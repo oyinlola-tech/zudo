@@ -1,0 +1,711 @@
+---
+title: Sign in with OAuth
+description: Add "Sign in with Google" to the Task API with @zudojs/auth-oauth. Learn the OAuth 2 authorization code flow, state and PKCE, the provider presets, and the callback, all tested offline against a stand-in provider.
+minutes: 50
+youNeed: The Authentication lesson
+youBuild: A "Sign in with Google" flow for the Task API that ends in your own session
+keywords: zudojs oauth, oauth 2, sign in with google, social login, authorization code flow, pkce, code verifier, code challenge, state, csrf, redirect uri, client secret, github login, microsoft login, apple login, discord login, createAuthorizationUrl, exchangeCodeForToken
+tier: advanced
+---
+<section>
+<h2 id="why">Let someone else check the password</h2>
+<p>In <a href="/learn/zudo-auth">the Authentication lesson</a> the Task API checked passwords itself. Many users would rather not create one more password. With "Sign in with Google", Google checks who they are and tells your server. Your server never sees their Google password.</p>
+<p>The standard behind those buttons is <strong>OAuth 2</strong>. Four parties take part:</p>
+<ul>
+<li>the <strong>user</strong>, in a web browser;</li>
+<li>your <strong>app</strong>, the Task API. OAuth calls it the <em>client</em>;</li>
+<li>the <strong>provider</strong>, for example Google, which knows the user;</li>
+<li>the provider's <strong>API</strong>, which returns the user's profile.</li>
+</ul>
+<p>The flow you will build is the <strong>authorization code flow</strong>. It has six steps:</p>
+<ol>
+<li>The user clicks "Sign in with Google". Your server builds a long URL on Google and redirects the browser there.</li>
+<li>The user signs in at Google, on Google's own page.</li>
+<li>Google asks: "Task API wants your email and name. Allow?" The user says yes.</li>
+<li>Google redirects the browser back to your <strong>callback URL</strong> with a short-lived <code>code</code> in the query string.</li>
+<li>Your server sends the code, plus its own <strong>client secret</strong>, directly to Google and gets an <strong>access token</strong> back.</li>
+<li>Your server uses the access token to ask Google for the user's profile. Then it creates <em>its own</em> session, exactly like after a password login.</li>
+</ol>
+<p>Steps 5 and 6 happen server to server, so the access token and the client secret never pass through the browser. That is the point of the flow. <code>@zudojs/auth-oauth</code> does steps 1, 5 and 6, and adds two protections that you will study in detail: <strong>state</strong> and <strong>PKCE</strong>.</p>
+</section>
+
+<section>
+<h2 id="install">Install and register your app</h2>
+<p>In your <code>task-api</code> folder:</p>
+<shell>
+$ npm install @zudojs/auth-oauth
+
+added 1 package, and audited 12 packages in 4s
+
+found 0 vulnerabilities
+</shell>
+<p>To use a real provider you register your app with it once. For Google that is in the Google Cloud console under "APIs &amp; Services", "Credentials", "OAuth client ID", type "Web application". You get two values:</p>
+<ul>
+<li>a <strong>client id</strong>. It is public: it appears in the URL of step 1;</li>
+<li>a <strong>client secret</strong>. It proves that a request really comes from your server. Treat it like the JWT secrets: <code>.env</code> only, never in code or git.</li>
+</ul>
+<p>You also enter the exact <strong>redirect URI</strong> (the callback URL) there. For local development this lesson uses <code>http://localhost:3000/auth/google/callback</code>.</p>
+<p>You do not need a Google account for this page. Every example runs offline against a small stand-in for Google, and the package never contacts the internet unless you ask it to.</p>
+</section>
+
+<section>
+<h2 id="providers">The built-in providers</h2>
+<p>The package knows the addresses and habits of five providers. Print what it ships:</p>
+<example file="providers.ts" project="oauth" browser="no">
+import { PROVIDER_PRESETS } from "@zudojs/auth-oauth";
+
+for (const [name, preset] of Object.entries(PROVIDER_PRESETS)) {
+  console.log(name, {
+    login: preset.authorizeUrl ?? "(you supply it)",
+    scopes: preset.defaultScopes.join(" "),
+    secretSentIn: preset.clientAuth,
+    refresh: preset.supportsRefresh,
+    profile: preset.userInfoUrl ?? "none",
+  });
+}
+</example>
+<output>
+google {
+  login: 'https://accounts.google.com/o/oauth2/v2/auth',
+  scopes: 'openid email profile',
+  secretSentIn: 'body',
+  refresh: true,
+  profile: 'https://openidconnect.googleapis.com/v1/userinfo'
+}
+github {
+  login: 'https://github.com/login/oauth/authorize',
+  scopes: 'read:user user:email',
+  secretSentIn: 'body',
+  refresh: false,
+  profile: 'https://api.github.com/user'
+}
+microsoft {
+  login: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
+  scopes: 'openid email profile offline_access User.Read',
+  secretSentIn: 'body',
+  refresh: true,
+  profile: 'https://graph.microsoft.com/v1.0/me'
+}
+apple {
+  login: 'https://appleid.apple.com/auth/authorize',
+  scopes: 'name email',
+  secretSentIn: 'body',
+  refresh: true,
+  profile: 'none'
+}
+discord {
+  login: 'https://discord.com/oauth2/authorize',
+  scopes: 'identify email',
+  secretSentIn: 'basic',
+  refresh: true,
+  profile: 'https://discord.com/api/v10/users/@me'
+}
+custom {
+  login: '(you supply it)',
+  scopes: '',
+  secretSentIn: 'body',
+  refresh: true,
+  profile: 'none'
+}
+</output>
+<ul>
+<li><strong>Scopes</strong> are what you ask the user to allow. <code>openid email profile</code> means "who you are, your email, your name and picture". Ask for as little as you need.</li>
+<li><code>secretSentIn</code> is how the client secret travels in step 5: as a form field (<code>body</code>) or in an HTTP Basic <code>Authorization</code> header (<code>basic</code>). Never in a URL, where logs would keep it.</li>
+<li>GitHub gives no refresh tokens and Apple has no profile endpoint. You will see both errors at the end of this lesson.</li>
+<li><code>custom</code> is for any other OAuth 2 server: you supply its three URLs yourself.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="config">Configuration from the environment</h2>
+<p>Every function in the package takes a plain configuration object. Build it in one place, reading both values from the environment:</p>
+<example file="env.ts" project="oauth" browser="no">
+export function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} is not set. Add it to your .env file.`);
+  }
+  return value;
+}
+</example>
+<example file="google.ts" project="oauth" browser="no">
+import type { FetchLike, OAuthConfig } from "@zudojs/auth-oauth";
+import { requireEnv } from "./env.js";
+
+export const CALLBACK_URL = "http://localhost:3000/auth/google/callback";
+
+export function googleConfig(fetch?: FetchLike): OAuthConfig {
+  return {
+    provider: "google",
+    clientId: requireEnv("GOOGLE_CLIENT_ID"),
+    clientSecret: requireEnv("GOOGLE_CLIENT_SECRET"),
+    allowedRedirectUris: [CALLBACK_URL],
+    ...(fetch === undefined ? {} : { fetch }),
+  };
+}
+</example>
+<ul>
+<li><code>allowedRedirectUris</code> is an allow-list. The package refuses to send Google any other callback address, so nobody can trick your server into sending users, and their codes, somewhere else.</li>
+<li>The optional <code>fetch</code> replaces the function the package uses to call the provider. Your app never passes it. The examples on this page pass the stand-in for Google through it.</li>
+</ul>
+<p>Without the environment variables:</p>
+<example file="missing-env.ts" project="oauth" browser="no">
+import { createAuthorizationUrl, generateState } from "@zudojs/auth-oauth";
+import { CALLBACK_URL, googleConfig } from "./google.js";
+
+try {
+  googleConfig();
+} catch (error) {
+  console.log("our check:", (error as Error).message);
+}
+
+try {
+  createAuthorizationUrl(
+    {
+      provider: "google",
+      clientId: process.env.GOOGLE_CLIENT_ID ?? "",
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+      allowedRedirectUris: [CALLBACK_URL],
+    },
+    { state: generateState(), redirectUri: CALLBACK_URL },
+  );
+} catch (error) {
+  console.log("the package:", (error as Error).name, "-", (error as Error).message);
+}
+</example>
+<output>
+our check: GOOGLE_CLIENT_ID is not set. Add it to your .env file.
+the package: OAuthConfigurationError - clientId is required and must be a non-empty string.
+</output>
+<p>The package refuses to work with an empty client id or secret, even for step 1, which does not send the secret. Like in the last lesson, the other examples on this page import a demo-only file first, so they run without your <code>.env</code>:</p>
+<example file="demo-env.ts" project="oauth" browser="no">
+/*
+ * DEMO ONLY. Lets the examples on this page run without a Google account.
+ * The client id is a made-up public name and the secret is random for this run,
+ * so nothing here can talk to the real Google. Never copy this into your app.
+ */
+import { randomBytes } from "node:crypto";
+
+process.env.GOOGLE_CLIENT_ID ??= "task-api-demo.apps.googleusercontent.com";
+process.env.GOOGLE_CLIENT_SECRET ??= randomBytes(24).toString("base64url");
+process.env.JWT_ACCESS_SECRET ??= randomBytes(32).toString("base64url");
+process.env.JWT_REFRESH_SECRET ??= randomBytes(32).toString("base64url");
+</example>
+</section>
+
+<section>
+<h2 id="authorize">Step 1: the authorization URL</h2>
+<example file="start.ts" project="oauth" browser="no">
+import "./demo-env.js";
+import { createAuthorizationUrl, generateState } from "@zudojs/auth-oauth";
+import { CALLBACK_URL, googleConfig } from "./google.js";
+
+const start = createAuthorizationUrl(googleConfig(), {
+  state: generateState(),
+  redirectUri: CALLBACK_URL,
+});
+
+const url = new URL(start.url);
+console.log(url.origin + url.pathname);
+for (const [name, value] of url.searchParams) {
+  console.log(`  ${name} = ${value}`);
+}
+console.log("keep on the server:", Object.keys(start));
+console.log("secret in the URL?", start.url.includes(process.env.GOOGLE_CLIENT_SECRET!));
+console.log("verifier in the URL?", start.url.includes(start.codeVerifier));
+</example>
+<output mask="b64">
+https://accounts.google.com/o/oauth2/v2/auth
+  access_type = offline
+  prompt = consent
+  response_type = code
+  client_id = task-api-demo.apps.googleusercontent.com
+  redirect_uri = http://localhost:3000/auth/google/callback
+  scope = openid email profile
+  state = GN0lrhektq-3AHYlpviVIs4koaN7HFrelwr9ewQNlRE
+  code_challenge = nmrvjNoGTT0fjHO9-dkBYOrAzZ1V_h7aH1zwI9oXiFA
+  code_challenge_method = S256
+keep on the server: [ 'url', 'state', 'codeVerifier', 'codeChallenge' ]
+secret in the URL? false
+verifier in the URL? false
+</output>
+<p>The browser will see this URL, so everything in it is public:</p>
+<ul>
+<li><code>response_type=code</code> asks for the authorization code flow. <code>client_id</code>, <code>redirect_uri</code> and <code>scope</code> say who is asking, where to come back to, and for what.</li>
+<li><code>access_type=offline</code> and <code>prompt=consent</code> come from the Google preset. They make Google issue a refresh token.</li>
+<li><code>state</code> and <code>code_challenge</code> are the two protections, explained next. They are random, so yours will differ.</li>
+<li>The client secret and the <code>codeVerifier</code> are <strong>not</strong> in the URL. The function returns the verifier to you, and you keep it on the server until step 5.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="state">State: is this callback for a login I started?</h2>
+<p>Your callback URL is public. Anyone can make a browser open <code>/auth/google/callback?code=...</code>. Here is the attack that state prevents: an attacker signs in at Google with <em>their own</em> account, stops before the callback, and sends you a link with their code. If your server accepted it, you would be logged in to the attacker's account, and everything you then saved would be theirs to read. This is login CSRF (cross-site request forgery).</p>
+<p>The fix: before step 1 your server creates a random <code>state</code>, stores it on the server for this browser, and sends it to Google. Google returns it unchanged in step 4. A callback whose state does not match a login <em>this browser</em> started is rejected. Each pending login is also used <strong>once</strong> and expires after 10 minutes:</p>
+<example file="pending.ts" project="oauth" browser="no">
+import { randomBytes } from "node:crypto";
+import { OAuthStateMismatchError, verifyState } from "@zudojs/auth-oauth";
+
+interface PendingLogin {
+  readonly state: string;
+  readonly codeVerifier: string;
+  readonly expiresAt: number;
+}
+
+const pending = new Map<string, PendingLogin>();
+const TEN_MINUTES = 10 * 60 * 1000;
+
+export function savePendingLogin(state: string, codeVerifier: string): string {
+  const loginId = randomBytes(32).toString("base64url");
+  pending.set(loginId, { state, codeVerifier, expiresAt: Date.now() + TEN_MINUTES });
+  return loginId;
+}
+
+export function takeVerifiedLogin(loginId: string | undefined, receivedState: string): string {
+  const login = loginId === undefined ? undefined : pending.get(loginId);
+  if (loginId !== undefined) pending.delete(loginId);
+  if (login === undefined || login.expiresAt < Date.now() || !verifyState(login.state, receivedState)) {
+    throw new OAuthStateMismatchError();
+  }
+  return login.codeVerifier;
+}
+</example>
+<ul>
+<li><code>savePendingLogin</code> stores the state and the PKCE verifier under a random <code>loginId</code>. The browser only gets the <code>loginId</code>, in an HttpOnly cookie. The state and the verifier never leave the server.</li>
+<li><code>takeVerifiedLogin</code> deletes the entry <em>before</em> checking it, so the same callback can never be used twice, even when the check fails.</li>
+<li><code>verifyState</code> compares in constant time, so an attacker cannot guess the state one character at a time by measuring response times. It returns <code>false</code> for an empty or missing value. It does not throw, so you throw <code>OAuthStateMismatchError</code> yourself.</li>
+</ul>
+<p>Now try a forged state, a missing cookie, an empty state, the real callback, and a replay of it:</p>
+<example file="try-state.ts" project="oauth" browser="no">
+import { OAuthStateMismatchError, generateState } from "@zudojs/auth-oauth";
+import { savePendingLogin, takeVerifiedLogin } from "./pending.js";
+
+function callback(label: string, loginId: string | undefined, state: string): void {
+  try {
+    console.log(label, "-> ok, verifier", takeVerifiedLogin(loginId, state));
+  } catch (error) {
+    if (error instanceof OAuthStateMismatchError) console.log(label, "->", error.statusCode, error.message);
+  }
+}
+
+const state = generateState();
+const loginId = savePendingLogin(state, "the-verifier");
+
+callback("forged state", savePendingLogin(state, "v"), generateState());
+callback("no login cookie", undefined, state);
+callback("empty state", savePendingLogin(state, "v"), "");
+callback("real callback", loginId, state);
+callback("same callback again", loginId, state);
+</example>
+<output>
+forged state -> 400 OAuth state verification failed.
+no login cookie -> 400 OAuth state verification failed.
+empty state -> 400 OAuth state verification failed.
+real callback -> ok, verifier the-verifier
+same callback again -> 400 OAuth state verification failed.
+</output>
+<p>Only the real callback passes, and only once. All failures give the same message, so an attacker learns nothing about which check failed.</p>
+<warn title="COMMON MISTAKE">Comparing the state with <code>===</code> against a value from a cookie that the browser also sends back. If both sides come from the browser, an attacker controls both. Keep the state on the server, like <code>pending.ts</code> does.</warn>
+</section>
+
+<section>
+<h2 id="pkce">PKCE: is this the server that started the login?</h2>
+<p>The <code>code</code> travels through the browser in step 4, and a URL can leak: browser history, a proxy log, a malicious browser extension. <strong>PKCE</strong> (Proof Key for Code Exchange, say "pixy") makes a stolen code useless:</p>
+<ol>
+<li>Before step 1 your server creates a random secret, the <strong>code verifier</strong>.</li>
+<li>It sends only its SHA-256 hash, the <strong>code challenge</strong>, in the URL. Google remembers it with the code.</li>
+<li>In step 5 your server sends the verifier itself. Google hashes it and compares it with the challenge. A thief has the code but not the verifier.</li>
+</ol>
+<p>The challenge is <code>base64url(SHA-256(verifier))</code>. The standard that defines PKCE, RFC 7636, contains an example pair. Check the package against it, and against Node's own SHA-256:</p>
+<example file="pkce.ts" project="oauth" browser="no">
+import { createHash } from "node:crypto";
+import { assertValidCodeVerifier, deriveCodeChallenge, generateCodeVerifier, OAuthError } from "@zudojs/auth-oauth";
+
+const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+console.log("package:  ", deriveCodeChallenge(verifier));
+console.log("by hand:  ", createHash("sha256").update(verifier).digest("base64url"));
+console.log("RFC 7636: ", "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+
+const mine = generateCodeVerifier();
+console.log(mine.length, "characters,", deriveCodeChallenge(mine) === deriveCodeChallenge(generateCodeVerifier()));
+
+try {
+  assertValidCodeVerifier("too-short");
+} catch (error) {
+  if (error instanceof OAuthError) console.log(error.code, "-", error.message);
+}
+</example>
+<output>
+package:   E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
+by hand:   E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
+RFC 7636:  E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
+64 characters, false
+OAUTH_PKCE_INVALID - PKCE code verifier must be 43-128 characters from the unreserved alphabet.
+</output>
+<p>All three agree. A generated verifier is 64 random characters, and two verifiers never give the same challenge. The package only implements the <code>S256</code> method. The older <code>plain</code> method sends the verifier itself in the URL, which protects nothing, so you cannot turn it on.</p>
+</section>
+
+<section>
+<h2 id="exchange">Steps 4 to 6: code, token, profile</h2>
+<p>To test the rest without the internet, here is a small stand-in for Google. <code>signInAtGoogle</code> plays steps 2 to 4: it takes the authorization URL and returns the callback URL with a new code. <code>fakeGoogleFetch</code> answers the token and profile requests, and checks PKCE exactly like Google: the verifier must hash to the challenge that came with the code, and each code works once.</p>
+<example file="fake-google.ts" project="oauth" browser="no">
+import { createHash, randomBytes } from "node:crypto";
+import type { FetchLike } from "@zudojs/auth-oauth";
+
+/* A tiny stand-in for Google, for testing only. It never touches the network. */
+const codes = new Map<string, { challenge: string; redirectUri: string }>();
+const accessTokens = new Set<string>();
+
+export function signInAtGoogle(authorizationUrl: string): string {
+  const params = new URL(authorizationUrl).searchParams;
+  const code = randomBytes(16).toString("hex");
+  const redirectUri = params.get("redirect_uri") ?? "";
+  codes.set(code, { challenge: params.get("code_challenge") ?? "", redirectUri });
+  return `${redirectUri}?code=${code}&state=${params.get("state")}`;
+}
+
+export const fakeGoogleFetch: FetchLike = async (url, init) => {
+  if (url === "https://oauth2.googleapis.com/token") {
+    const form = new URLSearchParams(String(init.body));
+    const grant = codes.get(form.get("code") ?? "");
+    codes.delete(form.get("code") ?? "");
+    const proof = createHash("sha256").update(form.get("code_verifier") ?? "").digest("base64url");
+    if (!grant || grant.challenge !== proof || grant.redirectUri !== form.get("redirect_uri")) {
+      return Response.json({ error: "invalid_grant" }, { status: 400 });
+    }
+    const accessToken = randomBytes(16).toString("hex");
+    accessTokens.add(accessToken);
+    return Response.json({ access_token: accessToken, token_type: "Bearer", expires_in: 3599 });
+  }
+  const auth = new Headers(init.headers).get("authorization") ?? "";
+  if (!accessTokens.has(auth.replace("Bearer ", ""))) {
+    return Response.json({ error: "invalid_token" }, { status: 401 });
+  }
+  return Response.json({ sub: "10769150350006150715113082367", email: "ada@example.com", email_verified: true, name: "Ada Lovelace" });
+};
+</example>
+<p>Now the real package calls, <code>exchangeCodeForToken</code> (step 5) and <code>fetchUserInfo</code> (step 6), first with a wrong verifier, then correctly, then with the same code again:</p>
+<example file="exchange.ts" project="oauth" browser="no">
+import "./demo-env.js";
+import { createAuthorizationUrl, exchangeCodeForToken, fetchUserInfo, generateState, OAuthProviderError } from "@zudojs/auth-oauth";
+import { fakeGoogleFetch, signInAtGoogle } from "./fake-google.js";
+import { CALLBACK_URL, googleConfig } from "./google.js";
+
+const config = googleConfig(fakeGoogleFetch);
+const start = createAuthorizationUrl(config, { state: generateState(), redirectUri: CALLBACK_URL });
+
+const callback = new URL(signInAtGoogle(start.url));
+const code = callback.searchParams.get("code") ?? "";
+console.log("back at", callback.pathname, "with", [...callback.searchParams.keys()]);
+
+try {
+  await exchangeCodeForToken(config, { code, codeVerifier: "x".repeat(64), redirectUri: CALLBACK_URL });
+} catch (error) {
+  if (error instanceof OAuthProviderError) console.log("wrong verifier ->", error.message);
+}
+
+const second = new URL(signInAtGoogle(start.url)).searchParams.get("code") ?? "";
+const tokens = await exchangeCodeForToken(config, { code: second, codeVerifier: start.codeVerifier, redirectUri: CALLBACK_URL });
+console.log("token type:", tokens.tokenType, "expires in:", tokens.expiresIn);
+
+const profile = await fetchUserInfo(config, tokens.accessToken);
+console.log(profile.providerId, profile.email, profile.emailVerified, profile.name);
+
+try {
+  await exchangeCodeForToken(config, { code: second, codeVerifier: start.codeVerifier, redirectUri: CALLBACK_URL });
+} catch (error) {
+  if (error instanceof OAuthProviderError) console.log("same code again ->", error.statusCode, error.providerError);
+}
+</example>
+<output>
+back at /auth/google/callback with [ 'code', 'state' ]
+wrong verifier -> The token endpoint returned HTTP 400 (invalid_grant).
+token type: Bearer expires in: 3599
+10769150350006150715113082367 ada@example.com true Ada Lovelace
+same code again -> 502 invalid_grant
+</output>
+<ul>
+<li>With a wrong verifier the provider refuses the code. That is what happens to a thief who has only the code. Like Google, the stand-in then throws the code away, so the example signs in a second time.</li>
+<li><code>fetchUserInfo</code> turns each provider's own profile format into one shape: <code>providerId</code>, <code>email</code>, <code>emailVerified</code>, <code>name</code>, <code>avatarUrl</code>.</li>
+<li>Provider errors are <code>OAuthProviderError</code> with status 502 (Bad Gateway: a service behind you failed). The message contains only the short OAuth error code, never a secret, a token or the provider's free-text description.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="server">The whole flow in the Task API</h2>
+<p>After step 6 you know that Google vouches for this person. Now your app takes over. First, find or create the local account. Key it by provider and provider id, <strong>not by email</strong>: emails change, and an email that is not verified proves nothing. The role is chosen by your server, as always:</p>
+<example file="accounts.ts" project="oauth" browser="no">
+import { toUserId } from "@zudojs/auth";
+import type { AuthUser, UserId } from "@zudojs/auth";
+import type { OAuthProvider, OAuthUserInfo } from "@zudojs/auth-oauth";
+
+const byProviderId = new Map<string, AuthUser>();
+
+export function findOrCreateAccount(provider: OAuthProvider, profile: OAuthUserInfo): AuthUser {
+  const key = `${provider}:${profile.providerId}`;
+  const existing = byProviderId.get(key);
+  if (existing !== undefined) return existing;
+  const user: AuthUser = {
+    id: toUserId(`u-${byProviderId.size + 1}`),
+    email: profile.emailVerified === true && profile.email !== undefined ? profile.email : "",
+    name: profile.name,
+    roles: ["user"],
+    active: true,
+    createdAt: new Date(),
+  };
+  byProviderId.set(key, user);
+  return user;
+}
+
+export async function findAccountById(id: UserId): Promise<AuthUser | null> {
+  return [...byProviderId.values()].find((user) => user.id === id) ?? null;
+}
+</example>
+<p>Second, start a session. <code>@zudojs/auth</code>'s <code>login()</code> needs a password, which an OAuth user does not have. So you create the session in the session store yourself and bind a token pair to it with <code>sessionId</code>. The auth service then checks these tokens, and logs them out, exactly like password logins:</p>
+<example file="sessions.ts" project="oauth" browser="no">
+import { createAuthService, createMemorySessionStore, createTokenPair } from "@zudojs/auth";
+import type { AuthUser, TokenConfig, TokenPair } from "@zudojs/auth";
+import { findAccountById } from "./accounts.js";
+import { requireEnv } from "./env.js";
+
+const tokenConfig: TokenConfig = {
+  accessSecret: requireEnv("JWT_ACCESS_SECRET"),
+  refreshSecret: requireEnv("JWT_REFRESH_SECRET"),
+};
+const sessionStore = createMemorySessionStore();
+
+export const auth = createAuthService({
+  token: tokenConfig,
+  sessionStore,
+  sessionTtlSeconds: 30 * 60,
+  absoluteSessionTtlSeconds: 7 * 24 * 60 * 60,
+  findUser: async () => null,
+  findUserById: findAccountById,
+  verifyPassword: async () => false,
+});
+
+export async function startSession(user: AuthUser): Promise<TokenPair> {
+  const session = await sessionStore.create({ userId: user.id, ttlSeconds: 30 * 60, absoluteTtlSeconds: 7 * 24 * 60 * 60 });
+  return createTokenPair(user.id, tokenConfig, { roles: user.roles, sessionId: session.id });
+}
+</example>
+<p><code>findUser</code> returns <code>null</code> and <code>verifyPassword</code> returns <code>false</code>, so password login is switched off for this service. In an app with both kinds of login, you pass your real functions and share one session store.</p>
+<p>Third, the two routes:</p>
+<example file="server.ts" project="oauth" browser="no">
+import { parseCookies } from "@zudojs/auth";
+import { createAuthorizationUrl, exchangeCodeForToken, fetchUserInfo, generateState } from "@zudojs/auth-oauth";
+import type { OAuthConfig } from "@zudojs/auth-oauth";
+import { badRequest, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+import { findOrCreateAccount } from "./accounts.js";
+import { CALLBACK_URL } from "./google.js";
+import { savePendingLogin, takeVerifiedLogin } from "./pending.js";
+import { startSession } from "./sessions.js";
+
+export async function startServer(google: OAuthConfig, port = 0) {
+  const router = createRouter();
+
+  router.get("/auth/google", () => {
+    const state = generateState();
+    const { url, codeVerifier } = createAuthorizationUrl(google, { state, redirectUri: CALLBACK_URL });
+    const loginId = savePendingLogin(state, codeVerifier);
+    return createResponseContext()
+      .cookie("oauth_login", loginId, { maxAge: 600, path: "/auth/google" })
+      .redirect(url);
+  });
+
+  router.get("/auth/google/callback", async (ctx) => {
+    const loginId = parseCookies(ctx.request.getHeader("cookie")).oauth_login;
+    const state = typeof ctx.query.state === "string" ? ctx.query.state : "";
+    const codeVerifier = takeVerifiedLogin(loginId, state);
+    const code = ctx.query.code;
+    if (typeof code !== "string" || code === "") throw badRequest("Sign-in was cancelled");
+
+    const tokens = await exchangeCodeForToken(google, { code, codeVerifier, redirectUri: CALLBACK_URL });
+    const user = findOrCreateAccount("google", await fetchUserInfo(google, tokens.accessToken));
+    const session = await startSession(user);
+    return createResponseContext()
+      .cookie("oauth_login", "", { maxAge: 0, path: "/auth/google" })
+      .json({ userId: user.id, accessToken: session.accessToken });
+  });
+
+  const adapter = createNodeHttpAdapter({
+    host: "127.0.0.1",
+    port,
+    handler: async (request) => (await router.dispatch(request)).response,
+  });
+  await adapter.start();
+  return { url: `http://127.0.0.1:${adapter.address?.port}`, stop: () => adapter.stop() };
+}
+</example>
+<ul>
+<li><code>GET /auth/google</code> saves the pending login, sets the <code>oauth_login</code> cookie (HttpOnly, Secure and SameSite=Lax by default, 10 minutes, only sent to <code>/auth/google...</code>) and redirects the browser to Google.</li>
+<li><code>SameSite=Lax</code> still sends the cookie when Google redirects the browser back, because that is a normal top-level navigation with <code>GET</code>.</li>
+<li>The callback checks state <strong>first</strong>. A forged callback never reaches Google. If the user pressed "Cancel" at Google, there is no <code>code</code> and the answer is 400.</li>
+<li>The Google access token is used once and thrown away. The client gets <em>your</em> token, from your session.</li>
+<li>Errors like <code>OAuthStateMismatchError</code> carry their status (400), so the HTTP layer answers with it. Configuration errors are 500 with a hidden message.</li>
+</ul>
+<p>Test the whole flow: start, "sign in at Google", callback, then a replay of the same callback and a callback from a browser that never started a login:</p>
+<example file="try-oauth.ts" project="oauth" browser="no">
+import "./demo-env.js";
+import { fakeGoogleFetch, signInAtGoogle } from "./fake-google.js";
+import { googleConfig } from "./google.js";
+import { startServer } from "./server.js";
+import { auth } from "./sessions.js";
+
+const server = await startServer(googleConfig(fakeGoogleFetch));
+
+const start = await fetch(server.url + "/auth/google", { redirect: "manual" });
+const cookie = (start.headers.get("set-cookie") ?? "").split(";")[0]!;
+console.log(start.status, new URL(start.headers.get("location")!).host, cookie.split("=")[0]);
+
+const callback = new URL(signInAtGoogle(start.headers.get("location")!));
+const path = callback.pathname + callback.search;
+
+const done = await fetch(server.url + path, { headers: { cookie } });
+const body = (await done.json()) as { userId: string; accessToken: string };
+console.log(done.status, body.userId, (await auth.verifyToken(body.accessToken)).sub);
+
+const replay = await fetch(server.url + path, { headers: { cookie } });
+console.log("replayed callback:", replay.status, await replay.text());
+
+const noCookie = await fetch(server.url + path);
+console.log("callback without cookie:", noCookie.status, await noCookie.text());
+await server.stop();
+</example>
+<output>
+302 accounts.google.com oauth_login
+200 u-1 u-1
+replayed callback: 400 {"error":"OAuth state verification failed.","code":"OAUTH_STATE_MISMATCH"}
+callback without cookie: 400 {"error":"OAuth state verification failed.","code":"OAUTH_STATE_MISMATCH"}
+</output>
+<p>The first request answers 302 (a redirect) to <code>accounts.google.com</code> and sets the cookie. After the callback, the Task API's own <code>auth.verifyToken</code> accepts the new token for user <code>u-1</code>. The replay and the cookie-less callback, the login CSRF attack from above, both get 400.</p>
+<h3>With the real Google</h3>
+<p>The only change is to leave out the stand-in and listen on port 3000, the port in <code>CALLBACK_URL</code>. This file needs real credentials, so it is not run on this page:</p>
+<example file="main.ts" project="oauth" browser="no" check="skip">
+import { googleConfig } from "./google.js";
+import { startServer } from "./server.js";
+
+const server = await startServer(googleConfig(), 3000);
+console.log(`Open http://localhost:3000/auth/google in your browser (server on ${server.url})`);
+</example>
+<p>Put <code>GOOGLE_CLIENT_ID</code>, <code>GOOGLE_CLIENT_SECRET</code> and the two JWT secrets in <code>.env</code>, add <code>http://localhost:3000/auth/google/callback</code> as an authorized redirect URI in the Google console, and run <code>npx tsx --env-file=.env src/main.ts</code>. Open the printed address, sign in, and the browser shows a JSON object with your new <code>userId</code> and <code>accessToken</code>. In a real web app you would put the token in an HttpOnly cookie and redirect to your home page instead of showing JSON.</p>
+<warn title="IN PRODUCTION">Use an <code>https://</code> callback URL. The package allows <code>http</code> only for <code>localhost</code>, <code>127.0.0.1</code> and <code>[::1]</code>. And keep pending logins in a shared store (your database or Redis) if you run more than one server: the callback may reach a different server than the start.</warn>
+</section>
+
+<section>
+<h2 id="providers-differ">Providers differ</h2>
+<p>Some differences show up as errors from the package, before any request is made:</p>
+<example file="limits.ts" project="oauth" browser="no">
+import "./demo-env.js";
+import { fetchUserInfo, normalizeUserInfo, OAuthError, refreshAccessToken } from "@zudojs/auth-oauth";
+import { googleConfig } from "./google.js";
+
+const google = googleConfig();
+
+async function show(label: string, action: () => Promise<unknown>): Promise<void> {
+  try {
+    await action();
+  } catch (error) {
+    if (error instanceof OAuthError) console.log(label, "->", error.name, "-", error.message);
+  }
+}
+
+await show("GitHub refresh", () => refreshAccessToken({ ...google, provider: "github" }, "stored-refresh-token"));
+await show("Apple profile", () => fetchUserInfo({ ...google, provider: "apple" }, "access-token"));
+await show("token URL to cloud metadata", () =>
+  refreshAccessToken({ ...google, tokenUrl: "https://169.254.169.254/latest/meta-data" }, "stored-refresh-token"));
+
+console.log(normalizeUserInfo("github", { id: 583231, login: "octocat", avatar_url: "https://avatars.githubusercontent.com/u/583231" }));
+</example>
+<output>
+GitHub refresh -> OAuthConfigurationError - This provider does not issue refresh tokens for the authorization-code flow.
+Apple profile -> OAuthConfigurationError - Apple has no user-info endpoint; read the profile from the id_token returned by the token exchange.
+token URL to cloud metadata -> OAuthEndpointNotAllowedError - tokenUrl resolves to a non-public host, which is not allowed.
+{
+  providerId: '583231',
+  name: 'octocat',
+  avatarUrl: 'https://avatars.githubusercontent.com/u/583231',
+  raw: {
+    id: 583231,
+    login: 'octocat',
+    avatar_url: 'https://avatars.githubusercontent.com/u/583231'
+  }
+}
+</output>
+<ul>
+<li><strong>GitHub</strong> tokens do not expire and come with no refresh token, so there is nothing to refresh.</li>
+<li><strong>Apple</strong> has no profile endpoint. The profile is inside the <code>idToken</code> from the token exchange, and this package does not check that token's signature. You must verify it yourself before trusting it. Apple also sends its callback as a <code>POST</code> form (<code>response_mode=form_post</code>), which a <code>SameSite=Lax</code> cookie does not follow.</li>
+<li>Your server fetches the token and profile URLs itself. The package refuses private and cloud-metadata addresses there, so a bad configuration cannot make your server fetch internal secrets. This attack is called SSRF, server-side request forgery.</li>
+<li>A GitHub profile without a public email simply has no <code>email</code>. The package never makes one up, so your code must handle an account without an email.</li>
+</ul>
+<warn title="ACCOUNT TAKEOVER">Never link an OAuth login to an existing password account just because the emails match, unless the provider says the email is verified and the user proves they own the existing account (for example by logging in to it first). Otherwise anyone who creates a provider account with Ada's address could log in as Ada.</warn>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Spot the mistakes">
+<p>This callback handler works, but has three security problems. Find them.</p>
+<pre><code>router.get("/auth/google/callback", async (ctx) => {
+  const tokens = await exchangeCodeForToken(google, {
+    code: String(ctx.query.code), codeVerifier: String(ctx.query.verifier), redirectUri: CALLBACK_URL,
+  });
+  const profile = await fetchUserInfo(google, tokens.accessToken);
+  const user = usersByEmail.get(profile.email ?? "") ?? createUser(profile);
+  return createResponseContext().json({ googleToken: tokens.accessToken });
+});</code></pre>
+<solution>
+<ol>
+<li>No state check. Anyone can send a victim a callback link with the attacker's code (login CSRF). Take the pending login from the server and call <code>verifyState</code> first.</li>
+<li>The PKCE verifier comes from the query string, so it travelled through the browser next to the code. A thief who has one has both. Keep the verifier on the server, as in <code>pending.ts</code>.</li>
+<li>Accounts are matched by email, verified or not, which allows account takeover. And the handler returns Google's access token to the browser instead of starting your own session. Key accounts by <code>provider:providerId</code> and return your own token.</li>
+</ol>
+</solution>
+</exercise>
+<exercise title="A GitHub config">
+<p>Write <code>githubConfig()</code> like <code>googleConfig()</code>, reading <code>GITHUB_CLIENT_ID</code> and <code>GITHUB_CLIENT_SECRET</code>, with the callback <code>http://localhost:3000/auth/github/callback</code> and only the <code>read:user</code> scope. Print the <code>scope</code> and <code>redirect_uri</code> of its authorization URL.</p>
+<solution>
+<example file="github.ts" project="oauth" browser="no">
+import { randomBytes } from "node:crypto";
+import { createAuthorizationUrl, generateState } from "@zudojs/auth-oauth";
+import type { OAuthConfig } from "@zudojs/auth-oauth";
+import { requireEnv } from "./env.js";
+
+process.env.GITHUB_CLIENT_ID ??= "demo-github-client-id";
+process.env.GITHUB_CLIENT_SECRET ??= randomBytes(24).toString("base64url");
+
+const GITHUB_CALLBACK = "http://localhost:3000/auth/github/callback";
+
+function githubConfig(): OAuthConfig {
+  return {
+    provider: "github",
+    clientId: requireEnv("GITHUB_CLIENT_ID"),
+    clientSecret: requireEnv("GITHUB_CLIENT_SECRET"),
+    allowedRedirectUris: [GITHUB_CALLBACK],
+    scopes: ["read:user"],
+  };
+}
+
+const { url } = createAuthorizationUrl(githubConfig(), { state: generateState(), redirectUri: GITHUB_CALLBACK });
+const params = new URL(url).searchParams;
+console.log(new URL(url).host, params.get("scope"), params.get("redirect_uri"));
+</example>
+<output>
+github.com read:user http://localhost:3000/auth/github/callback
+</output>
+<p>The two <code>??=</code> lines are demo-only placeholders, like <code>demo-env.ts</code>. Without <code>user:email</code>, GitHub profiles will usually have no email.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>OAuth 2's authorization code flow lets a provider check who the user is. The code comes back through the browser; the token and the client secret stay between servers.</li>
+<li>The client id is public, the client secret lives in <code>.env</code>, and redirect URIs are an allow-list.</li>
+<li><code>state</code> is stored on the server, checked with <code>verifyState</code> before anything else, and used once. It stops login CSRF.</li>
+<li>PKCE: the server keeps the verifier and sends only its SHA-256 challenge, so a stolen code is useless. The package always uses <code>S256</code>.</li>
+<li><code>exchangeCodeForToken</code> and <code>fetchUserInfo</code> finish the flow. Then you find or create the account by <code>provider:providerId</code> and start your own session.</li>
+<li>Providers differ: no refresh on GitHub, no profile endpoint on Apple, email is optional. Never link accounts on an unverified email.</li>
+</ul>
+<p>You now know who is calling. Next, decide what they may do, in <a href="/learn/zudo-permissions">Permissions</a>.</p>
+</section>

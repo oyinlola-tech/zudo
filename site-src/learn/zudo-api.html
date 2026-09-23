@@ -1,0 +1,450 @@
+---
+title: One operation, many transports
+description: Write your business logic once as an operation with @zudojs/api, then run it from HTTP, RPC and a queue with the same validation, errors, interceptors and timeouts.
+minutes: 45
+youNeed: The Task API project, and the lessons on validation, HTTP routing, queues and RPC
+youBuild: A tasks.create operation that the Task API serves over HTTP, over RPC and from a background queue, with one set of rules
+keywords: zudojs api, defineOperation, APIExecutor, APIOperationRegistry, APIInterceptor, createAPIContext, transport agnostic, operation, interceptor, api result
+tier: advanced
+---
+<section>
+<h2 id="why">One piece of logic, many doors</h2>
+<p>In the Task API, "create a task" lives inside an HTTP route. In <a href="/learn/zudo-rpc">the RPC lesson</a> you wrote it a second time as an RPC procedure. A nightly import job would need it a third time. Three copies drift apart: one of them forgets the title check, another returns a different error.</p>
+<p><code>@zudojs/api</code> fixes that with an <strong>operation</strong>: one named piece of logic with a declared input, a declared output and a handler. An <strong>executor</strong> runs operations, a <strong>registry</strong> finds them by name, and <strong>interceptors</strong> wrap every call with shared rules such as logging or sign-in checks.</p>
+<p>A <strong>transport</strong> is the door a call comes through: an HTTP request, an RPC frame, a queue job. Each transport only translates. The rules live in the operation.</p>
+<p>In your Task API folder, add the package. This lesson also uses <code>@zudojs/queue</code>; the other packages come from the RPC lesson. Every example is a <code>.ts</code> file that you run with <code>npx tsx file.ts</code>.</p>
+<shell title="Terminal on your computer">
+$ npm install @zudojs/api @zudojs/queue
+
+added 5 packages, and audited 15 packages in 10s
+
+1 package is looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+</shell>
+</section>
+
+<section>
+<h2 id="operations">Define an operation</h2>
+<p><code>defineOperation(options)</code> takes a <code>name</code>, an optional <code>input</code> and <code>output</code> schema from <code>@zudojs/schema</code>, and a <code>handler(input, context)</code>. It checks the definition at once, so a bad name or timeout fails when the program starts, not on the first request.</p>
+<example file="tasks.ts" project="api" browser="no">
+import { APIConflictError, defineOperation } from "@zudojs/api";
+import { schema } from "@zudojs/schema";
+import type { Infer } from "@zudojs/schema";
+
+const NewTaskSchema = schema.object({ title: schema.string().trim().min(3).max(100) });
+const TaskSchema = schema.object({ id: schema.number(), title: schema.string(), done: schema.boolean() });
+
+export type NewTask = Infer<typeof NewTaskSchema>;
+export type Task = Infer<typeof TaskSchema>;
+
+const tasks = new Map<number, Task>();
+
+export const createTask = defineOperation<NewTask, Task>({
+  name: "tasks.create",
+  input: NewTaskSchema,
+  output: TaskSchema,
+  metadata: { description: "Create a task", tags: ["Tasks"] },
+  handler: async (input) => {
+    if ([...tasks.values()].some((task) => task.title === input.title)) {
+      throw new APIConflictError(`A task called "${input.title}" already exists.`);
+    }
+    const task: Task = { id: tasks.size + 1, title: input.title, done: false };
+    tasks.set(task.id, task);
+    return task;
+  },
+});
+</example>
+<p>The two type parameters, <code>&lt;NewTask, Task&gt;</code>, come from the schemas with <code>Infer</code>, which you met in <a href="/learn/zudo-first-code">your first Zudo code</a>. So the types and the runtime checks describe the same data. <code>APIConflictError</code> is a ready-made error with status 409.</p>
+<p>Now run it with an executor. <code>createAPIContext(requestId, state)</code> makes the <strong>context</strong>: the small object that travels with one call. You will look at it closely soon.</p>
+<example file="run.ts" project="api" browser="no">
+import { APIExecutor, APIValidationError, createAPIContext } from "@zudojs/api";
+import { createTask } from "./tasks.js";
+
+const executor = new APIExecutor();
+const context = createAPIContext("req-1", {});
+console.log(await executor.execute(createTask, { title: "  Buy milk  " }, context));
+const invalid = await executor.execute(createTask, { title: "no" }, context);
+if (!invalid.ok && invalid.error instanceof APIValidationError) {
+  console.log(invalid.error.statusCode, invalid.error.message, invalid.error.issues);
+}
+const twice = await executor.execute(createTask, { title: "Buy milk" }, context);
+if (!twice.ok) console.log(twice.error.statusCode, twice.error.code, "-", twice.error.message);
+</example>
+<output>
+{ ok: true, data: { id: 1, title: 'Buy milk', done: false } }
+422 Invalid input for operation "tasks.create". [ 'title: invalid' ]
+409 ERR_API_CONFLICT - A task called "Buy milk" already exists.
+</output>
+<ul>
+<li>Every call gave back a <strong>result</strong>: <code>{ ok: true, data }</code> or <code>{ ok: false, error }</code>. The executor never throws, so you check <code>ok</code> instead of writing <code>try</code>/<code>catch</code>.</li>
+<li>The handler got the <em>cleaned</em> input: the spaces around "Buy milk" were trimmed by the schema.</li>
+<li>The bad title failed with 422. The issue says <em>where</em> the problem is, <code>title: invalid</code>, but not <em>what</em> was sent. Schema messages often repeat the value, and that value can be a password. The executor leaves it out on purpose.</li>
+<li>The handler's own <code>APIConflictError</code> came through unchanged, with its status and message.</li>
+</ul>
+<h3>Typed operations</h3>
+<p>Because <code>createTask</code> is an <code>APIOperation&lt;NewTask, Task&gt;</code>, TypeScript checks the input you pass to <code>execute</code>, and <code>result.data</code> has the type <code>Task</code>.</p>
+<example file="typed.ts" project="api" browser="no" check="tsc-error">
+import { APIExecutor, createAPIContext } from "@zudojs/api";
+import { createTask } from "./tasks.js";
+
+const result = await new APIExecutor().execute(createTask, { titel: "Buy milk" }, createAPIContext("req-1", {}));
+if (result.ok) console.log(result.data.title);
+</example>
+<output kind="tsc">
+typed.ts:4:62 - error TS2561: Object literal may only specify known properties, but 'titel' does not exist in type '{ title: string; }'. Did you mean to write 'title'?
+
+4 const result = await new APIExecutor().execute(createTask, { titel: "Buy milk" }, createAPIContext("req-1", {}));
+                                                               ~~~~~
+
+
+Found 1 error in typed.ts:4
+</output>
+<p>The typo is caught before the program runs. Transports get operations from the registry as <code>APIOperation&lt;unknown, unknown&gt;</code>: there the input really is unknown, because it comes from outside, and the schema checks it at runtime.</p>
+<h3>Errors the caller must not see</h3>
+<p>A handler can also fail by accident, for example with a database message. Such a message can contain table names, hosts or file paths. The executor turns every error that is not an API error into an <code>APIInternalError</code> with a fixed message, and keeps the original on <code>cause</code> for your logs:</p>
+<example file="internal.ts" project="api" browser="no">
+import { APIExecutor, createAPIContext, defineOperation } from "@zudojs/api";
+
+const exportTasks = defineOperation<{}, string>({
+  name: "tasks.export",
+  handler: async () => { throw new Error('relation "tasks" does not exist (host 10.0.0.5)'); },
+});
+const result = await new APIExecutor().execute(exportTasks, {}, createAPIContext("req-7", {}));
+if (!result.ok) {
+  console.log(result.error.name, result.error.statusCode, "expose:", result.error.expose);
+  console.log("message:", result.error.message);
+  console.log("for the log only:", (result.error.cause as Error).message);
+}
+</example>
+<output>
+APIInternalError 500 expose: false
+message: An unexpected internal error occurred in operation "tasks.export".
+for the log only: relation "tasks" does not exist (host 10.0.0.5)
+</output>
+<p><code>expose</code> is the flag that matters. <code>true</code> means "safe to show to the caller". <code>false</code> means "log it, send a generic message".</p>
+<warn title="NEVER SEND THE ERROR OBJECT AS IT IS">An <code>APIError</code> turns into JSON with its <code>cause</code>, and that includes the original message and stack. <code>res.json(result.error)</code> would leak the database message after all. Always pick the fields a caller may see. The <code>publicError</code> function below does that for every transport.</warn>
+</section>
+
+<section>
+<h2 id="context">The API context</h2>
+<p>The context carries four things through one call: a <strong>request id</strong>, an optional <code>AbortSignal</code> for cancelling, a <code>state</code> object you choose, and typed <strong>slots</strong>. A slot is read and written through a <strong>key</strong> made with <code>createContextKey&lt;T&gt;(name)</code>, so TypeScript knows the type of each value. Five keys are built in, such as <code>UserIdContextKey</code>. A request id often comes from an <code>x-request-id</code> header, which the client writes. <code>createAPIContext</code> throws a <code>TypeError</code> on an unsafe id. <code>normalizeRequestId</code> keeps a safe id and replaces anything else with a fresh UUID:</p>
+<example file="context.ts" project="api" browser="no">
+import { createAPIContext, createContextKey, normalizeRequestId, UserIdContextKey } from "@zudojs/api";
+
+console.log(normalizeRequestId("web-42"));
+console.log(normalizeRequestId("x\nFAKE LOG LINE: admin signed in"));
+const PlanKey = createContextKey<"free" | "pro">("plan");
+const context = createAPIContext("web-42", { locale: "en" });
+context.set(UserIdContextKey, "ada");
+context.set(PlanKey, "pro");
+console.log(context.get(UserIdContextKey), context.get(PlanKey), context.state.locale);
+</example>
+<output mask="uuid">
+web-42
+266de21a-0e98-4d5f-af95-48b24dc287b2
+ada pro en
+</output>
+<p>The id with a line break was replaced. Written into a log file as it was, it would have added a fake line to your logs. That trick is called <strong>log injection</strong>. <code>context.set(PlanKey, "gold")</code> would not compile, because the key says the value is <code>"free" | "pro"</code>.</p>
+</section>
+
+<section>
+<h2 id="interceptors">Interceptors: rules for every transport</h2>
+<p>An <strong>interceptor</strong> is an object with an <code>intercept(call, next)</code> method. It works like the middleware you know: do something, <code>await next()</code>, do something after. <code>call</code> holds the <code>operation</code>, the <code>input</code> and the <code>context</code>. An interceptor may also answer early, without calling <code>next()</code>, by returning <code>apiFailure(error)</code>. This file is the heart of the Task API. It registers the operation, builds one executor with two interceptors, and has the <code>publicError</code> function that every transport uses:</p>
+<example file="app.ts" project="api" browser="no">
+import { APIAuthenticationError, APIExecutor, APIOperationRegistry, APIValidationError, apiFailure, UserIdContextKey } from "@zudojs/api";
+import type { APIError, APIInterceptor } from "@zudojs/api";
+import { createTask } from "./tasks.js";
+
+const log: APIInterceptor = {
+  async intercept(call, next) {
+    const result = await next();
+    console.log(`[log] ${call.context.requestId} ${call.operation.name} -> ${result.ok ? "ok" : result.error.code}`);
+    return result;
+  },
+};
+
+const requireUser: APIInterceptor = {
+  async intercept(call, next) {
+    if (call.context.get(UserIdContextKey) === undefined) {
+      return apiFailure(new APIAuthenticationError("Sign in first."));
+    }
+    return next();
+  },
+};
+
+export const registry = new APIOperationRegistry();
+registry.register(createTask);
+registry.freeze();
+export const executor = new APIExecutor({ interceptors: [log, requireUser] });
+export function publicError(error: APIError): { code: string; message: string; issues?: readonly string[] } {
+  const issues = error instanceof APIValidationError ? { issues: error.issues } : {};
+  return { code: error.code, message: error.expose ? error.message : "An internal error occurred.", ...issues };
+}
+</example>
+<ul>
+<li>The first interceptor in the list is the outermost, so <code>log</code> also sees the answers of <code>requireUser</code>.</li>
+<li><code>registry.freeze()</code> locks the registry, so nobody can add or replace an operation while requests run. <code>get(name)</code>, <code>require(name)</code>, <code>getAll()</code> and <code>findByTag(tag)</code> read it.</li>
+<li><code>publicError</code> keeps only <code>code</code>, <code>issues</code> and, when <code>expose</code> is true, <code>message</code>.</li>
+</ul>
+<warn title="A REPLACED INPUT IS NOT CHECKED AGAIN">In <code>@zudojs/api</code> 1.1.1 the executor checks the input <em>before</em> the interceptors run. An interceptor may replace <code>call.input</code> before <code>next()</code>, and the handler then gets the new value without any schema check. If an interceptor changes the input, it must produce valid data itself.</warn>
+</section>
+
+<section>
+<h2 id="transports">One operation, three transports</h2>
+<p>Now the payoff. Each transport below does the same four steps: find the operation, build a context from what <em>it</em> verified, call the executor, and turn the result into its own kind of answer.</p>
+<h3>HTTP</h3>
+<p>One route, <code>POST /api/:operation</code>, serves every operation in the registry. The user comes from a bearer token. The <code>users</code> map stands in for the session or JWT check from <a href="/learn/zudo-auth">the authentication lesson</a>. At the end, the file calls its own server four times:</p>
+<example file="http-transport.ts" project="api" browser="no">
+import { randomBytes } from "node:crypto";
+import { createAPIContext, normalizeRequestId, UserIdContextKey } from "@zudojs/api";
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+import type { HttpRequestContext } from "@zudojs/http";
+import { executor, publicError, registry } from "./app.js";
+
+const token = randomBytes(32).toString("hex");
+const users = new Map([[token, "ada"]]);
+const router = createRouter();
+router.post("/api/:operation", async (ctx) => {
+  const operation = registry.get(ctx.params.operation ?? "");
+  if (!operation) return createResponseContext().setStatus(404).json({ ok: false, error: { code: "NOT_FOUND" } });
+  let input: unknown;
+  try {
+    input = JSON.parse(new TextDecoder().decode(ctx.request.body as Uint8Array));
+  } catch {
+    return createResponseContext().setStatus(400).json({ ok: false, error: { code: "BAD_JSON" } });
+  }
+  const context = createAPIContext(normalizeRequestId(ctx.request.getHeader("x-request-id")), {}, ctx.signal);
+  const userId = users.get(ctx.request.getHeader("authorization")?.replace(/^Bearer /, "") ?? "");
+  if (userId) context.set(UserIdContextKey, userId);
+
+  const result = await executor.execute(operation, input, context);
+  if (result.ok) return createResponseContext().json({ ok: true, data: result.data });
+  return createResponseContext().setStatus(result.error.statusCode).json({ ok: false, error: publicError(result.error) });
+});
+const server = await createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+}).start();
+
+const calls: [string, string, unknown][] = [
+  ["/tasks.create", token, { title: "Buy milk" }],
+  ["/tasks.create", "guessed-token", { title: "Buy milk" }],
+  ["/tasks.create", "guessed-token", { title: 42 }],
+  ["/tasks.delete", token, {}],
+];
+for (const [path, bearer, body] of calls) {
+  const response = await fetch(`http://127.0.0.1:${server.address?.port}/api${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-request-id": "web-1", authorization: `Bearer ${bearer}` },
+    body: JSON.stringify(body),
+  });
+  console.log(response.status, JSON.stringify(await response.json()));
+}
+await server.stop();
+</example>
+<output>
+[log] web-1 tasks.create -> ok
+200 {"ok":true,"data":{"id":1,"title":"Buy milk","done":false}}
+[log] web-1 tasks.create -> ERR_API_AUTHENTICATION
+401 {"ok":false,"error":{"code":"ERR_API_AUTHENTICATION","message":"Sign in first."}}
+422 {"ok":false,"error":{"code":"ERR_API_VALIDATION","message":"Invalid input for operation \"tasks.create\".","issues":["title: invalid"]}}
+404 {"ok":false,"error":{"code":"NOT_FOUND"}}
+</output>
+<p>The route has no task logic at all, and <code>ctx.signal</code> goes into the context, so a client that hangs up cancels the call. The guessed token got 401 from the <code>requireUser</code> interceptor. The third call also had a guessed token, yet it got 422, and <code>[log]</code> printed nothing. Validation ran first and the interceptors never ran. So a logging interceptor never sees invalid calls, and an unknown caller learns the shape of your input. When that matters, refuse unknown callers in the transport, before you call the executor.</p>
+<h3>RPC</h3>
+<p>The RPC transport registers one procedure per operation. The user comes from <code>call.auth</code>, the identity your RPC server verified, never from frame metadata, which the caller writes. The frame's id is written by the caller too, so it goes through <code>normalizeRequestId</code>. A failure becomes an <code>RPCError</code> with the same code:</p>
+<example file="rpc-transport.ts" project="api" browser="no">
+import { createAPIContext, normalizeRequestId, UserIdContextKey } from "@zudojs/api";
+import { createRPCProcedure, RPCClient, RPCError, RPCServer, isRPCError } from "@zudojs/rpc";
+import { executor, publicError, registry } from "./app.js";
+
+const rpc = new RPCServer();
+for (const operation of registry.getAll()) {
+  rpc.register(createRPCProcedure(operation.name, async (input: unknown, call) => {
+    const context = createAPIContext(normalizeRequestId(call.request.id), {}, call.signal);
+    if (typeof call.auth?.userId === "string") context.set(UserIdContextKey, call.auth.userId);
+    const result = await executor.execute(operation, input, context);
+    if (result.ok) return result.data;
+    const { code, message } = publicError(result.error);
+    throw new RPCError(message, { code, statusCode: result.error.statusCode, expose: true });
+  }));
+}
+const client = new RPCClient({ send: (request) => rpc.handle(request, { auth: { userId: "ada" } }) });
+console.log(await client.call("tasks.create", { title: "Walk the dog" }));
+try {
+  await client.call("tasks.create", { title: "Walk the dog" });
+} catch (error) {
+  if (isRPCError(error)) console.log(error.code, "-", error.message);
+}
+</example>
+<output mask="uuid">
+[log] a7dd43d5-ef69-4e92-ae1d-c33864d7c8af tasks.create -> ok
+{ id: 1, title: 'Walk the dog', done: false }
+[log] 4a790a2b-1ab8-4d8d-8c8b-d961451f44de tasks.create -> ERR_API_CONFLICT
+ERR_API_CONFLICT - A task called "Walk the dog" already exists.
+</output>
+<h3>Queue</h3>
+<p>A background job has no HTTP request and no token. Only your own code adds jobs, after it has checked who the user is, so the job carries that user id. The job fails when the operation fails, and the queue's retry and dead-letter rules take over:</p>
+<example file="queue-transport.ts" project="api" browser="no">
+import { createAPIContext, UserIdContextKey } from "@zudojs/api";
+import { createInMemoryQueue, createInMemoryQueueEventEmitter, createQueueName } from "@zudojs/queue";
+import { executor, publicError, registry } from "./app.js";
+
+const queue = createInMemoryQueue<{ input: unknown; userId: string }>(createQueueName("operations"), {
+  eventEmitter: createInMemoryQueueEventEmitter(),
+});
+let jobs = 0;
+for (const operation of registry.getAll()) {
+  queue.process(operation.name, async (job, jobContext) => {
+    const context = createAPIContext(`job-${++jobs}`, {}, jobContext.signal);
+    context.set(UserIdContextKey, job.data.userId);
+    const result = await executor.execute(operation, job.data.input, context);
+    if (!result.ok) throw new Error(`${result.error.code}: ${publicError(result.error).message}`);
+    console.log("[queue] completed", job.name, result.data);
+    return result.data;
+  });
+}
+queue.events?.on("job:failed", ({ job, error }) => console.log("[queue] failed", job.name, error.message));
+await queue.add("tasks.create", { input: { title: "Water plants" }, userId: "ada" }, { attempts: 1 });
+await queue.add("tasks.create", { input: { title: "" }, userId: "ada" }, { attempts: 1 });
+await new Promise((resolve) => setTimeout(resolve, 200));
+await queue.close();
+</example>
+<output>
+[log] job-1 tasks.create -> ok
+[queue] completed tasks.create { id: 1, title: 'Water plants', done: false }
+[queue] failed tasks.create ERR_API_VALIDATION: Invalid input for operation "tasks.create".
+</output>
+<p><code>attempts: 1</code> matters here: a validation error fails the same way every time, so retrying it only wastes work. Without the <code>eventEmitter</code> option, <code>queue.events</code> is a silent emitter and your listeners never run.</p>
+<note>Ready-made bindings are coming to <code>@zudojs/api</code>: a fetch handler for HTTP, an RPC binding, a queue binding and a command-line runner, with the operation's HTTP route set in its metadata. The docs page already describes them, but they are not in version 1.1.1 on npm. Until then, the small transports above do the same job.</note>
+</section>
+
+<section>
+<h2 id="timeouts">Timeouts and cancelling</h2>
+<p>Every operation has a <strong>timeout</strong>: 30 seconds by default, or the <code>timeout</code> you set in milliseconds. When time runs out, the caller gets <code>ERR_API_TIMEOUT</code> (504). But the executor only stops <em>waiting</em>. It does not stop the handler. The only signal a handler gets is <code>context.signal</code>, the caller's cancel signal, and in version 1.1.1 the timeout does not abort it. So a slow handler keeps working for a caller who already got an error. That can write a report twice, or keep the database busy for nobody.</p>
+<p>The fix: give the handler its own deadline signal, and combine it with the caller's signal with <code>AbortSignal.any</code>:</p>
+<example file="deadline.ts" project="api" browser="no">
+import { APIExecutor, createAPIContext, defineOperation } from "@zudojs/api";
+
+const REPORT_TIMEOUT = 100;
+const sleep = (ms: number, signal: AbortSignal) => new Promise((resolve, reject) => {
+  const timer = setTimeout(resolve, ms);
+  signal.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+});
+const report = defineOperation<{}, string>({
+  name: "tasks.report",
+  timeout: REPORT_TIMEOUT,
+  handler: async (_input, context) => {
+    const deadline = AbortSignal.timeout(REPORT_TIMEOUT + 10);
+    const signals = context.signal ? [deadline, context.signal] : [deadline];
+    try {
+      await sleep(300, AbortSignal.any(signals));
+    } catch (reason) {
+      console.log("[handler] stopped:", (reason as Error).name);
+      throw reason;
+    }
+    return "report.csv";
+  },
+});
+
+const executor = new APIExecutor();
+const late = await executor.execute(report, {}, createAPIContext("req-1", {}));
+if (!late.ok) console.log("[caller]", late.error.code);
+const controller = new AbortController();
+setTimeout(() => controller.abort(), 50);
+const cancelled = await executor.execute(report, {}, createAPIContext("req-2", {}, controller.signal));
+if (!cancelled.ok) console.log("[caller]", cancelled.error.code, cancelled.error.statusCode);
+</example>
+<output>
+[caller] ERR_API_TIMEOUT
+[handler] stopped: TimeoutError
+[handler] stopped: AbortError
+[caller] ERR_OPERATION_CANCELLED 499
+</output>
+<p>First call: the caller got <code>ERR_API_TIMEOUT</code> at 100 ms. The handler's own deadline fired 10 ms later and it stopped, instead of working for nobody. The 10 ms gap makes sure the executor answers first, so the caller always sees a clean timeout. Second call: the caller aborted after 50 ms, like a browser tab that was closed. The result code is <code>ERR_OPERATION_CANCELLED</code>. Check that code, not the unusual status 499.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Admins only">
+<p>Write an interceptor that refuses every operation tagged <code>"Admin"</code> unless the <strong>verified</strong> role in the context is <code>"admin"</code>. Store the role with your own context key. The input must never decide the role: test it with an input that claims <code>role: "admin"</code>.</p>
+<solution>
+<example file="admin.ts" project="api-admin" browser="no">
+import { APIAuthorizationError, APIExecutor, apiFailure, createAPIContext, createContextKey, defineOperation } from "@zudojs/api";
+import type { APIInterceptor } from "@zudojs/api";
+
+const RoleKey = createContextKey<"user" | "admin">("role");
+const adminOnly: APIInterceptor = {
+  async intercept(call, next) {
+    if (call.operation.metadata?.tags?.includes("Admin") && call.context.get(RoleKey) !== "admin") {
+      return apiFailure(new APIAuthorizationError("Admins only."));
+    }
+    return next();
+  },
+};
+const deleteAll = defineOperation<{ role?: string }, string>({
+  name: "tasks.deleteAll",
+  metadata: { tags: ["Admin"] },
+  handler: async () => "all tasks deleted",
+});
+
+const executor = new APIExecutor([adminOnly]);
+const bo = createAPIContext("req-1", {});
+bo.set(RoleKey, "user");
+const denied = await executor.execute(deleteAll, { role: "admin" }, bo);
+if (!denied.ok) console.log(denied.error.statusCode, denied.error.message);
+const ada = createAPIContext("req-2", {});
+ada.set(RoleKey, "admin");
+console.log(await executor.execute(deleteAll, {}, ada));
+</example>
+<output>
+403 Admins only.
+{ ok: true, data: 'all tasks deleted' }
+</output>
+<p>The role comes only from the context, which the transport fills after it verified the caller. The <code>role</code> in the input is ignored.</p>
+</solution>
+</exercise>
+<exercise title="Exit codes for a command-line transport">
+<p>A command-line tool reports failure with an <strong>exit code</strong>. Write <code>exitCode(result)</code>: 0 for success, 77 for status 401 or 403, 65 for 422, and 1 for anything else. Test it with results made by <code>apiSuccess</code> and <code>apiFailure</code>.</p>
+<solution>
+<example file="exit-code.ts" project="api-exit" browser="no">
+import { APIAuthenticationError, APIConflictError, APIValidationError, apiFailure, apiSuccess } from "@zudojs/api";
+import type { APIResult } from "@zudojs/api";
+
+function exitCode(result: APIResult<unknown>): number {
+  if (result.ok) return 0;
+  const status = result.error.statusCode;
+  if (status === 401 || status === 403) return 77;
+  if (status === 422) return 65;
+  return 1;
+}
+
+const results: APIResult<unknown>[] = [
+  apiSuccess({ id: 1 }),
+  apiFailure(new APIAuthenticationError("Sign in first.")),
+  apiFailure(new APIValidationError("Invalid input.", ["title: invalid"])),
+  apiFailure(new APIConflictError("Already exists.")),
+];
+console.log(results.map(exitCode));
+</example>
+<output>
+[ 0, 77, 65, 1 ]
+</output>
+<p>A script that runs your tool can now tell "fix your input" (65) from "sign in" (77) without reading any text.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>An <strong>operation</strong> is your logic with a name, an input schema, an output schema and a handler. Define it once with <code>defineOperation</code>.</li>
+<li><code>APIExecutor.execute</code> never throws. It returns <code>{ ok: true, data }</code> or <code>{ ok: false, error }</code>, and hides the message of every error with <code>expose: false</code>. Send callers only <code>code</code>, <code>issues</code> and exposed messages.</li>
+<li>The context carries a safe request id, a cancel signal and typed slots. Pass header values through <code>normalizeRequestId</code>.</li>
+<li>Interceptors apply the same rules on every transport. In 1.1.1 they run after input validation. A transport only finds the operation, builds the context from identity <em>it</em> verified, and translates the result.</li>
+<li>A timeout stops the waiting, not the handler. Give long handlers their own deadline signal.</li>
+</ul>
+<p>In the next lesson you describe the Task API in an OpenAPI document, so other people and tools can see exactly what it accepts and returns.</p>
+</section>

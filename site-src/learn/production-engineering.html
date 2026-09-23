@@ -1,0 +1,519 @@
+---
+title: Production engineering
+description: What changes when real users depend on your app. A checklist for configuration, secrets, logs, metrics, traces, health and readiness checks, graceful shutdown, timeouts, rate limits, caching and database performance, with a small runnable proof for each item.
+minutes: 55
+youNeed: The Task API project and the ZudoJS core, data and quality lessons
+youBuild: A production checklist for the Task API, and working proofs of health checks, graceful shutdown, rate limiting, caching and indexing
+keywords: production, dev vs prod, NODE_ENV, environment variables, secrets, structured logging, json logs, metrics, tracing, health check, readiness check, liveness, graceful shutdown, SIGTERM, timeouts, rate limiting, caching, database index, explain, connection pool
+tier: production
+---
+<section>
+<h2 id="checklist">The production checklist</h2>
+<p>On your computer, a crash means you restart <code>npm run dev</code>. In <strong>production</strong>, the place where real users use your app, a crash means lost orders, and nobody may notice until a customer complains. Production engineering is the set of habits that keep an app running, and tell you quickly when it is not.</p>
+<p>This lesson is built around one checklist. Each row links to a section with a small example that proves the point. Copy the list into your project's README and tick it off before your first deployment in <a href="/learn/deployment">the next lesson</a>.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>✓</th><th>Item</th><th>Done when</th></tr></thead>
+<tbody>
+<tr><td>☐</td><td><a href="#environments">Environment</a></td><td><code>NODE_ENV=production</code> is set, and the app behaves differently because of it.</td></tr>
+<tr><td>☐</td><td><a href="#config">Configuration and secrets</a></td><td>Every setting comes from the environment, is checked at startup, and no secret is in the code or the logs.</td></tr>
+<tr><td>☐</td><td><a href="#logs">Logs</a></td><td>One JSON line per event, with a level, a request id and no secrets.</td></tr>
+<tr><td>☐</td><td><a href="#metrics">Metrics and traces</a></td><td>Request count, error count and latency are measured, and slow requests can be traced.</td></tr>
+<tr><td>☐</td><td><a href="#health">Health and readiness</a></td><td><code>/health</code> says the process is alive; <code>/ready</code> says it can serve traffic.</td></tr>
+<tr><td>☐</td><td><a href="#shutdown">Graceful shutdown</a></td><td>On <code>SIGTERM</code>, the app stops taking new requests and finishes the ones in flight.</td></tr>
+<tr><td>☐</td><td><a href="#timeouts">Timeouts and retries</a></td><td>Every outgoing call has a timeout; only safe calls are retried.</td></tr>
+<tr><td>☐</td><td><a href="#ratelimit">Rate limiting</a></td><td>Public endpoints, and login above all, have a limit per client.</td></tr>
+<tr><td>☐</td><td><a href="#cache">Caching</a></td><td>Hot, slow reads are cached, and every write invalidates what it changed.</td></tr>
+<tr><td>☐</td><td><a href="#database">Database</a></td><td>Frequent queries use an index, and the connection pool has a sensible size.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="environments">Development versus production</h2>
+<div class="lx-table-wrap"><table>
+<thead><tr><th></th><th>Development</th><th>Production</th></tr></thead>
+<tbody>
+<tr><td>Who uses it</td><td>You</td><td>Customers, all day, in parallel</td></tr>
+<tr><td>Code</td><td>TypeScript run by <code>tsx watch</code>, restarts on save</td><td>Compiled JavaScript run by <code>node</code>, restarted by a process manager</td></tr>
+<tr><td>Errors</td><td>Full stack traces on screen</td><td>Generic message to the client, details only in the logs</td></tr>
+<tr><td>Logs</td><td>Pretty, easy to read</td><td>JSON lines, read by a machine</td></tr>
+<tr><td>Data</td><td>Fake, can be thrown away</td><td>Real, backed up, never reset</td></tr>
+<tr><td>Secrets</td><td>Throwaway values in <code>.env</code></td><td>Real values from the host's secret store</td></tr>
+</tbody>
+</table></div>
+<p>The app learns which world it is in from <code>NODE_ENV</code>. ZudoJS reads it with <code>resolveEnvironment</code> from <code>@zudojs/constants</code>, the same function the generated <code>app.ts</code> uses. It accepts common spellings and warns about typos, because a typo in production would silently switch on development behaviour:</p>
+<example file="environment.ts">
+import { resolveEnvironment } from "@zudojs/constants";
+
+for (const value of ["production", "prod", "Production", undefined, "staging", "prodution"]) {
+  console.log(String(value).padEnd(10), "->", resolveEnvironment({ NODE_ENV: value }));
+}
+</example>
+<output>
+production -> production
+prod       -> production
+Production -> production
+undefined  -> development
+staging    -> staging
+[@zudojs/constants] Unrecognized NODE_ENV value "prodution"; falling back to "development". Expected one of: development, test, staging, production (or the aliases dev, prod).
+prodution  -> development
+</output>
+<p>An unset <code>NODE_ENV</code> means development. So the one thing every production deployment must do is set it. Pass <code>{ strict: true }</code> as a second argument to make a typo stop the app instead of only warning.</p>
+</section>
+
+<section>
+<h2 id="config">Configuration and secrets</h2>
+<p>You met environment variables in <a href="/learn/node-runtime">the Node.js runtime lesson</a> and <code>@zudojs/config</code> in <a href="/learn/zudo-config">the configuration lesson</a>. For production, three rules:</p>
+<ol>
+<li><strong>Everything that differs between environments comes from the environment:</strong> ports, URLs, secrets, feature switches. The same build runs everywhere.</li>
+<li><strong>Check all of it at startup.</strong> Fail at once, listing every problem, instead of at 3 a.m. on the first request that needs the missing value.</li>
+<li><strong>Never print a secret.</strong> Not in an error, not in a log, not in a health check.</li>
+</ol>
+<p>A schema from <a href="/learn/zudo-validation">the validation lesson</a> does all three. It describes the settings once, turns strings into numbers, and reports problems by name only:</p>
+<example file="config.ts" project="config">
+import { schema, type Infer } from "@zudojs/schema";
+
+const ConfigSchema = schema.object({
+  NODE_ENV: schema.enum(["development", "test", "staging", "production"]),
+  PORT: schema.coerce.number().int().min(1).max(65535).default(3000),
+  DATABASE_URL: schema.string().regex(/^postgres(ql)?:\/\/\S+$/),
+  JWT_SECRET: schema.string().min(32),
+});
+export type Config = Infer<typeof ConfigSchema>;
+
+export function loadConfig(env: Record<string, string | undefined>): Config {
+  const result = ConfigSchema.safeParse(env);
+  if (!result.success) {
+    const problems = result.issues.map((issue) => `  ${issue.path.join(".")}: ${issue.message}`);
+    throw new Error(`Invalid configuration:\n${problems.join("\n")}`);
+  }
+  return result.data;
+}
+</example>
+<example file="start.ts" project="config">
+import { loadConfig } from "./config.js";
+
+// In the app: const config = loadConfig(process.env);
+try {
+  loadConfig({ NODE_ENV: "production", PORT: "eighty", DATABASE_URL: "postgres://db:5432/shop" });
+} catch (error) {
+  console.log((error as Error).message);
+}
+
+// A stand-in for the real secret, which comes from the host's secret store.
+const secret = crypto.randomUUID() + crypto.randomUUID();
+const config = loadConfig({ NODE_ENV: "production", DATABASE_URL: "postgres://db:5432/shop", JWT_SECRET: secret });
+console.log(config.PORT, config.NODE_ENV, `JWT_SECRET: ${config.JWT_SECRET.length} characters`);
+</example>
+<output>
+Invalid configuration:
+  PORT: Cannot coerce string to number
+  JWT_SECRET: Required field missing: JWT_SECRET
+3000 production JWT_SECRET: 72 characters
+</output>
+<p>The first call failed at once and listed both problems, not just the first. The message names <code>PORT</code> and <code>JWT_SECRET</code>, never their values, so a wrong secret cannot leak through it. <code>DATABASE_URL</code> is checked with a regular expression because <code>schema.string().url()</code> accepts only <code>http</code> and <code>https</code> addresses. The second call worked: <code>PORT</code> fell back to its default and became a number, and the program printed only the secret's length.</p>
+<h3>Where secrets live</h3>
+<ul>
+<li><strong>On your computer:</strong> a <code>.env</code> file, never committed, with throwaway values.</li>
+<li><strong>On a server:</strong> environment variables set by the host: a systemd <code>EnvironmentFile</code> readable only by the app's user, Docker secrets, or your cloud's secret manager. The next lesson shows the first two.</li>
+<li><strong>Rotate</strong> a secret (replace it with a new one) whenever someone who knew it leaves, and at once if it may have leaked. Code that reads it from the environment needs no change for that.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="logs">Logs a machine can read</h2>
+<p>In production nobody watches the terminal. Logs are collected from every server into one place (Loki, Elasticsearch, CloudWatch, Datadog …), and you search them. That works when each event is <strong>one line of JSON</strong> with the same fields every time, so the tool can filter by <code>level</code>, <code>requestId</code> or <code>orderId</code>.</p>
+<p><code>@zudojs/logger</code>, from <a href="/learn/zudo-logging">the logging lesson</a>, lets you choose where entries go with a <strong>transport</strong>. This one writes one JSON line per entry. The structured formatter keeps <code>message</code> as the plain text you logged, without the time and level glued in front:</p>
+<example file="json-logs.ts">
+import { createLogger, createStructuredLoggerFormatter, LoggerLevel, type LoggerTransportFunction } from "@zudojs/logger";
+
+const jsonLines: LoggerTransportFunction = (entry) => {
+  console.log(JSON.stringify({ time: entry.timestamp, level: entry.levelName, logger: entry.logger, msg: entry.message, ...entry.metadata }));
+};
+
+const logger = createLogger({
+  name: "task-api",
+  level: LoggerLevel.INFO,
+  formatter: createStructuredLoggerFormatter(),
+  transports: [jsonLines],
+});
+
+logger.debug("cache lookup", { key: "tasks.ada" });
+logger.info("task created", { requestId: "req-7", taskId: 42, password: "hunter2" });
+logger.error("database timeout", { requestId: "req-8", afterMs: 5000 });
+</example>
+<output mask="iso">
+{"time":"2026-09-23T13:50:02.118Z","level":"info","logger":"task-api","msg":"task created","requestId":"req-7","taskId":42,"password":"[REDACTED]"}
+{"time":"2026-09-23T13:50:02.121Z","level":"error","logger":"task-api","msg":"database timeout","requestId":"req-8","afterMs":5000}
+</output>
+<ul>
+<li>The <code>debug</code> line is missing because the level is <code>INFO</code>. Use <code>INFO</code> in production, and switch one service to <code>DEBUG</code> for a while when you hunt a bug.</li>
+<li>The password was replaced by <code>[REDACTED]</code> before any transport saw it. The logger does this for field names that look secret. It is a safety net, not permission: still do not log request bodies whole.</li>
+<li>Every line carries a <code>requestId</code>. That is the correlation id from <a href="/learn/zudo-microservices">the microservices lesson</a>, and it is what turns thousands of lines into the story of one request.</li>
+</ul>
+<p>Write logs to standard output, as here. The process manager or Docker collects them; the app should not manage log files itself.</p>
+</section>
+
+<section>
+<h2 id="metrics">Metrics and traces</h2>
+<p>Logs tell you what happened to one request. <strong>Metrics</strong> tell you how the whole system is doing: numbers collected all the time and drawn on a dashboard. Start with the four "golden signals": how many requests (<strong>traffic</strong>), how many fail (<strong>errors</strong>), how long they take (<strong>latency</strong>), and how full your resources are (<strong>saturation</strong>).</p>
+<p>With <code>@zudojs/observability</code>, from <a href="/learn/zudo-observability">the observability lesson</a>:</p>
+<example file="metrics.ts" browser="no">
+import { createObservability } from "@zudojs/observability";
+
+const obs = createObservability({ serviceName: "task-api", useConsoleExporters: false });
+const latency = obs.metrics.histogram("http.duration.ms", { route: "GET /tasks" });
+
+const durations = [12, 15, 11, 14, 13, 16, 12, 480, 15, 14];
+for (const ms of durations) {
+  obs.metrics.counter("http.requests", { route: "GET /tasks" }).increment();
+  latency.record(ms);
+}
+obs.metrics.counter("http.errors", { route: "GET /tasks" }).increment();
+
+const value = latency.getValue();
+console.log("requests:", durations.length, "errors: 1");
+console.log("mean:", Math.round(value.mean), "ms, p50:", Math.round(value.p50), "ms, p95:", Math.round(value.p95), "ms");
+await obs.shutdown();
+</example>
+<output>
+requests: 10 errors: 1
+mean: 60 ms, p50: 19 ms, p95: 365 ms
+</output>
+<p>Nine requests took about 13 ms and one took 480 ms. The <strong>mean</strong> (average) of 60 ms describes none of them. That is why latency is watched as <strong>percentiles</strong>: <code>p95</code> is the time that 95% of requests stay under, so it shows the slow tail your unluckiest users feel. The histogram estimates percentiles from buckets, so the values are approximate: good enough to see "most are fast, some are very slow".</p>
+<p>Alert on symptoms users feel: "p95 above 500 ms for 5 minutes", "more than 1% errors". When an alert fires, a <strong>trace</strong> of a slow request shows where the time went: 3 ms in your code, 470 ms waiting for the database. You created spans in the observability lesson; in production, send them to a tracing backend with an exporter, and sample a percentage of requests to keep the cost down.</p>
+</section>
+
+<section>
+<h2 id="health">Health and readiness checks</h2>
+<p>Whatever runs your app (Docker, Kubernetes, a load balancer) asks it two different questions, over HTTP, every few seconds:</p>
+<ul>
+<li><strong>Liveness, <code>/health</code>:</strong> "Is the process alive?" If not, restart it. Keep this check trivial. Never check the database here: if the database is down, restarting every app server would only make things worse.</li>
+<li><strong>Readiness, <code>/ready</code>:</strong> "Can it serve traffic right now?" If not, stop sending it requests, but do not restart it. Check what a request needs: database connected, migrations done, caches warmed.</li>
+</ul>
+<p>The generated project already registers a readiness check on the runtime. Here is the pattern with a database check. The database starts "down", so the app is alive but not ready:</p>
+<example file="probes.ts" browser="no">
+import { createContainer } from "@zudojs/container";
+import type { Module } from "@zudojs/core";
+import { createEventBus } from "@zudojs/events";
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, type HttpRequestContext } from "@zudojs/http";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
+
+let databaseConnected = false;
+const runtime = createRuntime(
+  { modules: new Map<string, Module>(), eventBus: createEventBus(), container: createContainer(), logger: createLogger({ name: "task-api", level: LoggerLevel.ERROR }) },
+  { applicationName: "task-api", environment: "production", handleSignals: false },
+);
+runtime.registerReadinessCheck("database", () => databaseConnected);
+await runtime.start();
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request: HttpRequestContext) => {
+    if (request.path === "/health") return { status: "alive" };
+    if (request.path === "/ready") {
+      await runtime.runReadinessChecks();
+      const body = { ready: runtime.ready, health: runtime.health.state };
+      return runtime.ready ? body : createResponseContext({ status: 503 }).json(body);
+    }
+    return createResponseContext({ status: 404 }).json({ error: "Not Found" });
+  },
+});
+await server.start();
+
+const probe = async (path: string) => {
+  const response = await fetch(`http://127.0.0.1:${server.address?.port}${path}`);
+  console.log(path.padEnd(7), response.status, await response.json());
+};
+await probe("/health");
+await probe("/ready");
+databaseConnected = true;
+await probe("/ready");
+await server.stop();
+await runtime.stop();
+</example>
+<output>
+/health 200 { status: 'alive' }
+/ready  503 { ready: false, health: 'degraded' }
+/ready  200 { ready: true, health: 'healthy' }
+</output>
+<p>While the database was down, <code>/ready</code> answered 503 and the runtime reported itself <code>degraded</code>, but <code>/health</code> still said 200, so nothing would restart it. When the database came back, the app became ready again by itself. Readiness checks that hang count as failed after 5 seconds, so a stuck database cannot hang the probe.</p>
+<warn title="KEEP PROBES QUIET">Health endpoints are public by default. Return only a status, never versions, hostnames, connection strings or error messages that help an attacker.</warn>
+</section>
+
+<section>
+<h2 id="shutdown">Graceful shutdown</h2>
+<p>Every deployment stops the old version of your app. The platform sends the process the <code>SIGTERM</code> signal, waits a while (10 seconds in Kubernetes by default, 10 in Docker, 90 in systemd), and then kills it. A <strong>graceful shutdown</strong> uses that time well: stop accepting new requests, let the ones in flight finish, close the database, then exit. Without it, every deployment cuts some customers' requests in half.</p>
+<p><code>server.stop()</code> from <code>@zudojs/http</code> does the HTTP part. Here a request is saving an order when the stop begins:</p>
+<example file="shutdown.ts" browser="no">
+import { createHttpServer, createNodeHttpAdapter } from "@zudojs/http";
+
+let started!: () => void;
+const handlerStarted = new Promise<void>((resolve) => (started = resolve));
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  gracefulShutdownTimeout: 10_000,
+  handler: async () => {
+    console.log("handler: saving order…");
+    started();
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    console.log("handler: order saved");
+    return { saved: true };
+  },
+});
+await server.start();
+const url = `http://127.0.0.1:${server.address?.port}/orders`;
+
+const inFlight = fetch(url, { method: "POST" }).then(async (response) => console.log("client:", response.status, await response.json()));
+await handlerStarted;
+
+console.log("SIGTERM received: stopping");
+const stopped = server.stop().then(() => console.log("server:", server.state));
+await new Promise((resolve) => setTimeout(resolve, 100));
+await fetch(url).catch((error: Error) => console.log("new request:", error.message));
+await Promise.all([inFlight, stopped]);
+</example>
+<output>
+handler: saving order…
+SIGTERM received: stopping
+new request: fetch failed
+handler: order saved
+client: 200 { saved: true }
+server: stopped
+</output>
+<p>Read the order of the lines. After the stop began, a new request was refused at once, so a load balancer sends it to another server. The order already being saved finished, and its client got a normal 200. Only then did the server report <code>stopped</code>.</p>
+<p>In the generated <code>src/server.ts</code> the same thing is wired to the real signals: on <code>SIGINT</code> or <code>SIGTERM</code> it calls <code>server.stop()</code>, then <code>runtime.stop()</code>, which shuts the modules down in reverse order (closing database pools, flushing logs), then exits. Keep your <code>gracefulShutdownTimeout</code> shorter than the platform's wait, or the platform kills the process mid-shutdown.</p>
+</section>
+
+<section>
+<h2 id="timeouts">Timeouts and retries</h2>
+<p>A request that waits forever is worse than one that fails: it holds memory, a connection and a customer. Set a limit at every edge:</p>
+<ul>
+<li><strong>Incoming:</strong> the Node adapter already has tighter defaults than Node itself: 10 s to receive the headers, 30 s for the whole request (<code>headersTimeout</code>, <code>requestTimeout</code>). Lower them if your API should never take that long.</li>
+<li><strong>Outgoing:</strong> every <code>HttpClient</code> gets a <code>timeout</code>, and <code>retry</code> only for safe methods, as in <a href="/learn/zudo-microservices">the microservices lesson</a>.</li>
+<li><strong>Database:</strong> set a statement timeout (<code>SET statement_timeout = '5s'</code> in PostgreSQL) so one bad query cannot hold a connection for minutes.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="ratelimit">Rate limiting</h2>
+<p>A <strong>rate limit</strong> caps how many requests one client may make in a time window. It protects you from bugs in someone's script, from scraping, and from password guessing. <code>@zudojs/security</code>, from <a href="/learn/zudo-security">the security lesson</a>, counts per client:</p>
+<example file="rate-limit.ts" browser="no">
+import { createRateLimiter, retryAfterSeconds } from "@zudojs/security";
+
+const loginLimiter = createRateLimiter({ windowMs: 60_000, max: 3 });
+
+for (let attempt = 1; attempt <= 5; attempt++) {
+  const decision = loginLimiter.check({ ip: "203.0.113.7" });
+  console.log(`attempt ${attempt}:`, decision.allowed ? `allowed, ${decision.remaining} left` : `429, retry after ${retryAfterSeconds(decision)} s`);
+}
+console.log("another client:", loginLimiter.check({ ip: "198.51.100.2" }).allowed ? "allowed" : "blocked");
+loginLimiter.destroy();
+</example>
+<output>
+attempt 1: allowed, 2 left
+attempt 2: allowed, 1 left
+attempt 3: allowed, 0 left
+attempt 4: 429, retry after 60 s
+attempt 5: 429, retry after 60 s
+another client: allowed
+</output>
+<p>In an app you use <code>createRateLimitMiddleware({ max, windowMs })</code> from <code>@zudojs/http</code>, which answers <code>429 Too Many Requests</code> with a <code>Retry-After</code> header. Two production details:</p>
+<ul>
+<li><strong>Behind a proxy</strong>, every request comes from the proxy's address. Set <code>trustProxy</code> on the adapter to the proxy you run, as the deployment lesson shows, or everyone shares one bucket.</li>
+<li><strong>With several app servers</strong>, an in-memory limiter counts per server. For a strict limit, keep the counters in Redis, shared by all servers.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="cache">Caching</h2>
+<p>A cache, from <a href="/learn/zudo-cache">the caching lesson</a>, is the cheapest performance win and the easiest way to show stale data. The production rule: <strong>every write must invalidate what it changed</strong>. Tags make that one call:</p>
+<example file="cache.ts">
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+
+const cache = createCacheService({ adapter: createMemoryCacheAdapter({ maxEntries: 10_000 }), config: { defaultTtl: 60_000 } });
+let price = 12;
+let queries = 0;
+const loadMug = async () => {
+  queries += 1;
+  return { sku: "mug", price };
+};
+
+for (let request = 1; request <= 3; request++) {
+  const { value, cached } = await cache.getOrSet("product.mug", loadMug, { tags: ["products"] });
+  console.log(`request ${request}: ${value.price} (${cached ? "cache" : "database"})`);
+}
+
+price = 10;
+await cache.invalidateByTag(["products"]);
+const after = await cache.getOrSet("product.mug", loadMug, { tags: ["products"] });
+console.log(`after the price change: ${after.value.price}`);
+console.log("database queries:", queries, "hit rate:", cache.getStats()?.hitRate);
+</example>
+<output>
+request 1: 12 (database)
+request 2: 12 (cache)
+request 3: 12 (cache)
+after the price change: 10
+database queries: 2 hit rate: 0.5
+</output>
+<p>Also give every entry a TTL (time to live), so a missed invalidation heals itself, and watch the hit rate on your dashboard: a cache with a low hit rate costs memory and adds a failure point for nothing. With several servers, use a shared cache such as Redis, or each server keeps its own stale copy.</p>
+</section>
+
+<section>
+<h2 id="database">Database performance and connection pools</h2>
+<h3>Indexes</h3>
+<p>Most slow APIs are slow in the database. Without an index, PostgreSQL finds matching rows by reading the whole table, a <strong>sequential scan</strong>. <code>EXPLAIN</code> shows the plan it chose. Here with PGlite, on 20,000 orders:</p>
+<example file="explain.ts" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  CREATE TABLE orders (id SERIAL PRIMARY KEY, customer_id INT NOT NULL, total INT NOT NULL);
+  INSERT INTO orders (customer_id, total) SELECT g % 2000, g % 97 FROM generate_series(1, 20000) g;
+  ANALYZE orders;
+`);
+
+async function measure(label: string) {
+  const { rows } = await db.query<{ "QUERY PLAN": string }>("EXPLAIN SELECT * FROM orders WHERE customer_id = $1", [42]);
+  console.log(label);
+  for (const row of rows) console.log("  " + row["QUERY PLAN"].replace(/\s+\(cost=.*\)/, ""));
+  const start = performance.now();
+  for (let customer = 0; customer < 100; customer++) await db.query("SELECT * FROM orders WHERE customer_id = $1", [customer]);
+  console.log(`  100 queries took ${Math.round(performance.now() - start)} ms`);
+}
+
+await measure("without an index:");
+await db.exec("CREATE INDEX orders_customer_id_idx ON orders (customer_id)");
+await measure("with an index:");
+await db.close();
+</example>
+<output mask="ms">
+without an index:
+  Seq Scan on orders
+    Filter: (customer_id = 42)
+  100 queries took 1180 ms
+with an index:
+  Bitmap Heap Scan on orders
+    Recheck Cond: (customer_id = 42)
+    ->  Bitmap Index Scan on orders_customer_id_idx
+          Index Cond: (customer_id = 42)
+  100 queries took 121 ms
+</output>
+<p>The plan changed from reading every row to looking the value up in the index, and the same 100 queries got roughly ten times faster. The example removes the <code>cost=</code> estimates from each line to keep the plan readable; run <code>EXPLAIN</code> yourself to see them. Index the columns you filter, join and sort by often, such as foreign keys. Do not index everything: each index slows down writes a little.</p>
+<p>Two more habits: <strong>avoid N+1 queries</strong> (one query for a list, then one more per item; use a join or <code>WHERE id = ANY($1)</code> instead), and <strong>always paginate</strong> lists with <code>LIMIT</code>.</p>
+<h3>Connection pools</h3>
+<p>Opening a database connection is slow, and PostgreSQL allows only a limited number (100 by default). So apps keep a <strong>pool</strong>: a few connections opened once and lent to requests in turn. When all are busy, the next query waits in line. This simulation has a pool of 2 connections and 5 queries of 100 ms each:</p>
+<example file="pool.ts">
+class Pool {
+  private free: number;
+  private readonly waiting: Array<() => void> = [];
+  constructor(size: number) {
+    this.free = size;
+  }
+
+  async query(name: string): Promise<void> {
+    if (this.free > 0) this.free -= 1;
+    else {
+      console.log(`${name}: all connections busy, waiting`);
+      await new Promise<void>((resolve) => this.waiting.push(resolve));
+    }
+    console.log(`${name}: running`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const next = this.waiting.shift();
+    if (next) next();
+    else this.free += 1;
+  }
+}
+
+const pool = new Pool(2);
+await Promise.all(["q1", "q2", "q3", "q4", "q5"].map((name) => pool.query(name)));
+</example>
+<output>
+q1: running
+q2: running
+q3: all connections busy, waiting
+q4: all connections busy, waiting
+q5: all connections busy, waiting
+q3: running
+q4: running
+q5: running
+</output>
+<p>Only two queries ran at a time. The other three waited, and each started when a connection was handed back, so the five queries took about 300 ms instead of 100 ms. Real pools (the <code>pg</code> package's <code>Pool</code>, Prisma's connection limit) work the same way. How to size one:</p>
+<ul>
+<li><strong>Total connections = pool size × number of app processes.</strong> Four servers with a pool of 20 need 80 connections, close to PostgreSQL's default limit of 100.</li>
+<li><strong>Small is fine.</strong> A database does its best work with a few busy connections. Start with 10 per process and raise it only if requests are measurably waiting for a connection.</li>
+<li><strong>Always set a wait timeout</strong> for getting a connection, so a full pool fails fast instead of piling up requests.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Add a rule to the config schema">
+<p>Extend the configuration schema with <code>LOG_LEVEL</code>, one of <code>debug</code>, <code>info</code>, <code>warn</code>, <code>error</code>, defaulting to <code>info</code>, and <code>CACHE_TTL_MS</code>, a whole number of at least 1000, defaulting to 60000. Show that <code>CACHE_TTL_MS=5</code> is refused.</p>
+<solution>
+<example file="config-more.ts">
+import { schema } from "@zudojs/schema";
+
+const Extra = schema.object({
+  LOG_LEVEL: schema.default(schema.enum(["debug", "info", "warn", "error"]), "info"),
+  CACHE_TTL_MS: schema.coerce.number().int().min(1000).default(60_000),
+});
+
+console.log(Extra.parse({}));
+const bad = Extra.safeParse({ CACHE_TTL_MS: "5" });
+if (!bad.success) console.log(bad.issues.map((issue) => `${issue.path.join(".")}: ${issue.code}`));
+</example>
+<output>
+{ LOG_LEVEL: 'info', CACHE_TTL_MS: 60000 }
+[ 'CACHE_TTL_MS: too_small' ]
+</output>
+</solution>
+</exercise>
+<exercise title="Which probe?">
+<p>For each check, decide whether it belongs in <code>/health</code> (liveness), <code>/ready</code> (readiness), or neither: the event loop is responsive; the database answers <code>SELECT 1</code>; the payment provider's API is reachable; database migrations have run; the disk has more than 1 GB free.</p>
+<solution>
+<ul>
+<li>Event loop responsive: <strong>liveness</strong>. If the process cannot answer at all, a restart helps.</li>
+<li>Database answers: <strong>readiness</strong>. Without it the app cannot serve, but a restart would not help.</li>
+<li>Payment provider reachable: <strong>neither</strong>. Most pages still work without it. Handle it per request with a timeout and a clear error, and watch it with a metric.</li>
+<li>Migrations have run: <strong>readiness</strong>, checked once at startup.</li>
+<li>Disk space: <strong>neither</strong>. That is a metric with an alert, long before it becomes an outage.</li>
+</ul>
+</solution>
+</exercise>
+<exercise title="Size a pool">
+<p>Your database allows 100 connections. You keep 10 for yourself and for migrations. You run 6 app processes, and each process also runs a background worker with its own pool of 3. What is the largest safe pool size for the web part of each process?</p>
+<solution>
+<example file="pool-size.js">
+const limit = 100;
+const reserved = 10;
+const processes = 6;
+const workerPool = 3;
+
+const perProcess = Math.floor((limit - reserved) / processes);
+console.log("connections per process:", perProcess);
+console.log("web pool size:", perProcess - workerPool);
+</example>
+<output>
+connections per process: 15
+web pool size: 12
+</output>
+<p>Then check the plan still holds during a deployment, when old and new processes may run at the same time for a moment. If it does not, lower the pool size or put a connection pooler such as PgBouncer in front of the database.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Set <code>NODE_ENV=production</code>. Take every setting from the environment, check it at startup, and never print a secret.</li>
+<li>Log one JSON line per event with a level and a request id. Measure traffic, errors and latency percentiles, and trace slow requests.</li>
+<li><code>/health</code> answers "alive?", <code>/ready</code> answers "can serve?". Only readiness checks dependencies.</li>
+<li>On <code>SIGTERM</code>, stop taking requests, finish the ones in flight, then close resources.</li>
+<li>Put timeouts on every edge, rate-limit public endpoints, cache hot reads with tags and TTLs, index what you query, and keep connection pools small.</li>
+</ul>
+<p>Your app is ready for production. Next, you put it there: a build, a server, Docker, a database, HTTPS and backups.</p>
+</section>

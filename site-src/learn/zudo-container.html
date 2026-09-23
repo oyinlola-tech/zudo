@@ -1,0 +1,582 @@
+---
+title: Dependency injection with @zudojs/container
+description: Let a container build and share your services. Learn tokens, class, factory and value providers, the singleton, scoped and transient lifetimes, circular dependency detection, disposal, and swapping real services for fakes in tests.
+minutes: 40
+youNeed: The application runtime and lifecycle
+youBuild: A composition root for the Task API that builds the TaskService, its store and its clock
+keywords: dependency injection, zudojs container, createContainer, createToken, InjectionToken, registerClass, registerFactory, registerValue, inject, singleton, scoped, transient, createScope, CircularDependencyError, dispose, snapshot, replace, testing with fakes, composition root
+---
+<section>
+<h2 id="why">The problem: who builds what?</h2>
+<p>A service rarely works alone. The Task API's <code>TaskService</code> needs somewhere to keep tasks and a way to know the time. The quick way is to create those inside the service:</p>
+<example file="hard-wired.ts">
+class TaskStore {
+  readonly tasks = new Map<number, string>();
+}
+
+class TaskService {
+  private readonly store = new TaskStore();
+
+  create(title: string): string {
+    const stamp = new Date().toISOString().slice(0, 10);
+    this.store.tasks.set(this.store.tasks.size + 1, title);
+    return `${title} (created ${stamp})`;
+  }
+}
+
+console.log(new TaskService().create("Buy milk").includes("created"));
+</example>
+<output>
+true
+</output>
+<p>It works, but look at what is now impossible:</p>
+<ul>
+<li>Two services cannot share one store: each <code>new TaskService()</code> makes its own.</li>
+<li>A test cannot give the service an empty store, a fake database, or a fixed date. The output changes every day, so the test can only check <code>includes("created")</code>.</li>
+</ul>
+<p>The fix is called <strong>dependency injection</strong>: a class does not create what it needs, it <em>receives</em> it, usually as constructor parameters. The things it receives are its <strong>dependencies</strong>:</p>
+<example file="injected.ts">
+interface Clock {
+  now(): Date;
+}
+
+class TaskStore {
+  readonly tasks = new Map<number, string>();
+}
+
+class TaskService {
+  constructor(private readonly store: TaskStore, private readonly clock: Clock) {}
+
+  create(title: string): string {
+    this.store.tasks.set(this.store.tasks.size + 1, title);
+    return `${title} (created ${this.clock.now().toISOString().slice(0, 10)})`;
+  }
+}
+
+const fixedClock: Clock = { now: () => new Date("2026-09-23T09:00:00Z") };
+const store = new TaskStore();
+const service = new TaskService(store, fixedClock);
+
+console.log(service.create("Buy milk"));
+console.log("tasks in the shared store:", store.tasks.size);
+</example>
+<output>
+Buy milk (created 2026-09-23)
+tasks in the shared store: 1
+</output>
+<p>Now the caller decides. The test passed a clock that always says 23 September, so the output is predictable, and it can look inside the same store the service used.</p>
+<p>Someone still has to call all those constructors in the right order. In a small app you do it by hand in one place, called the <strong>composition root</strong>. With dozens of services, a <strong>container</strong> does it for you: you tell it how to build each thing once, and it builds, shares and cleans up. <code>@zudojs/container</code> is already a dependency of the Task API; <code>src/app.ts</code> creates one with <code>createContainer()</code> and gives it to the runtime.</p>
+</section>
+
+<section>
+<h2 id="tokens">Tokens: names for dependencies</h2>
+<p>A container stores <strong>registrations</strong>: "when someone asks for X, build it like this". The X is a <strong>token</strong>, a key that names the dependency. A token can be a class, or an <code>InjectionToken</code> made with <code>createToken</code>:</p>
+<example file="tokens.ts">
+import { createContainer, createToken } from "@zudojs/container";
+
+interface Clock {
+  now(): Date;
+}
+
+const CLOCK = createToken<Clock>("Clock");
+const MAX_TASKS = createToken<number>("MaxTasks");
+
+const container = createContainer();
+container.registerValue(CLOCK, { now: () => new Date("2026-09-23T09:00:00Z") });
+container.registerValue(MAX_TASKS, 500);
+
+const clock = container.resolve(CLOCK);
+console.log(clock.now().toISOString(), container.resolve(MAX_TASKS));
+console.log(container.has(CLOCK), container.has(createToken<Clock>("Clock")));
+</example>
+<output>
+2026-09-23T09:00:00.000Z 500
+true false
+</output>
+<p><code>resolve</code> asks the container for a dependency. Three things to notice:</p>
+<ul>
+<li>The <code>&lt;Clock&gt;</code> in <code>createToken&lt;Clock&gt;</code> makes <code>resolve(CLOCK)</code> return a <code>Clock</code>, so TypeScript checks how you use it.</li>
+<li>An interface such as <code>Clock</code> does not exist when the program runs, so it cannot be a key. That is why interfaces need a token. A class does exist at runtime, so a class can be its own token.</li>
+<li>Every <code>createToken</code> call makes a new, unique token, even with the same name. The last line is <code>false</code>: create each token once and import it wherever it is needed.</li>
+</ul>
+<tip>You can also use plain strings such as <code>"clock"</code> as tokens, but TypeScript cannot check them: <code>resolve&lt;number&gt;("clock")</code> would compile and be wrong. Prefer <code>createToken</code> or a class.</tip>
+</section>
+
+<section>
+<h2 id="providers">Providers: how to build each dependency</h2>
+<p>A <strong>provider</strong> tells the container how to produce a value. There are four kinds, each with a short method:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Method</th><th>Provider</th><th>What the container does</th></tr></thead>
+<tbody>
+<tr><td><code>registerValue(token, value)</code></td><td>value</td><td>Hands out the object you gave it.</td></tr>
+<tr><td><code>registerClass(token, Class, { inject })</code></td><td>class</td><td>Calls <code>new Class(...)</code> with the resolved <code>inject</code> tokens as arguments.</td></tr>
+<tr><td><code>registerFactory(token, fn, inject)</code></td><td>factory</td><td>Calls your function and uses what it returns.</td></tr>
+<tr><td><code>registerExisting(token, otherToken)</code></td><td>alias</td><td>Answers with whatever <code>otherToken</code> resolves to.</td></tr>
+</tbody>
+</table></div>
+<p>Here is the Task API's <code>TaskService</code> built by the container. The service lists its dependencies in its constructor. The registration lists the matching tokens in <code>inject</code>, in the same order:</p>
+<example file="providers.ts">
+import { createContainer, createToken } from "@zudojs/container";
+
+interface Clock {
+  now(): Date;
+}
+
+class TaskStore {
+  readonly titles: string[] = [];
+}
+
+class TaskService {
+  constructor(private readonly store: TaskStore, private readonly clock: Clock) {}
+
+  create(title: string): string {
+    this.store.titles.push(title);
+    return `#${this.store.titles.length} ${title} at ${this.clock.now().toISOString()}`;
+  }
+}
+
+const CLOCK = createToken<Clock>("Clock");
+const START = createToken<string>("StartTime");
+
+const container = createContainer();
+container.registerValue(START, "2026-09-23T09:00:00Z");
+container.registerFactory(CLOCK, (start) => ({ now: () => new Date(String(start)) }), [START]);
+container.registerClass(TaskStore, TaskStore);
+container.registerClass(TaskService, TaskService, { inject: [TaskStore, CLOCK] });
+
+const service = container.resolve(TaskService);
+console.log(service.create("Buy milk"));
+</example>
+<output>
+#1 Buy milk at 2026-09-23T09:00:00.000Z
+</output>
+<p>To build <code>TaskService</code>, the container first resolved <code>TaskStore</code> (a class with no dependencies) and <code>CLOCK</code> (a factory, which needed <code>START</code>), then called <code>new TaskService(store, clock)</code>. You never wrote that call.</p>
+<warn title="THE INJECT LIST IS NOT TYPE-CHECKED">In version 1.1.2, TypeScript does not compare <code>inject: [TaskStore, CLOCK]</code> with the constructor, and factory arguments arrive typed as <code>unknown</code>. That is why the factory above wraps <code>start</code> in <code>String(...)</code>. If you swap the two tokens, the code still compiles and fails when it runs. Keep the <code>inject</code> list next to the constructor and in the same order, and let a test resolve every service once, so a mistake shows up in the test run.</warn>
+</section>
+
+<section>
+<h2 id="lifetimes">Lifetimes: singleton, scoped and transient</h2>
+<p>Should everyone who asks for <code>TaskStore</code> get <em>the same</em> store, or a new one? That is the registration's <strong>lifetime</strong>, set with the <code>scope</code> option:</p>
+<ul>
+<li><code>ContainerScope.SINGLETON</code>: one instance for the whole container. Use it for things that must be shared: a store, a connection pool, a logger.</li>
+<li><code>ContainerScope.TRANSIENT</code>: a new instance on every <code>resolve</code>. This is the <strong>default</strong>.</li>
+<li><code>ContainerScope.SCOPED</code>: one instance per <strong>scope</strong>. A scope is a short-lived child of the container, usually one per HTTP request.</li>
+</ul>
+<p>The identity operator <code>===</code> shows the difference: it is <code>true</code> only for the very same object.</p>
+<example file="lifetimes.ts">
+import { ContainerScope, createContainer } from "@zudojs/container";
+
+let created = 0;
+class TaskStore { readonly id = ++created; }
+class Report { readonly id = ++created; }
+class RequestInfo { readonly id = ++created; }
+
+const container = createContainer();
+container.registerClass(TaskStore, TaskStore, { scope: ContainerScope.SINGLETON });
+container.registerClass(Report, Report);
+container.registerClass(RequestInfo, RequestInfo, { scope: ContainerScope.SCOPED });
+
+console.log("singleton:", container.resolve(TaskStore) === container.resolve(TaskStore));
+console.log("transient:", container.resolve(Report) === container.resolve(Report));
+
+const request1 = container.createScope({ name: "request-1" });
+const request2 = container.createScope({ name: "request-2" });
+console.log("scoped, same request:", request1.resolve(RequestInfo) === request1.resolve(RequestInfo));
+console.log("scoped, two requests:", request1.resolve(RequestInfo) === request2.resolve(RequestInfo));
+console.log("singleton inside a scope:", request1.resolve(TaskStore) === container.resolve(TaskStore));
+console.log("objects created:", created);
+</example>
+<output>
+singleton: true
+transient: false
+scoped, same request: true
+scoped, two requests: false
+singleton inside a scope: true
+objects created: 5
+</output>
+<p>Count the objects: one <code>TaskStore</code>, two <code>Report</code>s (one per <code>resolve</code>), and two <code>RequestInfo</code>s (one per scope). A singleton stays the same everywhere, even when resolved through a scope.</p>
+<p>The container also stops you from mixing lifetimes in a dangerous way:</p>
+<example file="lifetime-errors.ts">
+import { ContainerScope, createContainer } from "@zudojs/container";
+
+class RequestInfo {}
+class TaskService {
+  constructor(readonly request: RequestInfo) {}
+}
+
+const container = createContainer();
+container.registerClass(RequestInfo, RequestInfo, { scope: ContainerScope.SCOPED });
+container.registerClass(TaskService, TaskService, {
+  scope: ContainerScope.SINGLETON,
+  inject: [RequestInfo],
+});
+
+try {
+  container.resolve(RequestInfo);
+} catch (error) {
+  console.log((error as Error).name);
+}
+
+try {
+  container.createScope().resolve(TaskService);
+} catch (error) {
+  console.log((error as Error).name);
+  console.log((error as Error).message);
+}
+</example>
+<output>
+ScopedResolutionError
+CaptiveDependencyError
+Captive dependency: singleton "TaskService" depends on scoped "RequestInfo". A longer-lived consumer cannot capture a shorter-lived dependency. (chain: TaskService -> RequestInfo)
+</output>
+<ul>
+<li>A scoped dependency belongs to a request, so asking for it with no scope is a <code>ScopedResolutionError</code>.</li>
+<li>A singleton lives forever. If it kept a reference to one request's <code>RequestInfo</code>, every later request would see the first request's data: a real data leak between users. The container refuses with a <code>CaptiveDependencyError</code>. The rule: a dependency must live at least as long as the thing that uses it.</li>
+</ul>
+<note>Error messages name a class token by its class name. A token made with <code>createToken("Mailer")</code> appears as <code>Symbol(Mailer)</code>, because that is how it is stored inside the container.</note>
+</section>
+
+<section>
+<h2 id="circular">Circular dependencies</h2>
+<p>If A needs B and B needs A, neither can be built first. You met this problem between modules in <a href="/learn/zudo-runtime#dependencies">the runtime lesson</a>. The container detects it too, and names the whole loop:</p>
+<example file="circular.ts">
+import { CircularDependencyError, createContainer } from "@zudojs/container";
+
+class TaskService {
+  constructor(readonly notifier: unknown) {}
+}
+class Notifier {
+  constructor(readonly tasks: unknown) {}
+}
+
+const container = createContainer();
+container.registerClass(TaskService, TaskService, { inject: [Notifier] });
+container.registerClass(Notifier, Notifier, { inject: [TaskService] });
+
+try {
+  container.resolve(TaskService);
+} catch (error) {
+  if (error instanceof CircularDependencyError) {
+    console.log(error.message);
+  }
+}
+</example>
+<output>
+Circular dependency detected: TaskService -> Notifier -> TaskService.
+</output>
+<p>A cycle is almost always a design problem, not a container problem. The usual fixes: move the shared part into a third class that both use, or let one side send an event instead of calling the other directly (you will meet events in <a href="/learn/zudo-events">the events lesson</a>).</p>
+</section>
+
+<section>
+<h2 id="disposal">Disposal: cleaning up</h2>
+<p>Some objects hold resources: a database connection, a file, a timer. When the app stops, they must be released. An object is <strong>disposable</strong> if it has a <code>dispose()</code> method. <code>container.dispose()</code> calls it on every singleton the container created, newest first, so a service is disposed before the pool it uses:</p>
+<example file="disposal.ts">
+import { ContainerScope, createContainer } from "@zudojs/container";
+
+class Pool {
+  dispose() { console.log("pool closed"); }
+}
+class TaskService {
+  constructor(readonly pool: Pool) {}
+  dispose() { console.log("task service stopped"); }
+}
+class RequestLog {
+  dispose() { console.log("request log flushed"); }
+}
+
+const container = createContainer();
+container.registerClass(Pool, Pool, { scope: ContainerScope.SINGLETON });
+container.registerClass(TaskService, TaskService, { scope: ContainerScope.SINGLETON, inject: [Pool] });
+container.registerClass(RequestLog, RequestLog, { scope: ContainerScope.SCOPED });
+
+container.resolve(TaskService);
+const request = container.createScope();
+request.resolve(RequestLog);
+
+await request.dispose();
+console.log("--- request finished");
+await container.dispose();
+console.log("disposed:", container.isDisposed());
+</example>
+<output>
+request log flushed
+--- request finished
+task service stopped
+pool closed
+disposed: true
+</output>
+<p>Disposing a scope only disposes that scope's objects. Transient objects are never tracked, so whoever resolved them must clean them up. Values you gave with <code>registerValue</code> are never disposed either: the container did not create them, so it does not own them.</p>
+<p>The runtime does not dispose the container for you. In the Task API, dispose it at the very end of shutdown, after <code>runtime.stop()</code>.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing with fakes</h2>
+<p>This is where dependency injection pays off. In a test you want the real <code>TaskService</code> but not the real outside world: no real e-mails, a fixed clock. <code>container.replace</code> swaps one registration, and every singleton that was built on the old one is rebuilt. <code>snapshot</code> and <code>restoreSnapshot</code> put everything back afterwards:</p>
+<example file="fakes.ts">
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+
+interface Mailer {
+  send(to: string, text: string): void;
+}
+const MAILER = createToken<Mailer>("Mailer");
+
+class TaskNotifier {
+  constructor(private readonly mailer: Mailer) {}
+  taskDone(title: string): void {
+    this.mailer.send("ada@example.com", `"${title}" is done`);
+  }
+}
+
+const container = createContainer();
+container.registerValue(MAILER, { send: (to, text) => console.log(`SMTP to ${to}: ${text}`) });
+container.registerClass(TaskNotifier, TaskNotifier, { scope: ContainerScope.SINGLETON, inject: [MAILER] });
+
+container.resolve(TaskNotifier).taskDone("Buy milk");
+
+const original = container.snapshot();
+const sent: string[] = [];
+container.replace(MAILER, { useValue: { send: (_to, text) => { sent.push(text); } } });
+container.resolve(TaskNotifier).taskDone("Walk the dog");
+console.log("the fake mailer recorded:", sent);
+
+container.restoreSnapshot(original);
+container.resolve(TaskNotifier).taskDone("Water the plants");
+</example>
+<output>
+SMTP to ada@example.com: "Buy milk" is done
+the fake mailer recorded: [ '"Walk the dog" is done' ]
+SMTP to ada@example.com: "Water the plants" is done
+</output>
+<p>While the fake was in place, nothing went to "SMTP" and the test could inspect exactly what would have been sent. <code>TaskNotifier</code> itself did not change at all. In a test file, the simplest approach is often a fresh container per test, filled with fakes from the start.</p>
+<p>Registering the same token twice by accident is an error (<code>DuplicateRegistrationError</code>), so a typo cannot silently replace a real service. Use <code>replace</code> when you mean it.</p>
+</section>
+
+<section>
+<h2 id="task-api">Put it in the Task API</h2>
+<p>The Task API gets a real <code>TaskService</code>, built by the container. It uses the <code>TaskStore</code> from the previous lesson, which does not change:</p>
+<file name="src/repositories/task.store.ts" project="task-api" browser="no">
+export type Priority = "low" | "normal" | "high";
+
+export interface StoredTask {
+  readonly id: number;
+  readonly title: string;
+  readonly done: boolean;
+  readonly priority: Priority;
+  readonly createdAt: string;
+}
+
+export class TaskStore {
+  public readonly tasks = new Map<number, StoredTask>();
+  public connected = false;
+  private lastId = 0;
+
+  public nextId(): number {
+    this.lastId += 1;
+    return this.lastId;
+  }
+}
+</file>
+<p>Copy <code>task.schema.ts</code> from the <code>ts-tasks</code> folder of <a href="/learn/zudo-first-code">Your first Zudo code</a> to <code>src/validators/task.schema.ts</code>, with one change:</p>
+<example file="src/validators/task.schema.ts" project="task-api" browser="no">
+import { schema } from "@zudojs/schema";
+import type { Infer } from "@zudojs/schema";
+
+export const NewTaskSchema = schema.object({
+  title: schema.string().trim().min(3).max(100),
+  done: schema.default(schema.boolean(), false),
+  priority: schema.default(schema.enum(["low", "normal", "high"] as const), "normal"),
+});
+
+export type NewTask = Infer<typeof NewTaskSchema>;
+</example>
+<p>Add <code>as const</code> after the list of priorities, as shown. Without it, TypeScript widens the list to <code>string[]</code>, so the inferred <code>priority</code> type would be any string instead of exactly <code>"low" | "normal" | "high"</code>, and it would not fit the store's <code>Priority</code> type.</p>
+<p>The service is the one from that lesson, changed to receive its store and a clock instead of creating them. Create <code>src/services/task.service.ts</code>:</p>
+<example file="src/services/task.service.ts" project="task-api" browser="no">
+import { ConflictError, NotFoundError } from "@zudojs/errors";
+import type { StoredTask, TaskStore } from "../repositories/task.store.js";
+import { NewTaskSchema } from "../validators/task.schema.js";
+
+export interface Clock {
+  now(): Date;
+}
+
+export class TaskService {
+  public constructor(private readonly store: TaskStore, private readonly clock: Clock) {}
+
+  public create(input: unknown): StoredTask {
+    const data = NewTaskSchema.parse(input);
+    const clash = [...this.store.tasks.values()].some((t) => t.title === data.title);
+    if (clash) {
+      throw new ConflictError(`A task called "${data.title}" already exists`);
+    }
+    const task: StoredTask = { id: this.store.nextId(), ...data, createdAt: this.clock.now().toISOString() };
+    this.store.tasks.set(task.id, task);
+    return task;
+  }
+
+  public list(): StoredTask[] {
+    return [...this.store.tasks.values()];
+  }
+
+  public get(id: number): StoredTask {
+    const task = this.store.tasks.get(id);
+    if (!task) {
+      throw new NotFoundError(`Task ${id} not found`);
+    }
+    return task;
+  }
+}
+</example>
+<p>Now the composition root: one file that says how everything is built. Create <code>src/container.ts</code>:</p>
+<example file="src/container.ts" project="task-api" browser="no">
+import { ContainerScope, createToken } from "@zudojs/container";
+import type { Container } from "@zudojs/container";
+import { TaskStore } from "./repositories/task.store.js";
+import { TaskService } from "./services/task.service.js";
+import type { Clock } from "./services/task.service.js";
+
+export const CLOCK = createToken<Clock>("Clock");
+
+export function registerServices(container: Container): void {
+  container.registerValue(CLOCK, { now: () => new Date() });
+  container.registerClass(TaskStore, TaskStore, { scope: ContainerScope.SINGLETON });
+  container.registerClass(TaskService, TaskService, {
+    scope: ContainerScope.SINGLETON,
+    inject: [TaskStore, CLOCK],
+  });
+}
+</example>
+<p>In <code>src/app.ts</code>, fill the container before building the runtime and take the store from it, so the modules and the service share one store. Only these lines change:</p>
+<example file="src/app.ts (part)" project="task-api" browser="no" check="skip">
+import { registerServices } from "./container.js";
+
+export function createApp(level: LoggerLevel = LoggerLevel.INFO): Runtime {
+  const container = createContainer();
+  registerServices(container);
+  const store = container.resolve(TaskStore);
+  // ...modules and createRuntime as before, with `container` in place of createContainer():
+  //   { modules, logger: createLogger({ name: "task-api", level }), container, eventBus: createEventBus() }
+</example>
+<p>Code that needs the service, such as the routes in the next lesson, asks the runtime's container: <code>runtime.context.container.resolve(TaskService)</code>. This check script does the same with its own container, and swaps the clock for a fixed one, exactly as a test would:</p>
+<example file="src/check-container.ts" project="task-api" browser="no">
+import { createContainer } from "@zudojs/container";
+import { CLOCK, registerServices } from "./container.js";
+import { TaskStore } from "./repositories/task.store.js";
+import { TaskService } from "./services/task.service.js";
+
+const container = createContainer();
+registerServices(container);
+container.replace(CLOCK, { useValue: { now: () => new Date("2026-09-23T09:00:00Z") } });
+
+const service = container.resolve(TaskService);
+console.log(service.create({ title: "  Buy milk " }));
+console.log(service.list().length, container.resolve(TaskStore).tasks.size);
+console.log(service === container.resolve(TaskService));
+await container.dispose();
+</example>
+<output>
+{
+  id: 1,
+  title: 'Buy milk',
+  done: false,
+  priority: 'normal',
+  createdAt: '2026-09-23T09:00:00.000Z'
+}
+1 1
+true
+</output>
+<p>Run it in your project, then check that everything still type-checks:</p>
+<shell title="Terminal on your computer">
+$ npx tsx src/check-container.ts
+{
+  id: 1,
+  title: 'Buy milk',
+  done: false,
+  priority: 'normal',
+  createdAt: '2026-09-23T09:00:00.000Z'
+}
+1 1
+true
+$ npx tsc --noEmit
+</shell>
+<p>The service got the store and the fixed clock without calling a single constructor, and the store it wrote to is the same singleton the rest of the app sees.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="An id generator">
+<p>Register an <code>IdGenerator</code> class whose <code>next()</code> method returns 1, 2, 3, … Resolve it twice and call <code>next()</code> on each. Try it first as transient (the default), then as a singleton. Explain the difference in output.</p>
+<solution>
+<example file="ids.ts">
+import { ContainerScope, createContainer } from "@zudojs/container";
+
+class IdGenerator {
+  private last = 0;
+  next(): number {
+    this.last += 1;
+    return this.last;
+  }
+}
+
+for (const scope of [ContainerScope.TRANSIENT, ContainerScope.SINGLETON]) {
+  const container = createContainer();
+  container.registerClass(IdGenerator, IdGenerator, { scope });
+  const a = container.resolve(IdGenerator);
+  const b = container.resolve(IdGenerator);
+  console.log(scope, a.next(), b.next());
+}
+</example>
+<output>
+transient 1 1
+singleton 1 2
+</output>
+<p>Transient gave two separate generators, so both started at 1: two tasks could get the same id. An id generator must be shared, so it has to be a singleton.</p>
+</solution>
+</exercise>
+<exercise title="One scope per request">
+<p>Register a scoped <code>RequestContext</code> class with a <code>requestId</code> property, and a transient <code>AuditLog</code> that receives it. Simulate two requests with two scopes, resolve <code>AuditLog</code> twice in each, and show that both logs in the same request share the same <code>RequestContext</code>.</p>
+<solution>
+<example file="per-request.ts">
+import { ContainerScope, createContainer } from "@zudojs/container";
+
+let counter = 0;
+class RequestContext {
+  readonly requestId = `req-${++counter}`;
+}
+class AuditLog {
+  constructor(readonly context: RequestContext) {}
+}
+
+const container = createContainer();
+container.registerClass(RequestContext, RequestContext, { scope: ContainerScope.SCOPED });
+container.registerClass(AuditLog, AuditLog, { inject: [RequestContext] });
+
+for (const name of ["first", "second"]) {
+  const scope = container.createScope({ name });
+  const a = scope.resolve(AuditLog);
+  const b = scope.resolve(AuditLog);
+  console.log(name, a.context.requestId, b.context.requestId, a === b);
+  await scope.dispose();
+}
+</example>
+<output>
+first req-1 req-1 false
+second req-2 req-2 false
+</output>
+<p>The two <code>AuditLog</code>s are different objects (transient), but inside one scope they share one <code>RequestContext</code>. A transient may depend on a scoped dependency, because the transient never outlives the request.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li><strong>Dependency injection</strong>: a class receives its dependencies instead of creating them, so they can be shared and replaced.</li>
+<li>A <strong>token</strong> names a dependency: a class, or <code>createToken&lt;T&gt;("Name")</code> for interfaces and values.</li>
+<li>Providers: <code>registerValue</code>, <code>registerClass</code> with an <code>inject</code> list, <code>registerFactory</code>, <code>registerExisting</code>.</li>
+<li>Lifetimes: <strong>singleton</strong> (one per container), <strong>scoped</strong> (one per <code>createScope()</code>), <strong>transient</strong> (new every time, the default). A singleton may not depend on a scoped dependency.</li>
+<li>Cycles fail with <code>CircularDependencyError</code>. <code>dispose()</code> cleans up singletons and scopes, newest first.</li>
+<li>For tests: <code>replace</code> a registration with a fake, then <code>restoreSnapshot</code>.</li>
+</ul>
+<p>The Task API now has a working <code>TaskService</code>, but nothing can reach it from the network yet. The next lesson gives it HTTP routes.</p>
+</section>

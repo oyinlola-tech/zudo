@@ -1,15 +1,15 @@
 ---
 title: Asynchronous JavaScript
-description: Learn why a backend waits without blocking, and how to write code that waits with promises, async and await.
-minutes: 30
-youNeed: Lessons 1 to 3
-youBuild: A fake database that answers after a delay
-keywords: javascript async await, promises, setTimeout, Promise.all, event loop, try catch async
+description: Learn why a backend waits without blocking, how callbacks, promises and async/await work, how errors travel through asynchronous code, and how to run work in sequence or in parallel.
+minutes: 50
+youNeed: Handling errors, and the lessons before it
+youBuild: A concurrent data loader that fetches several sources at once, with time limits and partial results
+keywords: javascript async await, synchronous asynchronous, blocking non-blocking, callback, callback hell, error-first callback, promise states, then catch finally, unhandled rejection, Promise.all, Promise.allSettled, Promise.race, Promise.any, sequential parallel, timeout, setTimeout, event loop
 ---
 <section>
 <h2 id="why">Why a backend waits</h2>
 <p>A backend spends most of its time waiting: for the database to answer, for a file to be read, for another service to reply. If it stopped everything while it waited, it could only serve one person at a time.</p>
-<p>JavaScript solves this by never standing still. When code has to wait, it says "call me back when the answer is ready" and moves on. That is <strong>asynchronous</strong> code.</p>
+<p>JavaScript solves this by never standing still. When code has to wait, it says "call me back when the answer is ready" and moves on. That is <strong>asynchronous</strong> code. Code that runs line by line, each line finishing before the next starts, is <strong>synchronous</strong>.</p>
 <p><code>setTimeout</code> is the simplest way to see it. It runs a function later, after a number of milliseconds:</p>
 <example file="timeout.js">
 console.log("1. Ask the database for tasks");
@@ -29,8 +29,98 @@ console.log("2. Carry on with other work");
 </section>
 
 <section>
+<h2 id="blocking">Blocking and non-blocking</h2>
+<p>JavaScript runs your code on a single <strong>thread</strong>: it can only do one thing at a time. While one piece of synchronous code runs, nothing else can, not even a timer that is already due. Code that keeps the thread busy like this is <strong>blocking</strong>:</p>
+<example file="blocking.js">
+const start = Date.now();
+
+setTimeout(() => {
+  const waited = Date.now() - start;
+  console.log("timer ran after", waited >= 200 ? "at least 200 ms" : "less than 200 ms");
+}, 0);
+
+while (Date.now() - start < 200) {
+  // busy: keep the thread working for 200 ms
+}
+console.log("busy loop finished");
+</example>
+<output>
+busy loop finished
+timer ran after at least 200 ms
+</output>
+<p>The timer asked to run after 0 ms, but it had to wait until the loop let go of the thread. On a server, a blocking loop like this freezes <em>every</em> request, not just one. <a href="/learn/node-runtime">The Node.js runtime lesson</a> shows the <strong>event loop</strong> that decides what runs next.</p>
+<p>Waiting for the outside world should be <strong>non-blocking</strong>: start the work, give the thread back, and get told when it is done. Node.js offers both styles for many tasks. Reading a file is a good example:</p>
+<example file="read-file.js" browser="no">
+import { readFile, readFileSync, writeFileSync } from "node:fs";
+
+writeFileSync("tasks.json", '[{"title":"Buy milk"}]');
+
+const text = readFileSync("tasks.json", "utf8");
+console.log("sync:", text);
+
+readFile("tasks.json", "utf8", (error, data) => {
+  console.log("async:", data);
+});
+
+console.log("after calling readFile");
+</example>
+<output>
+sync: [{"title":"Buy milk"}]
+after calling readFile
+async: [{"title":"Buy milk"}]
+</output>
+<p><code>readFileSync</code> blocks until the file is read. <code>readFile</code> returns at once and calls your function later, which is why <code>after calling readFile</code> came first. A server should use the non-blocking version.</p>
+</section>
+
+<section>
+<h2 id="callbacks">Callbacks and their problems</h2>
+<p>The function you give <code>readFile</code> is a <strong>callback</strong>: a function you pass to other code so it can call you back when it is done. Node.js callbacks follow a rule called <strong>error-first</strong>: the first argument is an error (or <code>null</code> when all went well), and the result comes second. You must check the error every time:</p>
+<example file="error-first.js" browser="no">
+import { readFile } from "node:fs";
+
+readFile("missing.json", "utf8", (error, data) => {
+  if (error) {
+    console.log("failed:", error.code);
+    return;
+  }
+  console.log(data);
+});
+</example>
+<output>
+failed: ENOENT
+</output>
+<p><code>ENOENT</code> is the system's code for "no such file". Callbacks work, but they get painful as soon as one step depends on another. Here are three fake database calls, each taking a callback, and a report that needs all three in order:</p>
+<example file="callback-hell.js">
+function getUser(id, callback) {
+  setTimeout(() => callback(null, { id, name: "Ada" }), 20);
+}
+function getTasks(user, callback) {
+  setTimeout(() => callback(null, ["Buy milk", "Call Grace"]), 20);
+}
+function saveReport(report, callback) {
+  setTimeout(() => callback(report.length > 50 ? new Error("too long") : null, report), 20);
+}
+
+getUser(1, (error, user) => {
+  if (error) return console.log("failed:", error.message);
+  getTasks(user, (error, tasks) => {
+    if (error) return console.log("failed:", error.message);
+    saveReport(`${user.name}: ${tasks.join(", ")}`, (error, saved) => {
+      if (error) return console.log("failed:", error.message);
+      console.log("saved:", saved);
+    });
+  });
+});
+</example>
+<output>
+saved: Ada: Buy milk, Call Grace
+</output>
+<p>This shape is called <strong>callback hell</strong>. Every step pushes the code further right, every level repeats the same error check, and forgetting one check silently loses an error. There is no <code>try</code>/<code>catch</code> across the steps, and nothing stops a buggy function from calling its callback twice. Promises were invented to fix all of this.</p>
+</section>
+
+<section>
 <h2 id="promises">Promises</h2>
-<p>Callbacks get messy when one wait depends on another. Modern JavaScript uses a <strong>Promise</strong> instead: an object that stands for a value you will have later. Here is a helper that waits a number of milliseconds and a fake database that answers after a short delay:</p>
+<p>A <strong>Promise</strong> is an object that stands for a value you will have later. Instead of passing a callback in, the function returns a promise, and you attach what should happen next. Here is a helper that waits a number of milliseconds and a fake database that answers after a short delay:</p>
 <example file="promise.js">
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -50,11 +140,73 @@ true
 Found: Buy milk
 </output>
 <p><code>findTask</code> returns straight away with a promise. <code>.then(...)</code> registers what to do once the promise has its value.</p>
+<h3>The three states of a promise</h3>
+<p>A promise is always in one of three states:</p>
+<ul>
+<li><strong>pending</strong>: the work is still going on.</li>
+<li><strong>fulfilled</strong>: it finished and has a value.</li>
+<li><strong>rejected</strong>: it failed and has a reason, usually an <code>Error</code>.</li>
+</ul>
+<p>Fulfilled and rejected together are called <strong>settled</strong>. A promise settles only once, and then never changes. You make your own promise with <code>new Promise((resolve, reject) =&gt; { ... })</code>: call <code>resolve(value)</code> to fulfil it, or <code>reject(error)</code> to reject it. JavaScript does not let you read a promise's state directly, so this example records it:</p>
+<example file="states.js">
+function track(name, promise) {
+  const record = { name, state: "pending" };
+  promise.then(
+    (value) => Object.assign(record, { state: "fulfilled", value }),
+    (error) => Object.assign(record, { state: "rejected", reason: error.message }),
+  );
+  return record;
+}
+
+const ok = new Promise((resolve) => setTimeout(() => resolve(42), 30));
+const bad = new Promise((resolve, reject) => {
+  setTimeout(() => reject(new Error("disk full")), 30);
+  setTimeout(() => resolve("too late"), 40);
+});
+
+const records = [track("ok", ok), track("bad", bad)];
+console.log(records);
+
+setTimeout(() => console.log(records), 60);
+</example>
+<output>
+[ { name: 'ok', state: 'pending' }, { name: 'bad', state: 'pending' } ]
+[
+  { name: 'ok', state: 'fulfilled', value: 42 },
+  { name: 'bad', state: 'rejected', reason: 'disk full' }
+]
+</output>
+<p>Both started <code>pending</code>. After 30 ms one was fulfilled and one rejected. <code>bad</code> also tried to <code>resolve("too late")</code> after it had been rejected, and that call was ignored: a settled promise never changes. That rule alone removes the "callback called twice" bug.</p>
+<h3>Chaining with then, catch and finally</h3>
+<p><code>.then</code> returns a <em>new</em> promise with whatever your function returns, so you can chain steps. <code>.catch</code> handles a rejection from any step above it. <code>.finally</code> runs at the end either way. Here is the callback-hell report again, with promise-returning versions of the same functions:</p>
+<example file="chain.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const getUser = (id) => wait(20).then(() => ({ id, name: "Ada" }));
+const getTasks = () => wait(20).then(() => ["Buy milk", "Call Grace"]);
+const saveReport = (report) =>
+  wait(20).then(() => {
+    if (report.length > 30) throw new Error("report too long");
+    return report;
+  });
+
+getUser(1)
+  .then((user) => getTasks(user).then((tasks) => `${user.name}: ${tasks.join(", ")}`))
+  .then((report) => saveReport(report))
+  .then((saved) => console.log("saved:", saved))
+  .catch((error) => console.log("failed:", error.message))
+  .finally(() => console.log("done"));
+</example>
+<output>
+saved: Ada: Buy milk, Call Grace
+done
+</output>
+<p>The steps now read top to bottom, and one <code>.catch</code> covers all of them. Try changing <code>30</code> to <code>10</code> in <code>saveReport</code>: the output becomes <code>failed: report too long</code> and then <code>done</code>.</p>
 </section>
 
 <section>
 <h2 id="async-await">async and await</h2>
-<p>Chains of <code>.then</code> are hard to read. Mark a function <code>async</code> and you can write <code>await</code> in front of a promise. The function pauses at that line until the value is ready, while the rest of the program keeps running. The code reads top to bottom again:</p>
+<p>Chains of <code>.then</code> are still hard to read. Mark a function <code>async</code> and you can write <code>await</code> in front of a promise. The function pauses at that line until the value is ready, while the rest of the program keeps running. The code reads top to bottom again:</p>
 <example file="await.js">
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -83,13 +235,13 @@ Looking up task 2...
 { id: 2, title: 'Write report', done: true }
 undefined
 </output>
-<p>An <code>async</code> function always returns a promise, even when it returns a plain value. That is why the database helper is <code>async</code>: anything that talks to the outside world is.</p>
-<tip>In an ES module, which is what your project is since lesson 1, you can also use <code>await</code> at the top level of a file, outside any function. The next examples do that.</tip>
+<p>An <code>async</code> function always returns a promise, even when it returns a plain value. That is why the database helper is <code>async</code>: anything that talks to the outside world is. <code>await</code> is just a nicer way to write <code>.then</code>: underneath, it is the same promises.</p>
+<tip>In an ES module, which is what your project is since <a href="/learn/setup">Your first program</a>, you can also use <code>await</code> at the top level of a file, outside any function. The next examples do that.</tip>
 </section>
 
 <section>
 <h2 id="errors">When waiting fails</h2>
-<p>Databases go down and networks drop. A promise can <strong>reject</strong> with an error instead of giving a value. With <code>await</code>, you handle that with <code>try</code> and <code>catch</code>, the same way you will handle any error:</p>
+<p>Databases go down and networks drop. When an <code>async</code> function throws, its promise is rejected. <code>await</code> turns that rejection back into a thrown error, so you handle it with <code>try</code> and <code>catch</code>, exactly as in <a href="/learn/js-errors">Handling errors</a>:</p>
 <example file="reject.js">
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -114,12 +266,42 @@ try {
 Saved: { title: 'Call Ada', done: false, id: 3 }
 Could not save: title must not be empty
 </output>
-<p><code>throw</code> stops the function and rejects its promise. <code>await</code> turns that rejection back into a thrown error, and <code>catch</code> receives it. Lesson 5 covers errors properly.</p>
+<h3>The forgotten await</h3>
+<p>The most common async bug is a missing <code>await</code>. Without it, the call returns a pending promise immediately, <code>try</code> finishes happily, and the error happens later, when nobody is listening. Save this as <code>forgot.js</code>:</p>
+<example file="forgot.js" browser="no" check="skip">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function saveTask(task) {
+  await wait(20);
+  if (task.title === "") throw new Error("title must not be empty");
+  return task;
+}
+
+try {
+  saveTask({ title: "" });
+  console.log("Saved, I think");
+} catch (error) {
+  console.log("Could not save:", error.message);
+}
+</example>
+<shell title="Terminal on your computer">
+$ node forgot.js
+Saved, I think
+file://~/async-demo/forgot.js:5
+  if (task.title === "") throw new Error("title must not be empty");
+                               ^
+
+Error: title must not be empty
+    at saveTask (file://~/async-demo/forgot.js:5:32)
+
+Node.js v24.19.0
+</shell>
+<p>The program claimed success, then crashed. A rejected promise that nobody handles is an <strong>unhandled rejection</strong>, and Node.js stops the whole process for it, because an error nobody saw is dangerous. The fix is one word: <code>await saveTask(...)</code>. Whenever you call an <code>async</code> function, either <code>await</code> it or attach a <code>.catch</code>.</p>
 </section>
 
 <section>
-<h2 id="parallel">Waiting for several things at once</h2>
-<p><code>await</code> one after another is slow when the waits do not depend on each other. <code>Promise.all</code> starts them all together and waits for every one:</p>
+<h2 id="parallel">Sequential or parallel</h2>
+<p>Several <code>await</code>s one after another run <strong>sequentially</strong>: each waits for the one before. That is right when a step needs the previous result. When the waits do not depend on each other, start them all first and wait for them together. <code>Promise.all</code> takes an array of promises and gives back an array of their values:</p>
 <example file="all.js">
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -144,7 +326,138 @@ console.log("Took less than 200ms:", tookMs < 200);
 { tasks: 3, users: 2 }
 Took less than 200ms: true
 </output>
-<p>Each wait is 100 ms, yet the pair finishes in about 100 ms, not 200, because they ran at the same time. <code>const [tasks, users] = ...</code> is destructuring again, this time for an array.</p>
+<p>Each wait is 100 ms, yet the pair finishes in about 100 ms, not 200, because they ran at the same time. <code>const [tasks, users] = ...</code> is array destructuring from <a href="/learn/js-modern">Modern JavaScript</a>.</p>
+<h3>Measuring the difference</h3>
+<p>Here are the same three lookups done both ways, timed. Your exact numbers will differ by a few milliseconds each run:</p>
+<example file="timing.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function fetchTask(id) {
+  await wait(100);
+  return { id };
+}
+
+let start = Date.now();
+for (const id of [1, 2, 3]) {
+  await fetchTask(id);
+}
+const sequential = Date.now() - start;
+
+start = Date.now();
+await Promise.all([1, 2, 3].map((id) => fetchTask(id)));
+const parallel = Date.now() - start;
+
+console.log(`sequential: ${sequential} ms`);
+console.log(`parallel: ${parallel} ms`);
+console.log("parallel is faster:", parallel < sequential);
+</example>
+<output mask="ms">
+sequential: 302 ms
+parallel: 101 ms
+parallel is faster: true
+</output>
+<p>Sequential took about 3 × 100 ms, parallel about 100 ms. In a real API that is the difference between a fast page and a slow one. Parallel is not always right, though: if you start 10,000 database queries at once, the database will struggle. For large lists, work in batches.</p>
+</section>
+
+<section>
+<h2 id="combinators">all, allSettled, race and any</h2>
+<p><code>Promise</code> has four ways to wait for several promises. They differ in what happens when some fail:</p>
+<ul>
+<li><code>Promise.all</code>: all values, or the <em>first</em> error. Use it when you need every result.</li>
+<li><code>Promise.allSettled</code>: never fails. Gives a report for each promise, <code>fulfilled</code> with a <code>value</code> or <code>rejected</code> with a <code>reason</code>. Use it when partial results are useful.</li>
+<li><code>Promise.race</code>: settles like whichever promise settles <em>first</em>, success or failure. Useful for time limits.</li>
+<li><code>Promise.any</code>: the first <em>success</em>. Fails only if all fail, with an <code>AggregateError</code>.</li>
+</ul>
+<example file="combinators.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const succeed = (value, ms) => wait(ms).then(() => value);
+const fail = (message, ms) => wait(ms).then(() => { throw new Error(message); });
+
+try {
+  await Promise.all([succeed("tasks", 20), fail("users down", 10)]);
+} catch (error) {
+  console.log("all:", error.message);
+}
+
+const results = await Promise.allSettled([succeed("tasks", 20), fail("users down", 10)]);
+console.log("allSettled:", results.map((r) => r.status === "fulfilled" ? r.value : r.reason.message));
+
+console.log("race:", await Promise.race([succeed("fast", 10), succeed("slow", 50)]));
+
+console.log("any:", await Promise.any([fail("mirror 1 down", 10), succeed("mirror 2", 30)]));
+
+try {
+  await Promise.any([fail("a down", 10), fail("b down", 20)]);
+} catch (error) {
+  console.log(`any: ${error.name}: ${error.message}`, error.errors.map((e) => e.message));
+}
+</example>
+<output>
+all: users down
+allSettled: [ 'tasks', 'users down' ]
+race: fast
+any: mirror 2
+any: AggregateError: All promises were rejected [ 'a down', 'b down' ]
+</output>
+<p>Notice the first case: one failure made <code>Promise.all</code> fail, and the successful <code>tasks</code> value was lost. <code>allSettled</code> kept both results. <code>any</code> skipped the broken mirror, and when every source failed, its <code>AggregateError</code> listed all the reasons in <code>error.errors</code>.</p>
+</section>
+
+<section>
+<h2 id="build">Build: a concurrent data loader</h2>
+<p>A dashboard page needs data from three services: the user (required), their tasks and their notifications (nice to have). A backend loads all three at the same time. Rules:</p>
+<ul>
+<li>If the user cannot be loaded, the whole request fails.</li>
+<li>If tasks or notifications fail, show the rest and report what is missing.</li>
+<li>No service may take longer than 150 ms. A slow service counts as failed.</li>
+</ul>
+<p>The time limit uses <code>Promise.race</code> between the real work and a timer that rejects. <code>finally</code> clears the timer, so it does not keep the program waiting once the work has finished:</p>
+<example file="loader.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function withTimeout(promise, ms, name) {
+  let timer;
+  const timeout = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${name} timed out after ${ms} ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+const services = {
+  user: async (id) => { await wait(50); return { id, name: "Ada" }; },
+  tasks: async () => { await wait(80); return ["Buy milk", "Call Grace"]; },
+  notifications: async () => { await wait(500); return ["Welcome!"]; },
+};
+
+async function loadDashboard(userId) {
+  const load = (name) => withTimeout(services[name](userId), 150, name);
+  const [user, tasks, notifications] = await Promise.allSettled(
+    ["user", "tasks", "notifications"].map(load),
+  );
+  if (user.status === "rejected") throw user.reason;
+
+  const optional = { tasks, notifications };
+  const dashboard = { user: user.value, missing: [] };
+  for (const [name, result] of Object.entries(optional)) {
+    if (result.status === "fulfilled") dashboard[name] = result.value;
+    else dashboard.missing.push(result.reason.message);
+  }
+  return dashboard;
+}
+
+const started = Date.now();
+console.log(await loadDashboard(1));
+console.log("finished within 200 ms:", Date.now() - started < 200);
+</example>
+<output>
+{
+  user: { id: 1, name: 'Ada' },
+  missing: [ 'notifications timed out after 150 ms' ],
+  tasks: [ 'Buy milk', 'Call Grace' ]
+}
+finished within 200 ms: true
+</output>
+<p>All three requests started together. The user and the tasks arrived in time. The notifications service would have taken 500 ms, so the time limit cut it off at 150 ms and it went into <code>missing</code>. The page still loaded in about 150 ms instead of 630 ms (50 + 80 + 500, one after another), and a slow service could not hold it hostage.</p>
+<p>This is the everyday work of a backend: start independent work in parallel, put a time limit on everything that leaves your process, and decide what is required and what is optional.</p>
 </section>
 
 <section>
@@ -180,14 +493,91 @@ Task 9 not found
 </output>
 </solution>
 </exercise>
+<exercise title="Retry a flaky service">
+<p>Write <code>retry(fn, attempts)</code> that calls the async function <code>fn</code>. If it fails, wait 20 ms and try again, up to <code>attempts</code> times in total. If every attempt fails, throw the last error. Test it with a fake service that fails twice and then works.</p>
+<solution>
+<example file="retry.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function retry(fn, attempts) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await fn(attempt);
+    } catch (error) {
+      lastError = error;
+      console.log(`attempt ${attempt} failed: ${error.message}`);
+      if (attempt < attempts) await wait(20);
+    }
+  }
+  throw lastError;
+}
+
+const flaky = async (attempt) => {
+  if (attempt < 3) throw new Error("service unavailable");
+  return "tasks loaded";
+};
+
+console.log(await retry(flaky, 5));
+
+try {
+  await retry(flaky, 2);
+} catch (error) {
+  console.log("gave up:", error.message);
+}
+</example>
+<output>
+attempt 1 failed: service unavailable
+attempt 2 failed: service unavailable
+tasks loaded
+attempt 1 failed: service unavailable
+attempt 2 failed: service unavailable
+gave up: service unavailable
+</output>
+<p>Note <code>return await fn(attempt)</code> inside <code>try</code>. Without <code>await</code>, the function would return the promise before it failed, and <code>catch</code> would never see the error: the forgotten-await bug from above.</p>
+</solution>
+</exercise>
+<exercise title="Parallel with a limit">
+<p>Load the tasks with ids 1 to 6 using <code>fetchTask</code> from the timing example, but never more than 2 at a time: split the ids into batches of 2, and use <code>Promise.all</code> for each batch. Print the ids in order.</p>
+<solution>
+<example file="batches.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function fetchTask(id) {
+  await wait(30);
+  return { id };
+}
+
+const ids = [1, 2, 3, 4, 5, 6];
+const loaded = [];
+
+for (let i = 0; i < ids.length; i += 2) {
+  const batch = ids.slice(i, i + 2);
+  const tasks = await Promise.all(batch.map((id) => fetchTask(id)));
+  console.log("batch done:", batch);
+  loaded.push(...tasks);
+}
+
+console.log(loaded.map((task) => task.id));
+</example>
+<output>
+batch done: [ 1, 2 ]
+batch done: [ 3, 4 ]
+batch done: [ 5, 6 ]
+[ 1, 2, 3, 4, 5, 6 ]
+</output>
+<p>Each batch runs in parallel, and the batches run one after another. <code>Promise.all</code> keeps the results in the same order as the input, whatever order they finish in.</p>
+</solution>
+</exercise>
 </section>
 
 <section>
 <h2 id="recap">Recap</h2>
 <ul>
-<li>A backend waits a lot. JavaScript keeps working while it waits instead of blocking.</li>
-<li>A promise is a value that arrives later. <code>async</code> functions return promises, and <code>await</code> pauses until one is ready.</li>
-<li>A failed promise becomes a thrown error at <code>await</code>. Catch it with <code>try</code>/<code>catch</code>.</li>
-<li><code>Promise.all</code> runs independent waits at the same time.</li>
+<li>JavaScript runs on one thread. Synchronous, blocking code holds it; asynchronous, non-blocking code starts work and gets called back later.</li>
+<li>Callbacks work, but nest badly. Node.js callbacks are error-first: <code>(error, result)</code>.</li>
+<li>A promise is pending, then settles once: fulfilled with a value or rejected with a reason. <code>.then</code> chains steps, <code>.catch</code> handles failures, <code>.finally</code> always runs.</li>
+<li><code>async</code> functions return promises, and <code>await</code> pauses until one settles. A rejection becomes a thrown error at <code>await</code>. Forgetting <code>await</code> leads to unhandled rejections, which crash Node.js.</li>
+<li>Run independent work in parallel. <code>all</code> needs every result, <code>allSettled</code> reports each one, <code>race</code> takes the first to settle (good for time limits), and <code>any</code> takes the first success.</li>
 </ul>
 </section>

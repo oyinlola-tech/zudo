@@ -1,0 +1,651 @@
+---
+title: Capstone: ShopFlow
+description: The final project. Plan and build ShopFlow, a small online shop, with ZudoJS. A complete, runnable core for accounts, products and a checkout that never oversells, followed by milestones with acceptance criteria that take it to a modular monolith and then to services.
+minutes: 120
+youNeed: Every ZudoJS lesson, Production engineering and Deploying a ZudoJS app
+youBuild: ShopFlow's working core (accounts, sessions, roles, products, cached catalog, transactional checkout, events, a receipt queue, tests) and a plan to finish it
+keywords: capstone, shopflow, e-commerce, checkout, inventory, overselling, transaction, sessions, roles, permissions, audit log, pglite, zudojs project, milestones
+tier: production
+---
+<section>
+<h2 id="brief">The brief</h2>
+<p><strong>ShopFlow</strong> is an online shop. You have met it in pieces throughout this part of the course. Now you build it as one application, the way you would at work: from a brief, with a plan, in steps that each end with something that runs and is tested.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Area</th><th>What ShopFlow must do</th></tr></thead>
+<tbody>
+<tr><td>Users</td><td>Register, log in, log out, stay logged in with a session. Sign-in with Google or GitHub is optional.</td></tr>
+<tr><td>Products</td><td>Admins create and edit products, sort them into categories and manage the stock. Everyone can browse.</td></tr>
+<tr><td>Orders</td><td>Customers fill a cart and check out. A checkout takes the stock and creates the order <strong>in one transaction</strong>, and the shop <strong>never sells more than it has</strong>, even when two customers buy the last item at the same moment.</td></tr>
+<tr><td>Administration</td><td>Roles and permissions decide who may do what. Every important action leaves an audit event.</td></tr>
+<tr><td>Infrastructure</td><td>PostgreSQL, a cache, a queue for e-mails, scheduled jobs, events, an OpenAPI description, tests, logs, metrics and traces.</td></tr>
+</tbody>
+</table></div>
+<p>This lesson gives you two things. First, a <strong>complete, runnable core</strong>: accounts, products and the checkout, built from ZudoJS packages, with tests. Every file below runs as it is. Second, <strong>milestones</strong> with acceptance criteria for everything else, so you can finish ShopFlow on your own and know when each part is done.</p>
+</section>
+
+<section>
+<h2 id="architecture">The architecture, and how it grows</h2>
+<p>ShopFlow follows the path from <a href="/learn/zudo-modular-monolith">the modular monolith lesson</a> and <a href="/learn/zudo-microservices">the microservices lesson</a>, in three stages. You build stage 1 today.</p>
+<ol>
+<li><strong>A monolith with clean modules.</strong> One process, one PostgreSQL database. <code>users</code>, <code>catalog</code> and <code>orders</code> are separate files, each created by one function that is its public API. They share the infrastructure (database connection, cache, event bus, queue) and nothing else. Orders never reads the catalog's code; checkout reacts to nothing but its own data, and everything that should happen <em>after</em> a sale listens for an <code>order.placed</code> event.</li>
+<li><strong>A modular monolith.</strong> Each module moves into <code>src/modules/&lt;name&gt;/</code> of a project generated with <code>zudojs create --architecture modular-monolith</code>, gets its own PostgreSQL schema (<code>catalog.products</code>, <code>orders.orders</code>), and is registered with the runtime. Code stays almost the same; the edges get enforced.</li>
+<li><strong>Services, only where needed.</strong> When there is a real reason, extract modules into services:</li>
+</ol>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Service</th><th>Owns</th><th>Talks to others with</th></tr></thead>
+<tbody>
+<tr><td>user</td><td>accounts, sessions, roles</td><td>HTTP: other services check a session with it (or verify a signed token themselves)</td></tr>
+<tr><td>product</td><td>products, categories, stock</td><td>HTTP to reserve and release stock, with an idempotency key; publishes <code>product.changed</code></td></tr>
+<tr><td>order</td><td>carts, orders</td><td>Runs the checkout <strong>saga</strong>: reserve stock → charge payment → confirm, with compensations; publishes <code>order.placed</code> through an <strong>outbox</strong></td></tr>
+<tr><td>payment</td><td>charges, refunds</td><td>HTTP with idempotency keys from order; publishes <code>payment.succeeded</code> / <code>payment.failed</code></td></tr>
+</tbody>
+</table></div>
+<p>Notice what changes in stage 3: the single database transaction in checkout, the heart of today's code, becomes a saga across services. That is the price of microservices, and why you start with stage 1.</p>
+</section>
+
+<section>
+<h2 id="setup">Set up the project</h2>
+<p>The core uses ten ZudoJS packages, plus <strong>PGlite</strong>, the real PostgreSQL that runs inside Node.js and needs no server, which you used in <a href="/learn/zudo-database">the database lesson</a>. When you move to a real server, you swap PGlite for a <code>pg</code> pool as in <a href="/learn/deployment">the deployment lesson</a>; the SQL stays the same.</p>
+<shell>
+$ mkdir shopflow && cd shopflow
+$ npm init -y
+$ npm pkg set type=module
+$ npm install @zudojs/auth @zudojs/cache @zudojs/crypto @zudojs/errors @zudojs/events @zudojs/http @zudojs/observability @zudojs/permissions @zudojs/queue @zudojs/schema @zudojs/security @electric-sql/pglite
+added 19 packages, and audited 20 packages in 2s
+
+1 package is looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+$ npm install -D typescript tsx @types/node vitest
+added 44 packages, and audited 64 packages in 5s
+…
+</shell>
+<p>Use the <code>tsconfig.json</code> from <a href="/learn/ts-setup">the TypeScript setup lesson</a> (strict, <code>NodeNext</code> modules). Then create the files below, in order, in the <code>shopflow</code> folder.</p>
+</section>
+
+<section>
+<h2 id="database">The database</h2>
+<p>Six tables. Three details carry most of the safety:</p>
+<ul>
+<li>Money is stored as whole <strong>cents</strong> (<code>INT</code>), never as a floating-point number, so 0.1 + 0.2 never costs anyone a cent.</li>
+<li><code>CHECK (stock &gt;= 0)</code> makes the database itself refuse negative stock. If a bug ever gets past the code, the database stops it.</li>
+<li>Sessions store only a <strong>hash</strong> of the session token. If the database leaks, the tokens in it cannot be used to log in.</li>
+</ul>
+<example file="db.ts" project="shopflow" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+export async function createDatabase(): Promise<PGlite> {
+  const db = new PGlite();
+  await db.exec(`
+    CREATE TABLE users (id SERIAL PRIMARY KEY, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'customer' CHECK (role IN ('customer', 'admin')));
+    CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id INT NOT NULL REFERENCES users (id),
+      expires_at TIMESTAMPTZ NOT NULL);
+    CREATE TABLE products (id SERIAL PRIMARY KEY, sku TEXT UNIQUE NOT NULL, name TEXT NOT NULL, category TEXT NOT NULL,
+      price_cents INT NOT NULL CHECK (price_cents > 0), stock INT NOT NULL CHECK (stock >= 0));
+    CREATE TABLE orders (id SERIAL PRIMARY KEY, user_id INT NOT NULL REFERENCES users (id), total_cents INT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+    CREATE TABLE order_lines (order_id INT NOT NULL REFERENCES orders (id), product_id INT NOT NULL REFERENCES products (id),
+      quantity INT NOT NULL CHECK (quantity > 0), price_cents INT NOT NULL);
+    CREATE TABLE audit_log (id SERIAL PRIMARY KEY, actor_id INT, action TEXT NOT NULL, detail JSONB NOT NULL,
+      at TIMESTAMPTZ NOT NULL DEFAULT now());
+  `);
+  return db;
+}
+</example>
+</section>
+
+<section>
+<h2 id="users">Users and sessions</h2>
+<p>The users module registers, logs in and recognises a logged-in user. It uses <code>@zudojs/auth</code> to hash passwords with scrypt, as in <a href="/learn/zudo-auth">the authentication lesson</a>, and <code>@zudojs/crypto</code> for a random session token. Read the security decisions in the code:</p>
+<ul>
+<li>The input is checked with a schema. The e-mail is trimmed and lower-cased, so <code>Ada@Example.com</code> and <code>ada@example.com</code> are one account. Passwords must be 12 to 128 characters.</li>
+<li><code>register</code> never reads a role from the request. Every new account is a <code>customer</code>. If the body could set <code>role</code>, anyone could make themselves an admin.</li>
+<li><code>login</code> gives the same answer for "no such e-mail" and "wrong password", and checks a <em>decoy</em> hash when the e-mail is unknown, so both cases take the same time. An attacker cannot find out which e-mails have accounts.</li>
+<li>The session token goes to the client once. The database keeps only its hash and an expiry date.</li>
+</ul>
+<example file="users.ts" project="shopflow" browser="no">
+import type { PGlite } from "@electric-sql/pglite";
+import { hashPassword, verifyPassword } from "@zudojs/auth";
+import { generateSessionToken, hashToken } from "@zudojs/crypto";
+import { AuthenticationError, ConflictError } from "@zudojs/errors";
+import { schema } from "@zudojs/schema";
+
+export interface User {
+  readonly id: number;
+  readonly email: string;
+  readonly role: "customer" | "admin";
+}
+
+const Credentials = schema.object({
+  email: schema.string().trim().toLowerCase().email(),
+  password: schema.string().min(12).max(128),
+});
+
+export async function createUsers(db: PGlite) {
+  const decoyHash = await hashPassword(crypto.randomUUID());
+  return {
+    async register(input: unknown): Promise<User> {
+      const { email, password } = Credentials.parse(input);
+      const passwordHash = await hashPassword(password);
+      const { rows } = await db.query<User>(
+        "INSERT INTO users (email, password_hash) VALUES ($1, $2) ON CONFLICT (email) DO NOTHING RETURNING id, email, role",
+        [email, passwordHash],
+      );
+      if (!rows[0]) throw new ConflictError("That e-mail is already registered");
+      return rows[0];
+    },
+
+    async login(input: unknown): Promise<string> {
+      const { email, password } = Credentials.parse(input);
+      const { rows } = await db.query<{ id: number; password_hash: string }>("SELECT id, password_hash FROM users WHERE email = $1", [email]);
+      const valid = await verifyPassword(password, rows[0]?.password_hash ?? decoyHash);
+      if (!rows[0] || !valid) throw new AuthenticationError("Wrong e-mail or password");
+      const token = await generateSessionToken();
+      await db.query("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, now() + interval '7 days')", [
+        await hashToken(token),
+        rows[0].id,
+      ]);
+      return token;
+    },
+
+    async authenticate(token: string | undefined): Promise<User> {
+      if (!token) throw new AuthenticationError("Log in first");
+      const { rows } = await db.query<User>(
+        "SELECT u.id, u.email, u.role FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = $1 AND s.expires_at > now()",
+        [await hashToken(token)],
+      );
+      if (!rows[0]) throw new AuthenticationError("Session expired, log in again");
+      return rows[0];
+    },
+  };
+}
+</example>
+</section>
+
+<section>
+<h2 id="catalog">Products and the cached catalog</h2>
+<p>The catalog validates new products and serves the product list from <code>@zudojs/cache</code>. Every change clears the <code>products</code> tag, as in <a href="/learn/production-engineering">Production engineering</a>, so the cache is never older than the last write. Note that this module does not check permissions: it does not know who is calling. That happens at the edge, in the HTTP layer, where the user is known.</p>
+<example file="catalog.ts" project="shopflow" browser="no">
+import type { PGlite } from "@electric-sql/pglite";
+import type { CacheService } from "@zudojs/cache";
+import { schema } from "@zudojs/schema";
+
+export interface Product {
+  readonly sku: string;
+  readonly name: string;
+  readonly category: string;
+  readonly priceCents: number;
+  readonly stock: number;
+}
+
+const NewProduct = schema.object({
+  sku: schema.string().regex(/^[a-z0-9-]{2,40}$/),
+  name: schema.string().trim().min(2).max(100),
+  category: schema.enum(["kitchen", "clothing", "books"]),
+  priceCents: schema.number().int().min(1).max(1_000_000),
+  stock: schema.number().int().min(0).max(100_000),
+});
+
+const SELECT = `SELECT sku, name, category, price_cents AS "priceCents", stock FROM products`;
+
+export function createCatalog(db: PGlite, cache: CacheService) {
+  return {
+    async create(input: unknown): Promise<Product> {
+      const p = NewProduct.parse(input);
+      const { rows } = await db.query<Product>(
+        `INSERT INTO products (sku, name, category, price_cents, stock) VALUES ($1, $2, $3, $4, $5)
+         RETURNING sku, name, category, price_cents AS "priceCents", stock`,
+        [p.sku, p.name, p.category, p.priceCents, p.stock],
+      );
+      await cache.invalidateByTag(["products"]);
+      return rows[0]!;
+    },
+
+    async list(): Promise<Product[]> {
+      const { value } = await cache.getOrSet("products.all", async () => (await db.query<Product>(`${SELECT} ORDER BY sku`)).rows, {
+        tags: ["products"],
+      });
+      return value;
+    },
+  };
+}
+</example>
+</section>
+
+<section>
+<h2 id="checkout">The checkout</h2>
+<p>This is the core of ShopFlow. For each line of the order, one SQL statement both checks and takes the stock:</p>
+<pre class="lx-json">UPDATE products SET stock = stock - $1 WHERE sku = $2 AND stock &gt;= $1 RETURNING id, price_cents</pre>
+<p>If there is not enough stock, the <code>WHERE</code> matches no row, nothing changes, and <code>RETURNING</code> returns nothing. Because the check and the change are one statement, two customers can never both see "1 left" and both buy it: PostgreSQL locks the row for the first <code>UPDATE</code>, and the second one sees the new stock. Reading the stock with a <code>SELECT</code> first and then updating it would have exactly that race.</p>
+<p>All lines, the order, its lines and the audit event run in <strong>one transaction</strong>, from <a href="/learn/zudo-transactions">the transactions lesson</a>. If the second line is out of stock, the <code>ConflictError</code> rolls back the first line's stock change too. The price comes from the database, never from the request, so a client cannot choose its own price.</p>
+<example file="orders.ts" project="shopflow" browser="no">
+import type { PGlite } from "@electric-sql/pglite";
+import { ConflictError } from "@zudojs/errors";
+import type { EventBus } from "@zudojs/events";
+import { schema } from "@zudojs/schema";
+
+const Checkout = schema.object({
+  items: schema
+    .array(schema.object({ sku: schema.string().max(40), quantity: schema.number().int().min(1).max(20) }))
+    .min(1)
+    .max(20),
+});
+
+export interface OrderPlaced {
+  readonly orderId: number;
+  readonly userId: number;
+  readonly totalCents: number;
+}
+
+export function createOrders(db: PGlite, bus: EventBus) {
+  return {
+    async checkout(userId: number, input: unknown): Promise<OrderPlaced> {
+      const { items } = Checkout.parse(input);
+      const placed = await db.transaction(async (tx) => {
+        let totalCents = 0;
+        const lines: Array<{ productId: number; quantity: number; priceCents: number }> = [];
+        for (const item of items) {
+          const { rows } = await tx.query<{ id: number; price_cents: number }>(
+            "UPDATE products SET stock = stock - $1 WHERE sku = $2 AND stock >= $1 RETURNING id, price_cents",
+            [item.quantity, item.sku],
+          );
+          if (!rows[0]) throw new ConflictError(`Not enough stock for ${item.sku}`);
+          totalCents += rows[0].price_cents * item.quantity;
+          lines.push({ productId: rows[0].id, quantity: item.quantity, priceCents: rows[0].price_cents });
+        }
+        const { rows } = await tx.query<{ id: number }>("INSERT INTO orders (user_id, total_cents) VALUES ($1, $2) RETURNING id", [userId, totalCents]);
+        const orderId = rows[0]!.id;
+        for (const line of lines) {
+          await tx.query("INSERT INTO order_lines (order_id, product_id, quantity, price_cents) VALUES ($1, $2, $3, $4)", [
+            orderId, line.productId, line.quantity, line.priceCents,
+          ]);
+        }
+        await tx.query("INSERT INTO audit_log (actor_id, action, detail) VALUES ($1, 'order.placed', $2)", [userId, { orderId, totalCents }]);
+        return { orderId, userId, totalCents };
+      });
+      await bus.publishEvent({ type: "order.placed", payload: placed });
+      return placed;
+    },
+  };
+}
+</example>
+<p>The <code>order.placed</code> event is published <em>after</em> the transaction has committed, so no listener ever reacts to an order that was rolled back. The other risk, a crash between the commit and the publish, is what the outbox from the microservices lesson fixes. It is one of the milestones.</p>
+</section>
+
+<section>
+<h2 id="wiring">Wiring the shop</h2>
+<p><code>app.ts</code> is the composition root. It creates the shared infrastructure once, and the three modules on top of it. It also decides what happens after a sale: count it in a metric, clear the product cache (the stock changed), and queue the receipt e-mail with retries. Permissions come from <code>@zudojs/permissions</code>: customers may read products and create orders; admins may do everything.</p>
+<example file="app.ts" project="shopflow" browser="no">
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+import { AuthorizationError } from "@zudojs/errors";
+import { createEventBus, type Event } from "@zudojs/events";
+import { createObservability } from "@zudojs/observability";
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+import { createCatalog } from "./catalog.js";
+import { createDatabase } from "./db.js";
+import { createOrders, type OrderPlaced } from "./orders.js";
+import { createUsers, type User } from "./users.js";
+
+export async function createShopFlow() {
+  const db = await createDatabase();
+  const cache = createCacheService({ adapter: createMemoryCacheAdapter({ maxEntries: 10_000 }), config: { defaultTtl: 60_000 } });
+  const bus = createEventBus();
+  const receipts = createInMemoryQueue<OrderPlaced>(createQueueName("receipts"));
+  const obs = createObservability({ serviceName: "shopflow", useConsoleExporters: false });
+  const permissions = createPermissionEngine({
+    roles: [
+      { name: "customer", permissions: ["product:read", "order:create"] },
+      { name: "admin", permissions: ["*:*"] },
+    ],
+  });
+
+  // Everything that reacts to a sale. Checkout itself knows none of it.
+  bus.on<Event<OrderPlaced>>("order.placed", async (event) => {
+    obs.metrics.counter("orders.placed").increment();
+    await cache.invalidateByTag(["products"]);
+    await receipts.add("send-receipt", event.payload, { attempts: 5, backoff: { type: "exponential", delay: 1000 } });
+  });
+
+  async function authorize(user: User, permission: string): Promise<void> {
+    const actor = createPermissionActor(String(user.id), { roles: [user.role] });
+    if (!(await permissions.can(actor, permission))) throw new AuthorizationError(`Missing permission ${permission}`);
+  }
+
+  return {
+    db,
+    receipts,
+    obs,
+    authorize,
+    users: await createUsers(db),
+    catalog: createCatalog(db, cache),
+    orders: createOrders(db, bus),
+    async close() {
+      await receipts.close();
+      await obs.shutdown();
+      await db.close();
+    },
+  };
+}
+
+export type ShopFlow = Awaited<ReturnType<typeof createShopFlow>>;
+</example>
+</section>
+
+<section>
+<h2 id="http">The HTTP API</h2>
+<p>The HTTP layer is thin: it reads the body, finds the user from the <code>Authorization: Bearer …</code> header, checks the permission, and calls a module. Errors from <code>@zudojs/errors</code> carry their own status code (400, 401, 403, 409), and <code>@zudojs/http</code> turns them into JSON answers by itself. Any other error becomes a plain 500 that reveals nothing. Login has its own rate limit, as recommended in <a href="/learn/zudo-auth">the authentication lesson</a>.</p>
+<example file="http.ts" project="shopflow" browser="no">
+import { RateLimitError, ValidationError } from "@zudojs/errors";
+import {
+  createHttpServer,
+  createNodeHttpAdapter,
+  createResponseContext,
+  createRouter,
+  type HttpRequestContext,
+  type HttpRouterContext,
+} from "@zudojs/http";
+import { createRateLimiter } from "@zudojs/security";
+import type { ShopFlow } from "./app.js";
+
+function body(ctx: HttpRouterContext): unknown {
+  const text = new TextDecoder().decode(ctx.request.body as Uint8Array);
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    throw new ValidationError("The body must be JSON");
+  }
+}
+
+function bearer(ctx: HttpRouterContext): string | undefined {
+  const header = ctx.request.getHeader("authorization");
+  return header?.startsWith("Bearer ") ? header.slice(7) : undefined;
+}
+
+export function createShopServer(shop: ShopFlow) {
+  const router = createRouter();
+  const logins = createRateLimiter({ windowMs: 60_000, max: 5 });
+
+  router.post("/register", async (ctx) => {
+    const user = await shop.users.register(body(ctx));
+    return createResponseContext({ status: 201 }).json({ id: user.id, email: user.email });
+  });
+  router.post("/login", async (ctx) => {
+    if (!logins.check({ ip: ctx.request.remoteAddress ?? "unknown" }).allowed) throw new RateLimitError("Too many login attempts");
+    return createResponseContext().json({ token: await shop.users.login(body(ctx)) });
+  });
+  router.get("/products", async () => createResponseContext().json(await shop.catalog.list()));
+  router.post("/products", async (ctx) => {
+    await shop.authorize(await shop.users.authenticate(bearer(ctx)), "product:create");
+    return createResponseContext({ status: 201 }).json(await shop.catalog.create(body(ctx)));
+  });
+  router.post("/checkout", async (ctx) => {
+    const user = await shop.users.authenticate(bearer(ctx));
+    await shop.authorize(user, "order:create");
+    return createResponseContext({ status: 201 }).json(await shop.orders.checkout(user.id, body(ctx)));
+  });
+
+  const server = createHttpServer({
+    adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+    handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+  });
+  server.on("onStopped", () => logins.destroy());
+  return server;
+}
+</example>
+</section>
+
+<section>
+<h2 id="run">Run it</h2>
+<p><code>main.ts</code> seeds an admin, starts the server on a free port, and plays a short story against the real HTTP API. The passwords are random for each run; nothing secret is written in the code. The first admin is promoted by a direct database update, the way a one-time setup script on the server would do it, never through the API.</p>
+<example file="main.ts" project="shopflow" browser="no">
+import { createShopFlow } from "./app.js";
+import type { Product } from "./catalog.js";
+import { createShopServer } from "./http.js";
+
+const shop = await createShopFlow();
+const receipts: number[] = [];
+shop.receipts.process("send-receipt", async (job) => {
+  receipts.push(job.data.orderId);
+});
+
+// Seed: the first admin is made by a script on the server, never through the public API.
+const adminLogin = { email: "admin@shopflow.test", password: crypto.randomUUID() };
+const admin = await shop.users.register(adminLogin);
+await shop.db.query("UPDATE users SET role = 'admin' WHERE id = $1", [admin.id]);
+
+const server = createShopServer(shop);
+await server.start();
+
+async function call<T = { token: string }>(method: string, path: string, data?: unknown, token?: string): Promise<T> {
+  const response = await fetch(`http://127.0.0.1:${server.address?.port}${path}`, {
+    method,
+    headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    body: data === undefined ? undefined : JSON.stringify(data),
+  });
+  const result: unknown = await response.json();
+  const error = typeof result === "object" && result !== null && "error" in result ? ` ${String(result.error)}` : "";
+  console.log(`${method} ${path} -> ${response.status}${error}`);
+  return result as T;
+}
+
+const adminToken = (await call("POST", "/login", adminLogin)).token;
+await call("POST", "/products", { sku: "mug", name: "ShopFlow mug", category: "kitchen", priceCents: 1200, stock: 2 }, adminToken);
+await call("POST", "/products", { sku: "tee", name: "ShopFlow T-shirt", category: "clothing", priceCents: 2000, stock: 5 }, adminToken);
+
+const adaLogin = { email: "Ada@Example.com", password: crypto.randomUUID() };
+await call("POST", "/register", { ...adaLogin, role: "admin" });
+const ada = (await call("POST", "/login", adaLogin)).token;
+await call("POST", "/products", { sku: "free", name: "Free stuff", category: "books", priceCents: 1, stock: 999 }, ada);
+console.log(await call("POST", "/checkout", { items: [{ sku: "mug", quantity: 2 }] }, ada));
+await call("POST", "/checkout", { items: [{ sku: "tee", quantity: 1 }, { sku: "mug", quantity: 1 }] }, ada);
+await call("POST", "/checkout", { items: [{ sku: "tee", quantity: -3 }] }, ada);
+await call("POST", "/checkout", { items: [{ sku: "tee", quantity: 1 }] });
+
+const products = await call<Product[]>("GET", "/products");
+console.log(products.map((product) => `${product.sku}: ${product.stock} left`).join(", "));
+
+while (receipts.length === 0) await new Promise((resolve) => setTimeout(resolve, 20));
+const orders = await shop.db.query("SELECT count(*)::int AS orders FROM orders");
+const audit = await shop.db.query<{ action: string; detail: unknown }>("SELECT action, detail FROM audit_log");
+console.log(orders.rows[0], "receipts sent:", receipts, "audit:", audit.rows.map((row) => `${row.action} ${JSON.stringify(row.detail)}`));
+await server.stop();
+await shop.close();
+</example>
+<output>
+POST /login -> 200
+POST /products -> 201
+POST /products -> 201
+POST /register -> 201
+POST /login -> 200
+POST /products -> 403 Missing permission product:create
+POST /checkout -> 201
+{ orderId: 1, userId: 2, totalCents: 2400 }
+POST /checkout -> 409 Not enough stock for mug
+POST /checkout -> 400 Validation failed
+POST /checkout -> 401 Log in first
+GET /products -> 200
+mug: 0 left, tee: 5 left
+{ orders: 1 } receipts sent: [ 1 ] audit: [ 'order.placed {"orderId":1,"totalCents":2400}' ]
+</output>
+<p>Run it with <code>npx tsx main.ts</code>, and read the story line by line:</p>
+<ul>
+<li>The admin created two products. Ada registered with <code>"role": "admin"</code> in her body, and it was ignored: her attempt to create a product got <strong>403</strong>.</li>
+<li>Ada bought both mugs: <strong>201</strong>, 2 × 12.00 = 24.00, taken from the database's price.</li>
+<li>Then she tried a T-shirt and a mug. The T-shirt line succeeded inside the transaction, the mug line found no stock, and the whole order was rolled back: <strong>409</strong>, and the list at the end still shows <strong>5</strong> T-shirts.</li>
+<li>A negative quantity was stopped by the schema (<strong>400</strong>), and a checkout without a session by the authentication (<strong>401</strong>).</li>
+<li>Exactly one order exists, one receipt went through the queue, and one audit event was written in the same transaction as the order.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="tests">Tests</h2>
+<p>A story on the screen is not a test. These Vitest tests, from <a href="/learn/zudo-testing">the testing lesson</a>, pin down the rules that matter most. The second one fires four checkouts at the same time for a product with two left, and requires that exactly two succeed:</p>
+<file name="checkout.test.ts" project="shopflow">
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createShopFlow, type ShopFlow } from "./app.js";
+
+let shop: ShopFlow;
+let userId: number;
+
+beforeAll(async () => {
+  shop = await createShopFlow();
+  await shop.catalog.create({ sku: "mug", name: "Mug", category: "kitchen", priceCents: 1200, stock: 3 });
+  await shop.catalog.create({ sku: "tee", name: "T-shirt", category: "clothing", priceCents: 2000, stock: 5 });
+  userId = (await shop.users.register({ email: "test@example.com", password: crypto.randomUUID() })).id;
+});
+afterAll(() => shop.close());
+
+const stockOf = async (sku: string) => (await shop.catalog.list()).find((product) => product.sku === sku)?.stock;
+
+describe("checkout", () => {
+  it("takes the stock and charges the right total", async () => {
+    const order = await shop.orders.checkout(userId, { items: [{ sku: "mug", quantity: 1 }] });
+    expect(order.totalCents).toBe(1200);
+    expect(await stockOf("mug")).toBe(2);
+  });
+
+  it("never oversells, even when customers check out at the same time", async () => {
+    const buy = () => shop.orders.checkout(userId, { items: [{ sku: "mug", quantity: 1 }] });
+    const results = await Promise.allSettled([buy(), buy(), buy(), buy()]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(2);
+    expect(await stockOf("mug")).toBe(0);
+  });
+
+  it("rolls back every line when one line fails", async () => {
+    const attempt = shop.orders.checkout(userId, { items: [{ sku: "tee", quantity: 2 }, { sku: "mug", quantity: 1 }] });
+    await expect(attempt).rejects.toThrow("Not enough stock for mug");
+    expect(await stockOf("tee")).toBe(5);
+  });
+
+  it("rejects invalid quantities before touching the database", async () => {
+    await expect(shop.orders.checkout(userId, { items: [{ sku: "tee", quantity: 0 }] })).rejects.toThrow("Validation failed");
+  });
+});
+</file>
+<shell>
+$ npx vitest run --reporter=verbose
+
+ RUN  v5.0.1 ~/shopflow
+
+ ✓ checkout.test.ts > checkout > takes the stock and charges the right total 18ms
+ ✓ checkout.test.ts > checkout > never oversells, even when customers check out at the same time 32ms
+ ✓ checkout.test.ts > checkout > rolls back every line when one line fails 5ms
+ ✓ checkout.test.ts > checkout > rejects invalid quantities before touching the database 1ms
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  15:18:06
+   Duration  7.32s (tests 84%, import 13%, transform 2%)
+</shell>
+<p>Each test file creates its own in-memory PostgreSQL, so tests never share data and need no database server. Break the checkout on purpose, for example by removing <code>AND stock &gt;= $1</code>, and watch the second test fail: that is how you know the test protects something.</p>
+</section>
+
+<section>
+<h2 id="milestones">Milestones</h2>
+<p>The core covers the hardest rule of the brief. Finish ShopFlow in these milestones. Each one is done when every acceptance criterion holds <em>and is covered by a test</em>. Keep the rules you have seen: validate every input with a schema, parameterized SQL only, permission checks at the edge, one transaction per unit of work, events after commit.</p>
+
+<h3>Milestone 1: complete accounts</h3>
+<ul>
+<li><code>POST /logout</code> deletes the session; the old token then gets 401.</li>
+<li>Expired sessions are refused, and a scheduled job with <code>@zudojs/scheduler</code> deletes them every night.</li>
+<li>Login is limited per IP <em>and</em> per e-mail: the sixth wrong password within a minute gets 429.</li>
+<li>Session tokens travel in an <code>HttpOnly; Secure; SameSite=Lax</code> cookie for browser clients, with CSRF protection from <code>@zudojs/security</code> on state-changing routes.</li>
+<li>Optional: "Sign in with GitHub" with <code>@zudojs/auth-oauth</code>, from <a href="/learn/zudo-oauth">the OAuth lesson</a>, linked to an existing account only by a verified e-mail.</li>
+</ul>
+
+<h3>Milestone 2: products and categories</h3>
+<ul>
+<li>A <code>categories</code> table replaces the fixed list; <code>GET /categories/:slug/products</code> lists one category, paginated with <code>LIMIT</code>.</li>
+<li><code>PATCH /products/:sku</code> (admin) changes name, price or category; the schema rejects unknown fields and a price of 0.</li>
+<li><code>POST /products/:sku/stock</code> (admin) adds or removes stock with a reason; every change writes an audit event in the same transaction.</li>
+<li>Past orders keep the price they were sold at, even after a price change.</li>
+</ul>
+
+<h3>Milestone 3: cart and orders</h3>
+<ul>
+<li>A cart lives in the database (<code>carts</code>, <code>cart_items</code>), so it survives a restart and works on two devices.</li>
+<li><code>GET /orders</code> returns only the caller's own orders, and <code>GET /orders/:id</code> answers 404, not 403, for someone else's order, so ids cannot be probed. Admins see every order.</li>
+<li><code>POST /orders/:id/cancel</code> puts the stock back and marks the order cancelled in one transaction, and only the owner or an admin may do it.</li>
+<li>A checkout request with an <code>Idempotency-Key</code> header that is sent twice creates one order.</li>
+</ul>
+
+<h3>Milestone 4: administration</h3>
+<ul>
+<li>A <code>support</code> role may read every order and cancel one, but may not touch products or roles.</li>
+<li>Only an admin may change a user's role, never their own, and the last admin cannot be demoted.</li>
+<li><code>GET /admin/audit</code> lists audit events with filters, and every admin action above appears in it.</li>
+</ul>
+
+<h3>Milestone 5: infrastructure</h3>
+<ul>
+<li>Configuration is read from the environment and checked at startup; a missing secret stops the app with a clear message.</li>
+<li>The receipt queue retries with backoff and moves a job that fails five times to the dead-letter list, which an admin endpoint can show.</li>
+<li><code>order.placed</code> is written to an outbox table in the checkout transaction and published by a relay, so no order is ever missed after a crash.</li>
+<li><code>/openapi.json</code> describes every route, generated from the routes with <code>@zudojs/openapi</code>, as in <a href="/learn/zudo-openapi">the OpenAPI lesson</a>.</li>
+<li>JSON logs carry a request id; metrics count requests, errors and checkout latency; each checkout is one trace.</li>
+<li><code>/health</code> and <code>/ready</code> behave as in Production engineering, and graceful shutdown finishes in-flight checkouts.</li>
+<li>The app runs with Docker Compose on real PostgreSQL and Redis, with Caddy in front, as in <a href="/learn/deployment">the deployment lesson</a>, and a backup has been restored.</li>
+</ul>
+
+<h3>Milestone 6: modules, then services</h3>
+<ul>
+<li>Move the code into a project from <code>zudojs create --architecture modular-monolith</code>, one module per area, each with its own PostgreSQL schema. A test fails if a module imports another module's private files.</li>
+<li>Extract <strong>payments</strong> first: it has the clearest boundary and the strictest security needs. Orders calls it over HTTP with a timeout and an idempotency key.</li>
+<li>Checkout becomes a saga: reserve stock, charge, confirm; a declined card releases the stock. A test simulates the payment service being down and checks that no stock stays reserved.</li>
+<li>Correlation ids and <code>traceparent</code> headers let you follow one checkout through both services.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Order history without leaking other people's orders">
+<p>Add <code>history(userId)</code> to the orders module: the caller's orders, newest first, each with its total. Then write the rule for <code>GET /orders/:id</code> in one sentence. Where must the check happen: in the SQL, or after loading the order?</p>
+<solution>
+<example file="history.ts" project="shopflow" browser="no">
+import type { PGlite } from "@electric-sql/pglite";
+import { NotFoundError } from "@zudojs/errors";
+
+export function createOrderHistory(db: PGlite) {
+  return {
+    async history(userId: number) {
+      const { rows } = await db.query<{ id: number; totalCents: number }>(
+        `SELECT id, total_cents AS "totalCents" FROM orders WHERE user_id = $1 ORDER BY id DESC LIMIT 50`,
+        [userId],
+      );
+      return rows;
+    },
+    async one(userId: number, orderId: number) {
+      const { rows } = await db.query<{ id: number; totalCents: number }>(
+        `SELECT id, total_cents AS "totalCents" FROM orders WHERE id = $1 AND user_id = $2`,
+        [orderId, userId],
+      );
+      if (!rows[0]) throw new NotFoundError(`No order ${orderId}`);
+      return rows[0];
+    },
+  };
+}
+</example>
+<p>The rule: a customer may read an order only if it is theirs. Put the owner in the SQL (<code>WHERE id = $1 AND user_id = $2</code>), so an order that is not yours is never even loaded, and answer 404 so nobody can learn which order ids exist. Loading by id alone and checking afterwards works too, but one forgotten check is a data leak; the SQL version cannot forget.</p>
+</solution>
+</exercise>
+<exercise title="Why not SELECT, then UPDATE?">
+<p>A teammate rewrites the checkout line as "<code>SELECT stock</code>, if it is enough then <code>UPDATE products SET stock = $new</code>". The tests still pass. Explain what goes wrong in production, and which test would catch it.</p>
+<solution>
+<p>Two checkouts for the last mug run at the same time. Both <code>SELECT</code> and see 1. Both decide it is enough. Both write <code>stock = 0</code>. Two mugs are sold, one exists. This is a <strong>race condition</strong>: the gap between reading and writing. The single <code>UPDATE … WHERE stock &gt;= $1</code> has no gap. The "never oversells" test with four parallel checkouts catches it on a real PostgreSQL server with several connections. PGlite runs one transaction at a time, so it can hide this race: run that test against real PostgreSQL in CI too.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>ShopFlow's core runs: hashed passwords, hashed session tokens, no role from the request, a permission check at every protected route, validated input, and errors that map to the right status by themselves.</li>
+<li>The checkout takes stock with one conditional <code>UPDATE</code> per line inside one transaction, so it never oversells and never leaves half an order. The database's <code>CHECK</code> is the last line of defence.</li>
+<li>Side effects (metrics, cache, receipt e-mail) hang off an event published after the commit, and the tests pin down the rules that matter.</li>
+<li>Six milestones take it from here to a complete shop, a modular monolith and finally services, each with criteria you can test.</li>
+</ul>
+<p>One step is left: a final challenge, where you find and fix the problems in an application someone else wrote.</p>
+</section>

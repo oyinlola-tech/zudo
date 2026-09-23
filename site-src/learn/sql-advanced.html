@@ -1,0 +1,417 @@
+---
+title: Joins, grouping and transactions
+description: Combine tables with joins, summarise data with group by and aggregates, filter groups with having, nest queries, control transactions yourself, measure queries with explain analyze, and connect Node.js to a real PostgreSQL server.
+minutes: 45
+youNeed: The SQL with PostgreSQL lesson
+youBuild: A task report with joins and aggregates, a measured index, and a Node.js script talking to your PostgreSQL server
+keywords: sql join, inner join, left join, group by, count sum avg, having, subquery, exists, begin commit rollback, explain analyze, query performance, index, node-postgres, pg package, DATABASE_URL
+---
+<section>
+<h2 id="data">The data for this lesson</h2>
+<p>Every example imports this module. It creates three users and their tasks. Each task has an <code>estimate</code> in minutes. Grace has no tasks at all, which will matter:</p>
+<example file="db.js" project="adv" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+export async function openDb() {
+  const db = new PGlite();
+  await db.exec(`
+    create table users (
+      id integer generated always as identity primary key,
+      name text not null
+    );
+    create table tasks (
+      id integer generated always as identity primary key,
+      user_id integer not null references users (id),
+      title text not null,
+      done boolean not null default false,
+      estimate integer not null
+    );
+    insert into users (name) values ('Ada'), ('Alan'), ('Grace');
+    insert into tasks (user_id, title, done, estimate) values
+      (1, 'Buy milk', true, 10),
+      (1, 'Write report', false, 120),
+      (1, 'Call the bank', false, 20),
+      (2, 'Fix bike', false, 60),
+      (2, 'Read book', true, 90);
+  `);
+  return db;
+}
+</example>
+</section>
+
+<section>
+<h2 id="joins">Joins: inner and left</h2>
+<p>The tasks table stores <code>user_id</code>, not the user's name. To show "Ada: Buy milk", you <strong>join</strong> the two tables: for each task, find the user row whose <code>id</code> equals the task's <code>user_id</code>, and put both side by side.</p>
+<ul>
+<li>An <strong>inner join</strong> (<code>join</code>) keeps only pairs that match. A user with no tasks disappears.</li>
+<li>A <strong>left join</strong> keeps every row of the left table (the one after <code>from</code>). When nothing matches on the right, the right side's columns are <code>null</code>.</li>
+</ul>
+<example file="joins.js" project="adv" browser="no">
+import { openDb } from "./db.js";
+
+const db = await openDb();
+
+const inner = await db.query(`
+  select users.name, tasks.title
+  from users
+  join tasks on tasks.user_id = users.id
+  where not tasks.done
+  order by users.name, tasks.id`);
+console.log(inner.rows);
+
+const left = await db.query(`
+  select u.name, t.title
+  from users u
+  left join tasks t on t.user_id = u.id and not t.done
+  order by u.name, t.id`);
+console.log(left.rows);
+await db.close();
+</example>
+<output>
+[
+  { name: 'Ada', title: 'Write report' },
+  { name: 'Ada', title: 'Call the bank' },
+  { name: 'Alan', title: 'Fix bike' }
+]
+[
+  { name: 'Ada', title: 'Write report' },
+  { name: 'Ada', title: 'Call the bank' },
+  { name: 'Alan', title: 'Fix bike' },
+  { name: 'Grace', title: null }
+]
+</output>
+<p>The inner join lists the three open tasks. The left join also lists Grace, with <code>title: null</code>, because she has no open tasks. Use a left join whenever "nothing on the right" is a valid answer you still want to see.</p>
+<p>The second query gives the tables short <strong>aliases</strong>, <code>users u</code> and <code>tasks t</code>, to save typing. Notice where the <code>not t.done</code> condition went: into the <code>on</code>. Had it been in a <code>where</code>, Grace's row (whose <code>t.done</code> is <code>null</code>) would have been filtered out, and the left join would behave like an inner join. It is a classic mistake.</p>
+</section>
+
+<section>
+<h2 id="grouping">Grouping and aggregates</h2>
+<p>An <strong>aggregate</strong> function turns many rows into one value: <code>count</code>, <code>sum</code>, <code>avg</code>, <code>min</code>, <code>max</code>. <code>group by</code> splits the rows into groups first, and the aggregate runs once per group. Here is a report with one row per user:</p>
+<example file="report.js" project="adv" browser="no">
+import { openDb } from "./db.js";
+
+const db = await openDb();
+const { rows } = await db.query(`
+  select u.name,
+         count(t.id) as tasks,
+         count(t.id) filter (where t.done) as done,
+         coalesce(sum(t.estimate), 0) as minutes,
+         avg(t.estimate) as average
+  from users u
+  left join tasks t on t.user_id = u.id
+  group by u.id, u.name
+  order by u.name`);
+console.log(rows);
+await db.close();
+</example>
+<output>
+[
+  {
+    name: 'Ada',
+    tasks: 3,
+    done: 1,
+    minutes: 150,
+    average: '50.0000000000000000'
+  },
+  {
+    name: 'Alan',
+    tasks: 2,
+    done: 1,
+    minutes: 150,
+    average: '75.0000000000000000'
+  },
+  { name: 'Grace', tasks: 0, done: 0, minutes: 0, average: null }
+]
+</output>
+<ul>
+<li><code>count(t.id)</code> counts rows where <code>t.id</code> is not null, so Grace gets 0. <code>count(*)</code> would count her one joined row and say 1.</li>
+<li><code>filter (where t.done)</code> makes an aggregate look only at some rows of the group.</li>
+<li><code>sum</code> of no rows is <code>null</code>, not 0. <code>coalesce(a, b)</code> returns the first value that is not null, so Grace gets 0 minutes.</li>
+<li><code>avg</code> returns an exact decimal type called <code>numeric</code>, and the driver hands it to JavaScript as a <strong>string</strong>, because a JavaScript number could lose digits. Round it in SQL and convert it when you want a number: <code>round(avg(t.estimate), 1)::float8</code>.</li>
+</ul>
+<p>Every column in the <code>select</code> must be either inside an aggregate or listed in <code>group by</code>. Otherwise PostgreSQL would not know which of the group's many values to show, and it refuses the query.</p>
+</section>
+
+<section>
+<h2 id="having">having: filtering groups</h2>
+<p><code>where</code> filters rows <em>before</em> grouping. <code>having</code> filters groups <em>after</em>, so it can use aggregates. Which users have more than an hour of open work?</p>
+<example file="having.js" project="adv" browser="no">
+import { openDb } from "./db.js";
+
+const db = await openDb();
+const { rows } = await db.query(
+  `select u.name, sum(t.estimate) as open_minutes
+   from users u
+   join tasks t on t.user_id = u.id
+   where not t.done
+   group by u.id, u.name
+   having sum(t.estimate) > $1
+   order by open_minutes desc`,
+  [60],
+);
+console.log(rows);
+await db.close();
+</example>
+<output>
+[ { name: 'Ada', open_minutes: 140 } ]
+</output>
+<p>Alan's open work is exactly 60 minutes, which is not more than 60, so only Ada is left. The order in which PostgreSQL works through a query is: <code>from</code> and joins, <code>where</code>, <code>group by</code>, <code>having</code>, <code>select</code>, <code>order by</code>, <code>limit</code>. That is why <code>order by</code> may use the alias <code>open_minutes</code> but <code>having</code> must repeat <code>sum(t.estimate)</code>.</p>
+</section>
+
+<section>
+<h2 id="subqueries">Subqueries</h2>
+<p>A <strong>subquery</strong> is a query inside another query, in parentheses. It can produce one value, a list, or a yes/no answer:</p>
+<example file="subqueries.js" project="adv" browser="no">
+import { openDb } from "./db.js";
+
+const db = await openDb();
+
+const long = await db.query(`
+  select title, estimate from tasks
+  where estimate > (select avg(estimate) from tasks)
+  order by estimate desc`);
+console.log(long.rows);
+
+const idle = await db.query(`
+  select name from users u
+  where not exists (select 1 from tasks t where t.user_id = u.id and not t.done)`);
+console.log(idle.rows);
+await db.close();
+</example>
+<output>
+[
+  { title: 'Write report', estimate: 120 },
+  { title: 'Read book', estimate: 90 }
+]
+[ { name: 'Grace' } ]
+</output>
+<p>The first subquery computes one value, the average estimate (60), and the outer query keeps tasks above it. The second is <strong>correlated</strong>: it refers to <code>u.id</code> from the outer query, so it runs for each user and asks "does this user have any open task?". <code>not exists</code> keeps the users for whom the answer is no. Grace has no tasks at all, so she has no open tasks either.</p>
+</section>
+
+<section>
+<h2 id="transactions">Transactions with begin, commit and rollback</h2>
+<p>In <a href="/learn/databases">How databases work</a> you used <code>db.transaction</code>. Underneath, it sends three SQL commands, and you can send them yourself:</p>
+<ul>
+<li><code>begin</code> starts a transaction.</li>
+<li><code>commit</code> saves every change since <code>begin</code>, all at once.</li>
+<li><code>rollback</code> throws every change since <code>begin</code> away.</li>
+</ul>
+<example file="begin.js" project="adv" browser="no">
+import { openDb } from "./db.js";
+
+const db = await openDb();
+const count = async () => (await db.query("select count(*) as n from tasks")).rows[0].n;
+
+await db.exec("begin");
+await db.query("delete from tasks where user_id = $1", [1]);
+console.log("inside the transaction:", await count());
+await db.exec("rollback");
+console.log("after rollback:", await count());
+
+await db.transaction(async (tx) => {
+  await tx.query("update tasks set done = true where user_id = $1", [2]);
+  const { rows } = await tx.query("select count(*) as n from tasks where not done");
+  if (rows[0].n < 3) {
+    await tx.rollback();
+  }
+});
+console.log("open tasks:", (await db.query("select count(*) as n from tasks where not done")).rows[0].n);
+await db.close();
+</example>
+<output>
+inside the transaction: 2
+after rollback: 5
+open tasks: 3
+</output>
+<p>The delete really happened inside the transaction: the count dropped to 2. <code>rollback</code> brought all three of Ada's tasks back. In the second part, the function decided the result was not acceptable and called <code>tx.rollback()</code> itself, so Alan's tasks are still open.</p>
+<warn title="One connection per transaction">A transaction belongs to one database connection. PGlite has only one, so the <code>begin</code> above is safe. A real server app uses a <strong>pool</strong> of connections, and two <code>pool.query</code> calls may go out on two different connections. With the <code>pg</code> package below, take one client with <code>pool.connect()</code>, run <code>begin</code>, your queries and <code>commit</code> on that client, and <code>release()</code> it at the end. ZudoJS does this for you in <a href="/learn/zudo-transactions">the transactions lesson</a>.</warn>
+</section>
+
+<section>
+<h2 id="performance">Indexes and query performance</h2>
+<p><a href="/learn/databases">How databases work</a> showed that <code>explain</code> prints the plan. <code>explain analyze</code> goes further: it <strong>runs</strong> the query and reports what really happened, including the time. Here is a table of 200,000 tasks and a query for one user's open tasks, before and after an index:</p>
+<example file="explain.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table tasks (id integer primary key, user_id integer not null, done boolean not null, title text not null);
+  insert into tasks select n, n % 2000, n % 3 = 0, 'Task ' || n from generate_series(1, 200000) as n;
+  analyze tasks;
+`);
+
+async function explain() {
+  const { rows } = await db.query(
+    "explain (analyze, costs off, timing off, buffers off) select id, title from tasks where user_id = 42 and not done",
+  );
+  console.log(rows.map((r) => r["QUERY PLAN"]).join("\n"));
+}
+
+await explain();
+await db.exec("create index tasks_user_done_idx on tasks (user_id, done)");
+console.log("--- with an index on (user_id, done) ---");
+await explain();
+await db.close();
+</example>
+<output mask="ms">
+Seq Scan on tasks (actual rows=66.00 loops=1)
+  Filter: ((NOT done) AND (user_id = 42))
+  Rows Removed by Filter: 199934
+Planning Time: 0.843 ms
+Execution Time: 113.300 ms
+--- with an index on (user_id, done) ---
+Bitmap Heap Scan on tasks (actual rows=66.00 loops=1)
+  Recheck Cond: ((user_id = 42) AND (NOT done))
+  Heap Blocks: exact=66
+  ->  Bitmap Index Scan on tasks_user_done_idx (actual rows=66.00 loops=1)
+        Index Cond: ((user_id = 42) AND (done = false))
+        Index Searches: 1
+Planning Time: 0.977 ms
+Execution Time: 0.402 ms
+</output>
+<p>Read a plan from the most indented line outwards:</p>
+<ul>
+<li><strong>Before</strong>: a <code>Seq Scan</code> read the whole table. <code>Rows Removed by Filter</code> shows it looked at almost 200,000 rows to keep 66.</li>
+<li><strong>After</strong>: the <code>Bitmap Index Scan</code> found the 66 matching entries in the index, and the heap scan fetched only those rows.</li>
+<li><code>Execution Time</code> is the real time the query took. Your numbers will differ from the ones shown, but the index version is many times faster, and the gap grows with the table.</li>
+</ul>
+<p>The index covers two columns, <code>(user_id, done)</code>, in the same order the query filters by. A <strong>composite index</strong> like this can serve queries on <code>user_id</code> alone too, but not queries on <code>done</code> alone. We turned off per-step timing and cost estimates (<code>timing off, costs off</code>) only to keep the output short; plain <code>explain analyze</code> shows them.</p>
+<tip>When an endpoint is slow, copy its SQL, put <code>explain analyze</code> in front of it in psql, and look for a <code>Seq Scan</code> on a big table with a large <code>Rows Removed by Filter</code>. That is usually the missing index.</tip>
+</section>
+
+<section>
+<h2 id="node-postgres">Connect Node.js to your PostgreSQL server</h2>
+<p>PGlite runs inside your program. To talk to the real server you started in <a href="/learn/sql-basics">the last lesson</a>, use the <code>pg</code> package (also called node-postgres). It is the most used PostgreSQL driver for Node.js. Make a project next to your other ones:</p>
+<shell>
+$ mkdir task-pg
+$ cd task-pg
+$ npm init -y
+Wrote to ~/task-pg/package.json:
+…
+$ npm pkg set type=module
+$ npm install pg
+added 14 packages, and audited 15 packages in 5s
+
+found 0 vulnerabilities
+</shell>
+<p>Where the database is and how to log in is <strong>configuration</strong>, and the password is a secret, so neither belongs in your code. The convention is one environment variable, <code>DATABASE_URL</code>, holding a connection URL: <code>postgres://user:password@host:port/database</code>. The program refuses to start without it:</p>
+<example file="tasks.js" browser="no" check="skip">
+import pg from "pg";
+
+const url = process.env.DATABASE_URL;
+if (!url) {
+  console.error("DATABASE_URL is not set");
+  process.exit(1);
+}
+
+const pool = new pg.Pool({ connectionString: url });
+
+const done = process.argv[2] === "done";
+const { rows } = await pool.query("select id, title, done from tasks where done = $1 order by id", [done]);
+console.log(rows);
+
+const count = await pool.query("select count(*) as n from tasks");
+console.log(count.rows[0]);
+
+await pool.end();
+</example>
+<p>A <strong>pool</strong> keeps a few connections open and lends one to each query, because opening a new connection for every request is slow. <code>pool.query</code> takes the same <code>$1</code> placeholders as PGlite. <code>pool.end()</code> closes the connections so the program can exit; a server would keep the pool for its whole life.</p>
+<p>Run it, first without the variable, then with it. The URL is built from <code>PGPASSWORD</code>, which you set in the last lesson, and points at the <code>taskdb</code> database you made with psql:</p>
+<shell>
+$ node tasks.js
+DATABASE_URL is not set
+$ export DATABASE_URL="postgres://postgres:$PGPASSWORD@localhost:5434/taskdb"
+$ node tasks.js
+[
+  { id: 1, title: 'Buy milk', done: false },
+  { id: 2, title: 'Write report', done: false }
+]
+{ n: '2' }
+$ node tasks.js done
+[]
+{ n: '2' }
+</shell>
+<p>These are the two rows you inserted with psql. Look at the count: <code>'2'</code>, a string. <code>count</code> returns a 64-bit integer (<code>bigint</code>), which can be larger than JavaScript numbers can hold exactly, so <code>pg</code> returns it as text. Write <code>count(*)::int</code> when you know the number is small, or convert it with <code>Number(...)</code>. PGlite converts it for you, which is why the examples above printed plain numbers.</p>
+<p>Use port 5432 in the URL if that is where your server listens. A wrong password fails with <code>password authentication failed for user "postgres"</code>.</p>
+<p>When you are finished with the Docker server, stop and delete it (its data goes with it):</p>
+<shell>
+$ docker stop pg
+pg
+$ docker rm pg
+pg
+# optional: also delete the downloaded image to free disk space
+$ docker rmi postgres:17
+Untagged: postgres:17
+Untagged: postgres@sha256:f4c66b820c6f974249089d3d16d86a3698eae11e8746eb6644b2271031e91232
+Deleted: sha256:212aeeeb8faaef6c46498d86cbec6b9344d8d9492996b174664ff82c562ab685
+…
+</shell>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Tasks per user, busiest first">
+<p>Write one query that lists every user with their number of <strong>open</strong> tasks, including users with none, busiest first, then by name. Return plain numbers.</p>
+<solution>
+<example file="busiest.js" project="adv" browser="no">
+import { openDb } from "./db.js";
+
+const db = await openDb();
+const { rows } = await db.query(`
+  select u.name, count(t.id)::int as open
+  from users u
+  left join tasks t on t.user_id = u.id and not t.done
+  group by u.id, u.name
+  order by open desc, u.name`);
+console.log(rows);
+await db.close();
+</example>
+<output>
+[
+  { name: 'Ada', open: 2 },
+  { name: 'Alan', open: 1 },
+  { name: 'Grace', open: 0 }
+]
+</output>
+<p>The <code>not t.done</code> condition sits in the <code>on</code>, so Grace keeps her row, with 0.</p>
+</solution>
+</exercise>
+
+<exercise title="The biggest task of each user">
+<p>For each user who has tasks, show the title of their task with the largest estimate. Hint: a correlated subquery can compare a task's estimate with the maximum for the same user.</p>
+<solution>
+<example file="biggest.js" project="adv" browser="no">
+import { openDb } from "./db.js";
+
+const db = await openDb();
+const { rows } = await db.query(`
+  select u.name, t.title, t.estimate
+  from tasks t
+  join users u on u.id = t.user_id
+  where t.estimate = (select max(estimate) from tasks where user_id = t.user_id)
+  order by u.name`);
+console.log(rows);
+await db.close();
+</example>
+<output>
+[
+  { name: 'Ada', title: 'Write report', estimate: 120 },
+  { name: 'Alan', title: 'Read book', estimate: 90 }
+]
+</output>
+<p>If two tasks of one user tie for the largest estimate, both are shown.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li><code>join</code> keeps matching pairs; <code>left join</code> keeps every left row and fills the right with <code>null</code>. Conditions on the right table of a left join go in <code>on</code>.</li>
+<li><code>group by</code> with <code>count</code>, <code>sum</code>, <code>avg</code> summarises groups. <code>having</code> filters groups; <code>where</code> filters rows before grouping.</li>
+<li>Subqueries produce a value, a list or an exists-test; correlated ones refer to the outer row.</li>
+<li><code>begin</code>, <code>commit</code>, <code>rollback</code> control a transaction, and a transaction lives on one connection.</li>
+<li><code>explain analyze</code> runs a query and shows its real plan and time. A <code>Seq Scan</code> that removes most rows asks for an index.</li>
+<li>Connect with <code>pg</code> and a <code>Pool</code>, read <code>DATABASE_URL</code> from the environment, and remember that <code>bigint</code> and <code>numeric</code> arrive as strings.</li>
+</ul>
+</section>

@@ -1,0 +1,488 @@
+---
+title: Commands and queries (CQRS)
+description: Split the Task API's operations into commands that change data and queries that only read it. Command and query buses, handlers, middleware, execution context, results, and when CQRS is worth it, with @zudojs/cqrs.
+minutes: 40
+youNeed: The events and messaging lessons
+youBuild: The Task API's task operations as commands and queries, with the user taken from a trusted context
+keywords: zudojs cqrs, command query responsibility segregation, command bus, query bus, command handler, query handler, execution context, cqrs middleware, CommandOf, QueryOf
+---
+<section>
+<h2 id="idea">One rule: change or read, never both</h2>
+<p><strong>CQRS</strong> stands for Command Query Responsibility Segregation. The name is long; the rule is short. Every operation in your application is one of two kinds:</p>
+<ul>
+<li>A <strong>command</strong> asks for a change: "create a task", "complete task 7". It may change data, and it usually returns little: an id, or nothing.</li>
+<li>A <strong>query</strong> asks for data: "list my open tasks". It must <em>not</em> change anything. You can run it twice, or a hundred times, and nothing in the world is different afterwards.</li>
+</ul>
+<p>Why keep them apart? Because the two sides have different needs. A command must check permissions, validate input, run in a transaction and publish events. A query must be fast, and is shaped for one screen, often served from the cache you built in <a href="/learn/zudo-cache">the caching lesson</a>. Mixing both in one method makes both harder. And when a query can never change anything, you can cache it, retry it and run it anywhere without fear.</p>
+<p>In code, a command and a query are plain objects with a <code>type</code> string. A <strong>handler</strong> is the function that does the work for one type. A <strong>bus</strong> is the router between them: <code>bus.execute(command)</code> finds the handler by the type and runs it. This is the messaging idea from <a href="/learn/zudo-messaging">the previous lesson</a>, specialised: each type has exactly one handler, and the result comes straight back.</p>
+</section>
+
+<section>
+<h2 id="install">Install @zudojs/cqrs</h2>
+<shell>
+$ npm install @zudojs/cqrs
+
+added 1 package, and audited 76 packages in 2s
+…
+</shell>
+<p>It builds on <code>@zudojs/events</code>, which your project already has. Every example runs in the browser terminal, and on your computer with <code>npx tsx src/&lt;file&gt;.ts</code>.</p>
+</section>
+
+<section>
+<h2 id="first">Your first command and query</h2>
+<p><code>CommandOf</code> and <code>QueryOf</code> describe the shape: a <code>type</code> plus the data. The type arguments on <code>register</code> and <code>execute</code> tell TypeScript what goes in and what comes back:</p>
+<example file="first.ts">
+import { createCommandBus, createQueryBus } from "@zudojs/cqrs";
+import type { CommandOf, QueryOf } from "@zudojs/cqrs";
+
+interface Task {
+  readonly id: number;
+  readonly title: string;
+  readonly done: boolean;
+}
+
+type CreateTask = CommandOf<"CreateTask", { title: string }>;
+type ListTasks = QueryOf<"ListTasks">;
+
+const tasks: Task[] = [];
+const commands = createCommandBus();
+const queries = createQueryBus();
+
+commands.register<CreateTask, { id: number }>("CreateTask", (command) => {
+  const task: Task = { id: tasks.length + 1, title: command.title, done: false };
+  tasks.push(task);
+  return { id: task.id };
+});
+
+queries.register<ListTasks, readonly Task[]>("ListTasks", () => tasks);
+
+const created = await commands.execute<CreateTask, { id: number }>({ type: "CreateTask", title: "Buy milk" });
+console.log("created:", created);
+
+const list = await queries.execute<ListTasks, readonly Task[]>({ type: "ListTasks" });
+console.log("list:", list);
+</example>
+<output>
+created: { id: 1 }
+list: [ { id: 1, title: 'Buy milk', done: false } ]
+</output>
+<p>The code that calls <code>execute</code> never touches the <code>tasks</code> array. Only the handlers do. The command returned just the new id. If the caller wants the whole task, it asks with a query.</p>
+<p>Commands are named as orders, in the imperative: <code>CreateTask</code>, <code>CompleteTask</code>. Compare the events from <a href="/learn/zudo-events">the events lesson</a>, named in the past tense: <code>task.completed</code>. A command can be refused. An event already happened.</p>
+</section>
+
+<section>
+<h2 id="buses">One handler per type</h2>
+<p>On a command or query bus, each type has exactly one handler. That makes sense: "complete task 7" should be done once, by one piece of code, not by whoever happens to listen. The bus enforces it, and tells you clearly when a type has no handler:</p>
+<example file="buses.ts">
+import { CommandHandlerNotFoundError, createCommandBus, createCommand, DuplicateHandlerError } from "@zudojs/cqrs";
+
+const bus = createCommandBus();
+bus.register("CompleteTask", () => "completed");
+
+try {
+  bus.register("CompleteTask", () => "completed twice");
+} catch (error) {
+  if (error instanceof DuplicateHandlerError) console.log(error.message);
+}
+
+try {
+  await bus.execute({ type: "CompleteTsk" });
+} catch (error) {
+  if (error instanceof CommandHandlerNotFoundError) console.log(error.statusCode, error.message);
+}
+
+console.log(bus.size(), bus.has("CompleteTask"), bus.getCommandTypes());
+
+const command = createCommand("CompleteTask", { taskId: 7, type: "DeleteAllTasks" });
+console.log(command, Object.isFrozen(command));
+</example>
+<output>
+A command handler is already registered for "CompleteTask".
+500 No command handler is registered for "CompleteTsk".
+1 true [ 'CompleteTask' ]
+{ taskId: 7, type: 'CompleteTask' } true
+</output>
+<ul>
+<li>A second handler for the same type throws <code>DuplicateHandlerError</code> at registration, while the app starts.</li>
+<li>A typo in the type throws <code>CommandHandlerNotFoundError</code>. Compare the message bus, where a message nobody handled counted as a success. Here a missing handler is a bug, and a status of 500 says so.</li>
+<li><code>createCommand(type, data)</code> builds a frozen command. The type you pass always wins, even when the data has its own <code>type</code> field. That matters when the data comes from a request body: a client cannot turn a <code>CompleteTask</code> into a <code>DeleteAllTasks</code>.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="handlers">Handlers as classes</h2>
+<p>A handler can be a plain function, as above, or a class. A class can receive its dependencies (a repository, the event bus) in its constructor, which is how you wire it up with the container from <a href="/learn/zudo-container">the dependency injection lesson</a>:</p>
+<example file="class-handler.ts">
+import { CommandHandler, createCommandBus } from "@zudojs/cqrs";
+import type { CommandOf } from "@zudojs/cqrs";
+import { NotFoundError } from "@zudojs/errors";
+
+type CompleteTask = CommandOf<"CompleteTask", { taskId: number }>;
+
+interface TaskRow {
+  id: number;
+  title: string;
+  done: boolean;
+}
+
+class CompleteTaskHandler extends CommandHandler<CompleteTask, void> {
+  readonly commandType = "CompleteTask";
+
+  constructor(private readonly rows: Map<number, TaskRow>) {
+    super();
+  }
+
+  execute(command: CompleteTask): void {
+    const row = this.rows.get(command.taskId);
+    if (!row) throw new NotFoundError(`Task ${command.taskId} not found`);
+    row.done = true;
+  }
+}
+
+const rows = new Map([[1, { id: 1, title: "Buy milk", done: false }]]);
+const bus = createCommandBus().register("CompleteTask", new CompleteTaskHandler(rows));
+
+await bus.execute<CompleteTask>({ type: "CompleteTask", taskId: 1 });
+console.log(rows.get(1));
+
+try {
+  await bus.execute<CompleteTask>({ type: "CompleteTask", taskId: 9 });
+} catch (error) {
+  if (error instanceof NotFoundError) console.log(error.statusCode, error.message);
+}
+</example>
+<output>
+{ id: 1, title: 'Buy milk', done: true }
+404 Task 9 not found
+</output>
+<p>An error thrown by a handler comes straight out of <code>execute</code>, unchanged. The <code>NotFoundError</code> from <a href="/learn/zudo-errors">the errors lesson</a> still carries its 404, so your HTTP layer can turn it into the right response. Unlike the message bus, there is no result object to check: <code>execute</code> either returns the handler's value or throws.</p>
+</section>
+
+<section>
+<h2 id="context">The execution context: who is asking</h2>
+<p>Every <code>execute</code> call can take a second argument, the <strong>execution context</strong>. It rides along with the command and says <em>who</em> is asking (<code>userId</code>, <code>tenantId</code>), <em>where</em> it came from (<code>source</code>), and which ids tie it to other work (<code>requestId</code>, <code>correlationId</code>, <code>causationId</code>, the same ideas as in the messaging lesson).</p>
+<p>This matters for security. Look at this command first:</p>
+<example file="insecure.ts">
+import { createCommandBus } from "@zudojs/cqrs";
+import type { CommandOf } from "@zudojs/cqrs";
+
+type CompleteTask = CommandOf<"CompleteTask", { taskId: number; userId: string }>;
+
+const owners = new Map([[1, "ada"]]);
+const bus = createCommandBus();
+
+bus.register<CompleteTask, string>("CompleteTask", (command) => {
+  if (owners.get(command.taskId) !== command.userId) return "refused";
+  return `task ${command.taskId} completed for ${command.userId}`;
+});
+
+const body = JSON.parse('{ "taskId": 1, "userId": "ada" }');
+console.log(await bus.execute<CompleteTask, string>({ ...body, type: "CompleteTask" }));
+</example>
+<output>
+task 1 completed for ada
+</output>
+<warn title="THIS IS A SECURITY HOLE">The ownership check compares the task owner with <code>command.userId</code>, and <code>userId</code> came from the request body. Linus, logged in as himself, sends <code>{"taskId": 1, "userId": "ada"}</code> and completes Ada's task. The check passes because he chose the value it checks. Who is asking must never come from data the client sends. It comes from the verified login, as in <a href="/learn/zudo-auth">the authentication lesson</a>.</warn>
+<p>The fix: the HTTP layer reads the user from the verified token and puts it in the context. The command carries only what the client is allowed to choose, the task id:</p>
+<example file="secure.ts">
+import { createCommandBus, createExecutionContext, withUser } from "@zudojs/cqrs";
+import type { CommandOf } from "@zudojs/cqrs";
+import { AuthenticationError, NotFoundError } from "@zudojs/errors";
+
+type CompleteTask = CommandOf<"CompleteTask", { taskId: number }>;
+
+const owners = new Map([[1, "ada"]]);
+const bus = createCommandBus();
+
+bus.register<CompleteTask, string>("CompleteTask", (command, context) => {
+  const userId = context?.userId;
+  if (!userId) throw new AuthenticationError("Sign in first");
+  if (owners.get(command.taskId) !== userId) throw new NotFoundError(`Task ${command.taskId} not found`);
+  return `task ${command.taskId} completed for ${userId}`;
+});
+
+const request = createExecutionContext({ source: "http", correlationId: "req-7f3a" });
+const asLinus = withUser(request, "linus");
+const asAda = withUser(request, "ada");
+const command: CompleteTask = { type: "CompleteTask", taskId: 1 };
+
+for (const [who, context] of [["linus", asLinus], ["ada", asAda], ["nobody", request]] as const) {
+  try {
+    console.log(who, "->", await bus.execute<CompleteTask, string>(command, context));
+  } catch (error) {
+    if (error instanceof Error) console.log(who, "->", error.name, error.message);
+  }
+}
+</example>
+<output>
+linus -> NotFoundError Task 1 not found
+ada -> task 1 completed for ada
+nobody -> AuthenticationError Sign in first
+</output>
+<ul>
+<li><code>createExecutionContext</code> builds a frozen context and gives it a fresh <code>requestId</code>. <code>withUser</code> returns a <em>new</em> context with the user set. Nothing is changed in place.</li>
+<li>Linus gets a 404, not a 403. Saying "forbidden" would confirm that task 1 exists. "Not found" tells an outsider nothing.</li>
+<li>No user at all is a 401, <code>AuthenticationError</code>.</li>
+</ul>
+<p>When a command causes another one, <code>createChildExecutionContext(parent)</code> keeps the user and the correlation id and records the parent's <code>requestId</code> as the <code>causationId</code>.</p>
+</section>
+
+<section>
+<h2 id="middleware">Middleware on the buses</h2>
+<p>CQRS middleware wraps every command or query on a bus. It receives the request, the context and <code>next</code>. Its signature differs a little from the event and message middleware: you pass the request and context on, as <code>next(request, context)</code>. The package also ships ready-made middleware:</p>
+<example file="middleware.ts">
+import { createCommandBus, errorMiddleware, onErrorMiddleware, timingMiddleware } from "@zudojs/cqrs";
+import type { CqrsMiddleware } from "@zudojs/cqrs";
+
+const audit: CqrsMiddleware = async (request, context, next) => {
+  console.log(`audit: ${context?.userId ?? "anonymous"} runs ${request.type}`);
+  return next(request, context);
+};
+
+const timing = timingMiddleware({
+  onTiming: ({ request, succeeded }) => console.log(`timing: ${request.type} ok=${succeeded}`),
+});
+
+const bus = createCommandBus({ middleware: [audit, timing, errorMiddleware()] });
+bus.use(onErrorMiddleware((request, error) => {
+  console.log(`error: ${request.type} failed: ${error instanceof Error ? error.message : error}`);
+}));
+
+bus.register("CreateTask", () => ({ id: 1 }));
+bus.register("ExportTasks", () => {
+  throw new Error("connection to the database was reset");
+});
+
+console.log(await bus.execute({ type: "CreateTask" }, { userId: "ada" }));
+try {
+  await bus.execute({ type: "ExportTasks" }, { userId: "ada" });
+} catch (error) {
+  if (error instanceof Error) console.log("caller sees:", error.name, error.message);
+}
+console.log("timed so far:", timing.count);
+</example>
+<output>
+audit: ada runs CreateTask
+timing: CreateTask ok=true
+{ id: 1 }
+audit: ada runs ExportTasks
+error: ExportTasks failed: connection to the database was reset
+timing: ExportTasks ok=false
+caller sees: CqrsError connection to the database was reset
+timed so far: 2
+</output>
+<ul>
+<li>Middleware runs in the order you list it. <code>bus.use</code> adds one more at the end, closest to the handler.</li>
+<li><code>timingMiddleware</code> measures every request. Pass the numbers to your metrics in <a href="/learn/zudo-observability">the observability lesson</a>.</li>
+<li><code>errorMiddleware()</code> wraps unexpected errors, like this plain <code>Error</code>, in a <code>CqrsError</code> with status 500 whose <code>expose</code> flag is <code>false</code>, so your HTTP layer sends a generic message instead of the database's. Errors from <code>@zudojs/errors</code>, such as <code>NotFoundError</code>, pass through unchanged.</li>
+<li><code>onErrorMiddleware(fn)</code> calls <code>fn</code> for every failure, then re-throws it. Log there.</li>
+</ul>
+<warn title="CALL NEXT ONCE">A middleware must call <code>next</code> at most once. A second call throws. Not calling it at all skips the handler silently, which is only right for a guard that throws or returns a deliberate answer.</warn>
+</section>
+
+<section>
+<h2 id="results">What a command returns</h2>
+<p>You have seen the answer: <code>execute</code> returns whatever the handler returns, and throws whatever it throws. Keep command results small, usually the id of what was created. If you want every command to return the same explicit shape, with a status and a time, the package has an optional <strong>result type</strong>:</p>
+<example file="results.ts">
+import { createCommand, createCommandResult, createFailedCommandResult, isSuccessfulCommandResult } from "@zudojs/cqrs";
+
+const command = createCommand("CreateTask", { title: "Buy milk" });
+
+const ok = createCommandResult({ id: 1 }, { command, durationMs: 3 });
+console.log(ok.status, ok.commandType, ok.result, isSuccessfulCommandResult(ok));
+
+const refused = createFailedCommandResult({ reason: "Title already used" }, { command });
+console.log(refused.status, refused.result, isSuccessfulCommandResult(refused));
+</example>
+<output>
+success CreateTask { id: 1 } true
+failure { reason: 'Title already used' } false
+</output>
+<p>The buses do not create these for you. A handler that wants them returns one. Always check <code>status</code> (or <code>isSuccessfulCommandResult</code>) before you use <code>result</code>: <code>unwrapCommandResult(refused)</code> gives you <code>{ reason: … }</code> without complaining, because it only reads the <code>result</code> field. In most apps, throwing an error from <code>@zudojs/errors</code> is simpler and is what the rest of this course does.</p>
+</section>
+
+<section>
+<h2 id="task-api">Put it together: the Task API with CQRS</h2>
+<p>Here are the Task API's task operations as two commands and a query. The command handler for <code>CompleteTask</code> publishes the <code>task.completed</code> event from the events lesson after the change is saved, so emails, statistics and cache clearing happen without the handler knowing about them. The query is a plain read:</p>
+<example file="tasks.cqrs.ts" project="cqrs">
+import { createCommandBus, createQueryBus } from "@zudojs/cqrs";
+import type { CommandOf, CqrsContext, QueryOf } from "@zudojs/cqrs";
+import { AuthenticationError, NotFoundError } from "@zudojs/errors";
+import type { EventBus } from "@zudojs/events";
+
+export interface Task { readonly id: number; readonly userId: string; readonly title: string; done: boolean }
+export type CreateTask = CommandOf<"CreateTask", { title: string }>;
+export type CompleteTask = CommandOf<"CompleteTask", { taskId: number }>;
+export type ListTasks = QueryOf<"ListTasks", { onlyOpen: boolean }>;
+
+function requireUser(context?: CqrsContext): string {
+  if (!context?.userId) throw new AuthenticationError("Sign in first");
+  return context.userId;
+}
+
+export function createTaskBuses(events: EventBus) {
+  const rows = new Map<number, Task>();
+  const commands = createCommandBus();
+  const queries = createQueryBus();
+
+  commands.register<CreateTask, { id: number }>("CreateTask", (command, context) => {
+    const task: Task = { id: rows.size + 1, userId: requireUser(context), title: command.title, done: false };
+    rows.set(task.id, task);
+    return { id: task.id };
+  });
+
+  commands.register<CompleteTask, void>("CompleteTask", async (command, context) => {
+    const userId = requireUser(context);
+    const task = rows.get(command.taskId);
+    if (!task || task.userId !== userId) throw new NotFoundError(`Task ${command.taskId} not found`);
+    task.done = true;
+    await events.publishEvent({ type: "task.completed", payload: { taskId: task.id, userId } });
+  });
+
+  queries.register<ListTasks, Task[]>("ListTasks", (query, context) => {
+    const userId = requireUser(context);
+    return [...rows.values()].filter((t) => t.userId === userId && (!query.onlyOpen || !t.done));
+  });
+
+  return { commands, queries };
+}
+</example>
+<example file="main.ts" project="cqrs">
+import { createExecutionContext, withUser } from "@zudojs/cqrs";
+import { createEventBus } from "@zudojs/events";
+import { createTaskBuses } from "./tasks.cqrs.js";
+import type { CompleteTask, CreateTask, ListTasks, Task } from "./tasks.cqrs.js";
+
+const events = createEventBus();
+events.on("task.completed", (event) => console.log("event:", event.type, event.payload));
+const { commands, queries } = createTaskBuses(events);
+
+const ada = withUser(createExecutionContext({ source: "http" }), "ada");
+
+await commands.execute<CreateTask, { id: number }>({ type: "CreateTask", title: "Buy milk" }, ada);
+await commands.execute<CreateTask, { id: number }>({ type: "CreateTask", title: "Write report" }, ada);
+await commands.execute<CompleteTask>({ type: "CompleteTask", taskId: 1 }, ada);
+
+const open = await queries.execute<ListTasks, Task[]>({ type: "ListTasks", onlyOpen: true }, ada);
+console.log("open:", open.map((t) => t.title));
+const all = await queries.execute<ListTasks, Task[]>({ type: "ListTasks", onlyOpen: false }, ada);
+console.log("all:", all.map((t) => `${t.title} (${t.done ? "done" : "open"})`));
+</example>
+<output>
+event: task.completed { taskId: 1, userId: 'ada' }
+open: [ 'Write report' ]
+all: [ 'Buy milk (done)', 'Write report (open)' ]
+</output>
+<p>In the real Task API, the route for <code>POST /tasks/:id/complete</code> becomes three lines: build the context from the verified user, build the command from the validated path parameter, and <code>execute</code>. Every rule lives in one handler, and every command passes through the same audit, timing and error middleware.</p>
+</section>
+
+<section>
+<h2 id="when">When to use CQRS, and when not</h2>
+<p>CQRS is a tool, not a rule for every project. It adds a bus, a type per operation and a handler per type. That pays off when:</p>
+<ul>
+<li>You have many operations, and you want each in its own small, testable handler.</li>
+<li>You want one place to audit, time, lock or authorize every change.</li>
+<li>Reads and writes grow apart: writes need strict rules and transactions, reads need speed, caching, or a separate read-optimised table.</li>
+</ul>
+<p>Skip it when:</p>
+<ul>
+<li>The app is small, or mostly simple create-read-update-delete. A service class with methods, like the <code>TaskService</code> you already have, is clearer.</li>
+<li>You would only be adding a bus between a route and a single function call. Indirection costs reading time.</li>
+</ul>
+<p>You may also read about CQRS with <em>separate databases</em> for reads and writes, kept in sync by events. That is an advanced version for large systems. The simple split you learned here, commands versus queries in one database, gives most of the benefit.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Add RenameTask">
+<p>Add a <code>RenameTask</code> command with <code>taskId</code> and <code>title</code>. It must refuse a title shorter than 3 characters with a <code>ValidationError</code> from <code>@zudojs/errors</code>, and must only rename the caller's own task.</p>
+<solution>
+<example file="rename.ts">
+import { createCommandBus, createExecutionContext, withUser } from "@zudojs/cqrs";
+import type { CommandOf } from "@zudojs/cqrs";
+import { AuthenticationError, NotFoundError, ValidationError } from "@zudojs/errors";
+
+type RenameTask = CommandOf<"RenameTask", { taskId: number; title: string }>;
+
+const rows = new Map([[1, { id: 1, userId: "ada", title: "Buy milk" }]]);
+const bus = createCommandBus();
+
+bus.register<RenameTask, void>("RenameTask", (command, context) => {
+  const userId = context?.userId;
+  if (!userId) throw new AuthenticationError("Sign in first");
+  if (command.title.trim().length < 3) throw new ValidationError("Title must be at least 3 characters");
+  const row = rows.get(command.taskId);
+  if (!row || row.userId !== userId) throw new NotFoundError(`Task ${command.taskId} not found`);
+  row.title = command.title.trim();
+});
+
+const ada = withUser(createExecutionContext(), "ada");
+const linus = withUser(createExecutionContext(), "linus");
+
+await bus.execute<RenameTask>({ type: "RenameTask", taskId: 1, title: "Buy oat milk" }, ada);
+console.log(rows.get(1)?.title);
+
+for (const [title, context] of [["no", ada], ["Hacked", linus]] as const) {
+  try {
+    await bus.execute<RenameTask>({ type: "RenameTask", taskId: 1, title }, context);
+  } catch (error) {
+    if (error instanceof Error) console.log(error.name, error.message);
+  }
+}
+</example>
+<output>
+Buy oat milk
+ValidationError Title must be at least 3 characters
+NotFoundError Task 1 not found
+</output>
+</solution>
+</exercise>
+<exercise title="Command or query?">
+<p>Sort these into commands and queries: (a) <code>GetTaskCount</code>; (b) <code>MarkAllAsRead</code>; (c) <code>SearchTasks</code> that also records the search term for analytics; (d) <code>ArchiveOldTasks</code>.</p>
+<solution>
+<p>(a) Query. (b) Command. (d) Command. (c) is the interesting one: as described it is both, which breaks the rule. Make <code>SearchTasks</code> a pure query, and record the search term separately, for example by publishing a <code>search.performed</code> event that an analytics handler reacts to. Then the search can be cached and retried safely.</p>
+</solution>
+</exercise>
+<exercise title="A guard middleware">
+<p>Write a middleware that throws <code>AuthenticationError</code> for any request whose context has no <code>userId</code>, so no handler has to remember the check. Test it with and without a user.</p>
+<solution>
+<example file="guard.ts">
+import { createQueryBus } from "@zudojs/cqrs";
+import type { CqrsMiddleware } from "@zudojs/cqrs";
+import { AuthenticationError } from "@zudojs/errors";
+
+const requireUser: CqrsMiddleware = async (request, context, next) => {
+  if (!context?.userId) throw new AuthenticationError("Sign in first");
+  return next(request, context);
+};
+
+const queries = createQueryBus({ middleware: [requireUser] });
+queries.register("ListTasks", (query, context) => [`tasks of ${context?.userId}`]);
+
+console.log(await queries.execute({ type: "ListTasks" }, { userId: "ada" }));
+try {
+  await queries.execute({ type: "ListTasks" });
+} catch (error) {
+  if (error instanceof AuthenticationError) console.log(error.statusCode, error.message);
+}
+</example>
+<output>
+[ 'tasks of ada' ]
+401 Sign in first
+</output>
+<p>A guard like this is a safety net. Keep the ownership checks inside the handlers too: "signed in" and "allowed to touch this task" are different questions.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A command changes data and returns little. A query reads and changes nothing, so it can be cached and retried.</li>
+<li>A bus routes each <code>type</code> to exactly one handler. Duplicate and missing handlers are errors.</li>
+<li>Handlers are functions or classes. <code>execute</code> returns the handler's value or throws its error.</li>
+<li>The execution context carries the user, tenant and ids. The user comes from the verified login, never from the command's data.</li>
+<li>Middleware adds audit, timing and error handling to every command in one place. Call <code>next</code> once.</li>
+<li>Use CQRS when operations are many and reads and writes grow apart. For a small app, a service class is simpler.</li>
+</ul>
+</section>

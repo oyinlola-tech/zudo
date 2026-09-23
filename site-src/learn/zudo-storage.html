@@ -1,0 +1,699 @@
+---
+title: Storage abstractions
+description: Use @zudojs/storage's driver-independent contracts for databases, files, serialization, locks, connection pools and start-up and shutdown, with a PostgreSQL adapter and local file storage for the Task API.
+minutes: 45
+youNeed: The Databases with @zudojs/database lesson
+youBuild: Task attachments on disk, a column-safe task repository, fenced locks and a storage health report
+keywords: zudojs storage, storage abstraction, Database interface, BaseRepository, columns allow-list, mass assignment, LocalObjectStorage, object storage, path traversal, JsonSerializer, InMemoryLockManager, fencing token, ConnectionPool, StorageLifecycleManager, HealthChecker
+tier: advanced
+---
+<section>
+<h2 id="why">Contracts, not drivers</h2>
+<p><a href="/learn/zudo-database">@zudojs/database</a> is built for one stack: Prisma and PostgreSQL. <code>@zudojs/storage</code> takes a different approach. It defines small <strong>contracts</strong>, TypeScript interfaces that say what a piece of storage must be able to do, and ships code that works with anything that fulfils them:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Contract</th><th>What it stores</th><th>Ready-made implementation</th></tr></thead>
+<tbody>
+<tr><td><code>Database</code></td><td>Rows, with SQL</td><td>None: you write a small adapter for your driver</td></tr>
+<tr><td><code>ObjectStorage</code></td><td>Files ("objects") under a key</td><td><code>LocalObjectStorage</code>, on disk</td></tr>
+<tr><td><code>Serializer</code></td><td>Values as bytes</td><td><code>JsonSerializer</code></td></tr>
+<tr><td><code>LockManager</code></td><td>Who is working on what right now</td><td><code>InMemoryLockManager</code></td></tr>
+<tr><td><code>StorageLifecycle</code></td><td>Start, health, shutdown</td><td><code>StorageLifecycleManager</code>, <code>HealthChecker</code></td></tr>
+</tbody>
+</table></div>
+<p>Your application code depends only on the contracts. Tomorrow you can move files from your disk to a cloud bucket by writing a new <code>ObjectStorage</code>, and nothing else changes. That is the same idea as the dependency container in <a href="/learn/zudo-container">the container lesson</a>: depend on what something does, not on what it is.</p>
+<shell title="Terminal on your computer">
+$ npm install @zudojs/storage
+
+added 5 packages, and audited 20 packages in 5s
+
+1 package is looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+</shell>
+<p>You already have <code>@electric-sql/pglite</code> from the last lesson. Every example on this page uses Node.js APIs, so run them on your computer with <code>npx tsx file.ts</code>.</p>
+</section>
+
+<section>
+<h2 id="database">The Database contract</h2>
+<p>The <code>Database</code> contract has seven methods: <code>connect</code>, <code>disconnect</code>, <code>query</code>, <code>execute</code>, <code>transaction</code>, <code>healthCheck</code> and <code>getPoolStats</code>. A query is an object with the SQL <code>text</code> and its <code>parameters</code>, so there is no way to call it with values glued into the SQL. Here is an adapter for PGlite. It is shorter than last lesson's, because this contract speaks SQL directly:</p>
+<example file="pglite-database.ts" project="st" browser="no">
+import { randomUUID } from "node:crypto";
+import { PGlite } from "@electric-sql/pglite";
+import type { Database, Query, QueryResult, Transaction, TransactionState } from "@zudojs/storage";
+
+async function runQuery<T>(db: Pick<PGlite, "query">, query: Query): Promise<QueryResult<T>> {
+  const started = performance.now();
+  const result = await db.query<T>(query.text, [...(query.parameters ?? [])]);
+  return {
+    rows: result.rows,
+    // A SELECT reports the rows it returned; INSERT/UPDATE/DELETE the rows they changed.
+    rowCount: result.fields.length > 0 ? result.rows.length : (result.affectedRows ?? 0),
+    fields: result.fields.map((f) => ({ name: f.name, oid: f.dataTypeID })),
+    durationMs: performance.now() - started,
+  };
+}
+
+export class PgliteDatabase implements Database {
+  private readonly pg: PGlite;
+
+  constructor(dataDir?: string) {
+    this.pg = new PGlite(dataDir);
+  }
+  async connect() {
+    await this.pg.waitReady;
+  }
+  async disconnect() {
+    if (!this.pg.closed) await this.pg.close();
+  }
+  query<T = Record<string, unknown>>(query: Query) {
+    return runQuery<T>(this.pg, query);
+  }
+  async execute(query: Query) {
+    return { rowCount: (await runQuery(this.pg, query)).rowCount };
+  }
+  transaction<T>(callback: (tx: Transaction) => Promise<T>): Promise<T> {
+    return this.pg.transaction(async (pgTx) => {
+      let state: TransactionState = "active";
+      const tx: Transaction = {
+        id: randomUUID(),
+        get state() { return state; },
+        query: (q) => runQuery(pgTx, q),
+        execute: async (q) => ({ rowCount: (await runQuery(pgTx, q)).rowCount }),
+        savepoint: async (name) => { await pgTx.exec(`SAVEPOINT "${name}"`); },
+        rollbackToSavepoint: async (name) => { await pgTx.exec(`ROLLBACK TO SAVEPOINT "${name}"`); },
+      };
+      try {
+        const result = await callback(tx);
+        state = "committed";
+        return result;
+      } catch (error) {
+        state = "rolledback";
+        throw error;
+      }
+    });
+  }
+  async healthCheck() {
+    const started = performance.now();
+    try {
+      await this.pg.query("SELECT 1");
+      return { healthy: true, latencyMs: performance.now() - started, status: "connected" };
+    } catch {
+      return { healthy: false, latencyMs: performance.now() - started, status: "unreachable" };
+    }
+  }
+  getPoolStats() {
+    return { total: 1, idle: 1, active: 0, waiting: 0 };
+  }
+}
+</example>
+<p>PGlite is a single connection inside your process, so <code>getPoolStats</code> always reports one. The <a href="#pool">connection pools</a> section shows a real pool. Savepoint names are written into the SQL, so only ever pass names from your own code, never from a request.</p>
+<p>A tasks table for this lesson. The owner is stored per task, because every task belongs to a user:</p>
+<example file="setup.ts" project="st" browser="no">
+import { PgliteDatabase } from "./pglite-database.js";
+
+export interface TaskRow extends Record<string, unknown> {
+  id: number;
+  title: string;
+  done: boolean;
+  owner_id: string;
+}
+
+export async function setup() {
+  const db = new PgliteDatabase();
+  await db.connect();
+  await db.execute({
+    text: `CREATE TABLE tasks (
+      id       serial PRIMARY KEY,
+      title    text NOT NULL,
+      done     boolean NOT NULL DEFAULT false,
+      owner_id text NOT NULL
+    )`,
+  });
+  return db;
+}
+</example>
+</section>
+
+<section>
+<h2 id="repository">A repository with a column allow-list</h2>
+<p><code>BaseRepository</code> from <code>@zudojs/storage</code> builds parameterized SQL for the usual operations: <code>findById</code>, <code>findByIds</code>, <code>findAll</code>, <code>create</code>, <code>update</code>, <code>delete</code>, <code>exists</code> and <code>count</code>. Column names cannot be parameters, so it checks every one it writes into SQL. Give it <code>columns</code>, the list of columns it may write, filter and sort by:</p>
+<example file="repository.ts" project="st" browser="no">
+import { BaseRepository } from "@zudojs/storage";
+import { setup } from "./setup.js";
+import type { TaskRow } from "./setup.js";
+
+const db = await setup();
+const tasks = new BaseRepository<TaskRow, number>(db, {
+  tableName: "tasks",
+  columns: ["title", "done", "owner_id"],
+});
+
+const newTask = (title: string, ownerId: string) => ({ title, owner_id: ownerId }) as TaskRow;
+await tasks.create(newTask("Buy milk", "ada"));
+await tasks.create(newTask("Write report", "ada"));
+await tasks.create(newTask("Fix the bike", "grace"));
+
+console.log(await tasks.update(1, { done: true }));
+console.log(await tasks.findAll({ orderBy: "title", order: "ASC", limit: 10, offset: 0 }));
+console.log("ada has", await tasks.count({ owner_id: "ada" }), "tasks");
+console.log("task 3 exists?", await tasks.exists(3));
+
+await tasks.delete(3);
+console.log("task 3 exists?", await tasks.exists(3));
+await db.disconnect();
+</example>
+<output>
+{ id: 1, title: 'Buy milk', done: true, owner_id: 'ada' }
+[
+  { id: 1, title: 'Buy milk', done: true, owner_id: 'ada' },
+  { id: 3, title: 'Fix the bike', done: false, owner_id: 'grace' },
+  { id: 2, title: 'Write report', done: false, owner_id: 'ada' }
+]
+ada has 2 tasks
+task 3 exists? true
+task 3 exists? false
+</output>
+<p><code>create</code> takes a whole entity, including the <code>id</code> the database has not made yet. The <code>as TaskRow</code> in <code>newTask</code> tells TypeScript to accept the object without one.</p>
+<h3>What the allow-list stops, and what it doesn't</h3>
+<p>Now the attacks. A client sends a JSON body, and a careless route passes it straight to the repository. This is called <strong>mass assignment</strong>: the client sets fields it was never meant to touch.</p>
+<example file="mass-assignment.ts" project="st" browser="no">
+import { BaseRepository } from "@zudojs/storage";
+import { setup } from "./setup.js";
+import type { TaskRow } from "./setup.js";
+
+const db = await setup();
+const tasks = new BaseRepository<TaskRow, number>(db, {
+  tableName: "tasks",
+  columns: ["title", "done", "owner_id"],
+});
+await tasks.create({ title: "Buy milk", owner_id: "ada" } as TaskRow);
+
+const bodies: unknown[] = [
+  { done: true, is_admin: true },          // a column that does not exist
+  { title: "x', owner_id = 'mallory" },    // SQL in a value
+  { done: true, owner_id: "mallory" },      // a real column the client must not set
+];
+for (const body of bodies) {
+  try {
+    const row = await tasks.update(1, body as Partial<TaskRow>);
+    console.log("UPDATED:", row);
+  } catch (error) {
+    const e = error as Error & { code?: string; statusCode?: number };
+    console.log("refused:", e.statusCode, e.code, "-", e.message);
+  }
+}
+
+for (const orderBy of ["title; DROP TABLE tasks", "id"]) {
+  try {
+    await tasks.findAll({ orderBy });
+  } catch (error) {
+    console.log("refused sort:", (error as Error).message);
+  }
+}
+await db.disconnect();
+</example>
+<output>
+refused: 400 STORAGE_IDENTIFIER_NOT_ALLOWED - Invalid column name: "is_admin" is not allowed
+UPDATED: {
+  id: 1,
+  title: "x', owner_id = 'mallory",
+  done: false,
+  owner_id: 'ada'
+}
+UPDATED: {
+  id: 1,
+  title: "x', owner_id = 'mallory",
+  done: true,
+  owner_id: 'mallory'
+}
+refused sort: Invalid sort column: only letters, digits and underscores are allowed
+refused sort: Invalid sort column: "id" is not allowed
+</output>
+<p>Go through the results one by one:</p>
+<ul>
+<li><code>is_admin</code> is not in the allow-list, so the update was refused with a 400.</li>
+<li>The SQL in the title was not refused, and did no harm: it is a parameter, so PostgreSQL stored it as an odd title. That is exactly right.</li>
+<li><strong>The third body worked, and that is a bug in the route.</strong> <code>owner_id</code> is on the allow-list, because your own code must be able to set it when it creates a task. So the repository cannot know that <em>this</em> caller may not change it. Mallory now owns Ada's task.</li>
+<li>Sort columns are checked too. Even <code>id</code> was refused, because it is not on the list.</li>
+</ul>
+<p>The allow-list is a safety net for SQL, not a permission system. The fix belongs at the edge of your app: a schema that accepts only the fields a client may change, as in <a href="/learn/zudo-validation">the validation lesson</a>. The owner is set by the server from the logged-in user, never read from the body:</p>
+<example file="safe-update.ts" project="st" browser="no">
+import { BaseRepository } from "@zudojs/storage";
+import { schema } from "@zudojs/schema";
+import { setup } from "./setup.js";
+import type { TaskRow } from "./setup.js";
+
+const TaskChanges = schema.object({
+  title: schema.string().trim().min(3).max(100),
+  done: schema.boolean(),
+}).partial().strict();
+
+/* Drop keys whose value is undefined, so they are left alone instead of set to NULL. */
+function definedOnly<T extends object>(data: T): Partial<T> {
+  return Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined)) as Partial<T>;
+}
+
+const db = await setup();
+const tasks = new BaseRepository<TaskRow, number>(db, {
+  tableName: "tasks",
+  columns: ["title", "done", "owner_id"],
+});
+await tasks.create({ title: "Buy milk", owner_id: "ada" } as TaskRow);
+
+const bad = TaskChanges.safeParse({ done: true, owner_id: "mallory" });
+if (!bad.success) {
+  console.log("400:", bad.issues.map((i) => i.message));
+}
+
+const good = TaskChanges.parse({ done: true });
+console.log("parsed:", good);
+try {
+  await tasks.update(1, good);
+} catch (error) {
+  console.log("without definedOnly:", (error as Error).message);
+}
+console.log("saved:", await tasks.update(1, definedOnly(good)));
+await db.disconnect();
+</example>
+<output>
+400: [ 'Unknown key: owner_id' ]
+parsed: { title: undefined, done: true }
+without definedOnly: null value in column "title" of relation "tasks" violates not-null constraint
+saved: { id: 1, title: 'Buy milk', done: true, owner_id: 'ada' }
+</output>
+<p><code>.partial()</code> makes every field optional, since a client may change just one. <code>.strict()</code> makes the schema reject any key it does not know, so the request that tries to change the owner is answered with 400 before it gets near the database.</p>
+<p>The output also shows a trap. The client sent only <code>done</code>, but the parsed object has a <code>title</code> key whose value is <code>undefined</code>. <code>BaseRepository</code> writes every key it gets, so it tried to set <code>title</code> to <code>NULL</code>. Here the <code>NOT NULL</code> rule on the column stopped it; on a column that allows <code>NULL</code>, the title would have been silently wiped. <code>definedOnly</code> removes those keys first. Use a helper like it whenever you pass parsed data to <code>update</code>.</p>
+<note>The allow-list is used for writes, filters and sorting alike. To let clients sort by <code>id</code>, you would have to add <code>id</code> to <code>columns</code>, and then <code>update</code> would accept a new <code>id</code> too. With a schema at the edge that is harmless. Without one, it is one more field a client could change.</note>
+</section>
+
+<section>
+<h2 id="objects">Object storage for files</h2>
+<p>Databases are for rows. Files, such as images, PDFs or a task's attachments, go into <strong>object storage</strong>. An object is a file plus a little metadata (its content type, size and a hash), stored under a <strong>key</strong> like <code>tasks/1/notes.txt</code>. Cloud services such as Amazon S3 work the same way. <code>LocalObjectStorage</code> keeps objects in a folder on disk:</p>
+<example file="attachments.ts" project="st" browser="no">
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { LocalObjectStorage } from "@zudojs/storage";
+
+const folder = await mkdtemp(join(tmpdir(), "task-files-"));
+const files = new LocalObjectStorage(folder, { maxObjectBytes: 1024 * 1024 });
+const text = (s: string) => new TextEncoder().encode(s);
+
+const saved = await files.put("tasks/1/notes.txt", text("Oat milk, not cow milk."), {
+  contentType: "text/plain",
+  metadata: { uploadedBy: "ada" },
+});
+console.log(saved.key, saved.size, saved.contentType, saved.metadata);
+await files.put("tasks/1/list.md", text("- milk\n- bread"), { contentType: "text/markdown" });
+await files.put("tasks/2/plan.md", text("# Plan"), { contentType: "text/markdown" });
+
+const notes = await files.get("tasks/1/notes.txt");
+if (notes) {
+  console.log(new TextDecoder().decode(await notes.arrayBuffer()));
+}
+console.log("missing:", await files.get("tasks/9/nothing.txt"));
+
+const listing = await files.list("tasks/1/");
+console.log(listing.objects.map((o) => `${o.key} (${o.size} bytes)`));
+
+await files.delete("tasks/1/list.md");
+console.log("still there?", await files.exists("tasks/1/list.md"));
+</example>
+<output>
+tasks/1/notes.txt 23 text/plain { uploadedBy: 'ada' }
+Oat milk, not cow milk.
+missing: null
+[ 'tasks/1/list.md (14 bytes)', 'tasks/1/notes.txt (23 bytes)' ]
+still there? false
+</output>
+<p><code>put</code> returned the object's metadata: the key, the size in bytes, and the content type and metadata you gave it. It also computes an <code>etag</code>, a SHA-256 hash of the content, that you can use to tell whether a file changed. <code>get</code> returns <code>null</code> for a missing key, so you can answer 404. <code>list(prefix)</code> finds every object whose key starts with the prefix, which is why keys that look like folders are useful: one prefix per task.</p>
+<p><code>list</code> returns at most <code>maxKeys</code> objects at a time (1000 by default). When there are more, <code>isTruncated</code> is <code>true</code> and <code>continuationToken</code> tells the next call where to go on, like the cursor from last lesson.</p>
+<h3>Keys from users</h3>
+<p>Keys often contain something a user chose, such as a file name. On disk, a key becomes a path, and a path with <code>..</code> climbs out of its folder. That attack is called <strong>path traversal</strong>, and it can read or overwrite any file your server can reach. <code>LocalObjectStorage</code> refuses such keys, and anything bigger than <code>maxObjectBytes</code>:</p>
+<example file="traversal.ts" project="st" browser="no">
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { LocalObjectStorage } from "@zudojs/storage";
+
+const folder = await mkdtemp(join(tmpdir(), "task-files-"));
+const files = new LocalObjectStorage(folder, { maxObjectBytes: 1024 });
+
+const attempts: [string, Uint8Array][] = [
+  ["tasks/1/../../../etc/passwd", new Uint8Array(1)],
+  ["/etc/passwd", new Uint8Array(1)],
+  ["tasks//notes.txt", new Uint8Array(1)],
+  ["tasks/1/huge.bin", new Uint8Array(5000)],
+];
+for (const [key, data] of attempts) {
+  try {
+    await files.put(key, data);
+    console.log("stored", key);
+  } catch (error) {
+    const e = error as Error & { code?: string; statusCode?: number };
+    console.log(e.statusCode, e.code);
+  }
+}
+</example>
+<output>
+400 STORAGE_PATH_TRAVERSAL
+400 STORAGE_PATH_TRAVERSAL
+400 STORAGE_INVALID_KEY
+413 STORAGE_OBJECT_TOO_LARGE
+</output>
+<p>Each refusal carries a status code you can pass on: 400 for a bad key, <strong>413 Payload Too Large</strong> for a big file. Even so, don't use a user's file name as the key. Make the key yourself, for example <code>tasks/${taskId}/${randomUUID()}</code>, and keep the original name in the metadata. Check <code>taskId</code> is a task the user may touch, which <a href="/learn/zudo-permissions">the permissions lesson</a> covers.</p>
+</section>
+
+<section>
+<h2 id="serialization">Serialization</h2>
+<p>Storage keeps bytes. <strong>Serialization</strong> turns a value into bytes, and <strong>deserialization</strong> turns them back. <code>JSON.stringify</code> loses information: a <code>Date</code> becomes a string, and a <code>Map</code>, <code>Set</code> or <code>BigInt</code> is lost or throws. <code>JsonSerializer</code> keeps them, by tagging each special value with its type:</p>
+<example file="serialize.ts" project="st" browser="no">
+import { JsonSerializer } from "@zudojs/storage";
+
+const serializer = new JsonSerializer();
+const snapshot = {
+  id: 1,
+  due: new Date("2026-10-01T09:00:00Z"),
+  tags: new Set(["home", "shopping"]),
+  views: 12n,
+};
+
+const bytes = serializer.serialize(snapshot);
+console.log(bytes.constructor.name, bytes.length, "bytes");
+console.log(new TextDecoder().decode(bytes));
+
+const back = serializer.deserialize<typeof snapshot>(bytes);
+console.log(back);
+console.log(back.due instanceof Date, back.tags.has("home"));
+</example>
+<output>
+Uint8Array 160 bytes
+{"id":1,"due":{"$type":"Date","$value":"2026-10-01T09:00:00.000Z"},"tags":{"$type":"Set","$value":["home","shopping"]},"views":{"$type":"BigInt","$value":"12"}}
+{
+  id: 1,
+  due: 2026-10-01T09:00:00.000Z,
+  tags: Set(2) { 'home', 'shopping' },
+  views: 12n
+}
+true true
+</output>
+<p>The result is a <code>Uint8Array</code>, ready to <code>put</code> into object storage or a cache. The <code>$type</code> tags are how <code>deserialize</code> knows to rebuild a <code>Date</code>, a <code>Set</code> and a <code>BigInt</code>. <code>JsonSerializer</code> only speaks JSON: ask it for <code>"msgpack"</code> and it throws a <code>StorageError</code> that says so. For more control, <a href="/learn/zudo-serialization">the serialization lesson</a> covers <code>@zudojs/serialization</code>, which this class uses inside.</p>
+</section>
+
+<section>
+<h2 id="locking">Locks and fencing tokens</h2>
+<p>Two requests edit the same task at the same moment. Both read it, both change it, both save, and the first change is lost. A <strong>lock</strong> lets only one of them work on the task at a time. <code>acquire</code> waits for the lock; <code>tryAcquire</code> gives up at once and returns <code>null</code>:</p>
+<example file="locks.ts" project="st" browser="no">
+import { InMemoryLockManager } from "@zudojs/storage";
+
+const locks = new InMemoryLockManager();
+
+const first = await locks.acquire("task:1", { ttl: 5_000 });
+console.log("first holds", first.resource, "with fence", first.fence);
+console.log("try again:", await locks.tryAcquire("task:1", 5_000));
+
+const second = locks.acquire("task:1", { ttl: 5_000, timeout: 1_000 });
+setTimeout(() => void first.release(), 50);
+const lock = await second;
+console.log("second got it after release, fence", lock.fence);
+await lock.release();
+
+try {
+  await locks.acquire("task:2", { ttl: 5_000 });
+  await locks.acquire("task:2", { timeout: 100 });
+} catch (error) {
+  const e = error as Error & { code?: string; statusCode?: number };
+  console.log(e.statusCode, e.code, "-", e.message);
+}
+locks.clear();
+</example>
+<output>
+first holds task:1 with fence 1
+try again: null
+second got it after release, fence 2
+504 STORAGE_LOCK_ACQUIRE_TIMEOUT - Failed to acquire lock on "task:2" within 100ms
+</output>
+<p>Every lock has a <code>ttl</code> (time to live). If its holder crashes, the lock expires and others can go on. But a holder that is only slow can lose its lock without noticing, keep working, and overwrite the next holder's work. The <strong>fence</strong> number solves this. Every new lock gets a bigger fence, so the thing you protect can refuse any write that carries an older one:</p>
+<example file="fencing.ts" project="st" browser="no">
+import { InMemoryLockManager } from "@zudojs/storage";
+
+class TaskStore {
+  private highestFence = 0;
+  title = "Buy milk";
+
+  save(title: string, fence: number): void {
+    if (fence < this.highestFence) {
+      throw new Error(`stale fence ${fence}, current is ${this.highestFence}`);
+    }
+    this.highestFence = fence;
+    this.title = title;
+  }
+}
+
+const locks = new InMemoryLockManager();
+const store = new TaskStore();
+
+const slow = await locks.acquire("task:1", { ttl: 30 });
+await new Promise((resolve) => setTimeout(resolve, 60)); // too slow: the lock expired
+console.log("slow still holds it?", slow.isHeld());
+
+const fast = await locks.acquire("task:1", { ttl: 5_000 });
+store.save("Buy oat milk", fast.fence);
+await fast.release();
+
+try {
+  store.save("Buy cow milk", slow.fence);
+} catch (error) {
+  console.log((error as Error).message);
+}
+console.log("title:", store.title);
+</example>
+<output>
+slow still holds it? false
+stale fence 1, current is 2
+title: Buy oat milk
+</output>
+<p>The slow worker's write was refused, and the fast worker's change survived.</p>
+<warn title="IN MEMORY MEANS ONE PROCESS">An <code>InMemoryLockManager</code> only knows about locks in its own process. As soon as you run two copies of your server, each has its own locks and they protect nothing. For several servers, use a lock the servers share: PostgreSQL advisory locks through <code>createLockManager</code> from <a href="/learn/zudo-database">@zudojs/database</a>, or a <code>LockManager</code> you write over Redis.</warn>
+</section>
+
+<section>
+<h2 id="pool">Connection pools</h2>
+<p>You met pools at the end of the last lesson: a few database connections, opened once, lent out one at a time. <code>ConnectionPool</code> is a general-purpose pool. You give it a <strong>factory</strong>, a function that opens one connection, and limits. To see it lend and take back, this example gives each "connection" a name and runs its queries on one shared PGlite:</p>
+<example file="pool.ts" project="st" browser="no">
+import { ConnectionPool } from "@zudojs/storage";
+import type { Connection } from "@zudojs/storage";
+import { setup } from "./setup.js";
+
+const db = await setup();
+let opened = 0;
+
+async function openConnection(): Promise<Connection> {
+  opened += 1;
+  const id = `conn-${opened}`;
+  let state: Connection["state"] = "connected";
+  return {
+    id,
+    get state() { return state; },
+    query: (q) => db.query(q),
+    execute: (q) => db.execute(q),
+    ping: async () => state === "connected",
+    close: async () => { state = "disconnected"; },
+  };
+}
+
+const pool = new ConnectionPool(openConnection, { min: 1, max: 2, acquireTimeout: 200 });
+await pool.initialize();
+console.log("start:", pool.getStats());
+
+const a = await pool.acquire();
+const b = await pool.acquire();
+const waiting = pool.acquire();
+console.log("busy:", pool.getStats());
+
+await pool.release(a);
+const c = await waiting;
+console.log("the waiting request got", c.id);
+
+try {
+  await pool.acquire();
+} catch (error) {
+  const e = error as Error & { statusCode?: number };
+  console.log(e.statusCode, e.message);
+}
+await pool.release(b);
+await pool.release(c);
+
+const count = await pool.use((conn) => conn.query({ text: "SELECT count(*)::int AS n FROM tasks" }));
+console.log("use() returned", count.rows, "and gave the connection back:", pool.getStats());
+
+await pool.drain();
+console.log("after drain:", pool.getStats());
+await db.disconnect();
+</example>
+<output>
+start: { total: 1, idle: 1, active: 0, waiting: 0 }
+busy: { total: 2, idle: 0, active: 2, waiting: 1 }
+the waiting request got conn-1
+504 Acquire timeout: no connection available within 200ms
+use() returned [ { n: 0 } ] and gave the connection back: { total: 2, idle: 2, active: 0, waiting: 0 }
+after drain: { total: 0, idle: 0, active: 0, waiting: 0 }
+</output>
+<ul>
+<li><code>min: 1</code> opened one connection at start-up. The second was opened when it was needed, and no more than <code>max: 2</code> ever exist.</li>
+<li>With both lent out, the third <code>acquire</code> <strong>waited</strong>. As soon as <code>conn-1</code> came back, it went to the waiting request.</li>
+<li>A request that waits longer than <code>acquireTimeout</code> fails with a 504. Under heavy load, failing fast is better than letting requests pile up.</li>
+<li><code>use(fn)</code> acquires, runs your function and always releases, even when the function throws. Prefer it: a connection you forget to release is lost to the pool for good.</li>
+<li><code>drain()</code> waits for connections in use, then closes them all. Call it on shutdown.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="lifecycle">Storage lifecycle and health</h2>
+<p>Storage has to start before your server takes requests and stop after the last one. <code>StorageLifecycleManager</code> runs the steps for every registered component in order: <code>initialize</code>, <code>start</code>, and on shutdown <code>drain</code> (finish what is in progress) and <code>shutdown</code>. <code>HealthChecker</code> asks each one how it is doing. Each component implements the <code>StorageLifecycle</code> contract; here is a small wrapper for any component that can be checked:</p>
+<example file="lifecycle.ts" project="st" browser="no">
+import { HealthChecker, StorageLifecycleManager } from "@zudojs/storage";
+import type { StorageHealth, StorageLifecycle, StorageLifecyclePhase } from "@zudojs/storage";
+import { setup } from "./setup.js";
+
+class Component implements StorageLifecycle {
+  private phase: StorageLifecyclePhase = "uninitialized";
+  constructor(
+    private readonly name: string,
+    private readonly check: () => Promise<StorageHealth>,
+  ) {}
+  async initialize() { this.phase = "initializing"; }
+  async start() { this.phase = "ready"; console.log(this.name, "ready"); }
+  healthCheck() { return this.check(); }
+  async drain() { this.phase = "draining"; }
+  async shutdown() { this.phase = "shutdown"; console.log(this.name, "shut down"); }
+  getPhase() { return this.phase; }
+}
+
+const db = await setup();
+const database = new Component("database", () => db.healthCheck());
+const files = new Component("files", async () => ({ healthy: false, latencyMs: 0, status: "disk full" }));
+
+const storage = new StorageLifecycleManager();
+await storage.register(database);
+await storage.register(files);
+await storage.initialize();
+await storage.start();
+console.log("phase:", storage.getPhase());
+
+const health = new HealthChecker();
+health.register("database", database);
+health.register("files", files);
+const report = await health.checkAll();
+console.log("healthy:", report.healthy);
+for (const { name, health: h } of report.components) {
+  console.log(` ${name}: ${h.healthy ? "ok" : "FAILING"} (${h.status})`);
+}
+
+await storage.drain();
+await storage.shutdown();
+console.log("phase:", storage.getPhase());
+await db.disconnect();
+</example>
+<output>
+database ready
+files ready
+phase: ready
+healthy: false
+ files: FAILING (disk full)
+ database: ok (connected)
+database shut down
+files shut down
+phase: shutdown
+</output>
+<p>The report is unhealthy as a whole because one component is, and it names which. That is what your <code>/health</code> route should turn into a 503, as in the last lesson, while your logs get the details.</p>
+<p>Notice that shutdown ran in the same order as start-up: database first, then files. If one component uses another, register them so that this order is safe, or give each its own shutdown step in <a href="/learn/zudo-runtime">the runtime</a>, which stops modules in reverse dependency order.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Attachments with safe keys">
+<p>Write <code>saveAttachment(taskId, fileName, bytes)</code> that stores the file under <code>tasks/&lt;taskId&gt;/&lt;random id&gt;</code>, keeps the original name in the metadata, and returns the key. <code>taskId</code> must be a positive whole number. Save <code>"../../secret.txt"</code> and show that its name is kept but its key is safe.</p>
+<solution>
+<example file="save-attachment.ts" project="st" browser="no">
+import { randomUUID } from "node:crypto";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { LocalObjectStorage } from "@zudojs/storage";
+
+const files = new LocalObjectStorage(await mkdtemp(join(tmpdir(), "task-files-")));
+
+async function saveAttachment(taskId: number, fileName: string, bytes: Uint8Array): Promise<string> {
+  if (!Number.isSafeInteger(taskId) || taskId < 1) {
+    throw new RangeError("taskId must be a positive whole number");
+  }
+  const key = `tasks/${taskId}/${randomUUID()}`;
+  await files.put(key, bytes, { metadata: { fileName: fileName.slice(0, 200) } });
+  return key;
+}
+
+const key = await saveAttachment(1, "../../secret.txt", new TextEncoder().encode("hello"));
+console.log(/^tasks\/1\/[0-9a-f-]{36}$/.test(key));
+console.log((await files.metadata(key))?.metadata);
+try {
+  await saveAttachment(-1, "a.txt", new Uint8Array(1));
+} catch (error) {
+  console.log((error as Error).message);
+}
+</example>
+<output>
+true
+{ fileName: '../../secret.txt' }
+taskId must be a positive whole number
+</output>
+</solution>
+</exercise>
+
+<exercise title="A per-task lock helper">
+<p>Write <code>withTaskLock(taskId, work)</code> that acquires <code>task:&lt;id&gt;</code> with a 5 second TTL and a 1 second wait, runs <code>work(fence)</code>, and always releases the lock, even when <code>work</code> throws. Run two calls for the same task at the same time and print the order they run in.</p>
+<solution>
+<example file="task-lock.ts" project="st" browser="no">
+import { InMemoryLockManager } from "@zudojs/storage";
+
+const locks = new InMemoryLockManager();
+
+async function withTaskLock<T>(taskId: number, work: (fence: number) => Promise<T>): Promise<T> {
+  const lock = await locks.acquire(`task:${taskId}`, { ttl: 5_000, timeout: 1_000 });
+  try {
+    return await work(lock.fence);
+  } finally {
+    await lock.release();
+  }
+}
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+await Promise.all([
+  withTaskLock(1, async (fence) => { console.log("A starts, fence", fence); await pause(30); console.log("A ends"); }),
+  withTaskLock(1, async (fence) => { console.log("B starts, fence", fence); console.log("B ends"); }),
+]);
+</example>
+<output>
+A starts, fence 1
+A ends
+B starts, fence 2
+B ends
+</output>
+<p>B waited until A released the lock, so the two never overlapped. <code>finally</code> is what guarantees the release.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li><code>@zudojs/storage</code> defines contracts (<code>Database</code>, <code>ObjectStorage</code>, <code>Serializer</code>, <code>LockManager</code>, <code>StorageLifecycle</code>) so your code does not depend on one driver.</li>
+<li>Its <code>BaseRepository</code> builds parameterized SQL and checks every column against <code>columns</code>. That stops SQL tricks, not mass assignment: validate bodies with a strict schema and set owners on the server.</li>
+<li><code>LocalObjectStorage</code> stores files by key, refuses path traversal and oversized files, and lists by prefix. Generate keys yourself.</li>
+<li><code>JsonSerializer</code> keeps <code>Date</code>, <code>Map</code>, <code>Set</code> and <code>BigInt</code> through a round trip to bytes.</li>
+<li>Locks need a TTL and a fence check. <code>InMemoryLockManager</code> only works inside one process.</li>
+<li><code>ConnectionPool</code> lends a bounded number of connections; <code>use()</code> always gives them back. <code>StorageLifecycleManager</code> and <code>HealthChecker</code> start, check and stop everything.</li>
+</ul>
+<p>Next: <a href="/learn/zudo-transactions">transactions</a> that span many functions, with savepoints, hooks and retries.</p>
+</section>

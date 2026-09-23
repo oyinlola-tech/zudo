@@ -1,15 +1,26 @@
 ---
-title: Modules and errors
-description: Split a program into files with import and export, and handle things that go wrong with throw, try, catch and your own error classes.
-minutes: 30
-youNeed: Lessons 1 to 4
-youBuild: A task store in its own file, with a NotFound error
-keywords: javascript modules, import export, es modules, try catch finally, custom error class, instanceof, JSON.parse error
+title: Modules
+description: Split a program into files with ES modules, understand the older CommonJS require, choose between named and default exports, and avoid circular dependencies.
+minutes: 40
+youNeed: Asynchronous JavaScript, and the lessons before it
+youBuild: A task feature split into modules with a clear public entry point, and a circular dependency found and fixed
+keywords: javascript modules, es modules, import export, named export, default export, import alias, import * as, commonjs, require, module.exports, cjs, circular dependency, barrel file, index.js, project structure
 ---
 <section>
-<h2 id="modules">One file is not enough</h2>
-<p>Real backends have hundreds of files. Each file is a <strong>module</strong>: it keeps its variables to itself and <strong>exports</strong> only what other files should use. Another file <strong>imports</strong> those names.</p>
-<p>Make a new folder for this lesson, run <code>npm init -y</code> and <code>npm pkg set type=module</code> in it as in lesson 1, then create two files. The first one holds the tasks:</p>
+<h2 id="why">Why modules exist</h2>
+<p>Real backends have hundreds of files. Putting everything in one file does not work: it becomes impossible to find anything, two parts of the code accidentally use the same variable name, and any function can change any data.</p>
+<p>A <strong>module</strong> is a file with its own private scope. Nothing inside it is visible to other files unless the module <strong>exports</strong> it, and another file must <strong>import</strong> it by name to use it. That gives you three things:</p>
+<ul>
+<li><strong>Organisation</strong>: each file does one job and has a name that says what it is.</li>
+<li><strong>No name clashes</strong>: a variable called <code>tasks</code> in one file has nothing to do with <code>tasks</code> in another. That is the module scope from <a href="/learn/js-scope">Scope and how code runs</a>.</li>
+<li><strong>Hiding</strong>: a module decides exactly what the rest of the program may touch. Everything else is an internal detail you can change safely.</li>
+</ul>
+<p>JavaScript has two module systems. <strong>ES modules</strong> (ESM), with <code>import</code> and <code>export</code>, are the standard, and what this course uses. <strong>CommonJS</strong>, with <code>require</code>, is the older Node.js system that you will still meet. This lesson covers both.</p>
+</section>
+
+<section>
+<h2 id="esm">ES modules: import and export</h2>
+<p>Make a new folder for this lesson, run <code>npm init -y</code> and <code>npm pkg set type=module</code> in it as in <a href="/learn/setup">Your first program</a>, then create two files. The first one holds the tasks:</p>
 <example file="tasks.js" project="store">
 const tasks = [
   { id: 1, title: "Buy milk", done: false },
@@ -54,149 +65,416 @@ $ node main.js
 </shell>
 <p>A few rules to remember:</p>
 <ul>
-<li>A relative import starts with <code>./</code> and includes the file extension: <code>"./tasks.js"</code>, not <code>"./tasks"</code>.</li>
-<li><code>tasks</code> and <code>nextId</code> are not exported, so no other file can reach them. The only way to add a task is through <code>addTask</code>. Hiding details like this keeps a codebase safe to change.</li>
-<li>A package import has no <code>./</code>: <code>import { schema } from "@zudojs/schema"</code>. Node.js finds it in the <code>node_modules</code> folder that <code>npm install</code> fills.</li>
+<li>A relative import starts with <code>./</code> (this folder) or <code>../</code> (the folder above) and includes the file extension: <code>"./tasks.js"</code>, not <code>"./tasks"</code>.</li>
+<li><code>tasks</code> and <code>nextId</code> are not exported, so no other file can reach them. The only way to add a task is through <code>addTask</code>, so ids can never be duplicated.</li>
+<li>A package import has no <code>./</code>: <code>import { schema } from "@zudojs/schema"</code>. Node.js finds it in the <code>node_modules</code> folder that <code>npm install</code> fills. <a href="/learn/npm-packages">npm and packages</a> covers that.</li>
+<li><code>import</code> lines go at the top of the file. They run before any other code in the file.</li>
 </ul>
 <warn>If you see <code>SyntaxError: Cannot use import statement outside a module</code>, your <code>package.json</code> is missing <code>"type": "module"</code>. Run <code>npm pkg set type=module</code>.</warn>
 </section>
 
 <section>
-<h2 id="throw-catch">Throwing and catching errors</h2>
-<p>When code cannot do what was asked, it should say so loudly rather than carry on with bad data. <code>throw</code> stops the current function and hands an error to whoever called it. <code>try</code>/<code>catch</code> is where you receive it:</p>
-<example file="catch.js">
-function parseTask(text) {
-  const data = JSON.parse(text);
-  if (typeof data.title !== "string") {
-    throw new Error("title must be a string");
-  }
-  return data;
-}
+<h2 id="default">Named and default exports</h2>
+<p>Everything you exported so far is a <strong>named export</strong>: the importing file must use the exact name, inside <code>{ }</code>. A module may also have one <strong>default export</strong>, written <code>export default</code>. The importing file picks any name for it, with no braces:</p>
+<example file="task-store.js" project="default">
+export const MAX_TASKS = 100;
 
-const inputs = ['{"title":"Buy milk"}', '{"title":42}', "{not json"];
+export default class TaskStore {
+  #tasks = [];
 
-for (const input of inputs) {
-  try {
-    const task = parseTask(input);
-    console.log("OK:", task.title);
-  } catch (error) {
-    console.log(`${error.name}: ${error.message}`);
-  } finally {
-    console.log("  (checked one input)");
+  add(title) {
+    if (this.#tasks.length >= MAX_TASKS) throw new Error("store is full");
+    this.#tasks.push(title);
+    return this.#tasks.length;
   }
 }
 </example>
+<example file="main.js" project="default">
+import Store, { MAX_TASKS } from "./task-store.js";
+import Whatever from "./task-store.js";
+
+const store = new Store();
+console.log(store.add("Buy milk"), "of", MAX_TASKS);
+console.log(Store === Whatever);
+</example>
 <output>
-OK: Buy milk
-  (checked one input)
-Error: title must be a string
-  (checked one input)
-SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)
-  (checked one input)
+1 of 100
+true
 </output>
-<p>Three things happened:</p>
-<ul>
-<li>Good JSON with a string title passed.</li>
-<li>Our own <code>throw</code> rejected a title that was a number.</li>
-<li><code>JSON.parse</code> itself threw a <code>SyntaxError</code> on text that was not JSON. You did not write that <code>throw</code>. Built-in functions throw too.</li>
-</ul>
-<p><code>finally</code> runs whether or not there was an error. Use it for clean-up, such as closing a file.</p>
-<note>The exact wording of the <code>SyntaxError</code> comes from the JavaScript engine. Node.js and Chrome use the same engine, which is why the browser terminal prints the same message.</note>
+<p><code>Store</code> and <code>Whatever</code> are the same class, under two different names. That freedom is the problem with default exports: every file can call the same thing something different, so searching the code for <code>TaskStore</code> misses them, and editors cannot rename it reliably. A typo in a named import is an error; a "typo" in a default import is just a new name.</p>
+<tip>Prefer named exports. They keep one name for one thing across the whole codebase. ZudoJS packages only use named exports. You will still see <code>export default</code> in some libraries and frameworks, so you need to recognise it.</tip>
 </section>
 
 <section>
-<h2 id="error-classes">Your own error classes</h2>
-<p>A backend has to answer differently for different failures: "that task does not exist" is not the same as "the database is down". Give each failure its own <strong>class</strong>, so the code that catches it can tell them apart.</p>
-<p>A class is a template for objects. <code>extends Error</code> means "an error, plus my extras". Here the extra is <code>statusCode</code>, the number an HTTP API sends back. 404 means Not Found:</p>
-<example file="errors.js" project="errors">
-export class NotFoundError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "NotFoundError";
-    this.statusCode = 404;
-  }
+<h2 id="aliases">Import aliases and namespaces</h2>
+<p>Sometimes two modules export the same name. Rename one when you import it with <code>as</code>. Or import the whole module as one object with <code>import * as name</code>, called a <strong>namespace import</strong>:</p>
+<example file="tasks.js" project="alias">
+export function create(title) {
+  return { kind: "task", title };
+}
+
+export function count(list) {
+  return list.filter((item) => item.kind === "task").length;
 }
 </example>
-<example file="find.js" project="errors">
-import { NotFoundError } from "./errors.js";
+<example file="users.js" project="alias">
+export function create(name) {
+  return { kind: "user", name };
+}
+</example>
+<example file="main.js" project="alias">
+import { create as createTask } from "./tasks.js";
+import { create as createUser } from "./users.js";
+import * as taskModule from "./tasks.js";
 
-const tasks = [{ id: 1, title: "Buy milk", done: false }];
+const items = [createTask("Buy milk"), createUser("Ada"), createTask("Call Ada")];
+console.log(items);
+console.log(taskModule.count(items));
+console.log(typeof taskModule.create);
+</example>
+<output>
+[
+  { kind: 'task', title: 'Buy milk' },
+  { kind: 'user', name: 'Ada' },
+  { kind: 'task', title: 'Call Ada' }
+]
+2
+function
+</output>
+<p>Inside <code>main.js</code>, the two <code>create</code> functions are now <code>createTask</code> and <code>createUser</code>. The namespace <code>taskModule</code> holds every export of <code>tasks.js</code> as a property, which makes it obvious where <code>count</code> comes from.</p>
+</section>
 
-function getTask(id) {
-  const task = tasks.find((t) => t.id === id);
-  if (!task) {
-    throw new NotFoundError(`Task ${id} not found`);
-  }
+<section>
+<h2 id="once">A module runs once</h2>
+<p>However many files import a module, its code runs only the <em>first</em> time. Every importer gets the same exports, so they share any state inside it:</p>
+<example file="counter.js" project="once">
+console.log("counter.js is running");
+
+let count = 0;
+
+export function next() {
+  count += 1;
+  return count;
+}
+</example>
+<example file="tasks.js" project="once">
+import { next } from "./counter.js";
+
+export const taskId = () => `task-${next()}`;
+</example>
+<example file="users.js" project="once">
+import { next } from "./counter.js";
+
+export const userId = () => `user-${next()}`;
+</example>
+<example file="main.js" project="once">
+import { taskId } from "./tasks.js";
+import { userId } from "./users.js";
+
+console.log(taskId(), userId(), taskId());
+</example>
+<output>
+counter.js is running
+task-1 user-2 task-3
+</output>
+<p><code>counter.js</code> printed its message once, and the two modules share one <code>count</code>. This is useful (one database connection for the whole app, created in one module) and a trap (state you thought was private to <code>tasks.js</code> is shared). If each part needs its own counter, export a function that <em>creates</em> one, like <code>makeCounter</code> in <a href="/learn/js-scope">Scope</a>.</p>
+</section>
+
+<section>
+<h2 id="commonjs">CommonJS: require and module.exports</h2>
+<p>Before ES modules existed, Node.js had its own system, <strong>CommonJS</strong>. Many older packages and tutorials still use it, so you need to read it. A CommonJS file assigns what it shares to <code>module.exports</code>, and another file loads it with <code>require</code>.</p>
+<p>In a project with <code>"type": "module"</code>, a file must end in <code>.cjs</code> to be treated as CommonJS. (In a project without <code>"type": "module"</code>, every <code>.js</code> file is CommonJS.) Here is the task store again:</p>
+<example file="tasks.cjs" project="cjs" browser="no">
+const tasks = [];
+
+function addTask(title) {
+  const task = { id: tasks.length + 1, title, done: false };
+  tasks.push(task);
   return task;
 }
 
-for (const id of [1, 7]) {
-  try {
-    console.log(getTask(id));
-  } catch (error) {
-    if (error instanceof NotFoundError) {
-      console.log(error.statusCode, error.message);
-    } else {
-      throw error;
-    }
-  }
+function listTasks() {
+  return tasks;
 }
+
+module.exports = { addTask, listTasks };
+</example>
+<example file="main.cjs" project="cjs" browser="no">
+const { addTask, listTasks } = require("./tasks.cjs");
+
+addTask("Buy milk");
+addTask("Call Ada");
+console.log(listTasks());
+console.log(typeof require, typeof module);
 </example>
 <output>
-{ id: 1, title: 'Buy milk', done: false }
-404 Task 7 not found
+[
+  { id: 1, title: 'Buy milk', done: false },
+  { id: 2, title: 'Call Ada', done: false }
+]
+function object
 </output>
-<p><code>instanceof</code> asks "was this error made from that class?". The <code>else { throw error; }</code> part matters: only handle the errors you expect, and let anything else keep going up so it is not silently lost.</p>
-<p>This pattern is exactly how ZudoJS works. <code>@zudojs/errors</code> ships <code>NotFoundError</code>, <code>ValidationError</code>, <code>ConflictError</code> and dozens more, each with the right status code, so you will not write these classes yourself after this lesson.</p>
+<shell title="Terminal on your computer">
+$ node main.cjs
+[
+  { id: 1, title: 'Buy milk', done: false },
+  { id: 2, title: 'Call Ada', done: false }
+]
+function object
+</shell>
+<p>The ideas are the same, the spelling is different:</p>
+<ul>
+<li><code>require</code> is an ordinary function. It loads the file right then, synchronously, and returns its <code>module.exports</code> object. <code>import</code> is special syntax that Node.js reads before running anything.</li>
+<li><code>const { addTask } = require(...)</code> is just destructuring the returned object.</li>
+<li>These examples are "Node.js only": the browser terminal only understands ES modules.</li>
+</ul>
+<p>An ES module can import a CommonJS file. Its <code>module.exports</code> object arrives as the default export, and Node.js also detects simple named exports. The reverse, <code>require</code> in an ES module, does not exist:</p>
+<example file="app.js" project="cjs" browser="no">
+import tasks from "./tasks.cjs";
+import { addTask } from "./tasks.cjs";
+
+addTask("Plan week");
+console.log(tasks.listTasks());
+console.log(typeof require);
+</example>
+<output>
+[ { id: 1, title: 'Plan week', done: false } ]
+undefined
+</output>
+<p>For new code, always write ES modules. Use this knowledge to read older code and to understand why some packages are imported with a default import.</p>
+</section>
+
+<section>
+<h2 id="boundaries">Module boundaries: a public entry point</h2>
+<p>As a feature grows, it becomes several files: one that stores data, one with the rules, maybe one with helpers. Other parts of the app should not reach into all of them. Give the feature's folder one <strong>entry point</strong>, usually <code>index.js</code>, that re-exports only the public functions. <code>export { name } from "./file.js"</code> re-exports without importing into the current file:</p>
+<example file="tasks/store.js" project="feature" browser="no">
+const rows = [];
+
+export function insert(task) {
+  rows.push(task);
+  return task;
+}
+
+export function all() {
+  return rows.map((row) => ({ ...row }));
+}
+</example>
+<example file="tasks/service.js" project="feature" browser="no">
+import { all, insert } from "./store.js";
+
+export function createTask(title) {
+  const clean = title.trim();
+  if (clean === "") throw new Error("title must not be empty");
+  return insert({ id: all().length + 1, title: clean, done: false });
+}
+
+export function listTasks() {
+  return all();
+}
+</example>
+<example file="tasks/index.js" project="feature" browser="no">
+export { createTask, listTasks } from "./service.js";
+</example>
+<example file="main.js" project="feature" browser="no">
+import * as tasks from "./tasks/index.js";
+
+tasks.createTask("  Buy milk ");
+console.log(tasks.listTasks());
+console.log(Object.keys(tasks));
+</example>
+<output>
+[ { id: 1, title: 'Buy milk', done: false } ]
+[ 'createTask', 'listTasks' ]
+</output>
+<p>The rest of the app sees exactly two functions. <code>insert</code> exists, but it is not part of the feature's public face, so nobody can store a task that skipped the validation in <code>createTask</code>. You are free to replace <code>store.js</code> with a real database later without changing any other file. That line between "public" and "internal" is a <strong>module boundary</strong>.</p>
+<note>npm packages draw the same line with the <code>"exports"</code> field in their <code>package.json</code>: only the paths listed there can be imported. That is why you import <code>@zudojs/errors</code>, not a file deep inside it.</note>
+</section>
+
+<section>
+<h2 id="circular">Circular dependencies</h2>
+<p>A <strong>circular dependency</strong> is when module A imports module B, and B (directly or through others) imports A. It usually happens by accident as a project grows. Here, <code>tasks.js</code> uses a logger, and the logger wants a constant from <code>tasks.js</code>:</p>
+<file name="tasks.js" project="cycle">
+import { logChange } from "./logger.js";
+
+export const DEFAULT_PRIORITY = 3;
+
+export function createTask(title) {
+  const task = { title, priority: DEFAULT_PRIORITY };
+  logChange("created", task);
+  return task;
+}
+</file>
+<file name="logger.js" project="cycle">
+import { DEFAULT_PRIORITY } from "./tasks.js";
+
+const prefix = `[tasks, default priority ${DEFAULT_PRIORITY}]`;
+
+export function logChange(event, task) {
+  console.log(`${prefix} ${event}: ${task.title}`);
+}
+</file>
+<file name="main.js" project="cycle">
+import { createTask } from "./tasks.js";
+
+createTask("Buy milk");
+</file>
+<shell title="Terminal on your computer">
+$ node main.js
+file://~/modules-demo/cycle/logger.js:3
+const prefix = `[tasks, default priority ${DEFAULT_PRIORITY}]`;
+                                           ^
+
+ReferenceError: Cannot access 'DEFAULT_PRIORITY' before initialization
+    at file://~/modules-demo/cycle/logger.js:3:44
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at async node:internal/modules/esm/loader:643:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+
+Node.js v24.19.0
+</shell>
+<p>Follow what Node.js did:</p>
+<ol>
+<li><code>main.js</code> imports <code>tasks.js</code>. Before running <code>tasks.js</code>, Node.js must run what <em>it</em> imports: <code>logger.js</code>.</li>
+<li><code>logger.js</code> imports <code>tasks.js</code>, which is already being loaded, so Node.js does not start it again. It runs <code>logger.js</code> first.</li>
+<li><code>logger.js</code> reads <code>DEFAULT_PRIORITY</code> on line 3, but the line in <code>tasks.js</code> that creates it has not run yet. That is the temporal dead zone from <a href="/learn/js-scope">Scope</a>, across two files.</li>
+</ol>
+<p>This error message, "Cannot access ... before initialization" pointing at an <em>imported</em> name, is the typical sign of a circular import. CommonJS is worse: if you rewrite the same three files with <code>require</code>, nothing crashes. <code>require</code> returns the half-finished exports object, the value is quietly <code>undefined</code>, and you only get a warning:</p>
+<shell title="Terminal on your computer">
+$ node main.cjs
+[tasks, default priority undefined] created: Buy milk
+(node:258000) Warning: Accessing non-existent property 'DEFAULT_PRIORITY' of module exports inside circular dependency
+(Use `node --trace-warnings ...` to show where the warning was created)
+</shell>
+<h3>The fix: break the cycle</h3>
+<p>Move what both modules need into a third module that imports neither of them. Dependencies then point one way only:</p>
+<example file="constants.js" project="nocycle">
+export const DEFAULT_PRIORITY = 3;
+</example>
+<example file="logger.js" project="nocycle">
+import { DEFAULT_PRIORITY } from "./constants.js";
+
+const prefix = `[tasks, default priority ${DEFAULT_PRIORITY}]`;
+
+export function logChange(event, task) {
+  console.log(`${prefix} ${event}: ${task.title}`);
+}
+</example>
+<example file="tasks.js" project="nocycle">
+import { DEFAULT_PRIORITY } from "./constants.js";
+import { logChange } from "./logger.js";
+
+export function createTask(title) {
+  const task = { title, priority: DEFAULT_PRIORITY };
+  logChange("created", task);
+  return task;
+}
+</example>
+<example file="main.js" project="nocycle">
+import { createTask } from "./tasks.js";
+
+createTask("Buy milk");
+</example>
+<output>
+[tasks, default priority 3] created: Buy milk
+</output>
+<p>Now <code>main.js</code> → <code>tasks.js</code> → <code>logger.js</code> → <code>constants.js</code>, and <code>tasks.js</code> → <code>constants.js</code>. No arrow points back. Other ways to break a cycle: pass the value in as an argument instead of importing it, or merge two modules that cannot live without each other.</p>
+</section>
+
+<section>
+<h2 id="structure">Choosing a module structure</h2>
+<p>There are two common ways to arrange the files of a backend:</p>
+<ul>
+<li><strong>By technical type</strong>: a <code>routes/</code> folder, a <code>services/</code> folder, a <code>models/</code> folder. Every feature is spread across all of them.</li>
+<li><strong>By feature</strong>: a <code>tasks/</code> folder, a <code>users/</code> folder, each holding its own routes, service and store, with one <code>index.js</code> entry point.</li>
+</ul>
+<pre><code>src/
+  main.js
+  shared/
+    errors.js
+    constants.js
+  tasks/
+    index.js        public entry point
+    service.js
+    store.js
+  users/
+    index.js
+    service.js
+    store.js</code></pre>
+<p>Organising by feature scales better. Everything about tasks is in one place, a feature can be understood (or deleted) on its own, and the entry points keep features from reaching into each other's internals. A few rules keep it healthy:</p>
+<ul>
+<li>A feature imports another feature only through its <code>index.js</code>.</li>
+<li>Shared code lives in <code>shared/</code> and never imports from a feature. That rule alone prevents most circular dependencies.</li>
+<li>One module, one job. When a file grows past a screen or two, split it.</li>
+</ul>
+<p>ZudoJS projects use this feature-based layout, and <a href="/learn/backend-architecture">Backend architecture</a> explains the layers inside each feature.</p>
 </section>
 
 <section>
 <h2 id="practice">Practice</h2>
-<exercise title="Add a ValidationError">
-<p>Add a <code>ValidationError</code> class with status code 400 (Bad Request) to <code>errors.js</code>. Write <code>createTask(title)</code> that throws it when the title is empty, and show that the catching code can tell the two errors apart.</p>
+<exercise title="Split a file into modules">
+<p>Move <code>formatTask</code> into its own file <code>format.js</code> as a named export, and <code>isOverdue</code> into <code>dates.js</code>. Import both into <code>main.js</code> and print the result for one task that is overdue.</p>
 <solution>
-<example file="errors.js" project="practice">
-export class NotFoundError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "NotFoundError";
-    this.statusCode = 404;
-  }
-}
-
-export class ValidationError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "ValidationError";
-    this.statusCode = 400;
-  }
+<example file="format.js" project="split">
+export function formatTask(task) {
+  return `${task.done ? "[x]" : "[ ]"} ${task.title}`;
 }
 </example>
-<example file="create.js" project="practice">
-import { NotFoundError, ValidationError } from "./errors.js";
-
-function createTask(title) {
-  if (title.trim() === "") {
-    throw new ValidationError("title must not be empty");
-  }
-  return { id: 2, title, done: false };
+<example file="dates.js" project="split">
+export function isOverdue(task, today) {
+  return !task.done && task.due < today;
 }
+</example>
+<example file="main.js" project="split">
+import { isOverdue } from "./dates.js";
+import { formatTask } from "./format.js";
 
-function describe(error) {
-  if (error instanceof ValidationError) return "Fix your input";
-  if (error instanceof NotFoundError) return "Check the id";
-  return "Something else went wrong";
-}
-
-try {
-  createTask("  ");
-} catch (error) {
-  console.log(error.statusCode, error.name, "-", describe(error));
-}
+const task = { title: "File taxes", done: false, due: "2026-04-30" };
+const warning = isOverdue(task, "2026-09-23") ? " (overdue)" : "";
+console.log(formatTask(task) + warning);
 </example>
 <output>
-400 ValidationError - Fix your input
+[ ] File taxes (overdue)
 </output>
+<p>The dates are strings in <code>YYYY-MM-DD</code> form, which sort correctly as text, so <code>&lt;</code> works on them.</p>
+</solution>
+</exercise>
+<exercise title="Read some CommonJS">
+<p>Rewrite this CommonJS module and its user as ES modules with named exports.</p>
+<example file="old.cjs" browser="no" check="skip">
+const LIMIT = 20;
+
+function paginate(items, page) {
+  return items.slice((page - 1) * LIMIT, page * LIMIT);
+}
+
+module.exports = { LIMIT, paginate };
+
+// in another file:
+// const { paginate } = require("./old.cjs");
+</example>
+<solution>
+<example file="paginate.js" project="esm-rewrite">
+export const LIMIT = 20;
+
+export function paginate(items, page) {
+  return items.slice((page - 1) * LIMIT, page * LIMIT);
+}
+</example>
+<example file="main.js" project="esm-rewrite">
+import { LIMIT, paginate } from "./paginate.js";
+
+const items = Array.from({ length: 45 }, (_, i) => i + 1);
+console.log(LIMIT, paginate(items, 3));
+</example>
+<output>
+20 [ 41, 42, 43, 44, 45 ]
+</output>
+</solution>
+</exercise>
+<exercise title="Spot the cycle">
+<p><code>users.js</code> imports <code>getTasksFor</code> from <code>tasks.js</code>, and <code>tasks.js</code> imports <code>findUser</code> from <code>users.js</code>. Both only use the imported function <em>inside</em> their own functions, never at the top level. Will it crash? Is it still a problem?</p>
+<solution>
+<p>It will usually not crash. By the time any function is <em>called</em>, both modules have finished loading, so both imports are ready. Only code that runs at the top level while the modules are still loading, like the <code>prefix</code> line above, hits the error. It is still a warning sign: the two modules cannot be understood or tested separately, and the first top-level use of either import will break. Move the shared logic into a third module, or have one side receive the function as an argument.</p>
 </solution>
 </exercise>
 </section>
@@ -204,9 +482,13 @@ try {
 <section>
 <h2 id="recap">Recap</h2>
 <ul>
-<li>Each file is a module. <code>export</code> what others may use and <code>import</code> it by path, with the extension.</li>
-<li><code>throw</code> reports a failure; <code>try</code>/<code>catch</code>/<code>finally</code> handles it.</li>
-<li>Give each kind of failure its own class, check it with <code>instanceof</code>, and re-throw what you don't handle.</li>
+<li>Each file is a module with its own scope. <code>export</code> what others may use, and <code>import</code> it by relative path with the extension.</li>
+<li>Prefer named exports. A default export can be imported under any name, which makes code harder to search.</li>
+<li><code>import { a as b }</code> renames an import, and <code>import * as ns</code> gathers all exports into one object.</li>
+<li>A module runs once, and every importer shares its state.</li>
+<li>CommonJS uses <code>require</code> and <code>module.exports</code> (<code>.cjs</code> files in an ES module project). Read it, but write ES modules.</li>
+<li>Give each feature one public entry point, and keep its internals private.</li>
+<li>A circular import shows up as "Cannot access ... before initialization" (ESM) or a silent <code>undefined</code> (CommonJS). Break it by moving the shared part into a third module.</li>
 </ul>
-<p>That completes the JavaScript part. Next, you will add types to this same code, and watch TypeScript catch mistakes JavaScript let through.</p>
+<p>That completes the JavaScript part. Next, you will leave the browser behind and look at Node.js itself: the runtime that runs your JavaScript on a server.</p>
 </section>

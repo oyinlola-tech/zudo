@@ -1,0 +1,721 @@
+---
+title: The application runtime and lifecycle
+description: Learn how the ZudoJS runtime starts the parts of your application in dependency order, rolls back when startup fails, reports readiness, and shuts everything down gracefully.
+minutes: 45
+youNeed: The task-api project from the previous lesson
+youBuild: A Task API runtime with a store module and a tasks module that start in order, roll back on failure and stop cleanly
+keywords: zudojs runtime, createRuntime, module lifecycle, onInitialize, onReady, onShutdown, onDestroy, dependency order, rollback, RuntimeStartError, graceful shutdown, SIGTERM, readiness check, health, zudojs lifecycle, dependsOn, BaseModule
+---
+<section>
+<h2 id="why">Why an application needs a runtime</h2>
+<p>A real backend is not one thing. The Task API will soon have a database connection, a service with the task rules, and an HTTP server. These parts depend on each other:</p>
+<ul>
+<li>The tasks service needs the database, so the database must be ready <strong>first</strong>.</li>
+<li>The HTTP server sends requests to the tasks service, so it must start <strong>last</strong>.</li>
+<li>When the program stops, the order is reversed: stop taking requests first, close the database last.</li>
+</ul>
+<p>Doing this by hand works for two parts and becomes fragile at ten. The <strong>runtime</strong> (<code>@zudojs/runtime</code>) does it for you. You describe each part and what it depends on, and the runtime works out the order, starts everything, notices failures and shuts down cleanly.</p>
+<p>You already have one. In <a href="/learn/zudo-create-project">Create the Task API project</a>, the CLI generated <code>src/app.ts</code>, which builds a runtime with <code>createRuntime</code>, and <code>src/server.ts</code>, which calls <code>runtime.start()</code>. This lesson explains what happens inside those two calls. Every package used here is already in the project's <code>package.json</code>, so there is nothing to install.</p>
+</section>
+
+<section>
+<h2 id="modules">Modules and their four hooks</h2>
+<p>The runtime manages <strong>modules</strong>. A module is an object with an <code>id</code>, a <code>name</code>, an optional list of <code>dependencies</code> (the ids of other modules), and up to four <strong>hooks</strong>. A hook is a function the runtime calls at a fixed moment:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Hook</th><th>When the runtime calls it</th><th>Typical work</th></tr></thead>
+<tbody>
+<tr><td><code>onInitialize</code></td><td>During <code>start()</code>, dependencies first</td><td>Open a connection, load data</td></tr>
+<tr><td><code>onReady</code></td><td>During <code>start()</code>, after every module has initialized</td><td>Start accepting work</td></tr>
+<tr><td><code>onShutdown</code></td><td>During <code>stop()</code>, in reverse order</td><td>Stop accepting work, finish what is running</td></tr>
+<tr><td><code>onDestroy</code></td><td>During <code>stop()</code>, last, in reverse order</td><td>Release everything the module still holds</td></tr>
+</tbody>
+</table></div>
+<p>To see the order, this helper builds a module whose hooks only print what happens. It also creates a runtime. <code>createRuntime</code> takes two arguments: the <strong>services</strong> the runtime works with (the modules, a logger, a dependency container and an event bus, exactly like <code>src/app.ts</code>) and the <strong>options</strong> that describe the application:</p>
+<example file="trace.ts" project="rt" browser="no">
+import { createContainer } from "@zudojs/container";
+import type { Module } from "@zudojs/core";
+import { createEventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
+import type { Runtime } from "@zudojs/runtime";
+
+export function traceModule(id: string, dependencies: string[] = []): Module {
+  return {
+    id,
+    name: id,
+    dependencies,
+    onInitialize: () => console.log(`initialize ${id}`),
+    onReady: () => console.log(`ready      ${id}`),
+    onShutdown: () => console.log(`shutdown   ${id}`),
+    onDestroy: () => console.log(`destroy    ${id}`),
+  };
+}
+
+export function buildRuntime(modules: Module[]): Runtime {
+  return createRuntime(
+    {
+      modules: new Map(modules.map((m) => [m.id, m])),
+      logger: createLogger({ name: "task-api", level: LoggerLevel.FATAL }),
+      container: createContainer(),
+      eventBus: createEventBus(),
+    },
+    { applicationName: "task-api", environment: "development", handleSignals: false },
+  );
+}
+</example>
+<p>The logger level <code>FATAL</code> hides the runtime's own log lines, so the output below only shows the hooks. In your project, keep the default level: those log lines are useful there. <code>handleSignals: false</code> is explained in <a href="#signals">Signals and graceful shutdown</a>.</p>
+<p>Now three modules for the Task API: a <code>store</code> that holds the data, a <code>tasks</code> module that needs the store, and an <code>http</code> module that needs the tasks. They are listed in the <em>wrong</em> order on purpose:</p>
+<example file="start-stop.ts" project="rt" browser="no">
+import { buildRuntime, traceModule } from "./trace.js";
+
+const runtime = buildRuntime([
+  traceModule("http", ["tasks"]),
+  traceModule("tasks", ["store"]),
+  traceModule("store"),
+]);
+
+console.log("state:", runtime.state);
+await runtime.start();
+console.log("state:", runtime.state);
+await runtime.stop();
+console.log("state:", runtime.state);
+</example>
+<output>
+state: created
+initialize store
+initialize tasks
+initialize http
+ready      store
+ready      tasks
+ready      http
+state: running
+shutdown   http
+shutdown   tasks
+shutdown   store
+destroy    http
+destroy    tasks
+destroy    store
+state: stopped
+</output>
+<p>Read it from top to bottom:</p>
+<ul>
+<li>The runtime ignored the order of the list and followed the <code>dependencies</code>: <code>store</code>, then <code>tasks</code>, then <code>http</code>.</li>
+<li>Startup has two rounds. Every module is initialized before any module becomes ready. So when <code>http</code> becomes ready, it knows every other module has at least been initialized.</li>
+<li>Stopping runs the same order backwards, again in two rounds: all <code>onShutdown</code> hooks, then all <code>onDestroy</code> hooks.</li>
+<li><code>runtime.state</code> went from <code>created</code> to <code>running</code> to <code>stopped</code>.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="states">Lifecycle states and events</h2>
+<p>The runtime is a <strong>state machine</strong>: at any moment it is in exactly one <strong>state</strong>, and it only moves between states along fixed paths. You read it from <code>runtime.state</code>:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>State</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>created</code></td><td>Built, nothing has run yet.</td></tr>
+<tr><td><code>initializing</code></td><td>Running the <code>onInitialize</code> and <code>onReady</code> hooks.</td></tr>
+<tr><td><code>running</code></td><td>Everything is up.</td></tr>
+<tr><td><code>stopping</code></td><td>Running the <code>onShutdown</code> and <code>onDestroy</code> hooks.</td></tr>
+<tr><td><code>stopped</code></td><td>Everything is down. A stopped runtime cannot be started again; create a new one.</td></tr>
+<tr><td><code>failed</code></td><td>Something went wrong on the way up or down.</td></tr>
+</tbody>
+</table></div>
+<p>Each change is also announced as an <strong>event</strong> on the event bus you passed in. Other parts of your program can listen without the runtime knowing about them. Here a listener prints the runtime events and the state at that moment:</p>
+<example file="events.ts" project="rt" browser="no">
+import { createContainer } from "@zudojs/container";
+import { createEventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
+import { traceModule } from "./trace.js";
+
+const eventBus = createEventBus();
+const runtime = createRuntime(
+  {
+    modules: new Map([["store", traceModule("store")]]),
+    logger: createLogger({ name: "task-api", level: LoggerLevel.FATAL }),
+    container: createContainer(),
+    eventBus,
+  },
+  { applicationName: "task-api", environment: "development", handleSignals: false },
+);
+
+for (const type of ["runtime.initializing", "runtime.running", "runtime.stopping", "runtime.stopped"] as const) {
+  eventBus.on(type, (event) => console.log(`event ${event.type} (state: ${runtime.state})`));
+}
+
+await runtime.start();
+await runtime.stop();
+</example>
+<output>
+event runtime.initializing (state: initializing)
+initialize store
+ready      store
+event runtime.running (state: running)
+event runtime.stopping (state: stopping)
+shutdown   store
+destroy    store
+event runtime.stopped (state: stopped)
+</output>
+<p>There are also events for every module (<code>runtime.module.initializing</code>, <code>runtime.module.failed</code>, …) and for health changes. In later lessons, logging and monitoring code listens to them.</p>
+<note>The type in <code>@zudojs/runtime</code> also lists two states, <code>initialized</code> and <code>starting</code>, that the runtime never enters in version 1.2.1: <code>onReady</code> runs while the state is still <code>initializing</code>. Only rely on the six states above.</note>
+</section>
+
+<section>
+<h2 id="dependencies">The dependency graph</h2>
+<p>The <code>dependencies</code> lists form a <strong>dependency graph</strong>: an arrow from each module to every module it needs. The runtime sorts that graph so that every module comes after the modules it points to. That sorting is called a <strong>topological sort</strong>, and it is why the order in your list did not matter.</p>
+<p>Two mistakes make sorting impossible, and the runtime refuses to start in both cases:</p>
+<example file="bad-graph.ts" project="rt" browser="no">
+import { buildRuntime, traceModule } from "./trace.js";
+
+const cycle = buildRuntime([
+  traceModule("tasks", ["store"]),
+  traceModule("store", ["tasks"]),
+]);
+try {
+  await cycle.start();
+} catch (error) {
+  console.log((error as Error).name);
+  console.log((error as Error).message);
+}
+
+const missing = buildRuntime([traceModule("tasks", ["database"])]);
+try {
+  await missing.start();
+} catch (error) {
+  console.log((error as Error).name);
+  console.log((error as Error).message);
+}
+</example>
+<output>
+RuntimeCircularDependencyError
+Circular module dependency detected: tasks -> store -> tasks.
+RuntimeDependencyError
+Module "tasks" depends on "database" which is not registered.
+</output>
+<ul>
+<li>A <strong>cycle</strong> (<code>tasks</code> needs <code>store</code>, which needs <code>tasks</code>) has no valid first module. The error shows the whole loop, so you can see which link to remove.</li>
+<li>A <strong>missing</strong> dependency is usually a typo or a module you forgot to register.</li>
+</ul>
+<p>No hook ran in either case: the runtime checks the whole graph before it touches any module. A mistake in the wiring shows up the first time you start the app, not hours later.</p>
+</section>
+
+<section>
+<h2 id="rollback">Rollback when startup fails</h2>
+<p>Suppose the HTTP module cannot start because another program already uses its port. The store and the tasks module are already up. If the runtime simply gave up, the store's connection would stay open. Instead, it <strong>rolls back</strong>: it undoes what already happened, in reverse order.</p>
+<example file="rollback.ts" project="rt" browser="no">
+import { RuntimeStartError } from "@zudojs/runtime";
+import { buildRuntime, traceModule } from "./trace.js";
+
+const http = {
+  ...traceModule("http", ["tasks"]),
+  onReady: () => {
+    console.log("ready      http");
+    throw new Error("Port 3000 is already in use");
+  },
+};
+
+const runtime = buildRuntime([traceModule("store"), traceModule("tasks", ["store"]), http]);
+
+try {
+  await runtime.start();
+} catch (error) {
+  if (error instanceof RuntimeStartError) {
+    console.log(error.message);
+    console.log("phase:", error.phase);
+    console.log("cause:", (error.cause as Error).message);
+  }
+}
+console.log("state:", runtime.state);
+</example>
+<output>
+initialize store
+initialize tasks
+initialize http
+ready      store
+ready      tasks
+ready      http
+shutdown   tasks
+shutdown   store
+destroy    http
+destroy    tasks
+destroy    store
+Module "http" failed during startup.
+phase: start
+cause: Port 3000 is already in use
+state: failed
+</output>
+<p>Look at which hooks ran after the failure:</p>
+<ul>
+<li><code>onShutdown</code> ran only for <code>tasks</code> and <code>store</code>, the modules that had become ready. <code>http</code> never started, so there was nothing to shut down.</li>
+<li><code>onDestroy</code> ran for all three, because all three had initialized and may hold resources.</li>
+<li><code>start()</code> rejected with a <code>RuntimeStartError</code>. It says which <code>phase</code> failed (<code>initialize</code> or <code>start</code>), and the original error is in <code>cause</code>.</li>
+</ul>
+<p>The state is now <code>failed</code>. A failed runtime can still be stopped: <code>await runtime.stop()</code> releases anything the rollback did not reach, and it is safe to call even when there is nothing left. In <code>src/server.ts</code> this means: if <code>runtime.start()</code> throws, log the error, call <code>runtime.stop()</code>, and exit with code 1 so the platform running your app knows it failed.</p>
+</section>
+
+<section>
+<h2 id="readiness">Readiness and health</h2>
+<p>Hosting platforms ask a running app two questions:</p>
+<ul>
+<li><strong>Is it ready?</strong> Can it take requests right now? If not, send traffic elsewhere for a while.</li>
+<li><strong>Is it healthy?</strong> Is everything working as it should?</li>
+</ul>
+<p>A <strong>readiness check</strong> is a function that returns <code>true</code> or <code>false</code>. You register it on the runtime, and <code>runtime.ready</code> and <code>runtime.health</code> are worked out from all the checks:</p>
+<example file="readiness.ts" project="rt" browser="no">
+import { buildRuntime, traceModule } from "./trace.js";
+
+let storeConnected = true;
+const runtime = buildRuntime([traceModule("store")]);
+runtime.registerReadinessCheck("store", () => storeConnected);
+
+await runtime.start();
+await runtime.runReadinessChecks();
+console.log("ready:", runtime.ready, "health:", runtime.health.state);
+
+storeConnected = false;
+await runtime.runReadinessChecks();
+console.log("ready:", runtime.ready, "health:", runtime.health.state);
+
+await runtime.stop();
+</example>
+<output>
+initialize store
+ready      store
+ready: true health: healthy
+ready: false health: degraded
+shutdown   store
+destroy    store
+</output>
+<p>When the store lost its connection, the app kept running but reported itself <strong>degraded</strong>: still alive, not fully working. The generated <code>src/app.ts</code> registers one check, <code>modules</code>, and the generated <code>/health</code> route answers 503 when the runtime is not running.</p>
+</section>
+
+<section>
+<h2 id="signals">Signals and graceful shutdown</h2>
+<p>When a hosting platform wants your app to stop, for example to deploy a new version, it sends the process a <strong>signal</strong> called <code>SIGTERM</code>. Pressing <kbd>Ctrl</kbd> + <kbd>C</kbd> in a terminal sends <code>SIGINT</code>. By default, Node.js ends the process immediately. Any request being answered is cut off, and any data not yet saved is lost.</p>
+<p>A <strong>graceful shutdown</strong> does better: stop accepting new work, finish the work in progress, close connections, then exit. With <code>handleSignals: true</code> (the default), the runtime listens for both signals and runs <code>stop()</code> for you. This example sends <code>SIGTERM</code> to its own process to show it:</p>
+<example file="signal.ts" browser="no">
+import { createContainer } from "@zudojs/container";
+import type { Module } from "@zudojs/core";
+import { createEventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
+
+const http: Module = {
+  id: "http",
+  name: "http",
+  onReady: () => console.log("http: accepting requests"),
+  onShutdown: async () => {
+    console.log("http: finishing requests in progress...");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    console.log("http: closed");
+  },
+};
+
+const runtime = createRuntime(
+  {
+    modules: new Map([["http", http]]),
+    logger: createLogger({ name: "task-api", level: LoggerLevel.FATAL }),
+    container: createContainer(),
+    eventBus: createEventBus(),
+  },
+  { applicationName: "task-api", environment: "development", handleSignals: true },
+);
+
+process.on("exit", (code) => console.log(`process exits with code ${code}, state: ${runtime.state}`));
+
+await runtime.start();
+process.kill(process.pid, "SIGTERM");
+</example>
+<output>
+http: accepting requests
+http: finishing requests in progress...
+http: closed
+process exits with code 0, state: stopped
+</output>
+<p>The signal did not kill the process. The runtime caught it, waited for the <code>onShutdown</code> hook to finish its 100 ms of work, and only then let the process end. A second <code>SIGTERM</code> during shutdown exits at once, in case shutdown hangs, and <code>shutdownTimeout</code> (30 seconds by default) puts an upper limit on the whole thing.</p>
+<p>Why does the generated <code>src/app.ts</code> pass <code>handleSignals: false</code>? Because the HTTP server in <code>src/server.ts</code> is not a module. <code>server.ts</code> handles the signals itself so it can stop things in the right order: first <code>server.stop()</code> (no new requests, finish the current ones), then <code>runtime.stop()</code> (close everything the requests used). If both listened, they would race each other. You will see the server side of this in <a href="/learn/zudo-middleware">Middleware, CORS, security headers and graceful shutdown</a>.</p>
+</section>
+
+<section>
+<h2 id="options">Application options and module context</h2>
+<p>The second argument of <code>createRuntime</code> describes the application. These are the options you will use most:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Option</th><th>Default</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>applicationName</code></td><td>required</td><td>Name used in logs and events.</td></tr>
+<tr><td><code>environment</code></td><td>required</td><td><code>"development"</code>, <code>"test"</code> or <code>"production"</code>. The generated app reads it from <code>NODE_ENV</code> with <code>resolveEnvironment()</code>.</td></tr>
+<tr><td><code>applicationVersion</code></td><td><code>"0.1.0"</code></td><td>Your app's version.</td></tr>
+<tr><td><code>handleSignals</code></td><td><code>true</code></td><td>Stop gracefully on <code>SIGTERM</code> and <code>SIGINT</code>.</td></tr>
+<tr><td><code>startupTimeout</code> / <code>shutdownTimeout</code></td><td>60000 / 30000</td><td>Longest time, in milliseconds, that starting or stopping may take.</td></tr>
+</tbody>
+</table></div>
+<p>Everything about the running application is available as <code>runtime.context</code>. And each hook receives a <strong>module context</strong> (<code>ModuleContext</code>) with the module's own information and the runtime's <code>logger</code>. Modules are usually classes that extend <code>BaseModule</code> from <code>@zudojs/core</code>, like the generated <code>AppModule</code>. The <code>options</code> you give <code>BaseModule</code> come back in <code>context.options</code>:</p>
+<example file="context.ts" browser="no">
+import { createContainer } from "@zudojs/container";
+import { BaseModule } from "@zudojs/core";
+import type { ModuleContext } from "@zudojs/core";
+import { createEventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
+
+class StoreModule extends BaseModule {
+  public readonly id = "store";
+  public readonly name = "Task store";
+
+  public constructor() {
+    super({ version: "0.1.0", options: { maxTasks: 500 } });
+  }
+
+  public override async onInitialize(context: ModuleContext): Promise<void> {
+    console.log(`${context.name} v${context.version}, options:`, context.options);
+  }
+}
+
+const runtime = createRuntime(
+  {
+    modules: new Map([["store", new StoreModule()]]),
+    logger: createLogger({ name: "task-api", level: LoggerLevel.FATAL }),
+    container: createContainer(),
+    eventBus: createEventBus(),
+  },
+  { applicationName: "task-api", applicationVersion: "0.1.0", environment: "development", handleSignals: false },
+);
+
+await runtime.start();
+const { applicationName, applicationVersion, environment, runtimeId } = runtime.context;
+console.log(applicationName, applicationVersion, environment, runtimeId);
+await runtime.stop();
+</example>
+<output mask="b64">
+Task store v0.1.0, options: { maxTasks: 500 }
+task-api 0.1.0 development rt_c8a25a1c1f0e4d7ab4a6d1a9e8a0c3b2
+</output>
+<p>The <code>runtimeId</code> is new on every run. It lets you tell apart two copies of the same app in logs.</p>
+<tip><code>@zudojs/core</code> also has <code>createApplication</code>, which builds the container, logger and runtime for you in one call. The CLI uses <code>@zudojs/runtime</code> directly instead, so you can see and change every piece in <code>src/app.ts</code>.</tip>
+</section>
+
+<section>
+<h2 id="components">Smaller parts: @zudojs/lifecycle</h2>
+<p>The runtime manages the big pieces of your app. Sometimes one module owns several smaller parts, such as a connection pool, a cache and a mail sender. <code>@zudojs/lifecycle</code> applies the same idea one level down, to plain objects called <strong>components</strong>. Each component has optional <code>initialize</code>, <code>start</code>, <code>ready</code>, <code>stop</code> and <code>dispose</code> methods. You declare its dependencies with <code>dependsOn</code>, and you can mark a component that the app can live without as <code>critical: false</code>:</p>
+<example file="components.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+function component(name: string, failOnStart = false) {
+  return {
+    name,
+    start: async () => {
+      console.log(`start ${name}`);
+      if (failOnStart) throw new Error(`${name} is unreachable`);
+    },
+    stop: async () => console.log(`stop  ${name}`),
+  };
+}
+
+const manager = createLifecycleManager({ handleSignals: false });
+manager.register(component("pool"), { id: "pool" });
+manager.register(component("cache"), { id: "cache", dependsOn: ["pool"] });
+manager.register(component("mailer", true), { id: "mailer", critical: false });
+
+await manager.start();
+for (const [id, status] of manager.getStatus()) console.log(id, status.state);
+await manager.shutdown();
+</example>
+<output>
+start pool
+start mailer
+start cache
+pool ready
+cache ready
+mailer failed
+stop  cache
+stop  mailer
+stop  pool
+</output>
+<p>The mailer failed, but because it is not critical, startup carried on and the mailer is simply marked <code>failed</code>. Had the pool failed, <code>start()</code> would have rolled back and rejected, just like the runtime. Notice that <code>pool</code> and <code>mailer</code> started together: components that do not depend on each other run in parallel.</p>
+</section>
+
+<section>
+<h2 id="task-api">Put it in the Task API</h2>
+<p>Now give the real project two modules. First, somewhere to keep tasks. For now it is a <code>Map</code> in memory (the <a href="/learn/zudo-database">database lesson</a> replaces it with PostgreSQL). The generated project has an empty <code>src/repositories/</code> folder for code that stores data, so create <code>src/repositories/task.store.ts</code>:</p>
+<example file="src/repositories/task.store.ts" project="task-api" browser="no">
+export type Priority = "low" | "normal" | "high";
+
+export interface StoredTask {
+  readonly id: number;
+  readonly title: string;
+  readonly done: boolean;
+  readonly priority: Priority;
+  readonly createdAt: string;
+}
+
+export class TaskStore {
+  public readonly tasks = new Map<number, StoredTask>();
+  public connected = false;
+  private lastId = 0;
+
+  public nextId(): number {
+    this.lastId += 1;
+    return this.lastId;
+  }
+}
+</example>
+<p>The <code>store</code> module "connects" it when the app starts and clears it when the app stops. Create <code>src/modules/store.module.ts</code>:</p>
+<example file="src/modules/store.module.ts" project="task-api" browser="no">
+import { BaseModule } from "@zudojs/core";
+import type { ModuleContext } from "@zudojs/core";
+import type { TaskStore } from "../repositories/task.store.js";
+
+export class StoreModule extends BaseModule {
+  public readonly id = "store";
+  public readonly name = "store";
+
+  public constructor(private readonly store: TaskStore) {
+    super({ version: "0.1.0" });
+  }
+
+  public override async onInitialize(context: ModuleContext): Promise<void> {
+    this.store.connected = true;
+    context.logger.info("store connected");
+  }
+
+  public override async onDestroy(context: ModuleContext): Promise<void> {
+    this.store.tasks.clear();
+    this.store.connected = false;
+    context.logger.info("store closed");
+  }
+}
+</example>
+<p>Then <code>src/modules/tasks.module.ts</code>. It adds one example task at startup. Its <code>dependencies</code> list is what guarantees the store is connected before <code>onInitialize</code> runs:</p>
+<example file="src/modules/tasks.module.ts" project="task-api" browser="no">
+import { BaseModule } from "@zudojs/core";
+import type { ModuleContext } from "@zudojs/core";
+import type { TaskStore } from "../repositories/task.store.js";
+
+export class TasksModule extends BaseModule {
+  public readonly id = "tasks";
+  public readonly name = "tasks";
+
+  public constructor(private readonly store: TaskStore) {
+    super({ version: "0.1.0", dependencies: ["store"] });
+  }
+
+  public override async onInitialize(context: ModuleContext): Promise<void> {
+    if (!this.store.connected) {
+      throw new Error("The task store is not connected");
+    }
+    const id = this.store.nextId();
+    this.store.tasks.set(id, {
+      id,
+      title: "Read the runtime lesson",
+      done: true,
+      priority: "normal",
+      createdAt: "2026-09-23T09:00:00.000Z",
+    });
+    context.logger.info(`tasks ready, ${this.store.tasks.size} in store`);
+  }
+}
+</example>
+<p>Register both in <code>src/app.ts</code>. Both modules receive the same <code>TaskStore</code> object. The order in the list does not matter any more, but a readiness check for the store now does:</p>
+<example file="src/app.ts" project="task-api" browser="no">
+import { resolveEnvironment } from "@zudojs/constants";
+import { createContainer } from "@zudojs/container";
+import type { Module } from "@zudojs/core";
+import { createEventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
+import type { Runtime } from "@zudojs/runtime";
+import { StoreModule } from "./modules/store.module.js";
+import { TasksModule } from "./modules/tasks.module.js";
+import { TaskStore } from "./repositories/task.store.js";
+
+export function createApp(level: LoggerLevel = LoggerLevel.INFO): Runtime {
+  const store = new TaskStore();
+  const modules = new Map<string, Module>();
+  for (const module of [new TasksModule(store), new StoreModule(store)]) {
+    modules.set(module.id, module);
+  }
+
+  const runtime = createRuntime(
+    {
+      modules,
+      logger: createLogger({ name: "task-api", level }),
+      container: createContainer(),
+      eventBus: createEventBus(),
+    },
+    {
+      applicationName: "task-api",
+      applicationVersion: "0.1.0",
+      environment: resolveEnvironment(),
+      handleSignals: false,
+    },
+  );
+
+  runtime.registerReadinessCheck("modules", () => runtime.state === "running");
+  runtime.registerReadinessCheck("store", () => store.connected);
+  return runtime;
+}
+</example>
+<p>The <code>level</code> parameter lets a test script silence the logs. <code>src/server.ts</code> calls <code>createApp()</code> without arguments and keeps them.</p>
+<p>The two new modules replace the placeholder <code>AppModule</code>. Delete <code>src/modules/app.module.ts</code> and <code>src/services/app.service.ts</code>, empty <code>src/services/index.ts</code>, and make <code>src/modules/index.ts</code> export the new modules instead:</p>
+<example file="src/modules/index.ts" project="task-api" browser="no">
+export { StoreModule } from "./store.module.js";
+export { TasksModule } from "./tasks.module.js";
+</example>
+<p>A quick script proves the wiring works:</p>
+<example file="src/check-runtime.ts" project="task-api" browser="no">
+import { LoggerLevel } from "@zudojs/logger";
+import { createApp } from "./app.js";
+
+const runtime = createApp(LoggerLevel.FATAL);
+await runtime.start();
+await runtime.runReadinessChecks();
+console.log(runtime.state, runtime.ready, runtime.health.state);
+await runtime.stop();
+console.log(runtime.state);
+</example>
+<output>
+running true healthy
+stopped
+</output>
+<p>Run the same script in your project, and then start the real server to see the modules' log lines:</p>
+<shell title="Terminal on your computer">
+$ npx tsc --noEmit
+$ npx tsx src/check-runtime.ts
+running true healthy
+stopped
+$ npm run dev
+
+> task-api@0.1.0 dev
+> tsx watch src/server.ts
+
+{
+  timestamp: '2026-09-23T13:39:53.796Z',
+  level: 'info',
+  message: '2026-09-23T13:39:53.796Z [INFO] [task-api] store connected',
+  logger: 'task-api',
+  metadata: {}
+}
+{
+  timestamp: '2026-09-23T13:39:53.799Z',
+  level: 'info',
+  message: '2026-09-23T13:39:53.799Z [INFO] [task-api] tasks ready, 1 in store',
+  logger: 'task-api',
+  metadata: {}
+}
+{
+  timestamp: '2026-09-23T13:39:53.799Z',
+  level: 'info',
+  message: '2026-09-23T13:39:53.799Z [INFO] [task-api] All modules initialized. modules=["store","tasks"] durationMs=5',
+  logger: 'task-api',
+  metadata: { modules: [ 'store', 'tasks' ], durationMs: 5 }
+}
+…
+Listening on port 3000
+</shell>
+<p><code>tsc</code> printed nothing, so the project still type-checks. Your times will differ. The store logs before the tasks module, because of the dependency, then the runtime reports every module initialized and started. <code>/health</code> still answers as before. Stop the server with <kbd>Ctrl</kbd> + <kbd>C</kbd>.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Add a mailer module">
+<p>Using <code>traceModule</code> and <code>buildRuntime</code> from this lesson, add a <code>mailer</code> module that needs <code>tasks</code>, next to <code>http</code>, which also needs <code>tasks</code>. Before running it, write down the order you expect for all four rounds of hooks. Then run it.</p>
+<solution>
+<example file="mailer.ts" project="rt" browser="no">
+import { buildRuntime, traceModule } from "./trace.js";
+
+const runtime = buildRuntime([
+  traceModule("mailer", ["tasks"]),
+  traceModule("http", ["tasks"]),
+  traceModule("tasks", ["store"]),
+  traceModule("store"),
+]);
+await runtime.start();
+await runtime.stop();
+</example>
+<output>
+initialize store
+initialize tasks
+initialize mailer
+initialize http
+ready      store
+ready      tasks
+ready      mailer
+ready      http
+shutdown   http
+shutdown   mailer
+shutdown   tasks
+shutdown   store
+destroy    http
+destroy    mailer
+destroy    tasks
+destroy    store
+</output>
+<p><code>mailer</code> and <code>http</code> do not depend on each other, so either may come first. The runtime keeps the order you listed them in, and stops them in exactly the reverse order.</p>
+</solution>
+</exercise>
+<exercise title="A failing initialization">
+<p>Make the <code>tasks</code> module throw <code>new Error("Schema is out of date")</code> in <code>onInitialize</code>. Which hooks run, what is the error's <code>phase</code>, and why does <code>onShutdown</code> run for no module at all?</p>
+<solution>
+<example file="init-fail.ts" project="rt" browser="no">
+import { RuntimeStartError } from "@zudojs/runtime";
+import { buildRuntime, traceModule } from "./trace.js";
+
+const tasks = {
+  ...traceModule("tasks", ["store"]),
+  onInitialize: () => {
+    console.log("initialize tasks");
+    throw new Error("Schema is out of date");
+  },
+};
+
+const runtime = buildRuntime([traceModule("store"), tasks, traceModule("http", ["tasks"])]);
+try {
+  await runtime.start();
+} catch (error) {
+  if (error instanceof RuntimeStartError) {
+    console.log(error.phase, "-", (error.cause as Error).message);
+  }
+}
+</example>
+<output>
+initialize store
+initialize tasks
+destroy    tasks
+destroy    store
+initialize - Schema is out of date
+</output>
+<p>The failure happened in the first round, so no module ever became ready and there is nothing to shut down. <code>http</code> was never initialized, so it is not destroyed either. <code>tasks</code> is destroyed even though its <code>onInitialize</code> failed halfway: it may have opened something before throwing, so its <code>onDestroy</code> must cope with a half-initialized state.</p>
+</solution>
+</exercise>
+<exercise title="Stop on failure">
+<p>In the Task API, <code>src/server.ts</code> calls <code>await runtime.start()</code> without a <code>try</code>. Change it so that a failed start logs the error, calls <code>runtime.stop()</code> and exits with code 1.</p>
+<solution>
+<example file="src/server.ts (part)" project="task-api" browser="no" check="skip">
+import { createApp } from "./app.js";
+
+const runtime = createApp();
+try {
+  await runtime.start();
+} catch (error) {
+  console.error("Startup failed:", error);
+  await runtime.stop();
+  process.exit(1);
+}
+</example>
+<p>Exit code 1 tells Docker, systemd or your hosting platform that the app did not start, so it can restart it or alert you. Exiting with 0 would report success.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>The runtime starts <strong>modules</strong> in dependency order, in two rounds (<code>onInitialize</code>, then <code>onReady</code>), and stops them in reverse (<code>onShutdown</code>, then <code>onDestroy</code>).</li>
+<li><code>runtime.state</code> moves from <code>created</code> to <code>running</code> to <code>stopped</code>, or to <code>failed</code>. Every change is also an event on the event bus.</li>
+<li>Cycles and missing dependencies are refused before any hook runs.</li>
+<li>A failed start rolls back what already ran and rejects with <code>RuntimeStartError</code>, with the original error as <code>cause</code>.</li>
+<li>Readiness checks decide <code>runtime.ready</code> and <code>runtime.health</code>.</li>
+<li>Graceful shutdown turns <code>SIGTERM</code> into an orderly stop. In the Task API, <code>server.ts</code> stops the HTTP server first, then the runtime.</li>
+</ul>
+<p>The modules in this lesson passed the <code>TaskStore</code> to each other through their constructors. With two modules that is fine. The next lesson introduces the <strong>dependency container</strong>, which builds and shares objects like it for you.</p>
+</section>

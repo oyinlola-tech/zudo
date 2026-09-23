@@ -1,0 +1,529 @@
+---
+title: TypeScript and JavaScript together
+description: See exactly what TypeScript becomes when it runs, why types cannot check outside data, and how to close that gap by hand with type guards, assertion functions and a validator that returns a Result.
+minutes: 45
+youNeed: Modules in TypeScript
+youBuild: A type-safe create-task handler that turns untrusted JSON into a checked NewTask, or a list of problems
+keywords: type erasure, typescript runtime, compile time vs runtime, runtime validation, type guard, value is T, assertion function, asserts value is T, type assertion as, as unknown as, JSON.parse any, unknown in catch, type-safe api design
+---
+<section>
+<h2 id="pipeline">From TypeScript to a running program</h2>
+<p>Every TypeScript program goes through the same steps:</p>
+<ol>
+<li><strong>TypeScript</strong>: you write <code>.ts</code> files with types. <code>tsc</code> checks them.</li>
+<li><strong>JavaScript</strong>: the types are removed, by <code>tsc</code>, <code>tsx</code> or Node.js.</li>
+<li><strong>Node.js</strong>: runs the JavaScript. It has never heard of your types.</li>
+<li><strong>Your application</strong>: receives requests, reads files and databases, and talks to other services, all while running.</li>
+</ol>
+<p>Here is a small file. It has an interface, a type alias, annotations, a default parameter and a type assertion (<code>as</code>):</p>
+<example file="erase.ts" project="erase">
+interface Task {
+  id: number;
+  title: string;
+}
+
+type Status = "todo" | "done";
+
+function label(task: Task, status: Status = "todo"): string {
+  return `${task.title} (${status})`;
+}
+
+const raw: unknown = { id: 1, title: "Buy milk" };
+const task = raw as Task;
+console.log(label(task));
+</example>
+<output>
+Buy milk (todo)
+</output>
+<p>Compile it in your <code>ts-tasks</code> folder, and read what Node.js will actually run:</p>
+<shell>
+$ npx tsc --noEmit false --outDir dist
+$ cat dist/erase.js
+function label(task, status = "todo") {
+    return `${task.title} (${status})`;
+}
+const raw = { id: 1, title: "Buy milk" };
+const task = raw;
+console.log(label(task));
+export {};
+</shell>
+<p>The interface and the type alias are gone. So are the annotations. The default value <code>= "todo"</code> stayed, because it is JavaScript. And look at <code>const task = raw;</code>: the <code>as Task</code> became <strong>nothing at all</strong>. No check, no conversion. This is called <strong>type erasure</strong>, and it explains everything in this lesson.</p>
+</section>
+
+<section>
+<h2 id="compile-vs-runtime">Compile time and runtime</h2>
+<p>There are two worlds. <strong>Compile time</strong> is when <code>tsc</code> reads your code. <strong>Runtime</strong> is when Node.js runs it. Types live only in the first:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Only at compile time (erased)</th><th>Also at runtime (real JavaScript)</th></tr></thead>
+<tbody>
+<tr><td><code>interface</code>, <code>type</code>, annotations, generics</td><td>Values, functions, classes</td></tr>
+<tr><td><code>value as Task</code></td><td><code>typeof value === "string"</code></td></tr>
+<tr><td><code>private</code>, <code>readonly</code>, <code>import type</code></td><td><code>#private</code>, <code>Object.freeze</code>, <code>import</code></td></tr>
+<tr><td>Checking that <code>task.title</code> exists</td><td><code>"title" in task</code>, <code>value instanceof Date</code>, <code>Array.isArray(value)</code></td></tr>
+</tbody>
+</table></div>
+<p>So you cannot ask, while the program runs, "is this value a <code>Task</code>?". There is no <code>Task</code> left to ask about:</p>
+<example file="instanceof.ts" project="world" check="tsc-error">
+interface Task {
+  id: number;
+  title: string;
+}
+
+function isTask(value: unknown): boolean {
+  return value instanceof Task;
+}
+</example>
+<output kind="tsc">
+instanceof.ts:7:27 - error TS2693: 'Task' only refers to a type, but is being used as a value here.
+
+7   return value instanceof Task;
+                            ~~~~
+
+
+Found 1 error in instanceof.ts:7
+</output>
+<p><code>instanceof</code> works with classes, because a class is also a real JavaScript value. An interface is not. To check a value against an interface, you have to check its parts with runtime tools: <code>typeof</code>, <code>in</code>, <code>Array.isArray</code>.</p>
+</section>
+
+<section>
+<h2 id="gap">The gap: data from outside</h2>
+<p>Inside your program, the compiler follows every value from where it is made to where it is used. But a backend's most important data comes from <strong>outside</strong>: request bodies, query strings, environment variables, files, database rows, other APIs. That data arrives while the program runs, as text, and the compiler never saw it.</p>
+<p>The trap is <code>JSON.parse</code>. It is declared to return <code>any</code>, so you can put its result straight into a typed variable, and the compiler believes you:</p>
+<example file="gap.ts" project="world">
+interface Task {
+  title: string;
+  done: boolean;
+}
+
+const requestBody = '{"title": 42, "done": "sometimes"}';
+const task: Task = JSON.parse(requestBody);
+
+console.log(typeof task.title, typeof task.done);
+
+try {
+  console.log(task.title.toUpperCase());
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+number string
+TypeError: task.title.toUpperCase is not a function
+</output>
+<p>This file passes <code>tsc</code> with no errors, then fails when it runs. Without the <code>try</code>, the program would crash. The types said <code>title</code> was a string. The data said otherwise, and the data won, because the types were erased before the code ran.</p>
+<p>Every request that reaches your API is text like <code>requestBody</code>, sent by someone else, possibly an attacker. Something has to check it <strong>at runtime</strong> and turn it into a value that really matches the type. The rest of this lesson builds that check by hand.</p>
+</section>
+
+<section>
+<h2 id="assertions">Type assertions: when as lies</h2>
+<p><code>value as Task</code> is a <strong>type assertion</strong>. It tells the compiler "trust me, this is a <code>Task</code>". You just saw it compile to nothing. It changes the type the compiler believes, never the value:</p>
+<example file="as-lies.ts" project="world">
+interface Task {
+  id: number;
+  title: string;
+}
+
+const body: unknown = JSON.parse('{"id": "7"}');
+const task = body as Task;
+const id = "42" as unknown as number;
+
+console.log(typeof task.id, task.title);
+console.log(typeof id, id + 1);
+</example>
+<output>
+string undefined
+string 421
+</output>
+<ul>
+<li><code>task.id</code> is typed as a <code>number</code>, but it is the string <code>"7"</code>, and <code>task.title</code> is typed as a <code>string</code> but does not exist.</li>
+<li><code>"42" as unknown as number</code> compiles, and <code>id + 1</code> gives <code>"421"</code>: string joining, not addition. TypeScript refuses <code>"42" as number</code> directly because it is obviously wrong, but going through <code>unknown</code> silences every objection.</li>
+</ul>
+<p>When is <code>as</code> acceptable? Only when <strong>you know something the compiler cannot</strong>, and you have checked it yourself. <code>as const</code> is always safe: it makes a type narrower, not different. <code>field as keyof NewTask</code> right after <code>Object.keys</code> on an object you built yourself, as in <a href="/learn/ts-advanced#mapped">Advanced and utility types</a>, is safe. On data from outside, <code>as</code> is never a check. The same goes for <code>any</code> and for the <code>!</code> operator (<code>value!</code>, "not null, trust me"): each one switches the compiler off for one spot.</p>
+</section>
+
+<section>
+<h2 id="guards">Type guards: value is T</h2>
+<p>You already narrow types with <code>typeof</code> and <code>in</code>. A <strong>type guard</strong> packs such checks into a function you can reuse. Its return type, <code>value is NewTask</code>, is called a <strong>type predicate</strong>: when the function returns <code>true</code>, TypeScript narrows the argument to that type.</p>
+<example file="guard.ts" project="world">
+interface NewTask {
+  title: string;
+  done: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNewTask(value: unknown): value is NewTask {
+  return isRecord(value) && typeof value.title === "string" && typeof value.done === "boolean";
+}
+
+for (const text of ['{"title": "Buy milk", "done": false}', '{"title": 42, "done": "sometimes"}', "[1, 2]", "null"]) {
+  const body: unknown = JSON.parse(text);
+  if (isNewTask(body)) {
+    console.log("valid:", body.title.toUpperCase());
+  } else {
+    console.log("invalid:", text);
+  }
+}
+</example>
+<output>
+valid: BUY MILK
+invalid: {"title": 42, "done": "sometimes"}
+invalid: [1, 2]
+invalid: null
+</output>
+<ul>
+<li><code>body</code> is <code>unknown</code>: the honest type for parsed JSON. Writing <code>const body: unknown</code> stops <code>any</code> from spreading.</li>
+<li><code>isRecord</code> checks the value is a plain object. <code>typeof null</code> is <code>"object"</code> in JavaScript, and so is an array, so both need their own test.</li>
+<li>Inside <code>if (isNewTask(body))</code>, <code>body</code> is a <code>NewTask</code>, and <code>.toUpperCase()</code> is allowed.</li>
+</ul>
+<warn title="THE COMPILER TRUSTS YOUR GUARD">TypeScript does not check that the body of a type guard matches its predicate. A guard that forgets to check <code>done</code> still narrows to <code>NewTask</code>, and the bug is back. Type guards are the one place where a type can lie, so keep them short and write tests for them.</warn>
+</section>
+
+<section>
+<h2 id="asserts">Assertion functions: asserts value is T</h2>
+<p>A type guard returns a boolean and you write the <code>if</code>. An <strong>assertion function</strong> throws instead, and when it returns normally, the value is narrowed for the rest of the code. Its return type is <code>asserts value is T</code>:</p>
+<example file="asserts.ts" project="world">
+interface NewTask {
+  title: string;
+  done: boolean;
+}
+
+function assertNewTask(value: unknown): asserts value is NewTask {
+  if (typeof value !== "object" || value === null) {
+    throw new TypeError("body must be a JSON object");
+  }
+  if (!("title" in value) || typeof value.title !== "string") {
+    throw new TypeError("title must be a string");
+  }
+  if (!("done" in value) || typeof value.done !== "boolean") {
+    throw new TypeError("done must be true or false");
+  }
+}
+
+for (const text of ['{"title": "Call Ada", "done": true}', '{"title": "Call Ada"}']) {
+  const body: unknown = JSON.parse(text);
+  try {
+    assertNewTask(body);
+    console.log(body.title, body.done);
+  } catch (error) {
+    console.log(String(error));
+  }
+}
+</example>
+<output>
+Call Ada true
+TypeError: done must be true or false
+</output>
+<p>After <code>assertNewTask(body)</code>, <code>body</code> is a <code>NewTask</code> on every following line. This version also uses <code>in</code> instead of <code>isRecord</code>: after <code>"title" in value</code>, TypeScript knows <code>value</code> has a <code>title</code> property, of type <code>unknown</code>, which <code>typeof</code> then narrows. Use an assertion function when bad data should stop the work, and a type guard when you want to choose what to do.</p>
+</section>
+
+<section>
+<h2 id="catch">unknown in catch</h2>
+<p>There is one more place where outside data sneaks in: <code>catch</code>. JavaScript lets code <code>throw</code> anything, not only <code>Error</code> objects. So with <code>strict</code> on, the variable in <code>catch (error)</code> has the type <code>unknown</code>:</p>
+<example file="catch.ts" project="world" check="tsc-error">
+try {
+  JSON.parse("{not json");
+} catch (error) {
+  console.log(error.message);
+}
+</example>
+<output kind="tsc">
+catch.ts:4:15 - error TS18046: 'error' is of type 'unknown'.
+
+4   console.log(error.message);
+                ~~~~~
+
+
+Found 1 error in catch.ts:4
+</output>
+<example file="catch.ts" project="world">
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+try {
+  JSON.parse("{not json");
+} catch (error) {
+  console.log("bad JSON:", messageOf(error));
+}
+
+try {
+  throw "a plain string";
+} catch (error) {
+  console.log("thrown:", messageOf(error));
+}
+</example>
+<output>
+bad JSON: Expected property name or '}' in JSON at position 1 (line 1 column 2)
+thrown: a plain string
+</output>
+<p><code>error instanceof Error</code> is a runtime check (<code>Error</code> is a class), so it narrows. Never write <code>catch (error: any)</code>; it just hides the question.</p>
+</section>
+
+<section>
+<h2 id="validator">Build: a validator that returns a Result</h2>
+<p>A real API should not stop at the first problem. It should tell the client everything that is wrong, in one answer. It should also clean the data: trim spaces, enforce lengths, and <strong>copy only the fields it expects</strong>, so a client cannot sneak in an <code>id</code> or a <code>role</code> (the mass assignment hole from <a href="/learn/ts-objects#build">the user module</a>). Here is a validator that does all of that and returns the <code>Result</code> type from <a href="/learn/ts-generics#result">Generics</a>:</p>
+<example file="validate.ts" project="api">
+export type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+export type Priority = "low" | "normal" | "high";
+export interface NewTask {
+  title: string;
+  done: boolean;
+  priority: Priority;
+}
+
+const PRIORITIES: readonly Priority[] = ["low", "normal", "high"];
+
+function isPriority(value: unknown): value is Priority {
+  return PRIORITIES.some((p) => p === value);
+}
+
+export function parseNewTask(body: unknown): Result<NewTask, string[]> {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return { ok: false, error: ["body must be a JSON object"] };
+  }
+  const input = body as Record<string, unknown>;
+  const issues: string[] = [];
+  const title = typeof input.title === "string" ? input.title.trim() : "";
+  if (title.length < 3 || title.length > 100) issues.push("title must be a string of 3 to 100 characters");
+  const done = input.done ?? false;
+  if (typeof done !== "boolean") issues.push("done must be true or false");
+  const priority = input.priority ?? "normal";
+  if (!isPriority(priority)) issues.push(`priority must be one of ${PRIORITIES.join(", ")}`);
+  if (issues.length > 0 || typeof done !== "boolean" || !isPriority(priority)) {
+    return { ok: false, error: issues };
+  }
+  return { ok: true, value: { title, done, priority } };
+}
+</example>
+<p>Read it top to bottom. The one <code>as</code> is safe: the line before it proved <code>body</code> is a non-null, non-array object, and <code>Record&lt;string, unknown&gt;</code> still says "every property is unknown". Each field is read, checked, and given its default. The final object is built by hand from three checked variables, so nothing else the client sent can get through.</p>
+<p>The last <code>if</code> repeats <code>typeof done</code> and <code>isPriority</code> even though <code>issues</code> already says whether they failed. The compiler cannot connect "the array is empty" to "these checks passed", so the checks are written where it can see them. Now the handler, the one function that touches the raw request:</p>
+<example file="handler.ts" project="api">
+import { parseNewTask } from "./validate.js";
+import type { NewTask } from "./validate.js";
+
+interface Reply {
+  status: number;
+  body: unknown;
+}
+
+let nextId = 1;
+function createTask(input: NewTask): { id: number } & NewTask {
+  return { id: nextId++, ...input };
+}
+
+export function handleCreateTask(rawBody: string): Reply {
+  let body: unknown;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    return { status: 400, body: { error: "body is not valid JSON" } };
+  }
+  const result = parseNewTask(body);
+  if (!result.ok) return { status: 422, body: { error: "invalid task", issues: result.error } };
+  return { status: 201, body: createTask(result.value) };
+}
+
+console.log(handleCreateTask('{"title": "  Buy milk ", "priority": "high"}'));
+console.log(handleCreateTask('{"title": 42, "done": "sometimes"}'));
+console.log(handleCreateTask('{"title": "Fix bug", "id": 999, "role": "admin"}'));
+console.log(handleCreateTask("{not json"));
+</example>
+<output>
+{
+  status: 201,
+  body: { id: 1, title: 'Buy milk', done: false, priority: 'high' }
+}
+{
+  status: 422,
+  body: {
+    error: 'invalid task',
+    issues: [
+      'title must be a string of 3 to 100 characters',
+      'done must be true or false'
+    ]
+  }
+}
+{
+  status: 201,
+  body: { id: 2, title: 'Fix bug', done: false, priority: 'normal' }
+}
+{ status: 400, body: { error: 'body is not valid JSON' } }
+</output>
+<p>Four requests, four correct answers. The spaces around <code>"Buy milk"</code> were trimmed. The bad body from earlier got a <strong>422</strong> with both problems listed, as you designed in <a href="/learn/rest-design">the REST design lesson</a>. The third client tried to choose its own <code>id</code> and make itself an <code>admin</code>; both fields were simply dropped. Broken JSON got a <strong>400</strong>. And <code>createTask</code> takes a <code>NewTask</code>, so it can only ever be called with checked data.</p>
+</section>
+
+<section>
+<h2 id="api-design">Designing type-safe APIs</h2>
+<p>What you just built follows a handful of rules that hold for any TypeScript backend:</p>
+<ul>
+<li><strong>Type the boundary as <code>unknown</code>.</strong> Everything from outside (request bodies, <code>process.env</code>, files, other APIs) starts as <code>unknown</code>, never <code>any</code>.</li>
+<li><strong>Validate once, at the edge.</strong> Turn <code>unknown</code> into a precise type in one place. Inner functions such as <code>createTask(input: NewTask)</code> take only checked types, so they never need to check again.</li>
+<li><strong>Return failures in the type.</strong> <code>Result&lt;T, E&gt;</code> or a discriminated union makes the caller handle the bad case. Throw for things that should never happen.</li>
+<li><strong>Prefer guards to <code>as</code>, <code>unknown</code> to <code>any</code>, checks to <code>!</code>.</strong> Every escape hatch is a spot the compiler can no longer help you.</li>
+<li><strong>Allow-list fields.</strong> Build output and input objects from named fields, never by spreading what a client sent, and never by sending a whole internal object.</li>
+<li><strong>Make wrong states unwritable.</strong> Literal unions instead of free strings, <code>readonly</code> where things must not change, discriminated unions instead of many optional fields.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="next">Hand-written validators get long</h2>
+<p>Count the lines. Checking three fields took about twenty lines of careful code, plus a trick to keep the compiler convinced, plus the <code>NewTask</code> interface written separately from the checks. If someone adds a field to the interface and forgets the validator, nothing warns them. A real API has dozens of request shapes, with nested objects, arrays, e-mail addresses and dates.</p>
+<p>That is exactly the problem <code>@zudojs/schema</code> solves. You describe the shape once, as a schema; it checks values at runtime, collects every issue, strips unknown fields, and gives you the TypeScript type for free, so the type and the check can never disagree. The same task, with ZudoJS:</p>
+<pre><code>const NewTaskSchema = schema.object({
+  title: schema.string().trim().min(3).max(100),
+  done: schema.default(schema.boolean(), false),
+  priority: schema.default(schema.enum(["low", "normal", "high"]), "normal"),
+});
+type NewTask = Infer&lt;typeof NewTaskSchema&gt;;</code></pre>
+<p>You will install it and use it in <a href="/learn/zudo-first-code">Your first Zudo code</a>. Now you know exactly what it does for you, and why.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Read a port from the environment">
+<p>Write <code>readPort(value: string | undefined): Result&lt;number, string&gt;</code> for <code>process.env.PORT</code>. Missing means <code>3000</code>. Anything that is not a whole number from 1 to 65535 is an error. Why is the parameter <code>string | undefined</code> and not <code>number</code>?</p>
+<solution>
+<example file="port.ts" project="ex-port">
+type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+
+function readPort(value: string | undefined): Result<number, string> {
+  if (value === undefined || value.trim() === "") return { ok: true, value: 3000 };
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return { ok: false, error: `PORT must be a whole number from 1 to 65535, got "${value}"` };
+  }
+  return { ok: true, value: port };
+}
+
+for (const input of [undefined, "8080", "80.5", "http"]) {
+  console.log(readPort(input));
+}
+</example>
+<output>
+{ ok: true, value: 3000 }
+{ ok: true, value: 8080 }
+{
+  ok: false,
+  error: 'PORT must be a whole number from 1 to 65535, got "80.5"'
+}
+{
+  ok: false,
+  error: 'PORT must be a whole number from 1 to 65535, got "http"'
+}
+</output>
+<p>Environment variables are always strings, or missing. That is what <code>@types/node</code> says too: <code>process.env.PORT</code> has the type <code>string | undefined</code>. In your program you would call <code>readPort(process.env.PORT)</code> and stop with a clear message when the result is not <code>ok</code>.</p>
+</solution>
+</exercise>
+<exercise title="Find the lying guard">
+<p>This guard compiles, and the program crashes. Find the bug, fix the guard, and explain why <code>tsc</code> did not catch it.</p>
+<example file="lying-guard.ts" project="ex-guard">
+interface User {
+  email: string;
+  tags: string[];
+}
+
+function isUser(value: unknown): value is User {
+  return typeof value === "object" && value !== null && "email" in value;
+}
+
+const body: unknown = JSON.parse('{"email": "ada@example.com"}');
+if (isUser(body)) {
+  try {
+    console.log(body.tags.join(", "));
+  } catch (error) {
+    console.log(String(error));
+  }
+}
+</example>
+<output>
+TypeError: Cannot read properties of undefined (reading 'join')
+</output>
+<solution>
+<p>The guard only checks that <code>email</code> exists. It checks neither that <code>email</code> is a string nor that <code>tags</code> is an array of strings. <code>tsc</code> does not compare a guard's body with its <code>value is User</code> promise; it simply believes it.</p>
+<example file="lying-guard.ts" project="ex-guard">
+interface User {
+  email: string;
+  tags: string[];
+}
+
+function isUser(value: unknown): value is User {
+  if (typeof value !== "object" || value === null) return false;
+  if (!("email" in value) || typeof value.email !== "string") return false;
+  if (!("tags" in value) || !Array.isArray(value.tags)) return false;
+  return value.tags.every((tag: unknown) => typeof tag === "string");
+}
+
+const body: unknown = JSON.parse('{"email": "ada@example.com"}');
+console.log(isUser(body) ? body.tags.join(", ") : "not a user");
+</example>
+<output>
+not a user
+</output>
+</solution>
+</exercise>
+<exercise title="Validate a patch">
+<p>Write <code>parseTaskPatch(body: unknown): Result&lt;{ title?: string; done?: boolean }, string[]&gt;</code>. Both fields are optional, but when present they must be valid (title 3 to 100 characters after trimming). An empty patch <code>{}</code> is an error: there is nothing to change.</p>
+<solution>
+<example file="patch.ts" project="ex-patch">
+type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+interface TaskPatch {
+  title?: string;
+  done?: boolean;
+}
+
+function parseTaskPatch(body: unknown): Result<TaskPatch, string[]> {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return { ok: false, error: ["body must be a JSON object"] };
+  }
+  const input = body as Record<string, unknown>;
+  const patch: TaskPatch = {};
+  const issues: string[] = [];
+  if (input.title !== undefined) {
+    const title = typeof input.title === "string" ? input.title.trim() : "";
+    if (title.length >= 3 && title.length <= 100) patch.title = title;
+    else issues.push("title must be a string of 3 to 100 characters");
+  }
+  if (input.done !== undefined) {
+    if (typeof input.done === "boolean") patch.done = input.done;
+    else issues.push("done must be true or false");
+  }
+  if (issues.length === 0 && Object.keys(patch).length === 0) issues.push("nothing to change");
+  return issues.length > 0 ? { ok: false, error: issues } : { ok: true, value: patch };
+}
+
+console.log(parseTaskPatch({ done: true }));
+console.log(parseTaskPatch({ title: "  Buy oat milk " }));
+console.log(parseTaskPatch({ id: 5 }));
+console.log(parseTaskPatch({ title: "x", done: "yes" }));
+</example>
+<output>
+{ ok: true, value: { done: true } }
+{ ok: true, value: { title: 'Buy oat milk' } }
+{ ok: false, error: [ 'nothing to change' ] }
+{
+  ok: false,
+  error: [
+    'title must be a string of 3 to 100 characters',
+    'done must be true or false'
+  ]
+}
+</output>
+<p><code>{ id: 5 }</code> is refused as "nothing to change": the <code>id</code> is ignored, because only allowed fields are ever copied into <code>patch</code>.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>TypeScript becomes JavaScript before it runs. Types, interfaces and <code>as</code> are erased; only JavaScript checks exist at runtime.</li>
+<li>Outside data (JSON, <code>process.env</code>, files, other APIs) was never seen by the compiler. Type it as <code>unknown</code>.</li>
+<li><code>as</code> changes what the compiler believes, never the value. Do not use it on outside data.</li>
+<li>Type guards (<code>value is T</code>) and assertion functions (<code>asserts value is T</code>) narrow <code>unknown</code> after real checks. The compiler trusts them, so keep them correct.</li>
+<li>In <code>catch</code>, the error is <code>unknown</code>; check with <code>instanceof Error</code>.</li>
+<li>Validate once at the boundary, return a <code>Result</code> with every issue, and copy only allowed fields. <code>@zudojs/schema</code> does this for you, next.</li>
+</ul>
+</section>

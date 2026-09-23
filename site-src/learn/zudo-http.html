@@ -1,0 +1,655 @@
+---
+title: Routes, requests and responses
+description: Serve the Task API over HTTP with @zudojs/http. Start a server, add routes with parameters, read query strings, headers, cookies and JSON bodies safely, and answer with the right status codes.
+minutes: 50
+youNeed: Dependency injection with @zudojs/container, and HTTP in depth
+youBuild: GET, POST and DELETE routes for /tasks, served by the Task API and tested with fetch and curl
+keywords: zudojs http, createHttpServer, createNodeHttpAdapter, createRouter, route parameters, query string, request body Uint8Array, JSON body, TextDecoder, createResponseContext, status codes, 201 Created, 204 No Content, Location header, cookies, parseCookies, HttpError, badRequest
+---
+<section>
+<h2 id="server">A server in a few lines</h2>
+<p>In <a href="/learn/node-http">An HTTP server with no framework</a> you built a server with <code>node:http</code> and did everything by hand. <code>@zudojs/http</code> does the same job with less code and safer defaults. The generated <code>src/server.ts</code> already uses it. It needs two pieces:</p>
+<ul>
+<li>An <strong>adapter</strong>, which talks to the real network. <code>createNodeHttpAdapter</code> uses Node's <code>node:http</code> under the hood. It decides the <code>host</code> and <code>port</code>.</li>
+<li>A <strong>handler</strong>, your function. It receives each request and returns the response.</li>
+</ul>
+<example file="first-server.ts" browser="no">
+import { createHttpServer, createNodeHttpAdapter } from "@zudojs/http";
+import type { HttpRequestContext } from "@zudojs/http";
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: (request: HttpRequestContext) => ({ message: "Hello from the Task API", path: request.path }),
+});
+
+await server.start();
+const base = `http://127.0.0.1:${server.address?.port}`;
+
+const response = await fetch(`${base}/hello`);
+console.log(response.status, response.headers.get("content-type"));
+console.log(await response.text());
+
+await server.stop();
+console.log(server.state);
+</example>
+<output>
+200 application/json
+{"message":"Hello from the Task API","path":"/hello"}
+stopped
+</output>
+<p>A few things to notice:</p>
+<ul>
+<li><code>port: 0</code> asks the operating system for any free port. <code>server.address?.port</code> tells you which one it picked. That way the example never clashes with another program. Your real server uses a fixed port such as 3000.</li>
+<li>The handler returned a plain object, and the server sent it as JSON with status 200 and the right <code>content-type</code>.</li>
+<li>The example starts the server, sends itself a request with <code>fetch</code>, prints the answer and stops. Every example in this lesson works like that, so you can run it and see the result. A real server keeps running until you stop it.</li>
+</ul>
+<note>Write the type of the handler's parameter, <code>(request: HttpRequestContext)</code>, yourself. In <code>@zudojs/http</code> 1.3.0, <code>createHttpServer</code> does not pass that type on, so without it strict TypeScript reports "Parameter 'request' implicitly has an 'any' type".</note>
+</section>
+
+<section>
+<h2 id="router">Routes and route parameters</h2>
+<p>One handler for every path soon turns into a long chain of <code>if</code> statements. A <strong>router</strong> keeps a table of <strong>routes</strong>: a method plus a path pattern, and the function that answers it. The server's handler hands every request to <code>router.dispatch</code>.</p>
+<p>So the next examples stay short, this helper file starts a server for a router, runs some requests and stops it:</p>
+<example file="serve.ts" project="http" browser="no">
+import { createHttpServer, createNodeHttpAdapter } from "@zudojs/http";
+import type { HttpRequestContext, HttpRouter } from "@zudojs/http";
+
+export async function withServer(router: HttpRouter, run: (base: string) => Promise<void>): Promise<void> {
+  const server = createHttpServer({
+    adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+    handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+  });
+  await server.start();
+  try {
+    await run(`http://127.0.0.1:${server.address?.port}`);
+  } finally {
+    await server.stop();
+  }
+}
+
+export async function show(label: string, response: Response): Promise<void> {
+  console.log(label, "->", response.status, await response.text());
+}
+</example>
+<p>Now two routes. <code>:id</code> in a path is a <strong>route parameter</strong>: it matches one piece of the path, and its value lands in <code>ctx.params.id</code>:</p>
+<example file="routes.ts" project="http" browser="no">
+import { createResponseContext, createRouter } from "@zudojs/http";
+import { NotFoundError } from "@zudojs/errors";
+import { show, withServer } from "./serve.js";
+
+const tasks = [
+  { id: 1, title: "Buy milk", done: false },
+  { id: 2, title: "Walk the dog", done: true },
+];
+
+const router = createRouter();
+router.get("/tasks", () => createResponseContext().json(tasks));
+router.get("/tasks/:id", (ctx) => {
+  const task = tasks.find((t) => String(t.id) === ctx.params.id);
+  if (!task) {
+    throw new NotFoundError(`Task ${ctx.params.id} not found`);
+  }
+  return createResponseContext().json(task);
+});
+
+await withServer(router, async (base) => {
+  await show("GET /tasks", await fetch(`${base}/tasks`));
+  await show("GET /tasks/2", await fetch(`${base}/tasks/2`));
+  await show("GET /tasks/9", await fetch(`${base}/tasks/9`));
+  await show("GET /users", await fetch(`${base}/users`));
+  await show("DELETE /tasks/1", await fetch(`${base}/tasks/1`, { method: "DELETE" }));
+});
+</example>
+<output>
+GET /tasks -> 200 [{"id":1,"title":"Buy milk","done":false},{"id":2,"title":"Walk the dog","done":true}]
+GET /tasks/2 -> 200 {"id":2,"title":"Walk the dog","done":true}
+GET /tasks/9 -> 404 {"error":"Task 9 not found","code":"ERR_RESOURCE_NOT_FOUND"}
+GET /users -> 404 {"error":"Not Found","method":"GET","path":"/users"}
+DELETE /tasks/1 -> 405 {"error":"Method Not Allowed","method":"DELETE","path":"/tasks/1","allowed":["GET"]}
+</output>
+<p>You wrote two routes, and five different requests got sensible answers:</p>
+<ul>
+<li>A route handler receives one object, usually called <code>ctx</code>. The request itself is <code>ctx.request</code>; the route parameters are <code>ctx.params</code>.</li>
+<li>Route parameters are always <strong>strings</strong>: <code>ctx.params.id</code> is <code>"2"</code>, not <code>2</code>. That is why the code compares <code>String(t.id)</code>.</li>
+<li>Throwing <code>NotFoundError</code> from <a href="/learn/zudo-first-code">@zudojs/errors</a> became a 404 with its <code>code</code>. You do not build error responses by hand.</li>
+<li>An unknown path gets 404, and a known path with the wrong method gets <strong>405 Method Not Allowed</strong> with the list of allowed methods. The router does both for you.</li>
+</ul>
+<p>Unlike the server's handler, a route must return a response built with <code>createResponseContext()</code>. If you return a plain object from a route, TypeScript reports an error, and in plain JavaScript the client would get an empty <code>204</code> response. Always finish a route with <code>createResponseContext()</code> and <code>.json(...)</code>, <code>.setStatus(...)</code> or <code>.setHeader(...)</code>, so it says exactly what it sends.</p>
+</section>
+
+<section>
+<h2 id="query">Query strings</h2>
+<p>The part of a URL after <code>?</code> is the <strong>query string</strong>, for options such as filters: <code>/tasks?done=true</code>. The router parses it into <code>ctx.query</code>:</p>
+<example file="query.ts" project="http" browser="no">
+import { createResponseContext, createRouter } from "@zudojs/http";
+import { show, withServer } from "./serve.js";
+
+const router = createRouter();
+router.get("/search", (ctx) => {
+  const summary = Object.entries(ctx.query).map(([key, value]) => `${key}=${JSON.stringify(value)}`);
+  return createResponseContext().json(summary);
+});
+
+await withServer(router, async (base) => {
+  await show("one of each", await fetch(`${base}/search?done=true&limit=10`));
+  await show("repeated key", await fetch(`${base}/search?tag=home&tag=urgent`));
+  await show("no query", await fetch(`${base}/search`));
+});
+</example>
+<output>
+one of each -> 200 ["done=\"true\"","limit=\"10\""]
+repeated key -> 200 ["tag=[\"home\",\"urgent\"]"]
+no query -> 200 []
+</output>
+<p>Two facts you must remember:</p>
+<ul>
+<li>Every value is a <strong>string</strong>. <code>done=true</code> gives <code>"true"</code>, and <code>limit=10</code> gives <code>"10"</code>. <code>"false"</code> is a non-empty string, so <code>if (ctx.query.done)</code> would treat it as true.</li>
+<li>A key given twice becomes an <strong>array</strong> of strings.</li>
+</ul>
+<p>So a query value is <code>string | string[]</code>, or missing. Converting and checking it by hand gets tedious. In <a href="/learn/zudo-validation">Schemas and validation in depth</a> a schema does it in one line. For now, here is the Task API's filter, done carefully by hand:</p>
+<example file="filter.ts" project="http" browser="no">
+import { createResponseContext, createRouter } from "@zudojs/http";
+import { show, withServer } from "./serve.js";
+
+const tasks = [
+  { id: 1, title: "Buy milk", done: false },
+  { id: 2, title: "Walk the dog", done: true },
+];
+
+const router = createRouter();
+router.get("/tasks", (ctx) => {
+  const done = ctx.query.done;
+  if (done === undefined) {
+    return createResponseContext().json(tasks);
+  }
+  if (done !== "true" && done !== "false") {
+    return createResponseContext({ status: 400 }).json({ error: "done must be true or false" });
+  }
+  return createResponseContext().json(tasks.filter((t) => t.done === (done === "true")));
+});
+
+await withServer(router, async (base) => {
+  await show("done=false", await fetch(`${base}/tasks?done=false`));
+  await show("done=yes", await fetch(`${base}/tasks?done=yes`));
+});
+</example>
+<output>
+done=false -> 200 [{"id":1,"title":"Buy milk","done":false}]
+done=yes -> 400 {"error":"done must be true or false"}
+</output>
+</section>
+
+<section>
+<h2 id="body">Request bodies</h2>
+<p>A <code>POST</code> request carries data in its <strong>body</strong>. In <code>@zudojs/http</code> 1.3.0 the body arrives as <strong>raw bytes</strong>: a <code>Uint8Array</code>, already read from the network for you and limited to 10 MB by default (bigger bodies get <strong>413 Payload Too Large</strong>). It is <em>not</em> parsed. The server cannot know whether the bytes are JSON, a form or an image, so turning them into data is your job:</p>
+<example file="raw-body.ts" project="http" browser="no">
+import { createResponseContext, createRouter } from "@zudojs/http";
+import { show, withServer } from "./serve.js";
+
+const router = createRouter();
+router.post("/echo", (ctx) => {
+  const body = ctx.request.body;
+  console.log("body is a Uint8Array:", body instanceof Uint8Array);
+  const text = new TextDecoder().decode(body as Uint8Array);
+  return createResponseContext().json({ bytes: text.length, text });
+});
+
+await withServer(router, async (base) => {
+  await show("POST /echo", await fetch(`${base}/echo`, { method: "POST", body: '{"title":"Buy milk"}' }));
+});
+</example>
+<output>
+body is a Uint8Array: true
+POST /echo -> 200 {"bytes":20,"text":"{\"title\":\"Buy milk\"}"}
+</output>
+<p><code>TextDecoder</code> turns bytes into text, assuming UTF-8. The next step, <code>JSON.parse</code>, throws on bad input. An uncaught error is a bug, so the server would answer 500. But broken JSON is the <em>client's</em> mistake and deserves a 400. A small helper handles every case once:</p>
+<example file="read-json.ts" project="http" browser="no">
+import { badRequest, HttpError } from "@zudojs/http";
+import type { HttpRequestContext } from "@zudojs/http";
+
+export function readJson(request: HttpRequestContext): unknown {
+  const type = request.getHeader("content-type") ?? "";
+  if (!type.startsWith("application/json")) {
+    throw new HttpError(415, "Send JSON with Content-Type: application/json", { code: "UNSUPPORTED_MEDIA_TYPE" });
+  }
+  const text = new TextDecoder().decode(request.body as Uint8Array);
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw badRequest("The request body is not valid JSON");
+  }
+}
+</example>
+<ul>
+<li>It checks the <code>Content-Type</code> header first (you met it in <a href="/learn/http-deep#headers">HTTP in depth</a>). Anything that is not JSON gets <strong>415 Unsupported Media Type</strong>.</li>
+<li><code>badRequest(...)</code> and <code>new HttpError(status, message, { code })</code> come from <code>@zudojs/http</code>. Thrown from a route, they become a response with that status. Give <code>HttpError</code> a <code>code</code> of your own; without one it reports the vague default <code>ERR_OPERATION_FAILED</code>.</li>
+<li>It returns <code>unknown</code>, not <code>any</code>: the data is not trusted until a schema has checked it.</li>
+</ul>
+<p>Now a <code>POST /tasks</code> route that reads, validates and creates. The schema is the <code>NewTaskSchema</code> from the <a href="/learn/zudo-container#task-api">previous lesson</a>. A successful create answers <strong>201 Created</strong> with a <code>Location</code> header that says where the new task lives:</p>
+<example file="create.ts" project="http" browser="no">
+import { createResponseContext, createRouter } from "@zudojs/http";
+import { schema } from "@zudojs/schema";
+import { readJson } from "./read-json.js";
+import { withServer } from "./serve.js";
+
+const NewTaskSchema = schema.object({
+  title: schema.string().trim().min(3).max(100),
+  done: schema.default(schema.boolean(), false),
+});
+
+const tasks: { id: number; title: string; done: boolean }[] = [];
+
+const router = createRouter();
+router.post("/tasks", (ctx) => {
+  const data = NewTaskSchema.parse(readJson(ctx.request));
+  const task = { id: tasks.length + 1, ...data };
+  tasks.push(task);
+  return createResponseContext({ status: 201 }).setHeader("location", `/tasks/${task.id}`).json(task);
+});
+
+const json = { "content-type": "application/json" };
+await withServer(router, async (base) => {
+  const attempts: [string, RequestInit][] = [
+    ["good", { method: "POST", headers: json, body: '{"title": "  Buy milk "}' }],
+    ["broken JSON", { method: "POST", headers: json, body: '{"title": ' }],
+    ["too short", { method: "POST", headers: json, body: '{"title": "no"}' }],
+    ["not JSON", { method: "POST", headers: { "content-type": "text/plain" }, body: "Buy milk" }],
+  ];
+  for (const [label, init] of attempts) {
+    const response = await fetch(`${base}/tasks`, init);
+    console.log(label, "->", response.status, response.headers.get("location"), await response.text());
+  }
+});
+</example>
+<output>
+good -> 201 /tasks/1 {"id":1,"title":"Buy milk","done":false}
+broken JSON -> 400 null {"error":"The request body is not valid JSON","code":"BAD_REQUEST"}
+too short -> 400 null {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+not JSON -> 415 null {"error":"Send JSON with Content-Type: application/json","code":"UNSUPPORTED_MEDIA_TYPE"}
+</output>
+<p>Every bad request got a 4xx status, and none of them reached the task list. The schema failure became a 400 by itself, because <code>SchemaError</code> carries status 400. Its body only says "Validation failed" for now; <a href="/learn/zudo-errors">The ZudoJS error system</a> adds the list of problems.</p>
+</section>
+
+<section>
+<h2 id="headers">Headers and cookies</h2>
+<p><code>request.getHeader(name)</code> reads a request header. The name is not case-sensitive, and a missing header gives <code>undefined</code>. On the response, <code>setHeader(name, value)</code> adds one.</p>
+<p><strong>Cookies</strong> are small values the browser stores and sends back with every request (see <a href="/learn/http-deep#cookies">HTTP in depth</a>). <code>response.cookie(name, value, options)</code> sets one with safe defaults, and <code>parseCookies</code> reads the <code>Cookie</code> header:</p>
+<example file="cookies.ts" project="http" browser="no">
+import { createResponseContext, createRouter, parseCookies } from "@zudojs/http";
+import { withServer } from "./serve.js";
+
+const router = createRouter();
+router.put("/preferences/theme/:theme", (ctx) =>
+  createResponseContext({ status: 204 }).cookie("theme", ctx.params.theme ?? "light", { maxAge: 60 * 60 * 24 * 365 }),
+);
+router.get("/preferences", (ctx) => {
+  const cookies = parseCookies(ctx.request.getHeader("cookie"));
+  const agent = ctx.request.getHeader("User-Agent");
+  return createResponseContext()
+    .setHeader("cache-control", "no-store")
+    .json({ theme: cookies.get("theme") ?? "light", agent });
+});
+
+await withServer(router, async (base) => {
+  const set = await fetch(`${base}/preferences/theme/dark`, { method: "PUT" });
+  const cookie = set.headers.get("set-cookie") ?? "";
+  console.log(set.status, cookie);
+
+  const read = await fetch(`${base}/preferences`, {
+    headers: { cookie: cookie.split(";")[0] ?? "", "user-agent": "task-cli/1.0" },
+  });
+  console.log(read.status, read.headers.get("cache-control"), await read.text());
+});
+</example>
+<output>
+204 theme=dark; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Lax
+200 no-store {"theme":"dark","agent":"task-cli/1.0"}
+</output>
+<p>Read the <code>Set-Cookie</code> header. You only asked for a one-year <code>Max-Age</code>, and <code>@zudojs/http</code> added the safe settings from <a href="/learn/http-deep#cookies">HTTP in depth</a> by itself:</p>
+<ul>
+<li><code>HttpOnly</code>: JavaScript in the page cannot read the cookie, so an injected script cannot steal it.</li>
+<li><code>Secure</code>: the browser only sends it over HTTPS.</li>
+<li><code>SameSite=Lax</code>: other websites cannot make the browser send it along with their requests, except when the user follows a normal link.</li>
+</ul>
+<p>Only turn one of these off when you have a specific reason. The <code>fetch</code> above sent the cookie back by hand; a browser does that for you. Note also that the route read <code>ctx.params.theme</code> with <code>?? "light"</code>: TypeScript types a parameter as possibly missing.</p>
+</section>
+
+<section>
+<h2 id="status">Responses and status codes</h2>
+<p><code>createResponseContext()</code> builds a response. You can pass <code>{ status, headers, body }</code> at once, or chain <code>setStatus</code>, <code>setHeader</code>, <code>json</code>, <code>text</code> and <code>cookie</code>. The status codes a JSON API uses most:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Status</th><th>When</th><th>How in @zudojs/http</th></tr></thead>
+<tbody>
+<tr><td>200 OK</td><td>Here is what you asked for.</td><td><code>createResponseContext().json(data)</code></td></tr>
+<tr><td>201 Created</td><td>A new resource exists now.</td><td><code>createResponseContext({ status: 201 })</code> plus a <code>location</code> header</td></tr>
+<tr><td>204 No Content</td><td>Done, nothing to send back.</td><td><code>createResponseContext({ status: 204 })</code></td></tr>
+<tr><td>400 Bad Request</td><td>The input is wrong.</td><td>A <code>SchemaError</code>, or <code>throw badRequest(...)</code></td></tr>
+<tr><td>404 Not Found</td><td>No such resource.</td><td><code>throw new NotFoundError(...)</code></td></tr>
+<tr><td>409 Conflict</td><td>Clashes with what exists.</td><td><code>throw new ConflictError(...)</code></td></tr>
+<tr><td>500 Internal Server Error</td><td>A bug.</td><td>Any other error. The client only sees <code>{"error":"Internal Server Error"}</code>.</td></tr>
+</tbody>
+</table></div>
+<p>Deleting shows two of them. The first <code>DELETE</code> removes the task and sends nothing back. Deleting it again finds nothing:</p>
+<example file="delete.ts" project="http" browser="no">
+import { createResponseContext, createRouter } from "@zudojs/http";
+import { NotFoundError } from "@zudojs/errors";
+import { show, withServer } from "./serve.js";
+
+const tasks = new Map([[1, { id: 1, title: "Buy milk" }]]);
+
+const router = createRouter();
+router.delete("/tasks/:id", (ctx) => {
+  if (!tasks.delete(Number(ctx.params.id))) {
+    throw new NotFoundError(`Task ${ctx.params.id} not found`);
+  }
+  return createResponseContext({ status: 204 });
+});
+router.get("/crash", () => {
+  throw new Error("Cannot read the database file /var/data/tasks.db");
+});
+
+await withServer(router, async (base) => {
+  await show("first DELETE", await fetch(`${base}/tasks/1`, { method: "DELETE" }));
+  await show("second DELETE", await fetch(`${base}/tasks/1`, { method: "DELETE" }));
+  await show("GET /crash", await fetch(`${base}/crash`));
+});
+</example>
+<output>
+first DELETE -> 204
+second DELETE -> 404 {"error":"Task 1 not found","code":"ERR_RESOURCE_NOT_FOUND"}
+GET /crash -> 500 {"error":"Internal Server Error"}
+</output>
+<p>The last request hit a bug. The error message contained a file path, which would tell an attacker about your server, and it was <strong>not</strong> sent. The client got a generic 500. You will decide exactly what clients see, and log the details for yourself, in <a href="/learn/zudo-errors">The ZudoJS error system</a>.</p>
+</section>
+
+<section>
+<h2 id="task-api">Put it in the Task API</h2>
+<p>Now connect the <code>TaskService</code> from the previous lesson to real routes. These files from that lesson do not change:</p>
+<details class="lx-solution"><summary>Show the unchanged files</summary>
+<file name="src/repositories/task.store.ts" project="task-api">
+export type Priority = "low" | "normal" | "high";
+
+export interface StoredTask {
+  readonly id: number;
+  readonly title: string;
+  readonly done: boolean;
+  readonly priority: Priority;
+  readonly createdAt: string;
+}
+
+export class TaskStore {
+  public readonly tasks = new Map<number, StoredTask>();
+  public connected = false;
+  private lastId = 0;
+
+  public nextId(): number {
+    this.lastId += 1;
+    return this.lastId;
+  }
+}
+</file>
+<file name="src/validators/task.schema.ts" project="task-api">
+import { schema } from "@zudojs/schema";
+import type { Infer } from "@zudojs/schema";
+
+export const NewTaskSchema = schema.object({
+  title: schema.string().trim().min(3).max(100),
+  done: schema.default(schema.boolean(), false),
+  priority: schema.default(schema.enum(["low", "normal", "high"] as const), "normal"),
+});
+
+export type NewTask = Infer<typeof NewTaskSchema>;
+</file>
+<file name="src/services/task.service.ts" project="task-api">
+import { ConflictError, NotFoundError } from "@zudojs/errors";
+import type { StoredTask, TaskStore } from "../repositories/task.store.js";
+import { NewTaskSchema } from "../validators/task.schema.js";
+
+export interface Clock {
+  now(): Date;
+}
+
+export class TaskService {
+  public constructor(private readonly store: TaskStore, private readonly clock: Clock) {}
+
+  public create(input: unknown): StoredTask {
+    const data = NewTaskSchema.parse(input);
+    const clash = [...this.store.tasks.values()].some((t) => t.title === data.title);
+    if (clash) {
+      throw new ConflictError(`A task called "${data.title}" already exists`);
+    }
+    const task: StoredTask = { id: this.store.nextId(), ...data, createdAt: this.clock.now().toISOString() };
+    this.store.tasks.set(task.id, task);
+    return task;
+  }
+
+  public list(): StoredTask[] {
+    return [...this.store.tasks.values()];
+  }
+
+  public get(id: number): StoredTask {
+    const task = this.store.tasks.get(id);
+    if (!task) {
+      throw new NotFoundError(`Task ${id} not found`);
+    }
+    return task;
+  }
+}
+</file>
+</details>
+<p>Put the <code>readJson</code> helper in <code>src/utils/http.ts</code>. Then create <code>src/routes/tasks.routes.ts</code>. A route file only translates between HTTP and the service: it reads the request, calls the service, and chooses the status. The rules stay in the service.</p>
+<example file="src/utils/http.ts" project="task-api" browser="no">
+import { badRequest, HttpError } from "@zudojs/http";
+import type { HttpRequestContext } from "@zudojs/http";
+
+export function readJson(request: HttpRequestContext): unknown {
+  const type = request.getHeader("content-type") ?? "";
+  if (!type.startsWith("application/json")) {
+    throw new HttpError(415, "Send JSON with Content-Type: application/json", { code: "UNSUPPORTED_MEDIA_TYPE" });
+  }
+  const text = new TextDecoder().decode(request.body as Uint8Array);
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw badRequest("The request body is not valid JSON");
+  }
+}
+
+export function parseId(raw: string | undefined): number {
+  const id = Number(raw);
+  if (!Number.isSafeInteger(id) || id < 1) {
+    throw badRequest("The task id must be a positive whole number");
+  }
+  return id;
+}
+</example>
+<example file="src/routes/tasks.routes.ts" project="task-api" browser="no">
+import { createResponseContext } from "@zudojs/http";
+import type { HttpRouter } from "@zudojs/http";
+import type { TaskService } from "../services/task.service.js";
+import { parseId, readJson } from "../utils/http.js";
+
+export function registerTaskRoutes(router: HttpRouter, tasks: TaskService): void {
+  router.get("/tasks", () => createResponseContext().json(tasks.list()));
+
+  router.get("/tasks/:id", (ctx) => createResponseContext().json(tasks.get(parseId(ctx.params.id))));
+
+  router.post("/tasks", (ctx) => {
+    const task = tasks.create(readJson(ctx.request));
+    return createResponseContext({ status: 201 }).setHeader("location", `/tasks/${task.id}`).json(task);
+  });
+}
+</example>
+<p><code>parseId</code> refuses ids such as <code>abc</code>, <code>1.5</code> or <code>-3</code> with a 400, before the service ever sees them. This script checks the routes against a real server, with a fixed clock:</p>
+<example file="src/check-http.ts" project="task-api" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createRouter } from "@zudojs/http";
+import type { HttpRequestContext } from "@zudojs/http";
+import { TaskStore } from "./repositories/task.store.js";
+import { registerTaskRoutes } from "./routes/tasks.routes.js";
+import { TaskService } from "./services/task.service.js";
+
+const service = new TaskService(new TaskStore(), { now: () => new Date("2026-09-23T09:00:00Z") });
+const router = createRouter();
+registerTaskRoutes(router, service);
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+});
+await server.start();
+const base = `http://127.0.0.1:${server.address?.port}`;
+const json = { "content-type": "application/json" };
+
+for (const [method, path, body] of [
+  ["POST", "/tasks", '{"title":"Buy milk","priority":"high"}'],
+  ["POST", "/tasks", '{"title":"Buy milk"}'],
+  ["GET", "/tasks/1", undefined],
+  ["GET", "/tasks/abc", undefined],
+  ["GET", "/tasks", undefined],
+] as const) {
+  const response = await fetch(base + path, { method, headers: json, body });
+  console.log(method, path, response.status, await response.text());
+}
+await server.stop();
+</example>
+<output>
+POST /tasks 201 {"id":1,"title":"Buy milk","done":false,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}
+POST /tasks 409 {"error":"A task called \"Buy milk\" already exists","code":"ERR_CONFLICT"}
+GET /tasks/1 200 {"id":1,"title":"Buy milk","done":false,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}
+GET /tasks/abc 400 {"error":"The task id must be a positive whole number","code":"BAD_REQUEST"}
+GET /tasks 200 [{"id":1,"title":"Buy milk","done":false,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}]
+</output>
+<p>Finally, the server. In <code>src/server.ts</code>, build a router, register the routes with the <code>TaskService</code> from the runtime's container, keep <code>/health</code> as a route, and let the handler dispatch. Replace the whole <code>createHttpServer</code> call and the <code>import</code>s at the top:</p>
+<example file="src/server.ts (part)" project="task-api" browser="no" check="skip">
+import {
+  createHttpServer,
+  createNodeHttpAdapter,
+  createResponseContext,
+  createRouter,
+  type HttpRequestContext,
+} from "@zudojs/http";
+
+import { createApp } from "./app.js";
+import { HealthController } from "./controllers/index.js";
+import { registerTaskRoutes } from "./routes/tasks.routes.js";
+import { TaskService } from "./services/task.service.js";
+
+// resolvePort() and `await runtime.start()` stay as they were.
+
+const router = createRouter();
+router.get("/health", () =>
+  runtime.state === "running"
+    ? createResponseContext().json(new HealthController().check())
+    : createResponseContext({ status: 503 }).json({ status: "unavailable" }),
+);
+registerTaskRoutes(router, runtime.context.container.resolve(TaskService));
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({
+    host: process.env["HOST"] ?? "0.0.0.0",
+    port: resolvePort(),
+  }),
+  handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+});
+</example>
+<p>Start it with <code>npm run dev</code>, and try the API from a second terminal:</p>
+<shell title="Terminal on your computer">
+$ curl -i -X POST http://localhost:3000/tasks -H "content-type: application/json" -d '{"title":"Buy milk"}'
+HTTP/1.1 201 Created
+location: /tasks/2
+content-type: application/json
+content-length: 99
+Date: Wed, 23 Sep 2026 14:04:10 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"id":2,"title":"Buy milk","done":false,"priority":"normal","createdAt":"2026-09-23T14:04:10.510Z"}
+$ curl http://localhost:3000/tasks
+[{"id":1,"title":"Read the runtime lesson","done":true,"priority":"normal","createdAt":"2026-09-23T09:00:00.000Z"},{"id":2,"title":"Buy milk","done":false,"priority":"normal","createdAt":"2026-09-23T14:04:10.510Z"}]
+$ curl http://localhost:3000/tasks/7
+{"error":"Task 7 not found","code":"ERR_RESOURCE_NOT_FOUND"}
+</shell>
+<tip>On Windows PowerShell, type <code>curl.exe</code>, and put the JSON in double quotes with the inner quotes escaped: <code>-d "{\"title\":\"Buy milk\"}"</code>.</tip>
+<p>The new task got id 2, and the list shows it next to the one the <code>tasks</code> module added at startup. Both live in the one <code>TaskStore</code> singleton, shared by the modules and the service through the container.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Mark a task as done">
+<p>Add a <code>PATCH /tasks/:id/done</code> route to the small in-memory router from the <a href="#router">routes section</a>. It sets <code>done</code> to <code>true</code> and answers 200 with the task, or 404 if there is no such task.</p>
+<solution>
+<example file="patch.ts" project="http" browser="no">
+import { createResponseContext, createRouter } from "@zudojs/http";
+import { NotFoundError } from "@zudojs/errors";
+import { show, withServer } from "./serve.js";
+
+const tasks = [{ id: 1, title: "Buy milk", done: false }];
+
+const router = createRouter();
+router.patch("/tasks/:id/done", (ctx) => {
+  const task = tasks.find((t) => String(t.id) === ctx.params.id);
+  if (!task) {
+    throw new NotFoundError(`Task ${ctx.params.id} not found`);
+  }
+  task.done = true;
+  return createResponseContext().json(task);
+});
+
+await withServer(router, async (base) => {
+  await show("PATCH /tasks/1/done", await fetch(`${base}/tasks/1/done`, { method: "PATCH" }));
+  await show("PATCH /tasks/5/done", await fetch(`${base}/tasks/5/done`, { method: "PATCH" }));
+});
+</example>
+<output>
+PATCH /tasks/1/done -> 200 {"id":1,"title":"Buy milk","done":true}
+PATCH /tasks/5/done -> 404 {"error":"Task 5 not found","code":"ERR_RESOURCE_NOT_FOUND"}
+</output>
+</solution>
+</exercise>
+<exercise title="A limit on the list">
+<p>Change the <code>GET /tasks</code> route of <a href="#query">the filter example</a> so it also accepts <code>?limit=N</code>. It must be a whole number from 1 to 50; anything else is a 400. Remember: the value arrives as a string, maybe as an array.</p>
+<solution>
+<example file="limit.ts" project="http" browser="no">
+import { badRequest, createResponseContext, createRouter } from "@zudojs/http";
+import { show, withServer } from "./serve.js";
+
+const tasks = Array.from({ length: 5 }, (_, i) => ({ id: i + 1, title: `Task ${i + 1}` }));
+
+const router = createRouter();
+router.get("/tasks", (ctx) => {
+  const raw = ctx.query.limit ?? "50";
+  const limit = typeof raw === "string" && /^\d+$/.test(raw) ? Number(raw) : NaN;
+  if (!(limit >= 1 && limit <= 50)) {
+    throw badRequest("limit must be a whole number from 1 to 50");
+  }
+  return createResponseContext().json(tasks.slice(0, limit));
+});
+
+await withServer(router, async (base) => {
+  await show("limit=2", await fetch(`${base}/tasks?limit=2`));
+  await show("limit=0", await fetch(`${base}/tasks?limit=0`));
+  await show("limit=1&limit=2", await fetch(`${base}/tasks?limit=1&limit=2`));
+});
+</example>
+<output>
+limit=2 -> 200 [{"id":1,"title":"Task 1"},{"id":2,"title":"Task 2"}]
+limit=0 -> 400 {"error":"limit must be a whole number from 1 to 50","code":"BAD_REQUEST"}
+limit=1&limit=2 -> 400 {"error":"limit must be a whole number from 1 to 50","code":"BAD_REQUEST"}
+</output>
+<p>The regular expression <code>^\d+$</code> accepts digits only, so <code>"1.5"</code>, <code>"-1"</code> and <code>" 2"</code> are refused. A repeated key is an array, not a string, so it is refused too. The next lessons replace this hand-written code with a schema.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li><code>createHttpServer</code> + <code>createNodeHttpAdapter</code> run a server; <code>port: 0</code> picks a free port, which is handy in tests.</li>
+<li><code>createRouter()</code> maps a method and a path to a handler. <code>:id</code> parameters and query values are always strings; repeated query keys become arrays. Unknown paths get 404 and wrong methods 405 automatically.</li>
+<li>The request body is raw bytes. Check the <code>Content-Type</code>, decode with <code>TextDecoder</code>, parse JSON inside <code>try</code>, then validate with a schema.</li>
+<li>Routes return <code>createResponseContext()</code> with the right status: 201 plus <code>Location</code> for a create, 204 for a delete.</li>
+<li>Throwing <code>NotFoundError</code>, <code>ConflictError</code>, <code>badRequest()</code> or a <code>SchemaError</code> becomes the matching 4xx. Any other error becomes a generic 500.</li>
+<li>Cookies set with <code>response.cookie()</code> are <code>HttpOnly</code>, <code>Secure</code> and <code>SameSite=Lax</code> by default.</li>
+</ul>
+<p>Next, wrap every route in <strong>middleware</strong>: security headers, CORS, rate limits and a graceful shutdown.</p>
+</section>

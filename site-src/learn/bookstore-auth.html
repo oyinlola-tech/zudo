@@ -1,0 +1,614 @@
+---
+title: "BookStore API: authentication and tests"
+description: Add users to the BookStore. Hash passwords with scrypt, issue signed log-in tokens with a secret from the environment, protect the order routes, test it all with node:test, and then look honestly at what this hand-built backend now gets wrong.
+minutes: 50
+youNeed: "BookStore API: validation and PostgreSQL", and "Testing fundamentals"
+youBuild: A BookStore API where users register, log in, and see only their own orders, with a node:test suite
+keywords: password hashing node, scrypt, timingSafeEqual, hmac token, bearer token, authentication typescript, protected route, node:test, TOKEN_SECRET, environment secret, framework problems
+---
+<section>
+<h2 id="plan">Who is asking?</h2>
+<p>Right now anyone can place an order, and <code>GET /orders</code> shows everybody's orders. The BookStore needs to know <strong>who</strong> sends each request. That is <strong>authentication</strong>, and it has three parts:</p>
+<ol>
+<li><strong>Register</strong>: <code>POST /users</code> stores an e-mail and a <em>hash</em> of the password, never the password itself.</li>
+<li><strong>Log in</strong>: <code>POST /sessions</code> checks the password and hands back a signed <strong>token</strong>, a string that proves "this is user 7" until it expires.</li>
+<li><strong>Prove it</strong>: every request to a protected route sends the token in the <code>Authorization</code> header. The server checks the signature and knows the user.</li>
+</ol>
+<p>Everything in this lesson uses <code>node:crypto</code>, which is built into Node.js. You install nothing.</p>
+</section>
+
+<section>
+<h2 id="secret">A secret from the environment</h2>
+<p>The server signs tokens with a <strong>secret</strong>: a long random value that only the server knows. Anyone who has it can make tokens for any user, so it never goes into the code or into git. It comes from an environment variable, and the server refuses to start without a good one. Here is <code>src/config.ts</code> with the new setting:</p>
+<example file="src/config.ts" project="auth" browser="no">
+export interface Config {
+  readonly port: number;
+  readonly dataDir: string | undefined;
+  readonly tokenSecret: string;
+}
+
+type Env = Readonly<Record<string, string | undefined>>;
+
+export function loadConfig(env: Env): Config {
+  const raw = env["PORT"] ?? "3000";
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error(`PORT must be a whole number from 0 to 65535, got "${raw}"`);
+  }
+  const tokenSecret = env["TOKEN_SECRET"];
+  if (tokenSecret === undefined || tokenSecret.length < 32) {
+    throw new Error("TOKEN_SECRET must be set to a random value of at least 32 characters");
+  }
+  return { port, dataDir: env["DATA_DIR"], tokenSecret };
+}
+</example>
+<p>A missing secret and a short, guessable one are both refused. Try both, then a real random one made with <code>randomBytes</code>:</p>
+<example file="try-secret.ts" project="auth" browser="no">
+import { randomBytes } from "node:crypto";
+
+import { loadConfig } from "./src/config.js";
+
+try {
+  loadConfig({ PORT: "3000" });
+} catch (error) {
+  console.log("Refused to start:", error instanceof Error ? error.message : error);
+}
+
+try {
+  loadConfig({ TOKEN_SECRET: "secret" });
+} catch (error) {
+  console.log("Refused to start:", error instanceof Error ? error.message : error);
+}
+
+const config = loadConfig({ TOKEN_SECRET: randomBytes(32).toString("hex") });
+console.log("Started with a secret of", config.tokenSecret.length, "characters");
+</example>
+<output>
+Refused to start: TOKEN_SECRET must be set to a random value of at least 32 characters
+Refused to start: TOKEN_SECRET must be set to a random value of at least 32 characters
+Started with a secret of 64 characters
+</output>
+<p>The real server does the same. Started without <code>TOKEN_SECRET</code>, it stops before it opens a port:</p>
+<shell>
+$ npm start
+
+> bookstore@1.0.0 start
+> tsx src/server.ts
+
+~/bookstore/src/config.ts:17
+    throw new Error("TOKEN_SECRET must be set to a random value of at least 32 characters");
+          ^
+
+Error: TOKEN_SECRET must be set to a random value of at least 32 characters
+    at loadConfig (~/bookstore/src/config.ts:17:11)
+    at <anonymous> (~/bookstore/src/server.ts:6:16)
+…
+Node.js v24.19.0
+</shell>
+<p>Make a secret the same way and put it in the environment of the terminal that runs the server:</p>
+<shell>
+$ export TOKEN_SECRET=$(node -p "require('node:crypto').randomBytes(32).toString('hex')")
+</shell>
+<warn title="ONE SECRET PER SERVER, NEVER IN GIT">Do not copy a secret from a tutorial, a chat or a colleague's laptop. Make a fresh one for each environment. If a secret ever leaks, replace it: every token signed with the old one stops working, which is exactly what you want.</warn>
+</section>
+
+<section>
+<h2 id="passwords">Storing passwords safely</h2>
+<p>If your database leaks, the attacker must not learn the passwords. So you store a <strong>hash</strong>: the output of a one-way function. You can check a password against the hash, but you cannot turn the hash back into the password.</p>
+<p>A fast hash like SHA-256 is the wrong tool: an attacker can try billions of guesses per second. Password hashes are <strong>slow on purpose</strong>. Node.js has one built in, <strong>scrypt</strong>. Each password also gets its own random <strong>salt</strong>, so two users with the same password get different hashes:</p>
+<example file="src/auth/password.ts" project="auth" browser="no">
+import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
+
+const KEY_LENGTH = 64;
+
+function derive(password: string, salt: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scrypt(password, salt, KEY_LENGTH, (error, key) => (error ? reject(error) : resolve(key)));
+  });
+}
+
+export async function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(16);
+  const key = await derive(password, salt);
+  return `scrypt$${salt.toString("base64url")}$${key.toString("base64url")}`;
+}
+
+export async function verifyPassword(password: string, stored: string): Promise<boolean> {
+  const [scheme, salt, key] = stored.split("$");
+  if (scheme !== "scrypt" || salt === undefined || key === undefined) return false;
+  const expected = Buffer.from(key, "base64url");
+  const actual = await derive(password, Buffer.from(salt, "base64url"));
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+</example>
+<ul>
+<li><code>scrypt</code> takes a callback, so <code>derive</code> wraps it in a <code>Promise</code> (<a href="/learn/js-async">Asynchronous JavaScript</a>) to use it with <code>await</code>.</li>
+<li>The stored string holds everything needed to check later: the method name, the salt and the key, separated by <code>$</code>.</li>
+<li><code>timingSafeEqual</code> compares two buffers in a time that does not depend on where they first differ. A normal <code>===</code> stops at the first different byte, and an attacker can measure that difference to guess a value piece by piece.</li>
+</ul>
+<example file="try-password.ts" project="auth" browser="no">
+import { hashPassword, verifyPassword } from "./src/auth/password.js";
+
+const first = await hashPassword("correct horse battery");
+const second = await hashPassword("correct horse battery");
+
+console.log(first);
+console.log("same password, same hash?", first === second);
+console.log("right password:", await verifyPassword("correct horse battery", first));
+console.log("wrong password:", await verifyPassword("correct horse battery!", first));
+</example>
+<output mask="b64">
+scrypt$cr-RTXIGZPIMrtaRv3Kv6w$KW9awwEzrIjGkg5EWNqlZT_YWfsthvL7ehYeRHu6LF1y7c9CNAQYDs2F1gs3dFV13Gz0QlKMs69qo4Bye6HKuA
+same password, same hash? false
+right password: true
+wrong password: false
+</output>
+<p>Your hash will look different: the salt is random on every call. That is also why the same password gave two different hashes, and yet both check correctly.</p>
+</section>
+
+<section>
+<h2 id="tokens">Signed tokens</h2>
+<p>After log-in the server gives the client a token. The token must be impossible to forge. The server attaches a <strong>signature</strong> made with <strong>HMAC</strong>: a hash of the token's content mixed with the secret. Change one character of the content and the signature no longer matches; and without the secret, nobody can make a new valid one.</p>
+<example file="src/auth/token.ts" project="auth" browser="no">
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+export interface TokenPayload {
+  readonly sub: number;
+  readonly exp: number;
+}
+
+function sign(data: string, secret: string): string {
+  return createHmac("sha256", secret).update(data).digest("base64url");
+}
+
+function isPayload(value: unknown): value is TokenPayload {
+  return typeof value === "object" && value !== null && "sub" in value && "exp" in value
+    && Number.isInteger(value.sub) && Number.isInteger(value.exp);
+}
+
+export function createToken(userId: number, secret: string, now = Date.now(), ttlSeconds = 3600): string {
+  const payload: TokenPayload = { sub: userId, exp: Math.floor(now / 1000) + ttlSeconds };
+  const data = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `${data}.${sign(data, secret)}`;
+}
+
+export function readToken(token: string, secret: string, now = Date.now()): TokenPayload | undefined {
+  const [data, signature, extra] = token.split(".");
+  if (data === undefined || signature === undefined || extra !== undefined) return undefined;
+  const expected = Buffer.from(sign(data, secret));
+  const given = Buffer.from(signature);
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return undefined;
+  const payload: unknown = JSON.parse(Buffer.from(data, "base64url").toString("utf8"));
+  if (!isPayload(payload) || payload.exp * 1000 <= now) return undefined;
+  return payload;
+}
+</example>
+<ul>
+<li>The <strong>payload</strong> says who (<code>sub</code>, "subject", the user id) and until when (<code>exp</code>, "expires", in seconds since 1970). A token lives one hour.</li>
+<li><strong>base64url</strong> writes bytes as letters, digits, <code>-</code> and <code>_</code>, safe to put in a header or URL.</li>
+<li><code>readToken</code> checks the signature <em>first</em>, and only then reads the content. It returns <code>undefined</code> for anything wrong: a bad shape, a bad signature, an expired token.</li>
+<li><code>now</code> is a parameter with <code>Date.now()</code> as the default. A test can pass any time it likes, so "two hours later" does not mean waiting two hours.</li>
+</ul>
+<note>This is the same idea as a <strong>JWT</strong> (JSON Web Token), the standard format. A JWT also has a header part that names the signing method. You will use real JWTs with <code>@zudojs/auth</code> later in the course.</note>
+<example file="try-token.ts" project="auth" browser="no">
+import { randomBytes } from "node:crypto";
+
+import { createToken, readToken } from "./src/auth/token.js";
+
+const secret = randomBytes(32).toString("hex");
+const now = Date.UTC(2026, 8, 23, 12, 0, 0);
+const token = createToken(7, secret, now);
+const [data] = token.split(".");
+
+console.log("payload part:", data);
+console.log("decoded:", Buffer.from(data!, "base64url").toString("utf8"));
+console.log("valid:", readToken(token, secret, now));
+
+const forged = Buffer.from(JSON.stringify({ sub: 1, exp: 1790170000 })).toString("base64url");
+console.log("forged payload:", readToken(`${forged}.${token.split(".")[1]}`, secret, now));
+console.log("other secret:", readToken(token, randomBytes(32).toString("hex"), now));
+console.log("two hours later:", readToken(token, secret, now + 2 * 3600 * 1000));
+</example>
+<output>
+payload part: eyJzdWIiOjcsImV4cCI6MTc5MDE2ODQwMH0
+decoded: {"sub":7,"exp":1790168400}
+valid: { sub: 7, exp: 1790168400 }
+forged payload: undefined
+other secret: undefined
+two hours later: undefined
+</output>
+<p>Look at the second line: anyone can <strong>read</strong> a token. The signature stops people from <em>changing</em> it, not from reading it. So never put a password or other private data in a token. The attacker who swapped in <code>"sub": 1</code> to become user 1 got nothing, because the old signature does not match the new content.</p>
+</section>
+
+<section>
+<h2 id="routes">Register, log in, protect</h2>
+<p>The code in this section plugs into the project from <a href="/learn/bookstore-data">the last lesson</a>. First, two more migrations in <code>src/db.ts</code>: a <code>users</code> table, and an owner for each order. They go at the end of the list, so a database that already exists gets them on its next start:</p>
+<example file="src/db.ts (part)" project="wiring" browser="no" check="skip">
+  `CREATE TABLE IF NOT EXISTS users (
+     id serial PRIMARY KEY,
+     email text NOT NULL UNIQUE,
+     password_hash text NOT NULL
+   )`,
+  `ALTER TABLE orders ADD COLUMN IF NOT EXISTS user_id integer REFERENCES users (id)`,
+];
+</example>
+<p>A body parser for the e-mail and password goes in <code>src/validation/bodies.ts</code>. E-mails are stored in lower case, so <code>Ada@Example.com</code> and <code>ada@example.com</code> are one account. The password is checked for length, but not trimmed: spaces are allowed in a password.</p>
+<example file="src/validation/bodies.ts (part)" project="wiring" browser="no" check="skip">
+export interface Credentials {
+  readonly email: string;
+  readonly password: string;
+}
+
+export function parseCredentials(input: unknown): Credentials {
+  const body = objectBody(input);
+  const issues: string[] = [];
+  const email = text(body["email"], "email", 254, issues).toLowerCase();
+  if (email !== "" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) issues.push("email is not an e-mail address");
+  const password = typeof body["password"] === "string" ? body["password"] : "";
+  if (password.length < 10 || password.length > 200) issues.push("password must be 10 to 200 characters");
+  return done({ email, password }, issues);
+}
+</example>
+<p>The user repository. Notice that <code>create</code> returns a <code>User</code> without the hash: the hash only leaves the repository through <code>findByEmail</code>, for the log-in check.</p>
+<example file="src/repositories/users.ts" project="wiring" browser="no" check="skip">
+import type { Queryable } from "../db.js";
+import { isPgError } from "../db.js";
+import { ConflictError } from "../errors.js";
+
+export interface User {
+  readonly id: number;
+  readonly email: string;
+}
+
+interface UserRow extends User {
+  readonly passwordHash: string;
+}
+
+export class UserRepository {
+  constructor(private readonly db: Queryable) {}
+
+  async create(email: string, passwordHash: string): Promise<User> {
+    try {
+      const { rows } = await this.db.query<User>(
+        "INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email",
+        [email, passwordHash],
+      );
+      return rows[0]!;
+    } catch (error) {
+      if (isPgError(error) && error.code === "23505") throw new ConflictError("That e-mail is already registered");
+      throw error;
+    }
+  }
+
+  async findByEmail(email: string): Promise<UserRow | undefined> {
+    const { rows } = await this.db.query<UserRow>(
+      `SELECT id, email, password_hash AS "passwordHash" FROM users WHERE email = $1`,
+      [email],
+    );
+    return rows[0];
+  }
+}
+</example>
+<p>The two user routes. Log-in answers with the <strong>same</strong> message whether the e-mail is unknown or the password is wrong, so it does not tell a stranger which e-mails have accounts:</p>
+<example file="src/routes/users.ts" project="wiring" browser="no" check="skip">
+import { hashPassword, verifyPassword } from "../auth/password.js";
+import { createToken } from "../auth/token.js";
+import { HttpError } from "../http/errors.js";
+import type { Router } from "../http/router.js";
+import type { UserRepository } from "../repositories/users.js";
+import { parseCredentials } from "../validation/bodies.js";
+
+export function addUserRoutes(router: Router, users: UserRepository, secret: string): void {
+  router.add("POST", "/users", async (request) => {
+    const { email, password } = parseCredentials(request.body);
+    const user = await users.create(email, await hashPassword(password));
+    return { status: 201, body: user };
+  });
+
+  router.add("POST", "/sessions", async (request) => {
+    const { email, password } = parseCredentials(request.body);
+    const user = await users.findByEmail(email);
+    if (user === undefined || !(await verifyPassword(password, user.passwordHash))) {
+      throw new HttpError(401, "bad_credentials", "Wrong e-mail or password");
+    }
+    return { status: 200, body: { token: createToken(user.id, secret) } };
+  });
+}
+</example>
+<p>A protected route calls one guard. It reads the <code>Authorization: Bearer &lt;token&gt;</code> header, and either returns the user id or throws <strong>401 Unauthorized</strong>:</p>
+<example file="src/http/auth.ts" project="wiring" browser="no" check="skip">
+import { readToken } from "../auth/token.js";
+import { HttpError } from "./errors.js";
+import type { ApiRequest } from "./types.js";
+
+export function requireUserId(request: ApiRequest, secret: string): number {
+  const header = request.headers["authorization"];
+  const token = typeof header === "string" && header.startsWith("Bearer ") ? header.slice(7) : undefined;
+  const payload = token === undefined ? undefined : readToken(token, secret);
+  if (payload === undefined) {
+    throw new HttpError(401, "unauthorized", "Log in and send your token as: Authorization: Bearer <token>");
+  }
+  return payload.sub;
+}
+</example>
+<p>The order routes now ask the guard who is calling, and pass that user id to the repository:</p>
+<example file="src/routes/orders.ts" project="wiring" browser="no" check="skip">
+import { requireUserId } from "../http/auth.js";
+import type { Router } from "../http/router.js";
+import type { OrderRepository } from "../repositories/orders.js";
+import { parseNewOrder } from "../validation/bodies.js";
+
+export function addOrderRoutes(router: Router, orders: OrderRepository, secret: string): void {
+  router.add("GET", "/orders", async (request) => {
+    const userId = requireUserId(request, secret);
+    return { status: 200, body: await orders.listFor(userId) };
+  });
+
+  router.add("POST", "/orders", async (request) => {
+    const userId = requireUserId(request, secret);
+    return { status: 201, body: await orders.place(userId, parseNewOrder(request.body)) };
+  });
+}
+</example>
+<warn title="THE MISTAKE TO NEVER MAKE">A tempting shortcut is to let the client say who it is: <code>{ "bookId": 1, "quantity": 1, "userId": 2 }</code>, then <code>orders.place(body.userId, …)</code>. With that one line, any logged-in user can order in someone else's name, or read someone else's orders by changing a number. The user id must come <strong>only</strong> from the verified token. That is why <code>parseNewOrder</code> has no <code>userId</code> field at all.</warn>
+<p>In <code>src/repositories/orders.ts</code>, <code>place</code> takes the user id and writes it into the new <code>user_id</code> column, and <code>list</code> becomes <code>listFor</code>, which filters by it:</p>
+<example file="src/repositories/orders.ts (part)" project="wiring" browser="no" check="skip">
+  INSERT INTO orders (user_id, book_id, quantity, total_cents)
+  SELECT $3, id, $2, price_cents * $2 FROM taken
+  …
+  async place(userId: number, order: NewOrder): Promise<Order> {
+    const { rows } = await this.db.query<Order>(PLACE_ORDER, [order.bookId, order.quantity, userId]);
+  …
+  async listFor(userId: number): Promise<Order[]> {
+    const { rows } = await this.db.query<Order>(
+      `SELECT id, book_id AS "bookId", quantity, total_cents AS "totalCents"
+       FROM orders WHERE user_id = $1 ORDER BY id`,
+      [userId],
+    );
+    return rows;
+  }
+</example>
+<p>Finally, <code>createRouter(db, tokenSecret)</code> passes the secret to the routes that need it, adds <code>addUserRoutes(router, new UserRepository(db), tokenSecret)</code>, and <code>server.ts</code> calls it with <code>config.tokenSecret</code>. Start the server in the terminal where you exported <code>TOKEN_SECRET</code>:</p>
+<shell>
+$ npm run dev
+
+> bookstore@1.0.0 dev
+> tsx watch src/server.ts
+
+BookStore API on http://localhost:3000
+</shell>
+<p>In a second terminal: add a book, register, register again, log in with a wrong and then the right password, and use the token:</p>
+<shell>
+$ curl -X POST http://localhost:3000/authors -H 'content-type: application/json' -d '{"name":"Chinua Achebe"}'
+{"id":1,"name":"Chinua Achebe"}
+$ curl -X POST http://localhost:3000/books -H 'content-type: application/json' -d '{"title":"Things Fall Apart","authorId":1,"priceCents":1299,"stock":3}'
+{"id":1,"title":"Things Fall Apart","authorId":1,"priceCents":1299,"stock":3}
+$ curl -X POST http://localhost:3000/users -H 'content-type: application/json' -d '{"email":"ada@example.com","password":"a long passphrase"}'
+{"id":1,"email":"ada@example.com"}
+$ curl -X POST http://localhost:3000/users -H 'content-type: application/json' -d '{"email":"ada@example.com","password":"a long passphrase"}'
+{"error":"conflict","message":"That e-mail is already registered"}
+$ curl -X POST http://localhost:3000/sessions -H 'content-type: application/json' -d '{"email":"ada@example.com","password":"wrong passphrase"}'
+{"error":"bad_credentials","message":"Wrong e-mail or password"}
+$ curl -X POST http://localhost:3000/sessions -H 'content-type: application/json' -d '{"email":"ada@example.com","password":"a long passphrase"}'
+{"token":"eyJzdWIiOjEsImV4cCI6MTc5MDE3NTM1MX0.EtB0bByiCmKIrq2oHVUQXnvdAdTRPuCZHykaTCXaYJ0"}
+$ TOKEN=eyJzdWIiOjEsImV4cCI6MTc5MDE3NTM1MX0.EtB0bByiCmKIrq2oHVUQXnvdAdTRPuCZHykaTCXaYJ0
+$ curl http://localhost:3000/orders
+{"error":"unauthorized","message":"Log in and send your token as: Authorization: Bearer <token>"}
+$ curl -X POST http://localhost:3000/orders -H 'content-type: application/json' -H "authorization: Bearer $TOKEN" -d '{"bookId":1,"quantity":1}'
+{"id":1,"bookId":1,"quantity":1,"totalCents":1299}
+$ curl http://localhost:3000/orders -H "authorization: Bearer $TOKEN"
+[{"id":1,"bookId":1,"quantity":1,"totalCents":1299}]
+</shell>
+<p>Paste your own token after <code>TOKEN=</code>; it will differ from this one, because your secret and your clock differ.</p>
+<warn title="NOT READY FOR THE INTERNET YET">Nothing stops a script from trying a million passwords against <code>/sessions</code>. A public log-in route needs a <strong>rate limit</strong>: only a few attempts per minute per client. It is on the list below, and you will add one with <code>@zudojs/security</code> later in the course.</warn>
+</section>
+
+<section>
+<h2 id="tests">Tests with node:test</h2>
+<p>You wrote tests with <code>node:test</code> in <a href="/learn/testing-basics">Testing fundamentals</a>. The token code is a good first target: pure functions, and every rule is one test. Each test makes its own secret, so no real secret ever appears in a test file:</p>
+<example file="tests/token.test.ts" project="auth" browser="no">
+import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
+import { test } from "node:test";
+
+import { createToken, readToken } from "../src/auth/token.js";
+
+const secret = randomBytes(32).toString("hex");
+const now = Date.UTC(2026, 8, 23, 12, 0, 0);
+
+test("a fresh token names its user", () => {
+  assert.equal(readToken(createToken(7, secret, now), secret, now)?.sub, 7);
+});
+
+test("a token signed with another secret is refused", () => {
+  const other = randomBytes(32).toString("hex");
+  assert.equal(readToken(createToken(7, other, now), secret, now), undefined);
+});
+
+test("a changed payload is refused", () => {
+  const [, signature] = createToken(7, secret, now).split(".");
+  const payload = Buffer.from(JSON.stringify({ sub: 1, exp: 9999999999 })).toString("base64url");
+  assert.equal(readToken(`${payload}.${signature}`, secret, now), undefined);
+});
+
+test("an expired token is refused", () => {
+  const token = createToken(7, secret, now, 60);
+  assert.equal(readToken(token, secret, now + 61_000), undefined);
+});
+</example>
+<output mask="ms,num">
+✔ a fresh token names its user (4.777057ms)
+✔ a token signed with another secret is refused (0.916208ms)
+✔ a changed payload is refused (0.45011ms)
+✔ an expired token is refused (0.527713ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 29.750346
+</output>
+<p>The durations will differ on your computer. Testing the whole API takes more work: a test must build a database, a secret, a router and a server, start it on port 0, and close everything afterwards:</p>
+<example file="tests/api.test.ts" project="wiring" browser="no" check="skip">
+import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
+import { after, before, test } from "node:test";
+
+import { createApp } from "../src/app.js";
+import { openDatabase } from "../src/db.js";
+import { createRouter } from "../src/routes/index.js";
+
+const db = await openDatabase();
+const server = createApp(createRouter(db, randomBytes(32).toString("hex")));
+let base = "";
+
+before(async () => {
+  server.listen(0);
+  await once(server, "listening");
+  base = `http://localhost:${(server.address() as AddressInfo).port}`;
+});
+
+after(async () => {
+  server.close();
+  await db.close();
+});
+
+function post(path: string, body: unknown, token?: string): Promise<Response> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (token !== undefined) headers["authorization"] = `Bearer ${token}`;
+  return fetch(base + path, { method: "POST", headers, body: JSON.stringify(body) });
+}
+
+test("orders need a token", async () => {
+  const response = await fetch(`${base}/orders`);
+  assert.equal(response.status, 401);
+});
+
+test("a new user logs in and has no orders yet", async () => {
+  const credentials = { email: "ada@example.com", password: "a long passphrase" };
+  assert.equal((await post("/users", credentials)).status, 201);
+  const { token } = (await (await post("/sessions", credentials)).json()) as { token: string };
+  const orders = await fetch(`${base}/orders`, { headers: { authorization: `Bearer ${token}` } });
+  assert.equal(orders.status, 200);
+  assert.deepEqual(await orders.json(), []);
+});
+</example>
+<p>Add a test script to <code>package.json</code>, <code>"test": "tsx --test tests/*.test.ts"</code>, and run the whole suite:</p>
+<shell>
+$ npm test
+
+> bookstore@1.0.0 test
+> tsx --test tests/*.test.ts
+
+✔ orders need a token (123.101035ms)
+✔ a new user logs in and has no orders yet (502.271227ms)
+✔ a fresh token names its user (9.257998ms)
+✔ a token signed with another secret is refused (7.276882ms)
+✔ a changed payload is refused (1.063517ms)
+✔ an expired token is refused (1.500403ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 12632.250468
+</shell>
+<p>Six tests pass. Almost all of the time is PGlite starting up for the API test.</p>
+</section>
+
+<section>
+<h2 id="review">An honest review</h2>
+<p>The BookStore works. It validates input, uses parameterized SQL, hashes passwords, signs tokens and has tests. Now step back and read your own code as a reviewer would. These are the problems it has, and every one of them grows with each new route:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Problem</th><th>Where you felt it</th></tr></thead>
+<tbody>
+<tr><td><strong>Routing boilerplate</strong></td><td>Every route file repeats the same shape: <code>router.add</code>, parse, call, <code>return { status, body }</code>. The router has no middleware, so "require a user" is a line you must remember in every protected handler. Forget it once and the route is open.</td></tr>
+<tr><td><strong>Validation boilerplate</strong></td><td><code>text</code>, <code>whole</code>, <code>parseNewBook</code>, <code>parseCredentials</code>… and each <code>interface</code> is written separately from its parser, so the two can drift apart.</td></tr>
+<tr><td><strong>Manual wiring</strong></td><td><code>createRouter</code> builds every repository and hands the secret to the routes that need it. Each new dependency means changing function signatures up the whole chain.</td></tr>
+<tr><td><strong>No lifecycle</strong></td><td>Nothing handles <kbd>Ctrl</kbd> + <kbd>C</kbd> or a <code>SIGTERM</code> from a server: requests in flight are cut off and the database is never closed. There is no order for "start the database, then the server" or "stop them in reverse". There is no health check a load balancer could ask.</td></tr>
+<tr><td><strong>Scattered configuration</strong></td><td><code>PORT</code>, <code>DATA_DIR</code>, <code>DATABASE_URL</code> and <code>TOKEN_SECRET</code> are each parsed by hand. Nothing lists them all, gives each a type, or hides the secret if someone logs the config.</td></tr>
+<tr><td><strong>Missing security layers</strong></td><td>No rate limit on log-in. No security headers (<code>X-Content-Type-Options</code>, <code>Strict-Transport-Security</code>, …). No CORS policy for browsers. Tokens cannot be revoked before they expire, so there is no real log-out. Registration answers 409 for a known e-mail, which tells a stranger who has an account.</td></tr>
+<tr><td><strong>Testing friction</strong></td><td>To test one route you build a database, a secret, a router and a server, and tear them down again. There are no helpers for fake users, test data or a test client.</td></tr>
+<tr><td><strong>No logging or errors standard</strong></td><td>Logging is <code>console.log</code> and <code>console.error</code>. Your error codes (<code>not_found</code>, <code>invalid_id</code>) are your own invention, different from the next project's.</td></tr>
+</tbody>
+</table></div>
+<p>None of these is a bug you can fix with one clever line. They are <strong>structural</strong>: they come from having no common shape for the code. The next part of the course names that shape (<a href="/learn/backend-architecture">Backend architecture</a>), and then shows how a framework takes over these jobs (<a href="/learn/frameworks">What a framework does</a>).</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Test the password functions">
+<p>Write <code>tests/password.test.ts</code> with two tests: the right password is accepted and a wrong one refused; and a stored value that is not in the <code>scrypt$salt$key</code> format is refused without throwing.</p>
+<solution>
+<example file="tests/password.test.ts" project="auth" browser="no">
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import { hashPassword, verifyPassword } from "../src/auth/password.js";
+
+test("the right password passes, a wrong one fails", async () => {
+  const stored = await hashPassword("a long passphrase");
+  assert.equal(await verifyPassword("a long passphrase", stored), true);
+  assert.equal(await verifyPassword("a long passphrasE", stored), false);
+});
+
+test("a broken stored value is refused", async () => {
+  assert.equal(await verifyPassword("a long passphrase", "plain-text-password"), false);
+});
+</example>
+<output mask="ms,num">
+✔ the right password passes, a wrong one fails (410.756149ms)
+✔ a broken stored value is refused (0.486865ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 425.464448
+</output>
+<p>The second test matters: a database row with a damaged or old-format value must mean "wrong password", not a crash.</p>
+</solution>
+</exercise>
+<exercise title="Tokens that expire sooner">
+<p>A bank would not accept a one-hour token. Using <code>createToken</code>'s <code>ttlSeconds</code> parameter, make a token that lives 5 minutes, and show that it is valid after 4 minutes and refused after 6.</p>
+<solution>
+<example file="try-short-token.ts" project="auth" browser="no">
+import { randomBytes } from "node:crypto";
+
+import { createToken, readToken } from "./src/auth/token.js";
+
+const secret = randomBytes(32).toString("hex");
+const now = Date.UTC(2026, 8, 23, 12, 0, 0);
+const token = createToken(7, secret, now, 5 * 60);
+const minute = 60 * 1000;
+
+console.log("after 4 minutes:", readToken(token, secret, now + 4 * minute));
+console.log("after 6 minutes:", readToken(token, secret, now + 6 * minute));
+</example>
+<output>
+after 4 minutes: { sub: 7, exp: 1790165100 }
+after 6 minutes: undefined
+</output>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Passwords are stored as scrypt hashes with a random salt, and compared with <code>timingSafeEqual</code>.</li>
+<li>A log-in returns a token: a readable payload plus an HMAC signature made with a secret. Changing the payload or the secret makes it invalid, and it expires.</li>
+<li>The secret comes from <code>TOKEN_SECRET</code>, and the server refuses to start without a long enough one.</li>
+<li>Protected routes take the user id from the verified token, never from the request body.</li>
+<li><code>node:test</code> tests pure functions easily, and a whole API with some effort.</li>
+<li>The hand-built BookStore now shows its structural problems: boilerplate, manual wiring, no lifecycle, scattered configuration, missing security layers and testing friction.</li>
+</ul>
+</section>

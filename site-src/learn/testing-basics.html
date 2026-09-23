@@ -1,0 +1,633 @@
+---
+title: Testing fundamentals
+description: Why automated tests matter, the difference between unit, integration and end-to-end tests, and how to write them with node:assert and Node's built-in test runner, including mocks, spies, isolated tests and a fresh test database. Then the same tests in Vitest.
+minutes: 45
+youNeed: The Git and GitHub lesson
+youBuild: A test suite for a task list, a task store on a real test database, and an HTTP endpoint
+keywords: javascript testing, unit test, integration test, end-to-end test, node:test, node:assert, describe it, mock.fn, mock.method, spy, beforeEach, test isolation, test database, pglite, vitest
+---
+<section>
+<h2 id="why">Why test?</h2>
+<p>So far you checked your code by running it and reading the output. That works once. But every change can break something that used to work, and nobody re-checks forty endpoints by hand after each commit. An <strong>automated test</strong> is a small program that runs your code with known input and checks the result. You write it once, and it runs again in seconds, as often as you like: before every commit, and on every pull request, as the <a href="/learn/git">Git lesson</a> mentioned.</p>
+<p>Tests come in three sizes:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Kind</th><th>Tests</th><th>Speed</th><th>Example</th></tr></thead>
+<tbody>
+<tr><td><strong>Unit</strong></td><td>One function or class, alone</td><td>Milliseconds</td><td><code>validateTitle("  ")</code> throws</td></tr>
+<tr><td><strong>Integration</strong></td><td>Several parts together, such as your code and a real database</td><td>Tenths of a second</td><td>The task store saves a row and reads it back</td></tr>
+<tr><td><strong>End-to-end</strong> (e2e)</td><td>The whole system from the outside, like a user or client</td><td>Seconds</td><td><code>POST /tasks</code> over HTTP returns 201</td></tr>
+</tbody>
+</table></div>
+<p>Most projects write many unit tests, a good number of integration tests, and a few end-to-end tests: the fast ones catch most bugs, the slow ones prove the parts really fit together. This lesson writes all three.</p>
+</section>
+
+<section>
+<h2 id="assert">Assertions</h2>
+<p>An <strong>assertion</strong> is a check that throws an error when something is not as expected. At its heart, a test is just that:</p>
+<example file="check.js">
+function assertEqual(actual, expected) {
+  if (actual !== expected) {
+    throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+}
+
+const slug = (title) => title.trim().toLowerCase().replaceAll(" ", "-");
+
+assertEqual(slug("Buy milk"), "buy-milk");
+console.log("test 1 passed");
+try {
+  assertEqual(slug("  Call Ada "), "call-ada ");
+} catch (error) {
+  console.log("test 2 failed:", error.message);
+}
+</example>
+<output>
+test 1 passed
+test 2 failed: Expected "call-ada ", got "call-ada"
+</output>
+<p>Test 2 failed because the <em>test</em> was wrong: it expected a trailing space that <code>trim</code> removes. That happens too. A failing test means "look here", not always "the code is broken".</p>
+<p>Node.js has a complete set of assertions built in, in <code>node:assert/strict</code>. The <code>strict</code> version compares with <code>===</code>, which is what you want:</p>
+<example file="assert.js" browser="no">
+import assert from "node:assert/strict";
+
+assert.equal(2 + 2, 4);
+assert.deepEqual({ id: 1, tags: ["home"] }, { id: 1, tags: ["home"] });
+assert.throws(() => JSON.parse("{oops"), SyntaxError);
+await assert.rejects(Promise.reject(new Error("db down")), /db down/);
+console.log("all four passed");
+
+try {
+  assert.deepEqual({ id: 1, done: false }, { id: 1, done: true });
+} catch (error) {
+  console.log(error.message);
+}
+</example>
+<output>
+all four passed
+Expected values to be strictly deep-equal:
++ actual - expected
+
+  {
++   done: false,
+-   done: true,
+    id: 1
+  }
+</output>
+<ul>
+<li><code>equal</code> compares simple values. <code>deepEqual</code> compares objects and arrays by their content, not by identity.</li>
+<li><code>throws</code> checks that a function throws, here a <code>SyntaxError</code>. <code>rejects</code> does the same for a promise, and needs <code>await</code>.</li>
+<li>When an assertion fails, it throws an <code>AssertionError</code> whose message shows the difference: <code>+</code> is what you got (actual), <code>-</code> is what you expected.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="node-test">Node's test runner: describe and it</h2>
+<p>Node.js also has a <strong>test runner</strong> built in, <code>node:test</code>. It runs your tests, keeps going when one fails, and prints a report. Here is the code to test, a small task list:</p>
+<example file="tasks.js" project="t" browser="no">
+export function validateTitle(title) {
+  if (typeof title !== "string") {
+    throw new TypeError("title must be a string");
+  }
+  const trimmed = title.trim();
+  if (trimmed.length < 3 || trimmed.length > 100) {
+    throw new RangeError("title must be 3 to 100 characters");
+  }
+  return trimmed;
+}
+
+export class TaskList {
+  constructor(notify = () => {}) {
+    this.tasks = [];
+    this.notify = notify;
+  }
+
+  add(title) {
+    const task = { id: this.tasks.length + 1, title: validateTitle(title), done: false };
+    this.tasks.push(task);
+    this.notify("task.added", task);
+    return task;
+  }
+
+  complete(id) {
+    const task = this.tasks.find((t) => t.id === id);
+    if (!task) throw new Error(`Task ${id} not found`);
+    task.done = true;
+    return task;
+  }
+}
+</example>
+<p><code>describe</code> groups tests, and <code>it</code> defines one test: a name that reads like a sentence, and a function. By convention test files end in <code>.test.js</code>:</p>
+<example file="tasks.test.js" project="t" browser="no">
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { TaskList, validateTitle } from "./tasks.js";
+
+describe("validateTitle", () => {
+  it("trims spaces", () => {
+    assert.equal(validateTitle("  Buy milk "), "Buy milk");
+  });
+
+  it("rejects titles that are too short", () => {
+    assert.throws(() => validateTitle(" a "), RangeError);
+  });
+
+  it("rejects values that are not strings", () => {
+    assert.throws(() => validateTitle(42), { message: "title must be a string" });
+  });
+});
+
+describe("TaskList", () => {
+  it("adds and completes a task", () => {
+    const list = new TaskList();
+    const task = list.add("Buy milk");
+    assert.deepEqual(list.complete(task.id), { id: 1, title: "Buy milk", done: true });
+  });
+});
+</example>
+<output mask="ms,num">
+▶ validateTitle
+  ✔ trims spaces (2.541186ms)
+  ✔ rejects titles that are too short (1.549167ms)
+  ✔ rejects values that are not strings (1.874239ms)
+✔ validateTitle (10.946031ms)
+▶ TaskList
+  ✔ adds and completes a task (2.317796ms)
+✔ TaskList (5.625268ms)
+ℹ tests 4
+ℹ suites 2
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 54.887707
+</output>
+<p>A <code>✔</code> marks each passing test, with its duration in milliseconds. Your times will be different; everything else should match. The summary counts tests, suites (the <code>describe</code> groups) and results.</p>
+<p>To run it on your computer, put <code>tasks.js</code> and <code>tasks.test.js</code> in a new folder, <code>tasks</code>, with <code>"type": "module"</code> in its <code>package.json</code>. You can run one file with <code>node tasks.test.js</code>, as above, or let Node find every test file in the project with <code>node --test</code>. Put that in <code>package.json</code> as the <code>test</code> script, so the whole team and your CI use one command, <code>npm test</code>:</p>
+<shell>
+$ npm pkg set scripts.test="node --test"
+$ npm test
+
+> tasks@1.0.0 test
+> node --test
+
+▶ validateTitle
+  ✔ trims spaces (2.568283ms)
+  ✔ rejects titles that are too short (1.988112ms)
+  ✔ rejects values that are not strings (3.709841ms)
+✔ validateTitle (18.530572ms)
+▶ TaskList
+  ✔ adds and completes a task (2.234005ms)
+✔ TaskList (2.728223ms)
+ℹ tests 4
+ℹ suites 2
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 420.674511
+</shell>
+<p>When a test fails, the runner says which one, where, and why. Here someone "simplified" <code>validateTitle</code> to <code>const trimmed = title;</code>. Two tests caught it: the title is no longer trimmed, and <code>" a "</code> now counts as 3 characters, so it is no longer rejected (the long stack traces are shortened with …):</p>
+<shell>
+$ npm test
+
+> tasks@1.0.0 test
+> node --test
+
+▶ validateTitle
+  ✖ trims spaces (4.55542ms)
+  ✖ rejects titles that are too short (0.995711ms)
+  ✔ rejects values that are not strings (4.712584ms)
+✖ validateTitle (15.031252ms)
+▶ TaskList
+  ✔ adds and completes a task (2.296583ms)
+✔ TaskList (2.937544ms)
+ℹ tests 4
+ℹ suites 2
+ℹ pass 2
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 235.543004
+
+✖ failing tests:
+
+test at tasks.test.js:6:3
+✖ trims spaces (4.55542ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+
+  + '  Buy milk '
+  - 'Buy milk'
+
+      at TestContext.<anonymous> (file://~/tasks/tasks.test.js:7:12)
+      …
+
+test at tasks.test.js:10:3
+✖ rejects titles that are too short (0.995711ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception (RangeError).
+      at TestContext.<anonymous> (file://~/tasks/tasks.test.js:11:12)
+      …
+</shell>
+<p>The exit code is 1 when any test fails. That is how CI knows to block a pull request.</p>
+</section>
+
+<section>
+<h2 id="mocks">Mocks and spies</h2>
+<p><code>TaskList</code> calls a <code>notify</code> function whenever a task is added. In the real app it might send an e-mail. In a test you do not want e-mails; you want to know that <code>notify</code> <em>was called, with the right arguments</em>. A <strong>mock function</strong> is a fake that records every call. <code>mock.fn()</code> makes one:</p>
+<example file="notify.test.js" project="t" browser="no">
+import { it, mock } from "node:test";
+import assert from "node:assert/strict";
+import { TaskList } from "./tasks.js";
+
+it("notifies once per added task", () => {
+  const notify = mock.fn();
+  const list = new TaskList(notify);
+
+  list.add("Buy milk");
+  list.add("Call Ada");
+
+  assert.equal(notify.mock.callCount(), 2);
+  assert.deepEqual(notify.mock.calls[1].arguments, ["task.added", { id: 2, title: "Call Ada", done: false }]);
+});
+
+it("does not notify when the title is invalid", () => {
+  const notify = mock.fn();
+  const list = new TaskList(notify);
+  assert.throws(() => list.add("x"));
+  assert.equal(notify.mock.callCount(), 0);
+});
+</example>
+<output mask="ms,num">
+✔ notifies once per added task (16.356168ms)
+✔ does not notify when the title is invalid (0.777526ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 102.868739
+</output>
+<p><code>notify.mock.calls</code> is an array with one entry per call, and each entry has the <code>arguments</code>. The second test checks something that must <em>not</em> happen, which is just as important.</p>
+<p>Sometimes the code under test does not take the function as an argument, but calls a method on an object it imports. <code>mock.method(object, "name", fake)</code> replaces that method for the test and records calls. Wrapping a real method to watch it without changing what it does is called a <strong>spy</strong>:</p>
+<example file="mailer.test.js" project="t" browser="no">
+import { afterEach, it, mock } from "node:test";
+import assert from "node:assert/strict";
+
+const mailer = {
+  send(to, text) {
+    throw new Error("tests must never send real e-mail");
+  },
+};
+
+async function inviteUser(email) {
+  await mailer.send(email, "Welcome to the Task API");
+  return { invited: email };
+}
+
+afterEach(() => mock.restoreAll());
+
+it("sends a welcome mail", async () => {
+  const send = mock.method(mailer, "send", async () => {});
+  const result = await inviteUser("ada@example.com");
+  assert.deepEqual(result, { invited: "ada@example.com" });
+  assert.deepEqual(send.mock.calls[0].arguments, ["ada@example.com", "Welcome to the Task API"]);
+});
+
+it("spies on a real method without replacing it", () => {
+  const spy = mock.method(Math, "max");
+  assert.equal(Math.max(3, 7), 7);
+  assert.equal(spy.mock.callCount(), 1);
+});
+</example>
+<output mask="ms,num">
+✔ sends a welcome mail (5.566413ms)
+✔ spies on a real method without replacing it (1.128211ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 26.539801
+</output>
+<p><code>mock.restoreAll()</code> in <code>afterEach</code> puts the real methods back after every test, so one test's fake can never leak into the next.</p>
+<tip>Mock the edges of your system (e-mail, payment providers, other services, the clock), not your own logic. A test that mocks everything only proves that the mocks work.</tip>
+</section>
+
+<section>
+<h2 id="isolation">Test isolation</h2>
+<p>Each test must pass on its own and in any order. If test B only passes because test A added a task first, then running B alone, or changing A, breaks B for no visible reason. The fix is to give every test a <strong>fresh</strong> start. <code>beforeEach</code> runs before every test in its <code>describe</code>:</p>
+<example file="isolation.test.js" project="t" browser="no">
+import { beforeEach, describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { TaskList } from "./tasks.js";
+
+describe("TaskList ids", () => {
+  let list;
+
+  beforeEach(() => {
+    list = new TaskList();
+    list.add("Buy milk");
+  });
+
+  it("gives the next task id 2", () => {
+    assert.equal(list.add("Call Ada").id, 2);
+  });
+
+  it("still gives id 2 in the next test", () => {
+    assert.equal(list.add("Fix bike").id, 2);
+  });
+});
+</example>
+<output mask="ms,num">
+▶ TaskList ids
+  ✔ gives the next task id 2 (4.504445ms)
+  ✔ still gives id 2 in the next test (1.123982ms)
+✔ TaskList ids (10.533501ms)
+ℹ tests 2
+ℹ suites 1
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 51.843746
+</output>
+<p>Both tests see a list with exactly one task. Without <code>beforeEach</code>, a shared list would give the second test id 3, and the result would depend on the order the tests run in. There are also <code>afterEach</code>, <code>before</code> (once, before all tests) and <code>after</code> (once, at the end).</p>
+</section>
+
+<section>
+<h2 id="database">Integration tests with a test database</h2>
+<p>A task store that runs SQL is best tested against a <strong>real</strong> database: a mock would not notice a typo in the SQL or a broken constraint. The same isolation rule applies, so each test needs its own clean database. PGlite from <a href="/learn/databases">How databases work</a> makes that easy. Creating a database takes a few seconds, so the file builds one <strong>template</strong> with the schema in <code>before</code>, and <code>beforeEach</code> gives every test its own copy with <code>clone()</code>, which is much faster:</p>
+<example file="store.test.js" project="t" browser="no">
+import { after, afterEach, before, beforeEach, describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { PGlite } from "@electric-sql/pglite";
+
+async function createTask(db, userId, title) {
+  const { rows } = await db.query("insert into tasks (user_id, title) values ($1, $2) returning id, title", [userId, title]);
+  return rows[0];
+}
+
+async function listTasks(db, userId) {
+  return (await db.query("select title from tasks where user_id = $1 order by id", [userId])).rows;
+}
+
+describe("task store", () => {
+  let template;
+  let db;
+
+  before(async () => {
+    template = new PGlite();
+    await template.exec(`create table tasks (
+      id integer generated always as identity primary key,
+      user_id integer not null,
+      title text not null check (title <> ''))`);
+  });
+  beforeEach(async () => {
+    db = await template.clone();
+  });
+  afterEach(() => db.close());
+  after(() => template.close());
+
+  it("creates a task and gives it an id", async () => {
+    assert.deepEqual(await createTask(db, 1, "Buy milk"), { id: 1, title: "Buy milk" });
+  });
+
+  it("starts empty again and lists only the user's own tasks", async () => {
+    await createTask(db, 1, "Buy milk");
+    await createTask(db, 2, "Fix bike");
+    assert.deepEqual(await listTasks(db, 1), [{ title: "Buy milk" }]);
+  });
+
+  it("lets the database reject an empty title", async () => {
+    await assert.rejects(createTask(db, 1, ""), { code: "23514" });
+  });
+});
+</example>
+<output mask="ms,num">
+▶ task store
+  ✔ creates a task and gives it an id (1540.780516ms)
+  ✔ starts empty again and lists only the user's own tasks (1759.484352ms)
+  ✔ lets the database reject an empty title (1726.781556ms)
+✔ task store (14172.84682ms)
+ℹ tests 3
+ℹ suites 1
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 14192.553736
+</output>
+<p>The second test got id 1 again for "Buy milk": its database really was a fresh copy. The third test checks that the <code>check</code> constraint works; <code>23514</code> is PostgreSQL's code for a check violation. Each test's time includes making its copy in <code>beforeEach</code>, and the suite's total also includes building the template in <code>before</code>. Your times will differ, but a copy is ready several times faster than a new database.</p>
+<p>Against a real PostgreSQL server you would do the same with a separate test database, never your development or production one, and either recreate its tables or wrap each test in a transaction that is rolled back at the end.</p>
+</section>
+
+<section>
+<h2 id="e2e">Testing over HTTP</h2>
+<p>An end-to-end test talks to your API the way a client does. Start the server on a free port in <code>before</code>, send real requests with <code>fetch</code>, and close it in <code>after</code>:</p>
+<example file="api.test.js" project="t" browser="no">
+import http from "node:http";
+import { after, before, describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { TaskList } from "./tasks.js";
+
+function createServer(list) {
+  return http.createServer(async (req, res) => {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    try {
+      const task = list.add(JSON.parse(body).title);
+      res.writeHead(201, { "Content-Type": "application/json" }).end(JSON.stringify(task));
+    } catch (error) {
+      res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ error: error.message }));
+    }
+  });
+}
+
+describe("POST /tasks", () => {
+  let server;
+  let url;
+
+  before(async () => {
+    server = createServer(new TaskList());
+    await new Promise((resolve) => server.listen(0, resolve));
+    url = `http://localhost:${server.address().port}/tasks`;
+  });
+  after(() => server.close());
+
+  const post = (body) => fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body });
+
+  it("creates a task", async () => {
+    const res = await post(JSON.stringify({ title: "Buy milk" }));
+    assert.equal(res.status, 201);
+    assert.deepEqual(await res.json(), { id: 1, title: "Buy milk", done: false });
+  });
+
+  it("answers 400 for a bad title", async () => {
+    const res = await post(JSON.stringify({ title: "x" }));
+    assert.equal(res.status, 400);
+    assert.deepEqual(await res.json(), { error: "title must be 3 to 100 characters" });
+  });
+});
+</example>
+<output mask="ms,num">
+▶ POST /tasks
+  ✔ creates a task (144.357192ms)
+  ✔ answers 400 for a bad title (15.63144ms)
+✔ POST /tasks (178.785677ms)
+ℹ tests 2
+ℹ suites 1
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 206.130498
+</output>
+<p>This test checks the status codes and JSON bodies a client really receives. It would catch a wrong header or a crash in the request handling that a unit test of <code>TaskList</code> cannot see.</p>
+</section>
+
+<section>
+<h2 id="vitest">Vitest</h2>
+<p><code>node:test</code> needs nothing installed, which makes it perfect for learning. Many projects use <strong>Vitest</strong> instead, a test runner from npm with a watch mode, nicer output, and TypeScript support without setup. ZudoJS projects use Vitest. The ideas are identical; the names differ a little: <code>expect(value).toBe(...)</code> instead of <code>assert.equal</code>, <code>toEqual</code> for deep comparison, and <code>vi.fn()</code> instead of <code>mock.fn()</code>.</p>
+<p>A project uses one test runner: each runner would also try to run the other's test files. So try Vitest in a new folder, <code>tasks-vitest</code>, with a copy of <code>tasks.js</code>. Install it as a development dependency (<code>-D</code>) and write a test:</p>
+<shell>
+$ mkdir tasks-vitest
+$ cd tasks-vitest
+$ npm init -y
+Wrote to ~/tasks-vitest/package.json:
+…
+$ npm pkg set type=module
+$ npm install -D vitest
+
+added 37 packages, and audited 38 packages in 22s
+
+12 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+</shell>
+<file name="tasks.test.js" project="v">
+import { describe, expect, it, vi } from "vitest";
+import { TaskList, validateTitle } from "./tasks.js";
+
+describe("validateTitle", () => {
+  it("trims spaces", () => {
+    expect(validateTitle("  Buy milk ")).toBe("Buy milk");
+  });
+
+  it("rejects titles that are too short", () => {
+    expect(() => validateTitle(" a ")).toThrow(RangeError);
+  });
+});
+
+describe("TaskList", () => {
+  it("notifies once per added task", () => {
+    const notify = vi.fn();
+    new TaskList(notify).add("Buy milk");
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith("task.added", { id: 1, title: "Buy milk", done: false });
+  });
+});
+</file>
+<p>Run it once with <code>vitest run</code>. <code>--reporter=verbose</code> lists every test; without it, Vitest prints only the summary when everything passes:</p>
+<shell>
+$ npx vitest run --reporter=verbose
+
+ RUN  v5.0.1 ~/tasks-vitest
+
+ ✓ tasks.test.js > validateTitle > trims spaces 4ms
+ ✓ tasks.test.js > validateTitle > rejects titles that are too short 1ms
+ ✓ tasks.test.js > TaskList > notifies once per added task 4ms
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  15:07:41
+   Duration  573ms (transform 44%, import 34%, tests 12%, worker 9%)
+$ npm pkg set scripts.test="vitest run"
+$ npm test
+
+> tasks-vitest@1.0.0 test
+> vitest run
+
+
+ RUN  v5.0.1 ~/tasks-vitest
+
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  15:07:43
+   Duration  394ms (transform 46%, import 28%, tests 15%, worker 10%)
+</shell>
+<p>Plain <code>npx vitest</code>, without <code>run</code>, starts <strong>watch mode</strong>: it stays open and reruns the affected tests every time you save a file. <a href="/learn/zudo-testing">Testing a ZudoJS application</a> builds on this.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Test complete()">
+<p>Write tests for <code>TaskList.complete</code>: it marks the task as done, and it throws <code>Task 9 not found</code> for an id that does not exist. Use <code>beforeEach</code> for a fresh list.</p>
+<solution>
+<example file="complete.test.js" project="t" browser="no">
+import { beforeEach, describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { TaskList } from "./tasks.js";
+
+describe("TaskList.complete", () => {
+  let list;
+  beforeEach(() => {
+    list = new TaskList();
+    list.add("Buy milk");
+  });
+
+  it("marks the task as done", () => {
+    assert.equal(list.complete(1).done, true);
+  });
+
+  it("throws for a missing id", () => {
+    assert.throws(() => list.complete(9), { message: "Task 9 not found" });
+  });
+});
+</example>
+<output mask="ms,num">
+▶ TaskList.complete
+  ✔ marks the task as done (3.525656ms)
+  ✔ throws for a missing id (2.660301ms)
+✔ TaskList.complete (10.265716ms)
+ℹ tests 2
+ℹ suites 1
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 45.078475
+</output>
+</solution>
+</exercise>
+
+<exercise title="Which kind of test?">
+<p>Unit, integration or end-to-end? (a) <code>slug("Buy milk")</code> returns <code>buy-milk</code>; (b) <code>GET /v1/tasks?limit=0</code> returns a 400 problem details body; (c) the task store's SQL returns only the current user's tasks from PGlite; (d) <code>parseListQuery</code> reports an invalid <code>sort</code>.</p>
+<solution>
+<p>(a) Unit. (b) End-to-end: it goes through HTTP. (c) Integration: your code together with a real database. (d) Unit: it is a pure function.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Automated tests re-check your code in seconds after every change. Write many unit tests, some integration tests and a few end-to-end tests.</li>
+<li><code>node:assert/strict</code> gives you <code>equal</code>, <code>deepEqual</code>, <code>throws</code> and <code>rejects</code>. <code>node:test</code> gives you <code>describe</code>, <code>it</code> and <code>node --test</code>.</li>
+<li><code>mock.fn()</code> records calls; <code>mock.method()</code> replaces or spies on a method. Restore mocks after each test, and mock only the edges.</li>
+<li>Every test gets a fresh start with <code>beforeEach</code>, including a fresh database: a PGlite template and a <code>clone()</code> per test.</li>
+<li>Vitest works the same way with <code>expect</code> and <code>vi.fn()</code>, and ZudoJS projects use it.</li>
+</ul>
+</section>

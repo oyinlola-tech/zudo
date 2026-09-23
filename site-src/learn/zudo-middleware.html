@@ -1,0 +1,570 @@
+---
+title: Middleware, CORS, security headers and graceful shutdown
+description: Wrap every Task API route in middleware. Learn how a middleware pipeline runs, then add security headers, a CORS allow-list, rate limits with @zudojs/security, and a graceful shutdown that lets requests in progress finish.
+minutes: 50
+youNeed: Routes, requests and responses
+youBuild: A Task API that sends safe headers, allows only its own web app, limits how fast clients can write, and shuts down without cutting off requests
+keywords: zudojs middleware, HttpMiddlewarePipeline, next, priority, short-circuit, createSecurityMiddleware, security headers, X-Frame-Options, nosniff, HSTS, createCorsMiddleware, CORS allow-list, preflight, credentials, createRateLimiter, createRateLimitMiddleware, 429 Too Many Requests, Retry-After, graceful shutdown, in-flight requests, SIGTERM
+---
+<section>
+<h2 id="what">What middleware is</h2>
+<p>Some work belongs to <em>every</em> request, not to one route: adding security headers, checking where a request comes from, counting requests per client, measuring time. Copying that code into every route would be repetitive and easy to forget.</p>
+<p><strong>Middleware</strong> is a function that runs <em>around</em> the route. It receives a <code>context</code> (with <code>context.request</code> and <code>context.response</code>) and a function called <code>next</code>. Calling <code>next()</code> runs everything after it: the next middleware, and at the end the route. A middleware can:</p>
+<ul>
+<li>do work <strong>before</strong> <code>next()</code>, such as checking the request,</li>
+<li>do work <strong>after</strong> <code>next()</code>, such as adding a header to the response,</li>
+<li>or <strong>not call</strong> <code>next()</code> at all and answer by itself. That is called <strong>short-circuiting</strong>.</li>
+</ul>
+<p>An <code>HttpMiddlewarePipeline</code> holds middleware in order. You can run it without a server, with a request made by <code>createRequestContext</code>, which also makes middleware easy to test:</p>
+<example file="order.ts" browser="no">
+import { createRequestContext, createResponseContext, HttpMiddlewarePipeline } from "@zudojs/http";
+import type { HttpMiddleware } from "@zudojs/http";
+
+function trace(name: string): HttpMiddleware {
+  return async (context, next) => {
+    console.log(`${name}: before`);
+    const response = await next();
+    console.log(`${name}: after`);
+    return response;
+  };
+}
+
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(trace("timing"));
+pipeline.use(trace("security"), { priority: -10 });
+pipeline.use(async (context) => {
+  console.log("route: builds the response");
+  return context.response.json({ ok: true });
+});
+
+const request = createRequestContext({ method: "GET", url: "/tasks" });
+const response = await pipeline.execute(request, createResponseContext());
+console.log(response.status, response.body);
+</example>
+<output>
+security: before
+timing: before
+route: builds the response
+timing: after
+security: after
+200 {"ok":true}
+</output>
+<p>The calls nest like layers of an onion: <code>security</code> starts first and finishes last. It was registered second but runs first because its <code>priority</code> is lower. Lower numbers run earlier, the default is 0, and equal priorities keep the order you added them in. The last function never calls <code>next</code>; it plays the role of the route.</p>
+</section>
+
+<section>
+<h2 id="own">Writing your own middleware</h2>
+<p>Two small middleware for the Task API. The first puts an <code>x-response-time</code> header on every response: work <em>after</em> <code>next()</code>. The second is a maintenance switch that short-circuits: while it is on, no request reaches a route:</p>
+<example file="own.ts" browser="no">
+import { createRequestContext, createResponseContext, HttpMiddlewarePipeline } from "@zudojs/http";
+import type { HttpMiddleware } from "@zudojs/http";
+
+const responseTime: HttpMiddleware = async (context, next) => {
+  const started = performance.now();
+  const response = await next();
+  return response.setHeader("x-response-time", `${Math.round(performance.now() - started)}ms`);
+};
+
+let maintenance = false;
+const maintenanceMode: HttpMiddleware = async (context, next) => {
+  if (maintenance) {
+    return context.response
+      .setStatus(503)
+      .setHeader("retry-after", "120")
+      .json({ error: "The Task API is under maintenance" });
+  }
+  return next();
+};
+
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(responseTime, { priority: -100 });
+pipeline.use(maintenanceMode);
+pipeline.use(async (context) => context.response.json([{ id: 1, title: "Buy milk" }]));
+
+for (const state of [false, true]) {
+  maintenance = state;
+  const response = await pipeline.execute(createRequestContext({ method: "GET", url: "/tasks" }), createResponseContext());
+  console.log(response.status, response.headers["retry-after"], response.body);
+  console.log("has x-response-time:", "x-response-time" in response.headers);
+}
+</example>
+<output>
+200 undefined [{"id":1,"title":"Buy milk"}]
+has x-response-time: true
+503 120 {"error":"The Task API is under maintenance"}
+has x-response-time: true
+</output>
+<p>With maintenance on, the route never ran, yet the response still got its <code>x-response-time</code> header. <code>responseTime</code> has the lowest priority, so it wraps everything, including middleware that answers early. That is the rule for ordering: middleware that must see <em>every</em> response goes first.</p>
+<p>To run a pipeline for real requests, its last step dispatches the router, and the server hands every request to the pipeline:</p>
+<example file="wiring.ts (part)" browser="no" check="skip">
+pipeline.use(async (context) => (await router.dispatch(context.request)).response);
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 3000 }),
+  handler: (request: HttpRequestContext) => pipeline.execute(request, createResponseContext()),
+});
+</example>
+</section>
+
+<section>
+<h2 id="headers">Security headers</h2>
+<p>Browsers understand a set of response headers that switch on extra protection: do not let other sites put this page in a frame, do not guess content types, and so on. <code>createSecurityMiddleware()</code> sends a safe set on every response. So the next examples can use a real server, this helper serves a pipeline and stops it again:</p>
+<example file="serve.ts" project="mw" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createResponseContext } from "@zudojs/http";
+import type { HttpMiddlewarePipeline, HttpRequestContext } from "@zudojs/http";
+
+export async function withServer(pipeline: HttpMiddlewarePipeline, run: (base: string) => Promise<void>): Promise<void> {
+  const server = createHttpServer({
+    adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+    handler: (request: HttpRequestContext) => pipeline.execute(request, createResponseContext()),
+  });
+  await server.start();
+  try {
+    await run(`http://127.0.0.1:${server.address?.port}`);
+  } finally {
+    await server.stop();
+  }
+}
+</example>
+<example file="headers.ts" project="mw" browser="no">
+import { createSecurityMiddleware, HttpMiddlewarePipeline } from "@zudojs/http";
+import { withServer } from "./serve.js";
+
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(createSecurityMiddleware());
+pipeline.use(async (context) => context.response.json([{ id: 1, title: "Buy milk" }]));
+
+await withServer(pipeline, async (base) => {
+  const response = await fetch(`${base}/tasks`);
+  for (const name of [
+    "x-content-type-options",
+    "x-frame-options",
+    "referrer-policy",
+    "content-security-policy",
+    "strict-transport-security",
+  ]) {
+    console.log(`${name}: ${response.headers.get(name)}`);
+  }
+});
+</example>
+<output>
+x-content-type-options: nosniff
+x-frame-options: DENY
+referrer-policy: strict-origin-when-cross-origin
+content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+strict-transport-security: max-age=31536000; includeSubDomains; preload
+</output>
+<p>What they do, in short:</p>
+<ul>
+<li><code>X-Content-Type-Options: nosniff</code>: the browser must trust the <code>Content-Type</code> you send and not guess, so a JSON answer can never be run as a script.</li>
+<li><code>X-Frame-Options: DENY</code> and CSP's <code>frame-ancestors 'none'</code>: no other site may show your pages inside a frame. This stops <strong>clickjacking</strong>, where an invisible frame tricks the user into clicking your buttons.</li>
+<li><code>Referrer-Policy</code>: other sites do not see your full URLs, which may contain ids.</li>
+<li><code>Content-Security-Policy</code> (CSP): the list of places a page may load scripts, styles and images from.</li>
+<li><code>Strict-Transport-Security</code> (HSTS): "only ever talk to me over HTTPS" for a year.</li>
+</ul>
+<p>The middleware also sends a few more (<code>Permissions-Policy</code> and the cross-origin headers). You get all of them with one line, and you never have to remember them.</p>
+<warn title="HSTS AND PLAIN HTTP">Browsers remember HSTS. If a server on <code>localhost</code> sends it, some browsers then refuse plain <code>http://localhost</code> for a year. For a plain-HTTP development server, use <code>createSecurityMiddleware({ strictTransportSecurity: "max-age=0" })</code>, which tells browsers to forget it, and keep the default in production behind HTTPS. <a href="/learn/zudo-security#headers">Security for every public API</a> goes deeper into CSP and HSTS.</warn>
+</section>
+
+<section>
+<h2 id="cors">CORS: which websites may call you</h2>
+<p>Imagine the Task API at <code>api.tasks.example.com</code> and its web app at <code>tasks.example.com</code>. When JavaScript on one website calls another address, the browser first checks whether that address allows it. That rule is <strong>CORS</strong> (Cross-Origin Resource Sharing). An <strong>origin</strong> is a scheme, host and port, like <code>https://tasks.example.com</code>. The browser sends it in the <code>Origin</code> header, and your answer must say that this origin is allowed.</p>
+<p>For some requests (for example a <code>POST</code> with JSON) the browser first sends a separate <code>OPTIONS</code> request, called a <strong>preflight</strong>, to ask for permission. <code>createCorsMiddleware</code> handles both. Give it an <strong>allow-list</strong>: the exact origins you trust.</p>
+<example file="cors.ts" project="mw" browser="no">
+import { createCorsMiddleware, HttpMiddlewarePipeline } from "@zudojs/http";
+import { withServer } from "./serve.js";
+
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(createCorsMiddleware({ allowOrigin: ["https://tasks.example.com"], credentials: true }));
+pipeline.use(async (context) => context.response.json([{ id: 1, title: "Buy milk" }]));
+
+async function call(label: string, base: string, init: RequestInit): Promise<void> {
+  const response = await fetch(`${base}/tasks`, init);
+  console.log(label, response.status, "allow-origin:", response.headers.get("access-control-allow-origin"));
+}
+
+await withServer(pipeline, async (base) => {
+  await call("our app      ", base, { headers: { origin: "https://tasks.example.com" } });
+  await call("other site   ", base, { headers: { origin: "https://evil.example" } });
+  await call("preflight    ", base, {
+    method: "OPTIONS",
+    headers: { origin: "https://tasks.example.com", "access-control-request-method": "POST" },
+  });
+});
+</example>
+<output>
+our app       200 allow-origin: https://tasks.example.com
+other site    200 allow-origin: null
+preflight     204 allow-origin: https://tasks.example.com
+</output>
+<p>Our own app got <code>access-control-allow-origin</code> back with its origin, so its browser lets the page read the answer. The preflight was answered with 204 by the middleware itself; the route never ran.</p>
+<p>Look closely at the other site: it got status 200 and the data was sent. Only the missing header makes <em>the browser</em> hide the answer from that site's JavaScript. <strong>CORS protects users' browsers, not your server.</strong> <code>curl</code>, a script or another server ignores CORS completely. It never replaces authentication or permissions.</p>
+<p><code>credentials: true</code> lets the browser send cookies along. Combined with "every origin" (<code>"*"</code>), any website could make requests with your users' cookies. The package refuses that combination at startup:</p>
+<example file="cors-wildcard.ts" browser="no">
+import { createCorsMiddleware } from "@zudojs/http";
+
+try {
+  createCorsMiddleware({ allowOrigin: "*", credentials: true });
+} catch (error) {
+  console.log((error as Error).name);
+  console.log((error as Error).message);
+}
+</example>
+<output>
+ConfigurationError
+CORS: credentials cannot be combined with a wildcard origin ("*"). Enumerate the allowed origins, or supply a function or RegExp.
+</output>
+<p>Keep the allow-list in configuration, not in the code, so development can allow <code>http://localhost:5173</code> and production only your real domain. The <a href="/learn/zudo-config">next lesson</a> does exactly that.</p>
+</section>
+
+<section>
+<h2 id="rate-limit">Rate limiting</h2>
+<p>A public API must limit how many requests one client can send. Without a limit, one script can flood the Task API with junk tasks or guess passwords all day. A <strong>rate limiter</strong> counts requests per client within a time window and answers <strong>429 Too Many Requests</strong> when the client goes over.</p>
+<p>The limiter lives in <code>@zudojs/security</code>. <code>@zudojs/http</code> already uses it internally, so npm has it, but add it to your project because you are going to import it yourself:</p>
+<shell title="Terminal on your computer">
+$ npm install @zudojs/security
+up to date, audited 72 packages in 3s
+…
+</shell>
+<p>"up to date" means npm already had it; now it is also listed in your <code>package.json</code>. <code>createRateLimiter</code> counts per <strong>key</strong>, usually the client's IP address:</p>
+<example file="limiter.ts" browser="no">
+import { createRateLimiter } from "@zudojs/security";
+
+const limiter = createRateLimiter({ windowMs: 60_000, max: 3 });
+
+for (let i = 1; i <= 4; i++) {
+  const decision = limiter.check({ ip: "203.0.113.7" });
+  console.log(`request ${i}: allowed=${decision.allowed} remaining=${decision.remaining}`);
+}
+console.log("another client:", limiter.check({ ip: "198.51.100.2" }).allowed);
+limiter.destroy();
+</example>
+<output>
+request 1: allowed=true remaining=2
+request 2: allowed=true remaining=1
+request 3: allowed=true remaining=0
+request 4: allowed=false remaining=0
+another client: true
+</output>
+<p>The fourth request inside one minute was refused, but a different client was not affected. The window <em>slides</em>: each check forgets requests older than <code>windowMs</code>, so a client cannot send three requests at 11:59:59 and three more at 12:00:00. <code>destroy()</code> stops the limiter's clean-up timer when you no longer need it.</p>
+<p>In a pipeline, <code>createRateLimitMiddleware</code> wraps a limiter. Give it options to create one, or pass <code>{ limiter }</code> to share one you made. Creating tasks costs more than reading them, so the Task API gets a gentle limit for every request and a stricter one for writes:</p>
+<example file="rate-limit.ts" project="mw" browser="no">
+import { createRateLimitMiddleware, HttpMiddlewarePipeline } from "@zudojs/http";
+import type { HttpMiddleware } from "@zudojs/http";
+import { createRateLimiter } from "@zudojs/security";
+import { withServer } from "./serve.js";
+
+const writes = createRateLimitMiddleware({ limiter: createRateLimiter({ windowMs: 60_000, max: 2 }) });
+const limitWrites: HttpMiddleware = (context, next) =>
+  context.request.method === "GET" ? next() : writes(context, next);
+
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(createRateLimitMiddleware({ windowMs: 60_000, max: 100 }));
+pipeline.use(limitWrites);
+pipeline.use(async (context) => context.response.setStatus(context.request.method === "POST" ? 201 : 200).json({ ok: true }));
+
+await withServer(pipeline, async (base) => {
+  for (const method of ["POST", "POST", "POST", "GET"]) {
+    const response = await fetch(`${base}/tasks`, { method });
+    console.log(method, response.status, "retry-after:", response.headers.get("retry-after"), await response.text());
+  }
+});
+</example>
+<output>
+POST 201 retry-after: null {"ok":true}
+POST 201 retry-after: null {"ok":true}
+POST 429 retry-after: 60 {"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"}}
+GET 200 retry-after: null {"ok":true}
+</output>
+<p>The third <code>POST</code> got 429 with a <code>Retry-After</code> header: the number of seconds to wait. Reading still works, because <code>GET</code> requests only count against the gentle limit.</p>
+<ul>
+<li>The client is identified by <code>request.remoteAddress</code>. Behind a <strong>proxy</strong> or load balancer, every request seems to come from the proxy, so all users would share one allowance. Tell the adapter how many proxies you run, for example <code>createNodeHttpAdapter({ trustProxy: 1 })</code>; only then does it believe the <code>X-Forwarded-For</code> header. Never trust that header without it: any client can send it and pick its own address.</li>
+<li>These counts live in the memory of one process. With several copies of the app, each counts separately; <a href="/learn/zudo-security#rate-limit">Security for every public API</a> covers that case and login limits.</li>
+</ul>
+<note>In <code>@zudojs/http</code> 1.3.0 the 429 body is JSON but is sent with <code>Content-Type: text/plain</code>. Clients that check the content type before parsing should expect that.</note>
+</section>
+
+<section>
+<h2 id="generic">Middleware outside HTTP: @zudojs/middleware</h2>
+<p>The same idea helps with work that is not a request, such as a background job that sends task reminders. <code>@zudojs/middleware</code> is a general pipeline for any kind of context. It is already installed with the other ZudoJS packages. Each middleware is given with a <code>name</code>, and the result tells you whether the run succeeded:</p>
+<example file="job-pipeline.ts" browser="no">
+import { createPipeline, timeoutMiddleware } from "@zudojs/middleware";
+import type { Middleware } from "@zudojs/middleware";
+
+interface Job {
+  readonly name: string;
+}
+
+const announce: Middleware<Job, string> = async (job, next) => {
+  console.log(`start ${job.name}`);
+  const result = await next();
+  console.log(`done  ${job.name}`);
+  return result;
+};
+
+const run = createPipeline<Job, string>(
+  [{ name: "announce", handler: announce }, timeoutMiddleware(1_000)],
+  async (job) => `sent reminders for ${job.name}`,
+);
+
+const outcome = await run({ name: "due-today" });
+if (outcome.success) {
+  console.log(outcome.result, outcome.executedMiddleware);
+}
+</example>
+<output>
+start due-today
+done  due-today
+sent reminders for due-today [ 'announce', 'timeout' ]
+</output>
+<p>For HTTP, stay with <code>HttpMiddlewarePipeline</code> from <code>@zudojs/http</code>: it knows about requests and responses. The <a href="/learn/zudo-queue">queue lesson</a> uses job pipelines like this one.</p>
+</section>
+
+<section>
+<h2 id="shutdown">Graceful shutdown of the server</h2>
+<p>In <a href="/learn/zudo-runtime#signals">the runtime lesson</a> you saw why <code>src/server.ts</code> handles <code>SIGTERM</code> itself: it stops the HTTP server <em>before</em> the runtime. Here is what <code>server.stop()</code> does. It closes the door to new connections at once, but waits for requests that are already running, up to <code>gracefulShutdownTimeout</code> (30 seconds by default):</p>
+<example file="graceful.ts" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+import type { HttpRequestContext } from "@zudojs/http";
+
+let reportStarted!: () => void;
+const started = new Promise<void>((resolve) => (reportStarted = resolve));
+
+const router = createRouter();
+router.get("/report", async () => {
+  reportStarted();
+  console.log("report: started");
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  console.log("report: finished");
+  return createResponseContext().json({ tasks: 3 });
+});
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+  gracefulShutdownTimeout: 10_000,
+});
+server.on("onStopping", () => console.log("server: stopping"));
+server.on("onStopped", () => console.log("server: stopped"));
+await server.start();
+const base = `http://127.0.0.1:${server.address?.port}`;
+
+const slow = fetch(`${base}/report`).then(async (r) => console.log("client got", r.status, await r.text()));
+await started;
+const stopping = server.stop();
+
+try {
+  await fetch(`${base}/report`);
+} catch (error) {
+  console.log("new request refused:", ((error as Error).cause as { code?: string }).code);
+}
+await Promise.all([slow, stopping]);
+</example>
+<output>
+report: started
+server: stopping
+new request refused: ECONNREFUSED
+report: finished
+client got 200 {"tasks":3}
+server: stopped
+</output>
+<p>The report that was already running finished and its client got a full 200, while a new request was refused. Only then did the server report <code>stopped</code>. After that, <code>runtime.stop()</code> can safely close the store, because no request is using it any more.</p>
+<p>The full order in <code>src/server.ts</code> is therefore: stop the HTTP server, stop the runtime, dispose the container, exit with 0. If anything fails, log it and exit with 1. Keep <code>gracefulShutdownTimeout</code> below the time your platform waits after <code>SIGTERM</code> before it kills the process (often 30 seconds), so your shutdown finishes first.</p>
+</section>
+
+<section>
+<h2 id="task-api">Put it in the Task API</h2>
+<p>The Task API's middleware goes in its own file, next to the empty <code>src/middlewares/index.ts</code> the CLI created. <code>buildPipeline</code> takes the router and the allowed origins, and returns the pipeline with every middleware from this lesson in the right order:</p>
+<example file="src/middlewares/pipeline.ts" project="task-api" browser="no">
+import {
+  createCorsMiddleware,
+  createRateLimitMiddleware,
+  createSecurityMiddleware,
+  HttpMiddlewarePipeline,
+} from "@zudojs/http";
+import type { HttpMiddleware, HttpRouter } from "@zudojs/http";
+import { createRateLimiter } from "@zudojs/security";
+
+export interface PipelineOptions {
+  readonly corsOrigins: readonly string[];
+  readonly production: boolean;
+}
+
+export function buildPipeline(router: HttpRouter, options: PipelineOptions): HttpMiddlewarePipeline {
+  const writes = createRateLimitMiddleware({ limiter: createRateLimiter({ windowMs: 60_000, max: 20 }) });
+  const limitWrites: HttpMiddleware = (context, next) =>
+    ["GET", "HEAD", "OPTIONS"].includes(context.request.method) ? next() : writes(context, next);
+
+  const pipeline = new HttpMiddlewarePipeline();
+  pipeline.use(
+    createSecurityMiddleware(options.production ? {} : { strictTransportSecurity: "max-age=0" }),
+    { name: "security", priority: -100 },
+  );
+  pipeline.use(createCorsMiddleware({ allowOrigin: options.corsOrigins, credentials: true }), { name: "cors" });
+  pipeline.use(createRateLimitMiddleware({ windowMs: 60_000, max: 300 }), { name: "rate-limit" });
+  pipeline.use(limitWrites, { name: "write-limit" });
+  pipeline.use(async (context) => (await router.dispatch(context.request)).response, { name: "router" });
+  return pipeline;
+}
+</example>
+<p>The order matters. Security headers come first so that <em>every</em> answer gets them, even a 429 or a CORS preflight. CORS comes before the rate limits, so a preflight does not use up the client's allowance. The router is last.</p>
+<p>A check script with a stand-in route proves the order works:</p>
+<example file="src/check-middleware.ts" project="task-api" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+import type { HttpRequestContext } from "@zudojs/http";
+import { buildPipeline } from "./middlewares/pipeline.js";
+
+const router = createRouter();
+router.get("/tasks", () => createResponseContext().json([]));
+
+const pipeline = buildPipeline(router, { corsOrigins: ["http://localhost:5173"], production: false });
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: (request: HttpRequestContext) => pipeline.execute(request, createResponseContext()),
+});
+await server.start();
+
+const response = await fetch(`http://127.0.0.1:${server.address?.port}/tasks`, {
+  headers: { origin: "http://localhost:5173" },
+});
+console.log(response.status, await response.text());
+for (const name of ["access-control-allow-origin", "x-frame-options", "strict-transport-security"]) {
+  console.log(`${name}: ${response.headers.get(name)}`);
+}
+await server.stop();
+</example>
+<output>
+200 []
+access-control-allow-origin: http://localhost:5173
+x-frame-options: DENY
+strict-transport-security: max-age=0
+</output>
+<p>In <code>src/server.ts</code>, the handler now runs the pipeline, and the signal handler also disposes the container at the end. The origins are hard-coded for one more lesson; <a href="/learn/zudo-config">Configuration</a> moves them into settings:</p>
+<example file="src/server.ts (part)" project="task-api" browser="no" check="skip">
+import { buildPipeline } from "./middlewares/pipeline.js";
+
+const pipeline = buildPipeline(router, {
+  corsOrigins: ["http://localhost:5173"],
+  production: process.env["NODE_ENV"] === "production",
+});
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: process.env["HOST"] ?? "0.0.0.0", port: resolvePort() }),
+  handler: (request: HttpRequestContext) => pipeline.execute(request, createResponseContext()),
+  gracefulShutdownTimeout: 20_000,
+});
+
+// In the existing SIGINT/SIGTERM handler:
+void server
+  .stop()
+  .then(() => runtime.stop())
+  .then(() => runtime.context.container.dispose())
+  .then(() => process.exit(0))
+  .catch((error: unknown) => {
+    console.error(error);
+    process.exit(1);
+  });
+</example>
+<p>Restart <code>npm run dev</code> and look at the headers of a real answer:</p>
+<shell title="Terminal on your computer">
+$ npx tsx src/check-middleware.ts
+200 []
+access-control-allow-origin: http://localhost:5173
+x-frame-options: DENY
+strict-transport-security: max-age=0
+$ curl -i http://localhost:3000/tasks/1 -H "origin: http://localhost:5173"
+HTTP/1.1 200 OK
+content-type: application/json
+access-control-allow-credentials: true
+access-control-allow-origin: http://localhost:5173
+vary: Origin
+content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+strict-transport-security: max-age=0
+x-content-type-options: nosniff
+x-frame-options: DENY
+referrer-policy: strict-origin-when-cross-origin
+…
+content-length: 113
+Date: Wed, 23 Sep 2026 14:12:48 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"id":1,"title":"Read the runtime lesson","done":true,"priority":"normal","createdAt":"2026-09-23T09:00:00.000Z"}
+</shell>
+<p>Every answer now carries the security headers and, for your own app's origin, the CORS headers. Errors thrown by routes still become the right status: <code>curl http://localhost:3000/tasks/7</code> answers 404 as before. Press <kbd>Ctrl</kbd> + <kbd>C</kbd> and the last log lines are the runtime's "Graceful shutdown complete." and "Runtime stopped.": the server stopped first, then the modules.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A request id on every response">
+<p>Write a middleware that puts an <code>x-request-id</code> header on every response, using <code>context.request.id</code>: the unique id <code>@zudojs/http</code> gives every request. Test it with two requests made by <code>createRequestContext</code>, and check that they get different ids.</p>
+<solution>
+<example file="request-id.ts" browser="no">
+import { createRequestContext, createResponseContext, HttpMiddlewarePipeline } from "@zudojs/http";
+import type { HttpMiddleware } from "@zudojs/http";
+
+const requestId: HttpMiddleware = async (context, next) => {
+  const response = await next();
+  return response.setHeader("x-request-id", context.request.id);
+};
+
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(requestId, { priority: -100 });
+pipeline.use(async (context) => context.response.json({ ok: true }));
+
+const first = createRequestContext({ method: "GET", url: "/tasks" });
+const second = createRequestContext({ method: "GET", url: "/tasks" });
+const a = await pipeline.execute(first, createResponseContext());
+const b = await pipeline.execute(second, createResponseContext());
+
+console.log(a.headers["x-request-id"] === first.id, b.headers["x-request-id"] === second.id);
+console.log("different ids:", first.id !== second.id);
+console.log(a.headers["x-request-id"]);
+</example>
+<output mask="uuid">
+true true
+different ids: true
+9b1ccbf4-c024-4eab-873c-dd73f8f8da38
+</output>
+<p>The id is a random <strong>UUID</strong>, different on every run. When a user reports an error, they can send you the id from the response, and you can find that exact request in your logs. The <a href="/learn/zudo-logging">logging lesson</a> builds on this.</p>
+<note>The <code>@zudojs/http</code> documentation says <code>request.id</code> reuses an <code>X-Request-Id</code> header sent by the client. In version 1.3.0 it does not: the adapter checks the header's format (and answers 400 to a malformed one), but <code>request.id</code> is always newly generated.</note>
+</solution>
+</exercise>
+<exercise title="Allow a second origin">
+<p>The Task API also gets a mobile web app at <code>https://m.tasks.example.com</code>. Change the CORS example so it is allowed too, and show that <code>https://tasks.example.com.evil.example</code>, which merely <em>starts</em> with an allowed origin, is still refused.</p>
+<solution>
+<example file="cors-two.ts" project="mw" browser="no">
+import { createCorsMiddleware, HttpMiddlewarePipeline } from "@zudojs/http";
+import { withServer } from "./serve.js";
+
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(createCorsMiddleware({ allowOrigin: ["https://tasks.example.com", "https://m.tasks.example.com"] }));
+pipeline.use(async (context) => context.response.json([]));
+
+await withServer(pipeline, async (base) => {
+  for (const origin of ["https://m.tasks.example.com", "https://tasks.example.com.evil.example"]) {
+    const response = await fetch(`${base}/tasks`, { headers: { origin } });
+    console.log(origin, "->", response.headers.get("access-control-allow-origin"));
+  }
+});
+</example>
+<output>
+https://m.tasks.example.com -> https://m.tasks.example.com
+https://tasks.example.com.evil.example -> null
+</output>
+<p>The allow-list compares whole origins exactly. Never build your own check with <code>startsWith</code> or a loose regular expression: that is exactly the mistake the second origin exploits.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Middleware runs around the route: work before <code>next()</code>, work after it, or answer early without calling it. Lower <code>priority</code> runs first and wraps the rest.</li>
+<li><code>createSecurityMiddleware()</code> sends a safe set of security headers. Use <code>max-age=0</code> for HSTS on a plain-HTTP development server.</li>
+<li><code>createCorsMiddleware({ allowOrigin: [...] })</code> allows only listed origins. CORS protects browsers, not your server, and <code>"*"</code> with credentials is refused.</li>
+<li><code>createRateLimiter</code> from <code>@zudojs/security</code> counts requests per client in a sliding window; <code>createRateLimitMiddleware</code> answers 429 with <code>Retry-After</code>.</li>
+<li><code>server.stop()</code> refuses new connections and waits for requests in progress. Stop the server, then the runtime, then dispose the container.</li>
+</ul>
+<p>The allowed origins, the limits and the port are still written in the code. The next lesson moves them into <strong>configuration</strong>, where development and production can differ.</p>
+</section>

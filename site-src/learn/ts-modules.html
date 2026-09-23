@@ -1,0 +1,389 @@
+---
+title: Modules in TypeScript
+description: Split a TypeScript project into files, import types with import type, see why verbatimModuleSyntax exists, write .js in import paths, and understand how NodeNext resolution, "type" - "module" and the "exports" field fit together.
+minutes: 40
+youNeed: Classes in TypeScript, and the JavaScript modules lesson
+youBuild: A multi-file ts-modules project with src/ and dist/ folders, a barrel file and npm scripts to check, build and run it
+keywords: typescript modules, import type, export type, verbatimModuleSyntax, TS1484, js extension in typescript imports, moduleResolution nodenext, esm typescript node, package.json type module, exports field, barrel file, index.ts, rootDir outDir
+---
+<section>
+<h2 id="project">A project with src and dist</h2>
+<p>You learned <code>import</code> and <code>export</code> in <a href="/learn/js-modules">the JavaScript modules lesson</a>. TypeScript uses the same syntax, adds a few rules for types, and then the compiled JavaScript has to work in Node.js. This lesson builds a small project that shows every rule. Make a new folder next to <code>ts-tasks</code>:</p>
+<shell>
+$ mkdir ts-modules
+$ cd ts-modules
+$ npm init -y
+$ npm pkg set type=module
+$ npm install -D typescript tsx @types/node
+added 7 packages, and audited 8 packages in 7s
+
+found 0 vulnerabilities
+npm warn install-scripts 1 package has install scripts not yet covered by allowScripts:
+npm warn install-scripts   esbuild@0.28.2 (postinstall: node install.js)
+npm warn install-scripts
+npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install-scripts approve <pkg>` to allow.
+$ mkdir src
+</shell>
+<p>This time the source files live in <code>src/</code>, and the compiled JavaScript will go to <code>dist/</code>. That is the usual layout of a real project, ZudoJS packages included. Two new settings tell <code>tsc</code> about it:</p>
+<file name="tsconfig.json" project="mods">
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "verbatimModuleSyntax": true,
+    "rootDir": "src",
+    "outDir": "dist"
+  }
+}
+</file>
+<ul>
+<li><code>rootDir</code>: where the <code>.ts</code> files are. The folder structure inside it is copied to <code>outDir</code>.</li>
+<li><code>outDir</code>: where compiled <code>.js</code> files are written. There is no <code>noEmit</code> this time, because this project will be built. <code>npx tsc --noEmit</code> still only checks.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="import-type">Exporting and importing types</h2>
+<p>The first file holds the types and one value:</p>
+<example file="src/task.ts" project="mods">
+export type Status = "todo" | "doing" | "done";
+
+export interface Task {
+  readonly id: number;
+  title: string;
+  status: Status;
+}
+
+export const STATUSES: readonly Status[] = ["todo", "doing", "done"];
+</example>
+<p>You export a type exactly like a value. The difference is on the importing side. A type-only import is written <code>import type</code>:</p>
+<example file="src/store.ts" project="mods">
+import type { Status, Task } from "./task.js";
+
+const tasks: Task[] = [];
+
+export function addTask(title: string): Task {
+  const task: Task = { id: tasks.length + 1, title, status: "todo" };
+  tasks.push(task);
+  return task;
+}
+
+export function moveTask(id: number, status: Status): Task | undefined {
+  const task = tasks.find((t) => t.id === id);
+  if (task) task.status = status;
+  return task;
+}
+
+export function allTasks(): readonly Task[] {
+  return tasks;
+}
+</example>
+<p>When one import brings both a value and a type, mark just the type with <code>type</code> inside the braces:</p>
+<example file="src/format.ts" project="mods">
+import { STATUSES, type Task } from "./task.js";
+
+export function board(tasks: readonly Task[]): string {
+  const lines = STATUSES.map((status) => {
+    const titles = tasks.filter((t) => t.status === status).map((t) => t.title);
+    return `${status}: ${titles.join(", ") || "-"}`;
+  });
+  return lines.join("\n");
+}
+</example>
+<p>Why the fuss? Remember that types are erased. <code>STATUSES</code> exists when the program runs; <code>Task</code> does not. With <code>verbatimModuleSyntax</code> on, TypeScript follows one simple rule: <strong>an <code>import type</code> is removed, and every other import stays exactly as written</strong>. So if you forget the <code>type</code>, the compiled file asks Node.js for an export that does not exist. The compiler stops you first:</p>
+<example file="src/oops.ts" project="mods" check="tsc-error">
+import { STATUSES, Task } from "./task.js";
+
+const task: Task = { id: 1, title: "Buy milk", status: "todo" };
+console.log(task.title, STATUSES.length);
+</example>
+<output kind="tsc">
+src/oops.ts:1:20 - error TS1484: 'Task' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+
+1 import { STATUSES, Task } from "./task.js";
+                     ~~~~
+
+
+Found 1 error in src/oops.ts:1
+</output>
+<p>And here is what happens if you run that file anyway, since <code>tsx</code> does not check types:</p>
+<shell>
+$ npx tsx src/oops.ts
+~/ts-modules/src/oops.ts:1
+import { STATUSES, Task } from "./task.js";
+                   ^
+SyntaxError: The requested module './task.js' does not provide an export named 'Task'
+    at #asyncInstantiate (node:internal/modules/esm/module_job:327:21)
+…
+Node.js v24.19.0
+</shell>
+<p><code>STATUSES</code> is a real export of <code>task.js</code>, but <code>Task</code> was an interface, and the compiled <code>task.js</code> has no trace of it. Without <code>verbatimModuleSyntax</code>, TypeScript would guess which imports are types and drop them silently. The guess is usually right, but other tools that strip types, such as <code>tsx</code>, Node.js and the browser terminal, look at one file at a time and cannot guess. Being explicit makes every tool agree. That is why ZudoJS turns it on, and why this course has used <code>import type</code> since <a href="/learn/ts-objects">Interfaces, unions and literal types</a>.</p>
+</section>
+
+<section>
+<h2 id="barrel">A barrel file</h2>
+<p>Other code should not need to know which file each function lives in. A <strong>barrel</strong> is an <code>index.ts</code> that re-exports the public parts of a folder, so there is one place to import from. Types are re-exported with <code>export type</code>:</p>
+<example file="src/index.ts" project="mods">
+export type { Status, Task } from "./task.js";
+export { STATUSES } from "./task.js";
+export { addTask, allTasks, moveTask } from "./store.js";
+export { board } from "./format.js";
+</example>
+<p>Every ZudoJS package is built this way: each folder has an <code>index.ts</code> barrel, and <code>import { schema } from "@zudojs/schema"</code> reaches the top one. A barrel contains only exports, never logic. Now the program:</p>
+<example file="src/main.ts" project="mods">
+import { addTask, allTasks, board, moveTask } from "./index.js";
+import type { Task } from "./index.js";
+
+const first: Task = addTask("Buy milk");
+addTask("Call Ada");
+addTask("File taxes");
+moveTask(first.id, "done");
+moveTask(2, "doing");
+console.log(board(allTasks()));
+</example>
+<output>
+todo: File taxes
+doing: Call Ada
+done: Buy milk
+</output>
+</section>
+
+<section>
+<h2 id="js-extension">Why the imports say .js</h2>
+<p>The files are called <code>store.ts</code> and <code>index.ts</code>, yet every import says <code>"./store.js"</code> and <code>"./index.js"</code>. This surprises everyone once. The reason: <strong>TypeScript does not change import paths</strong>. It removes types, and leaves the rest of your code as you wrote it. Build the project and look:</p>
+<shell>
+$ npx tsc
+$ ls dist
+format.js
+index.js
+main.js
+store.js
+task.js
+$ cat dist/main.js
+import { addTask, allTasks, board, moveTask } from "./index.js";
+const first = addTask("Buy milk");
+addTask("Call Ada");
+addTask("File taxes");
+moveTask(first.id, "done");
+moveTask(2, "doing");
+console.log(board(allTasks()));
+$ node dist/main.js
+todo: File taxes
+doing: Call Ada
+done: Buy milk
+</shell>
+<p><code>dist/main.js</code> imports <code>"./index.js"</code>, and there is a <code>dist/index.js</code> next to it, so Node.js finds it. The <code>import type</code> line is gone completely. When <code>tsc</code> checks <code>src/main.ts</code>, it knows that <code>./index.js</code> will be built from <code>./index.ts</code>, and reads that file's types. You write the path of the file that will <strong>run</strong>.</p>
+<p>The other spellings do not work with <code>NodeNext</code>:</p>
+<example file="src/paths.ts" project="mods" check="tsc-error">
+import { addTask } from "./store";
+import { board } from "./format.ts";
+
+console.log(board([addTask("Buy milk")]));
+</example>
+<output kind="tsc">
+src/paths.ts:1:25 - error TS2835: Relative import paths need explicit file extensions in ECMAScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Did you mean './store.js'?
+
+1 import { addTask } from "./store";
+                          ~~~~~~~~~
+
+src/paths.ts:2:23 - error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.
+
+2 import { board } from "./format.ts";
+                        ~~~~~~~~~~~~~
+
+
+Found 2 errors in the same file, starting at: src/paths.ts:1
+</output>
+<ul>
+<li><code>"./store"</code> without an extension: Node's ES modules never guess file extensions, so neither does TypeScript. The error even suggests the fix.</li>
+<li><code>"./format.ts"</code>: <code>dist/main.js</code> would then import a <code>.ts</code> file that does not exist in <code>dist</code>. (Newer TypeScript can rewrite <code>.ts</code> to <code>.js</code> while building, with the <code>rewriteRelativeImportExtensions</code> setting. That is what you would use to run the same files with <code>node src/main.ts</code>. This course sticks with <code>.js</code>, like ZudoJS.)</li>
+<li>A folder name alone, like <code>"./tasks"</code>, does not load <code>./tasks/index.js</code> in ES modules either. Write the full path.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="resolution">Module resolution and "type": "module"</h2>
+<p><strong>Module resolution</strong> is how a tool turns an import string into a file. <code>"moduleResolution": "NodeNext"</code> tells TypeScript to use exactly Node's rules, so anything that passes <code>tsc</code> also loads in Node.js:</p>
+<ul>
+<li>A path starting with <code>./</code> or <code>../</code> is a file next to this one, with its full extension.</li>
+<li>Anything else, like <code>"@zudojs/schema"</code>, is a package in <code>node_modules</code>, found through its <code>package.json</code>.</li>
+<li>Whether a file is an ES module or old-style CommonJS depends on the nearest <code>package.json</code>: <code>"type": "module"</code> means ES modules. The file extensions <code>.mts</code> and <code>.cts</code> force one or the other, whatever <code>package.json</code> says.</li>
+</ul>
+<p>See what happens when the <code>"type"</code> line is missing:</p>
+<shell>
+$ npm pkg delete type
+$ npx tsc --noEmit
+src/format.ts:1:10 - error TS1295: ECMAScript imports and exports cannot be written in a CommonJS file under 'verbatimModuleSyntax'. Adjust the 'type' field in the nearest 'package.json' to make this file an ECMAScript module, or adjust your 'verbatimModuleSyntax', 'module', and 'moduleResolution' settings in TypeScript.
+
+1 import { STATUSES, type Task } from "./task.js";
+           ~~~~~~~~
+…
+Found 15 errors in 5 files.
+
+Errors  Files
+     2  src/format.ts:1
+     5  src/index.ts:2
+     4  src/main.ts:1
+     3  src/store.ts:5
+     1  src/task.ts:9
+$ npm pkg set type=module
+$ npx tsc --noEmit
+</shell>
+<p>Without <code>"type": "module"</code>, Node.js treats every <code>.js</code> file as CommonJS, so TypeScript does too, and <code>import</code>/<code>export</code> are not allowed. Fifteen errors, one fix: put the line back. Whenever you see TS1295 or TS1287, check <code>package.json</code> first.</p>
+</section>
+
+<section>
+<h2 id="exports">Packages and the "exports" field</h2>
+<p>When you import a package, TypeScript and Node.js read its <code>package.json</code>. Modern packages list their public entry points in the <strong><code>"exports"</code></strong> field. Here is the relevant part of <code>@zudojs/schema</code>'s <code>package.json</code>, the package you will install in <a href="/learn/zudo-first-code">Your first Zudo code</a>:</p>
+<file name="package.json" project="schema-package">
+{
+  "name": "@zudojs/schema",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  }
+}
+</file>
+<ul>
+<li><code>"."</code> is the package's main entry: <code>import … from "@zudojs/schema"</code>.</li>
+<li><code>"types"</code> is the file TypeScript reads. A <code>.d.ts</code> file (a <strong>declaration file</strong>) holds only types; <code>tsc</code> writes one next to each <code>.js</code> file when a package is built with the <code>declaration</code> setting.</li>
+<li><code>"import"</code> is the file Node.js runs for an <code>import</code>.</li>
+</ul>
+<p>Anything not listed in <code>"exports"</code> is private to the package, even though the file is right there in <code>node_modules</code>. Reaching into it is refused by both tools:</p>
+<example file="deep-import.ts" project="deep" check="tsc-error">
+import { schema } from "@zudojs/schema/dist/schemaRoot/index.js";
+
+console.log(schema.string().parse("Buy milk"));
+</example>
+<output kind="tsc">
+deep-import.ts:1:24 - error TS2307: Cannot find module '@zudojs/schema/dist/schemaRoot/index.js' or its corresponding type declarations.
+
+1 import { schema } from "@zudojs/schema/dist/schemaRoot/index.js";
+                         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 1 error in deep-import.ts:1
+</output>
+<p>Node.js reports the same thing at runtime as <code>ERR_PACKAGE_PATH_NOT_EXPORTED</code>. That is a feature: a package author can reorganise internal files without breaking your code, because you could only ever use what <code>"exports"</code> promised. Import from the package name.</p>
+</section>
+
+<section>
+<h2 id="scripts">Scripts for check, build and run</h2>
+<p>Put the commands in <code>package.json</code> so nobody has to remember them. With <code>npm pkg set</code>, or by editing the file, add four scripts:</p>
+<file name="package.json" project="mods">
+{
+  "name": "ts-modules",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "dev": "tsx src/main.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
+</file>
+<shell>
+$ npm run check
+
+> ts-modules@1.0.0 check
+> tsc --noEmit
+
+$ npm run build
+
+> ts-modules@1.0.0 build
+> tsc
+
+$ npm start
+
+> ts-modules@1.0.0 start
+> node dist/main.js
+
+todo: File taxes
+doing: Call Ada
+done: Buy milk
+</shell>
+<p><code>npm run dev</code> runs the source with <code>tsx</code> while you work; <code>check</code> and <code>build</code> before you ship; <code>start</code> runs the built JavaScript, which is what a server does in production. A project created by the ZudoJS CLI comes with scripts like these; there, the check script is called <code>typecheck</code>. Add <code>dist/</code> to your <code>.gitignore</code>, as you learned in <a href="/learn/git">the Git lesson</a>: it is generated, so it does not belong in the repository.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Add a module">
+<p>Add <code>src/stats.ts</code> with a function <code>countByStatus(tasks: readonly Task[])</code> that returns a <code>Record&lt;Status, number&gt;</code>. Export it from the barrel, use it in <code>main.ts</code>, and check that <code>npm run check</code> and <code>npm run build</code> pass.</p>
+<solution>
+<example file="src/task.ts" project="ex-stats">
+export type Status = "todo" | "doing" | "done";
+
+export interface Task {
+  readonly id: number;
+  title: string;
+  status: Status;
+}
+</example>
+<example file="src/stats.ts" project="ex-stats">
+import type { Status, Task } from "./task.js";
+
+export function countByStatus(tasks: readonly Task[]): Record<Status, number> {
+  const counts: Record<Status, number> = { todo: 0, doing: 0, done: 0 };
+  for (const task of tasks) counts[task.status] += 1;
+  return counts;
+}
+</example>
+<example file="src/main.ts" project="ex-stats">
+import { countByStatus } from "./stats.js";
+import type { Task } from "./task.js";
+
+const tasks: Task[] = [
+  { id: 1, title: "Buy milk", status: "done" },
+  { id: 2, title: "Call Ada", status: "todo" },
+  { id: 3, title: "File taxes", status: "todo" },
+];
+console.log(countByStatus(tasks));
+</example>
+<output>
+{ todo: 2, doing: 0, done: 1 }
+</output>
+<p>In your project, add <code>export { countByStatus } from "./stats.js";</code> to <code>src/index.ts</code> and import it from <code>"./index.js"</code> in <code>main.ts</code>. <code>stats.ts</code> only needs <code>import type</code>, because it uses <code>Task</code> and <code>Status</code> only as types.</p>
+</solution>
+</exercise>
+<exercise title="Which imports are wrong?">
+<p>With <code>NodeNext</code> and <code>verbatimModuleSyntax</code>, which of these lines does <code>tsc</code> reject, and how do you fix each one?</p>
+<pre><code>import { Task } from "./task.js";
+import { addTask } from "./store.js";
+import { board } from "./format";
+import type { STATUSES } from "./task.js";
+import { schema } from "@zudojs/schema";</code></pre>
+<solution>
+<ul>
+<li>Line 1 is rejected (TS1484): <code>Task</code> is a type. Write <code>import type { Task }</code>.</li>
+<li>Line 2 is correct.</li>
+<li>Line 3 is rejected (TS2835): write <code>"./format.js"</code>.</li>
+<li>Line 4 compiles, but <code>STATUSES</code> can then only be used as a type: <code>STATUSES.map(…)</code> would be an error, because an <code>import type</code> is removed before the code runs. A value needs a normal import.</li>
+<li>Line 5 is correct, once the package is installed: it uses the package's <code>"exports"</code> entry.</li>
+</ul>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Import types with <code>import type</code> (or <code>type</code> inside the braces), and re-export them with <code>export type</code>. <code>verbatimModuleSyntax</code> enforces it, so every tool agrees on what is removed.</li>
+<li>TypeScript never changes import paths. Write the <code>.js</code> name of the file that will run; <code>tsc</code> maps it to the <code>.ts</code> file.</li>
+<li><code>NodeNext</code> follows Node's rules: full relative paths, packages through <code>node_modules</code>, and <code>"type": "module"</code> for ES modules.</li>
+<li>A package's <code>"exports"</code> field lists what you may import; everything else is private.</li>
+<li><code>rootDir</code>/<code>outDir</code> separate <code>src/</code> from <code>dist/</code>; <code>check</code>, <code>build</code>, <code>start</code> and <code>dev</code> scripts run the whole workflow.</li>
+</ul>
+</section>

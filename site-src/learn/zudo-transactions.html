@@ -1,0 +1,629 @@
+---
+title: Transactions
+description: Coordinate transactions across many functions with @zudojs/transactions, with context that follows your code through AsyncLocalStorage, rollbacks, savepoints, after-commit hooks, retries, timeouts and rollback-only state, against real PostgreSQL.
+minutes: 45
+youNeed: The Databases with @zudojs/database lesson
+youBuild: A task service whose functions share one transaction, send emails only after commit, and retry on conflicts
+keywords: zudojs transactions, transaction manager, unit of work, AsyncLocalStorage, propagation, participant, savepoint, nested transaction, requires_new, afterCommit, rollback-only, TransactionRollbackError, retry, serialization failure, transaction timeout, isolation level
+tier: advanced
+---
+<section>
+<h2 id="why">One transaction, many functions</h2>
+<p>In <a href="/learn/zudo-database">the last lessons</a> you wrapped work in <code>withTransaction</code> and passed the transaction client <code>tx</code> down by hand. That gets awkward as an app grows. Creating a task calls <code>insertTask</code>, which calls <code>recordActivity</code>, which calls <code>bumpCounter</code>. Each of them must run in the same transaction, and each must also work when called on its own.</p>
+<p><code>@zudojs/transactions</code> solves this. It keeps track of "the transaction in progress" for you, decides what a transaction inside another one should do, runs code after a commit, retries on conflicts and enforces timeouts. It does not talk to any database itself. You give it an <strong>adapter</strong> that knows how to say <code>BEGIN</code>, <code>COMMIT</code> and <code>ROLLBACK</code> to yours.</p>
+<shell title="Terminal on your computer">
+$ npm install @zudojs/transactions
+
+added 1 package, and audited 21 packages in 3s
+
+1 package is looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+</shell>
+<p>Every example here uses PGlite and Node.js APIs, so run them on your computer with <code>npx tsx file.ts</code>.</p>
+</section>
+
+<section>
+<h2 id="adapter">An adapter for PostgreSQL</h2>
+<p>An adapter has a list of <strong>capabilities</strong> (what it can do) and six methods. <code>begin</code> returns a <strong>handle</strong>, anything that identifies the open transaction; the manager hands it back to <code>commit</code> and <code>rollback</code>. This one also writes each SQL command to a <code>log</code> array, so you can watch what the manager does:</p>
+<example file="adapter.ts" project="tx" browser="no">
+import type { PGlite } from "@electric-sql/pglite";
+import type { TransactionAdapter, TransactionIsolationLevel, TransactionOptions } from "@zudojs/transactions";
+
+const LEVELS: Record<TransactionIsolationLevel, string> = {
+  read_uncommitted: "READ UNCOMMITTED",
+  read_committed: "READ COMMITTED",
+  repeatable_read: "REPEATABLE READ",
+  serializable: "SERIALIZABLE",
+};
+
+function savepointName(name: string): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new TypeError(`Invalid savepoint name "${name}"`);
+  return name;
+}
+
+export function pgliteAdapter(pg: PGlite, log: string[]): TransactionAdapter {
+  const sql = async (text: string) => {
+    log.push(text);
+    await pg.exec(text);
+  };
+  return {
+    capabilities: {
+      savepoints: true,
+      nestedTransactions: true,
+      isolationLevels: Object.keys(LEVELS) as TransactionIsolationLevel[],
+      readOnlyTransactions: true,
+      timeouts: true,
+    },
+    async begin(options?: TransactionOptions) {
+      let text = "BEGIN";
+      if (options?.isolation) text += ` ISOLATION LEVEL ${LEVELS[options.isolation]}`;
+      if (options?.readOnly) text += " READ ONLY";
+      await sql(text);
+      return pg;
+    },
+    commit: () => sql("COMMIT"),
+    rollback: () => sql("ROLLBACK"),
+    createSavepoint: (_handle, name) => sql(`SAVEPOINT ${savepointName(name)}`),
+    rollbackToSavepoint: (_handle, name) => sql(`ROLLBACK TO SAVEPOINT ${savepointName(name)}`),
+    releaseSavepoint: (_handle, name) => sql(`RELEASE SAVEPOINT ${savepointName(name)}`),
+  };
+}
+</example>
+<p>Savepoint names go straight into SQL, so the adapter checks them first. The isolation level comes from a fixed table, never from the caller's string.</p>
+<p>Now the Task API's tables and a manager. <code>onEvent</code> receives a <strong>lifecycle event</strong> for every step (started, committing, committed, rolled back…), which is what you would send to your metrics. Here it goes to the same log:</p>
+<example file="setup.ts" project="tx" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+import { createTransactionManager } from "@zudojs/transactions";
+import { pgliteAdapter } from "./adapter.js";
+
+export async function setup() {
+  const pg = new PGlite();
+  await pg.exec(`
+    CREATE TABLE tasks (id serial PRIMARY KEY, title text NOT NULL UNIQUE);
+    CREATE TABLE activity (id serial PRIMARY KEY, message text NOT NULL);
+  `);
+  const log: string[] = [];
+  const manager = createTransactionManager({
+    adapter: pgliteAdapter(pg, log),
+    onEvent: (event) => log.push("  event: " + event.type),
+  });
+  const count = async (table: "tasks" | "activity") =>
+    (await pg.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`)).rows[0]?.n;
+  return { pg, manager, log, count };
+}
+</example>
+<warn title="ONE CONNECTION, ONE TRANSACTION AT A TIME">PGlite is a single connection, so the queries in these examples run inside whatever transaction is open on it. That is why they can use <code>pg.query</code> directly. A real server has a <strong>pool</strong> of connections, and each transaction's queries must go to the connection its <code>begin()</code> opened. <code>@zudojs/transactions</code> 1.1.2 gives that handle only to the adapter; your query code has no public way to read it. In a server with a pool, use <code>withTransaction</code> from <a href="/learn/zudo-database">@zudojs/database</a> for the connection, and the ideas on this page to structure your code.</warn>
+</section>
+
+<section>
+<h2 id="run">Commit and rollback</h2>
+<p><code>manager.run(callback)</code> opens a transaction, runs your callback, commits if it returns and rolls back if it throws. It returns what your callback returns, and passes your error on unchanged, so you never write a <code>try</code>/<code>catch</code> just to roll back:</p>
+<example file="run.ts" project="tx" browser="no">
+import { setup } from "./setup.js";
+
+const { pg, manager, log, count } = await setup();
+
+async function createTask(title: string) {
+  return manager.run(async () => {
+    const { rows } = await pg.query<{ id: number }>(
+      "INSERT INTO tasks (title) VALUES ($1) RETURNING id", [title],
+    );
+    await pg.query("INSERT INTO activity (message) VALUES ($1)", [`created ${title}`]);
+    return rows[0]?.id;
+  });
+}
+
+console.log("new id:", await createTask("Buy milk"));
+console.log(log.splice(0).join("\n"));
+
+try {
+  await createTask("Buy milk");
+} catch (error) {
+  console.log("failed:", (error as Error).message);
+}
+console.log(log.splice(0).join("\n"));
+console.log("tasks:", await count("tasks"), "activity:", await count("activity"));
+</example>
+<output>
+new id: 1
+BEGIN
+  event: transaction.started
+  event: transaction.committing
+COMMIT
+  event: transaction.committed
+failed: duplicate key value violates unique constraint "tasks_title_key"
+BEGIN
+  event: transaction.started
+  event: transaction.rolling_back
+ROLLBACK
+  event: transaction.rolled_back
+tasks: 1 activity: 1
+</output>
+<p>The first call committed both rows. The second broke the <code>UNIQUE</code> rule on the title, the manager rolled back, and your caller got PostgreSQL's own error. The counts prove it: one task and one activity row, not a lonely second activity row.</p>
+</section>
+
+<section>
+<h2 id="context">Context that follows your code</h2>
+<p>How does <code>recordActivity</code> below know a transaction is already open, when nobody passed it one? The manager stores the current transaction in Node's <code>AsyncLocalStorage</code>: a value that follows your code through every <code>await</code>, timer and callback that started inside <code>run</code>, and is invisible everywhere else. <code>manager.getCurrent()</code> reads it.</p>
+<p>When <code>run</code> is called while a transaction is open, the default <strong>propagation</strong> rule, <code>"required"</code>, makes it <strong>join</strong> that transaction as a <strong>participant</strong> instead of opening a second one:</p>
+<example file="context.ts" project="tx" browser="no">
+import { setup } from "./setup.js";
+
+const { pg, manager, log } = await setup();
+
+async function recordActivity(message: string) {
+  await manager.run(async (tx) => {
+    log.push(`  recordActivity runs as ${tx.kind}`);
+    await pg.query("INSERT INTO activity (message) VALUES ($1)", [message]);
+  });
+}
+
+await manager.run(async (tx) => {
+  log.push(`  createTask runs as ${tx.kind}`);
+  await pg.query("INSERT INTO tasks (title) VALUES ($1)", ["Buy milk"]);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  log.push(`  after a timer, same transaction? ${manager.getCurrent()?.id === tx.id}`);
+  await recordActivity("created Buy milk");
+});
+console.log(log.splice(0).join("\n"));
+
+console.log("outside run:", manager.getCurrent());
+await recordActivity("called on its own");
+console.log(log.splice(0).join("\n"));
+</example>
+<output>
+BEGIN
+  event: transaction.started
+  createTask runs as root
+  after a timer, same transaction? true
+  recordActivity runs as participant
+  event: transaction.committing
+COMMIT
+  event: transaction.committed
+outside run: undefined
+BEGIN
+  event: transaction.started
+  recordActivity runs as root
+  event: transaction.committing
+COMMIT
+  event: transaction.committed
+</output>
+<p>Inside <code>createTask</code>'s transaction, <code>recordActivity</code> was a participant: no second <code>BEGIN</code>, one <code>COMMIT</code> for everything. Called on its own, the same function opened and committed its own transaction, as a <strong>root</strong>. You write each function once, and it does the right thing in both places. Only the scope that opened a transaction ever commits it.</p>
+</section>
+
+<section>
+<h2 id="rollback-only">Rollback-only</h2>
+<p>A participant cannot commit or roll back the shared transaction; that is the root's job. So what happens when a participant fails, and the root catches the error and carries on? The failure has already spoiled the unit of work, so the manager marks the transaction <strong>rollback-only</strong>. When the root tries to commit, it rolls back instead and throws <code>TransactionRollbackError</code>:</p>
+<example file="rollback-only.ts" project="tx" browser="no">
+import { TransactionRollbackError } from "@zudojs/transactions";
+import { setup } from "./setup.js";
+
+const { pg, manager, log, count } = await setup();
+
+async function recordActivity(message: string) {
+  await manager.run(async () => {
+    if (message.length > 20) throw new Error("activity message too long");
+    await pg.query("INSERT INTO activity (message) VALUES ($1)", [message]);
+  });
+}
+
+try {
+  await manager.run(async (tx) => {
+    await pg.query("INSERT INTO tasks (title) VALUES ($1)", ["Buy milk"]);
+    try {
+      await recordActivity("created a task called Buy milk");
+    } catch {
+      log.push(`  caught it; rollback-only now? ${tx.isRollbackOnly()}`);
+    }
+  });
+} catch (error) {
+  if (error instanceof TransactionRollbackError) {
+    console.log(error.name, "-", error.message.replace(/txn_[0-9a-f]+/, "txn_…"));
+    console.log("reason:", error.metadata["originalError"]);
+  }
+}
+console.log(log.splice(0).join("\n"));
+console.log("tasks:", await count("tasks"));
+</example>
+<output>
+TransactionRollbackError - Transaction "txn_…" rollback failed
+reason: activity message too long
+BEGIN
+  event: transaction.started
+  caught it; rollback-only now? true
+  event: transaction.rolling_back
+ROLLBACK
+  event: transaction.rolled_back
+tasks: 0
+</output>
+<p>Catching the participant's error did not save the transaction: the task was rolled back too. That is the safe choice. If you want part of the work to be allowed to fail, use a savepoint, in the next section.</p>
+<p>Transaction ids are random, so the example shortens them to <code>txn_…</code>. The error's message says "rollback failed", which is misleading: the rollback worked, and it was the <em>commit</em> that was refused. <code>error.metadata.originalError</code> holds the reason, here the participant's error.</p>
+<p>You can also mark a transaction yourself. <code>tx.markRollbackOnly(reason)</code> is handy for a <strong>dry run</strong>: do all the work, check the result, and throw it away:</p>
+<example file="dry-run.ts" project="tx" browser="no">
+import { TransactionRollbackError } from "@zudojs/transactions";
+import { setup } from "./setup.js";
+
+const { pg, manager, count } = await setup();
+
+async function importTasks(titles: string[], dryRun: boolean) {
+  return manager.run(async (tx) => {
+    for (const title of titles) {
+      await pg.query("INSERT INTO tasks (title) VALUES ($1)", [title]);
+    }
+    const n = (await pg.query<{ n: number }>("SELECT count(*)::int AS n FROM tasks")).rows[0]?.n;
+    if (dryRun) tx.markRollbackOnly("dry run");
+    return n;
+  });
+}
+
+try {
+  await importTasks(["Buy milk", "Walk the dog"], true);
+} catch (error) {
+  if (error instanceof TransactionRollbackError) {
+    console.log("dry run finished, reason:", error.metadata["originalError"]);
+  }
+}
+console.log("tasks after dry run:", await count("tasks"));
+console.log("real import, tasks:", await importTasks(["Buy milk", "Walk the dog"], false));
+</example>
+<output>
+dry run finished, reason: dry run
+tasks after dry run: 0
+real import, tasks: 2
+</output>
+</section>
+
+<section>
+<h2 id="savepoints">Savepoints</h2>
+<p>A <strong>savepoint</strong> is a bookmark inside a transaction. You can roll back to it, undoing only what happened after it, and keep the rest. Ask for one with <code>propagation: "nested"</code>. The inner callback gets a transaction of kind <code>"savepoint"</code>: if it throws, only its own work is undone. Here an import keeps the good rows and skips the bad one:</p>
+<example file="savepoints.ts" project="tx" browser="no">
+import { setup } from "./setup.js";
+
+const { pg, manager, log } = await setup();
+await pg.query("INSERT INTO tasks (title) VALUES ($1)", ["Buy milk"]);
+
+const imported = await manager.run(async () => {
+  const done: string[] = [];
+  for (const title of ["Pay rent", "Buy milk", "Call mom"]) {
+    try {
+      await manager.run(async () => {
+        await pg.query("INSERT INTO tasks (title) VALUES ($1)", [title]);
+      }, { propagation: "nested" });
+      done.push(title);
+    } catch {
+      log.push(`  skipped "${title}"`);
+    }
+  }
+  return done;
+});
+
+const short = (line: string) => line.replace(/sp_txn_[0-9a-f]+/, "sp_txn_…");
+console.log(log.splice(0).filter((line) => !line.includes("event")).map(short).join("\n"));
+console.log("imported:", imported);
+console.log((await pg.query("SELECT title FROM tasks ORDER BY id")).rows);
+</example>
+<output>
+BEGIN
+SAVEPOINT sp_txn_…
+RELEASE SAVEPOINT sp_txn_…
+SAVEPOINT sp_txn_…
+ROLLBACK TO SAVEPOINT sp_txn_…
+RELEASE SAVEPOINT sp_txn_…
+  skipped "Buy milk"
+SAVEPOINT sp_txn_…
+RELEASE SAVEPOINT sp_txn_…
+COMMIT
+imported: [ 'Pay rent', 'Call mom' ]
+[ { title: 'Buy milk' }, { title: 'Pay rent' }, { title: 'Call mom' } ]
+</output>
+<p>Each title got its own <code>SAVEPOINT</code>, named after a random transaction id (shortened to <code>sp_txn_…</code> here). For "Buy milk", the insert failed, the manager rolled back <code>TO SAVEPOINT</code>, and the outer transaction went on, still healthy. The good titles were saved in one <code>COMMIT</code>. Without the savepoint, PostgreSQL would have refused every statement after the error, and the whole import would have been lost.</p>
+<h3>Other propagation rules</h3>
+<p><code>"required"</code> and <code>"nested"</code> are the two you will use most. The others:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Propagation</th><th>A transaction is open</th><th>None is open</th></tr></thead>
+<tbody>
+<tr><td><code>required</code> (default)</td><td>Join it as a participant</td><td>Open a new one</td></tr>
+<tr><td><code>nested</code></td><td>Open a savepoint in it</td><td>Open a new one</td></tr>
+<tr><td><code>requires_new</code></td><td>Pause it, open a separate one</td><td>Open a new one</td></tr>
+<tr><td><code>mandatory</code></td><td>Join it</td><td>Throw</td></tr>
+<tr><td><code>supports</code></td><td>Join it</td><td>Run without a transaction</td></tr>
+<tr><td><code>not_supported</code></td><td>Pause it, run without</td><td>Run without a transaction</td></tr>
+<tr><td><code>never</code></td><td>Throw</td><td>Run without a transaction</td></tr>
+</tbody>
+</table></div>
+<p><code>mandatory</code> is a useful guard for a function that must never write outside a transaction:</p>
+<example file="mandatory.ts" project="tx" browser="no">
+import { setup } from "./setup.js";
+
+const { pg, manager } = await setup();
+
+async function moveTaskActivity(message: string) {
+  await manager.run(async () => {
+    await pg.query("INSERT INTO activity (message) VALUES ($1)", [message]);
+  }, { propagation: "mandatory" });
+}
+
+try {
+  await moveTaskActivity("oops, no transaction");
+} catch (error) {
+  console.log((error as Error).name, "-", (error as Error).message);
+}
+await manager.run(() => moveTaskActivity("inside a transaction"));
+console.log((await pg.query("SELECT message FROM activity")).rows);
+</example>
+<output>
+TransactionPropagationError - Propagation is 'mandatory' but no transaction is in progress
+[ { message: 'inside a transaction' } ]
+</output>
+<p><code>requires_new</code> needs a second, separate transaction while the first is paused. That needs a second connection, so it only works with a connection pool, not with PGlite.</p>
+</section>
+
+<section>
+<h2 id="hooks">After-commit hooks</h2>
+<p>A classic bug: the code sends a "task created" email, and then the transaction rolls back. The user got an email about a task that does not exist. Anything that leaves your database, such as emails, messages to other services or cache updates, must wait until the commit really happened.</p>
+<p><code>tx.afterCommit(callback)</code> does exactly that. The callback runs after a successful commit, and is thrown away on a rollback. <code>tx.afterRollback</code> is the opposite. A participant's callbacks wait for the root's commit:</p>
+<example file="hooks.ts" project="tx" browser="no">
+import { setup } from "./setup.js";
+
+const { pg, manager } = await setup();
+
+async function createTask(title: string) {
+  await manager.run(async (tx) => {
+    tx.afterCommit(async () => console.log(`  email: "${title}" was created`));
+    tx.afterRollback(async () => console.log(`  log: creating "${title}" was rolled back`));
+    await pg.query("INSERT INTO tasks (title) VALUES ($1)", [title]);
+    console.log(`  inserted "${title}", not committed yet`);
+  });
+}
+
+await createTask("Buy milk");
+console.log("returned");
+try {
+  await createTask("Buy milk");
+} catch {
+  console.log("second call failed, and no email was sent");
+}
+</example>
+<output>
+  inserted "Buy milk", not committed yet
+  email: "Buy milk" was created
+returned
+  log: creating "Buy milk" was rolled back
+second call failed, and no email was sent
+</output>
+<p>The email line came after the commit. The second call failed on the <code>UNIQUE</code> rule, so its email was never sent and its rollback callback ran instead. Register callbacks before the work that can fail: a callback registered after the failing line would never be registered at all.</p>
+<h3>When a hook fails</h3>
+<p>An after-commit callback can fail too, say the email service is down. The data is already committed, and nothing can undo that, so the manager does not throw at your caller. It collects the failures into an <code>AggregateError</code> and hands them to the manager's <code>hooks.onError</code>, where you log them or queue a retry. Manager-wide <code>hooks</code> also run for every transaction:</p>
+<example file="hook-errors.ts" project="tx" browser="no">
+import { createInMemoryAdapter, createTransactionManager } from "@zudojs/transactions";
+
+const manager = createTransactionManager({
+  adapter: createInMemoryAdapter(),
+  hooks: {
+    async beforeCommit({ transaction }) {
+      console.log("beforeCommit:", transaction.options.name);
+    },
+    async onError({ error }) {
+      const failures = error instanceof AggregateError ? error.errors : [error];
+      for (const failure of failures) console.log("onError:", (failure as Error).message);
+    },
+  },
+});
+
+const result = await manager.run(async (tx) => {
+  tx.afterCommit(async () => { throw new Error("email service is down"); });
+  tx.afterCommit(async () => console.log("published task.created"));
+  return "task 1 saved";
+}, { name: "create-task" });
+console.log(result);
+</example>
+<output>
+beforeCommit: create-task
+published task.created
+onError: email service is down
+task 1 saved
+</output>
+<p><code>createInMemoryAdapter()</code> is an adapter with no database, built into the package for tests and examples like this one. The failing email did not stop the second callback, and the caller still got its result.</p>
+</section>
+
+<section>
+<h2 id="retries">Retries</h2>
+<p>Under load, PostgreSQL sometimes refuses a transaction and asks you to try again: a <strong>serialization failure</strong> (error code <code>40001</code>) in the strict <code>serializable</code> isolation level, or a <strong>deadlock</strong> (<code>40P01</code>) when two transactions wait for each other. Trying the whole transaction again usually works. <code>retry</code> does it for you, and <code>shouldRetry</code> decides which errors deserve another try:</p>
+<example file="retry.ts" project="tx" browser="no">
+import { setup } from "./setup.js";
+
+const { manager, log } = await setup();
+const RETRYABLE = new Set(["40001", "40P01"]);
+const retry = {
+  attempts: 3,
+  delay: 10,
+  backoff: "exponential" as const,
+  shouldRetry: (error: unknown) => RETRYABLE.has((error as { code?: string }).code ?? ""),
+};
+
+let calls = 0;
+const result = await manager.run(async () => {
+  calls += 1;
+  if (calls < 3) {
+    throw Object.assign(new Error("could not serialize access"), { code: "40001" });
+  }
+  return "saved";
+}, { isolation: "serializable", retry });
+console.log(result, "after", calls, "attempts");
+console.log(log.splice(0).filter((line) => !line.includes("event")).join("\n"));
+
+calls = 0;
+try {
+  await manager.run(async () => {
+    calls += 1;
+    throw new Error("title is required");
+  }, { retry });
+} catch (error) {
+  console.log((error as Error).message, "- attempts:", calls);
+}
+</example>
+<output>
+saved after 3 attempts
+BEGIN ISOLATION LEVEL SERIALIZABLE
+ROLLBACK
+BEGIN ISOLATION LEVEL SERIALIZABLE
+ROLLBACK
+BEGIN ISOLATION LEVEL SERIALIZABLE
+COMMIT
+title is required - attempts: 1
+</output>
+<p>The simulated conflict happened twice; the third attempt committed. The validation error was not retried, because trying the same bad input again can never succeed. <code>"exponential"</code> backoff doubles the pause after each failure (10 ms, then 20 ms), so a busy database gets some breathing room.</p>
+<warn title="A RETRY RUNS YOUR WHOLE CALLBACK AGAIN">Everything inside the callback happens once per attempt. Database work is rolled back each time, but anything else is not: an email sent inside the callback would go out three times. Put those in <code>afterCommit</code>, which runs once, after the attempt that committed.</warn>
+</section>
+
+<section>
+<h2 id="timeouts">Timeouts and read-only transactions</h2>
+<p>An open transaction holds locks, and others wait for them. A transaction that runs too long slows everyone down. <code>timeout</code> puts a limit on it:</p>
+<example file="timeout.ts" project="tx" browser="no">
+import { TransactionTimeoutError } from "@zudojs/transactions";
+import { setup } from "./setup.js";
+
+const { pg, manager, log, count } = await setup();
+const started = Date.now();
+
+try {
+  await manager.run(async (tx) => {
+    await pg.query("INSERT INTO tasks (title) VALUES ($1)", ["Slow task"]);
+    await new Promise((resolve) => setTimeout(resolve, 100)); // a slow call
+    log.push(`  still running: timed out? ${tx.timedOut}, rollback-only? ${tx.isRollbackOnly()}`);
+  }, { timeout: 30 });
+} catch (error) {
+  if (error instanceof TransactionTimeoutError) {
+    const waited = Date.now() - started >= 100 ? "at least 100 ms" : "less than 100 ms";
+    console.log(error.name, "- the caller waited", waited);
+  }
+}
+console.log(log.splice(0).join("\n"));
+console.log("tasks:", await count("tasks"));
+</example>
+<output>
+TransactionTimeoutError - the caller waited at least 100 ms
+BEGIN
+  event: transaction.started
+  event: transaction.timed_out
+  still running: timed out? true, rollback-only? true
+  event: transaction.rolling_back
+ROLLBACK
+  event: transaction.rolled_back
+  event: transaction.timed_out
+tasks: 0
+</output>
+<p>Read that carefully, because it is not what most people expect. At 30 ms the manager marked the transaction <strong>timed out</strong> and rollback-only. It did <em>not</em> stop your callback, which went on running until it finished at about 100 ms. Only then did it roll back and throw <code>TransactionTimeoutError</code>. The timeout guarantees that slow work is never committed. It does not free the caller early. To stop a slow query inside PostgreSQL itself, set PostgreSQL's <code>statement_timeout</code> as well.</p>
+<p><code>readOnly: true</code> opens a <strong>read-only</strong> transaction. PostgreSQL itself then refuses every write, which protects reports and exports from a bug that would change data:</p>
+<example file="read-only.ts" project="tx" browser="no">
+import { setup } from "./setup.js";
+
+const { pg, manager, log } = await setup();
+
+try {
+  await manager.run(async () => {
+    await pg.query("SELECT count(*) FROM tasks");
+    await pg.query("DELETE FROM tasks");
+  }, { readOnly: true, isolation: "repeatable_read" });
+} catch (error) {
+  console.log((error as Error).message);
+}
+console.log(log.filter((line) => !line.includes("event")).join("\n"));
+</example>
+<output>
+cannot execute DELETE in a read-only transaction
+BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY
+ROLLBACK
+</output>
+<p>If you ask for an isolation level or feature the adapter did not declare in its <code>capabilities</code>, the manager refuses before it sends anything to the database: <code>TransactionIsolationError</code> for an isolation level, <code>TransactionCapabilityError</code> for anything else.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Complete a task">
+<p>Write <code>completeTask(id)</code>. In one transaction it marks the task done (add a <code>done</code> column), records the activity with a participant function, and registers an after-commit "notify" message. If no row was updated, throw a <code>NotFoundError</code> from <code>@zudojs/errors</code>. Try it with an existing and a missing id, and show that the missing one changed nothing.</p>
+<solution>
+<example file="complete-task.ts" project="tx" browser="no">
+import { NotFoundError } from "@zudojs/errors";
+import { setup } from "./setup.js";
+
+const { pg, manager, count } = await setup();
+await pg.exec("ALTER TABLE tasks ADD COLUMN done boolean NOT NULL DEFAULT false");
+await pg.query("INSERT INTO tasks (title) VALUES ($1)", ["Buy milk"]);
+
+async function recordActivity(message: string) {
+  await manager.run(async () => {
+    await pg.query("INSERT INTO activity (message) VALUES ($1)", [message]);
+  });
+}
+
+async function completeTask(id: number) {
+  await manager.run(async (tx) => {
+    await recordActivity(`completed task ${id}`);
+    const result = await pg.query("UPDATE tasks SET done = true WHERE id = $1", [id]);
+    if (result.affectedRows === 0) throw new NotFoundError(`Task ${id} not found`);
+    tx.afterCommit(async () => console.log(`notify: task ${id} is done`));
+  });
+}
+
+await completeTask(1);
+try {
+  await completeTask(42);
+} catch (error) {
+  if (error instanceof NotFoundError) console.log(error.statusCode, error.message);
+}
+console.log("activity rows:", await count("activity"));
+</example>
+<output>
+notify: task 1 is done
+404 Task 42 not found
+activity rows: 1
+</output>
+<p>The activity for task 42 was written first, then rolled back with the rest when the update found nothing. And unlike <code>withTransaction</code> in <a href="/learn/zudo-database">@zudojs/database</a>, the manager passed your <code>NotFoundError</code> through unchanged, 404 and all.</p>
+</solution>
+</exercise>
+
+<exercise title="Count the events">
+<p>Create a manager with the in-memory adapter whose <code>onEvent</code> counts events by type. Run one transaction that commits and one that throws, then print the counts.</p>
+<solution>
+<example file="event-counts.ts" project="tx" browser="no">
+import { createInMemoryAdapter, createTransactionManager } from "@zudojs/transactions";
+
+const counts = new Map<string, number>();
+const manager = createTransactionManager({
+  adapter: createInMemoryAdapter(),
+  onEvent: (event) => counts.set(event.type, (counts.get(event.type) ?? 0) + 1),
+});
+
+await manager.run(async () => "ok");
+await manager.run(async () => { throw new Error("nope"); }).catch(() => undefined);
+console.log(Object.fromEntries(counts));
+</example>
+<output>
+{
+  'transaction.started': 2,
+  'transaction.committing': 1,
+  'transaction.committed': 1,
+  'transaction.rolling_back': 1,
+  'transaction.rolled_back': 1
+}
+</output>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li><code>createTransactionManager({ adapter })</code> coordinates transactions; the adapter turns begin, commit, rollback and savepoints into SQL for your database.</li>
+<li><code>manager.run(callback)</code> commits on return and rolls back on a throw, passing your error through unchanged.</li>
+<li>The current transaction travels with your code through <code>AsyncLocalStorage</code>. A nested <code>run</code> joins it as a participant (<code>"required"</code>), and only the root commits.</li>
+<li>A failed participant makes the transaction rollback-only; the root's commit then throws <code>TransactionRollbackError</code>. <code>markRollbackOnly</code> gives you dry runs.</li>
+<li><code>propagation: "nested"</code> uses a savepoint, so part of the work can fail on its own.</li>
+<li><code>afterCommit</code> is where emails and messages go. Retries replay the whole callback, so keep side effects out of it.</li>
+<li><code>timeout</code> guarantees slow work is never committed, but does not interrupt it. <code>readOnly</code> makes PostgreSQL refuse writes.</li>
+</ul>
+<p>That completes the data part. Next, the <a href="/learn/zudo-auth">authentication lesson</a> gives each task an owner who can log in.</p>
+</section>

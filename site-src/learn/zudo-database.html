@@ -1,0 +1,958 @@
+---
+title: Databases with @zudojs/database
+description: Connect the Task API to PostgreSQL through @zudojs/database, with migrations, seeds, a repository, a query builder, pagination, transactions and health checks, all running against real PostgreSQL.
+minutes: 50
+youNeed: The SQL lessons and the ZudoJS core part
+youBuild: A PostgreSQL task store with migrations, seeds, a soft-deleting repository and signed pagination
+keywords: zudojs database, prisma, repository pattern, BaseRepository, migrations, seeds, query builder, pagination, keyset pagination, cursor, soft delete, withTransaction, health check, connection pool, pglite, driver adapter
+---
+<section>
+<h2 id="what">What @zudojs/database does</h2>
+<p>In <a href="/learn/sql-basics">the SQL lessons</a> you wrote every query by hand. That works, but every project ends up writing the same things again: connect and disconnect, run migrations once, turn database errors into HTTP errors, page through results, retry a failed transaction. <code>@zudojs/database</code> does those jobs for you.</p>
+<p>It is built on <strong>Prisma</strong>, a popular database toolkit for TypeScript. Prisma talks to PostgreSQL. ZudoJS sits on top of it and adds:</p>
+<ul>
+<li>a <strong>client</strong> that connects, disconnects and reports its status,</li>
+<li><strong>migrations</strong> and <strong>seeds</strong> that run once, even when two servers start at the same moment,</li>
+<li>a <strong>repository</strong> base class with create, find, update, delete, soft delete and pagination,</li>
+<li>a <strong>query builder</strong>, <strong>transactions</strong> with retries, and <strong>health checks</strong>.</li>
+</ul>
+<p>It supports <strong>PostgreSQL only</strong>. Install it in your <code>task-api</code> folder, together with PGlite from <a href="/learn/databases">the databases lesson</a>:</p>
+<shell title="Terminal on your computer">
+$ npm install @zudojs/database @electric-sql/pglite
+
+added 7 packages, and audited 15 packages in 16s
+
+found 0 vulnerabilities
+</shell>
+<p>Your numbers will be different, because your project already has other packages. npm also added <code>@prisma/client</code>: <code>@zudojs/database</code> lists it as a <strong>peer dependency</strong>, a package it expects your project to provide.</p>
+</section>
+
+<section>
+<h2 id="adapter">The client and its adapter</h2>
+<p>ZudoJS never talks to the database directly. It talks to a Prisma client, and it only needs a few methods from it: <code>$connect</code>, <code>$disconnect</code>, <code>$queryRawUnsafe</code>, <code>$executeRawUnsafe</code> and <code>$transaction</code>. The package calls this shape <code>PrismaClientLike</code>. Anything with those methods works. This is the <strong>adapter pattern</strong>: a small object that makes one thing look like the thing another piece of code expects.</p>
+<p>In a production app, the Prisma client comes from Prisma itself. You describe your tables in a <code>schema.prisma</code> file, run <code>npx prisma generate</code>, and connect through a <strong>driver adapter</strong>, <code>@prisma/adapter-pg</code>:</p>
+<example file="production-db.ts" browser="no" check="skip">
+import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { createDatabaseClient } from "@zudojs/database";
+
+const connectionString = process.env["DATABASE_URL"];
+if (!connectionString) {
+  throw new Error("DATABASE_URL is not set");
+}
+
+const prisma = new PrismaClient({
+  adapter: new PrismaPg({
+    connectionString,
+    max: 10,                        // at most 10 open connections
+    idleTimeoutMillis: 30_000,      // close a connection unused for 30 s
+    connectionTimeoutMillis: 5_000, // give up waiting for a free one after 5 s
+  }),
+});
+
+export const client = createDatabaseClient({ prisma });
+</example>
+<p>That needs a running PostgreSQL server and the Prisma tool chain, which the <a href="/learn/deployment">deployment lesson</a> sets up. For learning, this lesson uses PGlite instead, the real PostgreSQL running inside Node.js. There is no ready-made Prisma adapter for PGlite, so you write a small one. It has two files.</p>
+<p>The first turns a Prisma-style <code>where</code> object, such as <code>{ done: false, title: { contains: "milk" } }</code>, into SQL. Look at two things. Every value becomes a <code>$1</code>, <code>$2</code>… parameter, never part of the SQL text. And every field name is checked against an <strong>allow-list</strong> before it is used, because a field name cannot be a parameter:</p>
+<example file="where.ts" project="db" browser="no">
+const COMPARE: Record<string, string> = {
+  equals: "=", not: "<>", lt: "<", lte: "<=", gt: ">", gte: ">=",
+};
+
+/* "createdAt" becomes the column "created_at", but only for known fields. */
+export function column(field: string, fields: readonly string[]): string {
+  if (!fields.includes(field)) {
+    throw new TypeError(`Unknown field "${field}"`);
+  }
+  return `"${field.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase())}"`;
+}
+
+export function whereToSql(where: unknown, fields: readonly string[], params: unknown[]): string {
+  if (where === undefined || where === null) return "TRUE";
+  const bind = (value: unknown) => `$${params.push(value)}`;
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(where)) {
+    if (key === "AND" || key === "OR") {
+      const list = (value as unknown[]).map((w) => `(${whereToSql(w, fields, params)})`);
+      parts.push(list.join(` ${key} `) || (key === "AND" ? "TRUE" : "FALSE"));
+      continue;
+    }
+    if (key === "NOT") {
+      parts.push(`NOT (${whereToSql(value, fields, params)})`);
+      continue;
+    }
+    const col = column(key, fields);
+    const hasOps = value !== null && typeof value === "object" && !(value instanceof Date);
+    for (const [op, v] of hasOps ? Object.entries(value) : [["equals", value]]) {
+      if (v === null && op === "equals") parts.push(`${col} IS NULL`);
+      else if (v === null && op === "not") parts.push(`${col} IS NOT NULL`);
+      else if (op in COMPARE) parts.push(`${col} ${COMPARE[op]} ${bind(v)}`);
+      else if (op === "in") parts.push(`${col} = ANY(${bind(v)})`);
+      else if (op === "contains") parts.push(`${col} LIKE ${bind(`%${String(v).replace(/[\\%_]/g, "\\$&")}%`)}`);
+      else throw new TypeError(`Operator "${op}" is not supported`);
+    }
+  }
+  return parts.join(" AND ") || "TRUE";
+}
+</example>
+<p>The second file is the adapter itself. <code>modelDelegate</code> gives one table the methods a Prisma <strong>model delegate</strong> has (<code>findMany</code>, <code>create</code>, <code>update</code>…), and <code>createPglitePrisma</code> builds the whole client. It also translates PostgreSQL's error codes into the Prisma codes ZudoJS understands: <code>23505</code> (unique value already used) becomes <code>P2002</code>, and a missing row becomes <code>P2025</code>. You don't need to follow every line; copy it into your project:</p>
+<example file="pglite-adapter.ts" project="db" browser="no">
+import type { PGlite, Transaction } from "@electric-sql/pglite";
+import type { DatabaseTransactionContext, PrismaClientLike, RepositoryDelegate } from "@zudojs/database";
+import { column, whereToSql } from "./where.js";
+
+type Db = PGlite | Transaction;
+type Row = Record<string, unknown>;
+export interface Model {
+  readonly table: string;
+  readonly fields: readonly string[];
+}
+interface Args {
+  where?: unknown;
+  data?: Row;
+  orderBy?: readonly Row[];
+  skip?: number;
+  take?: number;
+}
+
+/* PostgreSQL error codes, translated to the Prisma codes ZudoJS understands. */
+const PRISMA_CODES: Record<string, string> = { "23505": "P2002", "23503": "P2003", "40001": "P2034" };
+
+function prismaError(code: string, message: string): Error {
+  return Object.assign(new Error(message), { code, clientVersion: "pglite" });
+}
+
+async function run(db: Db, sql: string, params: readonly unknown[]) {
+  try {
+    return await db.query<Row>(sql, [...params]);
+  } catch (error) {
+    const code = PRISMA_CODES[(error as { code?: string }).code ?? ""];
+    throw code ? prismaError(code, (error as Error).message) : error;
+  }
+}
+
+/* Rows come back as { created_at: … }; entities use { createdAt: … }. */
+function toEntity(row: Row | undefined): Row {
+  if (!row) throw prismaError("P2025", "Record not found");
+  const entries = Object.entries(row).map(([key, value]) => [
+    key.replace(/_(\w)/g, (_, c: string) => c.toUpperCase()),
+    value,
+  ]);
+  return Object.fromEntries(entries);
+}
+
+export function modelDelegate<T>(db: Db, model: Model): RepositoryDelegate<T, number> {
+  const table = `"${model.table}"`;
+  const col = (field: string) => column(field, model.fields);
+  const where = (args: Args | undefined, params: unknown[]) =>
+    whereToSql(args?.where, model.fields, params);
+
+  async function findMany(args: Args = {}) {
+    const params: unknown[] = [];
+    let sql = `SELECT * FROM ${table} WHERE ${where(args, params)}`;
+    const order = (args.orderBy ?? []).flatMap((o) => Object.entries(o));
+    if (order.length > 0) {
+      sql += " ORDER BY " + order.map(([f, d]) => `${col(f)} ${d === "desc" ? "DESC" : "ASC"}`).join(", ");
+    }
+    if (args.take !== undefined) sql += ` LIMIT $${params.push(args.take)}`;
+    if (args.skip !== undefined) sql += ` OFFSET $${params.push(args.skip)}`;
+    return (await run(db, sql, params)).rows.map(toEntity);
+  }
+
+  const delegate = {
+    findMany,
+    findFirst: async (args: Args) => (await findMany({ ...args, take: 1 }))[0] ?? null,
+    findUnique: async (args: Args) => (await findMany({ ...args, take: 1 }))[0] ?? null,
+    async count(args?: Args) {
+      const params: unknown[] = [];
+      const sql = `SELECT count(*) AS n FROM ${table} WHERE ${where(args, params)}`;
+      return Number((await run(db, sql, params)).rows[0]?.["n"]);
+    },
+    async create(args: Args) {
+      const entries = Object.entries(args.data ?? {}).filter(([, value]) => value !== undefined);
+      const columns = entries.map(([field]) => col(field)).join(", ");
+      const marks = entries.map((_, i) => `$${i + 1}`).join(", ");
+      const sql = `INSERT INTO ${table} (${columns}) VALUES (${marks}) RETURNING *`;
+      return toEntity((await run(db, sql, entries.map(([, value]) => value))).rows[0]);
+    },
+    async update(args: Args) {
+      const params: unknown[] = [];
+      const sets = Object.entries(args.data ?? {})
+        .filter(([, value]) => value !== undefined) // like Prisma: undefined means "leave it"
+        .map(([f, v]) => `${col(f)} = $${params.push(v)}`);
+      const sql = `UPDATE ${table} SET ${sets.join(", ")} WHERE ${where(args, params)} RETURNING *`;
+      return toEntity((await run(db, sql, params)).rows[0]);
+    },
+    async delete(args: Args) {
+      const params: unknown[] = [];
+      const sql = `DELETE FROM ${table} WHERE ${where(args, params)} RETURNING *`;
+      return toEntity((await run(db, sql, params)).rows[0]);
+    },
+  };
+  return delegate as unknown as RepositoryDelegate<T, number>;
+}
+
+export function createPglitePrisma(pg: PGlite, models: Readonly<Record<string, Model>>): PrismaClientLike {
+  const bind = (db: Db): DatabaseTransactionContext => {
+    const client: Record<string, unknown> = {
+      $queryRawUnsafe: async (sql: string, ...values: unknown[]) => (await run(db, sql, values)).rows,
+      $executeRawUnsafe: async (sql: string, ...values: unknown[]) =>
+        (await run(db, sql, values)).affectedRows ?? 0,
+    };
+    for (const [key, model] of Object.entries(models)) client[key] = modelDelegate(db, model);
+    return client;
+  };
+  return {
+    ...bind(pg),
+    async $connect() {
+      if (pg.closed) throw new Error("PGlite is closed");
+      await pg.waitReady;
+    },
+    async $disconnect() {
+      if (!pg.closed) await pg.close();
+    },
+    $transaction: (callback) => pg.transaction((tx) => callback(bind(tx))),
+  };
+}
+</example>
+<p>One line needs a word: <code>delegate as unknown as RepositoryDelegate&lt;T, number&gt;</code>. The adapter works with plain rows, but a repository wants rows of type <code>T</code>, such as <code>Task</code>. Prisma generates exact types for each table; this small adapter cannot, so it asserts the type once, in one place. The table definition below is what keeps it honest.</p>
+<note>This adapter covers what the lesson needs: equality, <code>contains</code>, comparisons, <code>AND</code>/<code>OR</code>/<code>NOT</code>, sorting and paging. It ignores transaction options such as the isolation level. In production, Prisma does all of this for you.</note>
+</section>
+
+<section>
+<h2 id="config">Configuration and connecting</h2>
+<p>Now describe the <code>tasks</code> table once and open a client. The client is created with <code>createDatabaseClient</code>. Two options are worth knowing on day one:</p>
+<ul>
+<li><code>logger</code>: by default the client logs every connect and disconnect as JSON through <code>@zudojs/logger</code>. <code>noopDatabaseLogger</code> keeps the examples quiet. In your app, keep the default or pass your own logger.</li>
+<li><code>connectionTimeoutMs</code>: how long <code>connect()</code> may take before it fails (the default is 10 seconds).</li>
+</ul>
+<p>Where the data lives is <strong>configuration</strong>, so it comes from the environment, as in <a href="/learn/zudo-config">the config lesson</a>. With no <code>PGLITE_DATA_DIR</code>, PGlite keeps everything in memory:</p>
+<example file="database.ts" project="db" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+import { createDatabaseClient, noopDatabaseLogger } from "@zudojs/database";
+import { createPglitePrisma } from "./pglite-adapter.js";
+import type { Model } from "./pglite-adapter.js";
+
+export interface Task {
+  readonly id: number;
+  readonly title: string;
+  readonly done: boolean;
+  readonly priority: "low" | "normal" | "high";
+  readonly createdAt: Date;
+  readonly deletedAt: Date | null;
+}
+
+export const TASK_MODEL: Model = {
+  table: "tasks",
+  fields: ["id", "title", "done", "priority", "createdAt", "deletedAt"],
+};
+
+export async function openDatabase() {
+  const pg = new PGlite(process.env["PGLITE_DATA_DIR"]);
+  const prisma = createPglitePrisma(pg, { task: TASK_MODEL });
+  const client = createDatabaseClient({
+    prisma,
+    logger: noopDatabaseLogger,
+    connectionTimeoutMs: 5_000,
+  });
+  await client.connect();
+  return { pg, client };
+}
+</example>
+<p>The key <code>task</code> in <code>{ task: TASK_MODEL }</code> matters: it is the name Prisma would give the <code>Task</code> model, and the repository uses it to find its table inside a transaction.</p>
+<p>A real PostgreSQL server needs a connection string such as <code>postgres://user:password@host:5432/tasks</code>. It contains a password, so it is a <strong>secret</strong>: it comes from the environment, never from your code, and you never print it. Check that it is there when the app starts, so a missing setting fails loudly at once instead of at the first request:</p>
+<example file="env-check.ts" project="db" browser="no">
+import { ConfigurationError } from "@zudojs/errors";
+
+export function requireDatabaseUrl(): string {
+  const url = process.env["DATABASE_URL"];
+  if (!url) {
+    throw new ConfigurationError("DATABASE_URL is not set. Add it to your environment or .env file.");
+  }
+  if (!/^postgres(ql)?:\/\//.test(url)) {
+    throw new ConfigurationError("DATABASE_URL must start with postgres://");
+  }
+  return url;
+}
+
+try {
+  requireDatabaseUrl();
+} catch (error) {
+  if (error instanceof ConfigurationError) {
+    console.log(error.name, "-", error.message);
+  }
+}
+</example>
+<output>
+ConfigurationError - DATABASE_URL is not set. Add it to your environment or .env file.
+</output>
+<p>The message names the setting but never shows a value. Error messages end up in logs, and logs are read by more people than your secrets should be.</p>
+</section>
+
+<section>
+<h2 id="migrations">Migrations</h2>
+<p>You met migrations in <a href="/learn/databases">the databases lesson</a>: numbered steps that change the database's structure, applied in order and recorded so each runs only once. <code>createMigrationRunner</code> does that, with two extras. It takes a PostgreSQL <strong>advisory lock</strong> while it works, so two copies of your server starting together cannot apply the same migration twice. And each migration can have a <code>down</code> step that undoes it:</p>
+<example file="migrations.ts" project="db" browser="no">
+import type { Migration } from "@zudojs/database";
+
+export const migrations: Migration[] = [
+  {
+    version: 1,
+    name: "create-tasks",
+    up: async (tx) => {
+      await tx.$executeRawUnsafe(`
+        CREATE TABLE tasks (
+          id         serial PRIMARY KEY,
+          title      text NOT NULL UNIQUE,
+          done       boolean NOT NULL DEFAULT false,
+          priority   text NOT NULL DEFAULT 'normal',
+          created_at timestamptz NOT NULL DEFAULT now(),
+          deleted_at timestamptz
+        )`);
+    },
+    down: async (tx) => {
+      await tx.$executeRawUnsafe("DROP TABLE tasks");
+    },
+  },
+  {
+    version: 2,
+    name: "index-tasks-priority",
+    up: async (tx) => {
+      await tx.$executeRawUnsafe("CREATE INDEX tasks_priority_idx ON tasks (priority)");
+    },
+    down: async (tx) => {
+      await tx.$executeRawUnsafe("DROP INDEX tasks_priority_idx");
+    },
+  },
+];
+</example>
+<p>Run them, run them again, then undo the last one:</p>
+<example file="migrate.ts" project="db" browser="no">
+import { createMigrationRunner } from "@zudojs/database";
+import { openDatabase } from "./database.js";
+import { migrations } from "./migrations.js";
+
+const { client } = await openDatabase();
+const runner = createMigrationRunner(client, migrations);
+
+const first = await runner.migrate();
+console.log("applied:", first.applied.map((m) => `${m.version} ${m.name}`));
+
+const again = await runner.migrate();
+console.log("applied:", again.applied.length, "skipped:", again.skipped.length);
+
+const undone = await runner.rollback();
+console.log("rolled back:", undone?.name);
+
+const status = await runner.status();
+console.log("version", status.currentVersion, "of", status.latestVersion);
+console.log("pending:", status.pending.map((m) => m.name));
+
+await client.disconnect();
+</example>
+<output>
+applied: [ '1 create-tasks', '2 index-tasks-priority' ]
+applied: 0 skipped: 2
+rolled back: index-tasks-priority
+version 1 of 2
+pending: [ 'index-tasks-priority' ]
+</output>
+<p>The second <code>migrate()</code> applied nothing: the runner keeps its history in a table called <code>_migrations</code> and skipped both. After the rollback, version 2 is <strong>pending</strong> again, so the next <code>migrate()</code> would re-apply it. Each migration runs in its own transaction: if one fails halfway, its changes are undone and the ones before it stay.</p>
+<warn title="NEVER EDIT A MIGRATION THAT HAS RUN">Once a migration has run on any shared database, treat it as frozen. To change the table again, add migration 3. The runner only looks at version numbers, so an edited migration 1 would never run again anywhere it already ran.</warn>
+</section>
+
+<section>
+<h2 id="seeds">Seeds</h2>
+<p>A <strong>seed</strong> puts starting data into the database: demo tasks for development, or the list of roles every install needs. The seed runner works like the migration runner: named steps, run once, recorded in a <code>_seeds</code> table. A small <code>setup</code> function runs both, so every later example starts from the same data:</p>
+<example file="seeds.ts" project="db" browser="no">
+import type { Seed } from "@zudojs/database";
+
+export const seeds: Seed[] = [
+  {
+    name: "demo-tasks",
+    run: async (tx) => {
+      const titles = ["Buy milk", "Write report", "Call the bank", "Read a book", "Plan the trip"];
+      for (const title of titles) {
+        await tx.$executeRawUnsafe("INSERT INTO tasks (title) VALUES ($1)", title);
+      }
+      await tx.$executeRawUnsafe("UPDATE tasks SET priority = 'high' WHERE title = $1", "Call the bank");
+    },
+    rollback: async (tx) => {
+      await tx.$executeRawUnsafe("DELETE FROM tasks");
+    },
+  },
+];
+</example>
+<example file="setup.ts" project="db" browser="no">
+import { createMigrationRunner, createSeedRunner } from "@zudojs/database";
+import { openDatabase } from "./database.js";
+import { migrations } from "./migrations.js";
+import { seeds } from "./seeds.js";
+
+export async function setup() {
+  const db = await openDatabase();
+  await createMigrationRunner(db.client, migrations).migrate();
+  await createSeedRunner(db.client, seeds).run();
+  return db;
+}
+</example>
+<example file="seed.ts" project="db" browser="no">
+import { createSeedRunner } from "@zudojs/database";
+import { seeds } from "./seeds.js";
+import { setup } from "./setup.js";
+
+const { client } = await setup();
+
+const again = await createSeedRunner(client, seeds).run();
+console.log("second run skipped:", again.skipped.map((s) => s.name));
+
+const rows = await client.queryRawUnsafe<{ id: number; title: string; priority: string }[]>(
+  "SELECT id, title, priority FROM tasks ORDER BY id",
+);
+console.table(rows);
+await client.disconnect();
+</example>
+<output>
+second run skipped: [ 'demo-tasks' ]
+┌─────────┬────┬─────────────────┬──────────┐
+│ (index) │ id │ title           │ priority │
+├─────────┼────┼─────────────────┼──────────┤
+│ 0       │ 1  │ 'Buy milk'      │ 'normal' │
+│ 1       │ 2  │ 'Write report'  │ 'normal' │
+│ 2       │ 3  │ 'Call the bank' │ 'high'   │
+│ 3       │ 4  │ 'Read a book'   │ 'normal' │
+│ 4       │ 5  │ 'Plan the trip' │ 'normal' │
+└─────────┴────┴─────────────────┴──────────┘
+</output>
+<p><code>setup()</code> ran the seed once; running it a second time skipped it. Seeds are for data your app needs to start. Test data for one test belongs in that test, which <a href="/learn/zudo-testing">the testing lesson</a> covers.</p>
+</section>
+
+<section>
+<h2 id="raw">Raw SQL, safely</h2>
+<p>You just used <code>client.queryRawUnsafe(sql, values)</code>. Sometimes a hand-written query is the clearest way to get an answer. The word <em>Unsafe</em> in the name is a warning: the method sends your SQL text exactly as you wrote it. It is safe only when every outside value goes in the <code>values</code> array. Here is the mistake from <a href="/learn/sql-basics#injection">the SQL basics lesson</a> once more, then the fix:</p>
+<example file="raw.ts" project="db" browser="no">
+import { setup } from "./setup.js";
+
+const { client } = await setup();
+const search = "nothing' OR '1'='1"; // what an attacker types into the search box
+
+// WRONG: the input becomes part of the SQL
+const leaked = await client.queryRawUnsafe<unknown[]>(
+  `SELECT id FROM tasks WHERE title = '${search}'`,
+);
+console.log("string-built query returned", leaked.length, "rows");
+
+// RIGHT: the input is a parameter, never SQL
+const safe = await client.queryRawUnsafe<unknown[]>(
+  "SELECT id FROM tasks WHERE title = $1",
+  [search],
+);
+console.log("parameterized query returned", safe.length, "rows");
+await client.disconnect();
+</example>
+<output>
+string-built query returned 5 rows
+parameterized query returned 0 rows
+</output>
+<p>The string-built query returned every task, because the attacker's quote closed the string and <code>OR '1'='1'</code> is always true. With <code>$1</code>, PostgreSQL treats the whole input as one plain value and finds no task with that odd title. Raw SQL through ZudoJS always uses <code>$1</code>, <code>$2</code>… with a values array.</p>
+</section>
+
+<section>
+<h2 id="repository">A repository</h2>
+<p>A <strong>repository</strong> is one class that owns all access to one table. The rest of your app asks it for tasks and never writes SQL. You wrote a small generic repository in <a href="/learn/ts-generics">the generics lesson</a>; <code>BaseRepository</code> is the full version. Extend it, pass the model delegate, and add methods for your own questions:</p>
+<example file="task.repository.ts" project="db" browser="no">
+import { BaseRepository } from "@zudojs/database";
+import type { BaseRepositoryOptions, RepositoryDelegate } from "@zudojs/database";
+import type { Task } from "./database.js";
+
+export type NewTask = Pick<Task, "title"> & Partial<Pick<Task, "done" | "priority">>;
+
+export class TaskRepository extends BaseRepository<Task, number, NewTask> {
+  constructor(delegate: RepositoryDelegate<Task, number, NewTask>, options: BaseRepositoryOptions = {}) {
+    super(delegate, { modelName: "Task", softDelete: true, ...options });
+  }
+
+  findByTitle(title: string): Promise<Task | null> {
+    return this.findOne({ title });
+  }
+}
+</example>
+<p>The type parameters are the entity (<code>Task</code>), its id type (<code>number</code>) and what <code>create</code> accepts (<code>NewTask</code>: a title, and optionally <code>done</code> and <code>priority</code>). <code>softDelete: true</code> is explained in the next section, and <code>options</code> lets a caller add more settings, which the pagination section uses. Now use it, including two things that go wrong on purpose:</p>
+<example file="repository.ts" project="db" browser="no">
+import { isConflictError, isNotFoundError } from "@zudojs/database";
+import { BaseError } from "@zudojs/errors";
+import { TASK_MODEL } from "./database.js";
+import type { Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { setup } from "./setup.js";
+import { TaskRepository } from "./task.repository.js";
+
+const { pg, client } = await setup();
+const tasks = new TaskRepository(modelDelegate<Task>(pg, TASK_MODEL));
+
+const created = await tasks.create({ title: "Learn ZudoJS", priority: "high" });
+console.log(created);
+
+const updated = await tasks.update(created.id, { done: true });
+console.log("done:", updated.done);
+console.log("Buy milk has id", (await tasks.findByTitle("Buy milk"))?.id);
+console.log("high priority:", await tasks.count({ priority: "high" }));
+
+const mistakes = [
+  () => tasks.create({ title: "Buy milk" }),
+  () => tasks.update(999, { done: true }),
+];
+for (const attempt of mistakes) {
+  try {
+    await attempt();
+  } catch (error) {
+    if (error instanceof BaseError) {
+      console.log(error.statusCode, error.code, error.message);
+      console.log("  conflict?", isConflictError(error), "not found?", isNotFoundError(error));
+    }
+  }
+}
+await client.disconnect();
+</example>
+<output mask="iso">
+{
+  id: 6,
+  title: 'Learn ZudoJS',
+  done: false,
+  priority: 'high',
+  createdAt: 2026-09-23T13:40:42.567Z,
+  deletedAt: null
+}
+done: true
+Buy milk has id 1
+high priority: 2
+409 ERR_CONFLICT Task already exists.
+  conflict? true not found? false
+404 ERR_NOT_FOUND Task was not found.
+  conflict? false not found? true
+</output>
+<p>Read the output:</p>
+<ul>
+<li><code>create</code> returned the whole new row, with the id, defaults and timestamp that PostgreSQL filled in.</li>
+<li>A second "Buy milk" broke the <code>UNIQUE</code> rule on <code>title</code>. The repository turned PostgreSQL's error into a <code>DatabaseError</code> with status <strong>409 Conflict</strong>.</li>
+<li>Updating task 999 found nothing to update, which became <strong>404 Not Found</strong>.</li>
+</ul>
+<p>These are the same status codes your API should send, so an error handler like the one in <a href="/learn/zudo-errors">the errors lesson</a> can pass them on as they are. The messages are generic on purpose: they never include the constraint name or the SQL, which would tell an attacker about your schema.</p>
+</section>
+
+<section>
+<h2 id="query">Soft delete and the query builder</h2>
+<p><strong>Soft delete</strong> means "mark as deleted instead of removing". <code>softDelete(id)</code> sets <code>deleted_at</code> to the current time, and from then on every read of the repository skips that row. Users can get a deleted task back, and you keep a history. <code>findDeleted()</code> lists the deleted ones, and <code>withDeleted()</code> gives you a copy of the repository that sees everything.</p>
+<p>For searches with several conditions, <code>createQueryBuilder</code> builds the filter step by step. Its type parameter lists the fields you allow, so a typo is a compile error:</p>
+<example file="query.ts" project="db" browser="no">
+import { createQueryBuilder } from "@zudojs/database";
+import { TASK_MODEL } from "./database.js";
+import type { Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { setup } from "./setup.js";
+import { TaskRepository } from "./task.repository.js";
+
+const { pg, client } = await setup();
+const tasks = new TaskRepository(modelDelegate<Task>(pg, TASK_MODEL));
+
+await tasks.softDelete(1);
+const titles = (list: readonly Task[]) =>
+  [...list].sort((a, b) => a.id - b.id).map((t) => `${t.id} ${t.title}`);
+console.log("visible:", titles(await tasks.findMany()));
+console.log("deleted:", titles(await tasks.findDeleted()));
+console.log("everything:", (await tasks.withDeleted().count()));
+
+const query = createQueryBuilder<keyof Task>()
+  .where("done", false)
+  .whereContains("title", "the")
+  .orderByDesc("id")
+  .limit(2);
+console.log(JSON.stringify(query.toPrismaArgs()));
+const found = await tasks.findByQuery(query);
+console.log("found:", found.map((t) => `${t.id} ${t.title}`));
+await client.disconnect();
+</example>
+<output>
+visible: [
+  '2 Write report',
+  '3 Call the bank',
+  '4 Read a book',
+  '5 Plan the trip'
+]
+deleted: [ '1 Buy milk' ]
+everything: 5
+{"where":{"done":{"equals":false},"title":{"contains":"the"}},"orderBy":[{"id":"desc"}],"skip":0,"take":2}
+found: [ '5 Plan the trip', '3 Call the bank' ]
+</output>
+<p>The query builder produces a plain Prisma-style object (the JSON line), which the repository hands to the delegate, and your adapter turned into SQL with parameters. <code>whereContains</code> is case-sensitive: <code>"the"</code> matches "Call the bank" and "Plan the trip", not "The…".</p>
+<h3>Sorting by what the client asks for</h3>
+<p>Clients often choose the sort order: <code>GET /tasks?sort=title</code>. A field name cannot be a SQL parameter, so it must be checked. ZudoJS checks sort fields before they reach the database, and your adapter's allow-list catches any field the table does not have:</p>
+<example file="sort-attack.ts" project="db" browser="no">
+import { TASK_MODEL } from "./database.js";
+import type { Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { setup } from "./setup.js";
+import { TaskRepository } from "./task.repository.js";
+
+const { pg, client } = await setup();
+const tasks = new TaskRepository(modelDelegate<Task>(pg, TASK_MODEL));
+
+for (const field of ["title", "title; DROP TABLE tasks", "password"]) {
+  try {
+    const page = await tasks.findPaginated(undefined, {
+      pagination: { page: 1, limit: 2 },
+      sort: [{ field, direction: "asc" }],
+    });
+    console.log(field, "->", page.data.map((t) => t.title));
+  } catch (error) {
+    console.log(field, "->", (error as Error).name, (error as Error).message);
+  }
+}
+console.log("tasks left:", await tasks.count());
+await client.disconnect();
+</example>
+<output>
+title -> [ 'Buy milk', 'Call the bank' ]
+title; DROP TABLE tasks -> TypeError Invalid query field name "title; DROP TABLE tasks".
+password -> DatabaseError Unknown field "password"
+tasks left: 5
+</output>
+<p>The injection attempt never reached PostgreSQL: ZudoJS refused the name because it is not a plain identifier. <code>password</code> is a valid name but not a field of <code>tasks</code>, so the adapter refused it. In a real route, check the sort field against a short list of allowed values with a schema first, and answer 400 for anything else, as <a href="/learn/zudo-validation">the validation lesson</a> showed.</p>
+</section>
+
+<section>
+<h2 id="pagination">Pagination</h2>
+<p>Never return a whole table: it grows forever. <strong>Pagination</strong> returns one page at a time. There are two kinds.</p>
+<p><strong>Offset pagination</strong> says "page 2, 2 per page". It is easy and lets users jump to any page. <code>findPaginated</code> also counts the rows, so it can tell you how many pages there are. <strong>Keyset (cursor) pagination</strong> says "the 2 tasks after the last one I saw". It stays fast on huge tables and does not skip or repeat rows when new ones are added between requests. The "last one I saw" is an opaque string called a <strong>cursor</strong>, which the client sends back to get the next page.</p>
+<p>A cursor travels through the client, so the client can change it. Give the repository a <code>cursorSecret</code> and every cursor is <strong>signed</strong>: a changed cursor is rejected. The secret comes from the environment:</p>
+<example file="paginate.ts" project="db" browser="no">
+import { randomBytes } from "node:crypto";
+import { TASK_MODEL } from "./database.js";
+import type { Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { setup } from "./setup.js";
+import { TaskRepository } from "./task.repository.js";
+
+// Demo only: a random secret so the example runs anywhere. Your app sets CURSOR_SECRET.
+process.env["CURSOR_SECRET"] ??= randomBytes(32).toString("base64url");
+
+const cursorSecret = process.env["CURSOR_SECRET"];
+if (cursorSecret.length < 32) {
+  throw new Error("CURSOR_SECRET must be at least 32 characters");
+}
+
+const { pg, client } = await setup();
+const tasks = new TaskRepository(modelDelegate<Task>(pg, TASK_MODEL), { cursorSecret });
+const sort = [{ field: "id", direction: "asc" }] as const;
+
+const page2 = await tasks.findPaginated(undefined, { pagination: { page: 2, limit: 2 }, sort });
+console.log(page2.data.map((t) => t.id), page2.meta);
+
+const first = await tasks.paginateCursor(undefined, { limit: 2, sort });
+console.log(first.data.map((t) => t.id), first.meta.nextCursor);
+const next = await tasks.paginateCursor(undefined, { limit: 2, sort, cursor: first.meta.nextCursor });
+console.log(next.data.map((t) => t.id), next.meta.hasNextPage);
+
+const [, signature] = (first.meta.nextCursor ?? "").split(".");
+const forged = Buffer.from('{"id":0}').toString("base64url") + "." + signature;
+try {
+  await tasks.paginateCursor(undefined, { limit: 2, sort, cursor: forged });
+} catch (error) {
+  console.log((error as Error).name, (error as Error).message);
+}
+await client.disconnect();
+</example>
+<output mask="b64">
+[ 3, 4 ] {
+  page: 2,
+  limit: 2,
+  total: 5,
+  totalPages: 3,
+  hasNextPage: true,
+  hasPreviousPage: true,
+  hasNext: true,
+  hasPrev: true
+}
+[ 1, 2 ] eyJpZCI6Mn0.nySv_IOv5J-S0Pqx2wp7NtmJoZLgIR3kP0ZwbiFLgRY
+[ 3, 4 ] true
+TypeError Invalid pagination cursor signature.
+</output>
+<p>Page 2 of the offset pagination holds tasks 3 and 4, and <code>meta</code> has what a client needs to draw page links: the total, the number of pages, and whether there is a next or previous page.</p>
+<p>The cursor has two parts separated by a dot. The first is the position, in Base64: <code>eyJpZCI6Mn0</code> is <code>{"id":2}</code>, the last task of the first page. The second is the signature, which changes with every secret (so yours will differ). The forged cursor claimed to start at id 0 and reused a real signature, and it was refused.</p>
+<p>Two things to handle in your route:</p>
+<ul>
+<li>The refusal is a plain <code>TypeError</code>. Catch it and answer 400 Bad Request, or it becomes a 500.</li>
+<li>In version 1.2.1, <code>meta.previousCursor</code> is always empty, even when <code>hasPreviousPage</code> is <code>true</code>. Cursor pagination only goes forward: use it for "load more" and infinite scrolling, and offset pagination when users need page numbers.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="transactions">Transactions</h2>
+<p>A transaction makes several changes all-or-nothing, as you saw in <a href="/learn/databases">the databases lesson</a>. <code>withTransaction(client, callback)</code> opens one, passes a transaction client <code>tx</code> to your callback, commits if the callback returns and rolls back if it throws. Repositories join the transaction with <code>withTransaction(tx)</code>, which returns a copy bound to it:</p>
+<example file="transaction.ts" project="db" browser="no">
+import { withTransaction } from "@zudojs/database";
+import { BaseError } from "@zudojs/errors";
+import { TASK_MODEL } from "./database.js";
+import type { Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { setup } from "./setup.js";
+import { TaskRepository } from "./task.repository.js";
+
+const { pg, client } = await setup();
+const tasks = new TaskRepository(modelDelegate<Task>(pg, TASK_MODEL));
+
+try {
+  await withTransaction(client, async (tx) => {
+    const repo = tasks.withTransaction(tx);
+    await repo.create({ title: "Pack bags" });
+    await repo.create({ title: "Buy milk" }); // already exists
+  });
+} catch (error) {
+  if (error instanceof BaseError) {
+    console.log("transaction failed:", error.statusCode, error.message);
+  }
+}
+console.log("Pack bags saved?", (await tasks.findByTitle("Pack bags")) !== null);
+
+const moved = await withTransaction(client, async (tx) => {
+  const repo = tasks.withTransaction(tx);
+  await repo.update(2, { priority: "high" });
+  await repo.update(3, { priority: "normal" });
+  return repo.count({ priority: "high" });
+});
+console.log("committed, high priority tasks:", moved);
+await client.disconnect();
+</example>
+<output>
+transaction failed: 409 Task already exists.
+Pack bags saved? false
+committed, high priority tasks: 1
+</output>
+<p>The second insert failed, so the first one was rolled back too: "Pack bags" was never saved. The second transaction committed both updates together. Use the <code>tx</code>-bound repository for every query inside the callback. A query through the ordinary <code>tasks</code> repository would run outside the transaction.</p>
+<h3>Your own errors inside a transaction</h3>
+<p>There is one surprise, and it matters for an API. When your own code throws inside the callback, <code>@zudojs/database</code> 1.2.1 wraps your error in a <code>DatabaseError</code> with status 500. Your original error is kept as <code>cause</code>:</p>
+<example file="transaction-errors.ts" project="db" browser="no">
+import { withTransaction } from "@zudojs/database";
+import { BaseError, DatabaseError, NotFoundError } from "@zudojs/errors";
+import { setup } from "./setup.js";
+
+const { client } = await setup();
+
+type Client = Parameters<typeof withTransaction>[0];
+type Work<T> = Parameters<typeof withTransaction<T>>[1];
+
+async function inTransaction<T>(db: Client, work: Work<T>): Promise<T> {
+  try {
+    return await withTransaction(db, work);
+  } catch (error) {
+    // Give your own errors (404, 409, ...) back their status code.
+    if (error instanceof DatabaseError && error.cause instanceof BaseError) {
+      if (!(error.cause instanceof DatabaseError)) throw error.cause;
+    }
+    throw error;
+  }
+}
+
+for (const run of [withTransaction<void>, inTransaction<void>]) {
+  try {
+    await run(client, async () => {
+      throw new NotFoundError("Project 7 not found");
+    });
+  } catch (error) {
+    const e = error as BaseError;
+    console.log(e.name, e.statusCode, e.message);
+  }
+}
+await client.disconnect();
+</example>
+<output>
+DatabaseError 500 Project 7 not found
+NotFoundError 404 Project 7 not found
+</output>
+<p>With plain <code>withTransaction</code>, the 404 turned into a 500, so your API would answer "Internal Server Error" for a missing project. The small <code>inTransaction</code> helper gives your own errors back unchanged and still rolls the transaction back. Errors that really come from the database, such as the 409 above, stay as they are.</p>
+<p><code>withTransactionRetry(client, callback, { retries: 3 })</code> runs the whole callback again when PostgreSQL reports a <strong>serialization failure</strong> or a deadlock, two errors that mean "try again". The <a href="/learn/zudo-transactions">transactions lesson</a> goes deeper: nesting, savepoints, hooks that run after a commit, and timeouts.</p>
+</section>
+
+<section>
+<h2 id="health">Health checks and connection pools</h2>
+<p>Your <code>/health</code> route from <a href="/learn/zudo-create-project">creating the project</a> says "ok" even when the database is down. A load balancer then keeps sending traffic to a server that cannot answer. <code>checkDatabaseHealth</code> runs a tiny <code>SELECT 1</code> with a timeout and tells you the truth:</p>
+<example file="health.ts" project="db" browser="no">
+import { checkDatabaseHealth, checkDatabaseReadiness } from "@zudojs/database";
+import { setup } from "./setup.js";
+
+const { pg, client } = await setup();
+
+async function healthRoute() {
+  const health = await checkDatabaseHealth(client, { timeoutMs: 2_000 });
+  return { status: health.healthy ? 200 : 503, body: { database: health.status } };
+}
+
+console.log(await healthRoute());
+console.log("ready:", (await checkDatabaseReadiness(client)).ready);
+
+await pg.close(); // the database goes away
+console.log(await healthRoute());
+console.log("ready:", (await checkDatabaseReadiness(client)).ready);
+await client.disconnect();
+</example>
+<output>
+{ status: 200, body: { database: 'healthy' } }
+ready: true
+{ status: 503, body: { database: 'unhealthy' } }
+ready: false
+</output>
+<p>Once the database was gone, the check reported <code>unhealthy</code> and the route answered <strong>503 Service Unavailable</strong>. The body names only the status, never the error's text or the host name: a health endpoint is public.</p>
+<ul>
+<li><strong>Health</strong> (also called liveness) asks "is this process working?".</li>
+<li><strong>Readiness</strong> asks "can it take traffic right now?". During start-up, before migrations are done, a server is alive but not ready.</li>
+</ul>
+<h3>Connection pools</h3>
+<p>Opening a connection to a PostgreSQL server is slow: a network round trip, a login, some memory on the server. A <strong>connection pool</strong> opens a few connections once and lends them out, one per query or transaction, taking them back afterwards. When all are busy, the next query waits for a free one.</p>
+<p>With Prisma, the pool belongs to the driver adapter, not to <code>@zudojs/database</code>. That is why the production example at the top of this lesson passed <code>max</code>, <code>idleTimeoutMillis</code> and <code>connectionTimeoutMillis</code> to <code>PrismaPg</code>. A pool that is too big overloads the database; too small, and requests queue. Start with about 10 per server process, and remember that PostgreSQL has a total limit (often 100) shared by all your servers. PGlite is one connection inside your process, so it has no pool.</p>
+<p>For long-running servers, <code>createConnectionManager({ client, healthCheckIntervalMs, reconnect })</code> checks the connection on a timer and reconnects with growing pauses between tries when it drops.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Add a due date">
+<p>Write migration 3, <code>add-task-due-date</code>, that adds a nullable <code>due_date date</code> column to <code>tasks</code>, with a <code>down</code> that removes it. Run all migrations and print the column names of <code>tasks</code> from <code>information_schema.columns</code>.</p>
+<solution>
+<example file="due-date.ts" project="db" browser="no">
+import { createMigrationRunner } from "@zudojs/database";
+import type { Migration } from "@zudojs/database";
+import { openDatabase } from "./database.js";
+import { migrations } from "./migrations.js";
+
+const addDueDate: Migration = {
+  version: 3,
+  name: "add-task-due-date",
+  up: async (tx) => {
+    await tx.$executeRawUnsafe("ALTER TABLE tasks ADD COLUMN due_date date");
+  },
+  down: async (tx) => {
+    await tx.$executeRawUnsafe("ALTER TABLE tasks DROP COLUMN due_date");
+  },
+};
+
+const { client } = await openDatabase();
+const result = await createMigrationRunner(client, [...migrations, addDueDate]).migrate();
+console.log(result.applied.map((m) => m.version));
+
+const columns = await client.queryRawUnsafe<{ column_name: string }[]>(
+  "SELECT column_name FROM information_schema.columns WHERE table_name = $1 ORDER BY ordinal_position",
+  ["tasks"],
+);
+console.log(columns.map((c) => c.column_name));
+await client.disconnect();
+</example>
+<output>
+[ 1, 2, 3 ]
+[
+  'id',
+  'title',
+  'done',
+  'priority',
+  'created_at',
+  'deleted_at',
+  'due_date'
+]
+</output>
+<p>Remember to add <code>"dueDate"</code> to <code>TASK_MODEL.fields</code> and <code>dueDate: string | null</code> to <code>Task</code>, or the adapter's allow-list will refuse the new field.</p>
+</solution>
+</exercise>
+
+<exercise title="Open tasks by priority">
+<p>Add a method <code>openByPriority(priority)</code> to <code>TaskRepository</code> that returns the tasks that are not done and have that priority, newest first, using the query builder. Mark task 4 done and try it.</p>
+<solution>
+<example file="open-by-priority.ts" project="db" browser="no">
+import { createQueryBuilder } from "@zudojs/database";
+import { TASK_MODEL } from "./database.js";
+import type { Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { setup } from "./setup.js";
+import { TaskRepository } from "./task.repository.js";
+
+class Tasks extends TaskRepository {
+  openByPriority(priority: Task["priority"]): Promise<readonly Task[]> {
+    const query = createQueryBuilder<keyof Task>()
+      .where("done", false)
+      .where("priority", priority)
+      .orderByDesc("createdAt")
+      .orderByDesc("id");
+    return this.findByQuery(query);
+  }
+}
+
+const { pg, client } = await setup();
+const tasks = new Tasks(modelDelegate<Task>(pg, TASK_MODEL));
+await tasks.update(4, { done: true });
+console.log((await tasks.openByPriority("normal")).map((t) => t.id));
+console.log((await tasks.openByPriority("high")).map((t) => t.id));
+await client.disconnect();
+</example>
+<output>
+[ 5, 2, 1 ]
+[ 3 ]
+</output>
+<p>Sorting by <code>createdAt</code> alone is not enough here: the seed created all five tasks in one transaction, so they share a timestamp. Adding <code>id</code> as a second sort field makes the order stable.</p>
+</solution>
+</exercise>
+
+<exercise title="A safe page request">
+<p>Clients send <code>page</code> and <code>limit</code> as strings in the query string. Write <code>listTasks(query)</code> that validates them with <code>@zudojs/schema</code> (whole numbers, page at least 1, limit 1 to 50, both optional) and returns a page of tasks sorted by id. Try it with <code>{ page: "2", limit: "2" }</code> and with <code>{ limit: "5000" }</code>.</p>
+<solution>
+<example file="list-tasks.ts" project="db" browser="no">
+import { SchemaError } from "@zudojs/errors";
+import { schema } from "@zudojs/schema";
+import { TASK_MODEL } from "./database.js";
+import type { Task } from "./database.js";
+import { modelDelegate } from "./pglite-adapter.js";
+import { setup } from "./setup.js";
+import { TaskRepository } from "./task.repository.js";
+
+const PageQuery = schema.object({
+  page: schema.coerce.number().int().min(1).default(1),
+  limit: schema.coerce.number().int().min(1).max(50).default(10),
+});
+
+const { pg, client } = await setup();
+const tasks = new TaskRepository(modelDelegate<Task>(pg, TASK_MODEL));
+
+async function listTasks(query: unknown) {
+  const { page, limit } = PageQuery.parse(query);
+  const result = await tasks.findPaginated(undefined, {
+    pagination: { page, limit },
+    sort: [{ field: "id", direction: "asc" }],
+  });
+  return { tasks: result.data.map((t) => t.title), total: result.meta.total, pages: result.meta.totalPages };
+}
+
+console.log(await listTasks({ page: "2", limit: "2" }));
+try {
+  await listTasks({ limit: "5000" });
+} catch (error) {
+  if (error instanceof SchemaError) console.log(error.statusCode, error.message);
+}
+await client.disconnect();
+</example>
+<output>
+{ tasks: [ 'Call the bank', 'Read a book' ], total: 5, pages: 3 }
+400 Validation failed
+</output>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li><code>@zudojs/database</code> is a PostgreSQL layer on top of Prisma. It needs a <code>PrismaClientLike</code>: in production a generated <code>PrismaClient</code> with <code>@prisma/adapter-pg</code>, here a small adapter over PGlite.</li>
+<li>Connection strings are secrets: read them from the environment, check them at start-up, never print them.</li>
+<li><code>createMigrationRunner</code> and <code>createSeedRunner</code> apply numbered migrations and named seeds once, under a lock, and can roll them back.</li>
+<li><code>queryRawUnsafe</code> is safe only with <code>$1</code> parameters. Field names are checked against an allow-list.</li>
+<li><code>BaseRepository</code> gives you CRUD, soft delete, <code>findByQuery</code>, offset and signed cursor pagination, and maps database errors to 409 and 404.</li>
+<li><code>withTransaction</code> makes several writes all-or-nothing; bind repositories with <code>withTransaction(tx)</code>, and unwrap your own errors from its 500.</li>
+<li><code>checkDatabaseHealth</code> makes <code>/health</code> honest. Pools live in the driver adapter.</li>
+</ul>
+<p>Next, <a href="/learn/zudo-storage">storage abstractions</a> show a second, driver-independent way to store data, including files.</p>
+</section>

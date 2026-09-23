@@ -1,57 +1,214 @@
 ---
-title: Unions, narrowing and generics
-description: Handle values that can be one of several types, write functions that work for any type with generics, and discover the one thing types cannot do for a backend.
-minutes: 30
-youNeed: Lessons 6 and 7
-youBuild: A typed Result helper and a generic repository
-keywords: typescript narrowing, discriminated union, generics, unknown vs any, Result type, Promise type, JSON.parse any
+title: Generics
+description: Write one function, interface or class that works for many types without losing type safety, set rules with constraints and keyof, give type parameters defaults, and build a Result type and a generic repository.
+minutes: 35
+youNeed: Interfaces, unions and literal types
+youBuild: A typed Result helper and a generic in-memory repository for tasks and users
+keywords: typescript generics, generic function, type parameter, generic interface, generic class, extends constraint, keyof constraint, default type parameter, Result type, generic repository
 ---
 <section>
-<h2 id="narrowing">Narrowing a union</h2>
-<p>A value with a union type, such as <code>string | number</code>, could be either. Before you use it, you check which one it is. TypeScript follows your checks and <strong>narrows</strong> the type inside each branch:</p>
-<example file="narrow.ts" project="gen">
-function parseId(raw: string | number): number {
-  if (typeof raw === "number") {
-    return raw;
-  }
-  return Number.parseInt(raw, 10);
+<h2 id="why">Why generics</h2>
+<p>Here is a small helper that returns the first task in a list, and the same helper for users:</p>
+<example file="why.ts" project="gen">
+interface Task { id: number; title: string }
+interface User { id: number; name: string }
+
+function firstTask(items: Task[]): Task | undefined {
+  return items[0];
 }
 
-console.log(parseId(7));
-console.log(parseId("42"));
-console.log(parseId("abc"));
+function firstUser(items: User[]): User | undefined {
+  return items[0];
+}
+
+console.log(firstTask([{ id: 1, title: "Buy milk" }])?.title);
+console.log(firstUser([{ id: 7, name: "Ada" }])?.name);
 </example>
 <output>
-7
-42
-NaN
+Buy milk
+Ada
 </output>
-<p>Inside the <code>if</code>, <code>raw</code> is a <code>number</code>. After it, TypeScript knows it can only be a <code>string</code>. The last line shows why a backend cannot stop there: <code>"abc"</code> is a string, so the types are happy, and yet the result is <code>NaN</code>, "not a number". You will fix that properly in lesson 9.</p>
+<p>The two bodies are identical. Only the types differ. You could write one version with <code>any</code>, but you learned in <a href="/learn/ts-types#any-unknown">Basic types</a> what that costs:</p>
+<example file="any-first.ts" project="gen">
+function firstAny(items: any[]): any {
+  return items[0];
+}
+
+const title = firstAny(["Buy milk", "Call Ada"]);
+try {
+  console.log(title.toFixed(2));
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+TypeError: title.toFixed is not a function
+</output>
+<p>It compiles, and crashes. The compiler forgot that the list held strings. A <strong>generic</strong> is the fix: a function (or interface, or class) with a <strong>type parameter</strong>, a placeholder for a type that the caller fills in.</p>
 </section>
 
 <section>
-<h2 id="discriminated">Results instead of surprises</h2>
-<p>Many ZudoJS functions do not throw when something goes wrong. They return an object that says whether it worked. The trick is a property, here <code>ok</code>, whose literal value tells the two shapes apart. That is a <strong>discriminated union</strong>:</p>
-<example file="result.ts" project="gen">
-type Result =
-  | { ok: true; value: number }
-  | { ok: false; error: string };
+<h2 id="generic-functions">Generic functions</h2>
+<p>A type parameter goes in angle brackets before the parameter list. By convention a single one is called <code>T</code> (for "type"):</p>
+<example file="first.ts" project="gen">
+function first<T>(items: readonly T[]): T | undefined {
+  return items[0];
+}
 
-function parsePort(raw: string): Result {
+const title = first(["Buy milk", "Call Ada"]);
+const count = first([3, 1, 2]);
+const nothing = first<string>([]);
+
+console.log(title?.toUpperCase(), (count ?? 0) + 1, nothing);
+</example>
+<output>
+BUY MILK 4 undefined
+</output>
+<p>When you call <code>first(["Buy milk", "Call Ada"])</code>, TypeScript sees an array of strings, so <code>T</code> becomes <code>string</code> and <code>title</code> is <code>string | undefined</code>. For <code>[3, 1, 2]</code>, <code>T</code> is <code>number</code>. This is <strong>inference</strong> again. With an empty array there is nothing to infer from, so you pass the type yourself: <code>first&lt;string&gt;([])</code>.</p>
+<p>A function can have several type parameters. This one turns a list into a <code>Map</code>, looked up by a key that a callback picks:</p>
+<example file="index-by.ts" project="gen">
+function indexBy<T, K>(items: readonly T[], keyOf: (item: T) => K): Map<K, T> {
+  const map = new Map<K, T>();
+  for (const item of items) map.set(keyOf(item), item);
+  return map;
+}
+
+const users = [
+  { id: 1, email: "ada@example.com", name: "Ada" },
+  { id: 2, email: "grace@example.com", name: "Grace" },
+];
+
+const byEmail = indexBy(users, (user) => user.email);
+const byId = indexBy(users, (user) => user.id);
+
+console.log(byEmail.get("grace@example.com")?.name);
+console.log(byId.get(1)?.name, byId.size);
+</example>
+<output>
+Grace
+Ada 2
+</output>
+<p><code>T</code> is inferred from the list and <code>K</code> from what the callback returns: <code>string</code> for <code>byEmail</code>, <code>number</code> for <code>byId</code>. So <code>byId.get("1")</code> would be a type error, which is right, because the map's keys are numbers.</p>
+<p>You have used generic types since the first lessons without the name: <code>Array&lt;string&gt;</code>, <code>Promise&lt;Task&gt;</code> and <code>Map&lt;K, T&gt;</code> are all generic types from JavaScript's standard library.</p>
+</section>
+
+<section>
+<h2 id="generic-types">Generic interfaces and types</h2>
+<p>Interfaces and type aliases can take type parameters too. An API that returns long lists sends them one page at a time. The page shape is the same for tasks and users; only the items differ:</p>
+<example file="page.ts" project="gen">
+interface Page<T> {
+  readonly items: readonly T[];
+  readonly page: number;
+  readonly totalPages: number;
+}
+
+function paginate<T>(all: readonly T[], page: number, size: number): Page<T> {
+  const start = (page - 1) * size;
+  return { items: all.slice(start, start + size), page, totalPages: Math.ceil(all.length / size) };
+}
+
+const titles = ["Buy milk", "Call Ada", "File taxes", "Fix bug", "Water plants"];
+const second: Page<string> = paginate(titles, 2, 2);
+console.log(second);
+</example>
+<output>
+{ items: [ 'File taxes', 'Fix bug' ], page: 2, totalPages: 3 }
+</output>
+<p>A generic type is like a function for types: <code>Page&lt;string&gt;</code> "calls" <code>Page</code> with <code>T = string</code>, and gives an object whose <code>items</code> are strings.</p>
+</section>
+
+<section>
+<h2 id="constraints">Constraints: extends and keyof</h2>
+<p>Inside a generic function, <code>T</code> could be anything, so TypeScript lets you do almost nothing with it. Try to read an <code>id</code>:</p>
+<example file="find.ts" project="gen" check="tsc-error">
+function findById<T>(items: readonly T[], id: number): T | undefined {
+  return items.find((item) => item.id === id);
+}
+</example>
+<output kind="tsc">
+find.ts:2:36 - error TS2339: Property 'id' does not exist on type 'T'.
+
+2   return items.find((item) => item.id === id);
+                                     ~~
+
+
+Found 1 error in find.ts:2
+</output>
+<p>That is correct: someone could call <code>findById([1, 2, 3], 1)</code>, and numbers have no <code>id</code>. A <strong>constraint</strong>, written <code>T extends …</code>, sets a rule for <code>T</code>: "any type, as long as it has at least this shape".</p>
+<example file="find.ts" project="gen">
+function findById<T extends { id: number }>(items: readonly T[], id: number): T | undefined {
+  return items.find((item) => item.id === id);
+}
+
+function pluck<T, K extends keyof T>(items: readonly T[], key: K): T[K][] {
+  return items.map((item) => item[key]);
+}
+
+const tasks = [
+  { id: 1, title: "Buy milk", done: false },
+  { id: 2, title: "Call Ada", done: true },
+];
+
+console.log(findById(tasks, 2)?.title);
+console.log(pluck(tasks, "title"));
+console.log(pluck(tasks, "done"));
+</example>
+<output>
+Call Ada
+[ 'Buy milk', 'Call Ada' ]
+[ false, true ]
+</output>
+<ul>
+<li><code>T extends { id: number }</code>: <code>T</code> can be a task, a user, anything with a numeric <code>id</code>. And the result is still the full <code>T</code>: <code>findById(tasks, 2)?.title</code> works.</li>
+<li><code>keyof T</code> is the union of <code>T</code>'s property names, here <code>"id" | "title" | "done"</code>. <code>K extends keyof T</code> means "one of those names", and <code>T[K]</code> is the type of that property. So <code>pluck(tasks, "title")</code> is a <code>string[]</code> and <code>pluck(tasks, "done")</code> a <code>boolean[]</code>.</li>
+</ul>
+<p>A name that is not a property is refused:</p>
+<example file="pluck-typo.ts" project="gen" check="tsc-error">
+function pluck<T, K extends keyof T>(items: readonly T[], key: K): T[K][] {
+  return items.map((item) => item[key]);
+}
+
+pluck([{ id: 1, title: "Buy milk" }], "titel");
+</example>
+<output kind="tsc">
+pluck-typo.ts:5:39 - error TS2345: Argument of type '"titel"' is not assignable to parameter of type '"id" | "title"'.
+
+5 pluck([{ id: 1, title: "Buy milk" }], "titel");
+                                        ~~~~~~~
+
+
+Found 1 error in pluck-typo.ts:5
+</output>
+<p><code>keyof</code> and <code>T[K]</code> get a full section of their own in <a href="/learn/ts-advanced">Advanced and utility types</a>.</p>
+</section>
+
+<section>
+<h2 id="result">A Result type, with defaults</h2>
+<p>Many functions can fail in expected ways: a port number out of range, a missing record. Instead of throwing, they can return an object that says whether it worked. You know the tool for that from <a href="/learn/ts-objects#discriminated">Interfaces, unions and literal types</a>: a discriminated union. Made generic, it works for any value and any error:</p>
+<example file="result.ts" project="gen">
+export type Result<T, E = string> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: E };
+
+export function ok<T>(value: T): Result<T, never> {
+  return { ok: true, value };
+}
+
+export function err<E>(error: E): Result<never, E> {
+  return { ok: false, error };
+}
+
+function parsePort(raw: string): Result<number> {
   const port = Number(raw);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    return { ok: false, error: `"${raw}" is not a valid port` };
+    return err(`"${raw}" is not a valid port`);
   }
-  return { ok: true, value: port };
+  return ok(port);
 }
 
 for (const input of ["3000", "99999", "http"]) {
   const result = parsePort(input);
-  if (result.ok) {
-    console.log("port", result.value);
-  } else {
-    console.log("error:", result.error);
-  }
+  console.log(result.ok ? `port ${result.value}` : `error: ${result.error}`);
 }
 </example>
 <output>
@@ -59,45 +216,17 @@ port 3000
 error: "99999" is not a valid port
 error: "http" is not a valid port
 </output>
-<p>After <code>if (result.ok)</code>, TypeScript knows <code>result</code> has a <code>value</code>. In the <code>else</code> branch it knows it has an <code>error</code>. Try to read <code>result.value</code> in the <code>else</code> branch and <code>tsc</code> refuses. You cannot forget the failure case.</p>
+<ul>
+<li><code>E = string</code> is a <strong>default type parameter</strong>. <code>Result&lt;number&gt;</code> means <code>Result&lt;number, string&gt;</code>. Pass a second type when you need a different error: <code>Result&lt;User, "not-found" | "suspended"&gt;</code>.</li>
+<li><code>ok</code> returns <code>Result&lt;T, never&gt;</code>: a success can never hold an error, so it fits any <code>Result&lt;T, E&gt;</code>. The same goes for <code>err</code>.</li>
+<li>After <code>result.ok</code>, TypeScript knows which member you have. You cannot read <code>result.value</code> without checking first, so you cannot forget the failure case.</li>
+</ul>
+<p>Some ZudoJS packages use this idea: <code>@zudojs/schema</code>'s <code>safeParse</code> returns a result object with a <code>success</code> flag instead of throwing.</p>
 </section>
 
 <section>
-<h2 id="generics">Generics: one function, any type</h2>
-<p>That <code>Result</code> only works for numbers. You want the same shape for tasks, users, anything. A <strong>generic</strong> type takes a type as a parameter, written in angle brackets:</p>
-<example file="generic.ts" project="gen">
-type Result<T> =
-  | { ok: true; value: T }
-  | { ok: false; error: string };
-
-function first<T>(items: T[]): Result<T> {
-  if (items.length === 0) {
-    return { ok: false, error: "the list is empty" };
-  }
-  return { ok: true, value: items[0]! };
-}
-
-const title = first(["Buy milk", "Call Ada"]);
-const count = first([3, 1, 2]);
-const none = first<string>([]);
-
-if (title.ok) console.log(title.value.toUpperCase());
-if (count.ok) console.log(count.value + 1);
-if (!none.ok) console.log(none.error);
-</example>
-<output>
-BUY MILK
-4
-the list is empty
-</output>
-<p><code>T</code> is a placeholder. When you call <code>first(["Buy milk", ...])</code>, TypeScript sees an array of strings, so <code>T</code> becomes <code>string</code> and <code>title.value</code> is a string. For <code>[3, 1, 2]</code>, <code>T</code> is <code>number</code>. With an empty array there is nothing to infer from, so you pass the type yourself: <code>first&lt;string&gt;([])</code>.</p>
-<p>The <code>!</code> in <code>items[0]!</code> tells TypeScript "I checked, this is not undefined". Use it only right after a check like the <code>length</code> test above.</p>
-<p>You have already used generic types without noticing: <code>Task[]</code> is short for <code>Array&lt;Task&gt;</code>, and an <code>async</code> function that returns a task returns a <code>Promise&lt;Task&gt;</code>.</p>
-</section>
-
-<section>
-<h2 id="repository">A generic repository</h2>
-<p>Here is a pattern ZudoJS uses everywhere: a <strong>repository</strong>, the one place that stores and finds one kind of record. Written once with a generic, it works for tasks, users or anything with an <code>id</code>:</p>
+<h2 id="repository">Generic classes: a repository</h2>
+<p>Classes can be generic too. Here is a pattern ZudoJS uses everywhere: a <strong>repository</strong>, the one place that stores and finds one kind of record. Written once, it works for tasks, users or anything with an <code>id</code>:</p>
 <example file="repository.ts" project="gen">
 interface Entity {
   readonly id: number;
@@ -115,91 +244,46 @@ class MemoryRepository<T extends Entity> {
     return this.items.get(id);
   }
 
-  async findAll(): Promise<T[]> {
-    return [...this.items.values()];
+  async findWhere(match: (item: T) => boolean): Promise<T[]> {
+    return [...this.items.values()].filter(match);
   }
 }
 
-interface Task extends Entity {
-  title: string;
-  done: boolean;
-}
+interface Task extends Entity { title: string; done: boolean }
+interface User extends Entity { email: string }
 
 const tasks = new MemoryRepository<Task>();
 await tasks.save({ id: 1, title: "Buy milk", done: false });
 await tasks.save({ id: 2, title: "Call Ada", done: true });
 
+const users = new MemoryRepository<User>();
+await users.save({ id: 1, email: "ada@example.com" });
+
 console.log(await tasks.findById(2));
-console.log((await tasks.findAll()).length);
+console.log((await tasks.findWhere((task) => !task.done)).map((task) => task.title));
+console.log((await users.findById(1))?.email);
 </example>
 <output>
 { id: 2, title: 'Call Ada', done: true }
-2
+[ 'Buy milk' ]
+ada@example.com
 </output>
 <ul>
-<li><code>T extends Entity</code> means "any type, as long as it has an <code>id</code>". Without that rule, <code>item.id</code> would be an error.</li>
-<li><code>private readonly items</code> can only be used inside the class, and never replaced. A <code>Map</code> is a built-in key-to-value store.</li>
-<li>The methods are <code>async</code> even though a <code>Map</code> answers instantly, because a real database will not. Swapping this class for a database later will not change any code that uses it.</li>
+<li><code>new MemoryRepository&lt;Task&gt;()</code> fixes <code>T</code> for that object. <code>tasks.save</code> now only accepts tasks, and <code>findById</code> returns a <code>Task</code>. Try <code>tasks.save({ id: 3, email: "x" })</code>: it is a type error.</li>
+<li><code>private readonly items</code> can only be used inside the class and never replaced. <a href="/learn/ts-classes">Classes in TypeScript</a> covers these words.</li>
+<li>The methods are <code>async</code> even though a <code>Map</code> answers instantly, because a real database will not. Swapping this class for a database version later will not change any code that uses it.</li>
 </ul>
-</section>
-
-<section>
-<h2 id="unknown">unknown, any, and the gap types cannot close</h2>
-<p>TypeScript has two "I don't know" types:</p>
-<ul>
-<li><code>any</code> switches type checking off. Anything goes, nothing is checked. Avoid it.</li>
-<li><code>unknown</code> means "could be anything, so prove what it is before you use it". The compiler refuses to let you use it until you narrow it.</li>
-</ul>
-<example file="unknown.ts" project="gen" check="tsc-error" browser="no">
-const body: unknown = JSON.parse('{"title":"Buy milk"}');
-
-console.log(body.title);
-</example>
-<output kind="tsc">
-unknown.ts:3:13 - error TS18046: 'body' is of type 'unknown'.
-
-3 console.log(body.title);
-              ~~~~
-
-
-Found 1 error in unknown.ts:3
-</output>
-<p>To use it, you would have to check first: <code>typeof body === "object"</code>, then that it has a <code>title</code>, then that the title is a string. That is tedious to write by hand for every request, which is exactly the problem the next section shows.</p>
-<p>Now the problem that matters most for a backend. <code>JSON.parse</code> is declared to return <code>any</code>, so you can put its result straight into a typed variable, and the compiler believes you:</p>
-<example file="gap.ts" project="gen">
-interface Task {
-  title: string;
-  done: boolean;
-}
-
-const requestBody = '{"title": 42, "done": "sometimes"}';
-const task: Task = JSON.parse(requestBody);
-
-console.log(typeof task.title, typeof task.done);
-
-try {
-  console.log(task.title.toUpperCase());
-} catch (error) {
-  console.log(String(error));
-}
-</example>
-<output>
-number string
-TypeError: task.title.toUpperCase is not a function
-</output>
-<p>This file passes <code>tsc</code> with no errors, then fails when it runs. Without the <code>try</code>, the program would crash. The types said <code>title</code> was a string. The data said otherwise, and the data won, because types are removed before the code runs (lesson 6).</p>
-<p>Every request that reaches your API is text like <code>requestBody</code>, sent by someone else. TypeScript cannot check it. Something has to check it <strong>while the program runs</strong>, and turn it into a value that really matches the type. That is the first job ZudoJS will do for you, in the next lesson.</p>
 </section>
 
 <section>
 <h2 id="practice">Practice</h2>
 <exercise title="A generic findOrFail">
-<p>Write a generic function <code>findOrFail&lt;T extends { id: number }&gt;(items: T[], id: number): Result&lt;T&gt;</code> that returns the item, or an error <code>"Item 7 not found"</code>. Try it with tasks.</p>
+<p>Using the <code>Result</code> type from this lesson, write <code>findOrFail&lt;T extends { id: number }&gt;(items: readonly T[], id: number): Result&lt;T&gt;</code> that returns the item, or the error <code>"Item 7 not found"</code>.</p>
 <solution>
-<example file="find-or-fail.ts" project="practice">
-type Result<T> = { ok: true; value: T } | { ok: false; error: string };
+<example file="find-or-fail.ts" project="ex-find">
+type Result<T, E = string> = { ok: true; value: T } | { ok: false; error: E };
 
-function findOrFail<T extends { id: number }>(items: T[], id: number): Result<T> {
+function findOrFail<T extends { id: number }>(items: readonly T[], id: number): Result<T> {
   const item = items.find((i) => i.id === id);
   return item ? { ok: true, value: item } : { ok: false, error: `Item ${id} not found` };
 }
@@ -211,12 +295,74 @@ const tasks = [
 
 const found = findOrFail(tasks, 2);
 const missing = findOrFail(tasks, 7);
-console.log(found.ok && found.value.title);
-console.log(!missing.ok && missing.error);
+if (found.ok) console.log(found.value.title);
+if (!missing.ok) console.log(missing.error);
 </example>
 <output>
 Call Ada
 Item 7 not found
+</output>
+</solution>
+</exercise>
+<exercise title="Group by a key">
+<p>Write <code>groupBy&lt;T, K&gt;(items: readonly T[], keyOf: (item: T) =&gt; K): Map&lt;K, T[]&gt;</code>. Group tasks by their <code>status</code> and print how many are in each group.</p>
+<solution>
+<example file="group-by.ts" project="ex-group">
+function groupBy<T, K>(items: readonly T[], keyOf: (item: T) => K): Map<K, T[]> {
+  const groups = new Map<K, T[]>();
+  for (const item of items) {
+    const key = keyOf(item);
+    const group = groups.get(key) ?? [];
+    group.push(item);
+    groups.set(key, group);
+  }
+  return groups;
+}
+
+type Status = "todo" | "doing" | "done";
+const tasks: { title: string; status: Status }[] = [
+  { title: "Buy milk", status: "done" },
+  { title: "Fix bug", status: "doing" },
+  { title: "Call Ada", status: "done" },
+];
+
+for (const [status, group] of groupBy(tasks, (task) => task.status)) {
+  console.log(status, group.length);
+}
+</example>
+<output>
+done 2
+doing 1
+</output>
+</solution>
+</exercise>
+<exercise title="A typed stack">
+<p>Write a class <code>Stack&lt;T&gt;</code> with <code>push(item: T): void</code>, <code>pop(): T | undefined</code> and a <code>size</code> getter. Use it for an "undo" list of task titles.</p>
+<solution>
+<example file="stack.ts" project="ex-stack">
+class Stack<T> {
+  private readonly items: T[] = [];
+
+  push(item: T): void {
+    this.items.push(item);
+  }
+
+  pop(): T | undefined {
+    return this.items.pop();
+  }
+
+  get size(): number {
+    return this.items.length;
+  }
+}
+
+const undo = new Stack<string>();
+undo.push("rename: Buy milk");
+undo.push("delete: Call Ada");
+console.log(undo.pop(), undo.size);
+</example>
+<output>
+delete: Call Ada 1
 </output>
 </solution>
 </exercise>
@@ -225,10 +371,10 @@ Item 7 not found
 <section>
 <h2 id="recap">Recap</h2>
 <ul>
-<li>Check a union's type with <code>typeof</code> or a shared literal property, and TypeScript narrows it for you.</li>
-<li>A discriminated union like <code>{ ok: true; value } | { ok: false; error }</code> makes failure impossible to ignore.</li>
-<li>Generics (<code>&lt;T&gt;</code>) let one function or class work for many types. <code>T extends Entity</code> sets rules for <code>T</code>.</li>
-<li>Prefer <code>unknown</code> to <code>any</code>. And remember: data from outside your program is never checked by types. You need a runtime check.</li>
+<li>A generic has type parameters (<code>&lt;T&gt;</code>) that the caller fills in, usually by inference. It keeps full type safety where <code>any</code> would lose it.</li>
+<li>Functions, interfaces, type aliases and classes can all be generic.</li>
+<li><code>T extends Shape</code> sets a rule for <code>T</code>. <code>K extends keyof T</code> means "one of <code>T</code>'s property names", and <code>T[K]</code> is that property's type.</li>
+<li><code>E = string</code> gives a type parameter a default.</li>
+<li><code>Result&lt;T, E&gt;</code> makes failure part of the return type; a generic repository stores any kind of record.</li>
 </ul>
-<p>You now know enough TypeScript to read and write ZudoJS code. Time to install it.</p>
 </section>

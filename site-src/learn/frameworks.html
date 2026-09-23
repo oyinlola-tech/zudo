@@ -1,0 +1,258 @@
+---
+title: What a framework does
+description: The difference between a library and a framework, inversion of control, and the jobs a backend framework takes over: lifecycle, dependency injection, routing, configuration, validation, database access, testing and application structure. Build a tiny framework to see how it works inside.
+minutes: 30
+youNeed: "Backend architecture"
+youBuild: A 40-line framework that starts modules in dependency order and stops them in reverse
+keywords: library vs framework, inversion of control, hollywood principle, what is a backend framework, application lifecycle, dependency order, graceful shutdown, framework responsibilities, why use a framework
+---
+<section>
+<h2 id="library">Libraries and frameworks</h2>
+<p>You have used plenty of other people's code already: <code>node:http</code>, PGlite, <code>tsx</code>. There are two very different ways to use code that someone else wrote.</p>
+<p>A <strong>library</strong> is code <em>you</em> call. You decide when, and your code stays in charge:</p>
+<example file="library.ts" project="fw">
+function formatPrice(cents: number): string {
+  return (cents / 100).toFixed(2);
+}
+
+const prices = [1299, 999, 1499];
+for (const cents of prices) {
+  console.log(formatPrice(cents));
+}
+</example>
+<output>
+12.99
+9.99
+14.99
+</output>
+<p>Your loop calls <code>formatPrice</code>. <code>formatPrice</code> has no idea a loop exists. That is the library relationship: the control flow is yours.</p>
+<p>A <strong>framework</strong> works the other way round. You write pieces, hand them to the framework, and <strong>it</strong> decides when to call them. You already saw this: in the BookStore you gave handlers to the router, and the router called them when a request arrived. This flip is called <strong>inversion of control</strong>, sometimes summed up as "don't call us, we'll call you".</p>
+<p>Inversion of control is not a loss. It is the point. Code that is called at the right time, in the right order, by something that has done it a thousand times, is code you no longer write or debug.</p>
+</section>
+
+<section>
+<h2 id="mini">A framework in 40 lines</h2>
+<p>The BookStore review listed "no lifecycle": nothing starts the database before the server, and nothing closes them in reverse. Here is a tiny framework that does exactly that. You describe <strong>modules</strong>, each with a name, what it depends on, and optional <code>start</code> and <code>stop</code> functions. The framework works out the order:</p>
+<example file="framework.ts" project="fw">
+export interface Module {
+  readonly name: string;
+  readonly dependsOn?: readonly string[];
+  start?(): void | Promise<void>;
+  stop?(): void | Promise<void>;
+}
+
+function startOrder(modules: readonly Module[]): Module[] {
+  const byName = new Map(modules.map((module) => [module.name, module]));
+  const ordered: Module[] = [];
+  const visiting = new Set<string>();
+  const visit = (module: Module): void => {
+    if (ordered.includes(module)) return;
+    if (visiting.has(module.name)) throw new Error(`Circular dependency at "${module.name}"`);
+    visiting.add(module.name);
+    for (const name of module.dependsOn ?? []) {
+      const dependency = byName.get(name);
+      if (dependency === undefined) throw new Error(`"${module.name}" needs "${name}", which is not registered`);
+      visit(dependency);
+    }
+    ordered.push(module);
+  };
+  modules.forEach(visit);
+  return ordered;
+}
+
+export function createApp(modules: readonly Module[]) {
+  const started: Module[] = [];
+  return {
+    async start(): Promise<void> {
+      for (const module of startOrder(modules)) {
+        await module.start?.();
+        started.push(module);
+      }
+    },
+    async stop(): Promise<void> {
+      for (const module of started.reverse()) {
+        await module.stop?.();
+      }
+      started.length = 0;
+    },
+  };
+}
+</example>
+<ul>
+<li><code>startOrder</code> visits each module's dependencies <em>before</em> the module itself, so every module lands after the ones it needs. Computer scientists call this a <strong>topological sort</strong>.</li>
+<li><code>visiting</code> remembers which modules are being visited right now. Meeting one of them again means A needs B needs A: a cycle that can never start, so the framework refuses clearly.</li>
+<li><code>module.start?.()</code> calls <code>start</code> only if the module has one (<a href="/learn/js-modern">Modern JavaScript</a> introduced <code>?.</code>).</li>
+<li><code>stop</code> walks the started modules <strong>in reverse</strong>: the server stops taking requests before the database it uses is closed.</li>
+</ul>
+<p>Now use it. The modules are listed in a random order on purpose:</p>
+<example file="main.ts" project="fw">
+import { createApp } from "./framework.js";
+import type { Module } from "./framework.js";
+
+function logged(name: string, dependsOn: string[] = []): Module {
+  return {
+    name,
+    dependsOn,
+    start: () => console.log("start", name),
+    stop: () => console.log("stop ", name),
+  };
+}
+
+const app = createApp([
+  logged("http", ["orders", "config"]),
+  logged("orders", ["database"]),
+  logged("database", ["config"]),
+  logged("config"),
+]);
+
+await app.start();
+console.log("-- the app is running --");
+await app.stop();
+</example>
+<output>
+start config
+start database
+start orders
+start http
+-- the app is running --
+stop  http
+stop  orders
+stop  database
+stop  config
+</output>
+<p>You never wrote "start config first". You only said what each module needs, and the framework called your functions in a safe order, then in the reverse order. That is inversion of control doing real work. A mistake in the setup is caught before anything starts:</p>
+<example file="broken.ts" project="fw">
+import { createApp } from "./framework.js";
+
+const app = createApp([
+  { name: "http", dependsOn: ["database"] },
+  { name: "database", dependsOn: ["cache"] },
+]);
+
+try {
+  await app.start();
+} catch (error) {
+  console.log(error instanceof Error ? error.message : error);
+}
+</example>
+<output>
+"database" needs "cache", which is not registered
+</output>
+</section>
+
+<section>
+<h2 id="jobs">What a backend framework takes over</h2>
+<p>A real framework does many such jobs. Here is each one, next to what it cost you in the BookStore, and the ZudoJS package that does it. You will meet all of them in the coming parts of the course.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Job</th><th>By hand in the BookStore</th><th>What a framework gives you</th><th>In ZudoJS</th></tr></thead>
+<tbody>
+<tr><td><strong>Lifecycle</strong></td><td>Nothing. <kbd>Ctrl</kbd> + <kbd>C</kbd> cut requests off and never closed the database.</td><td>Start in dependency order, stop in reverse, react to <code>SIGTERM</code>, undo a half-finished start, report readiness.</td><td><a href="/docs/packages-runtime">@zudojs/runtime</a>, <a href="/docs/packages-lifecycle">@zudojs/lifecycle</a></td></tr>
+<tr><td><strong>Dependency injection</strong></td><td><code>createRouter</code> built every repository and threaded the secret through by hand.</td><td>A <strong>container</strong>: register each service once, and ask for it by name wherever it is needed.</td><td><a href="/docs/packages-container">@zudojs/container</a></td></tr>
+<tr><td><strong>Routing and middleware</strong></td><td>Your own router, JSON reader, body limit and error mapping.</td><td>A tested router with path parameters, middleware pipelines and consistent responses.</td><td><a href="/docs/packages-http">@zudojs/http</a>, <a href="/docs/packages-middleware">@zudojs/middleware</a></td></tr>
+<tr><td><strong>Configuration</strong></td><td>Four environment variables, each parsed by hand.</td><td>Layered sources (defaults, files, environment), types, validation, and secrets hidden from logs.</td><td><a href="/docs/packages-config">@zudojs/config</a></td></tr>
+<tr><td><strong>Validation</strong></td><td><code>text</code>, <code>whole</code> and a parser per body, separate from the interfaces.</td><td>Describe the data once; get the runtime check and the TypeScript type from it.</td><td><a href="/docs/packages-schema">@zudojs/schema</a></td></tr>
+<tr><td><strong>Errors</strong></td><td>Your own error classes and codes.</td><td>Ready-made errors with status codes and stable codes shared by every package.</td><td><a href="/docs/packages-errors">@zudojs/errors</a></td></tr>
+<tr><td><strong>Database access</strong></td><td>A <code>Queryable</code> interface, <code>IF NOT EXISTS</code> migrations, error codes checked by hand.</td><td>Clients, repositories, migrations and transactions behind one interface.</td><td><a href="/docs/packages-database">@zudojs/database</a>, <a href="/docs/packages-transactions">@zudojs/transactions</a></td></tr>
+<tr><td><strong>Security</strong></td><td>Hashing and tokens by hand; no rate limit, no security headers.</td><td>Password hashing, JWTs, rate limiting, CORS, CSRF and security headers with safe defaults.</td><td><a href="/docs/packages-auth">@zudojs/auth</a>, <a href="/docs/packages-security">@zudojs/security</a></td></tr>
+<tr><td><strong>Testing</strong></td><td>Build a database, a secret and a server for every API test.</td><td>Test helpers, fakes and a test client that start the app for you.</td><td><a href="/docs/packages-testing">@zudojs/testing</a></td></tr>
+<tr><td><strong>Application architecture</strong></td><td>You chose the folders and the layers yourself.</td><td>A standard project layout and modules, created by a CLI, so every project looks alike.</td><td><a href="/docs/packages-core">@zudojs/core</a>, <a href="/docs/packages-cli">zudojs-cli</a></td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="cost">What a framework costs</h2>
+<p>A framework is not free. Be honest about the trade:</p>
+<ul>
+<li><strong>Learning.</strong> You must learn its names and rules before you are fast with it. This course spends many lessons on that.</li>
+<li><strong>Its way, not yours.</strong> A framework has opinions about structure. When your problem does not fit them, you work around them.</li>
+<li><strong>Staying power.</strong> Your code depends on the framework's future. Pick one that is maintained and whose parts you can replace.</li>
+</ul>
+<p>For a 50-line script, a framework is too much. For a backend with users, a database, several developers and a production server, the jobs in the table above are not optional. Either a framework does them, or you do, one bug at a time. You have now done most of them yourself, so you know what you are buying.</p>
+</section>
+
+<section>
+<h2 id="ready">Now you are ready for ZudoJS</h2>
+<p>Look at how far you came. You can write JavaScript and TypeScript, run a Node.js server, design a REST API, use SQL and PostgreSQL, hash passwords, sign tokens, test your code, and split a backend into layers. You also know, from experience, which parts of a backend are tedious and risky to build alone.</p>
+<p>That is exactly the knowledge ZudoJS assumes. It is a set of small packages that each take over one of the jobs above, and a CLI that puts them together into a project. The next lesson is a tour of what it contains and how the pieces fit.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Spot the cycle">
+<p>Give the mini framework three modules where <code>orders</code> needs <code>payments</code>, <code>payments</code> needs <code>mailer</code>, and <code>mailer</code> needs <code>orders</code>. What does <code>start</code> do?</p>
+<solution>
+<example file="cycle.ts" project="fw">
+import { createApp } from "./framework.js";
+
+const app = createApp([
+  { name: "orders", dependsOn: ["payments"] },
+  { name: "payments", dependsOn: ["mailer"] },
+  { name: "mailer", dependsOn: ["orders"] },
+]);
+
+try {
+  await app.start();
+} catch (error) {
+  console.log(error instanceof Error ? error.message : error);
+}
+</example>
+<output>
+Circular dependency at "orders"
+</output>
+<p>None of the three can go first, so nothing starts. Break the loop by moving the shared part into a module that the others depend on.</p>
+</solution>
+</exercise>
+<exercise title="Undo a failed start">
+<p>If the database fails to start, the config module is already running and is never stopped. Write <code>startAll(modules)</code>: it starts the modules in the given order, and if one throws, it stops the ones already started, in reverse, then rethrows the error.</p>
+<solution>
+<example file="rollback.ts" project="fw">
+import type { Module } from "./framework.js";
+
+async function startAll(modules: readonly Module[]): Promise<Module[]> {
+  const started: Module[] = [];
+  try {
+    for (const module of modules) {
+      await module.start?.();
+      started.push(module);
+    }
+    return started;
+  } catch (error) {
+    for (const module of [...started].reverse()) {
+      await module.stop?.();
+    }
+    throw error;
+  }
+}
+
+const modules: Module[] = [
+  { name: "config", start: () => console.log("start config"), stop: () => console.log("stop  config") },
+  { name: "database", start: () => { throw new Error("connection refused"); } },
+  { name: "http", start: () => console.log("start http") },
+];
+
+try {
+  await startAll(modules);
+} catch (error) {
+  console.log("could not start:", error instanceof Error ? error.message : error);
+}
+</example>
+<output>
+start config
+stop  config
+could not start: connection refused
+</output>
+<p>This is called a <strong>rollback</strong>. <code>@zudojs/runtime</code> does it for you, along with timeouts and shutdown signals.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>You call a library. A framework calls you: that is inversion of control.</li>
+<li>A framework starts parts in dependency order, stops them in reverse, and refuses a broken setup before anything runs.</li>
+<li>A backend framework takes over lifecycle, dependency injection, routing, configuration, validation, errors, database access, security, testing and project structure.</li>
+<li>It costs learning time and some freedom. For a real backend, the jobs it does must be done anyway.</li>
+</ul>
+</section>

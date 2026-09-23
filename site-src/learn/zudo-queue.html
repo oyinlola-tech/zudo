@@ -1,0 +1,521 @@
+---
+title: Background jobs
+description: Move slow and unreliable work out of the request and into a job queue. Queues, jobs, processors, workers, concurrency, retries with exponential backoff, delayed jobs, dead letters and graceful shutdown with @zudojs/queue.
+minutes: 45
+youNeed: The messaging lesson
+youBuild: A reminder-email job for the Task API that retries on failure and never disappears silently
+keywords: zudojs queue, background jobs, job queue, worker, concurrency, retry, exponential backoff, jitter, delayed job, dead letter queue, graceful shutdown, idempotent
+---
+<section>
+<h2 id="why">Why background jobs</h2>
+<p>At the end of <a href="/learn/zudo-messaging">the messaging lesson</a>, the Task API sent a reminder email <em>while the user waited</em>. Three things are wrong with that:</p>
+<ul>
+<li><strong>It is slow.</strong> If the mail server needs 2 seconds, the request needs 2 seconds.</li>
+<li><strong>It is fragile.</strong> If the mail server is down for a minute, the request fails, even though the user's task is fine.</li>
+<li><strong>It can be lost.</strong> If the process crashes halfway, nobody knows the email was never sent.</li>
+</ul>
+<p>A <strong>job queue</strong> fixes all three. The request only writes down what needs to be done, a <strong>job</strong>, and answers straight away with 202 Accepted. A separate loop, the <strong>worker</strong>, takes jobs off the queue one by one and runs a <strong>processor</strong>, the function that does the work. If the processor fails, the queue tries again later. If every try fails, the job is parked where a person can look at it, instead of vanishing.</p>
+<p>Use a queue for anything slow or unreliable that the user does not need to wait for: emails, image resizing, reports, calls to other companies' APIs, webhooks.</p>
+</section>
+
+<section>
+<h2 id="install">Install @zudojs/queue</h2>
+<shell>
+$ npm install @zudojs/queue
+
+added 1 package, and audited 77 packages in 3s
+…
+</shell>
+<p>The package ships an <strong>in-memory queue</strong>: jobs live in the memory of your process. That is perfect for learning, tests and small apps, and it runs in the browser terminal, so you can press <strong>Run in browser</strong> on every example. The last section explains what changes in production. On your computer, run the examples with <code>npx tsx src/&lt;file&gt;.ts</code>.</p>
+<p>The timings on this page are kept short, tens of milliseconds, so the examples finish fast. Real retry delays are seconds or minutes.</p>
+</section>
+
+<section>
+<h2 id="first-job">Your first queue</h2>
+<example file="first.ts">
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+interface Reminder {
+  readonly taskId: number;
+  readonly email: string;
+}
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const queue = createInMemoryQueue<Reminder>(createQueueName("reminders"));
+
+queue.process("send-reminder", async (job) => {
+  console.log(`processor: reminder for task ${job.data.taskId} to ${job.data.email}`);
+});
+
+const job = await queue.add("send-reminder", { taskId: 1, email: "ada@example.com" });
+console.log("added:", job.name, job.state);
+console.log("the request can answer now");
+
+await wait(200);
+console.log("later:", (await queue.getJob(job.id))?.state);
+await queue.close();
+</example>
+<output>
+added: send-reminder waiting
+the request can answer now
+processor: reminder for task 1 to ada@example.com
+later: completed
+</output>
+<ul>
+<li><code>createQueueName("reminders")</code> names the queue. The name is a <strong>branded</strong> string, like the message ids in the messaging lesson, so a plain string is rejected by TypeScript.</li>
+<li><code>queue.process(name, processor)</code> registers the function for jobs with that name. The in-memory queue starts checking for work as soon as a processor exists.</li>
+<li><code>queue.add(name, data)</code> stores a job and returns at once. The job is <code>waiting</code>: the request did not wait for the work.</li>
+<li>A moment later the processor ran and the job is <code>completed</code>. <code>queue.close()</code> shuts the queue down. Always call it when your program stops.</li>
+</ul>
+<p>A job moves through these <strong>states</strong>: <code>waiting</code> (ready), <code>scheduled</code> (not due yet), <code>active</code> (running), <code>completed</code>, <code>retrying</code> (failed, waiting to try again) and <code>dead_letter</code> (every try failed).</p>
+<warn title="WHAT GOES IN A JOB">Put small, plain data in a job: ids, an email address, a date. Not whole objects from the database, which may have changed by the time the job runs, and never secrets such as passwords or API keys: queues are stored, logged and shown in dashboards. The processor should load fresh data by id, and read secrets from its own configuration.</warn>
+</section>
+
+<section>
+<h2 id="concurrency">Concurrency</h2>
+<p><strong>Concurrency</strong> is how many jobs run at the same time. The default is 1: one job after another. Jobs that mostly wait, for a mail server or an API, can safely run side by side. This example counts how many processors are running at once:</p>
+<example file="concurrency.ts">
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function run(concurrency: number): Promise<void> {
+  const queue = createInMemoryQueue<{ n: number }>(createQueueName("emails"), { concurrency });
+  let running = 0;
+  let mostAtOnce = 0;
+
+  queue.process("send", async () => {
+    running += 1;
+    mostAtOnce = Math.max(mostAtOnce, running);
+    await wait(50);
+    running -= 1;
+  });
+
+  for (let n = 1; n <= 6; n++) await queue.add("send", { n });
+  while ((await queue.getStats()).succeeded < 6) await wait(20);
+  const stats = await queue.getStats();
+  console.log(`concurrency ${concurrency}: ${stats.succeeded} jobs done, at most ${mostAtOnce} at once`);
+  await queue.close();
+}
+
+await run(1);
+await run(3);
+</example>
+<output>
+concurrency 1: 6 jobs done, at most 1 at once
+concurrency 3: 6 jobs done, at most 3 at once
+</output>
+<p>Instead of guessing how long to wait, the loop asks <code>getStats()</code> every 20 ms until all 6 jobs have succeeded. Why not set the concurrency to 1,000? Every running job uses memory and connections, and the service at the other end has limits too. A mail provider may allow 10 connections, a database pool 20. Pick a number that the slowest thing your jobs touch can handle.</p>
+</section>
+
+<section>
+<h2 id="retries">Retries and exponential backoff</h2>
+<p>Most failures in a job are temporary: a timeout, a server restarting, a rate limit. The answer is to try again. Two options control it:</p>
+<ul>
+<li><code>attempts</code>: how many tries in total. The default is 1, which means no retry.</li>
+<li><code>backoff</code>: how long to wait before each retry.</li>
+</ul>
+<p>Retrying at once rarely helps: a server that is down now is probably still down 1 ms later. <strong>Exponential backoff</strong> doubles the wait after each failure, so a struggling service gets more and more room to recover. <code>calculateRetryDelay</code> is the function the queue uses, so you can see the waits it would pick:</p>
+<example file="backoff.ts">
+import { calculateRetryDelay, createExponentialBackoff, createFixedBackoff } from "@zudojs/queue";
+
+const exponential = createExponentialBackoff(1000, { maxDelay: 30_000, jitter: "none" });
+const fixed = createFixedBackoff(1000, { jitter: "none" });
+
+for (let attempt = 1; attempt <= 7; attempt++) {
+  const exp = calculateRetryDelay(attempt, exponential);
+  const fix = calculateRetryDelay(attempt, fixed);
+  console.log(`retry ${attempt}: exponential ${exp} ms, fixed ${fix} ms`);
+}
+</example>
+<output>
+retry 1: exponential 1000 ms, fixed 1000 ms
+retry 2: exponential 2000 ms, fixed 1000 ms
+retry 3: exponential 4000 ms, fixed 1000 ms
+retry 4: exponential 8000 ms, fixed 1000 ms
+retry 5: exponential 16000 ms, fixed 1000 ms
+retry 6: exponential 30000 ms, fixed 1000 ms
+retry 7: exponential 30000 ms, fixed 1000 ms
+</output>
+<p>The waits double from 1 second and stop growing at <code>maxDelay</code>, 30 seconds. Now imagine the mail server was down for a minute and 5,000 jobs failed at the same moment. With these exact numbers, all 5,000 retry at the same moment too, and knock the server over again. <strong>Jitter</strong> adds randomness to each wait, so the retries spread out. The default is <code>"full"</code>: a random wait between 0 and the computed one. Leave it on in production. It is off here only so the numbers are the same every time.</p>
+<p>Here is a processor that fails twice and then works. <code>job.attempt</code> counts the tries that came before this one, so it starts at 0:</p>
+<example file="retry.ts">
+import { createInMemoryQueue, createQueueName, createExponentialBackoff } from "@zudojs/queue";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const queue = createInMemoryQueue<{ taskId: number }>(createQueueName("reminders"));
+
+queue.process("send-reminder", async (job) => {
+  const attempt = job.attempt + 1;
+  if (attempt < 3) {
+    console.log(`try ${attempt}: mail server timed out`);
+    throw new Error("mail server timed out");
+  }
+  console.log(`try ${attempt}: sent`);
+});
+
+await queue.add("send-reminder", { taskId: 1 }, {
+  attempts: 5,
+  backoff: createExponentialBackoff(20, { jitter: "none" }),
+});
+
+await wait(600);
+const stats = await queue.getStats();
+console.log("succeeded:", stats.succeeded, "retried:", stats.retried);
+await queue.close();
+</example>
+<output>
+try 1: mail server timed out
+try 2: mail server timed out
+try 3: sent
+succeeded: 1 retried: 2
+</output>
+<p>Two failures, two retries, then success. The job was allowed 5 attempts and used 3. Nobody had to notice the outage.</p>
+<warn title="JOBS CAN RUN MORE THAN ONCE">A retry runs the whole processor again. If the processor sent the email and <em>then</em> failed while writing "sent" to the database, the retry sends a second email. Queues promise <strong>at least once</strong>, not exactly once. Make processors <strong>idempotent</strong>, safe to run twice: check whether the work was already done, as the Task API example below does.</warn>
+</section>
+
+<section>
+<h2 id="delayed">Delayed jobs and priorities</h2>
+<p>Some jobs should not run yet: "remind me in one hour", "send the invoice on the 1st". <code>delay</code> waits a number of milliseconds, and <code>scheduledAt</code> waits until a date. <code>priority</code> decides which waiting job goes first: higher numbers first, 50 by default:</p>
+<example file="delayed.ts">
+import { createInMemoryQueue, createQueueName, JobPriorityLevels } from "@zudojs/queue";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const queue = createInMemoryQueue<{ label: string }>(createQueueName("reminders"));
+
+queue.process("remind", async (job) => {
+  console.log("ran:", job.data.label);
+});
+
+await queue.add("remind", { label: "normal" });
+await queue.add("remind", { label: "urgent" }, { priority: JobPriorityLevels.HIGH });
+const atTime = await queue.add("remind", { label: "at a date, 100 ms from now" }, {
+  scheduledAt: new Date(Date.now() + 100),
+});
+const later = await queue.add("remind", { label: "in 250 ms" }, { delay: 250 });
+
+console.log("states:", atTime.state, later.state);
+await wait(500);
+await queue.close();
+</example>
+<output>
+states: scheduled scheduled
+ran: urgent
+ran: normal
+ran: at a date, 100 ms from now
+ran: in 250 ms
+</output>
+<p>The two delayed jobs start as <code>scheduled</code> and only become <code>waiting</code> when their time comes. Of the two jobs that were ready at once, the urgent one ran first, even though it was added after "normal". Among jobs with the same priority, the one added first runs first. <code>JobPriorityLevels</code> gives you named numbers: <code>LOW</code> (10), <code>NORMAL</code> (50), <code>HIGH</code> (100) and <code>CRITICAL</code> (200).</p>
+<p>What about jobs that <em>repeat</em>, every night or every hour? A queue runs each job once. Repeating work is the job of a <strong>scheduler</strong>, which adds a job to the queue at the right times. That is <a href="/learn/zudo-scheduler">the next lesson</a>.</p>
+</section>
+
+<section>
+<h2 id="dead-letter">The dead-letter queue</h2>
+<p>Some jobs will never succeed: the email address does not exist, the data is broken. After the last attempt, the queue moves the job to the <strong>dead-letter queue</strong>, a holding area for jobs that could not be done. The name comes from the post office, where undeliverable letters go to a "dead letter office". Nothing is silently thrown away:</p>
+<example file="dead-letter.ts">
+import { createInMemoryQueue, createQueueName, createFixedBackoff } from "@zudojs/queue";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const queue = createInMemoryQueue<{ email: string }>(createQueueName("reminders"));
+
+queue.process("send-reminder", async (job) => {
+  if (job.data.email.endsWith("@example.invalid")) {
+    throw new Error(`mailbox ${job.data.email} does not exist`);
+  }
+});
+
+const good = await queue.add("send-reminder", { email: "ada@example.com" }, { attempts: 3 });
+const bad = await queue.add("send-reminder", { email: "nobody@example.invalid" }, {
+  attempts: 3,
+  backoff: createFixedBackoff(10),
+});
+
+await wait(500);
+console.log("good:", (await queue.getJob(good.id))?.state);
+console.log("bad: ", (await queue.getJob(bad.id))?.state);
+
+for (const dead of await queue.getDeadLetterJobs()) {
+  console.log(`dead letter: ${dead.job.name} for ${dead.job.data.email}`);
+  console.log(`  after ${dead.attempts} attempts: ${dead.reason}`);
+}
+console.log("dead-lettered:", (await queue.getStats()).deadLettered);
+await queue.close();
+</example>
+<output>
+good: completed
+bad:  dead_letter
+dead letter: send-reminder for nobody@example.invalid
+  after 3 attempts: mailbox nobody@example.invalid does not exist
+dead-lettered: 1
+</output>
+<p>Each entry keeps the job, the error and the number of attempts. What you do with dead letters is a decision for your team:</p>
+<ul>
+<li><strong>Alert</strong> when the count grows. A dead-letter queue nobody looks at is just a slower way to lose data. The <a href="/learn/zudo-observability">observability lesson</a> shows how to count and alert.</li>
+<li><strong>Fix and replay.</strong> If a bug caused the failures, fix it, then add the jobs again with <code>queue.add(dead.job.name, dead.job.data)</code>.</li>
+<li><strong>Stop early for permanent errors.</strong> Retrying "mailbox does not exist" three times wastes time. A processor can check the error and give up at once, for example by marking the reminder as failed in the database and returning normally.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="timeouts">Timeouts</h2>
+<p>A job that hangs forever blocks a concurrency slot forever. Every job has a <code>timeout</code>, 30 seconds by default. When it runs out, the queue aborts <code>context.signal</code>, the same kind of <code>AbortSignal</code> you used in the messaging lesson, and counts the attempt as failed. Like there, the processor must watch the signal and stop itself:</p>
+<example file="timeout.ts">
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const queue = createInMemoryQueue<{ pages: number }>(createQueueName("reports"));
+
+queue.process("build-report", async (job, context) => {
+  for (let page = 1; page <= job.data.pages; page++) {
+    context.signal.throwIfAborted();
+    await wait(30);
+    console.log(`page ${page} done`);
+  }
+});
+
+const job = await queue.add("build-report", { pages: 10 }, { timeout: 75 });
+await wait(400);
+console.log("state:", (await queue.getJob(job.id))?.state);
+await queue.close();
+</example>
+<output>
+page 1 done
+page 2 done
+page 3 done
+state: dead_letter
+</output>
+<p>After 75 ms the signal was aborted. The processor finished the page it was on, saw the signal before page 4, and stopped. With one attempt allowed, the job went to the dead-letter queue. A processor that ignores the signal keeps running in the background, and the queue waits up to 5 seconds for it before giving up on it.</p>
+</section>
+
+<section>
+<h2 id="workers">Workers and graceful shutdown</h2>
+<p>So far the queue ran its own jobs. A separate <strong>worker</strong> gives you control: its own concurrency, and <code>start()</code> and <code>stop()</code>. When you create one, the queue stops running jobs itself and leaves that to the worker.</p>
+<p>Stopping matters more than it seems. When you deploy a new version, the old process is told to stop, often with a <code>SIGTERM</code> signal, as you saw in <a href="/learn/zudo-runtime">the runtime lesson</a>. If it simply exits, the jobs it was running die halfway. A <strong>graceful shutdown</strong> stops taking new jobs, lets the running ones finish, and only then exits:</p>
+<example file="worker.ts">
+import { createInMemoryQueue, createQueueName, createWorker } from "@zudojs/queue";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const queue = createInMemoryQueue<{ n: number }>(createQueueName("reminders"), { autoProcess: false });
+
+queue.process("send-reminder", async (job) => {
+  await wait(400);
+  console.log(`  job ${job.data.n} finished`);
+});
+
+for (let n = 1; n <= 5; n++) await queue.add("send-reminder", { n });
+
+const worker = createWorker("worker-1", queue, { concurrency: 2, pollInterval: 10 });
+await worker.start();
+console.log("worker:", worker.state);
+
+await wait(200);
+console.log("SIGTERM: stopping");
+await worker.stop();
+
+console.log("worker:", worker.state, worker.getStats());
+const stats = await queue.getStats();
+console.log("still waiting for the next start:", stats.waiting);
+await queue.close();
+</example>
+<output>
+worker: running
+SIGTERM: stopping
+  job 1 finished
+  job 2 finished
+worker: stopped {
+  processed: 2,
+  succeeded: 2,
+  failed: 0,
+  concurrency: 2,
+  state: 'stopped'
+}
+still waiting for the next start: 3
+</output>
+<p>Follow what happened:</p>
+<ul>
+<li>With <code>concurrency: 2</code>, the worker started jobs 1 and 2.</li>
+<li>200 ms later, while both were still running, the stop request came. <code>stop()</code> did not cut them off: it waited for both to finish, then resolved.</li>
+<li>Jobs 3, 4 and 5 were never started. They are still <code>waiting</code>, ready for the next worker. (With the in-memory queue they die with the process. With a stored queue they would survive.)</li>
+</ul>
+<p><code>autoProcess: false</code> keeps the queue from running jobs before the worker exists. <code>stop()</code> waits at most <code>drainTimeout</code> (30 seconds by default), and then aborts the jobs that are still running through their signal. Your platform will kill the process eventually, so keep that timeout shorter than its grace period.</p>
+</section>
+
+<section>
+<h2 id="task-api">Put it together: reminder jobs in the Task API</h2>
+<p>The reminder from the messaging lesson becomes a job. The route only enqueues it. The processor loads fresh data by id, skips reminders that were already sent (idempotency), and fails loudly on errors so the queue can retry:</p>
+<example file="reminders.ts" project="reminders">
+import { createInMemoryQueue, createQueueName, createExponentialBackoff } from "@zudojs/queue";
+
+export interface ReminderJob {
+  readonly taskId: number;
+}
+
+interface TaskRow { readonly id: number; readonly title: string; readonly email: string; reminded: boolean }
+
+export const tasks = new Map<number, TaskRow>([
+  [1, { id: 1, title: "Buy milk", email: "ada@example.com", reminded: false }],
+]);
+
+let mailServerUp = false;
+export const mailer = {
+  async send(to: string, text: string): Promise<void> {
+    if (!mailServerUp) {
+      mailServerUp = true;
+      throw new Error("mail server unavailable");
+    }
+    console.log(`mail to ${to}: ${text}`);
+  },
+};
+
+export const reminders = createInMemoryQueue<ReminderJob>(createQueueName("reminders"), {
+  concurrency: 5,
+  defaultJobOptions: { attempts: 5, backoff: createExponentialBackoff(20, { maxDelay: 1000 }) },
+});
+
+reminders.process("send-reminder", async (job) => {
+  const task = tasks.get(job.data.taskId);
+  if (!task || task.reminded) {
+    console.log(`task ${job.data.taskId}: nothing to do`);
+    return;
+  }
+  await mailer.send(task.email, `Don't forget "${task.title}"`);
+  task.reminded = true;
+});
+</example>
+<example file="main.ts" project="reminders">
+import { reminders } from "./reminders.js";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function postReminder(taskId: number) {
+  await reminders.add("send-reminder", { taskId }, { deduplicationKey: `reminder.task-${taskId}` });
+  return { status: 202, body: { queued: true } };
+}
+
+console.log(await postReminder(1));
+try {
+  await postReminder(1);
+} catch (error) {
+  if (error instanceof Error) console.log("second click:", error.name);
+}
+
+await wait(500);
+const stats = await reminders.getStats();
+console.log("succeeded:", stats.succeeded, "retried:", stats.retried, "dead:", stats.deadLettered);
+
+await reminders.add("send-reminder", { taskId: 1 });
+await wait(200);
+await reminders.close();
+</example>
+<output>
+{ status: 202, body: { queued: true } }
+second click: JobDuplicateError
+mail to ada@example.com: Don't forget "Buy milk"
+succeeded: 1 retried: 1 dead: 0
+task 1: nothing to do
+</output>
+<ul>
+<li>The route answered 202 straight away. The work happened after.</li>
+<li>A double click tried to add the same reminder twice. The <code>deduplicationKey</code> refused the second job while the first one exists. In the real route, catch <code>JobDuplicateError</code> and answer 202 anyway: the reminder <em>is</em> queued.</li>
+<li>The fake mail server failed once. The queue retried, and the second try sent the email. The user never saw the outage.</li>
+<li>A late extra job for the same task found <code>reminded: true</code> and did nothing: the processor is idempotent.</li>
+</ul>
+<p><code>defaultJobOptions</code> gives every job on the queue the same retry policy, so no route can forget it.</p>
+</section>
+
+<section>
+<h2 id="production">In production</h2>
+<p>The in-memory queue keeps jobs in the process's memory. Restart the process and every waiting job is gone, and two copies of the Task API have two separate queues. For production you want a queue backed by a store that survives restarts and is shared by all your servers, such as Redis or PostgreSQL. <code>@zudojs/queue</code> defines the <code>Queue</code> interface you have been using, so such an adapter can replace <code>createInMemoryQueue</code> without changing your processors. Only the in-memory implementation is published today, so check what your platform provides, or use a well-known queue library behind the same interface.</p>
+<p>Whatever store you use, the rules from this lesson stay the same: small job data, no secrets in jobs, idempotent processors, retries with backoff and jitter, dead letters that somebody watches, and a graceful stop.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Give up on permanent errors">
+<p>Change the dead-letter example so that a "does not exist" error does not waste retries: the processor records the bad address in a <code>failedAddresses</code> list and returns normally, while other errors are still thrown for a retry.</p>
+<solution>
+<example file="permanent.ts">
+import { createInMemoryQueue, createQueueName, createFixedBackoff } from "@zudojs/queue";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const queue = createInMemoryQueue<{ email: string }>(createQueueName("reminders"));
+const failedAddresses: string[] = [];
+let tries = 0;
+
+queue.process("send-reminder", async (job) => {
+  tries += 1;
+  if (job.data.email.endsWith("@example.invalid")) {
+    failedAddresses.push(job.data.email);
+    return;
+  }
+});
+
+await queue.add("send-reminder", { email: "nobody@example.invalid" }, {
+  attempts: 3,
+  backoff: createFixedBackoff(10),
+});
+await wait(300);
+console.log("tries:", tries, "failed addresses:", failedAddresses);
+console.log("dead-lettered:", (await queue.getStats()).deadLettered);
+await queue.close();
+</example>
+<output>
+tries: 1 failed addresses: [ 'nobody@example.invalid' ]
+dead-lettered: 0
+</output>
+<p>One try instead of three. In the Task API, write the failure to the database so the user can see "reminder could not be delivered" and fix their address.</p>
+</solution>
+</exercise>
+<exercise title="Queue middleware">
+<p>Queue middleware wraps every job, like the other middleware you have met. It receives <code>ctx</code> with <code>ctx.job</code> and <code>ctx.next()</code>. Write one that prints <code>start</code> and <code>end</code> with the job name, and pass it in the <code>middleware</code> option of the queue.</p>
+<solution>
+<example file="middleware.ts">
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+import type { QueueMiddleware } from "@zudojs/queue";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const log: QueueMiddleware = async (ctx) => {
+  console.log("start", ctx.job.name);
+  try {
+    return await ctx.next();
+  } finally {
+    console.log("end", ctx.job.name);
+  }
+};
+
+const queue = createInMemoryQueue<{ taskId: number }>(createQueueName("reminders"), { middleware: [log] });
+queue.process("send-reminder", async (job) => console.log("  sending for task", job.data.taskId));
+
+await queue.add("send-reminder", { taskId: 1 });
+await wait(200);
+await queue.close();
+</example>
+<output>
+start send-reminder
+  sending for task 1
+end send-reminder
+</output>
+</solution>
+</exercise>
+<exercise title="Which tool?">
+<p>For each, choose a direct call, an event, or a job: (a) checking a password at login; (b) generating a 200-page PDF export; (c) clearing the cache after a task changes; (d) calling a partner's webhook that is often slow.</p>
+<solution>
+<p>(a) A direct call: the user needs the answer now, and it is fast. (b) A job: slow, and the user can get a link when it is ready. (c) An event: fast, in-process, and several parts may care. (d) A job, with retries and backoff: slow and unreliable, and a failure must not be lost.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A queue moves slow or unreliable work out of the request. <code>add</code> stores a job, a processor does the work later.</li>
+<li>Jobs hold small, plain data: ids, not objects, and never secrets.</li>
+<li><code>concurrency</code> sets how many jobs run at once. Size it for what the jobs call.</li>
+<li><code>attempts</code> and <code>backoff</code> retry failures. Exponential backoff with jitter gives a failing service room to recover.</li>
+<li>Jobs run at least once, so processors must be idempotent.</li>
+<li><code>delay</code> and <code>scheduledAt</code> postpone a job. Repeating work belongs to a scheduler.</li>
+<li>Jobs that fail every attempt go to the dead-letter queue. Watch it.</li>
+<li>Processors honour <code>context.signal</code> for timeouts. A worker's <code>stop()</code> lets running jobs finish before the process exits.</li>
+</ul>
+</section>

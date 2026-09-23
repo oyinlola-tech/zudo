@@ -1,0 +1,512 @@
+---
+title: Classes in TypeScript
+description: Declare typed class properties, use parameter properties and access modifiers, compare private with #private, write abstract classes and classes that implement interfaces, and wire classes together with constructor injection.
+minutes: 40
+youNeed: Generics, and the JavaScript classes lesson
+youBuild: A TaskService that depends on interfaces, wired by hand in main.ts and tested with a fake repository and a fixed clock
+keywords: typescript classes, class properties, parameter properties, public private protected, private vs #private, readonly, abstract class, implements interface, dependency injection, constructor injection, fake in tests
+---
+<section>
+<h2 id="properties">Properties and constructors</h2>
+<p>You learned classes in <a href="/learn/js-classes">the JavaScript classes lesson</a>. In JavaScript, a constructor can create any property just by assigning <code>this.title = …</code>. TypeScript wants to know every property up front, with its type, so it can check every use. You <strong>declare</strong> them at the top of the class:</p>
+<example file="task.ts" project="classes">
+export class Task {
+  done = false;
+  tags: string[] = [];
+  id: number;
+  title: string;
+
+  constructor(id: number, title: string) {
+    this.id = id;
+    this.title = title;
+  }
+
+  complete(): this {
+    this.done = true;
+    return this;
+  }
+
+  describe(): string {
+    return `${this.done ? "[x]" : "[ ]"} #${this.id} ${this.title}`;
+  }
+}
+
+const milk = new Task(1, "Buy milk").complete();
+console.log(milk.describe());
+console.log(milk);
+</example>
+<output>
+[x] #1 Buy milk
+Task { done: true, tags: [], id: 1, title: 'Buy milk' }
+</output>
+<p><code>done = false</code> declares the property and gives it a starting value, so TypeScript infers <code>boolean</code>. <code>complete()</code> returns <code>this</code>, the object itself, so calls can be chained. Now the two mistakes this catches:</p>
+<example file="task.ts" project="classes" check="tsc-error">
+export class Task {
+  id: number;
+  done: boolean;
+
+  constructor(id: number, title: string) {
+    this.id = id;
+    this.title = title;
+  }
+}
+</example>
+<output kind="tsc">
+task.ts:3:3 - error TS2564: Property 'done' has no initializer and is not definitely assigned in the constructor.
+
+3   done: boolean;
+    ~~~~
+
+task.ts:7:10 - error TS2339: Property 'title' does not exist on type 'Task'.
+
+7     this.title = title;
+           ~~~~~
+
+
+Found 2 errors in the same file, starting at: task.ts:3
+</output>
+<ul>
+<li><strong>TS2564</strong>: <code>done</code> is declared as a <code>boolean</code>, but nothing ever sets it, so it would be <code>undefined</code>. <code>strict</code> checks that every property gets a value.</li>
+<li><strong>TS2339</strong>: <code>title</code> was never declared. In JavaScript this line silently adds a property; in TypeScript a typo like <code>this.titel = …</code> would be caught the same way.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="parameter-properties">Parameter properties</h2>
+<p>Declaring a property, taking a parameter, and copying one into the other is so common that TypeScript has a shortcut. Put <code>public</code>, <code>private</code>, <code>protected</code> or <code>readonly</code> in front of a constructor parameter, and it becomes a property automatically. These are called <strong>parameter properties</strong>:</p>
+<example file="short.ts" project="classes">
+class Task {
+  constructor(
+    public readonly id: number,
+    public title: string,
+    public done = false,
+  ) {}
+}
+
+const task = new Task(1, "Buy milk");
+task.title = "Buy oat milk";
+console.log(task);
+</example>
+<output>
+Task { id: 1, title: 'Buy oat milk', done: false }
+</output>
+<p>Three properties, declared and filled in far fewer lines. <code>public done = false</code> also shows that a parameter property can have a default value. <code>readonly</code> means the id is set once in the constructor and can never change; <code>task.id = 2</code> would be error TS2540.</p>
+<note title="NOT ERASABLE">Parameter properties generate code (the <code>this.id = id</code> lines), so Node's built-in type stripping, from <a href="/learn/ts-setup#run">Why TypeScript exists</a>, refuses them. <code>tsx</code>, <code>tsc</code> and the browser terminal all handle them. ZudoJS itself uses them, so this course runs code with <code>tsx</code>.</note>
+</section>
+
+<section>
+<h2 id="access">public, private, protected and #private</h2>
+<p>TypeScript has three <strong>access modifiers</strong> that say who may use a property or method:</p>
+<ul>
+<li><code>public</code> (the default): anyone.</li>
+<li><code>private</code>: only code inside this class.</li>
+<li><code>protected</code>: code inside this class and classes that <code>extends</code> it.</li>
+</ul>
+<example file="access.ts" project="classes" check="tsc-error">
+class Account {
+  protected balance = 0;
+  private readonly history: number[] = [];
+
+  deposit(amount: number): void {
+    this.balance += amount;
+    this.history.push(amount);
+  }
+}
+
+class SavingsAccount extends Account {
+  addInterest(rate: number): void {
+    this.balance += this.balance * rate;
+    this.history.push(-1);
+  }
+}
+
+const account = new SavingsAccount();
+account.deposit(100);
+console.log(account.balance);
+</example>
+<output kind="tsc">
+access.ts:14:10 - error TS2341: Property 'history' is private and only accessible within class 'Account'.
+
+14     this.history.push(-1);
+            ~~~~~~~
+
+access.ts:20:21 - error TS2445: Property 'balance' is protected and only accessible within class 'Account' and its subclasses.
+
+20 console.log(account.balance);
+                       ~~~~~~~
+
+
+Found 2 errors in the same file, starting at: access.ts:14
+</output>
+<p>The subclass may use <code>balance</code> (protected) but not <code>history</code> (private), and outside code may use neither.</p>
+<h3>private is a compile-time check; #private is real</h3>
+<p>You met JavaScript's own private fields, written <code>#name</code>, in the classes lesson. They look similar to <code>private</code>, but there is an important difference. TypeScript's <code>private</code> is a type, and like all types it is <strong>erased</strong>. When the program runs, the property is an ordinary, public property. A <code>#</code> field is enforced by JavaScript itself:</p>
+<example file="secret.ts" project="classes">
+class UserA {
+  constructor(
+    public email: string,
+    private passwordHash: string,
+  ) {}
+}
+
+class UserB {
+  #passwordHash: string;
+
+  constructor(public email: string, passwordHash: string) {
+    this.#passwordHash = passwordHash;
+  }
+
+  hasHash(): boolean {
+    return this.#passwordHash.length > 0;
+  }
+}
+
+const a = new UserA("ada@example.com", "$argon2id$v=19$...");
+const b = new UserB("ada@example.com", "$argon2id$v=19$...");
+
+console.log(JSON.stringify(a));
+console.log(JSON.stringify(b));
+console.log(Object.keys(a), Object.keys(b));
+console.log(a["passwordHash"]);
+</example>
+<output>
+{"email":"ada@example.com","passwordHash":"$argon2id$v=19$..."}
+{"email":"ada@example.com"}
+[ 'email', 'passwordHash' ] [ 'email' ]
+$argon2id$v=19$...
+</output>
+<p>This file compiles without errors, and look at the first line: the <code>private</code> password hash went straight into the JSON. If this object were an API response, every client would receive the hash. TypeScript even allows <code>a["passwordHash"]</code> with square brackets, as a deliberate escape hatch.</p>
+<p>The <code>#passwordHash</code> in <code>UserB</code> is not in the JSON, not in <code>Object.keys</code>, and cannot be read from outside at all. The rule:</p>
+<ul>
+<li>Use <code>private</code> to organise your own code: "this is an internal detail, do not call it".</li>
+<li>Use <code>#private</code> for anything that must really stay hidden, such as secrets. And better still, never put secrets in objects you might send; build the response with only the fields you choose, as in <a href="/learn/ts-advanced#practice">the public user exercise</a>.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="abstract">Abstract classes</h2>
+<p>An <strong>abstract class</strong> is a class that is only a starting point. You cannot create one with <code>new</code>. It can contain finished methods, and <strong>abstract methods</strong>: a name and a type, with no body, that every subclass must write.</p>
+<example file="notifier.ts" project="classes">
+abstract class Notifier {
+  constructor(protected readonly appName: string) {}
+
+  protected abstract send(to: string, text: string): Promise<void>;
+
+  async taskDue(to: string, title: string): Promise<void> {
+    await this.send(to, `[${this.appName}] "${title}" is due today`);
+  }
+}
+
+class ConsoleNotifier extends Notifier {
+  protected async send(to: string, text: string): Promise<void> {
+    console.log(`to ${to}: ${text}`);
+  }
+}
+
+const notifier = new ConsoleNotifier("Tasks");
+await notifier.taskDue("ada@example.com", "File taxes");
+</example>
+<output>
+to ada@example.com: [Tasks] "File taxes" is due today
+</output>
+<p><code>Notifier</code> decides <em>what</em> the message says; each subclass decides <em>how</em> it is delivered: console, e-mail, SMS. The compiler holds both sides to the deal:</p>
+<example file="notifier.ts" project="classes" check="tsc-error">
+abstract class Notifier {
+  protected abstract send(to: string, text: string): Promise<void>;
+}
+
+class EmailNotifier extends Notifier {}
+
+const notifier = new Notifier();
+</example>
+<output kind="tsc">
+notifier.ts:5:7 - error TS2515: Non-abstract class 'EmailNotifier' does not implement inherited abstract member send from class 'Notifier'.
+
+5 class EmailNotifier extends Notifier {}
+        ~~~~~~~~~~~~~
+
+notifier.ts:7:18 - error TS2511: Cannot create an instance of an abstract class.
+
+7 const notifier = new Notifier();
+                   ~~~~~~~~~~~~~~
+
+
+Found 2 errors in the same file, starting at: notifier.ts:5
+</output>
+</section>
+
+<section>
+<h2 id="implements">Implementing interfaces</h2>
+<p>An abstract class shares code. Often you only need to share a <strong>contract</strong>: "anything that stores tasks must have these methods". That is an interface, and a class promises to follow it with <code>implements</code>. Here is the start of a small multi-file project. First the contracts:</p>
+<example file="contracts.ts" project="di">
+export interface Task {
+  readonly id: number;
+  title: string;
+  dueDate: Date;
+  done: boolean;
+}
+
+export interface TaskRepository {
+  save(task: Task): Promise<void>;
+  findAll(): Promise<Task[]>;
+}
+
+export interface Clock {
+  now(): Date;
+}
+</example>
+<p>Then a class that implements the repository contract, keeping tasks in memory:</p>
+<example file="memory-repository.ts" project="di">
+import type { Task, TaskRepository } from "./contracts.js";
+
+export class MemoryTaskRepository implements TaskRepository {
+  readonly #tasks = new Map<number, Task>();
+
+  async save(task: Task): Promise<void> {
+    this.#tasks.set(task.id, { ...task });
+  }
+
+  async findAll(): Promise<Task[]> {
+    return [...this.#tasks.values()].map((task) => ({ ...task }));
+  }
+}
+</example>
+<p><code>implements TaskRepository</code> makes the compiler check the class against the interface. Forget a method, or get a type wrong, and the class itself is reported:</p>
+<example file="broken-repository.ts" project="di" check="tsc-error">
+import type { Task, TaskRepository } from "./contracts.js";
+
+export class BrokenRepository implements TaskRepository {
+  async save(task: Task): Promise<void> {}
+}
+</example>
+<output kind="tsc">
+broken-repository.ts:3:14 - error TS2420: Class 'BrokenRepository' incorrectly implements interface 'TaskRepository'.
+  Property 'findAll' is missing in type 'BrokenRepository' but required in type 'TaskRepository'.
+
+3 export class BrokenRepository implements TaskRepository {
+               ~~~~~~~~~~~~~~~~
+
+  contracts.ts:10:3 - 'findAll' is declared here.
+    10   findAll(): Promise<Task[]>;
+         ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 1 error in broken-repository.ts:3
+</output>
+<p>A class can implement several interfaces (<code>implements A, B</code>), and <code>implements</code> adds no code at all: it is only a check.</p>
+</section>
+
+<section>
+<h2 id="injection">Dependency injection by hand</h2>
+<p>Now the service with the business rules. It needs somewhere to store tasks and a way to know the current time. It could create them itself: <code>new MemoryTaskRepository()</code> and <code>new Date()</code>. But then it is stuck with them forever: no database later, and no way to test "is this task overdue?" without waiting for a real day to pass.</p>
+<p>Instead, the service <strong>asks for</strong> what it needs, in its constructor, typed as the interfaces. Whoever creates the service <strong>passes them in</strong>. This is called <strong>dependency injection</strong>, and passing them to the constructor is <strong>constructor injection</strong>:</p>
+<example file="task-service.ts" project="di">
+import type { Clock, Task, TaskRepository } from "./contracts.js";
+
+export class TaskService {
+  #nextId = 1;
+
+  constructor(
+    private readonly tasks: TaskRepository,
+    private readonly clock: Clock,
+  ) {}
+
+  async add(title: string, daysUntilDue: number): Promise<Task> {
+    const dueDate = new Date(this.clock.now().getTime() + daysUntilDue * 86_400_000);
+    const task: Task = { id: this.#nextId++, title, dueDate, done: false };
+    await this.tasks.save(task);
+    return task;
+  }
+
+  async overdue(): Promise<string[]> {
+    const now = this.clock.now();
+    const all = await this.tasks.findAll();
+    return all.filter((task) => !task.done && task.dueDate < now).map((task) => task.title);
+  }
+}
+</example>
+<p><code>TaskService</code> never mentions <code>MemoryTaskRepository</code> or <code>Date.now()</code>. It depends only on the two interfaces. The real objects are created in one place, the program's entry file, often called the <strong>composition root</strong>:</p>
+<example file="main.ts" project="di">
+import type { Clock } from "./contracts.js";
+import { MemoryTaskRepository } from "./memory-repository.js";
+import { TaskService } from "./task-service.js";
+
+const systemClock: Clock = { now: () => new Date() };
+const service = new TaskService(new MemoryTaskRepository(), systemClock);
+
+await service.add("File taxes", 3);
+await service.add("Call Ada", -1);
+console.log(await service.overdue());
+</example>
+<output>
+[ 'Call Ada' ]
+</output>
+<p>A task due yesterday (<code>-1</code> days) is overdue; one due in three days is not. <code>systemClock</code> is a plain object, not a class: anything with a <code>now()</code> method that returns a <code>Date</code> fits the <code>Clock</code> interface.</p>
+</section>
+
+<section>
+<h2 id="fakes">Swapping in fakes for tests</h2>
+<p>Here is the payoff. To test <code>overdue()</code>, you want time to stand still, and you want to see exactly what the service saved. So you write two <strong>fakes</strong>: simple stand-ins that implement the same interfaces.</p>
+<example file="fakes.ts" project="di">
+import type { Clock, Task, TaskRepository } from "./contracts.js";
+
+export class FixedClock implements Clock {
+  constructor(private current: Date) {}
+
+  now(): Date {
+    return this.current;
+  }
+
+  advanceDays(days: number): void {
+    this.current = new Date(this.current.getTime() + days * 86_400_000);
+  }
+}
+
+export class RecordingRepository implements TaskRepository {
+  readonly saved: Task[] = [];
+
+  async save(task: Task): Promise<void> {
+    this.saved.push(task);
+  }
+
+  async findAll(): Promise<Task[]> {
+    return this.saved;
+  }
+}
+</example>
+<example file="overdue-check.ts" project="di">
+import { FixedClock, RecordingRepository } from "./fakes.js";
+import { TaskService } from "./task-service.js";
+
+const clock = new FixedClock(new Date("2026-03-01T09:00:00Z"));
+const repo = new RecordingRepository();
+const service = new TaskService(repo, clock);
+
+await service.add("File taxes", 2);
+console.log("saved:", repo.saved.map((task) => task.dueDate.toISOString()));
+console.log("day 0:", await service.overdue());
+clock.advanceDays(3);
+console.log("day 3:", await service.overdue());
+</example>
+<output>
+saved: [ '2026-03-03T09:00:00.000Z' ]
+day 0: []
+day 3: [ 'File taxes' ]
+</output>
+<p>Three days pass in a microsecond, and every run prints the same thing. <code>TaskService</code> did not change at all: it cannot tell a fake from the real thing, because it only knows the interfaces. With the Vitest setup from <a href="/learn/testing-basics">the testing lesson</a>, the same idea becomes a test file:</p>
+<file name="task-service.test.ts" project="di">
+import { describe, expect, it } from "vitest";
+
+import { FixedClock, RecordingRepository } from "./fakes.js";
+import { TaskService } from "./task-service.js";
+
+describe("TaskService.overdue", () => {
+  it("reports a task only after its due date", async () => {
+    const clock = new FixedClock(new Date("2026-03-01T09:00:00Z"));
+    const service = new TaskService(new RecordingRepository(), clock);
+    await service.add("File taxes", 2);
+
+    expect(await service.overdue()).toEqual([]);
+    clock.advanceDays(3);
+    expect(await service.overdue()).toEqual(["File taxes"]);
+  });
+});
+</file>
+<shell>
+$ npm install -D vitest
+…
+$ npx vitest run --reporter=verbose
+ RUN  v5.0.1 ~/ts-tasks
+
+ ✓ task-service.test.ts > TaskService.overdue > reports a task only after its due date 4ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  14:46:55
+   Duration  326ms (transform 74%, import 16%, tests 5%, worker 5%)
+</shell>
+<p>Doing this wiring by hand is fine for three classes. A real backend has dozens of services, each needing several others, and creating them all in the right order in <code>main.ts</code> gets long. A <strong>dependency injection container</strong> does that wiring for you. ZudoJS has one, <code>@zudojs/container</code>, and you will meet it in <a href="/learn/zudo-container">the container lesson</a>. It works with exactly the kind of classes you just wrote.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A counter with real privacy">
+<p>Write a class <code>RateCounter</code> that counts login attempts per e-mail address. It has <code>hit(email: string): number</code> (adds one and returns the new count) and <code>reset(email: string): void</code>. The counts must not show up in <code>JSON.stringify</code> or be changeable from outside.</p>
+<solution>
+<example file="rate-counter.ts" project="ex-counter">
+class RateCounter {
+  readonly #counts = new Map<string, number>();
+
+  hit(email: string): number {
+    const next = (this.#counts.get(email) ?? 0) + 1;
+    this.#counts.set(email, next);
+    return next;
+  }
+
+  reset(email: string): void {
+    this.#counts.delete(email);
+  }
+}
+
+const counter = new RateCounter();
+counter.hit("ada@example.com");
+console.log(counter.hit("ada@example.com"), JSON.stringify(counter));
+counter.reset("ada@example.com");
+console.log(counter.hit("ada@example.com"));
+</example>
+<output>
+2 {}
+1
+</output>
+</solution>
+</exercise>
+<exercise title="Inject the notifier">
+<p>Give <code>TaskService</code> a third dependency: a <code>Notifier</code> interface with <code>send(text: string): Promise&lt;void&gt;</code>. Add a method <code>remindOverdue()</code> that sends one message per overdue task. Test it with a fake notifier that stores the messages in an array.</p>
+<solution>
+<example file="remind.ts" project="ex-remind">
+interface Notifier {
+  send(text: string): Promise<void>;
+}
+
+class ReminderService {
+  constructor(
+    private readonly overdueTitles: () => Promise<string[]>,
+    private readonly notifier: Notifier,
+  ) {}
+
+  async remindOverdue(): Promise<number> {
+    const titles = await this.overdueTitles();
+    for (const title of titles) await this.notifier.send(`"${title}" is overdue`);
+    return titles.length;
+  }
+}
+
+class FakeNotifier implements Notifier {
+  readonly sent: string[] = [];
+  async send(text: string): Promise<void> {
+    this.sent.push(text);
+  }
+}
+
+const fake = new FakeNotifier();
+const reminders = new ReminderService(async () => ["File taxes", "Call Ada"], fake);
+console.log(await reminders.remindOverdue(), fake.sent);
+</example>
+<output>
+2 [ '"File taxes" is overdue', '"Call Ada" is overdue' ]
+</output>
+<p>This solution goes one step further: instead of the whole <code>TaskService</code>, the reminder service depends only on a function that returns overdue titles. Depending on the smallest thing you need makes testing even easier. A dependency can be a function type, not just an interface.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Declare every class property with its type; <code>strict</code> checks each one gets a value.</li>
+<li>Parameter properties (<code>constructor(private readonly repo: Repo)</code>) declare and assign in one step.</li>
+<li><code>public</code>, <code>protected</code> and <code>private</code> are compile-time only. <code>#private</code> is enforced at runtime and stays out of <code>JSON.stringify</code>.</li>
+<li>An abstract class shares code and forces subclasses to fill in abstract methods. <code>implements</code> checks a class against an interface.</li>
+<li>Constructor injection: depend on interfaces, create the real objects in one place, and swap in fakes for tests.</li>
+</ul>
+</section>

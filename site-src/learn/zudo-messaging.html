@@ -1,0 +1,470 @@
+---
+title: Messaging
+description: Ask another part of the Task API to do something and get an answer back, without importing it. Messages, handlers, middleware, correlation and causation ids, timeouts and cancellation with @zudojs/messaging.
+minutes: 35
+youNeed: The events lesson
+youBuild: A reminder request that travels from the tasks module to a notifications module and back, traceable end to end
+keywords: zudojs messaging, message bus, request response, message handler, correlation id, causation id, timeout, AbortSignal, AbortController, cancellation
+---
+<section>
+<h2 id="why">Events tell, messages ask</h2>
+<p>In <a href="/learn/zudo-events">the events lesson</a>, the task service announced <code>task.completed</code> and did not care who reacted. Sometimes you need the opposite. The tasks part of the Task API wants the notifications part to <em>send a reminder email</em>, and it wants to know whether that worked, so it can tell the user.</p>
+<p>You could import the notifications code and call it directly. That is fine while the app is small. But as the app grows into separate modules (you will do that in <a href="/learn/zudo-modular-monolith">the modular monolith lesson</a>), every module importing every other module turns into a tangle.</p>
+<p>A <strong>message</strong> is a small named object with data that asks for something: "send a reminder for task 1". You hand it to a <strong>message bus</strong>. The bus finds the <strong>handler</strong> registered for that message type, runs it, and gives you back what the handler returned. Sender and handler only share the type name.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th></th><th>Event (<code>@zudojs/events</code>)</th><th>Message (<code>@zudojs/messaging</code>)</th></tr></thead>
+<tbody>
+<tr><td>Means</td><td>"This happened."</td><td>"Please do this, and tell me how it went."</td></tr>
+<tr><td>Name</td><td>Past tense: <code>task.completed</code></td><td>An instruction: <code>reminder.send</code></td></tr>
+<tr><td>Handlers</td><td>Any number, results ignored</td><td>Usually one, and its return value comes back</td></tr>
+<tr><td>If a handler fails</td><td>The others still run</td><td>The dispatch stops and reports the failure</td></tr>
+</tbody>
+</table></div>
+<p>Both are in-process: they live in the memory of one running program, like the event bus.</p>
+</section>
+
+<section>
+<h2 id="install">Install @zudojs/messaging</h2>
+<p>In your <code>task-api</code> folder:</p>
+<shell>
+$ npm install @zudojs/messaging
+
+added 1 package, and audited 75 packages in 3s
+…
+</shell>
+<p>Only one package was added, because the packages it builds on, <code>@zudojs/errors</code> and <code>@zudojs/constants</code>, are already in your project. Every example on this page runs in the browser terminal, and on your computer with <code>npx tsx src/&lt;file&gt;.ts</code>.</p>
+</section>
+
+<section>
+<h2 id="first-message">Your first message</h2>
+<example file="first.ts">
+import { createMessageBus } from "@zudojs/messaging";
+import type { Message } from "@zudojs/messaging";
+
+interface SendReminder {
+  readonly taskId: number;
+  readonly email: string;
+}
+
+const bus = createMessageBus();
+
+bus.on("reminder.send", async (message: Message<SendReminder>) => {
+  console.log(`sending reminder for task ${message.payload.taskId} to ${message.payload.email}`);
+  return { delivered: true };
+}, { id: "send-reminder" });
+
+const result = await bus.send({
+  type: "reminder.send",
+  payload: { taskId: 1, email: "ada@example.com" },
+});
+
+console.log("success:", result.success);
+console.log("value:", result.value);
+</example>
+<output>
+sending reminder for task 1 to ada@example.com
+success: true
+value: { delivered: true }
+</output>
+<ul>
+<li><code>bus.on(type, handler, { id })</code> registers a handler. Give it an <code>id</code>, so errors can name it and you can remove it later with <code>bus.off(id)</code>.</li>
+<li>The type on the parameter, <code>Message&lt;SendReminder&gt;</code>, tells TypeScript the shape of <code>message.payload</code>.</li>
+<li><code>bus.send({ type, payload })</code> builds the message and dispatches it. The <strong>result</strong> says whether it worked (<code>success</code>) and carries the handler's return value (<code>value</code>).</li>
+</ul>
+</section>
+
+<section>
+<h2 id="messages">What a message is</h2>
+<p>Like an event, a message is a frozen object with an <code>id</code>, a <code>type</code>, a <code>payload</code> and a <code>timestamp</code>. <code>createMessage</code> builds one yourself:</p>
+<example file="message.ts">
+import { createMessage, toCorrelationId } from "@zudojs/messaging";
+
+const message = createMessage({
+  type: "reminder.send",
+  payload: { taskId: 1, email: "ada@example.com" },
+  source: "tasks",
+  correlationId: toCorrelationId("req-7f3a"),
+});
+
+console.log(message.type, message.source);
+console.log(message.id.startsWith("msg:"), message.timestamp instanceof Date);
+console.log(message.correlationId);
+console.log(Object.isFrozen(message));
+</example>
+<output>
+reminder.send tasks
+true true
+req-7f3a
+true
+</output>
+<p><code>source</code> says which part of the app sent the message. The <code>correlationId</code> is explained below. Notice <code>toCorrelationId("req-7f3a")</code>: the ids in this package are <strong>branded</strong> strings. At runtime they are plain strings, but TypeScript will not accept any old string where a correlation id belongs, so you cannot pass a user id there by mistake. You brand a string once, with <code>toCorrelationId</code>, <code>toMessageId</code> or <code>toCausationId</code>, and they reject empty strings.</p>
+</section>
+
+<section>
+<h2 id="results">Results and failures</h2>
+<p>A failing handler does <em>not</em> make <code>send</code> throw. It returns a result with <code>success: false</code>, and the reason in <code>error</code>. That forces you to look at the outcome instead of forgetting a <code>try</code>:</p>
+<example file="results.ts">
+import { createMessageBus, MessageHandlerError } from "@zudojs/messaging";
+
+const bus = createMessageBus();
+
+bus.on("reminder.send", async () => {
+  throw new Error("mail server is down");
+}, { id: "send-reminder" });
+
+const failed = await bus.send({ type: "reminder.send", payload: { taskId: 1 } });
+console.log("success:", failed.success);
+console.log("wrapped:", failed.error instanceof MessageHandlerError);
+console.log("message:", failed.error?.message);
+
+const nobody = await bus.send({ type: "reminder.snd", payload: { taskId: 1 } });
+console.log("typo:", nobody.success, nobody.value);
+</example>
+<output>
+success: false
+wrapped: true
+message: Handler "send-reminder" failed: mail server is down
+typo: true []
+</output>
+<p>Look at the last line: a message that no handler listens for, here because of a typo in the type, still counts as a success, with an empty list as its value. The bus cannot tell "nobody needed to answer" from "you misspelled the address".</p>
+<p>When a message must have exactly one handler, as a request that expects an answer should, create the bus with <code>allowMultipleHandlers: false</code>, and check <code>bus.hasHandlers(type)</code> at start-up:</p>
+<example file="one-handler.ts">
+import { createMessageBus } from "@zudojs/messaging";
+
+const bus = createMessageBus({ allowMultipleHandlers: false });
+
+bus.on("reminder.send", async () => ({ delivered: true }), { id: "send-reminder" });
+
+try {
+  bus.on("reminder.send", async () => ({ delivered: false }), { id: "old-reminder" });
+} catch (error) {
+  if (error instanceof Error) console.log(error.name, "-", error.message);
+}
+
+for (const type of ["reminder.send", "reminder.cancel"]) {
+  console.log(type, "has a handler:", bus.hasHandlers(type));
+}
+</example>
+<output>
+MessageError - Message type "reminder.send" already has handler "send-reminder" and the registry does not allow multiple handlers.
+reminder.send has a handler: true
+reminder.cancel has a handler: false
+</output>
+<p>A second handler for the same type is now a mistake that fails at once, when the app starts, rather than a surprise in production. With several handlers allowed (the default), they run one after another, lowest <code>priority</code> number first, and <code>value</code> is an array of their results. The first one that fails stops the rest.</p>
+</section>
+
+<section>
+<h2 id="middleware">Message middleware</h2>
+<p>Message middleware works like the event middleware you just saw: a function around every dispatch, with a <code>next()</code> that runs the rest. Whatever <code>next()</code> returns becomes the result's value. Here one middleware logs every message, and another checks the payload with a schema from <a href="/learn/zudo-validation">the validation lesson</a> before any handler can see it:</p>
+<example file="middleware.ts">
+import { createMessageBus, MessageValidationError } from "@zudojs/messaging";
+import { schema } from "@zudojs/schema";
+
+const ReminderSchema = schema.object({
+  taskId: schema.number().int().positive(),
+  email: schema.string().email(),
+});
+
+const bus = createMessageBus();
+
+bus.use(async (ctx, next) => {
+  console.log(`-> ${ctx.message.type}`);
+  try {
+    return await next();
+  } finally {
+    console.log(`<- ${ctx.message.type}`);
+  }
+}, { id: "logging", priority: 10 });
+
+bus.use(async (ctx, next) => {
+  if (ctx.message.type === "reminder.send" && !ReminderSchema.safeParse(ctx.message.payload).success) {
+    throw new MessageValidationError("Invalid reminder.send payload");
+  }
+  return next();
+}, { id: "validation", priority: 20 });
+
+bus.on("reminder.send", async () => ({ delivered: true }), { id: "send-reminder" });
+
+const ok = await bus.send({ type: "reminder.send", payload: { taskId: 1, email: "ada@example.com" } });
+console.log(ok.success, ok.value);
+const bad = await bus.send({ type: "reminder.send", payload: { taskId: -1, email: "not-an-email" } });
+console.log(bad.success, bad.error?.name, "-", bad.error?.message);
+</example>
+<output>
+-> reminder.send
+<- reminder.send
+true { delivered: true }
+-> reminder.send
+<- reminder.send
+false MessageValidationError - Invalid reminder.send payload
+</output>
+<ul>
+<li>Middleware runs in <em>ascending</em> priority order here: 10 before 20, and the default is 100. That is the opposite of the event bus, so always look it up.</li>
+<li>The logging middleware uses <code>try</code>/<code>finally</code>, so its closing line prints even when an inner layer throws.</li>
+<li>When a middleware throws, the result is <code>success: false</code> and <code>error</code> is exactly what it threw. The handler never ran with bad data.</li>
+</ul>
+<p>Validating in the handler itself is also fine. Validating in middleware means no handler can forget. A message payload often came from outside (an HTTP body, a queue), so treat it like any other outside input.</p>
+</section>
+
+<section>
+<h2 id="correlation">Correlation and causation ids</h2>
+<p>One click in the app can start a chain: an HTTP request, which sends <code>reminder.send</code>, whose handler sends <code>email.deliver</code>. When something in that chain fails at 3 a.m., you need to find every log line that belongs to that one click. Two ids make that possible:</p>
+<ul>
+<li>The <strong>correlation id</strong> is shared by everything that belongs to one bigger operation, usually one HTTP request. Every message in the chain carries the same one.</li>
+<li>The <strong>causation id</strong> is the id of the one message that directly caused this one. It lets you rebuild the chain step by step.</li>
+</ul>
+<p><code>createDerivedMessage(parent, input)</code> builds a follow-up message that keeps the parent's correlation id and records the parent as its cause. Every handler can read both ids from its second argument, the <strong>context</strong>:</p>
+<example file="correlation.ts">
+import { createDerivedMessage, createMessageBus, toCorrelationId } from "@zudojs/messaging";
+
+const bus = createMessageBus();
+const ids = new Map<string, string>();
+
+bus.on("reminder.send", async (message, context) => {
+  console.log(`[${context.correlationId}] reminder.send, caused by: ${ids.get(context.causationId)}`);
+  ids.set(message.id, "reminder.send");
+  const email = createDerivedMessage(message, { type: "email.deliver", payload: { to: "ada@example.com" } });
+  const delivered = await bus.dispatch(email);
+  return delivered.value;
+}, { id: "send-reminder" });
+
+bus.on("email.deliver", async (message, context) => {
+  console.log(`[${context.correlationId}] email.deliver, caused by: ${ids.get(context.causationId)}`);
+  return "queued";
+}, { id: "deliver-email" });
+
+const result = await bus.send({
+  type: "reminder.send",
+  payload: { taskId: 1 },
+  correlationId: toCorrelationId("req-7f3a"),
+});
+console.log("result:", result.value);
+</example>
+<output>
+[req-7f3a] reminder.send, caused by: undefined
+[req-7f3a] email.deliver, caused by: reminder.send
+result: queued
+</output>
+<p>Both handlers logged the same correlation id, <code>req-7f3a</code>. The first message had no parent: its causation id defaults to its own id, which was not in the map yet, so it printed <code>undefined</code>. The second one names <code>reminder.send</code> as its cause. <code>bus.dispatch(message)</code> sends a message you already built.</p>
+<warn title="PUT THE CORRELATION ID ON THE MESSAGE">You can also pass <code>{ context: { correlationId } }</code> as the second argument of <code>send</code>. Handlers then see it in <code>context.correlationId</code>, but the message itself does not carry it, so <code>createDerivedMessage</code> cannot copy it and the follow-up message starts a new chain. Set <code>correlationId</code> on the message, as above, and the chain stays intact.</warn>
+<p>In the Task API, use the HTTP request id as the correlation id. The observability lesson puts the same id on every log line and trace, so one search finds the whole story.</p>
+</section>
+
+<section>
+<h2 id="timeouts">Timeouts</h2>
+<p>The mail server hangs. Without a limit, the request that sent <code>reminder.send</code> waits forever, and so does the user. Give the dispatch a <code>timeout</code> in milliseconds:</p>
+<example file="timeout.ts">
+import { createMessageBus, MessageTimeoutError } from "@zudojs/messaging";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const bus = createMessageBus();
+
+bus.on("reminder.send", async (message, context) => {
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    if (context.signal.aborted) {
+      console.log(`handler: gave up before attempt ${attempt}`);
+      return "cancelled";
+    }
+    console.log(`handler: attempt ${attempt} to reach the mail server`);
+    await wait(30);
+  }
+  return "sent";
+}, { id: "send-reminder" });
+
+const result = await bus.send({ type: "reminder.send", payload: { taskId: 1 } }, { timeout: 45 });
+console.log("success:", result.success, "timeout:", result.error instanceof MessageTimeoutError);
+console.log(result.error?.message);
+</example>
+<output>
+handler: attempt 1 to reach the mail server
+handler: attempt 2 to reach the mail server
+success: false timeout: true
+Message processing exceeded the timeout of 45ms.
+handler: gave up before attempt 3
+</output>
+<p>Read the order of the lines carefully:</p>
+<ul>
+<li>After 45 ms, <code>send</code> returned with <code>success: false</code> and a <code>MessageTimeoutError</code>. The caller was not kept waiting.</li>
+<li>The handler was <em>not</em> stopped by force. JavaScript cannot kill a running function. It kept going until its next check of <code>context.signal.aborted</code>, then stopped itself.</li>
+</ul>
+<p>That <code>context.signal</code> is an <strong>AbortSignal</strong>, the standard object that JavaScript uses to say "stop, nobody needs this any more". It has an <code>aborted</code> flag, and many built-in functions accept it: pass it to <code>fetch(url, { signal })</code> and the request itself is cancelled. A handler that ignores the signal keeps running and wasting resources after its caller has gone. <code>createMessageBus({ defaultTimeout: 5000 })</code> sets a timeout for every dispatch.</p>
+</section>
+
+<section>
+<h2 id="cancellation">Cancellation with AbortController</h2>
+<p>Sometimes the caller decides to stop, for example because the user closed the page. An <strong>AbortController</strong> is the object that owns a signal: you pass <code>controller.signal</code> to the work, and call <code>controller.abort()</code> to cancel it. The shortest way for a handler to respect it is <code>signal.throwIfAborted()</code>, which throws if the signal was aborted and does nothing otherwise:</p>
+<example file="cancel.ts">
+import { createMessageBus, MessageDispatchAbortedError } from "@zudojs/messaging";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const bus = createMessageBus();
+
+bus.on("report.build", async (message, context) => {
+  for (let page = 1; page <= 5; page++) {
+    context.signal.throwIfAborted();
+    await wait(30);
+    console.log(`built page ${page}`);
+  }
+  return "report ready";
+}, { id: "build-report" });
+
+const controller = new AbortController();
+setTimeout(() => controller.abort(new Error("the user closed the page")), 45);
+const result = await bus.send({ type: "report.build", payload: null }, { signal: controller.signal });
+console.log("success:", result.success);
+console.log(result.error?.message);
+
+try {
+  await bus.send({ type: "report.build", payload: null }, { signal: controller.signal });
+} catch (error) {
+  console.log("already aborted:", error instanceof MessageDispatchAbortedError);
+}
+</example>
+<output>
+built page 1
+built page 2
+success: false
+Handler "build-report" failed: the user closed the page
+already aborted: true
+</output>
+<p>Each page takes 30 ms. The controller aborted after 45 ms, while page 2 was being built. The handler finished that page, noticed the abort before page 3, and threw. The error you pass to <code>abort()</code> becomes the signal's <code>reason</code>, and <code>throwIfAborted()</code> throws it, so the dispatch failed with your message. The second <code>send</code> used a signal that was already aborted, so it never started: that is one of the few cases where <code>send</code> throws instead of returning a result.</p>
+<warn title="WHY THE HANDLER MUST THROW">If a handler sees the abort and simply <code>return</code>s, and it is the only handler, the dispatch reports <code>success: true</code> with whatever the handler returned. The caller then believes the work was done. Use <code>throwIfAborted()</code>, or throw <code>context.signal.reason</code>, so a cancelled job is reported as cancelled.</warn>
+</section>
+
+<section>
+<h2 id="task-api">Put it together: reminders in the Task API</h2>
+<p>The notifications part of the app owns the mailer and registers the handler. The tasks part only knows the message type and the payload shape. They could live in different folders, or later in different modules, without importing each other:</p>
+<example file="notifications.ts" project="reminders">
+import type { Message, MessageBus } from "@zudojs/messaging";
+
+export interface SendReminder {
+  readonly taskId: number;
+  readonly title: string;
+  readonly email: string;
+}
+
+export function registerNotificationHandlers(bus: MessageBus): void {
+  bus.on("reminder.send", async (message: Message<SendReminder>, context) => {
+    context.signal.throwIfAborted();
+    const { title, email } = message.payload;
+    console.log(`[${context.correlationId}] mail to ${email}: don't forget "${title}"`);
+    return { delivered: true, at: "2026-10-01T09:00:00Z" };
+  }, { id: "send-reminder" });
+}
+</example>
+<example file="main.ts" project="reminders">
+import { createMessageBus, toCorrelationId } from "@zudojs/messaging";
+import { registerNotificationHandlers } from "./notifications.js";
+
+const bus = createMessageBus({ allowMultipleHandlers: false, defaultTimeout: 2000 });
+registerNotificationHandlers(bus);
+
+async function remind(requestId: string, taskId: number, title: string, email: string) {
+  const result = await bus.send(
+    { type: "reminder.send", source: "tasks", payload: { taskId, title, email } },
+    { context: { correlationId: toCorrelationId(requestId) } },
+  );
+  if (!result.success) {
+    return { status: 502, body: { error: "Could not send the reminder" } };
+  }
+  return { status: 202, body: result.value };
+}
+
+console.log(await remind("req-7f3a", 1, "Buy milk", "ada@example.com"));
+bus.dispose();
+</example>
+<output>
+[req-7f3a] mail to ada@example.com: don't forget "Buy milk"
+{ status: 202, body: { delivered: true, at: '2026-10-01T09:00:00Z' } }
+</output>
+<p>The route answers 202 (Accepted) with the handler's result. If the handler fails or times out, the client gets a 502 with a short, safe message. The real reason goes to your logs, never to the client. <code>bus.dispose()</code> releases the bus when the app shuts down. After that, every <code>send</code> throws.</p>
+<p>Notice that the reminder here is sent while the user waits. If the mail server is slow, the request is slow, and if the server crashes, the reminder is lost. In <a href="/learn/zudo-queue">the background jobs lesson</a> you move this work onto a queue, so it survives crashes and retries on its own.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Time every message">
+<p>Write a middleware that stores the start time in <code>ctx.state</code> before <code>next()</code>, and after it prints the message type and whether the dispatch threw. Test it with one handler that works and one that throws.</p>
+<solution>
+<example file="timing.ts">
+import { createMessageBus } from "@zudojs/messaging";
+
+const bus = createMessageBus();
+
+bus.use(async (ctx, next) => {
+  ctx.state.set("startedAt", Date.now());
+  try {
+    const value = await next();
+    console.log(`${ctx.message.type}: ok`);
+    return value;
+  } catch (error) {
+    console.log(`${ctx.message.type}: failed`);
+    throw error;
+  }
+});
+
+bus.on("task.count", async () => 3, { id: "count" });
+bus.on("task.explode", async () => {
+  throw new Error("boom");
+}, { id: "explode" });
+
+console.log((await bus.send({ type: "task.count", payload: null })).value);
+console.log((await bus.send({ type: "task.explode", payload: null })).success);
+</example>
+<output>
+task.count: ok
+3
+task.explode: failed
+false
+</output>
+<p>A handler's error reaches the middleware as a thrown error, so a middleware sees failures too. Re-throw it, so the result still reports the failure.</p>
+</solution>
+</exercise>
+<exercise title="Messages or events?">
+<p>Which fits each case: (a) "user.registered", which starts a welcome email, an analytics entry and a Slack notice; (b) "tax.calculate", which needs the tax amount back for an invoice?</p>
+<solution>
+<p>(a) An event: something happened, several independent reactions, and nobody needs an answer. (b) A message: it asks for a result and needs exactly one handler, so use a bus with <code>allowMultipleHandlers: false</code>. The next lesson, CQRS, builds on this split between "do something" and "tell me something".</p>
+</solution>
+</exercise>
+<exercise title="Respect the signal">
+<p>This handler ignores its signal: <code>async () =&gt; { await wait(300); return "done"; }</code>. Rewrite it so a dispatch with <code>timeout: 45</code> stops it soon after the timeout, by waiting in steps of 30 ms.</p>
+<solution>
+<example file="respect.ts">
+import { createMessageBus } from "@zudojs/messaging";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const bus = createMessageBus();
+let steps = 0;
+
+bus.on("slow.job", async (message, context) => {
+  for (let i = 0; i < 10; i++) {
+    context.signal.throwIfAborted();
+    await wait(30);
+    steps += 1;
+  }
+  return "done";
+}, { id: "slow-job" });
+
+const result = await bus.send({ type: "slow.job", payload: null }, { timeout: 45 });
+await wait(100);
+console.log("success:", result.success, "steps done:", steps);
+</example>
+<output>
+success: false steps done: 2
+</output>
+<p>The handler did 2 steps (about 60 ms), then saw the aborted signal and stopped, instead of running all 10.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>An event says "this happened". A message asks "please do this" and brings the answer back.</li>
+<li><code>bus.on(type, handler, { id })</code> registers, <code>bus.send({ type, payload })</code> dispatches and returns <code>{ success, value, error }</code>. A failing handler does not throw.</li>
+<li>A message nobody handles is still a success. Use <code>allowMultipleHandlers: false</code> and <code>hasHandlers</code> for requests that need exactly one answer.</li>
+<li>Middleware wraps every dispatch. It runs in ascending priority order. Validate payloads there.</li>
+<li>The correlation id ties one operation together, and the causation id points to the direct parent. <code>createDerivedMessage</code> keeps both right.</li>
+<li><code>timeout</code> and an <code>AbortController</code> cancel through <code>context.signal</code>. Handlers must check it and throw, because nothing stops them by force.</li>
+</ul>
+</section>

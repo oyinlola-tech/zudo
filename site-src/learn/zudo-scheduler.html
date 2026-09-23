@@ -1,0 +1,527 @@
+---
+title: Scheduled tasks
+description: Run work on the clock, not on a request. Intervals, one-off runs and cron expressions, time zones, retries and failed runs, overlapping runs, restarts, and running a schedule on one instance only, with @zudojs/scheduler.
+minutes: 40
+youNeed: The background jobs lesson
+youBuild: A weekday 09:00 digest and a nightly cleanup for the Task API, safe to run with several servers
+keywords: zudojs scheduler, cron, cron expression, scheduled task, recurring job, every, time zone, UTC, overlap, misfire, daylight saving, distributed lock
+---
+<section>
+<h2 id="why">Work that the clock starts</h2>
+<p>Everything the Task API has done so far started with a request: a user clicks, a job is queued. Some work has no user behind it. It starts because of the time:</p>
+<ul>
+<li>At 09:00 every weekday, email each user a digest of their open tasks.</li>
+<li>Every night, delete completed tasks older than 30 days.</li>
+<li>Every 5 minutes, refresh the cached statistics.</li>
+</ul>
+<p>A <strong>scheduler</strong> runs a function at the times you describe. You could build a crude one with <code>setTimeout</code>, but you would soon need everything else: repeating on a calendar, stopping cleanly on shutdown, timeouts, retries, and not starting a second run while the first is still going. <code>@zudojs/scheduler</code> is that machinery.</p>
+<p>A scheduler and a queue work together. The scheduler decides <em>when</em>. The queue from <a href="/learn/zudo-queue">the background jobs lesson</a> makes sure the work is <em>done</em>, with retries and dead letters. You will connect them at the end.</p>
+</section>
+
+<section>
+<h2 id="install">Install @zudojs/scheduler</h2>
+<shell>
+$ npm install @zudojs/scheduler
+
+added 1 package, and audited 78 packages in 3s
+…
+</shell>
+<p>This package is not in the browser terminal, so every example on this page says <strong>Node.js only</strong>. Save each one in your <code>task-api/src</code> folder and run it with <code>npx tsx src/&lt;file&gt;.ts</code>. You will see the output shown under it.</p>
+</section>
+
+<section>
+<h2 id="first">Your first schedule</h2>
+<p>Three steps, always in this order: create a scheduler, <strong>define</strong> a job (give a function a name), then <strong>schedule</strong> that name. Nothing runs until you call <code>start()</code>:</p>
+<example file="first.ts" browser="no">
+import { Scheduler } from "@zudojs/scheduler";
+
+const scheduler = new Scheduler();
+const keepAlive = setInterval(() => {}, 1000);
+let runs = 0;
+let done: () => void = () => {};
+const threeRuns = new Promise<void>((resolve) => (done = resolve));
+
+scheduler.define({
+  id: "refresh-stats",
+  name: "Refresh the cached statistics",
+  handler: (ctx) => {
+    runs += 1;
+    console.log(`run ${runs} of ${ctx.jobId}`);
+    if (runs === 3) done();
+  },
+});
+
+const handle = scheduler.every("50ms", "refresh-stats");
+console.log("schedule is", handle.state);
+
+scheduler.start();
+await threeRuns;
+await scheduler.stop();
+clearInterval(keepAlive);
+console.log("stopped after", runs, "runs");
+</example>
+<output>
+schedule is active
+run 1 of refresh-stats
+run 2 of refresh-stats
+run 3 of refresh-stats
+stopped after 3 runs
+</output>
+<ul>
+<li>A <strong>job</strong> is a named function: an <code>id</code>, a <code>name</code> for people, and a <code>handler</code>. Scheduling an id you never defined throws.</li>
+<li>A <strong>schedule</strong> is a rule about when to run a job. <code>every("50ms", id)</code> runs it every 50 milliseconds, starting 50 ms from now. In the Task API you would write <code>every("5m", …)</code>. One job can have several schedules.</li>
+<li><code>every</code> returns a <strong>handle</strong>, a remote control for that one schedule.</li>
+<li><code>stop()</code> ends the timers. Call it when your app shuts down, from the same place that stops the queue workers.</li>
+</ul>
+<p>Waiting for a promise that the third run resolves, instead of waiting a fixed time, keeps the example exact even on a slow computer.</p>
+<warn title="THE SCHEDULER DOES NOT KEEP NODE.JS RUNNING">Node.js exits when it has nothing left to wait for. The scheduler's timers are marked so that they do not count, so a script that only calls <code>scheduler.start()</code> exits at once and nothing ever runs, without any error. That is what the empty <code>setInterval</code> is for. In the Task API you don't need it, because the HTTP server keeps the process running. You do need something like it if you run the scheduler in a process of its own.</warn>
+</section>
+
+<section>
+<h2 id="triggers">Once, after, every</h2>
+<p>There are four ways to schedule a defined job:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Call</th><th>Runs</th></tr></thead>
+<tbody>
+<tr><td><code>after("30s", id)</code></td><td>Once, 30 seconds from now</td></tr>
+<tr><td><code>at(new Date("2027-01-01T00:00:00Z"), id)</code></td><td>Once, at that instant</td></tr>
+<tr><td><code>every("5m", id)</code></td><td>Again and again, every 5 minutes</td></tr>
+<tr><td><code>cron("0 9 * * 1-5", id)</code></td><td>At calendar times: 09:00 on weekdays</td></tr>
+</tbody>
+</table></div>
+<p>Durations are strings with a unit: <code>ms</code>, <code>s</code>, <code>m</code>, <code>h</code>, <code>d</code> and <code>w</code>, which you can combine. A bare number is rejected, because nobody can tell whether <code>5</code> means seconds or minutes:</p>
+<example file="durations.ts" browser="no">
+import { InvalidDurationError, parseDuration } from "@zudojs/scheduler";
+
+for (const text of ["250ms", "30s", "5m", "1h30m", "1d", "1w"]) {
+  console.log(text.padEnd(6), "=", parseDuration(text), "ms");
+}
+
+try {
+  parseDuration("5");
+} catch (error) {
+  if (error instanceof InvalidDurationError) console.log("5 ->", error.name);
+}
+</example>
+<output>
+250ms  = 250 ms
+30s    = 30000 ms
+5m     = 300000 ms
+1h30m  = 5400000 ms
+1d     = 86400000 ms
+1w     = 604800000 ms
+5 -> InvalidDurationError
+</output>
+<p>Each call can pass <code>data</code>, which the handler reads as <code>ctx.data</code>: <code>scheduler.every("1h", "sync", { data: { source: "billing" } })</code>.</p>
+</section>
+
+<section>
+<h2 id="cron">Cron expressions</h2>
+<p><code>every("24h")</code> runs 24 hours after the app started, which could be 15:37. For "09:00 every weekday" you need a calendar rule. A <strong>cron expression</strong> is the standard way to write one, from the Unix tool <code>cron</code>. It is five fields separated by spaces:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Field</th><th>Values</th><th>Example</th></tr></thead>
+<tbody>
+<tr><td>1. minute</td><td>0 to 59</td><td><code>0</code> = at minute 0</td></tr>
+<tr><td>2. hour</td><td>0 to 23</td><td><code>9</code> = 09:00</td></tr>
+<tr><td>3. day of month</td><td>1 to 31</td><td><code>*</code> = any day</td></tr>
+<tr><td>4. month</td><td>1 to 12, or <code>jan</code> to <code>dec</code></td><td><code>*</code> = any month</td></tr>
+<tr><td>5. day of week</td><td>0 to 6 (0 is Sunday), or <code>sun</code> to <code>sat</code></td><td><code>1-5</code> = Monday to Friday</td></tr>
+</tbody>
+</table></div>
+<p>In each field, <code>*</code> means "any", <code>1-5</code> is a range, <code>1,15</code> is a list, and <code>*/15</code> means "every 15th": 0, 15, 30, 45. So <code>0 9 * * 1-5</code> reads "minute 0, hour 9, any day, any month, Monday to Friday".</p>
+<p>Cron expressions are easy to get wrong, so check them. A <code>CronTrigger</code> computes the next run after any date you give it, without starting anything. Starting from a fixed date, Friday 2 October 2026 at 12:00 UTC, the answers are the same on every computer:</p>
+<example file="cron.ts" browser="no">
+import { CronTrigger } from "@zudojs/scheduler";
+
+const from = new Date("2026-10-02T12:00:00Z");
+
+function nextRuns(expression: string, count: number): string {
+  const trigger = new CronTrigger(expression, "UTC");
+  const runs: string[] = [];
+  let after = from;
+  for (let i = 0; i < count; i++) {
+    const next = trigger.next(after);
+    if (!next) break;
+    runs.push(next.toISOString().slice(0, 16).replace("T", " "));
+    after = next;
+  }
+  return runs.join(" | ");
+}
+
+console.log("0 9 * * 1-5  ", nextRuns("0 9 * * 1-5", 3));
+console.log("*/15 * * * * ", nextRuns("*/15 * * * *", 3));
+console.log("30 2 * * *   ", nextRuns("30 2 * * *", 3));
+console.log("0 0 1 * *    ", nextRuns("0 0 1 * *", 3));
+console.log("@hourly      ", nextRuns("@hourly", 2));
+</example>
+<output>
+0 9 * * 1-5   2026-10-05 09:00 | 2026-10-06 09:00 | 2026-10-07 09:00
+*/15 * * * *  2026-10-02 12:15 | 2026-10-02 12:30 | 2026-10-02 12:45
+30 2 * * *    2026-10-03 02:30 | 2026-10-04 02:30 | 2026-10-05 02:30
+0 0 1 * *     2026-11-01 00:00 | 2026-12-01 00:00 | 2027-01-01 00:00
+@hourly       2026-10-02 13:00 | 2026-10-02 14:00
+</output>
+<ul>
+<li>The weekday digest skips Saturday 3 and Sunday 4 October and first runs on Monday the 5th.</li>
+<li><code>*/15</code> starts at 12:15, not 12:00: the next run is always strictly <em>after</em> the date you give.</li>
+<li><code>@hourly</code> is a shortcut for <code>0 * * * *</code>. <code>@daily</code>, <code>@weekly</code>, <code>@monthly</code> and <code>@yearly</code> exist too.</li>
+</ul>
+<warn title="THE TWO DAY FIELDS">When both day fields are set, cron runs when <em>either</em> matches, not both. <code>0 0 13 * 5</code> does not mean "Friday the 13th": it runs on every 13th <em>and</em> on every Friday. Every cron tool behaves this way. Check an expression like this with <code>CronTrigger</code> before you trust it.</warn>
+<p>A broken expression fails when you write it, not at 2 a.m.:</p>
+<example file="cron-errors.ts" browser="no">
+import { CronParseError, InvalidScheduleError, Scheduler } from "@zudojs/scheduler";
+
+const scheduler = new Scheduler();
+scheduler.define({ id: "digest", name: "Daily digest", handler: () => {} });
+
+for (const expression of ["0 9 * *", "0 25 * * *", "0 0 30 2 *"]) {
+  try {
+    scheduler.cron(expression, "digest", { timezone: "UTC" });
+  } catch (error) {
+    if (error instanceof CronParseError || error instanceof InvalidScheduleError) {
+      console.log(expression.padEnd(11), "->", error.name);
+    }
+  }
+}
+</example>
+<output>
+0 9 * *     -> CronParseError
+0 25 * * *  -> CronParseError
+0 0 30 2 *  -> InvalidScheduleError
+</output>
+<p>Four fields instead of five, and hour 25, cannot be parsed. <code>0 0 30 2 *</code> is valid cron, but 30 February never comes, so the schedule is refused.</p>
+</section>
+
+<section>
+<h2 id="time-zones">Time zones</h2>
+<p>"09:00" is not a moment until you say <em>where</em>. 09:00 in Lagos and 09:00 in Tokyo are eight hours apart. By default, cron fields are read in the <strong>local time zone of the server</strong>, whatever the operating system is set to. Pass <code>timezone: "UTC"</code> to read them in UTC, the same everywhere:</p>
+<example file="time-zones.ts" browser="no">
+import { Scheduler } from "@zudojs/scheduler";
+
+const now = new Date("2026-10-02T12:00:00Z");
+const scheduler = new Scheduler({
+  clock: { now: () => new Date(now), nowMs: () => now.getTime() },
+});
+scheduler.define({ id: "digest", name: "Weekday digest", handler: () => {} });
+
+const digest = scheduler.cron("0 9 * * 1-5", "digest", { timezone: "UTC" });
+console.log("next digest:", digest.nextRun()?.toISOString());
+
+try {
+  scheduler.cron("0 9 * * 1-5", "digest", { timezone: "Africa/Lagos" });
+} catch (error) {
+  if (error instanceof Error) console.log(error.name, "-", error.message);
+}
+</example>
+<output>
+next digest: 2026-10-05T09:00:00.000Z
+InvalidScheduleError - CronTrigger supports only "UTC" or the system local zone, got "Africa/Lagos"
+</output>
+<p>Two things are new here:</p>
+<ul>
+<li>A <strong>clock</strong> is where the scheduler reads the current time. This one always says 12:00 on 2 October, so <code>nextRun()</code> gives the same answer on every computer. That is how you test schedules without waiting for real time to pass.</li>
+<li>Named zones such as <code>"Africa/Lagos"</code> are refused rather than silently ignored, because the package carries no time-zone database.</li>
+</ul>
+<p>The advice for servers: run schedules in <strong>UTC</strong>. Servers move between regions and clouds, and many places change their clocks for <strong>daylight saving time</strong>. On the night the clocks jump forward, 02:30 local time does not exist, and a local-time job at 02:30 is skipped. When they jump back, 02:30 happens twice. UTC never jumps. If users want their digest at 09:00 <em>their</em> time, store each user's zone and compute the UTC time for them.</p>
+</section>
+
+<section>
+<h2 id="handles">Pausing, resuming, cancelling</h2>
+<p>The handle controls a live schedule. <code>listSchedules()</code> shows everything the scheduler knows:</p>
+<example file="handles.ts" browser="no">
+import { Scheduler } from "@zudojs/scheduler";
+
+const now = new Date("2026-10-02T12:00:00Z");
+const scheduler = new Scheduler({
+  clock: { now: () => new Date(now), nowMs: () => now.getTime() },
+});
+scheduler.define({ id: "cleanup", name: "Delete old completed tasks", handler: () => {} });
+scheduler.define({ id: "refresh-stats", name: "Refresh statistics", handler: () => {} });
+
+const cleanup = scheduler.cron("30 2 * * *", "cleanup", { timezone: "UTC" });
+const stats = scheduler.every("5m", "refresh-stats");
+
+await stats.pause();
+console.log("stats:", stats.state);
+await stats.resume();
+console.log("stats:", stats.state, stats.nextRun()?.toISOString());
+
+await cleanup.cancel();
+console.log("cleanup:", cleanup.state, cleanup.nextRun());
+
+for (const schedule of scheduler.listSchedules()) {
+  console.log(schedule.jobId, schedule.type, schedule.state, schedule.nextRunAt.toISOString());
+}
+</example>
+<output>
+stats: paused
+stats: active 2026-10-02T12:05:00.000Z
+cleanup: cancelled undefined
+refresh-stats interval active 2026-10-02T12:05:00.000Z
+</output>
+<p>A paused schedule does not fire. Resuming computes the next run from <em>now</em>: a schedule paused over three fire times does not fire three times at once when you resume it. A cancelled schedule is gone for good, and a run that was in progress is aborted through its signal.</p>
+</section>
+
+<section>
+<h2 id="failures">Failed runs, retries and timeouts</h2>
+<p>A handler that throws does not crash the scheduler, and it is not silently forgotten. A job can have a <strong>retry policy</strong>. What still fails after the last retry goes to the scheduler's <code>onError</code> callback, and every run is kept in a short history:</p>
+<example file="failures.ts" browser="no">
+import { Scheduler } from "@zudojs/scheduler";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const scheduler = new Scheduler({
+  onError: ({ jobId, error }) => {
+    if (error instanceof Error) console.log(`onError: ${jobId}: ${error.name}: ${error.message}`);
+  },
+});
+
+scheduler.define({
+  id: "sync-calendar",
+  name: "Sync the calendar",
+  options: { retry: { attempts: 3, strategy: "exponential", delay: 10 } },
+  handler: (ctx) => {
+    console.log(`sync-calendar attempt ${ctx.attempt}`);
+    if (ctx.attempt < 3) throw new Error("calendar API returned 503");
+  },
+});
+
+scheduler.define({
+  id: "build-report",
+  name: "Build the weekly report",
+  options: { timeout: 50 },
+  handler: async (ctx) => {
+    await wait(150);
+    console.log("build-report noticed the abort:", ctx.signal.aborted);
+  },
+});
+
+scheduler.after("10ms", "sync-calendar");
+scheduler.after("100ms", "build-report");
+scheduler.start();
+await wait(500);
+
+for (const run of scheduler.getExecutions()) console.log("history:", run.jobId, run.status);
+await scheduler.stop();
+</example>
+<output>
+sync-calendar attempt 1
+sync-calendar attempt 2
+sync-calendar attempt 3
+onError: build-report: SchedulerJobTimeoutError: Job timed out after 50ms.
+build-report noticed the abort: true
+history: sync-calendar completed
+history: build-report timed_out
+</output>
+<ul>
+<li><code>sync-calendar</code> failed twice and worked on the third attempt, so <code>onError</code> never heard about it. <code>ctx.attempt</code> starts at 1 here.</li>
+<li><code>build-report</code> ran past its 50 ms <code>timeout</code>. The scheduler aborted <code>ctx.signal</code> and reported a <code>SchedulerJobTimeoutError</code>. As with every signal in this course, the handler has to look at it. Pass it on to <code>fetch</code> and database calls.</li>
+<li><code>getExecutions()</code> keeps the last 100 runs with their status: <code>completed</code>, <code>failed</code>, <code>timed_out</code> or <code>cancelled</code>. Other errors arrive in <code>onError</code> as <code>SchedulerJobExecutionError</code>, with the original error as its <code>cause</code>.</li>
+</ul>
+<p>In the Task API, <code>onError</code> should log with the logger and raise an alert. A nightly job that fails every night for a month without anyone noticing is a classic production story.</p>
+</section>
+
+<section>
+<h2 id="overlap">Overlapping runs</h2>
+<p>You schedule a job every 10 minutes. One day the database is slow and a run takes 25 minutes. The next fire times arrive while the first run is still going. That is an <strong>overlap</strong>, and each schedule decides what to do with its <code>overlap</code> option:</p>
+<example file="overlap.ts" browser="no">
+import { Scheduler } from "@zudojs/scheduler";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function tryPolicy(overlap: "allow" | "skip"): Promise<void> {
+  const scheduler = new Scheduler();
+  let running = 0;
+  let mostAtOnce = 0;
+  scheduler.define({
+    id: "slow-cleanup",
+    name: "A cleanup that is slower than its interval",
+    handler: async () => {
+      running += 1;
+      mostAtOnce = Math.max(mostAtOnce, running);
+      await wait(150);
+      running -= 1;
+    },
+  });
+  scheduler.every("40ms", "slow-cleanup", { overlap });
+  scheduler.start();
+  await wait(300);
+  await scheduler.stop();
+  console.log(`${overlap}: runs overlapped: ${mostAtOnce > 1}`);
+}
+
+await tryPolicy("allow");
+await tryPolicy("skip");
+</example>
+<output>
+allow: runs overlapped: true
+skip: runs overlapped: false
+</output>
+<ul>
+<li><code>"allow"</code>, the default, starts a new run next to the old one. Runs pile up, each one slowing the database further.</li>
+<li><code>"skip"</code> drops a fire time while a run is still going. For cleanups and syncs this is almost always what you want: the running one will do the work.</li>
+<li><code>"queue"</code> holds one fire time and runs it right after the current run ends. <code>"replace"</code> aborts the running one and starts fresh, for when only the newest result matters.</li>
+</ul>
+<p><code>new Scheduler({ maxConcurrency })</code> also caps how many runs of <em>all</em> jobs may be in progress at once. The default is 10.</p>
+</section>
+
+<section>
+<h2 id="restarts">Restarts and persistent schedules</h2>
+<p>The scheduler keeps everything in memory. Nothing is written to disk. When the process restarts, every schedule is gone. That sounds bad, but for most recurring work it is fine:</p>
+<ul>
+<li><strong>Recurring schedules live in your code.</strong> The weekday digest and the nightly cleanup are defined when the app starts, every time it starts. The code is the source of truth, so there is nothing to lose.</li>
+<li><strong>Schedules that users create must be stored.</strong> "Remind me on 12 October at 08:00" is data. Save it in the database, as in <a href="/learn/zudo-database">the database lesson</a>, and when the app starts, read the rows and schedule them again.</li>
+</ul>
+<p>When the app restores a reminder whose time already passed while it was down, the <code>misfire</code> option decides: <code>"run-once"</code> (the default) runs it once right away, and <code>"skip"</code> refuses it:</p>
+<example file="restore.ts" browser="no">
+import { Scheduler } from "@zudojs/scheduler";
+
+interface ReminderRow {
+  readonly id: number;
+  readonly taskId: number;
+  readonly remindAt: string;
+}
+
+const rows: ReminderRow[] = [
+  { id: 1, taskId: 4, remindAt: "2026-10-02T08:00:00Z" },
+  { id: 2, taskId: 7, remindAt: "2026-10-12T08:00:00Z" },
+];
+
+const now = new Date("2026-10-02T12:00:00Z");
+const scheduler = new Scheduler({
+  clock: { now: () => new Date(now), nowMs: () => now.getTime() },
+});
+scheduler.define({ id: "task-reminder", name: "Send one task reminder", handler: () => {} });
+
+for (const row of rows) {
+  const handle = scheduler.at(new Date(row.remindAt), "task-reminder", {
+    misfire: "run-once",
+    data: { reminderId: row.id, taskId: row.taskId },
+  });
+  console.log(`reminder ${row.id}: runs at ${handle.nextRun()?.toISOString()}`);
+}
+</example>
+<output>
+reminder 1: runs at 2026-10-02T12:00:00.000Z
+reminder 2: runs at 2026-10-12T08:00:00.000Z
+</output>
+<p>Reminder 1 was due at 08:00, while the server was down. With <code>run-once</code> it runs at once, at 12:00. Reminder 2 is still in the future and keeps its time. The handler then marks the row as sent, so a later restart does not send it again.</p>
+<tip>For one-off work like a reminder, a delayed job on a stored queue (<code>queue.add(name, data, { scheduledAt })</code> from the last lesson) is often simpler: the queue already stores it, retries it and survives restarts. Use the scheduler for recurring, clock-based work.</tip>
+</section>
+
+<section>
+<h2 id="production">Run it on one instance only</h2>
+<p>In production you usually run two or more copies of the Task API behind a load balancer, as you will in <a href="/learn/deployment">the deployment lesson</a>. Each copy starts its own scheduler. At 09:00 each one sends the digest, and every user gets it twice, or ten times.</p>
+<p>There are three common fixes:</p>
+<ul>
+<li><strong>One scheduler process.</strong> Start the scheduler only where a setting says so, for example <code>SCHEDULER_ENABLED=true</code> on exactly one instance, or in a separate small "scheduler" service. Simple, but if that one instance is down, nothing runs.</li>
+<li><strong>A lock in a shared store.</strong> Every copy fires, but the job first takes a lock such as <code>digest.2026-10-05</code> in Redis. Only the copy that gets it does the work. The lock from <a href="/learn/zudo-cache">the caching lesson</a> works this way when you give it a shared lock store.</li>
+<li><strong>Let the scheduler only enqueue.</strong> The scheduled handler does no work itself. It adds a job to a shared queue with a <code>deduplicationKey</code> made from the date. Duplicates are refused, and the real work gets the queue's retries and dead letters.</li>
+</ul>
+<p>Here is the third pattern. Two schedulers stand for two servers, and they share one queue. Both fire, and both queue a job. The processor is <strong>idempotent</strong>, as in the last lesson: it records each day it has sent, so the second job does nothing:</p>
+<example file="one-instance.ts" browser="no">
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+import { Scheduler } from "@zudojs/scheduler";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const sentDays = new Set<string>();
+
+const digests = createInMemoryQueue<{ day: string }>(createQueueName("digests"));
+digests.process("send-digest", async (job) => {
+  if (sentDays.has(job.data.day)) {
+    console.log("worker: digest already sent today, skipping");
+    return;
+  }
+  sentDays.add(job.data.day);
+  console.log("worker: sending the digest");
+});
+
+function startServer(name: string): Scheduler {
+  const scheduler = new Scheduler();
+  scheduler.define({
+    id: "enqueue-digest",
+    name: "Enqueue the daily digest",
+    handler: async (ctx) => {
+      const day = ctx.scheduledAt.toISOString().slice(0, 10);
+      await digests.add("send-digest", { day });
+      console.log(`${name}: queued the digest`);
+    },
+  });
+  scheduler.after("20ms", "enqueue-digest");
+  scheduler.start();
+  return scheduler;
+}
+
+const a = startServer("server A");
+const b = startServer("server B");
+await wait(400);
+await a.stop();
+await b.stop();
+await digests.close();
+</example>
+<output>
+server A: queued the digest
+server B: queued the digest
+worker: sending the digest
+worker: digest already sent today, skipping
+</output>
+<p>Both "servers" fired and queued a job, but only one digest went out. The day comes from <code>ctx.scheduledAt</code>, the time the run was due, so tomorrow's run is a new day. In the real Task API, <code>sentDays</code> is a database table with a unique <code>day</code> column: the database then refuses the second insert even when two workers on two machines try at the same moment.</p>
+<p>Why not use the queue's <code>deduplicationKey</code>? It only refuses a second job while the first one is still in the queue. Once the first digest job has finished, a job with the same key is accepted again. The idempotent processor protects you no matter when the duplicate arrives.</p>
+<p>The production checklist for scheduled work:</p>
+<ul>
+<li>Run it on one instance, or make duplicates harmless with a lock or a deduplication key.</li>
+<li>Write cron expressions in UTC, and check them with <code>CronTrigger</code>.</li>
+<li>Choose <code>overlap: "skip"</code> for anything that can run longer than its interval.</li>
+<li>Give every job a <code>timeout</code>, honour <code>ctx.signal</code>, and send failures from <code>onError</code> to your logs and alerts.</li>
+<li>Keep handlers short. Heavy work goes on a queue.</li>
+<li>Call <code>stop()</code> on shutdown. By default it aborts running jobs and waits for them to settle. <code>stop({ drain: true })</code> lets them finish instead.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Write the expressions">
+<p>Write cron expressions for: (a) every day at 23:45; (b) every 10 minutes during office hours, 08:00 to 17:59, Monday to Friday; (c) at 06:00 on the first day of every quarter (January, April, July, October). Check each with <code>CronTrigger</code> from 2 October 2026, 12:00 UTC.</p>
+<solution>
+<example file="exercise-cron.ts" browser="no">
+import { CronTrigger } from "@zudojs/scheduler";
+
+const from = new Date("2026-10-02T12:00:00Z");
+const expressions = ["45 23 * * *", "*/10 8-17 * * 1-5", "0 6 1 1,4,7,10 *"];
+
+for (const expression of expressions) {
+  const trigger = new CronTrigger(expression, "UTC");
+  const first = trigger.next(from);
+  const second = first ? trigger.next(first) : null;
+  console.log(expression.padEnd(18), first?.toISOString(), second?.toISOString());
+}
+</example>
+<output>
+45 23 * * *        2026-10-02T23:45:00.000Z 2026-10-03T23:45:00.000Z
+*/10 8-17 * * 1-5  2026-10-02T12:10:00.000Z 2026-10-02T12:20:00.000Z
+0 6 1 1,4,7,10 *   2027-01-01T06:00:00.000Z 2027-04-01T06:00:00.000Z
+</output>
+<p>The quarterly job's next run is 1 January 2027: 1 October 2026 has just passed.</p>
+</solution>
+</exercise>
+<exercise title="Skip the overlap">
+<p>A "recalculate statistics" job runs every 30 seconds but sometimes takes 45 seconds. Which <code>overlap</code> policy should it use, and why? What would you change if it often took 2 minutes?</p>
+<solution>
+<p><code>"skip"</code>: a run that is still going will produce fresh statistics anyway, and a second run in parallel only doubles the load. If it often takes 2 minutes, the interval is simply too short for the work. Make the interval longer, make the job faster (for example by only recalculating users whose tasks changed), or move the work to a queue.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A scheduler runs work on the clock. Define a job, schedule it with <code>after</code>, <code>at</code>, <code>every</code> or <code>cron</code>, then <code>start()</code>. <code>stop()</code> on shutdown.</li>
+<li>A cron expression has five fields: minute, hour, day of month, month, day of week. Check expressions with <code>CronTrigger</code> from a fixed date.</li>
+<li>Use <code>timezone: "UTC"</code>. Local time has daylight-saving gaps and repeats.</li>
+<li>Handles pause, resume and cancel schedules. A fixed <code>clock</code> makes schedules testable.</li>
+<li>Retry policies, timeouts with <code>ctx.signal</code>, <code>onError</code> and <code>getExecutions()</code> keep failures visible.</li>
+<li><code>overlap: "skip"</code> stops slow runs from piling up.</li>
+<li>Nothing is stored: define recurring schedules in code, and store user-created ones in the database.</li>
+<li>Several instances each run the schedule. Run it on one, or make duplicates harmless with a lock or a queue deduplication key.</li>
+</ul>
+</section>

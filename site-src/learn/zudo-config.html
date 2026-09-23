@@ -1,0 +1,484 @@
+---
+title: Configuration
+description: Move the Task API's settings out of the code with @zudojs/config. Layer defaults, a config file and environment variables by priority, validate the result with a schema, keep secrets out of logs, and run the same code in development and production.
+minutes: 45
+youNeed: Middleware, CORS, security headers and graceful shutdown
+youBuild: A validated, typed configuration for the Task API that reads defaults, config.json and environment variables, and refuses to start in production without its secrets
+keywords: zudojs config, configuration, createConfigManager, createDefaultsConfigSource, createEnvironmentConfigSource, createCustomConfigSource, environment variables, process.env, config file, priority, precedence, secrets, redaction, toSafeObject, NODE_ENV, resolveEnvironment, .env file, --env-file, twelve-factor, fail fast
+---
+<section>
+<h2 id="why">Why configuration lives outside the code</h2>
+<p>The Task API now has settings written straight into <code>src/server.ts</code>: the port, the allowed CORS origins, the rate limits. That causes three problems:</p>
+<ul>
+<li><strong>They differ per environment.</strong> On your computer the web app runs at <code>http://localhost:5173</code>; in production it is <code>https://tasks.example.com</code>. Changing code to deploy is slow and risky.</li>
+<li><strong>Secrets would end up in git.</strong> A database password or a token-signing key written in code is visible to everyone who can read the repository, forever, even after you delete it.</li>
+<li><strong>Nobody can see what is configurable.</strong> The settings are scattered through the code.</li>
+</ul>
+<p><strong>Configuration</strong> is every value that changes between environments. The usual rule, from the "twelve-factor app" guidelines, is: code is the same everywhere, and configuration comes from outside, mostly from <strong>environment variables</strong>. You read those in <a href="/learn/node-apis">Node.js APIs</a> with <code>process.env</code>.</p>
+<p><code>@zudojs/config</code> collects settings from several places, decides which one wins, and keeps secrets out of logs. It is already in the Task API's <code>package.json</code>.</p>
+</section>
+
+<section>
+<h2 id="sources">Sources and priority</h2>
+<p>A <strong>config source</strong> is one place values come from: built-in defaults, a file, the environment. A <strong>config manager</strong> loads all its sources and merges them. When two sources give the same key, the one with the higher <strong>priority</strong> wins:</p>
+<example file="sources.ts">
+import { createConfigManager, createDefaultsConfigSource, createMemoryConfigSource } from "@zudojs/config";
+
+const config = createConfigManager({
+  sources: [
+    createDefaultsConfigSource({ port: 3000, host: "127.0.0.1", rate_limit_max: 300 }),
+    createMemoryConfigSource({ port: 8080 }, { name: "overrides", priority: 100 }),
+  ],
+});
+await config.load();
+
+console.log(config.number("port"), config.string("host"), config.number("rate_limit_max"));
+console.log(config.get("database_url"), config.string("database_url", "none"));
+</example>
+<output>
+8080 127.0.0.1 300
+undefined none
+</output>
+<p>The override's <code>port</code> beat the default, and every key the override did not mention kept its default. <strong>Typed accessors</strong> such as <code>number()</code>, <code>string()</code> and <code>boolean()</code> read a key as that type. <code>get()</code> gives <code>undefined</code> for a missing key, and the second argument of an accessor is a fallback. The accessors are typed as possibly <code>undefined</code> even when you give a fallback, so TypeScript may ask you to handle that case; <code>required()</code> throws instead when a key is missing.</p>
+<p>In real projects the layers are nearly always the same, from lowest to highest priority:</p>
+<ol>
+<li><strong>Defaults</strong> in the code: safe values that work on a developer's computer.</li>
+<li>A <strong>config file</strong>: settings you are happy to keep in git, per environment.</li>
+<li><strong>Environment variables</strong>: set by whoever runs the app, and the only place for secrets.</li>
+</ol>
+</section>
+
+<section>
+<h2 id="env">Environment variables</h2>
+<p><code>createEnvironmentConfigSource</code> reads environment variables that start with a <strong>prefix</strong>, so the app only picks up its own. It turns each name into a key: the prefix is removed, the rest is lower-cased, and a double underscore <code>__</code> becomes a dot. Normally it reads <code>process.env</code>; here it gets a plain object instead, so you can see the mapping (and run it in the browser):</p>
+<example file="env-source.ts">
+import { createConfigManager, createDefaultsConfigSource, createEnvironmentConfigSource } from "@zudojs/config";
+
+const fakeEnv = {
+  TASKS_PORT: "8080",
+  TASKS_RATE_LIMIT_MAX: "50",
+  TASKS_DEBUG: "false",
+  TASKS_DB__HOST: "db.internal",
+  HOME: "/home/ada",
+};
+
+const config = createConfigManager({
+  sources: [
+    createDefaultsConfigSource({ port: 3000, debug: true }),
+    createEnvironmentConfigSource({ prefix: "TASKS_", env: fakeEnv, priority: 50 }),
+  ],
+});
+await config.load();
+
+console.log(config.toObject());
+console.log(config.number("port"), typeof config.number("port"), config.boolean("debug"));
+</example>
+<output>
+{
+  port: '8080',
+  rate_limit_max: '50',
+  debug: 'false',
+  'db.host': 'db.internal'
+}
+8080 number false
+</output>
+<p>Notice:</p>
+<ul>
+<li><code>HOME</code> was ignored: it does not start with <code>TASKS_</code>.</li>
+<li>Every value from the environment is a <strong>string</strong>: <code>'8080'</code>, <code>'false'</code>. The environment has no other type. The typed accessors convert: <code>number("port")</code> gave the number 8080, and <code>boolean("debug")</code> turned <code>"false"</code> into <code>false</code>. A plain <code>if ("false")</code> would have been true.</li>
+</ul>
+<p>With the real environment, leave out <code>env</code>. This example prints the port from <code>process.env</code>, or the default when the variable is not set:</p>
+<example file="env-real.ts" browser="no">
+import { createConfigManager, createDefaultsConfigSource, createEnvironmentConfigSource } from "@zudojs/config";
+
+const config = createConfigManager({
+  sources: [
+    createDefaultsConfigSource({ port: 3000 }),
+    createEnvironmentConfigSource({ prefix: "TASKS_", priority: 50 }),
+  ],
+});
+await config.load();
+console.log("port:", config.number("port"));
+</example>
+<output>
+port: 3000
+</output>
+<p>On your computer, set the variable for one command by writing it in front:</p>
+<shell title="Terminal on your computer">
+$ npx tsx env-real.ts
+port: 3000
+$ TASKS_PORT=8080 npx tsx env-real.ts
+port: 8080
+</shell>
+<tip title="ON WINDOWS POWERSHELL">Set the variable first, then run: <code>$env:TASKS_PORT="8080"; npx tsx env-real.ts</code>. Remove it again with <code>Remove-Item Env:TASKS_PORT</code>.</tip>
+</section>
+
+<section>
+<h2 id="files">A config file</h2>
+<p>Settings that are not secret, and that you want to review in git, fit well in a JSON file. <code>@zudojs/config</code> has no built-in file reader, so you write a small source with <code>createCustomConfigSource</code>. Its loader function returns the values:</p>
+<file name="config.json" project="file">
+{
+  "host": "0.0.0.0",
+  "cors_origins": "https://tasks.example.com",
+  "rate_limit_max": 200
+}
+</file>
+<example file="file-source.ts" project="file" browser="no">
+import { readFile } from "node:fs/promises";
+import {
+  ConfigSourceType,
+  createConfigManager,
+  createCustomConfigSource,
+  createDefaultsConfigSource,
+  createEnvironmentConfigSource,
+} from "@zudojs/config";
+
+function jsonFile(path: string) {
+  return createCustomConfigSource(
+    "file",
+    async () => ({ values: JSON.parse(await readFile(path, "utf8")), source: path, type: ConfigSourceType.FILE }),
+    { priority: 10, optional: true },
+  );
+}
+
+const config = createConfigManager({
+  sources: [
+    createDefaultsConfigSource({ port: 3000, host: "127.0.0.1", rate_limit_max: 300 }),
+    jsonFile("config.json"),
+    createEnvironmentConfigSource({ prefix: "TASKS_", env: { TASKS_RATE_LIMIT_MAX: "50" }, priority: 20 }),
+  ],
+});
+await config.load();
+
+console.log(config.toObject());
+</example>
+<output>
+{
+  rate_limit_max: '50',
+  host: '0.0.0.0',
+  cors_origins: 'https://tasks.example.com',
+  port: 3000
+}
+</output>
+<p>Each key shows who won: <code>port</code> came from the defaults, <code>host</code> and <code>cors_origins</code> from the file, and <code>rate_limit_max</code> from the environment, which beat both. <code>optional: true</code> means a missing file is simply skipped, so the app still starts with defaults and environment variables alone.</p>
+</section>
+
+<section>
+<h2 id="validate">Validate at startup</h2>
+<p>A typo in a setting should stop the app <em>when it starts</em>, with a clear message, not three hours later when a request finally uses the value. This is called <strong>failing fast</strong>. You already know the tool: a schema from <code>@zudojs/schema</code>. Environment values are strings, so use <code>schema.coerce</code>, which converts <code>"8080"</code> to <code>8080</code> and refuses <code>"80x"</code>:</p>
+<example file="config.schema.ts" project="cfg">
+import { schema } from "@zudojs/schema";
+import type { Infer } from "@zudojs/schema";
+
+export const ConfigSchema = schema.object({
+  port: schema.coerce.number().int().min(0).max(65535),
+  host: schema.string().min(1),
+  cors_origins: schema.string().max(2000).transform((list) =>
+    list.split(",").map((origin) => origin.trim()).filter((origin) => origin.length > 0),
+  ),
+  rate_limit_max: schema.coerce.number().int().min(1).max(10_000),
+  jwt_secret: schema.string().min(32).max(512).optional(),
+});
+
+export type AppConfig = Infer<typeof ConfigSchema>;
+</example>
+<p><code>cors_origins</code> arrives as one comma-separated string, and the <code>transform</code> turns it into a list. <code>jwt_secret</code> is the key the <a href="/learn/zudo-auth">authentication lesson</a> will use to sign tokens. If it is given, it must be at least 32 characters. Now check some bad settings:</p>
+<example file="validate.ts" project="cfg">
+import type { SchemaIssue } from "@zudojs/schema";
+import { SchemaError } from "@zudojs/errors";
+import { ConfigSchema } from "./config.schema.js";
+
+const good = ConfigSchema.parse({ port: "8080", host: "0.0.0.0", cors_origins: "https://a.example, https://b.example", rate_limit_max: 300 });
+console.log(good);
+
+try {
+  ConfigSchema.parse({ port: "80x", host: "", cors_origins: "", rate_limit_max: "0", jwt_secret: "secret" });
+} catch (error) {
+  if (error instanceof SchemaError) {
+    for (const issue of error.issues as readonly SchemaIssue[]) {
+      console.log(`${issue.path.join(".")}: ${issue.message}`);
+    }
+  }
+}
+</example>
+<output>
+{
+  port: 8080,
+  host: '0.0.0.0',
+  cors_origins: [ 'https://a.example', 'https://b.example' ],
+  rate_limit_max: 300,
+  jwt_secret: undefined
+}
+port: Cannot coerce string to number
+host: String must be at least 1 characters
+rate_limit_max: Expected >= 1, received 0
+jwt_secret: String must be at least 32 characters
+</output>
+<p>All the problems are reported at once, each with the setting's name. <code>error.issues as readonly SchemaIssue[]</code> is the same type assertion you used in <a href="/learn/zudo-first-code#service">Your first Zudo code</a>, for the same reason: in the published <code>@zudojs/errors</code>, <code>issues</code> is typed <code>unknown[]</code>.</p>
+<note><code>@zudojs/config</code> has its own <code>manager.validate()</code>, but in version 1.2.0 its <code>number</code> and <code>boolean</code> types refuse the strings that environment variables always are, even with a <code>transform</code>. Validating with <code>@zudojs/schema</code>'s <code>coerce</code>, as above, avoids that.</note>
+</section>
+
+<section>
+<h2 id="secrets">Secrets and redaction</h2>
+<p>A <strong>secret</strong> is a value that gives power to whoever knows it: a database password, a token-signing key, an API key. Three rules:</p>
+<ol>
+<li>Secrets come <strong>only</strong> from the environment (or a secrets manager that sets it), never from code or a committed file.</li>
+<li>If a required secret is missing, the app refuses to start. It never falls back to a default like <code>"change-me"</code>: a default secret is a public secret.</li>
+<li>Secrets never appear in logs or error messages. Logs are copied to many places and read by many people.</li>
+</ol>
+<p><code>@zudojs/config</code> helps with rule 3. It marks keys whose names look secret (containing <code>secret</code>, <code>password</code>, <code>token</code>, <code>api_key</code>, <code>database_url</code> and similar) as <strong>sensitive</strong>. <code>toSafeObject()</code> is the copy for logs; <code>toObject()</code> and the accessors still give your code the real values:</p>
+<example file="redact.ts">
+import { createConfigManager, createEnvironmentConfigSource } from "@zudojs/config";
+
+const config = createConfigManager({
+  sources: [
+    createEnvironmentConfigSource({
+      prefix: "TASKS_",
+      env: {
+        TASKS_PORT: "8080",
+        TASKS_JWT_SECRET: "n8VqT2xLm4pR7sKd9wYb3cFh6jZa1eUo",
+        TASKS_DATABASE_URL: "postgres://tasks:pa55word@db.internal/tasks",
+      },
+    }),
+  ],
+});
+await config.load();
+
+console.log("for the logs:", config.toSafeObject());
+console.log("secret length for the code:", config.required<string>("jwt_secret").length);
+</example>
+<output>
+for the logs: { port: '8080', jwt_secret: '[REDACTED]', database_url: '[REDACTED]' }
+secret length for the code: 32
+</output>
+<p>The database URL was redacted too: it contains a password, and <code>database_url</code> is on the list of sensitive names. The logger from <code>@zudojs/logger</code> applies the same kind of redaction to anything you log, as a second safety net:</p>
+<example file="redact-log.ts">
+import { createLogger } from "@zudojs/logger";
+
+const logger = createLogger({ name: "task-api" });
+logger.info("configuration loaded", { port: 8080, jwtSecret: "n8VqT2xLm4pR7sKd9wYb3cFh6jZa1eUo" });
+</example>
+<output mask="iso">
+{
+  timestamp: '2026-09-23T14:19:02.590Z',
+  level: 'info',
+  message: '2026-09-23T14:19:02.590Z [INFO] [task-api] configuration loaded port=8080 jwtSecret=[REDACTED]',
+  logger: 'task-api',
+  metadata: { port: 8080, jwtSecret: '[REDACTED]' }
+}
+</output>
+<warn title="REDACTION WORKS ON NAMES">Both tools recognise a secret by its <em>key name</em>. A secret stored under an innocent name such as <code>note</code> is logged in full. Give secrets obvious names, and never log a whole <code>process.env</code>.</warn>
+</section>
+
+<section>
+<h2 id="environments">Development and production</h2>
+<p><code>NODE_ENV</code> is the environment variable every Node.js tool uses to tell development from production. <code>resolveEnvironment()</code> from <code>@zudojs/constants</code> (already used in the generated <code>src/app.ts</code>) reads it and returns <code>"development"</code>, <code>"test"</code> or <code>"production"</code>. When it is not set, you get <code>"development"</code>.</p>
+<p>Production gets stricter rules. Development defaults are allowed to be convenient; production must be told everything explicitly:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Setting</th><th>Development</th><th>Production</th></tr></thead>
+<tbody>
+<tr><td><code>cors_origins</code></td><td>defaults to <code>http://localhost:5173</code></td><td>must be set</td></tr>
+<tr><td><code>jwt_secret</code></td><td>may be missing until you add login</td><td>must be set, 32+ characters</td></tr>
+<tr><td>HSTS header</td><td><code>max-age=0</code> (plain HTTP)</td><td>one year</td></tr>
+</tbody>
+</table></div>
+<p>For development, typing variables in front of every command gets old. Put them in a file called <code>.env</code> and let Node.js load it with <code>--env-file</code>. The generated <code>.gitignore</code> already lists <code>.env</code>, so it is never committed. The committed <code>.env.example</code> shows which variables exist, with no real values:</p>
+<file name=".env" project="task-api">
+NODE_ENV=development
+TASKS_PORT=3000
+TASKS_CORS_ORIGINS=http://localhost:5173
+</file>
+<p>You will see it used at the end of the lesson.</p>
+</section>
+
+<section>
+<h2 id="task-api">Put it in the Task API</h2>
+<p>The generated project has an empty <code>src/configs/index.ts</code>. Fill it with one function, <code>loadConfig</code>, that does everything from this lesson: the three sources, validation, and the production rules. It takes the environment as a parameter (the real <code>process.env</code> by default), which makes it easy to test:</p>
+<example file="src/configs/index.ts" project="task-api" browser="no">
+import { readFile } from "node:fs/promises";
+import {
+  ConfigSourceType,
+  createConfigManager,
+  createCustomConfigSource,
+  createDefaultsConfigSource,
+  createEnvironmentConfigSource,
+} from "@zudojs/config";
+import { resolveEnvironment } from "@zudojs/constants";
+import { ConfigurationError } from "@zudojs/errors";
+import { schema } from "@zudojs/schema";
+import type { Infer, SchemaIssue } from "@zudojs/schema";
+
+const ConfigSchema = schema.object({
+  port: schema.coerce.number().int().min(0).max(65535),
+  host: schema.string().min(1),
+  cors_origins: schema.string().max(2000).transform((list) =>
+    list.split(",").map((origin) => origin.trim()).filter((origin) => origin.length > 0),
+  ),
+  rate_limit_max: schema.coerce.number().int().min(1).max(10_000),
+  jwt_secret: schema.string().min(32).max(512).optional(),
+});
+
+export type AppConfig = Infer<typeof ConfigSchema> & { readonly production: boolean };
+
+type Env = Record<string, string | undefined>;
+
+export async function loadConfig(env: Env = process.env, file = "config.json"): Promise<AppConfig> {
+  const production = resolveEnvironment(env) === "production";
+  const manager = createConfigManager({
+    sources: [
+      createDefaultsConfigSource({
+        port: 3000,
+        host: production ? "0.0.0.0" : "127.0.0.1",
+        cors_origins: production ? "" : "http://localhost:5173",
+        rate_limit_max: 300,
+      }),
+      createCustomConfigSource(
+        "file",
+        async () => ({ values: JSON.parse(await readFile(file, "utf8")), source: file, type: ConfigSourceType.FILE }),
+        { priority: 10, optional: true },
+      ),
+      createEnvironmentConfigSource({ prefix: "TASKS_", env, priority: 20 }),
+    ],
+  });
+  await manager.load();
+
+  const result = ConfigSchema.safeParse(manager.toObject());
+  if (!result.success) {
+    const issues = result.issues.map((issue: SchemaIssue) => `${issue.path.join(".")}: ${issue.message}`);
+    throw new ConfigurationError(`Invalid configuration: ${issues.join("; ")}`);
+  }
+  const config = { ...result.data, production };
+  if (production && config.jwt_secret === undefined) {
+    throw new ConfigurationError("TASKS_JWT_SECRET must be set in production");
+  }
+  if (production && config.cors_origins.length === 0) {
+    throw new ConfigurationError("TASKS_CORS_ORIGINS must be set in production");
+  }
+  return config;
+}
+</example>
+<p>Two details. <code>safeParse</code> is used here, so the issues are typed properly and need no type assertion. And the error message lists setting <em>names</em> only, never values, so even a wrong secret cannot leak into the log through it. This script tries the function with four different environments:</p>
+<example file="src/check-config.ts" project="task-api" browser="no">
+import { loadConfig } from "./configs/index.js";
+
+async function attempt(label: string, env: Record<string, string>): Promise<void> {
+  try {
+    const config = await loadConfig(env, "no-such-file.json");
+    console.log(label, "->", config.port, config.cors_origins, config.production);
+  } catch (error) {
+    console.log(label, "->", (error as Error).name + ":", (error as Error).message);
+  }
+}
+
+await attempt("development", {});
+await attempt("bad port   ", { TASKS_PORT: "eighty" });
+await attempt("production ", { NODE_ENV: "production", TASKS_CORS_ORIGINS: "https://tasks.example.com" });
+await attempt("production ", {
+  NODE_ENV: "production",
+  TASKS_CORS_ORIGINS: "https://tasks.example.com",
+  TASKS_JWT_SECRET: "n8VqT2xLm4pR7sKd9wYb3cFh6jZa1eUo",
+});
+</example>
+<output>
+development -> 3000 [ 'http://localhost:5173' ] false
+bad port    -> ConfigurationError: Invalid configuration: port: Cannot coerce string to number
+production  -> ConfigurationError: TASKS_JWT_SECRET must be set in production
+production  -> 3000 [ 'https://tasks.example.com' ] true
+</output>
+<p>Development starts with its convenient defaults. A wrong port and a production start without its secret both stop with a <code>ConfigurationError</code> that says exactly what to fix. The last one has everything and starts.</p>
+<p>In <code>src/server.ts</code>, load the configuration first, before anything else starts, and use it everywhere the code had fixed values. If it is invalid, print the message and exit with code 1, without a stack trace: the message already says what to fix. The <code>DEFAULT_PORT</code> constant and the <code>resolvePort</code> function are no longer needed:</p>
+<example file="src/server.ts (part)" project="task-api" browser="no" check="skip">
+import { loadConfig, type AppConfig } from "./configs/index.js";
+
+let config: AppConfig;
+try {
+  config = await loadConfig();
+} catch (error) {
+  console.error(`Cannot start: ${(error as Error).message}`);
+  process.exit(1);
+}
+
+// ...runtime and router as before...
+
+const pipeline = buildPipeline(router, { corsOrigins: config.cors_origins, production: config.production });
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: config.host, port: config.port }),
+  handler: (request: HttpRequestContext) => pipeline.execute(request, createResponseContext()),
+  gracefulShutdownTimeout: 20_000,
+});
+
+await server.start();
+console.log(`Listening on http://${config.host}:${server.address?.port ?? config.port}`);
+</example>
+<p>Change the <code>dev</code> script in <code>package.json</code> so it loads <code>.env</code>: <code>"dev": "tsx watch --env-file=.env src/server.ts"</code>. Then try it, and try a production start without the secret:</p>
+<shell title="Terminal on your computer">
+$ npx tsx src/check-config.ts
+development -> 3000 [ 'http://localhost:5173' ] false
+bad port    -> ConfigurationError: Invalid configuration: port: Cannot coerce string to number
+production  -> ConfigurationError: TASKS_JWT_SECRET must be set in production
+production  -> 3000 [ 'https://tasks.example.com' ] true
+$ npm run dev
+
+> task-api@0.1.0 dev
+> tsx watch --env-file=.env src/server.ts
+
+…
+Listening on http://127.0.0.1:3000
+$ NODE_ENV=production npx tsx src/server.ts
+Cannot start: TASKS_JWT_SECRET must be set in production
+</shell>
+<p>The development server now listens on <code>127.0.0.1</code> instead of every network interface, which is safer on a laptop in a café. The production start refused to run without its secret, with a message that names the variable, and without printing any value.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A request timeout setting">
+<p>Add a <code>request_timeout_ms</code> setting to the <a href="#validate">config schema</a>, with a default of 30000 in the defaults source. It must be a whole number from 1000 to 120000. Check it with <code>TASKS_REQUEST_TIMEOUT_MS=500</code> and with <code>5000</code>.</p>
+<solution>
+<example file="timeout-setting.ts">
+import { createConfigManager, createDefaultsConfigSource, createEnvironmentConfigSource } from "@zudojs/config";
+import { schema } from "@zudojs/schema";
+
+const Schema = schema.object({
+  request_timeout_ms: schema.coerce.number().int().min(1000).max(120_000),
+});
+
+for (const value of ["500", "5000"]) {
+  const config = createConfigManager({
+    sources: [
+      createDefaultsConfigSource({ request_timeout_ms: 30_000 }),
+      createEnvironmentConfigSource({ prefix: "TASKS_", env: { TASKS_REQUEST_TIMEOUT_MS: value }, priority: 20 }),
+    ],
+  });
+  await config.load();
+  const result = Schema.safeParse(config.toObject());
+  console.log(value, "->", result.success ? result.data : result.issues[0]?.message);
+}
+</example>
+<output>
+500 -> Expected >= 1000, received 500
+5000 -> { request_timeout_ms: 5000 }
+</output>
+</solution>
+</exercise>
+<exercise title="Find the leak">
+<p>A teammate wants to debug a production problem and adds <code>console.log("config", config.toObject())</code> at startup. What is wrong, and what should the line be?</p>
+<solution>
+<p><code>toObject()</code> returns the <strong>real</strong> values, so the JWT secret and the database password would be printed into the production logs, where anyone with log access can read them, and log services keep them for months. Use <code>config.toSafeObject()</code>, which replaces sensitive values with <code>"[REDACTED]"</code>, or better, log only the few settings you need, such as the port and the origins. If a secret was ever logged, treat it as leaked and replace it.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Configuration is everything that changes between environments. It comes from outside the code, mostly from environment variables.</li>
+<li>A config manager merges <strong>sources</strong> by <strong>priority</strong>: defaults &lt; config file &lt; environment variables.</li>
+<li>Environment values are always strings. Use typed accessors or <code>schema.coerce</code> to convert them.</li>
+<li>Validate the whole configuration at startup and stop with a clear error: fail fast.</li>
+<li>Secrets only come from the environment, have no defaults, and never reach logs: use <code>toSafeObject()</code>, and the logger redacts secret-looking keys too.</li>
+<li><code>NODE_ENV=production</code> switches on stricter rules. A <code>.env</code> file, loaded with <code>--env-file</code> and never committed, is for development.</li>
+</ul>
+<p>You have now used schemas for request bodies and for configuration. The next lesson looks at schemas in depth: coercion, transformations, refinements, and validating what goes <em>out</em> as well as what comes in.</p>
+</section>

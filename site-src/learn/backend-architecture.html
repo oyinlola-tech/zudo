@@ -1,0 +1,450 @@
+---
+title: Backend architecture
+description: Give backend code a shape. Learn controllers, services, repositories, models and DTOs, middleware, dependency injection and configuration, the difference between domain, application and infrastructure code, and which way dependencies must point. Then refactor the BookStore's orders into those layers.
+minutes: 45
+youNeed: The three BookStore API lessons
+youBuild: The BookStore's order feature split into layers, with middleware, a composition root and a swappable database
+keywords: backend architecture, separation of concerns, controller service repository, dto, domain model, layered architecture, clean architecture, dependency direction, dependency injection, middleware, composition root, ports and adapters
+---
+<section>
+<h2 id="why">One job per piece of code</h2>
+<p>At the end of <a href="/learn/bookstore-auth">the last lesson</a> you listed the BookStore's problems. Many of them come from one thing: a single route handler does several jobs at once. The order route reads a header, checks a token, parses a body, runs SQL, applies the stock rule and formats the answer. To change any one of those, you must read all of them.</p>
+<p><strong>Separation of concerns</strong> is the fix: each piece of code has one job, and knows as little as possible about the others. Backend developers everywhere use the same names for the usual pieces:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Piece</th><th>Its one job</th><th>In the BookStore</th></tr></thead>
+<tbody>
+<tr><td><strong>Controller</strong></td><td>Turn a request into a call to a service, and the result into a response. No business rules.</td><td>the route handlers</td></tr>
+<tr><td><strong>Service</strong></td><td>Carry out one use case, such as "place an order", step by step. Knows the rules, not HTTP and not SQL.</td><td>mixed into the handlers and the SQL</td></tr>
+<tr><td><strong>Repository</strong></td><td>Load and save one kind of record.</td><td><code>BookRepository</code>, <code>OrderRepository</code></td></tr>
+<tr><td><strong>Model</strong></td><td>The shapes and rules of your business: a book, an order, "you cannot buy more than the stock".</td><td><code>Book</code>, <code>Order</code>, and a rule hidden in a SQL <code>WHERE</code></td></tr>
+<tr><td><strong>DTO</strong></td><td>A <em>data transfer object</em>: the exact shape that crosses the boundary, in a request body or a response.</td><td><code>NewOrder</code> from <code>parseNewOrder</code></td></tr>
+<tr><td><strong>Middleware</strong></td><td>Code that runs around every handler: logging, error handling, authentication.</td><td>missing, so each handler repeats it</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="layers">Three layers and one rule</h2>
+<p>Those pieces fall into three <strong>layers</strong>:</p>
+<ul>
+<li><strong>Domain</strong>: the models and business rules. It would be true even without computers: an order cannot take more copies than there are.</li>
+<li><strong>Application</strong>: the services, the use cases of <em>this</em> app. It also defines the <strong>interfaces</strong> it needs from the outside world, such as "something that can find a book". These interfaces are often called <strong>ports</strong>.</li>
+<li><strong>Infrastructure</strong>: everything that talks to the outside world. HTTP controllers and middleware, PostgreSQL repositories, e-mail senders. They <strong>implement</strong> the ports.</li>
+</ul>
+<p>And the one rule: <strong>dependencies point inward</strong>. Outer code may import inner code; inner code never imports outer code.</p>
+<pre class="lx-json">  infrastructure   controller, middleware, repositories, main
+        │  imports
+        ▼
+  application      services, ports (interfaces)
+        │  imports
+        ▼
+  domain           models and rules  ── imports nothing</pre>
+<p>Why this direction? The domain is the part that is most valuable and changes least. The database driver, the HTTP library and the framework change far more often. If the domain imported the database, every database change would ripple into your business rules. With the arrows pointing inward, you can swap PostgreSQL for something else and not one rule changes. You will do exactly that at the end of this lesson.</p>
+</section>
+
+<section>
+<h2 id="domain">The domain: models and rules</h2>
+<p>Here is the BookStore's order feature, rebuilt layer by layer. All the files sit in one folder so you can run them in the browser. In a real project each layer gets its own folder, like <code>src/domain/</code>, <code>src/application/</code> and <code>src/infrastructure/</code>.</p>
+<p>The domain has the models and the stock rule. It imports nothing:</p>
+<example file="model.ts" project="layers">
+export interface Book {
+  readonly id: number;
+  readonly title: string;
+  readonly priceCents: number;
+  readonly stock: number;
+}
+
+export interface Order {
+  readonly id: number;
+  readonly userId: number;
+  readonly bookId: number;
+  readonly quantity: number;
+  readonly totalCents: number;
+}
+
+export class DomainError extends Error {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+export function takeFromStock(book: Book, quantity: number): Book {
+  if (quantity > book.stock) {
+    throw new DomainError("out_of_stock", `Only ${book.stock} left of "${book.title}"`);
+  }
+  return { ...book, stock: book.stock - quantity };
+}
+</example>
+<p><code>takeFromStock</code> does not change the book. It returns a new one with less stock, or throws. It needs no database and no server to test: it is a plain function.</p>
+</section>
+
+<section>
+<h2 id="application">The application: ports and a service</h2>
+<p>The service needs to find and save books and orders. It does not care how. So the application layer states what it needs as interfaces, the ports:</p>
+<example file="ports.ts" project="layers">
+import type { Book, Order } from "./model.js";
+
+export interface BookRepository {
+  find(id: number): Promise<Book | undefined>;
+  save(book: Book): Promise<void>;
+}
+
+export interface OrderRepository {
+  add(order: Omit<Order, "id">): Promise<Order>;
+  listFor(userId: number): Promise<Order[]>;
+}
+</example>
+<p>The service is the "place an order" use case, written as steps. It gets its repositories and a setting through its constructor; it never creates them itself. That is <strong>dependency injection</strong>, which you did by hand in <a href="/learn/ts-classes">Classes in TypeScript</a>:</p>
+<example file="order.service.ts" project="layers">
+import { DomainError, takeFromStock } from "./model.js";
+import type { Order } from "./model.js";
+import type { BookRepository, OrderRepository } from "./ports.js";
+
+export class OrderService {
+  constructor(
+    private readonly books: BookRepository,
+    private readonly orders: OrderRepository,
+    private readonly maxQuantity: number,
+  ) {}
+
+  async place(userId: number, bookId: number, quantity: number): Promise<Order> {
+    if (quantity > this.maxQuantity) {
+      throw new DomainError("too_many", `You can order at most ${this.maxQuantity} copies`);
+    }
+    const book = await this.books.find(bookId);
+    if (book === undefined) throw new DomainError("no_such_book", `Book ${bookId} does not exist`);
+    await this.books.save(takeFromStock(book, quantity));
+    return this.orders.add({ userId, bookId, quantity, totalCents: book.priceCents * quantity });
+  }
+
+  history(userId: number): Promise<Order[]> {
+    return this.orders.listFor(userId);
+  }
+}
+</example>
+<p>Read <code>place</code> out loud and it is the business process: check the amount, find the book, take the copies, record the order. There is no SQL, no status code and no header in it.</p>
+<note>With a real database, "find, then save" has a gap: two customers can both read "1 left". In <a href="/learn/bookstore-data">the data lesson</a> you closed that gap with a single SQL statement. A layered design keeps that fix inside the database repository, or uses a <strong>transaction</strong>, which a later lesson covers.</note>
+</section>
+
+<section>
+<h2 id="infrastructure">Infrastructure: repositories, DTOs, a controller</h2>
+<p>An in-memory implementation of the ports is enough to run everything. <code>implements BookRepository</code> makes TypeScript check that the class really fits the port:</p>
+<example file="memory.repositories.ts" project="layers">
+import type { Book, Order } from "./model.js";
+import type { BookRepository, OrderRepository } from "./ports.js";
+
+export class MemoryBookRepository implements BookRepository {
+  private readonly books = new Map<number, Book>();
+
+  constructor(books: readonly Book[]) {
+    for (const book of books) this.books.set(book.id, book);
+  }
+
+  async find(id: number): Promise<Book | undefined> {
+    return this.books.get(id);
+  }
+
+  async save(book: Book): Promise<void> {
+    this.books.set(book.id, book);
+  }
+}
+
+export class MemoryOrderRepository implements OrderRepository {
+  private readonly orders: Order[] = [];
+
+  async add(order: Omit<Order, "id">): Promise<Order> {
+    const saved = { ...order, id: this.orders.length + 1 };
+    this.orders.push(saved);
+    return saved;
+  }
+
+  async listFor(userId: number): Promise<Order[]> {
+    return this.orders.filter((order) => order.userId === userId);
+  }
+}
+</example>
+<p>The <strong>DTOs</strong> describe what crosses the network. The incoming DTO has only the fields a client may send: no <code>userId</code>, no price. The outgoing DTO is not the model either: it shows the total as <code>"25.98"</code> and leaves out <code>userId</code>. Your model can change without breaking clients, and internal fields never leak by accident:</p>
+<example file="order.dto.ts" project="layers">
+import type { Order } from "./model.js";
+
+export interface PlaceOrderDto {
+  readonly bookId: number;
+  readonly quantity: number;
+}
+
+export interface OrderDto {
+  readonly id: number;
+  readonly bookId: number;
+  readonly quantity: number;
+  readonly total: string;
+}
+
+function isWhole(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+export function parsePlaceOrder(body: unknown): PlaceOrderDto | undefined {
+  if (typeof body !== "object" || body === null) return undefined;
+  if (!("bookId" in body) || !("quantity" in body)) return undefined;
+  if (!isWhole(body.bookId) || !isWhole(body.quantity)) return undefined;
+  return { bookId: body.bookId, quantity: body.quantity };
+}
+
+export function toOrderDto(order: Order): OrderDto {
+  return {
+    id: order.id,
+    bookId: order.bookId,
+    quantity: order.quantity,
+    total: (order.totalCents / 100).toFixed(2),
+  };
+}
+</example>
+<p>The <strong>controller</strong> is thin. It checks that there is a user, parses the DTO, calls the service and formats the answer. The <code>userId</code> in its request comes from the verified token, as in the last lesson, never from the body:</p>
+<example file="order.controller.ts" project="layers">
+import { parsePlaceOrder, toOrderDto } from "./order.dto.js";
+import type { OrderService } from "./order.service.js";
+
+export interface Request {
+  readonly userId: number | undefined;
+  readonly body?: unknown;
+}
+
+export interface Response {
+  readonly status: number;
+  readonly body: unknown;
+}
+
+export class OrderController {
+  constructor(private readonly service: OrderService) {}
+
+  async place(request: Request): Promise<Response> {
+    if (request.userId === undefined) return { status: 401, body: { error: "log in first" } };
+    const dto = parsePlaceOrder(request.body);
+    if (dto === undefined) return { status: 400, body: { error: "send a bookId and a quantity" } };
+    const order = await this.service.place(request.userId, dto.bookId, dto.quantity);
+    return { status: 201, body: toOrderDto(order) };
+  }
+
+  async history(request: Request): Promise<Response> {
+    if (request.userId === undefined) return { status: 401, body: { error: "log in first" } };
+    const orders = await this.service.history(request.userId);
+    return { status: 200, body: orders.map(toOrderDto) };
+  }
+}
+</example>
+</section>
+
+<section>
+<h2 id="middleware">Middleware</h2>
+<p>The controller does not catch errors, and does not log. Those jobs are the same for every handler, so they belong in <strong>middleware</strong>: a function that takes the next handler and returns a new handler that does something before and after it.</p>
+<example file="middleware.ts" project="layers">
+import { DomainError } from "./model.js";
+import type { Request, Response } from "./order.controller.js";
+
+export type Handler = (request: Request) => Promise<Response>;
+export type Middleware = (next: Handler) => Handler;
+
+const STATUS: Readonly<Record<string, number>> = { no_such_book: 404, too_many: 400, out_of_stock: 409 };
+
+export const handleErrors: Middleware = (next) => async (request) => {
+  try {
+    return await next(request);
+  } catch (error) {
+    if (!(error instanceof DomainError)) return { status: 500, body: { error: "internal_error" } };
+    return { status: STATUS[error.code] ?? 400, body: { error: error.code, message: error.message } };
+  }
+};
+
+export function logRequests(log: (line: string) => void): Middleware {
+  return (next) => async (request) => {
+    const response = await next(request);
+    log(`user ${request.userId ?? "-"} -> ${response.status}`);
+    return response;
+  };
+}
+
+export function use(handler: Handler, ...middlewares: Middleware[]): Handler {
+  return middlewares.reduceRight((next, middleware) => middleware(next), handler);
+}
+</example>
+<ul>
+<li><code>handleErrors</code> turns a <code>DomainError</code> into a status code. This is the one place where the domain's words ("out of stock") meet HTTP's numbers (409).</li>
+<li><code>logRequests</code> gets its <code>log</code> function injected, so a test can collect the lines instead of printing them.</li>
+<li><code>use(handler, a, b)</code> wraps the handler so that <code>a</code> runs outermost, then <code>b</code>, then the handler: a <strong>pipeline</strong>. <code>reduceRight</code> is <code>reduce</code> (<a href="/learn/js-arrays">Arrays</a>) walking the list from the end, so it builds the pipeline from the inside out.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="composition">Configuration and the composition root</h2>
+<p>Settings are read once into a typed, frozen object, as in <a href="/learn/bookstore-http">the HTTP lesson</a>. <code>Object.freeze</code> makes sure no code changes a setting while the app runs:</p>
+<example file="config.ts" project="layers">
+export interface AppConfig {
+  readonly maxQuantity: number;
+}
+
+export function loadConfig(env: Readonly<Record<string, string | undefined>>): AppConfig {
+  const maxQuantity = Number(env["MAX_QUANTITY"] ?? "10");
+  if (!Number.isInteger(maxQuantity) || maxQuantity < 1) {
+    throw new Error("MAX_QUANTITY must be a whole number of 1 or more");
+  }
+  return Object.freeze({ maxQuantity });
+}
+</example>
+<p>Every class receives what it needs. Somebody still has to create them all, in the right order, and connect them. That place is called the <strong>composition root</strong>, and it is the only file that knows every concrete class. Here it also plays the part of the HTTP server and sends six requests. (A real server would pass <code>process.env</code> to <code>loadConfig</code>; the browser has no <code>process</code>, so this one passes a plain object.)</p>
+<example file="main.ts" project="layers">
+import { loadConfig } from "./config.js";
+import { MemoryBookRepository, MemoryOrderRepository } from "./memory.repositories.js";
+import { handleErrors, logRequests, use } from "./middleware.js";
+import { OrderController } from "./order.controller.js";
+import { OrderService } from "./order.service.js";
+
+const config = loadConfig({ MAX_QUANTITY: "5" });
+const books = new MemoryBookRepository([{ id: 1, title: "Things Fall Apart", priceCents: 1299, stock: 3 }]);
+const service = new OrderService(books, new MemoryOrderRepository(), config.maxQuantity);
+const controller = new OrderController(service);
+
+const log = logRequests((line) => console.log("log:", line));
+const place = use((request) => controller.place(request), log, handleErrors);
+const history = use((request) => controller.history(request), log, handleErrors);
+
+const show = (response: { status: number; body: unknown }) => console.log(response.status, JSON.stringify(response.body));
+show(await place({ userId: 1, body: { bookId: 1, quantity: 2 } }));
+show(await place({ userId: 2, body: { bookId: 1, quantity: 2 } }));
+show(await place({ userId: 2, body: { bookId: 1, quantity: 9 } }));
+show(await place({ userId: 2, body: { bookId: 7, quantity: 1 } }));
+show(await place({ userId: undefined, body: { bookId: 1, quantity: 1 } }));
+show(await history({ userId: 1 }));
+</example>
+<output>
+log: user 1 -> 201
+201 {"id":1,"bookId":1,"quantity":2,"total":"25.98"}
+log: user 2 -> 409
+409 {"error":"out_of_stock","message":"Only 1 left of \"Things Fall Apart\""}
+log: user 2 -> 400
+400 {"error":"too_many","message":"You can order at most 5 copies"}
+log: user 2 -> 404
+404 {"error":"no_such_book","message":"Book 7 does not exist"}
+log: user - -> 401
+401 {"error":"log in first"}
+log: user 1 -> 200
+200 [{"id":1,"bookId":1,"quantity":2,"total":"25.98"}]
+</output>
+<p>Follow one request through the layers. The first one went: logging middleware → error middleware → controller (parse the DTO) → service (check the amount, find, take stock) → domain rule → repositories → back out as an <code>OrderDto</code> → 201, logged on the way out. The errors took the same road and were turned into 409, 400 and 404 by <code>handleErrors</code>, and the log line still ran, because <code>log</code> is the outermost middleware. User 1's history holds only user 1's order.</p>
+</section>
+
+<section>
+<h2 id="payoff">What the layers bought you</h2>
+<p>Compare this with the route handlers of the BookStore:</p>
+<ul>
+<li><strong>Each file answers one question.</strong> "How is the total formatted?" is in the DTO. "When is an order refused?" is in the model and the service.</li>
+<li><strong>The business rules are testable without a server or a database.</strong> You pass the service fake repositories; the first exercise below does it.</li>
+<li><strong>The database is replaceable.</strong> The service only knows the ports. The second exercise swaps in PostgreSQL without touching the service.</li>
+<li><strong>Cross-cutting jobs are written once</strong>, as middleware, not repeated in every handler.</li>
+</ul>
+<p>The cost is more files, and a composition root that grows with every class. Wiring dozens of services by hand, in the right order, with their settings and their shutdown, is exactly the kind of job the next lesson hands to a framework.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Test the service with fakes">
+<p>Test <code>OrderService.place</code> without the memory repositories: write two small objects that satisfy <code>BookRepository</code> and <code>OrderRepository</code>, and check the total, the new stock and the order's owner.</p>
+<solution>
+<example file="service-check.ts" project="layers">
+import type { Book, Order } from "./model.js";
+import { OrderService } from "./order.service.js";
+import type { BookRepository, OrderRepository } from "./ports.js";
+
+const saved: Book[] = [];
+const books: BookRepository = {
+  find: async (id) => (id === 1 ? { id: 1, title: "Kindred", priceCents: 1000, stock: 4 } : undefined),
+  save: async (book) => {
+    saved.push(book);
+  },
+};
+const orders: OrderRepository = {
+  add: async (order) => ({ ...order, id: 99 }),
+  listFor: async () => [] as Order[],
+};
+
+const service = new OrderService(books, orders, 10);
+const order = await service.place(5, 1, 3);
+
+console.log(order.totalCents === 3000 ? "PASS total is 3 x 10.00" : "FAIL total");
+console.log(saved[0]?.stock === 1 ? "PASS stock went from 4 to 1" : "FAIL stock");
+console.log(order.userId === 5 ? "PASS order belongs to user 5" : "FAIL user");
+</example>
+<output>
+PASS total is 3 x 10.00
+PASS stock went from 4 to 1
+PASS order belongs to user 5
+</output>
+<p>The fakes are plain objects. The service cannot tell them from a database, because it only depends on the ports.</p>
+</solution>
+</exercise>
+<exercise title="Swap in PostgreSQL">
+<p>Write a <code>PgliteBookRepository</code> that implements <code>BookRepository</code> with PGlite, as in <a href="/learn/bookstore-data">the data lesson</a>, and place an order through the unchanged <code>OrderService</code>. Which files did you have to change?</p>
+<solution>
+<p>One new infrastructure file:</p>
+<example file="pglite.repositories.ts" project="layers" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+import type { Book } from "./model.js";
+import type { BookRepository } from "./ports.js";
+
+export class PgliteBookRepository implements BookRepository {
+  constructor(private readonly db: PGlite) {}
+
+  async find(id: number): Promise<Book | undefined> {
+    const { rows } = await this.db.query<Book>(
+      `SELECT id, title, price_cents AS "priceCents", stock FROM books WHERE id = $1`,
+      [id],
+    );
+    return rows[0];
+  }
+
+  async save(book: Book): Promise<void> {
+    await this.db.query("UPDATE books SET stock = $2 WHERE id = $1", [book.id, book.stock]);
+  }
+}
+</example>
+<p>And a different composition root:</p>
+<example file="main-pglite.ts" project="layers" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+import { MemoryOrderRepository } from "./memory.repositories.js";
+import { OrderService } from "./order.service.js";
+import { PgliteBookRepository } from "./pglite.repositories.js";
+
+const db = new PGlite();
+await db.exec(`CREATE TABLE books (id serial PRIMARY KEY, title text NOT NULL,
+  price_cents integer NOT NULL, stock integer NOT NULL CHECK (stock >= 0));
+  INSERT INTO books (title, price_cents, stock) VALUES ('Things Fall Apart', 1299, 3);`);
+
+const service = new OrderService(new PgliteBookRepository(db), new MemoryOrderRepository(), 5);
+console.log(await service.place(1, 1, 2));
+console.log((await db.query("SELECT title, stock FROM books")).rows);
+await db.close();
+</example>
+<output>
+{ userId: 1, bookId: 1, quantity: 2, totalCents: 2598, id: 1 }
+[ { title: 'Things Fall Apart', stock: 1 } ]
+</output>
+<p>No file in the domain or the application layer changed. Only infrastructure and the composition root did. That is the dependency rule paying off. Install PGlite first (<code>npm install @electric-sql/pglite</code>) to run this on your computer.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Controllers translate HTTP, services run use cases, repositories load and save, models hold the business rules, DTOs define what crosses the network.</li>
+<li>Domain, application and infrastructure are layers. Dependencies point inward: the domain imports nothing, infrastructure implements the application's ports.</li>
+<li>Dependency injection passes each class what it needs. The composition root is the one place that creates and connects everything.</li>
+<li>Middleware wraps handlers for jobs every request shares, such as error mapping and logging.</li>
+<li>Configuration is read once, checked, frozen and injected.</li>
+</ul>
+<p>Next: what a framework is, and which of these jobs it takes off your hands.</p>
+</section>

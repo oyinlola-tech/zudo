@@ -1,0 +1,562 @@
+---
+title: this, prototypes and classes
+description: Understand what this means inside a method and why it gets lost, how objects share methods through prototypes, and how to write classes with private fields, getters, static methods and inheritance.
+minutes: 45
+youNeed: Scope and how code runs, and the lessons before it
+youBuild: A Task class and a TaskList class, first with inheritance and then with composition
+keywords: javascript this, bind, arrow function this, constructor function, new, prototype, prototype chain, class, constructor, static method, private field, getter, setter, extends, super, composition over inheritance
+---
+<section>
+<h2 id="this">What this means</h2>
+<p>You met <code>this</code> briefly in <a href="/learn/js-data">Objects and JSON</a>: inside a method, it means "the object the method was called on". The important words are <em>called on</em>. <code>this</code> is not fixed when you write the function. It is decided each time the function is <em>called</em>, by what stands before the dot:</p>
+<example file="this.js">
+function describe() {
+  return `${this.title} (${this.done ? "done" : "open"})`;
+}
+
+const milk = { title: "Buy milk", done: false, describe };
+const ada = { title: "Call Ada", done: true, describe };
+
+console.log(milk.describe());
+console.log(ada.describe());
+console.log(milk.describe === ada.describe);
+</example>
+<output>
+Buy milk (open)
+Call Ada (done)
+true
+</output>
+<p>Both objects share <em>one</em> <code>describe</code> function. When you call <code>milk.describe()</code>, <code>this</code> is <code>milk</code>. When you call <code>ada.describe()</code>, <code>this</code> is <code>ada</code>. This is what lets many objects share one set of methods, which is the whole idea behind prototypes and classes below.</p>
+</section>
+
+<section>
+<h2 id="losing-this">Losing this, and two fixes</h2>
+<p>Because <code>this</code> comes from the dot at call time, it disappears as soon as you take a method off its object and call it on its own. This happens all the time when you pass a method as a <strong>callback</strong>, a function that some other code calls for you:</p>
+<example file="lost.js">
+const list = {
+  name: "Home",
+  label(task) {
+    return `${this.name}: ${task}`;
+  },
+};
+
+console.log(list.label("Buy milk"));
+
+const label = list.label;
+try {
+  label("Fix sink");
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+
+try {
+  ["Fix sink"].map(list.label);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+Home: Buy milk
+TypeError: Cannot read properties of undefined (reading 'name')
+TypeError: Cannot read properties of undefined (reading 'name')
+</output>
+<p>The second and third calls have no dot, so there is no object: <code>this</code> is <code>undefined</code>, and reading <code>this.name</code> crashes. <code>map(list.label)</code> passes the function only, not the object it came from.</p>
+<p>There are two standard fixes:</p>
+<ul>
+<li><strong>Wrap it in an arrow function</strong>: <code>(task) => list.label(task)</code>. The call inside has a dot again.</li>
+<li><strong>Bind it</strong>: <code>list.label.bind(list)</code> returns a new function whose <code>this</code> is fixed to <code>list</code> forever.</li>
+</ul>
+<example file="fixed.js">
+const list = {
+  name: "Home",
+  tasks: ["Buy milk", "Fix sink"],
+  label(task) {
+    return `${this.name}: ${task}`;
+  },
+  labelAll() {
+    return this.tasks.map((task) => this.label(task));
+  },
+};
+
+console.log(list.tasks.map((task) => list.label(task)));
+console.log(list.tasks.map(list.label.bind(list)));
+console.log(list.labelAll());
+</example>
+<output>
+[ 'Home: Buy milk', 'Home: Fix sink' ]
+[ 'Home: Buy milk', 'Home: Fix sink' ]
+[ 'Home: Buy milk', 'Home: Fix sink' ]
+</output>
+<p>Look at <code>labelAll</code>. The arrow function inside it uses <code>this</code>, and it works. Arrow functions do not have their own <code>this</code>: they use the <code>this</code> of the code around them, here <code>labelAll</code>'s, which is <code>list</code>. That makes arrows perfect for callbacks <em>inside</em> methods.</p>
+<warn title="Do not write methods as arrow functions">For the same reason, <code>label: () => this.name</code> does not work as a method: the arrow takes <code>this</code> from the surrounding module, where it is <code>undefined</code>. Use the short method form <code>label() { }</code> for methods, and arrows for callbacks.</warn>
+</section>
+
+<section>
+<h2 id="prototypes">Constructor functions and prototypes</h2>
+<p>A backend creates many objects of the same shape: thousands of tasks, each with a title, a <code>done</code> flag and the same methods. Before classes existed, JavaScript did this with a <strong>constructor function</strong> called with <code>new</code>. You will still see this in older code, and it shows how classes work underneath:</p>
+<example file="constructor.js">
+function Task(title) {
+  this.title = title;
+  this.done = false;
+}
+
+Task.prototype.complete = function () {
+  this.done = true;
+  return this;
+};
+
+const milk = new Task("Buy milk");
+const ada = new Task("Call Ada");
+milk.complete();
+
+console.log(milk, ada);
+console.log(Object.keys(milk));
+console.log(milk.complete === ada.complete);
+console.log(Object.getPrototypeOf(milk) === Task.prototype);
+</example>
+<output>
+Task { title: 'Buy milk', done: true } Task { title: 'Call Ada', done: false }
+[ 'title', 'done' ]
+true
+true
+</output>
+<p><code>new Task("Buy milk")</code> does four things:</p>
+<ol>
+<li>Creates a new empty object.</li>
+<li>Links that object to <code>Task.prototype</code>. That object is the new task's <strong>prototype</strong>.</li>
+<li>Calls <code>Task</code> with <code>this</code> set to the new object, so <code>this.title = title</code> fills it in.</li>
+<li>Returns the object.</li>
+</ol>
+<p>The <code>complete</code> method is not copied into each task: <code>Object.keys</code> shows only <code>title</code> and <code>done</code>. It lives once, on <code>Task.prototype</code>, and every task shares it.</p>
+<h3>The prototype chain</h3>
+<p>When you read a property, JavaScript first looks at the object itself. If the property is not there, it looks at the object's prototype, then at <em>that</em> object's prototype, and so on until it reaches <code>null</code>. This path is the <strong>prototype chain</strong>:</p>
+<example file="chain.js">
+function Task(title) {
+  this.title = title;
+}
+Task.prototype.complete = function () {
+  this.done = true;
+};
+
+const milk = new Task("Buy milk");
+
+const chain = [];
+let current = Object.getPrototypeOf(milk);
+while (current !== null) {
+  chain.push(`${current.constructor.name}.prototype`);
+  current = Object.getPrototypeOf(current);
+}
+console.log(["milk", ...chain].join(" -> "), "-> null");
+
+console.log(Object.hasOwn(milk, "title"), Object.hasOwn(milk, "complete"));
+console.log("complete" in milk, typeof milk.toString);
+console.log(Object.getPrototypeOf([]) === Array.prototype);
+</example>
+<output>
+milk -> Task.prototype -> Object.prototype -> null
+true false
+true function
+true
+</output>
+<ul>
+<li><code>title</code> is the task's <strong>own</strong> property. <code>complete</code> is <strong>inherited</strong> from <code>Task.prototype</code>: <code>Object.hasOwn</code> says no, but <code>in</code>, which follows the chain, says yes.</li>
+<li><code>toString</code> comes from the end of the chain, <code>Object.prototype</code>, which every ordinary object shares.</li>
+<li>Arrays work the same way. <code>map</code>, <code>filter</code> and <code>push</code> live on <code>Array.prototype</code>.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="classes">Classes</h2>
+<p>A <strong>class</strong> is the modern syntax for the same thing. The <code>constructor</code> is the function that fills in a new object, and methods written inside the class go on the prototype automatically:</p>
+<example file="class.js">
+class Task {
+  constructor(title) {
+    this.title = title;
+    this.done = false;
+  }
+
+  complete() {
+    this.done = true;
+    return this;
+  }
+
+  describe() {
+    return `${this.done ? "[x]" : "[ ]"} ${this.title}`;
+  }
+}
+
+const milk = new Task("Buy milk").complete();
+console.log(milk);
+console.log(milk.describe());
+console.log(typeof Task, Object.getPrototypeOf(milk) === Task.prototype);
+console.log(milk instanceof Task);
+</example>
+<output>
+Task { title: 'Buy milk', done: true }
+[x] Buy milk
+function true
+true
+</output>
+<p>Under the hood, <code>Task</code> is still a function with a prototype, exactly like the constructor function before. Because <code>complete</code> returns <code>this</code>, you can call another method straight after it. <code>instanceof</code> asks "is <code>Task.prototype</code> somewhere on this object's prototype chain?".</p>
+<p>Classes also add rules that catch mistakes: calling <code>Task("x")</code> without <code>new</code> throws a <code>TypeError</code>, and code inside a class always runs in strict mode.</p>
+</section>
+
+<section>
+<h2 id="members">Private fields, getters, setters and static methods</h2>
+<p>Classes have four more tools that you will use constantly:</p>
+<ul>
+<li>A <strong>private field</strong>, written with <code>#</code>, such as <code>#id</code>. Only code inside the class can read or write it. Writing <code>task.#id</code> outside the class is a <code>SyntaxError</code>: the program does not even start.</li>
+<li>A <strong>getter</strong>, <code>get id() { }</code>, runs a function when someone reads <code>task.id</code>. Without a matching setter, the property is read-only.</li>
+<li>A <strong>setter</strong>, <code>set title(value) { }</code>, runs a function when someone assigns <code>task.title = value</code>. It is the place to check the new value.</li>
+<li>A <strong>static</strong> member belongs to the class itself, not to each object. You call it on the class: <code>Task.fromJSON(text)</code>. It is often used for other ways of creating objects.</li>
+</ul>
+<example file="members.js">
+class Task {
+  static #nextId = 1;
+  #id;
+  #title = "";
+
+  constructor(title) {
+    this.#id = Task.#nextId;
+    Task.#nextId += 1;
+    this.title = title;
+    this.done = false;
+  }
+
+  get id() {
+    return this.#id;
+  }
+
+  get title() {
+    return this.#title;
+  }
+
+  set title(value) {
+    const clean = String(value).trim();
+    if (clean === "") throw new Error("title must not be empty");
+    this.#title = clean;
+  }
+
+  static fromJSON(text) {
+    const data = JSON.parse(text);
+    const task = new Task(data.title);
+    task.done = data.done === true;
+    return task;
+  }
+}
+
+const milk = new Task("  Buy milk ");
+const report = Task.fromJSON('{"title":"Write report","done":true}');
+
+console.log(milk.id, milk.title, report.id, report.done);
+console.log(Object.keys(milk));
+
+try {
+  milk.title = "   ";
+} catch (error) {
+  console.log(`Rejected: ${error.message}`);
+}
+console.log(milk.title);
+</example>
+<output>
+1 Buy milk 2 true
+[ 'done' ]
+Rejected: title must not be empty
+Buy milk
+</output>
+<ul>
+<li>The constructor assigned <code>this.title = title</code>, which went through the setter, so the spaces were trimmed.</li>
+<li><code>Object.keys</code> shows only <code>done</code>. The private fields are hidden, and the getters live on the prototype.</li>
+<li>The setter refused an empty title, and the old title stayed. No code outside the class can put the task into a bad state.</li>
+<li><code>#nextId</code> is static and private: one counter for the whole class, and nobody outside can reset it.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="inheritance">Inheritance with extends and super</h2>
+<p>Sometimes one kind of object is a special case of another. A recurring task <em>is a</em> task, with one extra piece of data: how often it repeats. <code>extends</code> creates a class that inherits everything from another one. <code>super</code> reaches the parent class:</p>
+<ul>
+<li><code>super(title)</code> in the constructor runs the parent's constructor. You must call it before you use <code>this</code>.</li>
+<li><code>super.describe()</code> in a method calls the parent's version of <code>describe</code>, so you can add to it instead of rewriting it.</li>
+</ul>
+<example file="extends.js">
+class Task {
+  constructor(title) {
+    this.title = title;
+    this.done = false;
+  }
+  describe() {
+    return `${this.done ? "[x]" : "[ ]"} ${this.title}`;
+  }
+}
+
+class RecurringTask extends Task {
+  constructor(title, everyDays) {
+    super(title);
+    this.everyDays = everyDays;
+  }
+  describe() {
+    return `${super.describe()} (every ${this.everyDays} days)`;
+  }
+}
+
+const bins = new RecurringTask("Take out bins", 7);
+console.log(bins);
+console.log(bins.describe());
+console.log(bins instanceof RecurringTask, bins instanceof Task);
+
+class Broken extends Task {
+  constructor(title) {
+    this.extra = true;
+    super(title);
+  }
+}
+
+try {
+  new Broken("x");
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+RecurringTask { title: 'Take out bins', done: false, everyDays: 7 }
+[ ] Take out bins (every 7 days)
+true true
+ReferenceError: Must call super constructor in derived class before accessing 'this' or returning from derived constructor
+</output>
+<p>The recurring task got <code>title</code> and <code>done</code> from <code>Task</code>'s constructor, plus its own <code>everyDays</code>. Its <code>describe</code> <strong>overrides</strong> the parent's, and reuses it through <code>super</code>. It is an instance of both classes, because <code>Task.prototype</code> is on its prototype chain. <code>Broken</code> shows the rule: <code>this</code> does not exist until <code>super()</code> has run.</p>
+</section>
+
+<section>
+<h2 id="task-list">A TaskList class</h2>
+<p>Now a class that manages many tasks. The list itself is private, and the class uses a private method, <code>#find</code>, that outside code cannot call. Watch what happens when a method is passed as a callback, the same problem as at the start of the lesson:</p>
+<example file="task-list.js">
+class Task {
+  constructor(id, title) {
+    this.id = id;
+    this.title = title;
+    this.done = false;
+  }
+}
+
+class TaskList {
+  #tasks = [];
+
+  add(title) {
+    const task = new Task(this.#tasks.length + 1, title);
+    this.#tasks.push(task);
+    return task;
+  }
+
+  complete(id) {
+    this.#find(id).done = true;
+  }
+
+  get openCount() {
+    return this.#tasks.filter((task) => !task.done).length;
+  }
+
+  #find(id) {
+    const task = this.#tasks.find((t) => t.id === id);
+    if (!task) throw new Error(`Task ${id} not found`);
+    return task;
+  }
+}
+
+const list = new TaskList();
+["Buy milk", "Call Ada", "Fix sink"].forEach((title) => list.add(title));
+list.complete(2);
+console.log(list.openCount);
+
+try {
+  ["Plan week"].forEach(list.add);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+
+try {
+  list.complete(9);
+} catch (error) {
+  console.log(error.message);
+}
+</example>
+<output>
+2
+TypeError: Cannot read properties of undefined (reading '#tasks')
+Task 9 not found
+</output>
+<p><code>forEach((title) =&gt; list.add(title))</code> works. <code>forEach(list.add)</code> loses <code>this</code>, exactly like before. Class code is always strict, so here the mistake crashes in the browser terminal too.</p>
+</section>
+
+<section>
+<h2 id="composition">Composition over inheritance</h2>
+<p>Inheritance is tempting whenever you want "a TaskList, but with something extra". Suppose you need a list that logs every change, and another that records an audit trail. With inheritance you write <code>LoggingTaskList extends TaskList</code> and <code>AuditedTaskList extends TaskList</code>. Then someone needs both, and you write a third class, <code>LoggingAuditedTaskList</code>. Every new feature doubles the number of classes.</p>
+<p><strong>Composition</strong> solves this differently: instead of <em>being</em> a special list, the list <em>has</em> helpers that you pass in. Here the helpers are plain functions, called listeners, that the list calls after each change:</p>
+<example file="composition.js">
+class TaskList {
+  #tasks = [];
+  #listeners;
+
+  constructor({ listeners = [] } = {}) {
+    this.#listeners = listeners;
+  }
+
+  add(title) {
+    const task = { id: this.#tasks.length + 1, title, done: false };
+    this.#tasks.push(task);
+    this.#emit("added", task);
+    return task;
+  }
+
+  complete(id) {
+    const task = this.#tasks.find((t) => t.id === id);
+    task.done = true;
+    this.#emit("completed", task);
+  }
+
+  #emit(event, task) {
+    for (const listener of this.#listeners) listener(event, task);
+  }
+}
+
+const log = (event, task) => console.log(`[log] ${event}: ${task.title}`);
+const auditTrail = [];
+const audit = (event, task) => auditTrail.push(`${event} #${task.id}`);
+
+const plain = new TaskList();
+plain.add("Nobody hears about this one");
+
+const watched = new TaskList({ listeners: [log, audit] });
+watched.add("Buy milk");
+watched.complete(1);
+console.log(auditTrail);
+</example>
+<output>
+[log] added: Buy milk
+[log] completed: Buy milk
+[ 'added #1', 'completed #1' ]
+</output>
+<p>One <code>TaskList</code> class covers every combination: no listeners, logging only, audit only, or both. Adding a new feature, such as sending an e-mail, means writing one more small function, not another class.</p>
+<p>A simple rule of thumb:</p>
+<ul>
+<li>Use <strong>inheritance</strong> for a true "is a" relationship that will not change, like <code>RecurringTask</code> and <code>Task</code>, or your own error classes in <a href="/learn/js-errors">the next lesson</a>.</li>
+<li>Use <strong>composition</strong> for "has a" or "uses a": a list that uses a logger, a service that uses a database. When in doubt, choose composition.</li>
+</ul>
+<p>Passing helpers in through the constructor is called <strong>dependency injection</strong>. ZudoJS is built on it: <code>@zudojs/container</code> creates your classes and hands each one the helpers it needs, as you will see in <a href="/learn/zudo-container">the container lesson</a>.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Add a priority with validation">
+<p>Write a <code>Task</code> class with a <code>title</code> and a <code>priority</code>. Make <code>priority</code> a getter and setter backed by a private field <code>#priority</code>. The setter must accept only whole numbers from 1 to 5, and throw an error otherwise. The default priority is 3.</p>
+<solution>
+<example file="priority.js">
+class Task {
+  #priority = 3;
+
+  constructor(title) {
+    this.title = title;
+  }
+
+  get priority() {
+    return this.#priority;
+  }
+
+  set priority(value) {
+    if (!Number.isInteger(value) || value < 1 || value > 5) {
+      throw new Error(`priority must be 1 to 5, got ${value}`);
+    }
+    this.#priority = value;
+  }
+}
+
+const task = new Task("Buy milk");
+console.log(task.priority);
+task.priority = 1;
+console.log(task.priority);
+
+try {
+  task.priority = 9;
+} catch (error) {
+  console.log(error.message);
+}
+console.log(task.priority);
+</example>
+<output>
+3
+1
+priority must be 1 to 5, got 9
+1
+</output>
+</solution>
+</exercise>
+<exercise title="A deadline task">
+<p>Write <code>DeadlineTask extends Task</code> that takes a title and a due date string such as <code>"2026-10-01"</code>. Override <code>describe()</code> so it adds <code>due 2026-10-01</code> after the parent's text. Use <code>super</code> in both the constructor and <code>describe</code>.</p>
+<solution>
+<example file="deadline.js">
+class Task {
+  constructor(title) {
+    this.title = title;
+    this.done = false;
+  }
+  describe() {
+    return `${this.done ? "[x]" : "[ ]"} ${this.title}`;
+  }
+}
+
+class DeadlineTask extends Task {
+  constructor(title, due) {
+    super(title);
+    this.due = due;
+  }
+  describe() {
+    return `${super.describe()}, due ${this.due}`;
+  }
+}
+
+console.log(new DeadlineTask("File taxes", "2026-10-01").describe());
+</example>
+<output>
+[ ] File taxes, due 2026-10-01
+</output>
+</solution>
+</exercise>
+<exercise title="Bind a handler">
+<p>A counter object has a method <code>increment()</code> that adds 1 to <code>this.count</code>. Call it three times through <code>[1, 2, 3].forEach(...)</code> so that <code>count</code> ends at 3. Show both fixes: an arrow function and <code>bind</code>.</p>
+<solution>
+<example file="bind.js">
+const counter = {
+  count: 0,
+  increment() {
+    this.count += 1;
+  },
+};
+
+[1, 2, 3].forEach(() => counter.increment());
+console.log(counter.count);
+
+counter.count = 0;
+const increment = counter.increment.bind(counter);
+[1, 2, 3].forEach(() => increment());
+console.log(counter.count);
+</example>
+<output>
+3
+3
+</output>
+<p>In the second fix, <code>() =&gt; increment()</code> is still used because <code>forEach</code> passes arguments (the item, its index and the array) to its callback. <code>increment</code> ignores them, so <code>forEach(increment)</code> would also work.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li><code>this</code> is decided at call time: it is the object before the dot. Without a dot, it is <code>undefined</code> in modules and classes.</li>
+<li>Passing a method as a callback loses <code>this</code>. Fix it with an arrow <code>(x) =&gt; obj.method(x)</code> or with <code>obj.method.bind(obj)</code>. Arrows have no <code>this</code> of their own, so they are great callbacks and bad methods.</li>
+<li><code>new</code> creates an object linked to a prototype. Methods live once on the prototype and are shared through the prototype chain.</li>
+<li>A class is cleaner syntax for the same thing: <code>constructor</code>, methods, <code>#private</code> fields and methods, <code>get</code>/<code>set</code>, and <code>static</code>.</li>
+<li><code>extends</code> and <code>super</code> build a class on top of another. Call <code>super()</code> before using <code>this</code>.</li>
+<li>Prefer composition, passing helpers in, over deep inheritance trees. That is dependency injection, which ZudoJS is built on.</li>
+</ul>
+</section>

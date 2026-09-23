@@ -1,0 +1,432 @@
+---
+title: OpenAPI documents
+description: Describe the Task API in an OpenAPI document with @zudojs/openapi. Turn your schemas into components, choose between OpenAPI 3.0 and 3.1, validate the document, save it as JSON or YAML, and serve a documentation page.
+minutes: 40
+youNeed: The Task API project, and the lessons on validation, HTTP routing and @zudojs/api
+youBuild: An openapi.json and openapi.yaml for the Task API, checked by a validator and served with a documentation page at /docs
+keywords: zudojs openapi, OpenAPI 3.1, OpenAPI 3.0, swagger, redoc, api documentation, OpenAPIManager, addSchema, convertSchema, openapi validation, openapi yaml
+tier: advanced
+---
+<section>
+<h2 id="what">What OpenAPI is</h2>
+<p>Other people want to use your Task API: a mobile developer, a partner company, a teammate who writes the web front end. They ask the same questions. Which paths exist? What do I send? What comes back? Which errors can happen?</p>
+<p><strong>OpenAPI</strong> is a standard way to answer those questions in one file, called an <strong>OpenAPI document</strong> (people also say "spec", short for specification). It is plain JSON or YAML, so both people and programs can read it. Tools use it to:</p>
+<ul>
+<li>show browsable documentation, such as <strong>Swagger UI</strong> or <strong>ReDoc</strong>,</li>
+<li>generate a client library for your API in another language,</li>
+<li>check in CI that the API did not change by accident.</li>
+</ul>
+<p>Writing that file by hand goes out of date the day the code changes. <code>@zudojs/openapi</code> builds it from the schemas and routes you already have. Install it in your Task API folder:</p>
+<shell title="Terminal on your computer">
+$ npm install @zudojs/openapi
+
+added 1 package, and audited 16 packages in 3s
+
+1 package is looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+</shell>
+<p>Every example is a <code>.ts</code> file that you run with <code>npx tsx file.ts</code>.</p>
+</section>
+
+<section>
+<h2 id="first">Your first document</h2>
+<p>An OpenAPI document has three main parts: <code>info</code> (the API's name and version), <code>paths</code> (every URL and what each method does there) and <code>components</code> (shared pieces, such as schemas). One method on one path is called an <strong>operation</strong>.</p>
+<p><code>OpenAPIManager</code> collects your routes and builds the document. Each route is a <code>method</code>, a <code>path</code>, and its documentation under <code>metadata.openapi</code>:</p>
+<example file="first.ts" project="oa" browser="no">
+import { OpenAPIManager } from "@zudojs/openapi";
+
+const manager = new OpenAPIManager({
+  version: "3.1.0",
+  info: { title: "Task API", version: "1.0.0" },
+  branding: false,
+});
+
+manager.addRoute({
+  method: "get",
+  path: "/tasks/:id",
+  metadata: {
+    openapi: {
+      operationId: "tasks.get",
+      summary: "Get one task",
+      tags: ["Tasks"],
+      parameters: [{ name: "id", in: "path", schema: { type: "integer", minimum: 1 } }],
+      responses: {
+        "200": { description: "The task" },
+        "404": { description: "No task with this id" },
+      },
+    },
+  },
+});
+
+const document = manager.generate();
+console.log(document.openapi, document.info);
+console.log(Object.keys(document.paths));
+console.log(JSON.stringify(document.paths["/tasks/{id}"]?.get?.parameters));
+</example>
+<output>
+3.1.0 { title: 'Task API', version: '1.0.0' }
+[ '/tasks/{id}' ]
+[{"name":"id","in":"path","required":true,"schema":{"type":"integer","minimum":1}}]
+</output>
+<ul>
+<li>The router style path <code>/tasks/:id</code> became <code>/tasks/{id}</code>, the way OpenAPI writes a <strong>path parameter</strong>.</li>
+<li>The <code>id</code> parameter got <code>required: true</code>. OpenAPI demands that for every path parameter.</li>
+<li><code>operationId</code> is a unique name for the operation. Client generators turn it into a method name.</li>
+<li><code>branding: false</code> keeps the output short. Without it, the manager adds the ZudoJS logo to <code>info</code> as <code>x-logo</code>, a field some viewers read.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="schemas">Schemas become components</h2>
+<p>In the validation lesson you described a task with <code>@zudojs/schema</code>. OpenAPI has its own schema language, based on JSON Schema. <code>manager.addSchema(name, schema)</code> translates yours and stores it under <code>components.schemas</code>. An operation then points at it with a <strong>reference</strong>, <code>{ "$ref": "#/components/schemas/Task" }</code>, which <code>createComponentReference</code> builds for you.</p>
+<p>This file describes the whole Task API. Later examples import it:</p>
+<example file="task-api.ts" project="oa" browser="no">
+import { OpenAPIManager, createComponentReference } from "@zudojs/openapi";
+import { schema } from "@zudojs/schema";
+
+export const NewTask = schema.object({ title: schema.string().trim().min(3).max(100) });
+export const Task = schema.object({ id: schema.number().int().min(1), title: schema.string(), done: schema.boolean() });
+
+const ref = (name: string) => createComponentReference("schemas", name);
+const json = (schema: object) => ({ "application/json": { schema } });
+
+export function taskApiDocs(version = "3.1.0"): OpenAPIManager {
+  const manager = new OpenAPIManager({ version, info: { title: "Task API", version: "1.0.0" }, branding: false });
+  manager.addSecurityScheme("bearerAuth", { type: "http", scheme: "bearer" });
+  manager.addSecurityRequirement({ bearerAuth: [] });
+  manager.addSchema("NewTask", NewTask).addSchema("Task", Task);
+
+  manager.addRoute({ method: "get", path: "/tasks", metadata: { openapi: {
+    operationId: "tasks.list", tags: ["Tasks"],
+    responses: { "200": { description: "All tasks of the user", content: json({ type: "array", items: ref("Task") }) } },
+  } } });
+  manager.addRoute({ method: "post", path: "/tasks", metadata: { openapi: {
+    operationId: "tasks.create", tags: ["Tasks"],
+    requestBody: { required: true, content: json(ref("NewTask")) },
+    responses: {
+      "201": { description: "The new task", content: json(ref("Task")) },
+      "401": { description: "Not signed in" },
+      "422": { description: "The body failed validation" },
+    },
+  } } });
+  manager.addRoute({ method: "get", path: "/health", metadata: { openapi: {
+    operationId: "health", security: [], responses: { "200": { description: "The server is up" } },
+  } } });
+  return manager;
+}
+</example>
+<p>Three new things:</p>
+<ul>
+<li><code>addSecurityScheme</code> says how callers prove who they are: a bearer token in the <code>Authorization</code> header. <code>addSecurityRequirement</code> makes it the rule for every operation.</li>
+<li><code>security: []</code> on <code>/health</code> means "no sign-in needed" for that one operation.</li>
+<li>The schemas are the same objects that validate requests at runtime. The document cannot drift away from them.</li>
+</ul>
+<p>Look at what the schemas became:</p>
+<example file="components.ts" project="oa" browser="no">
+import { taskApiDocs } from "./task-api.js";
+
+const schemas = taskApiDocs().generate().components?.schemas ?? {};
+for (const [name, converted] of Object.entries(schemas)) console.log(name, JSON.stringify(converted));
+</example>
+<output>
+NewTask {"type":"object","properties":{"title":{"type":"string","minLength":3,"maxLength":100}},"required":["title"]}
+Task {"type":"object","properties":{"id":{"type":"integer","minimum":1},"title":{"type":"string","maxLength":255},"done":{"type":"boolean"}},"required":["id","title","done"]}
+</output>
+<p><code>.min(3).max(100)</code> became <code>minLength</code> and <code>maxLength</code>. <code>.int()</code> became <code>"type": "integer"</code>. The task's <code>title</code> has no <code>.max()</code>, yet it shows <code>maxLength: 255</code>: that is the limit <code>@zudojs/schema</code> applies to every string by default, so the document tells clients the real limit.</p>
+</section>
+
+<section>
+<h2 id="versions">OpenAPI 3.0 or 3.1?</h2>
+<p>Two versions are in use. <strong>3.1</strong> is the current one and matches JSON Schema. <strong>3.0</strong> is older, but some tools, such as older code generators and API gateways, still only read 3.0. A few rules are written differently in the two versions. <code>convertSchema(schema, { version })</code> shows the difference:</p>
+<example file="versions.ts" project="oa" browser="no">
+import { convertSchema } from "@zudojs/openapi";
+import { schema } from "@zudojs/schema";
+
+const TaskFilter = schema.object({
+  priority: schema.number().int().gt(0).lt(6),
+  dueBefore: schema.nullable(schema.string().max(30)),
+});
+
+for (const version of ["3.0.3", "3.1.0"]) {
+  const { schema: converted } = convertSchema(TaskFilter, { version });
+  console.log(version, JSON.stringify(converted.properties));
+}
+</example>
+<output>
+3.0.3 {"priority":{"type":"integer","minimum":0,"exclusiveMinimum":true,"maximum":6,"exclusiveMaximum":true},"dueBefore":{"type":"string","maxLength":30,"nullable":true}}
+3.1.0 {"priority":{"type":"integer","exclusiveMinimum":0,"exclusiveMaximum":6},"dueBefore":{"type":["string","null"],"maxLength":30}}
+</output>
+<ul>
+<li><code>gt(0)</code> means "greater than 0, not equal". 3.1 writes <code>"exclusiveMinimum": 0</code>. 3.0 writes <code>"minimum": 0</code> plus <code>"exclusiveMinimum": true</code>.</li>
+<li>A value that may be <code>null</code> is <code>"nullable": true</code> in 3.0 and a list of types, <code>["string", "null"]</code>, in 3.1.</li>
+</ul>
+<p>You never write these by hand: pass <code>version</code> to the manager and every schema uses the right spelling. Choose 3.1 unless a tool you must support only reads 3.0.</p>
+</section>
+
+<section>
+<h2 id="validate">Validate the document</h2>
+<p>A document can be valid JSON and still be wrong. <code>manager.validate()</code> checks the OpenAPI rules and returns <code>{ valid, errors, warnings }</code>. This document has three mistakes that are easy to make:</p>
+<example file="broken.ts" project="oa" browser="no">
+import { OpenAPIManager } from "@zudojs/openapi";
+
+const manager = new OpenAPIManager({ info: { title: "Task API", version: "1.0.0" }, branding: false });
+manager.addRoute({ method: "delete", path: "/tasks/:id", metadata: { openapi: {
+  operationId: "tasks.delete", security: [{ bearer: [] }],
+  responses: { "204": { description: "Deleted" } },
+} } });
+manager.addRoute({ method: "get", path: "/tasks", metadata: { openapi: {
+  operationId: "tasks.list",
+  responses: { "200": { description: "All tasks", content: { "application/json": { schema: { $ref: "#/components/schemas/Task" } } } } },
+} } });
+
+const result = manager.validate();
+console.log("valid:", result.valid);
+for (const issue of result.errors) console.log("-", issue.path.join("."), ":", issue.message);
+</example>
+<output>
+valid: false
+- paths./tasks/{id}.delete.parameters : Path template "{id}" has no matching parameter with in: "path".
+- paths./tasks/{id}.delete.security : Security requirement "bearer" does not match any scheme in components.securitySchemes.
+- paths./tasks.get.responses.200.content.application/json.schema : Reference "#/components/schemas/Task" does not resolve within the document.
+</output>
+<ul>
+<li>The path has <code>{id}</code>, but no parameter describes it.</li>
+<li>The operation asks for a security scheme called <code>bearer</code> that the document never declares. Such a document <em>looks</em> protected, but tools cannot tell how to send a token.</li>
+<li>The <code>$ref</code> points at a <code>Task</code> schema that was never added.</li>
+</ul>
+<p>In a build script, <code>manager.generate(true)</code> validates and throws an <code>OpenAPIValidationError</code>. Its <code>format()</code> method prints one line per problem:</p>
+<example file="strict.ts" project="oa" browser="no">
+import { OpenAPIManager, OpenAPIValidationError } from "@zudojs/openapi";
+
+const manager = new OpenAPIManager({ info: { title: "Task API", version: "1.0.0" }, branding: false });
+manager.addRoute({ method: "get", path: "/tasks/:id", metadata: { openapi: { operationId: "tasks.get" } } });
+try {
+  manager.generate(true);
+} catch (error) {
+  if (error instanceof OpenAPIValidationError) console.log(error.format());
+}
+</example>
+<output>
+OpenAPI validation failed with 1 error.
+  error: paths./tasks/{id}.get.parameters — Path template "{id}" has no matching parameter with in: "path".
+</output>
+<warn title="A MISSING RESPONSE BECOMES 200 OK">That route documents no responses at all, yet the validator did not complain about it. In <code>@zudojs/openapi</code> 1.4.0 the manager quietly adds <code>"200": { "description": "OK" }</code> to every operation without responses. For a <code>DELETE</code> that answers 204, that is simply wrong. Always write the responses yourself.</warn>
+</section>
+
+<section>
+<h2 id="files">Save it as JSON and YAML</h2>
+<p><code>toJSON()</code> and <code>toYAML()</code> turn the document into text. <strong>YAML</strong> is another way to write the same data, with indentation instead of braces. Many people find it easier to read. Pass <code>true</code> to validate first, so a broken document is never written:</p>
+<example file="build-docs.ts" project="oa" browser="no">
+import { writeFileSync } from "node:fs";
+import { taskApiDocs } from "./task-api.js";
+
+const manager = taskApiDocs();
+writeFileSync("openapi.json", manager.toJSON(true));
+writeFileSync("openapi.yaml", manager.toYAML(true));
+console.log(manager.toYAML(true).split("\n").slice(0, 16).join("\n"));
+</example>
+<output>
+openapi: 3.1.0
+info:
+  title: Task API
+  version: 1.0.0
+paths:
+  /tasks:
+    get:
+      operationId: tasks.list
+      tags:
+        - Tasks
+      responses:
+        "200":
+          description: All tasks of the user
+          content:
+            application/json:
+              schema:
+</output>
+<p>Run it on your computer and look at the files:</p>
+<shell title="Terminal on your computer">
+$ npx tsx build-docs.ts
+openapi: 3.1.0
+info:
+  title: Task API
+…
+$ wc -l openapi.json openapi.yaml
+ 124 openapi.json
+  78 openapi.yaml
+ 202 total
+$ tail -n 12 openapi.yaml
+        done:
+          type: boolean
+      required:
+        - id
+        - title
+        - done
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+security:
+  - bearerAuth: []
+</shell>
+<p>Commit both files to git. When someone changes a route or a schema, the difference in <code>openapi.yaml</code> shows up in the review, and everybody sees how the API changed.</p>
+</section>
+
+<section>
+<h2 id="serve">Serve the document and a docs page</h2>
+<p>You can also serve the document from the running Task API. <code>manager.toResponse()</code> gives <code>{ status, headers, body }</code> for the JSON. <code>manager.toUIResponse({ specUrl })</code> gives a complete HTML page with Swagger UI that loads the document from <code>specUrl</code>. Both work with any HTTP server; here they go into two <code>@zudojs/http</code> routes:</p>
+<example file="serve.ts" project="oa" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+import type { HttpRequestContext } from "@zudojs/http";
+import type { OpenAPIDocumentResponse } from "@zudojs/openapi";
+import { taskApiDocs } from "./task-api.js";
+
+const docs = taskApiDocs();
+function send(answer: OpenAPIDocumentResponse) {
+  const response = createResponseContext().setStatus(answer.status);
+  for (const [name, value] of Object.entries(answer.headers)) response.setHeader(name, value);
+  return response.setBody(answer.body);
+}
+
+const router = createRouter();
+router.get("/openapi.json", async () => send(docs.toResponse({ validate: true })));
+router.get("/docs", async () => send(docs.toUIResponse({ specUrl: "/openapi.json", title: "Task API" })));
+const server = await createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+}).start();
+
+const base = `http://127.0.0.1:${server.address?.port}`;
+const spec = await fetch(`${base}/openapi.json`);
+console.log(spec.status, spec.headers.get("content-type"), Object.keys((await spec.json()).paths));
+const page = await fetch(`${base}/docs`);
+console.log(page.status, page.headers.get("content-type"));
+console.log((await page.text()).match(/<title>.*<\/title>/)?.[0]);
+console.log(page.headers.get("content-security-policy")?.split("; ").slice(0, 2));
+await server.stop();
+</example>
+<output>
+200 application/json; charset=utf-8 [ '/tasks', '/health' ]
+200 text/html; charset=utf-8
+<title>Task API</title>
+[
+  "default-src 'none'",
+  "script-src https://cdn.jsdelivr.net 'sha256-ivBYbHui56j/otciwGSwiCMOVV1Fq8rZhFfaWOWsHZ8='"
+]
+</output>
+<p>Open <code>/docs</code> in a browser and you get a page where people can read every operation and try it out. The page loads Swagger UI from a CDN, and the manager protects it:</p>
+<ul>
+<li>The script files are pinned to exact versions with <strong>integrity hashes</strong>. If the CDN file ever changes, the browser refuses to run it.</li>
+<li>The <code>content-security-policy</code> header allows scripts only from that CDN, plus the page's one known inline script.</li>
+</ul>
+<warn title="DOCUMENTATION IS PUBLIC INFORMATION">Everything in the document is visible to anyone who can open <code>/docs</code>. Never put secrets, internal host names or real tokens into descriptions or examples. <code>hidden: true</code> in a route's metadata leaves it out of the document, but that does not protect it: an attacker can still call it. Protect every route with authentication, whether it is documented or not.</warn>
+</section>
+
+<section>
+<h2 id="from-operations">Docs from your operations</h2>
+<p>In <a href="/learn/zudo-api">the previous lesson</a> every operation of the Task API lived in an <code>APIOperationRegistry</code>, and one route, <code>POST /api/:operation</code>, served them all. The registry already knows each operation's name, input schema, output schema, description and tags. So the document can come straight from it:</p>
+<example file="from-operations.ts" project="oa" browser="no">
+import { APIOperationRegistry, defineOperation } from "@zudojs/api";
+import { OpenAPIManager, createComponentReference } from "@zudojs/openapi";
+import type { Infer } from "@zudojs/schema";
+import { NewTask, Task } from "./task-api.js";
+
+const registry = new APIOperationRegistry();
+registry.register(defineOperation<Infer<typeof NewTask>, Infer<typeof Task>>({
+  name: "tasks.create", input: NewTask, output: Task,
+  metadata: { description: "Create a task", tags: ["Tasks"] },
+  handler: async (input) => ({ id: 1, title: input.title, done: false }),
+}));
+registry.freeze();
+
+const manager = new OpenAPIManager({ version: "3.1.0", info: { title: "Task API", version: "1.0.0" }, branding: false });
+for (const operation of registry.getAll()) {
+  const content = (part: string) => ({ "application/json": { schema: createComponentReference("schemas", part) } });
+  if (operation.input) manager.addSchema(`${operation.name}.input`, operation.input);
+  if (operation.output) manager.addSchema(`${operation.name}.output`, operation.output);
+  manager.addRoute({ method: "post", path: `/api/${operation.name}`, metadata: { openapi: {
+    operationId: operation.name,
+    summary: operation.metadata?.description,
+    tags: operation.metadata?.tags,
+    requestBody: operation.input ? { required: true, content: content(`${operation.name}.input`) } : undefined,
+    responses: {
+      "200": { description: "Success", content: operation.output ? content(`${operation.name}.output`) : undefined },
+      "422": { description: "The input failed validation" },
+    },
+  } } });
+}
+const document = manager.generate(true);
+console.log(Object.keys(document.paths), Object.keys(document.components?.schemas ?? {}));
+</example>
+<output>
+[ '/api/tasks.create' ] [ 'tasks.create.input', 'tasks.create.output' ]
+</output>
+<p>Add an operation to the registry, and it appears in the document the next time you build it. Nothing to forget.</p>
+<note>A faster way is coming: the next releases of <code>@zudojs/openapi</code>, <code>@zudojs/http</code> and <code>@zudojs/api</code> build a document straight from an <code>@zudojs/http</code> router or an operation registry, and can mount <code>/openapi.json</code> and <code>/docs</code> for you. The docs pages already describe them, but they are not in the versions on npm yet. Until then, the loop above does the same job.</note>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Document PATCH /tasks/:id">
+<p>Add a route to <code>taskApiDocs()</code>'s manager for <code>PATCH /tasks/:id</code>: it takes an <code>id</code> path parameter and a body <code>{ done: boolean }</code>, and answers 200 with a <code>Task</code> or 404. Register the body schema as <code>TaskUpdate</code>. Validate the result.</p>
+<solution>
+<example file="patch.ts" project="oa" browser="no">
+import { createComponentReference } from "@zudojs/openapi";
+import { schema } from "@zudojs/schema";
+import { taskApiDocs } from "./task-api.js";
+
+const manager = taskApiDocs();
+manager.addSchema("TaskUpdate", schema.object({ done: schema.boolean() }));
+manager.addRoute({ method: "patch", path: "/tasks/:id", metadata: { openapi: {
+  operationId: "tasks.update",
+  parameters: [{ name: "id", in: "path", schema: { type: "integer", minimum: 1 } }],
+  requestBody: { required: true, content: { "application/json": { schema: createComponentReference("schemas", "TaskUpdate") } } },
+  responses: {
+    "200": { description: "The updated task", content: { "application/json": { schema: createComponentReference("schemas", "Task") } } },
+    "404": { description: "No task with this id" },
+  },
+} } });
+console.log(manager.validate().valid, Object.keys(manager.generate().paths));
+</example>
+<output>
+true [ '/tasks', '/health', '/tasks/{id}' ]
+</output>
+</solution>
+</exercise>
+<exercise title="A check for CI">
+<p>Write <code>check-docs.ts</code>: it builds the Task API document for OpenAPI 3.0.3, prints <code>OpenAPI document OK</code> when it is valid, and otherwise prints the problems and sets <code>process.exitCode = 1</code>, so a CI job fails.</p>
+<solution>
+<example file="check-docs.ts" project="oa" browser="no">
+import { taskApiDocs } from "./task-api.js";
+
+const manager = taskApiDocs("3.0.3");
+const result = manager.validate();
+if (result.valid) {
+  console.log("OpenAPI document OK:", manager.generate().openapi, Object.keys(manager.generate().paths).length, "paths");
+} else {
+  for (const issue of result.errors) console.error(issue.path.join("."), issue.message);
+  process.exitCode = 1;
+}
+</example>
+<output>
+OpenAPI document OK: 3.0.3 2 paths
+</output>
+<p>Run it in CI next to your tests. A broken reference or a forgotten parameter then fails the build instead of reaching the people who use your API.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>An OpenAPI document describes every path, method, input and response of an HTTP API, in JSON or YAML, for people and tools.</li>
+<li><code>OpenAPIManager</code> builds it from routes. <code>/tasks/:id</code> becomes <code>/tasks/{id}</code>, and every path parameter must be described.</li>
+<li><code>addSchema</code> turns <code>@zudojs/schema</code> schemas into components, so the document and the runtime checks share one source.</li>
+<li>Pick 3.1 unless a tool needs 3.0. The converter writes the right keywords for each.</li>
+<li><code>validate()</code> or <code>generate(true)</code> catches missing parameters, unknown security schemes and broken references. Always write the responses yourself.</li>
+<li><code>toJSON</code> and <code>toYAML</code> save the document; <code>toResponse</code> and <code>toUIResponse</code> serve it with a docs page.</li>
+<li>Documentation is public. Hiding a route from it is not security.</li>
+</ul>
+<p>Next, you test the Task API: unit tests, fakes and integration tests with <code>@zudojs/testing</code>.</p>
+</section>

@@ -1,0 +1,499 @@
+---
+title: Final production challenge
+description: Someone else's gift-card feature works in the demo and fails everything else. Find its architectural problems, then make it production-ready step by step, with acceptance criteria, hints and worked solutions for the key fixes.
+minutes: 120
+youNeed: The whole course, especially the ShopFlow capstone
+youBuild: A secure, transactional, tested and deployable gift-card and wallet service, fixed from a broken one
+keywords: final challenge, code review, sql injection, parameterized queries, missing authentication, authorization, idor, transaction, race condition, validation, tests, production readiness, zudojs
+tier: production
+---
+<section>
+<h2 id="situation">The situation</h2>
+<p>ShopFlow wants gift cards. A customer types the code from a card and the amount goes into their <strong>wallet</strong>; they can also send wallet money to a friend. A teammate built it in an afternoon. The demo worked, the feature was merged, and now it is your job to get it ready for production.</p>
+<p>This is the last lesson of the course, and it works differently: you get a running application with real problems, and a checklist. You find the problems, fix them, and prove each fix with a test. The key fixes have worked solutions, hidden until you open them. Try first.</p>
+</section>
+
+<section>
+<h2 id="code">The code you inherit</h2>
+<p>Create a folder, install what the capstone used, and add three files. The database has two users, Ada (id 1) and Linus (id 2), each with 10.00 in their wallet, and two unused gift cards. Each user has a session token; the database stores only its hash.</p>
+<shell>
+$ mkdir giftcards && cd giftcards
+$ npm init -y
+$ npm pkg set type=module
+$ npm install @zudojs/crypto @zudojs/errors @zudojs/http @zudojs/schema @electric-sql/pglite
+…
+$ npm install -D typescript tsx @types/node vitest
+…
+</shell>
+<example file="db.ts" project="challenge" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+import { generateSessionToken, hashToken } from "@zudojs/crypto";
+
+/** A fresh database with two users, their wallets and two unused gift cards. */
+export async function createDatabase() {
+  const db = new PGlite();
+  await db.exec(`
+    CREATE TABLE users (id INT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT UNIQUE NOT NULL);
+    CREATE TABLE wallets (user_id INT PRIMARY KEY REFERENCES users (id), balance_cents INT NOT NULL CHECK (balance_cents >= 0));
+    CREATE TABLE gift_cards (code TEXT PRIMARY KEY, amount_cents INT NOT NULL, redeemed_by INT REFERENCES users (id));
+    INSERT INTO gift_cards VALUES ('GIFT-ADA-5000', 5000, NULL), ('GIFT-LINUS-2000', 2000, NULL);
+  `);
+  const tokens: Record<"ada" | "linus", string> = { ada: await generateSessionToken(), linus: await generateSessionToken() };
+  for (const [id, name] of [[1, "ada"], [2, "linus"]] as const) {
+    await db.query("INSERT INTO users VALUES ($1, $2, $3)", [id, name, await hashToken(tokens[name])]);
+    await db.query("INSERT INTO wallets VALUES ($1, 1000)", [id]);
+  }
+  return { db, tokens };
+}
+</example>
+<warn title="DELIBERATELY BROKEN CODE">The next file is the teammate's server. It is here so you can find what is wrong with it. Do not copy any of it into a real project.</warn>
+<example file="server.ts" project="challenge" browser="no">
+// ⚠ DELIBERATELY BROKEN. Do not copy this file into a real project.
+import type { PGlite } from "@electric-sql/pglite";
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter, type HttpRequestContext } from "@zudojs/http";
+
+export function createGiftCardServer(db: PGlite) {
+  const router = createRouter();
+  const body = (bytes: unknown) => JSON.parse(new TextDecoder().decode(bytes as Uint8Array));
+
+  router.get("/giftcards", async (ctx) => {
+    const { rows } = await db.query(`SELECT * FROM gift_cards WHERE code = '${ctx.query["code"]}'`);
+    return createResponseContext().json(rows);
+  });
+
+  router.get("/wallets/:userId", async (ctx) => {
+    const { rows } = await db.query(`SELECT * FROM wallets WHERE user_id = ${ctx.params["userId"]}`);
+    return createResponseContext().json(rows[0]);
+  });
+
+  router.post("/giftcards/redeem", async (ctx) => {
+    const { code, userId } = body(ctx.request.body);
+    const { rows } = await db.query<{ amount_cents: number; redeemed_by: number | null }>(
+      `SELECT * FROM gift_cards WHERE code = '${code}'`,
+    );
+    if (!rows[0] || rows[0].redeemed_by !== null) return createResponseContext({ status: 400 }).json({ error: "invalid card" });
+    await db.query(`UPDATE wallets SET balance_cents = balance_cents + ${rows[0].amount_cents} WHERE user_id = ${userId}`);
+    await db.query(`UPDATE gift_cards SET redeemed_by = ${userId} WHERE code = '${code}'`);
+    return createResponseContext().json({ ok: true });
+  });
+
+  router.post("/wallets/transfer", async (ctx) => {
+    const { from, to, amountCents } = body(ctx.request.body);
+    await db.query(`UPDATE wallets SET balance_cents = balance_cents - ${amountCents} WHERE user_id = ${from}`);
+    await db.query(`UPDATE wallets SET balance_cents = balance_cents + ${amountCents} WHERE user_id = ${to}`);
+    return createResponseContext().json({ ok: true });
+  });
+
+  return createHttpServer({
+    adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+    handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+  });
+}
+</example>
+<p>It compiles, and for Ada redeeming her own card it works. Now use it the way the internet will. <code>try-it.ts</code> is a normal request followed by five things any curious user could try:</p>
+<example file="try-it.ts" project="challenge" browser="no">
+import { createDatabase } from "./db.js";
+import { createGiftCardServer } from "./server.js";
+
+const { db } = await createDatabase();
+const server = createGiftCardServer(db);
+await server.start();
+const url = (path: string) => `http://127.0.0.1:${server.address?.port}${path}`;
+const post = (path: string, data: unknown) => fetch(url(path), { method: "POST", body: JSON.stringify(data) });
+const balances = async () => {
+  const { rows } = await db.query<{ user_id: number; balance_cents: number }>("SELECT user_id, balance_cents FROM wallets ORDER BY user_id");
+  return rows.map((row) => `user ${row.user_id}: ${row.balance_cents}`).join(", ");
+};
+
+console.log("start:", await balances());
+
+console.log("1. Ada redeems her own card:", (await post("/giftcards/redeem", { code: "GIFT-ADA-5000", userId: 1 })).status);
+
+const leaked = await (await fetch(url(`/giftcards?code=${encodeURIComponent("x' OR '1'='1")}`))).json();
+console.log("2. SQL injection lists every card:", leaked.map((card: { code: string }) => card.code));
+
+console.log("3. Ada redeems Linus's card into her wallet:", (await post("/giftcards/redeem", { code: "GIFT-LINUS-2000", userId: 1 })).status);
+
+console.log("4. Ada 'sends' Linus -3000 cents:", (await post("/wallets/transfer", { from: 1, to: 2, amountCents: -3000 })).status);
+
+console.log("5. Linus sends 1000 to user 99, who does not exist:", (await post("/wallets/transfer", { from: 2, to: 99, amountCents: 1000 })).status);
+
+console.log("6. Anyone reads Ada's wallet:", await (await fetch(url("/wallets/1"))).json());
+console.log("end:", await balances());
+await server.stop();
+await db.close();
+</example>
+<output>
+start: user 1: 1000, user 2: 1000
+1. Ada redeems her own card: 200
+2. SQL injection lists every card: [ 'GIFT-LINUS-2000', 'GIFT-ADA-5000' ]
+3. Ada redeems Linus's card into her wallet: 200
+4. Ada 'sends' Linus -3000 cents: 500
+5. Linus sends 1000 to user 99, who does not exist: 200
+6. Anyone reads Ada's wallet: { user_id: 1, balance_cents: 11000 }
+end: user 1: 11000, user 2: 0
+</output>
+<p>The wallets started with 20.00 in total, plus 70.00 of gift cards. They end with 110.00 in Ada's wallet and nothing left for Linus. Every line after the first is a real incident:</p>
+<ol start="2">
+<li>A code that closes the SQL string and adds <code>OR '1'='1'</code> turned the lookup into "every card". Ada now knows Linus's unused code.</li>
+<li>The server believed the <code>userId</code> in the body, so anyone can act as anyone, with no login at all.</li>
+<li>A negative amount was not refused. The first <code>UPDATE</code> <em>added</em> 30.00 to Ada; the second failed on the database's <code>CHECK</code> and answered 500, but the first had already been saved, because nothing wrapped the two writes in a transaction.</li>
+<li>A transfer to a user who does not exist took 10.00 from Linus and gave it to nobody, and still answered 200.</li>
+<li>Anyone can read anyone's balance.</li>
+</ol>
+</section>
+
+<section>
+<h2 id="identify">Step 1: name the problems</h2>
+<exercise title="Write the list">
+<p>Before you change any code, write down every problem you can find in <code>server.ts</code>, including ones the script did not show. Sort them into <strong>security</strong>, <strong>correctness</strong>, <strong>architecture</strong> and <strong>operations</strong>. Aim for at least ten.</p>
+<solution>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Kind</th><th>Problem</th></tr></thead>
+<tbody>
+<tr><td>Security</td><td>SQL built by string concatenation in every query: injection (incident 2), and worse ones are possible, such as <code>'; DROP TABLE …</code> through <code>/wallets/:userId</code>.</td></tr>
+<tr><td>Security</td><td>No authentication: the caller's identity comes from the request body or the URL (incidents 3 and 6).</td></tr>
+<tr><td>Security</td><td>No authorization: nothing checks that the wallet being read or debited belongs to the caller. This is an <em>IDOR</em>, an insecure direct object reference.</td></tr>
+<tr><td>Security</td><td>No rate limit on code lookups and redemptions, so gift codes can be guessed by brute force.</td></tr>
+<tr><td>Correctness</td><td>No input validation: negative, fractional or huge amounts, missing fields, and a body that is not JSON (a 500 from <code>JSON.parse</code>).</td></tr>
+<tr><td>Correctness</td><td>Two-step writes without a transaction: money is created or lost when the second write fails (incidents 4 and 5).</td></tr>
+<tr><td>Correctness</td><td>Check-then-act race: two redemptions of the same card at the same moment both pass the <code>SELECT</code>, and the card pays twice.</td></tr>
+<tr><td>Correctness</td><td>A transfer to a missing wallet answers 200: the result of the write is never checked.</td></tr>
+<tr><td>Architecture</td><td>Business rules, SQL and HTTP are mixed in route handlers: nothing can be tested without HTTP, and nothing is reusable.</td></tr>
+<tr><td>Architecture</td><td><code>SELECT *</code> returns internal columns (<code>redeemed_by</code>, user ids) to the client.</td></tr>
+<tr><td>Operations</td><td>No tests, no logs, no metrics, no audit trail of money movements, no health checks, no configuration, no OpenAPI description.</td></tr>
+</tbody>
+</table></div>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="checklist">Step 2: the checklist</h2>
+<p>The feature is ready when every line holds. Work through them in this order; each one links to the lesson that taught the tool.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>✓</th><th>Area</th><th>Acceptance criteria</th></tr></thead>
+<tbody>
+<tr><td>☐</td><td>Validation (<a href="/learn/zudo-validation">lesson</a>)</td><td>Every body, parameter and query is parsed by a schema. Amounts are whole cents from 1 to 100000. A bad request gets 400, never 500.</td></tr>
+<tr><td>☐</td><td>Persistence</td><td>Every SQL statement uses <code>$1</code> placeholders. No <code>SELECT *</code> reaches a client.</td></tr>
+<tr><td>☐</td><td>Authentication (<a href="/learn/zudo-auth">lesson</a>)</td><td>The user comes only from the session token. No endpoint accepts a user id for "who am I".</td></tr>
+<tr><td>☐</td><td>Authorization (<a href="/learn/zudo-permissions">lesson</a>)</td><td>A user can read and move only their own money. Support staff can read any wallet but cannot move money.</td></tr>
+<tr><td>☐</td><td>Transactions (<a href="/learn/zudo-transactions">lesson</a>)</td><td>Redeem and transfer are all-or-nothing. A card pays once, even under parallel requests.</td></tr>
+<tr><td>☐</td><td>Tests (<a href="/learn/zudo-testing">lesson</a>)</td><td>Every incident above has a test that failed on the old code and passes now.</td></tr>
+<tr><td>☐</td><td>Events and queues (<a href="/learn/zudo-events">events</a>, <a href="/learn/zudo-queue">queue</a>)</td><td>A <code>wallet.credited</code> event after each commit; the confirmation e-mail goes through a queue with retries.</td></tr>
+<tr><td>☐</td><td>Caching (<a href="/learn/zudo-cache">lesson</a>)</td><td>Balances are never cached. If card lookups are cached, a redemption invalidates the entry.</td></tr>
+<tr><td>☐</td><td>Abuse protection (<a href="/learn/zudo-security">lesson</a>)</td><td>Code lookups and redemptions are rate-limited per user and per IP; ten wrong codes in a row lock redemption for 15 minutes.</td></tr>
+<tr><td>☐</td><td>Observability (<a href="/learn/zudo-observability">lesson</a>)</td><td>JSON logs with a request id and no codes or tokens in them; metrics for redemptions, transfers and failures; an audit row for every money movement.</td></tr>
+<tr><td>☐</td><td>OpenAPI (<a href="/learn/zudo-openapi">lesson</a>)</td><td><code>/openapi.json</code> documents every route, its body schema and its error answers.</td></tr>
+<tr><td>☐</td><td>Production (<a href="/learn/production-engineering">lesson</a>)</td><td>Configuration checked at startup, <code>/health</code> and <code>/ready</code>, graceful shutdown, timeouts.</td></tr>
+<tr><td>☐</td><td>Deployment (<a href="/learn/deployment">lesson</a>)</td><td>Runs in Docker Compose behind HTTPS, with migrations, backups and an alert on the failure metric.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="fix-core">Step 3: fix security and data</h2>
+<exercise title="Validation, SQL, authentication and transactions">
+<p>Move the rules out of the route handlers into a <code>wallets.ts</code> module with four operations: <code>authenticate</code>, <code>card</code> (look up one code), <code>redeem</code> and <code>transfer</code>. Then write a new, thin HTTP layer on top of it. When you are done, run the same six attacks again: each must be refused with the right status, and the money must add up.</p>
+<p>Hints:</p>
+<ul>
+<li>A gift code has a known shape. A schema with a regular expression refuses anything else before SQL ever sees it. Parameters (<code>$1</code>) are still required: validation is one wall, parameters are the second.</li>
+<li>Find the user by hashing the bearer token and looking up the hash, as in the capstone's <code>users.ts</code>.</li>
+<li>Replace "<code>SELECT</code>, then <code>UPDATE</code>" with one <code>UPDATE … WHERE code = $1 AND redeemed_by IS NULL RETURNING …</code>. It checks and claims the card in one step, so the race disappears.</li>
+<li>For a transfer, debit with <code>AND balance_cents &gt;= $1</code>, then credit, inside <code>db.transaction</code>. Check <code>affectedRows</code> after each <code>UPDATE</code> and throw if it is 0: the throw rolls back the whole transaction.</li>
+<li>Throw errors from <code>@zudojs/errors</code>. <code>@zudojs/http</code> turns them into 400, 401, 404 and 409 answers for you.</li>
+</ul>
+<solution>
+<p>The rules, in one module with no HTTP in it:</p>
+<example file="wallets.ts" project="challenge" browser="no">
+import type { PGlite } from "@electric-sql/pglite";
+import { hashToken } from "@zudojs/crypto";
+import { AuthenticationError, ConflictError, NotFoundError, ValidationError } from "@zudojs/errors";
+import { schema } from "@zudojs/schema";
+
+const Code = schema.string().trim().regex(/^GIFT-[A-Z0-9-]{4,40}$/);
+const Redeem = schema.object({ code: Code });
+const Transfer = schema.object({ to: schema.number().int().positive(), amountCents: schema.number().int().min(1).max(100_000) });
+
+export function createWallets(db: PGlite) {
+  return {
+    async authenticate(authorization: string | undefined): Promise<number> {
+      const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : undefined;
+      const { rows } = token ? await db.query<{ id: number }>("SELECT id FROM users WHERE token_hash = $1", [await hashToken(token)]) : { rows: [] };
+      if (!rows[0]) throw new AuthenticationError("Log in first");
+      return rows[0].id;
+    },
+
+    async card(code: unknown) {
+      const { rows } = await db.query<{ amountCents: number; redeemed: boolean }>(
+        `SELECT amount_cents AS "amountCents", redeemed_by IS NOT NULL AS redeemed FROM gift_cards WHERE code = $1`,
+        [Code.parse(code)],
+      );
+      if (!rows[0]) throw new NotFoundError("No gift card with that code");
+      return rows[0];
+    },
+
+    async balance(userId: number): Promise<number> {
+      const { rows } = await db.query<{ balance_cents: number }>("SELECT balance_cents FROM wallets WHERE user_id = $1", [userId]);
+      return rows[0]?.balance_cents ?? 0;
+    },
+
+    async redeem(userId: number, input: unknown): Promise<number> {
+      const { code } = Redeem.parse(input);
+      return db.transaction(async (tx) => {
+        const card = await tx.query<{ amount_cents: number }>(
+          "UPDATE gift_cards SET redeemed_by = $1 WHERE code = $2 AND redeemed_by IS NULL RETURNING amount_cents",
+          [userId, code],
+        );
+        if (!card.rows[0]) throw new NotFoundError("No unused gift card with that code");
+        await tx.query("UPDATE wallets SET balance_cents = balance_cents + $1 WHERE user_id = $2", [card.rows[0].amount_cents, userId]);
+        return card.rows[0].amount_cents;
+      });
+    },
+
+    async transfer(fromUserId: number, input: unknown): Promise<void> {
+      const { to, amountCents } = Transfer.parse(input);
+      if (to === fromUserId) throw new ValidationError("You cannot send money to yourself");
+      await db.transaction(async (tx) => {
+        const debit = await tx.query(
+          "UPDATE wallets SET balance_cents = balance_cents - $1 WHERE user_id = $2 AND balance_cents >= $1",
+          [amountCents, fromUserId],
+        );
+        if (!debit.affectedRows) throw new ConflictError("Not enough money in your wallet");
+        const credit = await tx.query("UPDATE wallets SET balance_cents = balance_cents + $1 WHERE user_id = $2", [amountCents, to]);
+        if (!credit.affectedRows) throw new NotFoundError(`No wallet for user ${to}`);
+      });
+    },
+  };
+}
+</example>
+<p>The HTTP layer only reads, authenticates and delegates. There is no route that takes a user id any more: <code>/wallets/me</code> means "the caller".</p>
+<example file="fixed-server.ts" project="challenge" browser="no">
+import { ValidationError } from "@zudojs/errors";
+import {
+  createHttpServer,
+  createNodeHttpAdapter,
+  createResponseContext,
+  createRouter,
+  type HttpRequestContext,
+  type HttpRouterContext,
+} from "@zudojs/http";
+import type { createWallets } from "./wallets.js";
+
+function body(ctx: HttpRouterContext): unknown {
+  try {
+    return JSON.parse(new TextDecoder().decode(ctx.request.body as Uint8Array));
+  } catch {
+    throw new ValidationError("The body must be JSON");
+  }
+}
+
+export function createFixedServer(wallets: ReturnType<typeof createWallets>) {
+  const router = createRouter();
+  const me = (ctx: HttpRouterContext) => wallets.authenticate(ctx.request.getHeader("authorization"));
+
+  router.get("/giftcards/:code", async (ctx) => createResponseContext().json(await wallets.card(ctx.params["code"])));
+  router.get("/wallets/me", async (ctx) => createResponseContext().json({ balanceCents: await wallets.balance(await me(ctx)) }));
+  router.post("/giftcards/redeem", async (ctx) => {
+    const creditedCents = await wallets.redeem(await me(ctx), body(ctx));
+    return createResponseContext().json({ creditedCents });
+  });
+  router.post("/wallets/transfer", async (ctx) => {
+    await wallets.transfer(await me(ctx), body(ctx));
+    return createResponseContext().json({ ok: true });
+  });
+
+  return createHttpServer({
+    adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+    handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+  });
+}
+</example>
+<p>The same attacks, against the fixed server:</p>
+<example file="try-again.ts" project="challenge" browser="no">
+import { createDatabase } from "./db.js";
+import { createFixedServer } from "./fixed-server.js";
+import { createWallets } from "./wallets.js";
+
+const { db, tokens } = await createDatabase();
+const server = createFixedServer(createWallets(db));
+await server.start();
+
+async function call(method: string, path: string, data?: unknown, token?: string): Promise<string> {
+  const response = await fetch(`http://127.0.0.1:${server.address?.port}${path}`, {
+    method,
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+    body: data === undefined ? undefined : JSON.stringify(data),
+  });
+  return `${response.status} ${await response.text()}`;
+}
+const balances = async () => {
+  const { rows } = await db.query<{ user_id: number; balance_cents: number }>("SELECT user_id, balance_cents FROM wallets ORDER BY user_id");
+  return rows.map((row) => `user ${row.user_id}: ${row.balance_cents}`).join(", ");
+};
+
+console.log("start:", await balances());
+console.log("1.", await call("POST", "/giftcards/redeem", { code: "GIFT-ADA-5000" }, tokens.ada));
+console.log("2.", await call("GET", `/giftcards/${encodeURIComponent("x' OR '1'='1")}`));
+console.log("3.", await call("POST", "/giftcards/redeem", { code: "GIFT-LINUS-2000", userId: 1 }));
+console.log("4.", await call("POST", "/wallets/transfer", { to: 2, amountCents: -3000 }, tokens.ada));
+console.log("5.", await call("POST", "/wallets/transfer", { to: 99, amountCents: 1000 }, tokens.linus));
+console.log("6.", await call("GET", "/wallets/me"));
+console.log("7.", await call("POST", "/giftcards/redeem", { code: "GIFT-ADA-5000" }, tokens.ada));
+console.log("end:", await balances());
+await server.stop();
+await db.close();
+</example>
+<output>
+start: user 1: 1000, user 2: 1000
+1. 200 {"creditedCents":5000}
+2. 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+3. 401 {"error":"Log in first","code":"ERR_AUTHENTICATION_FAILED"}
+4. 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+5. 404 {"error":"No wallet for user 99","code":"ERR_RESOURCE_NOT_FOUND"}
+6. 401 {"error":"Log in first","code":"ERR_AUTHENTICATION_FAILED"}
+7. 404 {"error":"No unused gift card with that code","code":"ERR_RESOURCE_NOT_FOUND"}
+end: user 1: 6000, user 2: 1000
+</output>
+<ul>
+<li><strong>2.</strong> The injection string does not look like a gift code, so the schema refused it with 400. Even without the schema, the parameterized query would have looked for a card literally named <code>x' OR '1'='1</code> and answered 404.</li>
+<li><strong>3, 6.</strong> Without a session token: 401. The <code>userId</code> in the body is simply ignored.</li>
+<li><strong>4.</strong> A negative amount: 400, and nobody's money moved.</li>
+<li><strong>5.</strong> The debit from Linus happened inside the transaction, the credit found no wallet, the <code>NotFoundError</code> rolled both back: 404, and Linus still has 10.00.</li>
+<li><strong>7.</strong> The second redemption of the same card found no <em>unused</em> card: 404. The money adds up: 10.00 + 10.00 + 50.00 = 70.00.</li>
+</ul>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="tests">Step 4: prove it with tests</h2>
+<exercise title="One test per incident">
+<p>Write Vitest tests for the wallet module. Give every test a fresh database, so tests cannot affect each other. Include the race: redeem the same card twice <em>at the same time</em> with <code>Promise.allSettled</code>, and require exactly one success.</p>
+<solution>
+<file name="wallets.test.ts" project="challenge">
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { PGlite } from "@electric-sql/pglite";
+import { createDatabase } from "./db.js";
+import { createWallets } from "./wallets.js";
+
+let db: PGlite;
+let wallets: ReturnType<typeof createWallets>;
+
+beforeEach(async () => {
+  ({ db } = await createDatabase());
+  wallets = createWallets(db);
+});
+afterEach(() => db.close());
+
+describe("wallets", () => {
+  it("credits a gift card once, even when it is redeemed twice at the same time", async () => {
+    const results = await Promise.allSettled([
+      wallets.redeem(1, { code: "GIFT-ADA-5000" }),
+      wallets.redeem(1, { code: "GIFT-ADA-5000" }),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(await wallets.balance(1)).toBe(6000);
+  });
+
+  it("keeps the sender's money when the receiver does not exist", async () => {
+    await expect(wallets.transfer(2, { to: 99, amountCents: 1000 })).rejects.toThrow("No wallet for user 99");
+    expect(await wallets.balance(2)).toBe(1000);
+  });
+
+  it("refuses negative and oversized amounts", async () => {
+    await expect(wallets.transfer(1, { to: 2, amountCents: -3000 })).rejects.toThrow("Validation failed");
+    await expect(wallets.transfer(1, { to: 2, amountCents: 5000 })).rejects.toThrow("Not enough money");
+  });
+
+  it("treats SQL in a gift card code as an invalid code", async () => {
+    await expect(wallets.card("x' OR '1'='1")).rejects.toThrow("Validation failed");
+  });
+
+  it("rejects a missing or unknown session token", async () => {
+    await expect(wallets.authenticate(undefined)).rejects.toThrow("Log in first");
+    await expect(wallets.authenticate("Bearer not-a-real-token")).rejects.toThrow("Log in first");
+  });
+});
+</file>
+<shell>
+$ npx vitest run --reporter=verbose
+
+ RUN  v5.0.1 ~/giftcards
+
+ ✓ wallets.test.ts > wallets > credits a gift card once, even when it is redeemed twice at the same time 6553ms
+ ✓ wallets.test.ts > wallets > keeps the sender's money when the receiver does not exist 3854ms
+ ✓ wallets.test.ts > wallets > refuses negative and oversized amounts 3962ms
+ ✓ wallets.test.ts > wallets > treats SQL in a gift card code as an invalid code 3637ms
+ ✓ wallets.test.ts > wallets > rejects a missing or unknown session token 4245ms
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  15:25:20
+   Duration  23.43s (tests 96%, import 3%, transform 1%)
+</shell>
+<p>Most of each test's time is starting a fresh PGlite database, and these times come from a busy machine; yours will be faster. To check that the tests really protect you, point them at the old logic for a moment: the race test and the transfer test must fail.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="finish">Step 5: make it production-ready</h2>
+<p>The rest of the checklist uses what you built in the capstone and the production lessons. Each exercise lists what "done" means and where to look; the solutions describe the approach rather than giving code.</p>
+<exercise title="Events, queues, caching and abuse protection">
+<p>After a successful redemption or transfer, publish <code>wallet.credited</code> and queue a confirmation e-mail. Rate-limit the code endpoints. Decide what, if anything, to cache.</p>
+<solution>
+<ul>
+<li>Publish from the HTTP layer or the module <em>after</em> <code>db.transaction</code> returns, never inside it, exactly like <code>order.placed</code> in the capstone. For no lost events, write an outbox row inside the transaction instead.</li>
+<li>A subscriber adds a <code>send-confirmation</code> job with <code>attempts</code> and exponential <code>backoff</code>. The job carries ids and amounts only, never the gift code.</li>
+<li>Use two <code>createRateLimiter</code> instances, keyed by IP and by user id. Count failed redemptions per user and refuse further attempts for 15 minutes after ten.</li>
+<li>Do not cache balances: they must always be exact, and the query is a primary-key lookup that is already fast. Caching card lookups would mostly help attackers who guess codes.</li>
+</ul>
+</solution>
+</exercise>
+<exercise title="Observability, audit and OpenAPI">
+<p>Make every money movement traceable and every route documented.</p>
+<solution>
+<ul>
+<li>Add a <code>ledger</code> table (who, what, amount, related card or user, time) and insert one row per movement <em>inside</em> the same transaction. A ledger that can disagree with the balances is worse than none.</li>
+<li>Log one JSON line per request with the request id, route, status and duration. Log user ids, never tokens or gift codes: the logger's redaction does not know that <code>code</code> is secret here, so leave it out yourself.</li>
+<li>Count <code>wallet.redeemed</code>, <code>wallet.transfer</code> and <code>wallet.failed</code> (labelled with the error code, not the user) and record transfer latency in a histogram.</li>
+<li>Describe the routes with the router's <code>openapi</code> option or <code>@zudojs/openapi</code>, reusing the same schemas the routes parse with, so the document cannot drift from the code.</li>
+</ul>
+</solution>
+</exercise>
+<exercise title="Configure, deploy, monitor and handle failures">
+<p>Ship it, and decide what happens when things go wrong at 3 a.m.</p>
+<solution>
+<ul>
+<li>Swap PGlite for a <code>pg</code> pool from <code>DATABASE_URL</code>, checked at startup. Turn the table definitions into numbered migrations, run by <code>docker compose run --rm app node dist/migrate.js</code> before each release.</li>
+<li>Add <code>/health</code> and <code>/ready</code> (database check), graceful shutdown and statement timeouts. Run with Docker Compose behind Caddy, with the readiness check wired to the proxy's health checks, and a nightly backup that you have restored once.</li>
+<li>Alert when <code>wallet.failed</code> rises above its normal rate, when p95 latency of transfers exceeds 500 ms, and when <code>/ready</code> fails. Each alert links to a short runbook: what it means, how to check, how to fix.</li>
+<li>Rerun the real parallel-redemption test against real PostgreSQL in CI, where transactions really run at the same time. PGlite runs one transaction at a time and is gentler than production.</li>
+</ul>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="ready">You are now ready to build with ZudoJS</h2>
+<p>Look at the distance you have covered. You started with <code>console.log("Hello")</code>. You learned JavaScript, Node.js, how the web and databases work, and TypeScript. You built a backend with no framework and felt why frameworks exist. Then you built the Task API and ShopFlow with ZudoJS: modules and a runtime, dependency injection, routing and middleware, configuration, validation, errors, databases and transactions, authentication, permissions and security, caching, events, queues, CQRS, services, tests and observability. And in these last lessons you took an app to production and learned to judge someone else's code by what it does under attack, not in the demo.</p>
+<ul>
+<li>Every input is validated, every query is parameterized, every identity comes from a verified session, and every permission is checked where the user is known.</li>
+<li>Every unit of work is one transaction, and side effects happen after it commits.</li>
+<li>Every rule that matters has a test that would fail without it.</li>
+<li>Every production app has configuration checks, logs, metrics, health checks, graceful shutdown, backups you have restored, and a way back.</li>
+</ul>
+<p>Where to go next: finish the ShopFlow milestones; read the <a href="/docs/packages">ZudoJS package documentation</a> for the packages you use most; build something of your own, small, and put it on a real server. When a lesson or a package surprises you, that is worth reporting; frameworks get better because their users say where they hurt.</p>
+<p><strong>You are now ready to build with ZudoJS.</strong></p>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Working in a demo is not the same as working in production. Attack your own endpoints the way the internet will.</li>
+<li>The inherited app had SQL injection, identity taken from the request, no authorization, no validation, two-step writes without a transaction, a check-then-act race, and no tests.</li>
+<li>The fix moved rules into a module, validated every input with a schema, used parameters in every query, took the user only from the session, claimed the card and moved money in single transactions with conditional updates, and proved each fix with a test.</li>
+<li>Events, queues, rate limits, a ledger, logs, metrics, OpenAPI, configuration, health checks and a deployment finish the job.</li>
+</ul>
+</section>

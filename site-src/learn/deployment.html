@@ -1,0 +1,600 @@
+---
+title: Deploying a ZudoJS app
+description: Take the Task API from your computer to a server. Build it for production, run it under systemd or in Docker, add PostgreSQL and Redis with Docker Compose, put Caddy in front for HTTPS, run migrations during a deployment, read the logs and back up the database.
+minutes: 60
+youNeed: The Task API project, Production engineering, and Docker installed (docker.com/get-started)
+youBuild: The Task API running in Docker Compose with PostgreSQL, Redis and a Caddy reverse proxy, with migrations, readiness checks and a tested backup
+keywords: deployment, production build, npm ci, environment variables, linux server, systemd, pm2, docker, dockerfile, multi-stage build, docker compose, postgresql, redis, reverse proxy, caddy, nginx, https, dns, domain, logs, backups, pg_dump, pg_restore, migrations
+tier: production
+---
+<section>
+<h2 id="overview">From your computer to a server</h2>
+<p><strong>Deploying</strong> means putting your app on a computer that is always on and reachable from the internet, a <strong>server</strong>, and keeping it running there. The path in this lesson:</p>
+<ol>
+<li>Build the app for production and run it without any development tools.</li>
+<li>Run it on a Linux server as a service that restarts when it crashes.</li>
+<li>Package it as a Docker image, so it runs the same everywhere.</li>
+<li>Start it together with PostgreSQL, Redis and a reverse proxy using Docker Compose.</li>
+<li>Serve it over HTTPS on your own domain.</li>
+<li>Deploy new versions safely: migrations, logs, backups.</li>
+</ol>
+<p>Every command below was run for real on the Task API from <a href="/learn/zudo-create-project">Create the Task API project</a>. Your ids, times and sizes will differ.</p>
+</section>
+
+<section>
+<h2 id="prepare">Prepare the app</h2>
+<p>In production the app needs a database. Add the PostgreSQL driver, <code>pg</code>:</p>
+<shell>
+$ npm install pg
+…
+$ npm install -D @types/pg
+…
+</shell>
+<p>Then add three small files and changes. First, one connection pool for the whole process. It refuses to start without <code>DATABASE_URL</code>, and it has the limits you chose in <a href="/learn/production-engineering">Production engineering</a>:</p>
+<example file="src/databases/pool.ts" browser="no" check="skip">
+import pg from "pg";
+
+const connectionString = process.env["DATABASE_URL"];
+if (!connectionString) throw new Error("DATABASE_URL is not set");
+
+/** One connection pool per process, shared by every module. */
+export const pool = new pg.Pool({
+  connectionString,
+  max: 10,
+  connectionTimeoutMillis: 2_000,
+  statement_timeout: 5_000,
+});
+</example>
+<p>Second, a readiness check in <code>src/app.ts</code>, next to the one the CLI generated, and a <code>/ready</code> route in <code>src/server.ts</code>. Close the pool after the runtime has stopped, and trust forwarded headers only from the proxy you will add later:</p>
+<example file="src/app.ts (part)" browser="no">
+runtime.registerReadinessCheck("database", async () => {
+  await pool.query("SELECT 1");
+  return true;
+});
+</example>
+<example file="src/server.ts (part)" browser="no">
+adapter: createNodeHttpAdapter({
+  host: process.env["HOST"] ?? "0.0.0.0",
+  port: resolvePort(),
+  trustProxy: process.env["TRUST_PROXY"] ?? false,
+}),
+handler: async (request: HttpRequestContext) => {
+  if (request.path === "/ready") {
+    await runtime.runReadinessChecks();
+    if (!runtime.ready) return createResponseContext({ status: 503 }).json({ status: "not ready" });
+    return { status: "ready" };
+  }
+  // … /health and the 404 as before
+},
+
+// in the SIGTERM handler:
+void server.stop().then(() => runtime.stop()).then(() => pool.end())
+</example>
+<p>Third, a migration script. A <strong>migration</strong> is a numbered change to the database structure. The script applies the ones that have not run yet and records them in a <code>schema_migrations</code> table. The advisory lock makes two copies of the script, started at the same moment by two servers, wait for each other instead of both creating the table:</p>
+<example file="src/migrate.ts" browser="no" check="skip">
+import { pool } from "./databases/pool.js";
+
+const migrations = [
+  { id: 1, sql: "CREATE TABLE tasks (id SERIAL PRIMARY KEY, title TEXT NOT NULL, done BOOLEAN NOT NULL DEFAULT false)" },
+];
+
+const client = await pool.connect();
+try {
+  await client.query("BEGIN");
+  await client.query("SELECT pg_advisory_xact_lock(4242)");
+  await client.query("CREATE TABLE IF NOT EXISTS schema_migrations (id INT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())");
+  for (const migration of migrations) {
+    const done = await client.query("SELECT 1 FROM schema_migrations WHERE id = $1", [migration.id]);
+    if (done.rowCount) continue;
+    await client.query(migration.sql);
+    await client.query("INSERT INTO schema_migrations (id) VALUES ($1)", [migration.id]);
+    console.log(`applied migration ${migration.id}`);
+  }
+  await client.query("COMMIT");
+  console.log("database is up to date");
+} catch (error) {
+  await client.query("ROLLBACK");
+  throw error;
+} finally {
+  client.release();
+  await pool.end();
+}
+</example>
+<note>If you use Prisma through <code>@zudojs/database</code>, its <code>createMigrationRunner</code> does the same job, with the same kind of lock. The idea is identical: migrations are code, versioned in Git, applied by a command, never by hand.</note>
+<h3>The production build</h3>
+<p>In production you run compiled JavaScript with plain <code>node</code>, not <code>tsx</code>. <code>npm run build</code> runs <code>tsc</code>, which writes JavaScript into <code>dist/</code>:</p>
+<shell>
+$ npm run build
+
+> task-api@0.1.0 build
+> tsc
+
+$ ls dist/*.js dist/databases
+dist/app.js
+dist/index.js
+dist/migrate.js
+dist/server.js
+
+dist/databases:
+index.js
+pool.js
+</shell>
+<p>On the server you install only the packages the app needs to run. <code>npm ci</code> installs exactly the versions in <code>package-lock.json</code>, and <code>--omit=dev</code> leaves out TypeScript, tsx and Vitest. Then you start the compiled server with the production settings:</p>
+<pre class="lx-json">npm ci --omit=dev
+NODE_ENV=production DATABASE_URL=postgres://… node dist/server.js</pre>
+<p>That is the whole app: a <code>dist/</code> folder, <code>node_modules</code>, and environment variables.</p>
+</section>
+
+<section>
+<h2 id="linux">On a Linux server</h2>
+<p>Most servers run Linux, rented from a provider as a <strong>VPS</strong> (virtual private server). The basic setup, once:</p>
+<ul>
+<li>Log in with an SSH key, not a password, and turn password logins off.</li>
+<li>Install security updates, and turn on automatic ones.</li>
+<li>Allow only ports 22 (SSH), 80 and 443 (web) in the firewall. PostgreSQL's 5432 is never open to the internet.</li>
+<li>Install Node.js 24 from the official NodeSource or distribution packages, and PostgreSQL.</li>
+<li>Create a user that runs only the app, with no login and no admin rights: <code>sudo useradd --system --home /srv/task-api taskapi</code>.</li>
+</ul>
+<h3>Keep it running with systemd</h3>
+<p>If you start <code>node dist/server.js</code> in an SSH session, it stops when you log out, and nothing restarts it after a crash or a reboot. A <strong>process manager</strong> does that. On Linux, the built-in one is <strong>systemd</strong>. Describe the app in a <strong>unit file</strong>, <code>/etc/systemd/system/task-api.service</code>:</p>
+<pre class="lx-json"># /etc/systemd/system/task-api.service
+[Unit]
+Description=Task API (ZudoJS)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=taskapi
+WorkingDirectory=/srv/task-api
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/task-api/env
+ExecStart=/usr/bin/node dist/server.js
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=40
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target</pre>
+<ul>
+<li><code>User=taskapi</code>: the app never runs as root.</li>
+<li><code>EnvironmentFile</code>: the secrets, <code>DATABASE_URL</code> and friends, one <code>NAME=value</code> per line. Make the file readable only by root and the app: <code>sudo chmod 640 /etc/task-api/env</code> and <code>sudo chown root:taskapi /etc/task-api/env</code>.</li>
+<li><code>Restart=on-failure</code>: if the process crashes, systemd starts it again after 5 seconds.</li>
+<li><code>KillSignal=SIGTERM</code> and <code>TimeoutStopSec=40</code>: on stop, the app gets <code>SIGTERM</code> and 40 seconds for its graceful shutdown, more than the runtime's own 30.</li>
+<li>The last four lines lock the process down: it cannot gain privileges, write to the system, or read home folders.</li>
+</ul>
+<p>Check the file before you install it. No output means it is valid:</p>
+<shell>
+$ systemd-analyze verify task-api.service
+</shell>
+<p>Then, on the server, load it, start it, and look at it:</p>
+<pre class="lx-json">sudo systemctl daemon-reload
+sudo systemctl enable --now task-api
+systemctl status task-api
+journalctl -u task-api -f</pre>
+<p><code>enable --now</code> starts the app and also starts it at every boot. <code>journalctl -u task-api -f</code> follows its logs, everything the app writes to standard output, live.</p>
+<tip><strong>pm2</strong> is a popular process manager written in Node.js (<code>npm install -g pm2</code>, then <code>pm2 start dist/server.js --name task-api</code>). It works on any system and has a nice dashboard. On a Linux server systemd is already there and does the same job, so this course uses it.</tip>
+</section>
+
+<section>
+<h2 id="docker">Docker</h2>
+<p>A server set up by hand is hard to reproduce: which Node.js version, which system packages, which settings? <strong>Docker</strong> packages your app together with everything it needs to run into an <strong>image</strong>. A running copy of an image is a <strong>container</strong>. The same image runs on your laptop, in CI and on the server.</p>
+<p>The recipe for an image is a <code>Dockerfile</code>. This one uses a <strong>multi-stage build</strong>: the first stage has all the tools to compile TypeScript, and the second, final stage gets only the compiled JavaScript and the production packages. The image is smaller and contains no compiler or test tools an attacker could use.</p>
+<pre class="lx-json"># Dockerfile
+# Stage 1: install every dependency and compile TypeScript
+FROM node:24-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY tsconfig.json ./
+COPY src ./src
+RUN npm run build
+
+# Stage 2: only what production needs
+FROM node:24-alpine
+ENV NODE_ENV=production
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev &amp;&amp; npm cache clean --force
+COPY --from=build /app/dist ./dist
+USER node
+EXPOSE 3000
+HEALTHCHECK --interval=10s --timeout=3s CMD wget -qO- http://127.0.0.1:3000/health || exit 1
+CMD ["node", "dist/server.js"]</pre>
+<ul>
+<li><code>node:24-alpine</code> is the official Node.js 24 image on Alpine Linux, a very small Linux.</li>
+<li>The <code>package.json</code> files are copied before the source code. Docker caches each step, so when only your code changes, <code>npm ci</code> is not run again and the build takes seconds.</li>
+<li><code>USER node</code>: the official image has a user without admin rights. Use it.</li>
+<li><code>HEALTHCHECK</code> asks <code>/health</code> every 10 seconds, so <code>docker ps</code> shows whether the app is healthy.</li>
+<li><code>CMD</code> uses the list form, so <code>node</code> itself receives <code>SIGTERM</code> and can shut down gracefully.</li>
+</ul>
+<p>A <code>.dockerignore</code> file keeps local files out of the image. Above all, <code>.env</code> with your secrets must never be copied in:</p>
+<pre class="lx-json"># .dockerignore
+node_modules
+dist
+.env
+.git
+tests</pre>
+<p>Build the image and give it a name and a version, a <strong>tag</strong>:</p>
+<shell>
+$ docker build -t task-api:1.0.0 .
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 610B done
+#1 DONE 0.0s
+…
+#8 [stage-1 4/5] RUN npm ci --omit=dev && npm cache clean --force
+#8 25.95
+#8 25.95 added 30 packages, and audited 31 packages in 25s
+…
+#8 25.95 found 0 vulnerabilities
+…
+#8 DONE 27.4s
+
+#9 [build 4/7] RUN npm ci
+#9 37.53
+#9 37.53 added 85 packages, and audited 86 packages in 36s
+…
+#9 DONE 38.1s
+…
+#12 [build 7/7] RUN npm run build
+#12 0.933
+#12 0.933 > task-api@0.1.0 build
+#12 0.933 > tsc
+#12 0.933
+#12 DONE 7.3s
+
+#13 [stage-1 5/5] COPY --from=build /app/dist ./dist
+#13 DONE 0.3s
+
+#14 exporting to image
+…
+#14 naming to docker.io/library/task-api:1.0.0 0.0s done
+#14 DONE 2.1s
+$ docker images task-api
+IMAGE            ID             DISK USAGE   CONTENT SIZE   EXTRA
+task-api:1.0.0   f55e976d8484        183MB             0B   U
+</shell>
+<p>The production stage installed 30 packages, the build stage 85: the other 55 are development tools that never reach the final image. Now run it:</p>
+<shell>
+$ docker run --rm task-api:1.0.0
+file:///app/dist/databases/pool.js:4
+    throw new Error("DATABASE_URL is not set");
+          ^
+
+Error: DATABASE_URL is not set
+    at file:///app/dist/databases/pool.js:4:11
+…
+Node.js v24.21.0
+</shell>
+<p>That failure is the configuration check from the previous lesson, doing its job: without a database the app refuses to start, with a clear message. The container needs a database next to it, and that is what Docker Compose is for.</p>
+</section>
+
+<section>
+<h2 id="compose">Docker Compose: app, PostgreSQL, Redis and a proxy</h2>
+<p><strong>Docker Compose</strong> starts several containers that belong together from one file, <code>compose.yaml</code>, and puts them on a private network where each one can reach the others by its service name. That is the DNS-based service discovery from <a href="/learn/zudo-microservices">the microservices lesson</a>: the app connects to <code>db:5432</code>.</p>
+<pre class="lx-json"># compose.yaml
+services:
+  app:
+    build: .
+    image: task-api:1.0.0
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: postgres://taskapi:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/taskapi
+      REDIS_URL: redis://redis:6379
+      TRUST_PROXY: private
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: taskapi
+      POSTGRES_DB: taskapi
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taskapi -d taskapi"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+    restart: unless-stopped
+
+  proxy:
+    image: caddy:2-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:</pre>
+<ul>
+<li><strong>Only the proxy has <code>ports</code>.</strong> The app, the database and Redis are reachable only inside the Compose network, never from the internet.</li>
+<li><strong>Volumes</strong> (<code>pgdata</code>, <code>redisdata</code>) keep the data when containers are replaced. Without them, every deployment would delete your database.</li>
+<li><code>depends_on</code> with <code>service_healthy</code> starts the app only after PostgreSQL and Redis pass their health checks.</li>
+<li><code>${POSTGRES_PASSWORD:?…}</code> takes the password from the environment or from a <code>.env</code> file next to <code>compose.yaml</code>, and stops with a message if it is missing. There is no default password.</li>
+<li><code>REDIS_URL</code> is ready for a shared cache or rate-limit store, as recommended in the previous lesson. <code>TRUST_PROXY: private</code> tells the app to believe <code>X-Forwarded-For</code> only from addresses on private networks, which is where Caddy sits.</li>
+</ul>
+<p>The proxy's configuration, <code>Caddyfile</code>, forwards every request to the app:</p>
+<pre class="lx-json"># Caddyfile
+:80 {
+	reverse_proxy app:3000
+}</pre>
+<p>Try to start it without a password, then create one. <code>openssl rand -hex 24</code> prints 48 random characters, so nobody ever types or sees the password:</p>
+<shell>
+$ docker compose up -d
+error while interpolating services.app.environment.DATABASE_URL: required variable POSTGRES_PASSWORD is missing a value: set POSTGRES_PASSWORD in .env
+error while interpolating services.db.environment.POSTGRES_PASSWORD: required variable POSTGRES_PASSWORD is missing a value: set POSTGRES_PASSWORD in .env
+$ echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" > .env
+$ chmod 600 .env
+</shell>
+<p>Now start the database and Redis first, run the migrations, then start everything:</p>
+<shell>
+$ docker compose up -d db redis
+…
+ Container task-api-db-1 Started
+ Container task-api-redis-1 Started
+$ docker compose run --rm app node dist/migrate.js
+ Container task-api-redis-1 Healthy
+ Container task-api-db-1 Healthy
+…
+applied migration 1
+database is up to date
+$ docker compose up -d
+…
+ Container task-api-app-1 Started
+ Container task-api-proxy-1 Starting
+ Container task-api-proxy-1 Started
+$ docker compose ps --format 'table {{.Name}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+NAME               IMAGE            STATUS                            PORTS
+task-api-app-1     task-api:1.0.0   Up 7 seconds (health: starting)   3000/tcp
+task-api-db-1      postgres:17      Up 42 seconds (healthy)           5432/tcp
+task-api-proxy-1   caddy:2-alpine   Up 7 seconds                      443/tcp, 2019/tcp, 443/udp, 0.0.0.0:8080->80/tcp, [::]:8080->80/tcp
+task-api-redis-1   redis:8-alpine   Up 41 seconds (healthy)           6379/tcp
+$ curl -i http://localhost:8080/ready
+HTTP/1.1 200 OK
+Content-Length: 18
+Content-Type: application/json
+Date: Wed, 23 Sep 2026 14:05:17 GMT
+Via: 1.1 Caddy
+
+{"status":"ready"}
+$ docker compose exec redis redis-cli ping
+PONG
+</shell>
+<p>The request went to Caddy on port 8080 (the <code>Via: 1.1 Caddy</code> header), which passed it to the app, which checked the database and answered <code>ready</code>. Running the migrations a second time is safe: the script prints only <code>database is up to date</code>.</p>
+<h3>See the readiness check work</h3>
+<p>Stop the database and ask again:</p>
+<shell>
+$ docker compose stop db
+ Container task-api-db-1 Stopping
+ Container task-api-db-1 Stopped
+$ curl -i http://localhost:8080/ready
+HTTP/1.1 503 Service Unavailable
+…
+{"status":"not ready"}
+$ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/health
+200
+$ docker compose start db
+ Container task-api-db-1 Starting
+ Container task-api-db-1 Started
+$ curl http://localhost:8080/ready
+{"status":"ready"}
+</shell>
+<p>Exactly as planned in the previous lesson: without its database the app is <em>alive</em> (200) but <em>not ready</em> (503), so nothing restarts it, and it recovers by itself when the database is back.</p>
+</section>
+
+<section>
+<h2 id="https">Reverse proxy, domain and HTTPS</h2>
+<p>A <strong>reverse proxy</strong> is a server that sits in front of your app and receives every request first. It handles <strong>HTTPS</strong> (the encryption of every request between the browser and your server), compresses responses, and can spread traffic over several copies of the app. Your Node.js process then only speaks plain HTTP on the private network.</p>
+<h3>Point your domain at the server</h3>
+<p>At the company where you bought your domain, create a DNS <strong>A record</strong> (and an <strong>AAAA</strong> record for IPv6) for the name you want, for example <code>api.example.com</code>, pointing to your server's IP address. Changes can take a few minutes to an hour to reach everyone. Check with <code>dig +short api.example.com</code>: it should print your server's address.</p>
+<h3>HTTPS with Caddy</h3>
+<p>For a real domain, replace <code>:80</code> in the <code>Caddyfile</code> with the name, and publish ports 80 and 443 instead of 8080:</p>
+<pre class="lx-json"># Caddyfile on the server
+api.example.com {
+	reverse_proxy app:3000
+	encode zstd gzip
+}</pre>
+<p>That is all. When Caddy starts, it gets a free TLS certificate from Let's Encrypt for <code>api.example.com</code>, renews it before it expires, redirects HTTP to HTTPS, and adds the <code>Strict-Transport-Security</code> header. It needs ports 80 and 443 open and the DNS record in place. Add a volume for <code>/data</code> in the <code>proxy</code> service so the certificates survive a restart.</p>
+<h3>The same with nginx</h3>
+<p>nginx is the other common choice. It does not get certificates by itself; you use <code>certbot</code> for that. The part that forwards to the app looks like this:</p>
+<pre class="lx-json"># /etc/nginx/sites-available/task-api
+server {
+    listen 443 ssl;
+    server_name api.example.com;
+    ssl_certificate     /etc/letsencrypt/live/api.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}</pre>
+<warn title="TRUST ONLY YOUR OWN PROXY">Behind a proxy, every request reaches the app from the proxy's address, and the real client address is in the <code>X-Forwarded-For</code> header. Anyone can send that header, so the app must believe it only when it comes from your proxy. That is what <code>trustProxy</code> on the adapter does: <code>"loopback"</code> when nginx runs on the same machine, <code>"private"</code> inside Docker. Never set it to <code>true</code> on an app that is also reachable directly, or an attacker can pick their own IP address and walk around your per-IP rate limit.</warn>
+</section>
+
+<section>
+<h2 id="logs">Logs</h2>
+<p>The app writes its logs to standard output, and the platform keeps them. With Compose:</p>
+<shell>
+$ docker compose logs app --tail 3
+app-1  |   }
+app-1  | }
+app-1  | Listening on port 3000
+$ docker compose stop app
+ Container task-api-app-1 Stopping
+ Container task-api-app-1 Stopped
+$ docker compose logs app | grep -i "shutdown"
+app-1  |   message: '2026-09-23T14:06:59.947Z [INFO] [task-api] Initiating graceful shutdown. timeoutMs=30000',
+app-1  |   message: '2026-09-23T14:06:59.953Z [INFO] [task-api] Graceful shutdown complete.',
+</shell>
+<p><code>docker compose stop</code> sent <code>SIGTERM</code>, and the logs show the graceful shutdown from the previous lesson taking 6 milliseconds. Add <code>-f</code> to follow logs live. Under systemd the same is <code>journalctl -u task-api</code>. Docker keeps logs in files that grow forever by default; limit them with the <code>logging</code> option (<code>max-size: "10m"</code>, <code>max-file: "3"</code>) or ship them to a log service, as the production lesson recommends.</p>
+</section>
+
+<section>
+<h2 id="migrations">Deploying a new version</h2>
+<p>Every deployment follows the same steps, in this order:</p>
+<ol>
+<li><strong>Back up</strong> the database (next section).</li>
+<li><strong>Build</strong> the new image with a new tag, such as <code>task-api:1.1.0</code>. Keep the old image so you can go back.</li>
+<li><strong>Migrate</strong> the database with the new image, before the new app starts.</li>
+<li><strong>Replace</strong> the app container. The old one gets <code>SIGTERM</code> and finishes its requests.</li>
+<li><strong>Check</strong> <code>/ready</code>, the logs and your dashboard for a few minutes.</li>
+</ol>
+<shell>
+$ docker compose build app
+…
+ Image task-api:1.0.0 Built
+$ docker compose run --rm app node dist/migrate.js
+database is up to date
+$ docker compose up -d app
+…
+ Container task-api-app-1 Started
+$ curl http://localhost:8080/ready
+{"status":"ready"}
+</shell>
+<h3>Migrations that do not break the running app</h3>
+<p>Between step 3 and step 4, the <em>old</em> app runs against the <em>new</em> database. So every migration must work with both versions. Split breaking changes into two deployments, called <strong>expand and contract</strong>:</p>
+<ul>
+<li><strong>Renaming a column <code>title</code> to <code>name</code>:</strong> deployment 1 adds <code>name</code>, copies the data, and the new code writes both columns. Deployment 2, once no old code is left, removes <code>title</code>.</li>
+<li><strong>Adding a <code>NOT NULL</code> column:</strong> add it with a default, or as nullable first and fill it, then add the constraint later.</li>
+<li><strong>Never</strong> edit a migration that already ran in production. Add a new one.</li>
+</ul>
+<p>To <strong>roll back</strong> a bad release, start the previous image tag again. That only works if the database still suits it, which is one more reason for expand and contract.</p>
+</section>
+
+<section>
+<h2 id="backups">Backups</h2>
+<p>A backup you have never restored is only a hope. Make one with <code>pg_dump</code> in PostgreSQL's compact <code>custom</code> format, then prove it works by restoring it into a scratch database:</p>
+<shell>
+$ docker compose exec db psql -U taskapi -d taskapi -c "INSERT INTO tasks (title) VALUES ('Write the deploy guide'), ('Test the backup')"
+INSERT 0 2
+$ mkdir -p backups
+$ docker compose exec -T db pg_dump -U taskapi -d taskapi --format=custom > backups/taskapi-2026-09-23.dump
+$ ls -lh backups
+-rw-rw-r-- 1 you you 3.7K Sep 23 15:05 taskapi-2026-09-23.dump
+$ docker compose exec -T db createdb -U taskapi restore_check
+$ docker compose exec -T db pg_restore -U taskapi -d restore_check < backups/taskapi-2026-09-23.dump
+$ docker compose exec db psql -U taskapi -d restore_check -c "SELECT id, title, done FROM tasks"
+ id |         title          | done
+----+------------------------+------
+  1 | Write the deploy guide | f
+  2 | Test the backup        | f
+(2 rows)
+$ docker compose exec -T db dropdb -U taskapi restore_check
+</shell>
+<p>Both rows came back from the file. The rules for real backups:</p>
+<ul>
+<li><strong>Automate them:</strong> a nightly <code>cron</code> job or systemd timer that runs the <code>pg_dump</code> line with the date in the file name.</li>
+<li><strong>Store them somewhere else:</strong> a backup on the same server dies with the server. Copy it to object storage in another region, encrypted.</li>
+<li><strong>Keep several:</strong> for example 7 daily, 4 weekly and 12 monthly copies.</li>
+<li><strong>Test a restore</strong> regularly, exactly as above.</li>
+</ul>
+<p>Managed databases from cloud providers do nightly backups and point-in-time recovery for you, which is a good reason to use one once real money depends on your data.</p>
+</section>
+
+<section>
+<h2 id="cleanup">Clean up</h2>
+<p>When you are done experimenting on your computer, remove the containers, the network, the volumes (this deletes the database) and your image:</p>
+<shell>
+$ docker compose down --volumes
+ Container task-api-proxy-1 Stopping
+ Container task-api-proxy-1 Stopped
+…
+ Container task-api-db-1 Removed
+ Container task-api-redis-1 Removed
+ Volume task-api_pgdata Removing
+ Network task-api_default Removing
+ Volume task-api_redisdata Removing
+ Volume task-api_pgdata Removed
+ Volume task-api_redisdata Removed
+ Network task-api_default Removed
+$ docker image rm task-api:1.0.0
+Untagged: task-api:1.0.0
+Deleted: sha256:f55e976d84840a3ba4ddcdcb66961cc8ab7553e23d4e813e96f2c74aa5cf7401
+</shell>
+<p>On a real server, never run <code>down --volumes</code>: it deletes your production data.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Add log limits">
+<p>Docker's default log files grow without limit and can fill the server's disk. Add a <code>logging</code> section to the <code>app</code> service in <code>compose.yaml</code> that keeps at most 3 files of 10 MB.</p>
+<solution>
+<pre class="lx-json">  app:
+    # … everything from before
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"</pre>
+<p>Run <code>docker compose up -d app</code> to apply it. The app keeps at most 30 MB of logs; older lines are dropped. Ship logs to a log service if you need to keep them longer.</p>
+</solution>
+</exercise>
+<exercise title="A nightly backup">
+<p>Write the line for a <code>crontab</code> that makes a backup every night at 02:30, with the date in the file name, and deletes backups older than 14 days. Remember that <code>%</code> has a special meaning in crontab.</p>
+<solution>
+<pre class="lx-json">30 2 * * * cd /srv/task-api &amp;&amp; docker compose exec -T db pg_dump -U taskapi -d taskapi --format=custom &gt; backups/taskapi-$(date +\%F).dump &amp;&amp; find backups -name '*.dump' -mtime +14 -delete</pre>
+<p><code>date +%F</code> prints the date as <code>2026-09-23</code>; in a crontab each <code>%</code> must be written <code>\%</code>. Add a second job that copies the newest file to storage outside the server, and a reminder to test a restore every month.</p>
+</solution>
+</exercise>
+<exercise title="Spot the mistakes">
+<p>Find four production problems in this Compose service:</p>
+<pre class="lx-json">  app:
+    image: task-api:latest
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://admin:admin123@db:5432/taskapi
+      TRUST_PROXY: "true"</pre>
+<solution>
+<ul>
+<li><code>task-api:latest</code>: you cannot tell which version runs or go back to the previous one. Use version tags.</li>
+<li><code>ports: "3000:3000"</code> publishes the app directly to the internet, around the proxy and its HTTPS.</li>
+<li>The password is written in the file, it is weak, and <code>admin</code> suggests a database superuser. Use <code>${POSTGRES_PASSWORD:?…}</code> from <code>.env</code>, a random value, and a user that owns only this database.</li>
+<li><code>TRUST_PROXY: "true"</code> together with a published port lets any client fake its IP address with <code>X-Forwarded-For</code>. Trust only the proxy's network.</li>
+</ul>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Production runs compiled JavaScript: <code>npm run build</code>, <code>npm ci --omit=dev</code>, <code>node dist/server.js</code>, with every setting in environment variables.</li>
+<li>On a Linux server, systemd keeps the app running, restarts it after a crash, and holds its secrets in an <code>EnvironmentFile</code>.</li>
+<li>A multi-stage Dockerfile builds a small image with no build tools, running as a non-root user.</li>
+<li>Docker Compose runs the app with PostgreSQL, Redis and Caddy on a private network. Only the proxy is published, data lives in volumes, and a missing password stops the start.</li>
+<li>Caddy gets and renews HTTPS certificates for your domain by itself. Trust forwarded headers only from your own proxy.</li>
+<li>Every deployment: back up, build a new tag, migrate, replace, check. Write migrations that suit both versions, and test your backups by restoring them.</li>
+</ul>
+<p>You can now ship a ZudoJS app. In the capstone you design and build a bigger one from scratch: ShopFlow.</p>
+</section>

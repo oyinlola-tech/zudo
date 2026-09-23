@@ -1,0 +1,447 @@
+---
+title: Multi-tenancy
+description: Serve many companies from one Task API without ever mixing their data. Tenant ids, resolvers and trust levels, resolver chains, AsyncLocalStorage context and tenant-scoped queries with @zudojs/tenancy.
+minutes: 45
+youNeed: The Task API project, the auth and database lessons
+youBuild: A Task API where each company only ever sees its own tasks, with the tenant taken from the verified session and never from a header
+keywords: zudojs tenancy, multi-tenancy, saas, tenant id, tenant isolation, tenant resolver, resolver chain, trust level, x-tenant-id, AsyncLocalStorage, tenant context, tenant_id column
+---
+<section>
+<h2 id="what">One app, many customers</h2>
+<p>The Task API is now sold to companies. Acme and Globex each get their own users and their own tasks, but you run <strong>one</strong> copy of the application and one database for all of them. Each customer is a <strong>tenant</strong>, and an application built this way is <strong>multi-tenant</strong>. Almost every SaaS product (software you rent in the browser) works like this.</p>
+<p>There are three common ways to keep the tenants' data apart:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Strategy</th><th>How</th><th>Trade-off</th></tr></thead>
+<tbody>
+<tr><td>Shared tables</td><td>Every row has a <code>tenant_id</code> column, and every query filters on it.</td><td>Cheapest and simplest to run. One forgotten filter leaks data.</td></tr>
+<tr><td>Schema per tenant</td><td>Each tenant gets its own set of tables in one database.</td><td>Stronger walls. Migrations must run once per tenant.</td></tr>
+<tr><td>Database per tenant</td><td>Each tenant gets a whole database.</td><td>Strongest isolation, the most expensive, used for large customers.</td></tr>
+</tbody>
+</table></div>
+<p>This lesson uses shared tables, the usual starting point. Whatever the strategy, the rule is the same, and it is the most important sentence on this page: <strong>a request from one tenant must never read or change another tenant's data.</strong> That is called <strong>tenant isolation</strong>. A bug here is not a small bug: it shows one company's data to a competitor.</p>
+<shell title="Terminal on your computer">
+$ npm install @zudojs/tenancy
+
+added 1 package, and audited 75 packages in 7s
+…
+</shell>
+<p>The examples use Node.js features and PGlite from <a href="/learn/databases">the databases lesson</a>, so run them on your computer with <code>npx tsx src/&lt;file&gt;.ts</code>.</p>
+</section>
+
+<section>
+<h2 id="tenants">Tenants and tenant ids</h2>
+<p>A tenant has an id, a name and a <strong>status</strong>: only <code>active</code> tenants may use the app. A tenant that did not pay is <code>suspended</code>. A <strong>repository</strong> stores the tenants. The memory one is good for learning and tests:</p>
+<example file="tenants.ts" project="tenancy" browser="no">
+import { createMemoryTenantRepository, createTenantId } from "@zudojs/tenancy";
+
+export const tenants = createMemoryTenantRepository();
+tenants.add({ id: createTenantId("acme"), name: "Acme", slug: "acme", status: "active", metadata: {} });
+tenants.add({ id: createTenantId("globex"), name: "Globex", slug: "globex", status: "active", metadata: {} });
+tenants.add({ id: createTenantId("initech"), name: "Initech", status: "suspended", metadata: {} });
+</example>
+<example file="tenant-ids.ts" project="tenancy" browser="no">
+import { createTenantId, tryCreateTenantId } from "@zudojs/tenancy";
+import { tenants } from "./tenants.js";
+
+console.log(tryCreateTenantId("  ACME "));
+console.log(tryCreateTenantId("acme:admin"), tryCreateTenantId("../globex"));
+console.log((await tenants.findById(createTenantId("globex")))?.name);
+</example>
+<output>
+acme
+undefined undefined
+Globex
+</output>
+<p>A tenant id is cleaned up (trimmed, lower-cased) and must match <code>^[a-z0-9][a-z0-9_-]*$</code>. <code>tryCreateTenantId</code> returns <code>undefined</code> for anything else, <code>createTenantId</code> throws. That matters because tenant ids end up in cache keys, file paths and log lines: an id like <code>acme:admin</code> could otherwise forge a key that belongs to someone else.</p>
+</section>
+
+<section>
+<h2 id="resolvers">Which tenant is this request for?</h2>
+<p>Every request must be tied to one tenant. Finding out which one is called <strong>tenant resolution</strong>, and the parts that do it are <strong>resolvers</strong>. Each one looks at a different part of the request:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Resolver</th><th>Reads</th><th>Trust</th></tr></thead>
+<tbody>
+<tr><td><code>createJwtResolver</code></td><td>The <code>tenant_id</code> claim of the user's verified token or session</td><td><code>trusted</code></td></tr>
+<tr><td><code>createSubdomainResolver</code>, <code>createDomainResolver</code></td><td>The host name, like <code>acme.tasks.test</code></td><td><code>verified</code></td></tr>
+<tr><td><code>createHeaderResolver</code>, <code>createPathResolver</code></td><td>An <code>x-tenant-id</code> header, or a path like <code>/t/acme/tasks</code></td><td><code>untrusted</code></td></tr>
+</tbody>
+</table></div>
+<p>The <strong>trust level</strong> says how much you can believe the answer. A header is <code>untrusted</code> because the client writes it: anybody can send <code>x-tenant-id: globex</code> with <code>curl</code>. If your app believed it, every Acme user could read Globex's tasks by adding one line to their request. The session, on the other hand, was created by your server when the user logged in (as in <a href="/learn/zudo-auth">the auth lesson</a>), so the tenant stored in it is <code>trusted</code>.</p>
+<p>Resolvers read the request through a small interface: <code>getClaims</code>, <code>getHost</code>, <code>getHeader</code> and <code>getPath</code>. This helper builds one from plain values, so you can try resolvers without a server:</p>
+<example file="fake-request.ts" project="tenancy" browser="no">
+import type { HttpResolverContext, TenantClaims } from "@zudojs/tenancy";
+
+export interface FakeRequest {
+  readonly claims?: TenantClaims;
+  readonly host?: string;
+  readonly headers?: Readonly<Record<string, string>>;
+}
+
+export function fakeRequest(request: FakeRequest): HttpResolverContext {
+  return {
+    getClaims: () => request.claims,
+    getHost: () => request.host,
+    getHeader: (name) => request.headers?.[name.toLowerCase()],
+    getPath: () => "/tasks",
+  };
+}
+</example>
+<example file="resolve.ts" project="tenancy" browser="no">
+import { createHeaderResolver, createJwtResolver, createResolverChain, createSubdomainResolver } from "@zudojs/tenancy";
+import type { HttpResolverContext } from "@zudojs/tenancy";
+import { fakeRequest } from "./fake-request.js";
+
+const chain = createResolverChain<HttpResolverContext>([
+  createJwtResolver(),
+  createSubdomainResolver({ baseDomain: "tasks.test" }),
+  createHeaderResolver(),
+]);
+
+const requests = {
+  "session": fakeRequest({ claims: { tenant_id: "acme" } }),
+  "subdomain": fakeRequest({ host: "globex.tasks.test" }),
+  "header only": fakeRequest({ headers: { "x-tenant-id": "globex" } }),
+  "session + header": fakeRequest({ claims: { tenant_id: "acme" }, headers: { "x-tenant-id": "globex" } }),
+  "nothing": fakeRequest({ host: "tasks.test" }),
+};
+for (const [name, request] of Object.entries(requests)) {
+  const found = await chain.resolveTenant(request);
+  console.log(name.padEnd(16), found ? `${found.tenantId} from ${found.source} (${found.trust})` : "no tenant");
+}
+</example>
+<output>
+session          acme from jwt (trusted)
+subdomain        globex from subdomain (verified)
+header only      globex from header (untrusted)
+session + header acme from jwt (trusted)
+nothing          no tenant
+</output>
+<p>A <strong>resolver chain</strong> asks its resolvers in order of <strong>priority</strong> (the JWT resolver has the highest) and stops at the first answer. That is why "session + header" is Acme: the trusted session wins, and the header is never even read. "header only" found Globex, but marked it <code>untrusted</code>. The next section refuses it.</p>
+<p>Two more safety details: <code>www</code> and the bare domain do not count as tenants, and a resolver that <em>throws</em> (for example on an invalid token) stops the whole chain. A failed login can never fall through to the header.</p>
+</section>
+
+<section>
+<h2 id="trust">Enforce trust and status</h2>
+<p>Resolving is not enough: you must also check that the answer is trustworthy and that the tenant may use the app. <code>assertTrustLevel</code> refuses anything below the level you require, and <code>createTenantManager</code> loads the tenant and refuses tenants that are not active:</p>
+<example file="enforce.ts" project="tenancy" browser="no">
+import { assertTrustLevel, createResolverChain, createHeaderResolver, createJwtResolver, createTenantContextStorage, createTenantManager, TenantError } from "@zudojs/tenancy";
+import type { HttpResolverContext, Tenant } from "@zudojs/tenancy";
+import { fakeRequest } from "./fake-request.js";
+import type { FakeRequest } from "./fake-request.js";
+import { tenants } from "./tenants.js";
+
+const chain = createResolverChain<HttpResolverContext>([createJwtResolver(), createHeaderResolver()]);
+const manager = createTenantManager({ repository: tenants, storage: createTenantContextStorage() });
+
+async function tenantFor(request: FakeRequest): Promise<Tenant> {
+  const found = await chain.resolveTenant(fakeRequest(request));
+  if (!found) throw new TenantError("No tenant for this request");
+  assertTrustLevel(found.trust, "verified", found.source);
+  return manager.requireActive(found.tenantId);
+}
+
+for (const request of [
+  { claims: { tenant_id: "acme" } },
+  { headers: { "x-tenant-id": "globex" } },
+  { claims: { tenant_id: "initech" } },
+  {},
+]) {
+  try {
+    console.log("OK  ", (await tenantFor(request)).name);
+  } catch (error) {
+    if (error instanceof TenantError) console.log("DENY", error.statusCode, error.name);
+  }
+}
+</example>
+<output>
+OK   Acme
+DENY 403 TenantTrustLevelError
+DENY 403 TenantUnavailableError
+DENY 403 TenantError
+</output>
+<p>Only the trusted session reaches a tenant. The header-only request is refused with <code>TenantTrustLevelError</code>, and the suspended Initech with <code>TenantUnavailableError</code>. Every tenancy error extends <code>TenantError</code>, an <code>AuthorizationError</code> from <a href="/learn/zudo-errors">@zudojs/errors</a>, so it already carries status 403. Do not tell the client <em>why</em>: an attacker probing tenant names should not learn which ones exist or are suspended.</p>
+<note>When is a header acceptable? Only when a proxy that you control removes the client's <code>x-tenant-id</code> and sets its own, for example an API gateway that has already checked an API key. Then create the resolver with <code>createHeaderResolver({ trust: "verified" })</code>, and never expose the app without that proxy.</note>
+</section>
+
+<section>
+<h2 id="context">The tenant context</h2>
+<p>Once the tenant is known, every piece of code that handles the request needs it: services, repositories, cache keys, log lines. Passing it as a parameter through every function is tedious, and one forgotten parameter is a leak. Instead, the tenancy package stores it in an <strong>AsyncLocalStorage</strong>, the same Node.js feature that carried the trace id in <a href="/learn/zudo-observability">the observability lesson</a>:</p>
+<example file="context.ts" project="tenancy" browser="no">
+import { createContextManager, createTenantContextStorage } from "@zudojs/tenancy";
+
+export const tenantStorage = createTenantContextStorage();
+export const tenantContext = createContextManager({ storage: tenantStorage });
+</example>
+<example file="context-demo.ts" project="tenancy" browser="no">
+import { createTenantId, TenantContextMissingError } from "@zudojs/tenancy";
+import { tenantContext } from "./context.js";
+import { tenants } from "./tenants.js";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function listTasks(delayMs: number): Promise<void> {
+  await wait(delayMs);
+  console.log("listing tasks of", tenantContext.requireCurrentTenant().name);
+}
+
+const acme = await tenants.findById(createTenantId("acme"));
+const globex = await tenants.findById(createTenantId("globex"));
+if (acme && globex) {
+  await Promise.all([
+    tenantContext.run(acme, () => listTasks(30)),
+    tenantContext.run(globex, () => listTasks(10)),
+    tenantContext.run(acme, () => listTasks(20)),
+  ]);
+}
+
+try {
+  await listTasks(0);
+} catch (error) {
+  if (error instanceof TenantContextMissingError) console.log("outside:", error.message);
+}
+</example>
+<output>
+listing tasks of Globex
+listing tasks of Acme
+listing tasks of Acme
+outside: Tenant context is required but none was found
+</output>
+<p>The three calls ran at the same time and finished in a different order than they started, and each one saw its own tenant. <code>listTasks</code> has no tenant parameter. Outside <code>run</code>, <code>requireCurrentTenant()</code> throws: code that needs a tenant fails loudly instead of quietly reading everybody's data. <code>run</code> also refuses a tenant that is not active.</p>
+</section>
+
+<section>
+<h2 id="isolation">Tenant-scoped queries</h2>
+<p>Now the data. Every task row gets a <code>tenant_id</code>. The repository reads the tenant from the context and puts it in <strong>every</strong> query, as a parameter, never glued into the SQL text. Callers cannot even pass a tenant: there is no parameter to get wrong.</p>
+<example file="task.repository.ts" project="tenancy" browser="no">
+import type { PGlite } from "@electric-sql/pglite";
+import { tenantContext } from "./context.js";
+
+interface TaskRow { id: number; title: string }
+
+export class TaskRepository {
+  constructor(private readonly db: PGlite) {}
+
+  private tenantId(): string {
+    return tenantContext.requireCurrentTenant().id;
+  }
+
+  async list(): Promise<TaskRow[]> {
+    const result = await this.db.query<TaskRow>(
+      "select id, title from tasks where tenant_id = $1 order by id", [this.tenantId()]);
+    return result.rows;
+  }
+
+  async get(id: number): Promise<TaskRow | undefined> {
+    const result = await this.db.query<TaskRow>(
+      "select id, title from tasks where id = $1 and tenant_id = $2", [id, this.tenantId()]);
+    return result.rows[0];
+  }
+
+  async create(title: string): Promise<TaskRow> {
+    const result = await this.db.query<TaskRow>(
+      "insert into tasks (tenant_id, title) values ($1, $2) returning id, title", [this.tenantId(), title]);
+    const row = result.rows[0];
+    if (!row) throw new Error("insert returned no row");
+    return row;
+  }
+}
+</example>
+<example file="isolation.ts" project="tenancy" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+import { createTenantId } from "@zudojs/tenancy";
+import { tenantContext } from "./context.js";
+import { TaskRepository } from "./task.repository.js";
+import { tenants } from "./tenants.js";
+
+const db = new PGlite();
+await db.exec(`create table tasks (
+  id serial primary key,
+  tenant_id text not null,
+  title text not null
+)`);
+const repo = new TaskRepository(db);
+const acme = await tenants.findById(createTenantId("acme"));
+const globex = await tenants.findById(createTenantId("globex"));
+if (!acme || !globex) throw new Error("tenants missing");
+
+await tenantContext.run(acme, () => repo.create("Acme: ship order 1001"));
+const secret = await tenantContext.run(globex, () => repo.create("Globex: secret merger plan"));
+
+await tenantContext.run(acme, async () => {
+  console.log("acme sees:", await repo.list());
+  console.log(`acme asks for task ${secret.id}:`, await repo.get(secret.id));
+});
+await tenantContext.run(globex, async () => {
+  console.log("globex sees:", await repo.list());
+});
+await db.close();
+</example>
+<output>
+acme sees: [ { id: 1, title: 'Acme: ship order 1001' } ]
+acme asks for task 2: undefined
+globex sees: [ { id: 2, title: 'Globex: secret merger plan' } ]
+</output>
+<p>This is the test that matters. Acme asked for task 2 by its id, which is easy to guess because ids count up. The query found nothing, because task 2 belongs to Globex: <code>and tenant_id = $2</code> is part of the lookup. For the client, "belongs to someone else" and "does not exist" must look the same: a 404. Answering 403 would tell an attacker that the id exists.</p>
+<tip>Use the tenant in other keys too. <code>tenantKey(tenantId, "tasks:list")</code> builds a cache key like <code>tenant:acme:tasks\:list</code>, so one tenant's cached list is never served to another, and <code>assertTenantOwnership(resource, tenantId)</code> throws a <code>TenantIsolationError</code> if an object from the wrong tenant reaches your code.</tip>
+</section>
+
+<section>
+<h2 id="task-api">Put it together: a multi-tenant Task API</h2>
+<p>Now the real server. When a user logs in, the server stores their user id <em>and their tenant</em> in the session. On every request the handler: finds the session (no session means 401), resolves the tenant from the session's claims, checks trust and status, and runs the route inside the tenant context. The repository from the last section does the rest:</p>
+<example file="server.ts" project="tenancy" browser="no">
+import { randomUUID } from "node:crypto";
+import { PGlite } from "@electric-sql/pglite";
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, notFound, unauthorized } from "@zudojs/http";
+import type { HttpRequestContext } from "@zudojs/http";
+import { assertTrustLevel, createHeaderResolver, createJwtResolver, createResolverChain, createTenantManager, TenantError } from "@zudojs/tenancy";
+import type { HttpResolverContext, TenantClaims } from "@zudojs/tenancy";
+import { tenantContext, tenantStorage } from "./context.js";
+import { TaskRepository } from "./task.repository.js";
+import { tenants } from "./tenants.js";
+
+const db = new PGlite();
+await db.exec("create table tasks (id serial primary key, tenant_id text not null, title text not null)");
+await db.exec("insert into tasks (tenant_id, title) values ('acme', 'Acme: ship order 1001'), ('globex', 'Globex: secret merger plan')");
+const repo = new TaskRepository(db);
+
+const sessions = new Map<string, TenantClaims>();
+function login(userId: string, tenantId: string): string {
+  const token = randomUUID();
+  sessions.set(token, { sub: userId, tenant_id: tenantId });
+  return token;
+}
+
+const chain = createResolverChain<HttpResolverContext>([createJwtResolver(), createHeaderResolver()]);
+const manager = createTenantManager({ repository: tenants, storage: tenantStorage });
+
+async function handle(request: HttpRequestContext) {
+  const claims = sessions.get(request.getHeader("authorization")?.replace(/^Bearer /, "") ?? "");
+  if (!claims) throw unauthorized("Log in first");
+  const found = await chain.resolveTenant({
+    getClaims: () => claims,
+    getHeader: (name) => request.getHeader(name),
+    getHost: () => request.getHeader("host"),
+    getPath: () => request.path,
+  });
+  if (!found) throw notFound("Not found");
+  assertTrustLevel(found.trust, "verified", found.source);
+  const tenant = await manager.requireActive(found.tenantId);
+
+  return tenantContext.run(tenant, async () => {
+    if (request.path === "/tasks") return createResponseContext().json(await repo.list());
+    const id = Number(request.path.split("/")[2]);
+    const task = Number.isSafeInteger(id) ? await repo.get(id) : undefined;
+    if (!task) throw notFound("Task not found");
+    return createResponseContext().json(task);
+  });
+}
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ port: 0 }),
+  handler: async (request: HttpRequestContext) => {
+    try {
+      return await handle(request);
+    } catch (error) {
+      if (error instanceof TenantError) return createResponseContext({ status: 403 }).json({ error: "Forbidden" });
+      throw error;
+    }
+  },
+});
+await server.start();
+const base = `http://localhost:${server.address?.port}`;
+const ada = login("ada", "acme");
+const wile = login("wile", "initech");
+
+const calls: [string, string, Record<string, string>][] = [
+  ["ada lists tasks", "/tasks", { authorization: `Bearer ${ada}` }],
+  ["ada guesses id 2", "/tasks/2", { authorization: `Bearer ${ada}` }],
+  ["ada sends x-tenant-id", "/tasks", { authorization: `Bearer ${ada}`, "x-tenant-id": "globex" }],
+  ["header, no session", "/tasks", { "x-tenant-id": "globex" }],
+  ["suspended tenant", "/tasks", { authorization: `Bearer ${wile}` }],
+];
+for (const [name, path, headers] of calls) {
+  const response = await fetch(base + path, { headers });
+  console.log(name.padEnd(22), response.status, await response.text());
+}
+await server.stop();
+await db.close();
+</example>
+<output>
+ada lists tasks        200 [{"id":1,"title":"Acme: ship order 1001"}]
+ada guesses id 2       404 {"error":"Task not found","code":"NOT_FOUND"}
+ada sends x-tenant-id  200 [{"id":1,"title":"Acme: ship order 1001"}]
+header, no session     401 {"error":"Log in first","code":"UNAUTHORIZED"}
+suspended tenant       403 {"error":"Forbidden"}
+</output>
+<p>Read the five answers:</p>
+<ul>
+<li>Ada sees only Acme's task.</li>
+<li>Guessing Globex's id gives a 404, exactly like an id that does not exist.</li>
+<li>Her <code>x-tenant-id: globex</code> header changed nothing: the trusted session answered first.</li>
+<li>A header without a session is not even looked at: the request is not logged in.</li>
+<li>Initech's user logged in before the tenant was suspended, and now gets a plain 403 without the reason.</li>
+</ul>
+<note>@zudojs/tenancy also has ready-made middleware: <code>createResolveTenantMiddleware</code> and <code>createRequireTenantMiddleware</code>. In the versions current when this lesson was written (@zudojs/tenancy 1.2.1 with @zudojs/http 1.3.0), they block the request correctly, but inside the @zudojs/http middleware pipeline their refusals are sent with status <code>200</code>, the 403 or 404 only appears inside the JSON body. Until that is fixed, resolve the tenant in the handler as shown here. It is a few lines, and you can see every check.</note>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Add update and delete">
+<p>Add <code>rename(id, title)</code> and <code>delete(id)</code> to <code>TaskRepository</code>. Both must only touch the current tenant's row, and return whether a row was changed. Show that Acme cannot rename Globex's task.</p>
+<solution>
+<p>Put <code>tenant_id</code> in the <code>where</code> of every write, just like in the reads. PGlite reports how many rows changed in <code>affectedRows</code>:</p>
+<example file="rename.ts" project="tenancy" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+import { createTenantId } from "@zudojs/tenancy";
+import { tenantContext } from "./context.js";
+import { tenants } from "./tenants.js";
+
+const db = new PGlite();
+await db.exec("create table tasks (id serial primary key, tenant_id text not null, title text not null)");
+await db.exec("insert into tasks (tenant_id, title) values ('acme', 'Acme task'), ('globex', 'Globex task')");
+
+async function rename(id: number, title: string): Promise<boolean> {
+  const tenantId = tenantContext.requireCurrentTenant().id;
+  const result = await db.query("update tasks set title = $1 where id = $2 and tenant_id = $3", [title, id, tenantId]);
+  return (result.affectedRows ?? 0) > 0;
+}
+
+const acme = await tenants.findById(createTenantId("acme"));
+if (acme) {
+  await tenantContext.run(acme, async () => {
+    console.log("rename own task:", await rename(1, "Acme task, renamed"));
+    console.log("rename Globex's task:", await rename(2, "hacked"));
+  });
+}
+console.log((await db.query("select id, tenant_id, title from tasks order by id")).rows);
+await db.close();
+</example>
+<output>
+rename own task: true
+rename Globex's task: false
+[
+  { id: 1, tenant_id: 'acme', title: 'Acme task, renamed' },
+  { id: 2, tenant_id: 'globex', title: 'Globex task' }
+]
+</output>
+</solution>
+</exercise>
+<exercise title="Which source?">
+<p>For each case, say which resolver you would use and whether it is safe on its own: (a) a mobile app whose users log in; (b) each company opens <code>acme.tasks.test</code> in the browser, and users still log in; (c) a partner system calls your API with an API key; (d) a <code>?tenant=acme</code> query parameter.</p>
+<solution>
+<p>(a) The session or token claim (<code>createJwtResolver</code>): trusted. (b) The subdomain is fine for choosing the login page and the look of the site, but after login, check that the session's tenant equals the subdomain's, with <code>createResolverChain(..., { detectConflicts: true })</code>, which throws <code>TenantResolutionConflictError</code> when they disagree. (c) Look the tenant up from the API key on the server: trusted, because your server issued the key. (d) Never on its own: the client writes it, like a header. It is untrusted.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A tenant is one customer of a shared application. Tenant isolation, no request ever touching another tenant's data, is the rule above all others.</li>
+<li>Tenant ids are normalized and validated, so they are safe in keys and paths.</li>
+<li>Resolvers find the tenant. Sessions and tokens are trusted, host names verified, headers and paths untrusted, because the client writes them.</li>
+<li>A resolver chain asks by priority. Require <code>verified</code> trust, and refuse tenants that are not active, with a plain 403.</li>
+<li>The tenant context lives in AsyncLocalStorage: <code>run</code> sets it, <code>requireCurrentTenant</code> reads it, and code outside a tenant fails loudly.</li>
+<li>Every query filters on <code>tenant_id</code>, taken from the context and passed as a parameter. Another tenant's row is a 404.</li>
+</ul>
+</section>

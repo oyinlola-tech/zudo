@@ -1,0 +1,462 @@
+---
+title: Plugins
+description: Let other code extend the Task API without editing it. Write plugins, declare dependencies, run their lifecycle, give each one a scoped context, roll back failed starts, read diagnostics and publish a plugin to npm with @zudojs/plugins.
+minutes: 45
+youNeed: The Task API project and the runtime lesson
+youBuild: A Task API with an audit-log plugin and a reminder plugin, plus a plugin package ready for npm
+keywords: zudojs plugins, plugin system, plugin manager, plugin lifecycle, plugin dependencies, semver range, plugin context, disposables, rollback, diagnostics, capabilities, peerDependencies, publish plugin
+---
+<section>
+<h2 id="why">Why plugins</h2>
+<p>Your customers keep asking for extras: post to Slack when a task is done, keep an audit log, send reminders. If each extra is a change to the Task API itself, the core grows forever, and every customer runs code for features they do not use. A <strong>plugin</strong> is a piece of code that adds a feature to an application through a fixed interface, without changing the application. The application that loads plugins is called the <strong>host</strong>.</p>
+<p>You already know <strong>modules</strong> from <a href="/learn/zudo-runtime">the runtime lesson</a>. The difference is who writes the code and who decides to load it:</p>
+<ul>
+<li>A module is part of your application. It is always there.</li>
+<li>A plugin is optional. It may come from another team or from npm, and each installation decides which plugins it loads.</li>
+</ul>
+<shell title="Terminal on your computer">
+$ npm install @zudojs/plugins
+
+added 1 package, and audited 76 packages in 4s
+…
+</shell>
+<p>The examples use Node.js features, so run them on your computer with <code>npx tsx src/&lt;file&gt;.ts</code>.</p>
+</section>
+
+<section>
+<h2 id="first-plugin">Your first plugin</h2>
+<p>A plugin is an object with <code>metadata</code> (at least a <code>name</code>) and up to five <strong>lifecycle hooks</strong>, all optional. A <code>PluginManager</code> registers plugins and runs their hooks in the right order:</p>
+<example file="first.ts" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+import type { Plugin } from "@zudojs/plugins";
+
+const auditLog: Plugin = {
+  metadata: { name: "audit-log", version: "1.0.0" },
+  install: () => console.log("install: check settings, register things"),
+  initialize: () => console.log("initialize: prepare, every plugin is installed now"),
+  start: (context) => console.log("start: begin work, as", context.plugin.name),
+  stop: () => console.log("stop: finish work in progress"),
+  dispose: () => console.log("dispose: release everything"),
+};
+
+const manager = new PluginManager();
+manager.register(auditLog);
+
+const context = createPluginContext({ name: "task-api", version: "0.1.0" });
+await manager.start(context);
+console.log("running:", manager.has("audit-log"));
+await manager.stop(context);
+</example>
+<output>
+install: check settings, register things
+initialize: prepare, every plugin is installed now
+start: begin work, as audit-log
+running: true
+stop: finish work in progress
+dispose: release everything
+</output>
+<p><code>manager.start</code> runs <code>install</code>, <code>initialize</code> and <code>start</code>. <code>manager.stop</code> runs <code>stop</code> and <code>dispose</code>. Each phase finishes for <em>all</em> plugins before the next phase begins. <code>createPluginContext</code> describes the host (here <code>task-api</code>), and optionally the services it offers to plugins: a <code>logger</code>, <code>config</code>, a <code>container</code> and <code>events</code>. Inside a hook, <code>context.plugin</code> is the plugin's own metadata.</p>
+</section>
+
+<section>
+<h2 id="dependencies">Dependencies and versions</h2>
+<p>A Slack plugin needs a notifications plugin that knows how to send messages. It declares that with <code>dependencies</code>, and a <strong>version range</strong> like the ones in <code>package.json</code>: <code>^1.0.0</code> means "1.0.0 or any later 1.x". The manager starts dependencies first and stops them last:</p>
+<example file="dependencies.ts" browser="no">
+import { createPluginContext, PluginDependencyError, PluginDependencyVersionError, PluginManager } from "@zudojs/plugins";
+import type { Plugin } from "@zudojs/plugins";
+
+function plugin(name: string, version: string, needs: Plugin["dependencies"] = []): Plugin {
+  return {
+    metadata: { name, version },
+    dependencies: needs,
+    start: () => console.log("start", name),
+    stop: () => console.log("stop ", name),
+  };
+}
+
+const manager = new PluginManager();
+manager.register(plugin("slack", "1.0.0", [{ name: "notifications", version: "^1.2.0" }]));
+manager.register(plugin("notifications", "1.4.0"));
+const context = createPluginContext({ name: "task-api" });
+await manager.start(context);
+await manager.stop(context);
+
+for (const available of [undefined, "2.0.0"]) {
+  const broken = new PluginManager();
+  broken.register(plugin("slack", "1.0.0", [{ name: "notifications", version: "^1.2.0" }]));
+  if (available) broken.register(plugin("notifications", available));
+  try {
+    await broken.start(createPluginContext({ name: "task-api" }));
+  } catch (error) {
+    if (error instanceof PluginDependencyError || error instanceof PluginDependencyVersionError) {
+      console.log(error.name, "-", error.message);
+    }
+  }
+}
+</example>
+<output>
+start notifications
+start slack
+stop  slack
+stop  notifications
+PluginDependencyError - Plugin "slack" depends on "notifications" which is not registered.
+PluginDependencyVersionError - Plugin "slack" requires "notifications@^1.2.0", but version 2.0.0 is registered. Register a "notifications" that satisfies ^1.2.0, relax the constraint on "slack", or construct the manager with { checkVersions: false }.
+</output>
+<p>Slack was registered first, but notifications started first, because Slack depends on it. On shutdown the order is reversed. Both problems are found <strong>before any hook runs</strong>: a missing plugin, and a notifications 2.0.0 that does not satisfy <code>^1.2.0</code>, because a new major version may have changed its interface. A dependency marked <code>optional: true</code> is used for ordering when it is there, and ignored when it is not.</p>
+</section>
+
+<section>
+<h2 id="context">The scoped plugin context</h2>
+<p>A plugin often creates things that must be cleaned up: timers, connections, subscriptions. The manager gives each plugin its <strong>own scoped view</strong> of the context:</p>
+<ul>
+<li><code>context.onDispose(fn)</code> and <code>context.registerDisposable(obj)</code> add to <em>this plugin's</em> cleanup list, which runs when the plugin is disposed, newest first.</li>
+<li><code>context.signal</code> is an <code>AbortSignal</code> that fires when the plugin system shuts down, to cancel slow work such as a <code>fetch</code>.</li>
+<li><code>register(plugin, options)</code> hands the options to <code>install(context, options)</code>. That is how an installation configures a plugin.</li>
+</ul>
+<example file="reminders.ts" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+import type { Plugin } from "@zudojs/plugins";
+
+interface ReminderOptions {
+  readonly everyMs: number;
+}
+
+export function createReminderPlugin(): Plugin<ReminderOptions> {
+  let everyMs = 0;
+  return {
+    metadata: { name: "reminders", version: "1.0.0" },
+    install(_context, options) {
+      if (!Number.isInteger(options.everyMs) || options.everyMs < 10) throw new Error("everyMs must be an integer >= 10");
+      everyMs = options.everyMs;
+    },
+    start(context) {
+      const timer = setInterval(() => console.log("reminder: 2 tasks are due today"), everyMs);
+      context.onDispose(() => {
+        clearInterval(timer);
+        console.log("reminders: timer cleared");
+      });
+      context.signal.addEventListener("abort", () => console.log("reminders: shutdown signal"));
+    },
+  };
+}
+
+const manager = new PluginManager();
+manager.register(createReminderPlugin(), { everyMs: 40 });
+const context = createPluginContext({ name: "task-api" });
+await manager.start(context);
+await new Promise((resolve) => setTimeout(resolve, 100));
+await manager.stop(context);
+console.log("host exits cleanly");
+</example>
+<output>
+reminder: 2 tasks are due today
+reminder: 2 tasks are due today
+reminders: shutdown signal
+reminders: timer cleared
+host exits cleanly
+</output>
+<p>The timer fired twice in 100 ms, and then <code>stop</code> released it. Without the cleanup, the interval would keep the process alive forever and keep printing after the plugin was "stopped". The plugin also checks its options in <code>install</code>: settings from outside are input like any other, and a wrong value should stop the start-up, not cause strange behaviour later.</p>
+</section>
+
+<section>
+<h2 id="rollback">Failed starts, rollback and diagnostics</h2>
+<p>What if the Slack plugin cannot reach Slack while the Task API starts? Half-started plugins are dangerous: some timers run, some connections are open, and nothing will ever stop them. So when any hook of <code>manager.start</code> throws, the manager <strong>rolls back</strong>: it stops and disposes every plugin it had already brought up, then throws the error to you:</p>
+<example file="rollback.ts" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+
+const manager = new PluginManager({ hookTimeout: 1000 });
+manager.register({
+  metadata: { name: "audit-log", version: "1.0.0" },
+  start: (context) => context.onDispose(() => console.log("audit-log: file closed")),
+  stop: () => console.log("audit-log: stopped"),
+});
+manager.register({
+  metadata: { name: "slack", version: "1.0.0" },
+  dependencies: [{ name: "audit-log" }],
+  start: () => {
+    throw new Error("cannot reach slack.com");
+  },
+});
+
+try {
+  await manager.start(createPluginContext({ name: "task-api" }));
+} catch (error) {
+  console.log("start failed:", error instanceof Error ? error.message : error);
+}
+
+const report = manager.diagnostics();
+console.log(`total ${report.total}, healthy ${report.healthy}, failed ${report.failed}`);
+for (const entry of report.plugins) {
+  console.log(entry.plugin.name, entry.state, entry.health.status, entry.health.details ?? "");
+}
+</example>
+<output>
+audit-log: stopped
+audit-log: file closed
+start failed: cannot reach slack.com
+total 2, healthy 0, failed 1
+audit-log disposed degraded
+slack disposed unhealthy cannot reach slack.com
+</output>
+<ul>
+<li>The audit log had started, so it was stopped and its cleanup ran. Nothing is left running.</li>
+<li><code>diagnostics()</code> reports every plugin's state and health. The failed plugin keeps its error message in <code>health.details</code>, so a health endpoint or a log line can say <em>why</em>.</li>
+<li><code>hookTimeout</code> fails a hook that takes longer than the limit, so one hanging plugin cannot freeze the start-up of the whole Task API.</li>
+</ul>
+<p>A disposed plugin cannot be started again: calling <code>manager.start</code> a second time throws a <code>PluginStateError</code>. To retry, create a new manager with fresh plugin objects.</p>
+</section>
+
+<section>
+<h2 id="task-api">Put it together: plugins for the Task API</h2>
+<p>Plugins need a way to react to what the Task API does. The host offers that through <code>context.events</code>: any object with <code>on</code>, <code>off</code> and <code>emit</code>. This small <strong>event hub</strong> is enough. It also catches errors, so a broken plugin handler cannot break the request that emitted the event:</p>
+<example file="src/plugins/event-hub.ts" project="host" browser="no">
+import type { PluginEvents } from "@zudojs/plugins";
+
+type Handler = (event: unknown) => void;
+
+export function createEventHub(onError: (error: unknown, name: string) => void): PluginEvents {
+  const handlers = new Map<string, Set<Handler>>();
+  return {
+    on(name, handler) {
+      const set = handlers.get(name) ?? new Set<Handler>();
+      set.add(handler);
+      handlers.set(name, set);
+    },
+    off(name, handler) {
+      handlers.get(name)?.delete(handler);
+    },
+    emit(name, payload) {
+      for (const handler of handlers.get(name) ?? []) {
+        try {
+          handler(payload);
+        } catch (error) {
+          onError(error, name);
+        }
+      }
+    },
+  };
+}
+</example>
+<note>Why not the event bus from <a href="/learn/zudo-events">the events lesson</a>? Its <code>on</code>, <code>off</code> and <code>emit</code> have different shapes (for example <code>off</code> takes a subscription), so TypeScript refuses it as <code>PluginEvents</code>. A hub like this one, or a small adapter around the bus, fits.</note>
+<p>The audit-log plugin subscribes when it starts, and unsubscribes in its cleanup list. It only uses what the context gives it, so it works in any host that offers <code>events</code> and a <code>logger</code>:</p>
+<example file="src/plugins/audit-log.plugin.ts" project="host" browser="no">
+import type { Plugin } from "@zudojs/plugins";
+
+export interface TaskCompleted {
+  readonly taskId: number;
+  readonly userId: string;
+}
+
+export function createAuditLogPlugin(): Plugin {
+  return {
+    metadata: { name: "audit-log", version: "1.0.0", capabilities: ["events"] },
+    start(context) {
+      const onCompleted = (event: unknown) => {
+        const { taskId, userId } = event as TaskCompleted;
+        context.logger?.info("audit: task completed", { taskId, userId });
+      };
+      context.events?.on("task.completed", onCompleted);
+      context.onDispose(() => context.events?.off("task.completed", onCompleted));
+    },
+  };
+}
+</example>
+<p>The host builds the context with its logger and the hub, loads the plugins, and emits <code>task.completed</code> whenever a task is done. The Slack plugin needs a secret webhook address, which comes from an environment variable. When it is missing, the host logs a warning and starts without Slack, instead of failing or putting a secret in the code:</p>
+<example file="src/plugins/load.ts" project="host" browser="no">
+import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+import { createAuditLogPlugin } from "./audit-log.plugin.js";
+import { createEventHub } from "./event-hub.js";
+
+const logger = createLogger({
+  name: "task-api",
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.message)],
+});
+const events = createEventHub((error, name) => logger.error("plugin handler failed", { event: name, error: String(error) }));
+events.on("plugin:started", (event) => {
+  const { plugin } = event as { plugin: { name: string; version?: string } };
+  logger.info("plugin started", { name: plugin.name, version: plugin.version });
+});
+
+const manager = new PluginManager({ allowedCapabilities: ["events"], hookTimeout: 5000, logger });
+manager.register(createAuditLogPlugin());
+
+const webhook = process.env["SLACK_WEBHOOK_URL"];
+if (webhook) {
+  logger.info("slack plugin would be registered here");
+} else {
+  logger.warn("SLACK_WEBHOOK_URL is not set, running without the slack plugin");
+}
+
+const context = createPluginContext({ name: "task-api", version: "0.1.0" }, { logger, events });
+await manager.start(context);
+
+events.emit("task.completed", { taskId: 7, userId: "ada" });
+console.log("diagnostics:", manager.diagnostics().healthy, "healthy");
+
+await manager.stop(context);
+events.emit("task.completed", { taskId: 8, userId: "ada" });
+console.log("after stop, nobody listened to task 8");
+</example>
+<output>
+[WARN] [task-api] SLACK_WEBHOOK_URL is not set, running without the slack plugin
+[INFO] [task-api] plugin started name=audit-log version=1.0.0
+[INFO] [task-api] audit: task completed taskId=7 userId=ada
+diagnostics: 1 healthy
+after stop, nobody listened to task 8
+</output>
+<p>The host only knows the plugin interface. You could add a Slack, a statistics or a reminder plugin without touching this code, except for the one <code>register</code> line. And <code>allowedCapabilities</code> refuses to register a plugin that asks for more than the host grants.</p>
+<warn title="A PLUGIN RUNS WITH ALL THE POWER OF YOUR APP">Plugins are ordinary JavaScript in your process: a plugin can read every environment variable, open any file and send your data anywhere. <code>capabilities</code> is a declaration that the manager checks against your allow-list. It catches mistakes, but it is not a sandbox, and it cannot stop hostile code. Only install plugins you trust, pin their versions, and review what they do, exactly as with any other npm dependency.</warn>
+</section>
+
+<section>
+<h2 id="publish">Publishing a plugin</h2>
+<p>To share a plugin, publish it as an npm package. A few conventions make it easy to use:</p>
+<ul>
+<li>Export a <strong>factory function</strong>, like <code>createAuditLogPlugin()</code>, not a ready-made object. Every host, and every test, gets fresh state.</li>
+<li>Put <code>@zudojs/plugins</code> in <strong><code>peerDependencies</code></strong>, not in <code>dependencies</code>. A peer dependency says "the host must provide this". If each plugin installed its own copy, the host would end up with several copies, and classes like <code>PluginDependencyError</code> from one copy would fail an <code>instanceof</code> check against another. Also list it in <code>devDependencies</code>, so you can build and test.</li>
+<li>Import only <strong>types</strong> from <code>@zudojs/plugins</code> where you can (<code>import type</code>). Then the plugin works with whatever copy the host has.</li>
+<li>Ship compiled JavaScript and type declarations, and add the keyword <code>zudojs-plugin</code> so people can find it.</li>
+</ul>
+<p>Start a new folder for the package, run <code>npm init -y</code>, then <code>npm install -D @zudojs/plugins typescript</code>, and edit <code>package.json</code> until it looks like this:</p>
+<file name="package.json" project="publish">
+{
+  "name": "@acme/zudo-plugin-audit-log",
+  "version": "1.0.0",
+  "description": "Logs every completed task of a ZudoJS Task API.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "zudojs",
+    "zudojs-plugin",
+    "audit"
+  ],
+  "scripts": {
+    "build": "tsc"
+  },
+  "peerDependencies": {
+    "@zudojs/plugins": "^1.2.0"
+  },
+  "devDependencies": {
+    "@zudojs/plugins": "^1.2.1",
+    "typescript": "^7.0.2"
+  }
+}
+</file>
+<p>Copy <code>audit-log.plugin.ts</code> to <code>src/index.ts</code>. This <code>tsconfig.json</code> compiles <code>src</code> into <code>dist</code> and writes the <code>.d.ts</code> type files next to the JavaScript:</p>
+<file name="tsconfig.json" project="publish">
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "declaration": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": []
+  },
+  "include": ["src"]
+}
+</file>
+<p>Build it. Before you publish, <code>npm pack --dry-run</code> shows exactly which files would be uploaded:</p>
+<shell title="Terminal on your computer">
+$ npm run build
+
+&gt; @acme/zudo-plugin-audit-log@1.0.0 build
+&gt; tsc
+
+$ npm pack --dry-run
+npm notice
+npm notice package: @acme/zudo-plugin-audit-log@1.0.0
+npm notice Tarball Contents
+npm notice 79B README.md
+npm notice 196B dist/index.d.ts
+npm notice 529B dist/index.js
+npm notice 566B package.json
+npm notice Tarball Details
+npm notice name: @acme/zudo-plugin-audit-log
+npm notice version: 1.0.0
+npm notice filename: acme-zudo-plugin-audit-log-1.0.0.tgz
+npm notice package size: 753 B
+npm notice unpacked size: 1.4 kB
+npm notice shasum: d3960360a58f7eb4b80760aadddb4742394050a2
+npm notice integrity: sha512-fLcqjX4vlKEvc[...]oXk5IkePu1fuA==
+npm notice total files: 4
+npm notice
+acme-zudo-plugin-audit-log-1.0.0.tgz
+</shell>
+<p>Four files: the compiled code, its types, the <code>package.json</code> and a README. Your <code>src</code> folder, <code>node_modules</code> and any <code>.env</code> file stay at home, because <code>"files": ["dist"]</code> lists what to ship (npm always adds the README and <code>package.json</code>). Then <code>npm publish --access public</code> uploads it (you need an npm account, and <code>@acme</code> must be your scope). A host installs it with <code>npm install @acme/zudo-plugin-audit-log</code> and registers <code>createAuditLogPlugin()</code>.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A statistics plugin">
+<p>Write <code>createStatsPlugin()</code>: it counts <code>task.completed</code> events per user and, in <code>stop</code>, logs the counts with <code>context.logger</code>. Remember to unsubscribe in the cleanup list.</p>
+<solution>
+<example file="src/plugins/stats.ts" project="host" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+import type { Plugin } from "@zudojs/plugins";
+import { createEventHub } from "./event-hub.js";
+
+function createStatsPlugin(): Plugin {
+  const perUser = new Map<string, number>();
+  return {
+    metadata: { name: "stats", version: "1.0.0" },
+    start(context) {
+      const onCompleted = (event: unknown) => {
+        const { userId } = event as { userId: string };
+        perUser.set(userId, (perUser.get(userId) ?? 0) + 1);
+      };
+      context.events?.on("task.completed", onCompleted);
+      context.onDispose(() => context.events?.off("task.completed", onCompleted));
+    },
+    stop(context) {
+      context.logger?.info("tasks completed per user", Object.fromEntries(perUser));
+    },
+  };
+}
+
+const events = createEventHub((error) => console.log("handler failed:", error));
+const logger = { info: console.log, warn: console.log, error: console.log };
+const manager = new PluginManager();
+manager.register(createStatsPlugin());
+const context = createPluginContext({ name: "task-api" }, { events, logger });
+await manager.start(context);
+for (const userId of ["ada", "linus", "ada"]) events.emit("task.completed", { taskId: 1, userId });
+await manager.stop(context);
+</example>
+<output>
+tasks completed per user { ada: 2, linus: 1 }
+</output>
+</solution>
+</exercise>
+<exercise title="Which order?">
+<p>Plugins: <code>api</code> depends on <code>db</code> and <code>cache</code>, <code>cache</code> depends on <code>db</code>. They are registered as <code>api</code>, <code>cache</code>, <code>db</code>. In which order do they start, and in which order do they stop? What happens if <code>db</code> also declares a dependency on <code>api</code>?</p>
+<solution>
+<p>Start: <code>db</code>, <code>cache</code>, <code>api</code>: every plugin starts after everything it depends on. Stop: the reverse, <code>api</code>, <code>cache</code>, <code>db</code>. If <code>db</code> depended on <code>api</code>, there would be a cycle (<code>api</code> → <code>db</code> → <code>api</code>) with no valid order. <code>manager.start</code> throws a <code>PluginDependencyCycleError</code> that names the cycle, before any hook runs.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A plugin adds an optional feature to a host through a fixed interface: metadata plus the hooks <code>install</code>, <code>initialize</code>, <code>start</code>, <code>stop</code> and <code>dispose</code>.</li>
+<li><code>PluginManager</code> checks dependencies and version ranges before any hook runs, starts in dependency order and stops in reverse.</li>
+<li>Each plugin gets a scoped context: its own cleanup list, an abort signal and the host's services. Options passed to <code>register</code> reach <code>install</code>. Validate them.</li>
+<li>A failed start rolls back everything already started. <code>diagnostics()</code> reports state and health.</li>
+<li>Plugins are trusted code. Capabilities catch mistakes but are not a sandbox.</li>
+<li>Publish plugins as factory functions, with <code>@zudojs/plugins</code> as a peer dependency.</li>
+</ul>
+</section>

@@ -1,0 +1,376 @@
+---
+title: Git and GitHub
+description: Track every change to your code with Git, work on branches, merge them and resolve a real conflict, keep node_modules and secrets out of your repository, and share your work through GitHub with remotes and pull requests.
+minutes: 40
+youNeed: Git installed, and the Task API folder from earlier lessons
+youBuild: A Git repository for the Task API with a clean history, a .gitignore that protects your secrets, and a GitHub remote
+keywords: git tutorial, git init, git commit, git branch, git merge, merge conflict, gitignore, node_modules, .env, secrets, github, git remote, git push, pull request, secret scanning
+---
+<section>
+<h2 id="why">Why version control</h2>
+<p>You change a file, the server breaks, and you cannot remember what the working version looked like. Or two people edit the same project and overwrite each other's work. <strong>Version control</strong> solves both: it records every change, who made it and why, lets you go back to any earlier state, and merges the work of many people.</p>
+<p><strong>Git</strong> is the version control system almost everyone uses. It runs on your computer. <strong>GitHub</strong> is a website that stores Git projects online so a team can share them; GitLab and Bitbucket are similar. Git works without GitHub, so start with Git.</p>
+<p>Install it from <code>git-scm.com</code> (Windows), with <code>xcode-select --install</code> or <code>brew install git</code> (macOS), or with <code>sudo apt install git</code> (Linux). Then tell Git who you are. Every change you record carries this name and e-mail:</p>
+<shell>
+$ git --version
+git version 2.53.0
+$ git config --global user.name "Ada Lovelace"
+$ git config --global user.email "ada@example.com"
+$ git config --global init.defaultBranch main
+</shell>
+<p>Use your own name and e-mail. <code>--global</code> saves the settings for every project on this computer. The last line names the first branch <code>main</code>, which GitHub also uses.</p>
+</section>
+
+<section>
+<h2 id="commits">Repositories and commits</h2>
+<p>A <strong>repository</strong> (repo) is a project folder whose history Git tracks. <code>git init</code> turns a folder into one by creating a hidden <code>.git</code> folder, where the whole history lives. Here the folder holds a tiny <code>server.js</code> and a <code>README.md</code>:</p>
+<shell>
+$ mkdir task-api
+$ cd task-api
+$ git init
+Initialized empty Git repository in ~/task-api/.git/
+$ git status
+On branch main
+
+No commits yet
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	README.md
+	server.js
+
+nothing added to commit but untracked files present (use "git add" to track)
+</shell>
+<p><code>git status</code> is the command you will type most. It says the two files are <strong>untracked</strong>: Git sees them but is not recording them yet.</p>
+<p>Recording a change takes two steps. <code>git add</code> puts files on the <strong>staging area</strong>, the list of what goes into the next snapshot. <code>git commit</code> takes the snapshot, a <strong>commit</strong>, with a message saying what changed:</p>
+<shell>
+$ git add server.js README.md
+$ git status --short
+A  README.md
+A  server.js
+$ git commit -m "Add the first server"
+[main (root-commit) a754e78] Add the first server
+ 2 files changed, 11 insertions(+)
+ create mode 100644 README.md
+ create mode 100644 server.js
+$ git log --oneline
+a754e78 Add the first server
+</shell>
+<p><code>A</code> means "added to the staging area". <code>a754e78</code> is the start of the commit's <strong>hash</strong>, a unique id Git computes from the content; yours will differ. Write messages that say what the commit does, in a few words: "Add the first server", not "stuff" or "fix".</p>
+<tip>Commit small and often: one commit per finished step. A history of small commits is easy to read, and easy to undo one piece at a time.</tip>
+</section>
+
+<section>
+<h2 id="gitignore">.gitignore: node_modules and .env</h2>
+<p>Two things must never go into a repository:</p>
+<ul>
+<li><code>node_modules/</code>: thousands of files that <code>npm install</code> recreates from <code>package.json</code> and <code>package-lock.json</code> at any time.</li>
+<li><code>.env</code>: the file where you keep <strong>secrets</strong> for your computer, such as the database password. Anyone who can read the repository could read them.</li>
+</ul>
+<p>Install <code>pg</code> from <a href="/learn/sql-advanced">the last lesson</a> and put the database URL into <code>.env</code>. The value is built from the <code>PGPASSWORD</code> variable, so the password is never typed out:</p>
+<shell>
+$ npm init -y
+Wrote to ~/task-api/package.json:
+…
+$ npm pkg set type=module
+$ npm install pg
+
+added 14 packages, and audited 15 packages in 6s
+
+found 0 vulnerabilities
+$ echo "DATABASE_URL=postgres://postgres:$PGPASSWORD@localhost:5434/taskdb" > .env
+$ git status
+On branch main
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	.env
+	node_modules/
+	package-lock.json
+	package.json
+
+nothing added to commit but untracked files present (use "git add" to track)
+</shell>
+<p>Git is offering to track <code>.env</code> and <code>node_modules/</code>. One careless <code>git add .</code> would record both. Create a file named <code>.gitignore</code> in the project folder, with one pattern per line, <strong>before</strong> that happens:</p>
+<shell>
+$ cat .gitignore
+node_modules/
+.env
+$ git status
+On branch main
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	.gitignore
+	package-lock.json
+	package.json
+
+nothing added to commit but untracked files present (use "git add" to track)
+$ git check-ignore -v .env node_modules
+.gitignore:2:.env	.env
+.gitignore:1:node_modules/	node_modules
+$ git add .
+$ git commit -m "Add package.json and .gitignore"
+[main 3199366] Add package.json and .gitignore
+ 3 files changed, 181 insertions(+)
+ create mode 100644 .gitignore
+ create mode 100644 package-lock.json
+ create mode 100644 package.json
+</shell>
+<p>Both are gone from the list. <code>git check-ignore -v</code> explains which line of <code>.gitignore</code> hides a file, which helps when you wonder why a file is not showing up. <code>.gitignore</code> itself <em>is</em> committed, so everyone on the team gets the same rules.</p>
+<p>Your code reads the secret from the environment, never from a string in a file you commit. A good habit is to fail at startup, with a clear message, when a required variable is missing:</p>
+<example file="config.js" browser="no">
+function required(name) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Missing environment variable ${name}. Add it to .env or your shell.`);
+  }
+  return value;
+}
+
+try {
+  const databaseUrl = required("DATABASE_URL");
+  console.log("Connecting to", new URL(databaseUrl).host);
+} catch (error) {
+  console.log(error.message);
+}
+</example>
+<output>
+Missing environment variable DATABASE_URL. Add it to .env or your shell.
+</output>
+<p>Here the variable is not set, so the program says exactly what is missing instead of failing later with a confusing database error. When it is set, the program logs only the host, never the whole URL, which contains the password. Node.js can load a <code>.env</code> file for you: <code>node --env-file=.env server.js</code>. Many projects also commit a <code>.env.example</code> with the variable names and no real values, so a new developer knows what to fill in.</p>
+</section>
+
+<section>
+<h2 id="branches">Branches and merging</h2>
+<p>A <strong>branch</strong> is a separate line of work. You make a branch for a feature, commit on it without disturbing <code>main</code>, and <strong>merge</strong> it back when it is done. Make a branch that reads the port from the <code>PORT</code> environment variable, change the last line of <code>server.js</code> in your editor, and commit:</p>
+<shell>
+$ git switch -c port-from-env
+Switched to a new branch 'port-from-env'
+$ git diff
+diff --git a/server.js b/server.js
+index 4bf9816..4685a08 100644
+--- a/server.js
++++ b/server.js
+@@ -5,4 +5,4 @@ const server = http.createServer((req, res) => {
+   res.end(JSON.stringify({ status: "ok" }));
+ });
+
+-server.listen(3000);
++server.listen(Number(process.env.PORT ?? 3000));
+$ git commit -am "Read the port from PORT"
+[port-from-env 9970398] Read the port from PORT
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+</shell>
+<p><code>git switch -c</code> creates a branch and moves to it. <code>git diff</code> shows what changed and is not staged yet: <code>-</code> lines were removed, <code>+</code> lines added. <code>commit -a</code> stages every tracked file that changed, so you can skip <code>git add</code> for files Git already knows.</p>
+<p>Meanwhile, someone changes the <strong>same line</strong> on <code>main</code>, to log a message when the server starts:</p>
+<shell>
+$ git switch main
+Switched to branch 'main'
+$ git commit -am "Log when the server starts"
+[main 9a2086f] Log when the server starts
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+$ git log --oneline --graph --all
+* 9a2086f Log when the server starts
+| * 9970398 Read the port from PORT
+|/
+* 3199366 Add package.json and .gitignore
+* a754e78 Add the first server
+</shell>
+<p>The graph shows the two lines of work splitting after <code>3199366</code>. Now merge the branch into <code>main</code>:</p>
+<shell>
+$ git merge port-from-env
+Auto-merging server.js
+CONFLICT (content): Merge conflict in server.js
+Automatic merge failed; fix conflicts and then commit the result.
+$ git status
+On branch main
+You have unmerged paths.
+  (fix conflicts and run "git commit")
+  (use "git merge --abort" to abort the merge)
+
+Unmerged paths:
+  (use "git add <file>..." to mark resolution)
+	both modified:   server.js
+
+no changes added to commit (use "git add" and/or "git commit -a")
+$ cat server.js
+import http from "node:http";
+
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ status: "ok" }));
+});
+
+<<<<<<< HEAD
+server.listen(3000, () => console.log("Listening on port 3000"));
+=======
+server.listen(Number(process.env.PORT ?? 3000));
+>>>>>>> port-from-env
+</shell>
+<h3>Resolving the conflict</h3>
+<p>When both sides changed different lines, Git merges by itself. Here both changed the same line, so Git cannot know which one you want. That is a <strong>merge conflict</strong>, and it is normal, not an error. Git wrote both versions into the file between markers:</p>
+<ul>
+<li>From <code>&lt;&lt;&lt;&lt;&lt;&lt;&lt; HEAD</code> to <code>=======</code>: the version on your current branch, <code>main</code>.</li>
+<li>From <code>=======</code> to <code>&gt;&gt;&gt;&gt;&gt;&gt;&gt; port-from-env</code>: the version on the branch you are merging.</li>
+</ul>
+<p>Here you want both ideas: the port from the environment <em>and</em> the log message. Edit the file so it holds the final code, delete all three marker lines, then <code>git add</code> the file to mark it as resolved and commit:</p>
+<shell>
+$ tail -n 2 server.js
+const port = Number(process.env.PORT ?? 3000);
+server.listen(port, () => console.log(`Listening on port ${port}`));
+$ git add server.js
+$ git commit --no-edit
+[main f77f5c2] Merge branch 'port-from-env'
+$ git log --oneline --graph
+*   f77f5c2 Merge branch 'port-from-env'
+|\
+| * 9970398 Read the port from PORT
+* | 9a2086f Log when the server starts
+|/
+* 3199366 Add package.json and .gitignore
+* a754e78 Add the first server
+$ git branch -d port-from-env
+Deleted branch port-from-env (was 9970398).
+</shell>
+<p>The <strong>merge commit</strong> <code>f77f5c2</code> has two parents, which is where the graph joins again. <code>--no-edit</code> accepts Git's default message. The branch has done its job, so <code>git branch -d</code> deletes it; its commits stay in the history. If a merge gets confusing, <code>git merge --abort</code> puts everything back as it was before the merge.</p>
+</section>
+
+<section>
+<h2 id="secrets">If you commit a secret</h2>
+<p>It happens: <code>.gitignore</code> was missing, or someone forced a file in. Here the mistake is made on purpose with <code>git add -f</code>, which adds a file even though it is ignored:</p>
+<shell>
+$ git add -f .env
+$ git commit -m "Add config"
+[main 3947a0a] Add config
+ 1 file changed, 1 insertion(+)
+ create mode 100644 .env
+$ git show --stat --oneline HEAD
+3947a0a Add config
+ .env | 1 +
+ 1 file changed, 1 insertion(+)
+</shell>
+<p>What to do depends on one question: has the commit left your computer?</p>
+<h3>Not pushed yet</h3>
+<p>Undo the commit. <code>git reset HEAD~1</code> moves the branch back one commit and keeps your files as they are, so <code>.env</code> is simply an ignored file again:</p>
+<shell>
+$ git reset HEAD~1
+$ git status --short --ignored
+!! .env
+!! node_modules/
+$ git log --oneline -- .env
+</shell>
+<p><code>!!</code> marks ignored files. <code>git log -- .env</code> lists the commits that touched <code>.env</code>, and now prints nothing: no commit on <code>main</code> contains it.</p>
+<h3>Already pushed</h3>
+<p>Treat the secret as <strong>stolen</strong>. Bots scan public repositories for keys within minutes of a push. In this order:</p>
+<ol>
+<li><strong>Rotate</strong> the secret first: change the password, revoke the key, create a new one. This is the only step that really protects you.</li>
+<li>Remove the file from Git and commit: <code>git rm --cached .env</code>, then add it to <code>.gitignore</code>. <code>--cached</code> stops tracking the file but keeps it on your disk.</li>
+<li>The old value is still in the history. Rewriting history with a tool such as <code>git filter-repo</code>, and force-pushing, removes it from the repository, but copies that others already pulled or forked still have it. That is why step 1 comes first.</li>
+</ol>
+<p><strong>GitHub secret scanning</strong> helps. GitHub checks pushed code for the formats of known secrets (cloud keys, payment keys, tokens) and alerts you, and many providers revoke a leaked key automatically. <strong>Push protection</strong> goes further and blocks a push that contains a recognised secret before it is published. Both are on by default for public repositories; check <em>Settings → Code security</em> on yours.</p>
+<p>Scanners work by matching patterns. This toy version shows the idea; the real ones know hundreds of formats:</p>
+<example file="scan.js">
+const patterns = [
+  { name: "AWS access key id", regex: /\bAKIA[0-9A-Z]{16}\b/ },
+  { name: "GitHub token", regex: /\bghp_[A-Za-z0-9]{36}\b/ },
+  { name: "URL with a password", regex: /\/\/[^/\s:@]+:[^/\s@]+@/ },
+];
+
+function scan(fileName, text) {
+  const found = [];
+  text.split("\n").forEach((line, i) => {
+    for (const p of patterns) {
+      if (p.regex.test(line)) found.push(`${fileName}:${i + 1} looks like a ${p.name}`);
+    }
+  });
+  return found;
+}
+
+const env = "PORT=3000\nDATABASE_URL=postgres://postgres:hunter2@db:5432/tasks";
+console.log(scan(".env", env));
+console.log(scan("config.js", 'const url = process.env.DATABASE_URL;'));
+</example>
+<output>
+[ '.env:2 looks like a URL with a password' ]
+[]
+</output>
+<p>The <code>.env</code> text (with an obviously fake password) is flagged on line 2. The code that reads the value from <code>process.env</code> is clean, because it contains no secret at all. That is the pattern to follow.</p>
+</section>
+
+<section>
+<h2 id="github">GitHub: remotes, push, pull</h2>
+<p>A <strong>remote</strong> is another copy of the repository, usually on GitHub, that you send commits to and get commits from. To publish the Task API:</p>
+<ol>
+<li>Create an account on <code>github.com</code>, then click <strong>New repository</strong>. Name it <code>task-api</code>, make it <strong>private</strong> while you learn, and do not add a README (you have one).</li>
+<li>GitHub shows the repository's URL. Connect your local repository to it:</li>
+</ol>
+<shell>
+$ git remote add origin https://github.com/your-username/task-api.git
+$ git remote -v
+origin	https://github.com/your-username/task-api.git (fetch)
+origin	https://github.com/your-username/task-api.git (push)
+</shell>
+<p><code>origin</code> is the usual name for your main remote. Replace <code>your-username</code> with your GitHub name. Then:</p>
+<ul>
+<li><code>git push -u origin main</code> sends your <code>main</code> branch and its commits to GitHub. <code>-u</code> remembers the link, so later a plain <code>git push</code> is enough. The first time, Git asks you to log in; GitHub accepts a browser login through Git Credential Manager, a personal access token, or an SSH key, never your account password.</li>
+<li><code>git pull</code> fetches the commits others pushed and merges them into your branch. Pull before you start work each day.</li>
+<li><code>git clone &lt;url&gt;</code> copies a whole repository from GitHub onto a new computer, with its full history. Then run <code>npm install</code>, because <code>node_modules</code> is not in the repository, and create your own <code>.env</code>.</li>
+</ul>
+<h3>Pull requests</h3>
+<p>Teams do not push straight to <code>main</code>. They use <strong>pull requests</strong> (PRs), GitHub's way to propose, review and then merge a branch:</p>
+<ol>
+<li>Create a branch and commit your work on it: <code>git switch -c done-filter</code>.</li>
+<li>Push the branch: <code>git push -u origin done-filter</code>.</li>
+<li>On GitHub, click <strong>Compare &amp; pull request</strong>. Describe what changed and why.</li>
+<li>Teammates read the diff and comment. Automated checks, such as your tests, run on it (the <a href="/learn/testing-basics">next lesson</a> writes them). You fix things with more commits on the same branch; the PR updates by itself.</li>
+<li>When it is approved and the checks pass, click <strong>Merge</strong>. GitHub creates the merge on <code>main</code>.</li>
+<li>Locally, <code>git switch main</code>, <code>git pull</code>, and delete the old branch.</li>
+</ol>
+<p>A conflict can happen in a PR too, when <code>main</code> changed the same lines. You resolve it exactly as above: merge <code>main</code> into your branch, fix the markers, commit and push.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A branch with a clean merge">
+<p>In your <code>task-api</code> repository, create a branch <code>health</code>, add a new file <code>health.js</code>, commit it, switch back to <code>main</code> and merge. Why is there no conflict, and what does <code>git log --oneline --graph</code> show?</p>
+<solution>
+<p>Run <code>git switch -c health</code>, create the file, <code>git add health.js</code>, <code>git commit -m "Add health check"</code>, <code>git switch main</code>, <code>git merge health</code>. There is no conflict because nobody else changed the same lines. If <code>main</code> got no new commits in the meantime, Git just moves <code>main</code> forward to your commit. That is a <strong>fast-forward</strong> merge, and the graph stays a straight line with no merge commit.</p>
+</solution>
+</exercise>
+
+<exercise title="What goes in .gitignore?">
+<p>Which of these belong in <code>.gitignore</code> for a Node.js project: <code>node_modules/</code>, <code>package.json</code>, <code>package-lock.json</code>, <code>.env</code>, <code>.env.example</code>, <code>dist/</code> (compiled output), <code>*.log</code>, <code>src/</code>?</p>
+<solution>
+<p>Ignore <code>node_modules/</code>, <code>.env</code>, <code>dist/</code> and <code>*.log</code>: they are generated, secret or local. Commit <code>package.json</code> and <code>package-lock.json</code> (they let anyone reinstall the exact same packages), <code>.env.example</code> (names only, no values) and of course <code>src/</code>.</p>
+</solution>
+</exercise>
+
+<exercise title="Extend the scanner">
+<p>Add a pattern to <code>scan.js</code> for lines like <code>SECRET=...</code> or <code>API_KEY=...</code> with a value of 16 or more characters, and test it on a line with a long value and on <code>API_KEY=</code> with no value.</p>
+<solution>
+<example file="scan-env.js">
+const assignment = /^\s*[A-Z_]*(SECRET|KEY|TOKEN|PASSWORD)[A-Z_]*\s*=\s*\S{16,}/;
+
+for (const line of ["API_KEY=0123456789abcdef0123", "API_KEY=", "PORT=3000"]) {
+  console.log(JSON.stringify(line), assignment.test(line));
+}
+</example>
+<output>
+"API_KEY=0123456789abcdef0123" true
+"API_KEY=" false
+"PORT=3000" false
+</output>
+<p>An empty <code>API_KEY=</code>, as in a <code>.env.example</code> file, is not flagged, which is what you want.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Git records snapshots called commits: <code>git add</code> stages, <code>git commit -m</code> records, <code>git status</code> and <code>git log</code> show where you are.</li>
+<li>Branches hold separate lines of work. <code>git merge</code> joins them. A conflict shows both versions between markers: edit, <code>git add</code>, commit.</li>
+<li>Put <code>node_modules/</code> and <code>.env</code> in <code>.gitignore</code> before your first <code>git add .</code>. Read secrets from <code>process.env</code>.</li>
+<li>A committed secret that was pushed is leaked: rotate it first, then clean up. GitHub secret scanning and push protection help catch it.</li>
+<li><code>git remote add origin</code>, <code>git push</code>, <code>git pull</code> and <code>git clone</code> connect you with GitHub. Teams merge through reviewed pull requests.</li>
+</ul>
+</section>

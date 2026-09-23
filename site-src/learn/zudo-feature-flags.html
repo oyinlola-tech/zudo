@@ -1,0 +1,405 @@
+---
+title: Feature flags
+description: Turn features on and off without deploying. Rules, evaluation context, percentage rollouts, A/B variants, kill switches and browser snapshots with @zudojs/feature-flags.
+minutes: 40
+youNeed: The Task API project and the observability lesson
+youBuild: Task comments rolled out to beta users and then to 20% of everyone, an A/B test for task sorting, and a kill switch for emails
+keywords: zudojs feature flags, feature toggle, gradual rollout, percentage rollout, a/b test, variants, kill switch, evaluation context, deterministic bucketing, snapshot
+---
+<section>
+<h2 id="why">Deploy is not release</h2>
+<p>You finished task comments for the Task API. Should every user see them the moment you deploy? If there is a bug, everyone meets it at once, and the only fix is another deploy. A <strong>feature flag</strong> separates the two steps:</p>
+<ul>
+<li><strong>Deploy</strong>: the new code goes to production, switched off.</li>
+<li><strong>Release</strong>: you switch it on, first for yourself, then for a few users, then for everyone. If something goes wrong, you switch it off again in seconds.</li>
+</ul>
+<p>In code, a flag is just a question you ask at runtime: "is <code>task-comments</code> on <em>for this user</em>?". The answer can differ per user, and it can change while the server runs. Flags are also used for <strong>kill switches</strong> (turn off a feature that is causing trouble, like emails when the mail provider is down) and for <strong>A/B tests</strong> (show two versions to two groups and measure which works better).</p>
+<shell title="Terminal on your computer">
+$ npm install @zudojs/feature-flags
+
+added 1 package, and audited 74 packages in 4s
+…
+</shell>
+<p>The package runs in the browser terminal too, so you can press <strong>Run in browser</strong> on every example on this page.</p>
+</section>
+
+<section>
+<h2 id="first-flag">Your first flag</h2>
+<p>Flags come from a <strong>provider</strong>, the place where their definitions are stored. <code>createMemoryProvider</code> keeps them in memory. <code>createFeatureFlags</code> reads from a provider and answers questions:</p>
+<example file="first.ts">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([
+    { key: "task-comments", enabled: true, defaultValue: false },
+    { key: "task-export", enabled: true, defaultValue: true },
+  ]),
+});
+
+console.log("comments:", await flags.isEnabled("task-comments"));
+console.log("export:", await flags.isEnabled("task-export"));
+console.log("typo:", await flags.isEnabled("task-coments"));
+console.log(await flags.evaluate("task-export"));
+</example>
+<output>
+comments: false
+export: true
+typo: false
+{ key: 'task-export', value: true, reason: 'default', defaulted: true }
+</output>
+<ul>
+<li>Each flag has a <code>key</code>, a <code>defaultValue</code> it serves when nothing else decides, and <code>enabled</code>, which you will meet again in the kill switch section.</li>
+<li>An unknown key is simply off. A typo never switches a feature on by accident.</li>
+<li><code>evaluate</code> returns the value <em>and</em> the <code>reason</code> for it. That is what you log when you wonder why a user sees a feature.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="rules">Rules and the evaluation context</h2>
+<p>A flag can have <strong>rules</strong>. The <strong>evaluation context</strong> describes who is asking: <code>userId</code>, <code>tenantId</code>, <code>sessionId</code>, <code>environment</code> and any <code>attributes</code> you add, such as the user's plan. Rules are checked in order, and the <strong>first rule that matches wins</strong>. If none matches, the default is served:</p>
+<example file="rules.ts">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([
+    {
+      key: "task-comments",
+      enabled: true,
+      defaultValue: false,
+      rules: [
+        { type: "user", users: ["ada", "grace"], value: true },
+        { type: "attribute", attribute: "email", operator: "ends_with", value: "@taskapi.dev" },
+      ],
+    },
+    {
+      key: "page-size",
+      enabled: true,
+      defaultValue: 20,
+      rules: [{ type: "attribute", attribute: "plan", operator: "in", value: ["pro", "team"], result: 100 }],
+    },
+  ]),
+});
+
+const users = [
+  { userId: "ada", attributes: { plan: "free", email: "ada@example.com" } },
+  { userId: "linus", attributes: { plan: "pro", email: "linus@taskapi.dev" } },
+  { userId: "alan", attributes: { plan: "free", email: "alan@example.com" } },
+];
+for (const context of users) {
+  const comments = await flags.evaluate("task-comments", context);
+  const pageSize = await flags.get<number>("page-size", context);
+  console.log(context.userId.padEnd(6), "comments:", comments.value, `(${comments.reason})`, "page size:", pageSize);
+}
+</example>
+<output>
+ada    comments: true (target_match) page size: 20
+linus  comments: true (rule_match) page size: 100
+alan   comments: false (default) page size: 20
+</output>
+<p>Ada is on the beta list. Linus is not, but he works at the company, so the second rule matches. Alan matches no rule and gets the default. A flag value does not have to be a boolean: <code>page-size</code> is a number. An <code>attribute</code> rule compares with an operator (<code>equals</code>, <code>in</code>, <code>ends_with</code>, <code>greater_than</code> and more) and serves its <code>result</code>, which is <code>true</code> when you leave it out.</p>
+<warn title="THE CONTEXT MUST COME FROM THE SERVER">Build the context from the logged-in user, as <a href="/learn/zudo-auth">the auth lesson</a> verified them, and from your database: never from the request body or a header. If <code>plan</code> came from the client, anyone could send <code>"plan": "pro"</code> and get pro features for free. And a flag is not a permission: it says whether a feature is <em>switched on</em>, not whether this user <em>may</em> use it. Keep the permission check from <a href="/learn/zudo-permissions">the permissions lesson</a> as well.</warn>
+</section>
+
+<section>
+<h2 id="rollout">Percentage rollouts</h2>
+<p>After the beta, you want comments for 20% of all users, then 50%, then everyone. A <code>percentage</code> rule does that. It must not be random: if a user saw comments, reloaded the page and they were gone, that would be a terrible experience. So the rule is <strong>deterministic</strong>: it hashes the flag key and the user id into one of 10,000 <strong>buckets</strong>. The same user always lands in the same bucket:</p>
+<example file="rollout.ts">
+import { getBucket, isInRollout } from "@zudojs/feature-flags";
+
+for (const user of ["ada", "linus", "grace"]) {
+  console.log(user, "bucket", getBucket("task-comments", user), "then", getBucket("task-comments", user));
+}
+
+const inside = (percentage: number) => {
+  let count = 0;
+  for (let i = 0; i < 10000; i++) if (isInRollout("task-comments", `user-${i}`, percentage)) count++;
+  return count;
+};
+console.log("20%:", inside(20), "of 10000 users");
+console.log("50%:", inside(50), "of 10000 users");
+
+const earlyUsers = Array.from({ length: 10000 }, (_, i) => `user-${i}`).filter((u) => isInRollout("task-comments", u, 20));
+console.log("still inside at 50%:", earlyUsers.every((u) => isInRollout("task-comments", u, 50)));
+</example>
+<output>
+ada bucket 2563 then 2563
+linus bucket 6596 then 6596
+grace bucket 6243 then 6243
+20%: 2019 of 10000 users
+50%: 5010 of 10000 users
+still inside at 50%: true
+</output>
+<p>A 20% rollout reaches about 20% of users, and when you raise it to 50%, everybody who already had the feature keeps it. The flag key is part of the hash, so the same 20% of users do not end up as the guinea pigs of every experiment.</p>
+<p>The rule uses <code>userId</code>, then <code>tenantId</code>, then <code>sessionId</code>. A context with none of them counts as the single user <code>"anonymous"</code>, so all anonymous visitors get the same answer. Give logged-out visitors a session id if they should be spread out too.</p>
+</section>
+
+<section>
+<h2 id="variants">Variants: an A/B test</h2>
+<p>Should the task list be sorted by date or by priority? A <code>variant</code> rule splits users into named groups by weight, with the same stable buckets:</p>
+<example file="variants.ts">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "task-sorting",
+    enabled: true,
+    defaultValue: "by-date",
+    rules: [{ type: "variant", variants: [{ key: "by-date", weight: 50 }, { key: "by-priority", weight: 50 }] }],
+  }]),
+});
+
+const groups = new Map<string, number>();
+for (let i = 0; i < 1000; i++) {
+  const result = await flags.evaluate<string>("task-sorting", { userId: `user-${i}` });
+  groups.set(result.value, (groups.get(result.value) ?? 0) + 1);
+}
+console.log(groups);
+
+const grace = await flags.evaluate("task-sorting", { userId: "grace" });
+console.log("grace sees", grace.value, "because of", grace.reason);
+</example>
+<output>
+Map(2) { 'by-priority' => 501, 'by-date' => 499 }
+grace sees by-date because of variant_assignment
+</output>
+<p>About half of the users are in each group. To learn which version wins, record the variant with what the user did, for example a metric <code>tasks.completed</code> with a <code>variant</code> label, as in <a href="/learn/zudo-observability">the observability lesson</a>. A variant label is fine there: it has only two values.</p>
+</section>
+
+<section>
+<h2 id="kill-switch">Kill switches and safe defaults</h2>
+<p>The mail provider is down, and every task completion tries to send an email and fails. You want emails off, now. Set <code>enabled: false</code>: the flag then ignores all its rules and serves its <code>defaultValue</code>. That means the <strong>default must be the safe, "off" value</strong>. Look what happens when it is not:</p>
+<example file="kill-switch.ts">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const provider = createMemoryProvider([
+  { key: "emails-wrong", enabled: false, defaultValue: true },
+  { key: "emails", enabled: true, defaultValue: false, rules: [{ type: "static", value: true }] },
+]);
+const flags = createFeatureFlags({ provider });
+
+console.log("BAD emails-wrong:", await flags.evaluate("emails-wrong"));
+console.log("emails:", await flags.isEnabled("emails"));
+
+provider.set({ key: "emails", enabled: false, defaultValue: false, rules: [{ type: "static", value: true }] });
+console.log("emails after the switch:", await flags.evaluate("emails"));
+</example>
+<output>
+BAD emails-wrong: {
+  key: 'emails-wrong',
+  value: true,
+  reason: 'disabled',
+  defaulted: true
+}
+emails: true
+emails after the switch: { key: 'emails', value: false, reason: 'disabled', defaulted: true }
+</output>
+<p>The flag <code>emails-wrong</code> is disabled, yet its value is <code>true</code>, because that is its default, and <code>isEnabled("emails-wrong")</code> would answer <code>true</code> too. Always write flags like <code>emails</code>: <code>defaultValue: false</code>, and a rule that switches the feature on. Then disabling the flag, deleting it or losing the provider all lead to "off".</p>
+<p><code>provider.set</code> changed the flag while the program was running, and the very next evaluation saw it. The memory provider announces every change, and <code>createFeatureFlags</code> listens. No deploy, no restart. In a real system the flag definitions live in a database or a flag service with an admin page, behind a provider that reads them.</p>
+</section>
+
+<section>
+<h2 id="failures">When the flag store fails</h2>
+<p>If flags come from a remote service, that service can be down. The rule is the same as for kill switches: <strong>fail closed</strong>, meaning "when in doubt, off":</p>
+<example file="failures.ts">
+import { createFeatureFlags } from "@zudojs/feature-flags";
+import type { FeatureFlagProvider } from "@zudojs/feature-flags";
+
+const brokenProvider: FeatureFlagProvider = {
+  get: async () => { throw new Error("flag service unreachable"); },
+  getAll: async () => { throw new Error("flag service unreachable"); },
+};
+
+const flags = createFeatureFlags({
+  provider: brokenProvider,
+  onError: (error, source) => console.log("onError:", source, "-", error instanceof Error ? error.message : error),
+});
+
+console.log("comments:", await flags.isEnabled("task-comments", { userId: "ada" }));
+console.log("with fallback:", await flags.getBoolean("task-export", true, { userId: "ada" }));
+console.log(await flags.evaluate("task-comments"));
+</example>
+<output>
+onError: FeatureFlagProvider.getAll - flag service unreachable
+comments: false
+with fallback: true
+{
+  key: 'task-comments',
+  value: undefined,
+  reason: 'error',
+  defaulted: true
+}
+</output>
+<p>An unreachable store never switches a flag on, and the failure goes to <code>onError</code>, where the Task API should log it. After a failure, the flags instance leaves the provider alone for 5 seconds before it tries again, so an outage does not add a slow network call to every request. <code>getBoolean(key, fallback)</code> lets you choose the value for a missing or unreachable flag: use <code>true</code> only for features that are safe to keep running, like the export that every user already has.</p>
+</section>
+
+<section>
+<h2 id="snapshots">Flags in the browser: snapshots</h2>
+<p>A web or mobile client also needs flags, to show or hide buttons. Send it a <strong>snapshot</strong>: all flag values, evaluated on the server for this user. Only flags marked <code>visibility: "client"</code> are included, because flag definitions can reveal plans you have not announced, or the names of your beta customers:</p>
+<example file="snapshot.ts">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([
+    { key: "task-comments", enabled: true, defaultValue: false, visibility: "client",
+      rules: [{ type: "user", users: ["ada"], value: true }] },
+    { key: "dark-mode", enabled: true, defaultValue: true, visibility: "client" },
+    { key: "acme-migration", enabled: true, defaultValue: false,
+      rules: [{ type: "tenant", tenants: ["acme"], value: true }] },
+  ]),
+});
+
+const snapshot = await flags.snapshot({ userId: "ada" });
+const body = Object.fromEntries([...snapshot].map(([key, result]) => [key, result.value]));
+console.log(JSON.stringify(body));
+</example>
+<output>
+{"task-comments":true,"dark-mode":true}
+</output>
+<p>The client gets values, not rules: it cannot see who else is on the beta list. <code>acme-migration</code> has no visibility, so it stays on the server. Remember that anything in the snapshot can be changed by the user in their browser: use it to decide what to <em>show</em>, and check again on the server before you <em>do</em> anything.</p>
+</section>
+
+<section>
+<h2 id="task-api">Put it together: flags in the Task API</h2>
+<p>Keep all flag definitions in one file, with an owner and an end date, so that old flags get removed. A flag you forget becomes an <code>if</code> that nobody dares to delete:</p>
+<example file="src/flags/task.flags.ts" project="flags">
+import type { FeatureFlag } from "@zudojs/feature-flags";
+
+export const taskFlags: FeatureFlag[] = [
+  {
+    key: "task-comments",
+    description: "Comments on tasks. Beta users first, then a gradual rollout.",
+    enabled: true,
+    defaultValue: false,
+    visibility: "client",
+    rules: [
+      { type: "user", users: ["ada", "grace"], value: true },
+      { type: "percentage", percentage: 20, value: true },
+    ],
+    metadata: { owner: "tasks-team", expiresAt: new Date("2027-03-01") },
+  },
+  {
+    key: "task-emails",
+    description: "Kill switch for task emails.",
+    enabled: true,
+    defaultValue: false,
+    rules: [{ type: "static", value: true }],
+    metadata: { owner: "tasks-team" },
+  },
+];
+</example>
+<p>The service builds the context from the <strong>verified</strong> user object, and asks the flags before it does the optional work:</p>
+<example file="src/tasks/task.service.ts" project="flags">
+import type { FeatureFlags } from "@zudojs/feature-flags";
+
+export interface CurrentUser {
+  readonly id: string;
+  readonly plan: "free" | "pro";
+}
+
+export class TaskService {
+  constructor(private readonly flags: FeatureFlags) {}
+
+  async getTask(user: CurrentUser, id: number) {
+    const context = { userId: user.id, attributes: { plan: user.plan } };
+    const task = { id, title: "Buy milk", ownerId: user.id };
+    if (await this.flags.isEnabled("task-comments", context)) {
+      return { ...task, comments: [] as string[] };
+    }
+    return task;
+  }
+
+  async complete(user: CurrentUser, id: number): Promise<string> {
+    const emails = await this.flags.isEnabled("task-emails", { userId: user.id });
+    return emails ? `task ${id} done, email sent` : `task ${id} done, email skipped`;
+  }
+}
+</example>
+<example file="src/main.ts" project="flags">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+import { taskFlags } from "./flags/task.flags.js";
+import { TaskService } from "./tasks/task.service.js";
+
+const provider = createMemoryProvider(taskFlags);
+const flags = createFeatureFlags({
+  provider,
+  onError: (error, source) => console.log("flag store problem:", source, error),
+});
+const service = new TaskService(flags);
+
+for (const id of ["ada", "joan", "linus"]) {
+  console.log(id, await service.getTask({ id, plan: "free" }, 1));
+}
+console.log(await service.complete({ id: "ada", plan: "free" }, 1));
+
+const emails = taskFlags[1];
+if (emails) provider.set({ ...emails, enabled: false });
+console.log(await service.complete({ id: "ada", plan: "free" }, 1));
+flags.close();
+</example>
+<output>
+ada { id: 1, title: 'Buy milk', ownerId: 'ada', comments: [] }
+joan { id: 1, title: 'Buy milk', ownerId: 'joan', comments: [] }
+linus { id: 1, title: 'Buy milk', ownerId: 'linus' }
+task 1 done, email sent
+task 1 done, email skipped
+</output>
+<p>Ada is on the beta list. Joan falls inside the 20% rollout, Linus does not. When the mail provider has an outage, one change to <code>task-emails</code> stops the emails, and tasks can still be completed. <code>flags.close()</code> stops listening to the provider when the app shuts down.</p>
+<tip>When a feature is fully rolled out and stable, delete the flag and its <code>if</code>. The <code>expiresAt</code> date helps: after it, the flag evaluates to its default with the reason <code>expired</code>, so a forgotten flag switches the feature <em>off</em> and somebody notices.</tip>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Staff first, then 10%">
+<p>Write a flag <code>new-editor</code> that is on for users whose <code>email</code> attribute ends with <code>@taskapi.dev</code>, and for 10% of everyone else. Print the value and reason for <code>ada</code> (with a staff email) and for <code>user-1</code> to <code>user-3</code> (no email).</p>
+<solution>
+<example file="new-editor.ts">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "new-editor",
+    enabled: true,
+    defaultValue: false,
+    rules: [
+      { type: "attribute", attribute: "email", operator: "ends_with", value: "@taskapi.dev" },
+      { type: "percentage", percentage: 10, value: true },
+    ],
+  }]),
+});
+
+const ada = await flags.evaluate("new-editor", { userId: "ada", attributes: { email: "ada@taskapi.dev" } });
+console.log("ada", ada.value, ada.reason);
+for (const userId of ["user-1", "user-2", "user-3"]) {
+  const result = await flags.evaluate("new-editor", { userId });
+  console.log(userId, result.value, result.reason);
+}
+</example>
+<output>
+ada true rule_match
+user-1 true percentage_rollout
+user-2 false default
+user-3 false default
+</output>
+<p>The order of the rules matters: staff are checked first. The users without an email only reach the percentage rule, and each one lands in the same bucket every time you run it.</p>
+</solution>
+</exercise>
+<exercise title="Spot the unsafe flags">
+<p>Which of these definitions are unsafe, and why? (a) <code>{ key: "payments-v2", enabled: false, defaultValue: true }</code> (b) <code>{ key: "admin-panel", enabled: true, defaultValue: false, rules: [{ type: "attribute", attribute: "role", operator: "equals", value: "admin" }] }</code> with <code>role</code> read from a request header (c) <code>{ key: "beta-banner", enabled: true, defaultValue: false, visibility: "client" }</code></p>
+<solution>
+<p>(a) is unsafe: a disabled flag serves its default, so <code>payments-v2</code> is <em>on</em> while everyone believes it is off. Use <code>defaultValue: false</code> and a rule that turns it on. (b) is unsafe twice: the client controls the header, so anyone can become "admin", and a flag must not replace the permission check anyway. (c) is fine: it is off by default, and a banner is safe to show in the browser.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A feature flag separates deploying code from releasing a feature. You can switch it per user, and change it while the server runs.</li>
+<li>A provider stores definitions. <code>isEnabled</code>, <code>get</code> and <code>evaluate</code> answer for one evaluation context.</li>
+<li>Rules run in order, first match wins: <code>user</code>, <code>tenant</code>, <code>attribute</code>, <code>percentage</code>, <code>schedule</code>, <code>variant</code>, <code>static</code>.</li>
+<li>Percentage rollouts and variants are deterministic: the same user always gets the same answer, and raising the percentage keeps everyone who was already in.</li>
+<li>Fail closed: <code>defaultValue</code> is the safe value, because a disabled, expired or unreachable flag serves it.</li>
+<li>Build the context on the server from the verified user. A flag is not a permission.</li>
+<li>Snapshots send values, not rules, to the browser, and only for <code>visibility: "client"</code> flags. Delete flags when they are done.</li>
+</ul>
+</section>

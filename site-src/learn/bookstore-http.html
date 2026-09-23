@@ -1,0 +1,643 @@
+---
+title: "BookStore API: HTTP and routing"
+description: Start a TypeScript backend with no framework at all. Set up the folder, read configuration from the environment, write a small typed router, JSON helpers and error responses, and serve books and authors over HTTP.
+minutes: 45
+youNeed: The TypeScript lessons, plus "An HTTP server with no framework" and "Designing a REST API"
+youBuild: A BookStore API on node:http and tsx that serves authors and books as JSON
+keywords: typescript backend without framework, node http typescript, tsx, typed router, route parameters, json body, error responses, project structure, environment variables, PORT
+---
+<section>
+<h2 id="project">The project</h2>
+<p>For the next three lessons you build one backend from scratch: a <strong>BookStore API</strong>. It is written in TypeScript, and it uses no framework, only Node.js itself. In <a href="/learn/node-http">An HTTP server with no framework</a> you wrote a small server in plain JavaScript. This one is bigger, typed, and split into files the way a real project is.</p>
+<p>The API has four <strong>resources</strong>, the "things" a REST API is about (you designed URLs like these in <a href="/learn/rest-design">Designing a REST API</a>):</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Resource</th><th>Routes</th><th>Built in</th></tr></thead>
+<tbody>
+<tr><td>authors</td><td><code>GET /authors</code>, <code>POST /authors</code></td><td>this lesson</td></tr>
+<tr><td>books</td><td><code>GET /books</code>, <code>GET /books/:id</code>, <code>POST /books</code></td><td>this lesson (<code>POST</code> in the next)</td></tr>
+<tr><td>orders</td><td><code>GET /orders</code>, <code>POST /orders</code></td><td><a href="/learn/bookstore-data">validation and PostgreSQL</a></td></tr>
+<tr><td>users</td><td><code>POST /users</code>, <code>POST /sessions</code> (log in)</td><td><a href="/learn/bookstore-auth">authentication and tests</a></td></tr>
+</tbody>
+</table></div>
+<p>Why no framework? Because you will write, by hand, every job a framework does for you. At the end of the third lesson you will look back at the code and list what hurt. That list is the reason frameworks, and ZudoJS, exist.</p>
+</section>
+
+<section>
+<h2 id="setup">Set up the folder</h2>
+<p>Create a folder, a <code>package.json</code>, and install the TypeScript tools you met in <a href="/learn/ts-setup">Why TypeScript exists</a>:</p>
+<shell>
+$ mkdir bookstore
+$ cd bookstore
+$ npm init -y
+Wrote to ~/bookstore/package.json:
+…
+$ npm pkg set type=module
+$ npm install -D typescript tsx @types/node
+
+added 7 packages, and audited 8 packages in 7s
+
+found 0 vulnerabilities
+npm warn install-scripts 1 package has install scripts not yet covered by allowScripts:
+npm warn install-scripts   esbuild@0.28.2 (postinstall: node install.js)
+npm warn install-scripts
+npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install-scripts approve <pkg>` to allow.
+</shell>
+<p><code>npm pkg set type=module</code> tells Node.js that the <code>.js</code> files are ES modules, so <code>import</code> works. The esbuild warning is harmless; you saw it in <a href="/learn/npm-packages">npm and packages</a>. Now open <code>package.json</code> and give it three scripts. Your version numbers may be higher:</p>
+<file name="package.json" project="store">
+{
+  "name": "bookstore",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
+</file>
+<p>And the same <code>tsconfig.json</code> as in <a href="/learn/ts-setup">Why TypeScript exists</a>, with <code>strict</code> on:</p>
+<file name="tsconfig.json" project="store">
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "verbatimModuleSyntax": true
+  }
+}
+</file>
+<p>By the end of this lesson the folder looks like this. Each folder holds one kind of code, so you always know where to look:</p>
+<pre class="lx-json">bookstore/
+├── package.json
+├── tsconfig.json
+└── src/
+    ├── server.ts         starts everything
+    ├── app.ts            connects node:http to the router
+    ├── config.ts         reads settings from the environment
+    ├── store.ts          the data (in memory for now)
+    ├── http/             code that knows about HTTP
+    │   ├── types.ts
+    │   ├── router.ts
+    │   ├── errors.ts
+    │   ├── json.ts
+    │   └── params.ts
+    └── routes/           one file per resource
+        ├── authors.ts
+        ├── books.ts
+        └── index.ts</pre>
+</section>
+
+<section>
+<h2 id="config">Configuration from the environment</h2>
+<p><strong>Configuration</strong> is every value that can change between your laptop and a server: the port, the database, secrets. You never write those into the code. They come from <strong>environment variables</strong>, which Node.js gives you in <code>process.env</code> (you met it in <a href="/learn/node-runtime">What Node.js is</a>).</p>
+<p>Environment variables are always strings, or missing. So one module reads them, checks them once at startup, and turns them into a typed object. Everything else uses that object:</p>
+<example file="src/config.ts" project="store">
+export interface Config {
+  readonly port: number;
+}
+
+type Env = Readonly<Record<string, string | undefined>>;
+
+export function loadConfig(env: Env): Config {
+  const raw = env["PORT"] ?? "3000";
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error(`PORT must be a whole number from 0 to 65535, got "${raw}"`);
+  }
+  return { port };
+}
+</example>
+<p><code>loadConfig</code> takes the environment as a <strong>parameter</strong> instead of reading <code>process.env</code> itself. The server will pass <code>process.env</code>; a test can pass any object it likes. Try it:</p>
+<example file="try-config.ts" project="store">
+import { loadConfig } from "./src/config.js";
+
+console.log(loadConfig({}));
+console.log(loadConfig({ PORT: "8080" }));
+
+try {
+  loadConfig({ PORT: "eighty" });
+} catch (error) {
+  console.log(error instanceof Error ? error.message : error);
+}
+</example>
+<output>
+{ port: 3000 }
+{ port: 8080 }
+PORT must be a whole number from 0 to 65535, got "eighty"
+</output>
+<p>No <code>PORT</code> means the default, 3000. A bad value stops the program with a clear message. This is called <strong>failing fast</strong>: better to refuse to start than to start with a broken setting and fail later in a confusing way.</p>
+</section>
+
+<section>
+<h2 id="types">Requests and responses as plain data</h2>
+<p>The node:http <code>request</code> and <code>response</code> objects are big and awkward to test. So the BookStore turns each request into a small plain object, and each <strong>handler</strong> (the function that answers one route) returns a small plain object. Only one file, later, talks to node:http.</p>
+<example file="src/http/types.ts" project="store">
+export interface ApiRequest {
+  readonly method: string;
+  readonly path: string;
+  readonly params: Readonly<Record<string, string>>;
+  readonly query: URLSearchParams;
+  readonly headers: Readonly<Record<string, string | string[] | undefined>>;
+  readonly body: unknown;
+}
+
+export interface ApiResponse {
+  readonly status: number;
+  readonly body?: unknown;
+}
+
+export type Handler = (request: ApiRequest) => ApiResponse | Promise<ApiResponse>;
+</example>
+<ul>
+<li><code>params</code> holds the parts of the path that vary, such as the <code>7</code> in <code>/books/7</code>.</li>
+<li><code>query</code> holds the part after <code>?</code>, such as <code>?authorId=2</code>. <code>URLSearchParams</code> is built into Node.js and browsers.</li>
+<li><code>body</code> is <code>unknown</code>, on purpose. It comes from outside, so nothing about it is trusted until it is checked (<a href="/learn/ts-runtime">TypeScript and JavaScript together</a>).</li>
+<li>A <code>Handler</code> may be <code>async</code>, so it may return the response or a <code>Promise</code> of it.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="router">A tiny typed router</h2>
+<p>A <strong>router</strong> picks the handler for a request from its method and path. You register routes with a <strong>pattern</strong>: <code>/books/:id</code> means "<code>/books/</code> followed by anything, and call that anything <code>id</code>".</p>
+<example file="src/http/router.ts" project="store">
+import type { Handler } from "./types.js";
+
+interface Route {
+  readonly method: string;
+  readonly parts: readonly string[];
+  readonly handler: Handler;
+}
+
+export type Match =
+  | { readonly kind: "found"; readonly handler: Handler; readonly params: Record<string, string> }
+  | { readonly kind: "wrong-method"; readonly allowed: readonly string[] }
+  | { readonly kind: "not-found" };
+
+export class Router {
+  private readonly routes: Route[] = [];
+
+  add(method: string, pattern: string, handler: Handler): this {
+    this.routes.push({ method, parts: splitPath(pattern), handler });
+    return this;
+  }
+
+  match(method: string, path: string): Match {
+    const parts = splitPath(path);
+    const allowed: string[] = [];
+    for (const route of this.routes) {
+      const params = matchParts(route.parts, parts);
+      if (params === undefined) continue;
+      if (route.method === method) return { kind: "found", handler: route.handler, params };
+      allowed.push(route.method);
+    }
+    return allowed.length > 0 ? { kind: "wrong-method", allowed } : { kind: "not-found" };
+  }
+}
+
+function splitPath(path: string): string[] {
+  return path.split("/").filter((part) => part !== "");
+}
+
+function matchParts(pattern: readonly string[], parts: readonly string[]) {
+  if (pattern.length !== parts.length) return undefined;
+  const params: Record<string, string> = {};
+  for (const [i, want] of pattern.entries()) {
+    const got = parts[i]!;
+    if (want.startsWith(":")) params[want.slice(1)] = got;
+    else if (want !== got) return undefined;
+  }
+  return params;
+}
+</example>
+<p>How it works:</p>
+<ul>
+<li><code>splitPath("/books/7")</code> gives <code>["books", "7"]</code>. A pattern and a path match when they have the same number of parts and every fixed part is equal. A part starting with <code>:</code> matches anything and is saved in <code>params</code>.</li>
+<li><code>add</code> returns <code>this</code>, the router itself, so you can chain <code>.add(…).add(…)</code>.</li>
+<li><code>match</code> returns a <strong>discriminated union</strong> (<a href="/learn/ts-objects">Interfaces, unions and literal types</a>) with three cases. "The path exists but not for this method" is different from "the path does not exist": HTTP answers the first with <strong>405 Method Not Allowed</strong> and the second with <strong>404 Not Found</strong>.</li>
+</ul>
+<p>The router knows nothing about node:http, so you can try it directly:</p>
+<example file="try-router.ts" project="store">
+import { Router } from "./src/http/router.js";
+
+const router = new Router()
+  .add("GET", "/books", () => ({ status: 200, body: "every book" }))
+  .add("GET", "/books/:id", (request) => ({ status: 200, body: `book ${request.params["id"]}` }));
+
+const tries: [string, string][] = [
+  ["GET", "/books"],
+  ["GET", "/books/7"],
+  ["DELETE", "/books/7"],
+  ["GET", "/authors"],
+];
+
+for (const [method, path] of tries) {
+  const match = router.match(method, path);
+  if (match.kind === "found") console.log(method, path, "found", match.params);
+  if (match.kind === "wrong-method") console.log(method, path, "wrong method, allowed:", match.allowed);
+  if (match.kind === "not-found") console.log(method, path, "not found");
+}
+</example>
+<output>
+GET /books found {}
+GET /books/7 found { id: '7' }
+DELETE /books/7 wrong method, allowed: [ 'GET' ]
+GET /authors not found
+</output>
+<p>Inside each <code>if</code>, TypeScript knows which case it has: <code>match.params</code> only exists when <code>kind</code> is <code>"found"</code>, and <code>match.allowed</code> only when it is <code>"wrong-method"</code>.</p>
+</section>
+
+<section>
+<h2 id="errors">Errors and JSON</h2>
+<p>Every answer, even a failure, is a status code and a JSON body. An <code>HttpError</code> carries both, so any code can <code>throw</code> one and one function turns it into a response:</p>
+<example file="src/http/errors.ts" project="store" browser="no">
+import type { ApiResponse } from "./types.js";
+
+export class HttpError extends Error {
+  readonly status: number;
+  readonly code: string;
+
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export function toErrorResponse(error: unknown): ApiResponse {
+  if (error instanceof HttpError) {
+    return { status: error.status, body: { error: error.code, message: error.message } };
+  }
+  console.error(error);
+  return { status: 500, body: { error: "internal_error", message: "Something went wrong" } };
+}
+</example>
+<p>An <code>HttpError</code> is an error you threw on purpose, so its message is safe to show the client. Anything else is a bug. The bug is written to the server's log with <code>console.error</code>, and the client gets a plain 500 with no details. You never send a stack trace to the outside world: it tells an attacker how your code is built.</p>
+<p>The second file reads a JSON body from a request and writes a JSON response. This is the only code that deals with bytes:</p>
+<example file="src/http/json.ts" project="store" browser="no">
+import type { IncomingMessage, ServerResponse } from "node:http";
+
+import { HttpError } from "./errors.js";
+import type { ApiResponse } from "./types.js";
+
+const MAX_BODY_BYTES = 100_000;
+
+export async function readJson(request: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += (chunk as Buffer).length;
+    if (size > MAX_BODY_BYTES) throw new HttpError(413, "body_too_large", "The body is too large");
+    chunks.push(chunk as Buffer);
+  }
+  if (size === 0) return undefined;
+  if (!request.headers["content-type"]?.startsWith("application/json")) {
+    throw new HttpError(415, "not_json", "Send JSON with Content-Type: application/json");
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new HttpError(400, "invalid_json", "The body is not valid JSON");
+  }
+}
+
+export function sendJson(response: ServerResponse, result: ApiResponse): void {
+  const text = result.body === undefined ? "" : JSON.stringify(result.body);
+  response.writeHead(result.status, {
+    "content-type": "application/json; charset=utf-8",
+    "content-length": Buffer.byteLength(text),
+  });
+  response.end(text);
+}
+</example>
+<p>Three safety checks hide in <code>readJson</code>, and each has its own status code (<a href="/learn/http-deep">HTTP in depth</a> lists them):</p>
+<ul>
+<li><strong>413 Content Too Large</strong>: it stops reading after 100,000 bytes. Without a limit, one client could send gigabytes and fill your server's memory.</li>
+<li><strong>415 Unsupported Media Type</strong>: a body that is not labelled as JSON is refused.</li>
+<li><strong>400 Bad Request</strong>: <code>JSON.parse</code> throws on broken JSON, and that becomes a clear error instead of a crash.</li>
+</ul>
+<p>A request stream gives <code>Buffer</code> chunks, but its type says <code>any</code>, so <code>chunk as Buffer</code> tells TypeScript what they are.</p>
+</section>
+
+<section>
+<h2 id="routes">Routes for authors and books</h2>
+<p>For now the data lives in memory. <code>Table</code> is a small generic class, like the repository in <a href="/learn/ts-generics">Generics</a>. The next lesson replaces it with a real PostgreSQL database.</p>
+<example file="src/store.ts" project="store" browser="no">
+export interface Author {
+  readonly id: number;
+  readonly name: string;
+}
+
+export interface Book {
+  readonly id: number;
+  readonly title: string;
+  readonly authorId: number;
+  readonly priceCents: number;
+}
+
+export class Table<T extends { readonly id: number }> {
+  private readonly rows = new Map<number, T>();
+  private lastId = 0;
+
+  newId(): number {
+    this.lastId += 1;
+    return this.lastId;
+  }
+
+  all(): T[] {
+    return [...this.rows.values()];
+  }
+
+  get(id: number): T | undefined {
+    return this.rows.get(id);
+  }
+
+  save(row: T): T {
+    this.rows.set(row.id, row);
+    return row;
+  }
+}
+
+export const authors = new Table<Author>();
+export const books = new Table<Book>();
+
+authors.save({ id: authors.newId(), name: "Chinua Achebe" });
+authors.save({ id: authors.newId(), name: "Ursula K. Le Guin" });
+books.save({ id: books.newId(), title: "Things Fall Apart", authorId: 1, priceCents: 1299 });
+books.save({ id: books.newId(), title: "A Wizard of Earthsea", authorId: 2, priceCents: 999 });
+</example>
+<p>Prices are whole <strong>cents</strong> (<code>1299</code> is 12.99), never decimals: <code>0.1 + 0.2</code> is not exactly <code>0.3</code> in JavaScript, and money must add up exactly.</p>
+<p>Every id in a URL arrives as a string, and could be <code>"abc"</code> or <code>"-5"</code>. One helper turns it into a safe number or answers 400:</p>
+<example file="src/http/params.ts" project="store" browser="no">
+import { HttpError } from "./errors.js";
+
+const MAX_ID = 2_147_483_647;
+
+export function toId(raw: string | undefined, name: string): number {
+  const id = Number(raw);
+  if (!Number.isInteger(id) || id < 1 || id > MAX_ID) {
+    throw new HttpError(400, "invalid_id", `${name} must be a whole number from 1 to ${MAX_ID}`);
+  }
+  return id;
+}
+</example>
+<p>The upper limit is the largest <code>integer</code> PostgreSQL can store. Checking it now saves a confusing database error later.</p>
+<p>Now the routes. Each resource gets a file with one function that adds its routes to the router:</p>
+<example file="src/routes/books.ts" project="store" browser="no">
+import { HttpError } from "../http/errors.js";
+import { toId } from "../http/params.js";
+import type { Router } from "../http/router.js";
+import { books } from "../store.js";
+
+export function addBookRoutes(router: Router): void {
+  router.add("GET", "/books", (request) => {
+    const raw = request.query.get("authorId");
+    const authorId = raw === null ? undefined : toId(raw, "authorId");
+    const list = books.all().filter((book) => authorId === undefined || book.authorId === authorId);
+    return { status: 200, body: list };
+  });
+
+  router.add("GET", "/books/:id", (request) => {
+    const book = books.get(toId(request.params["id"], "id"));
+    if (book === undefined) throw new HttpError(404, "not_found", "Book not found");
+    return { status: 200, body: book };
+  });
+}
+</example>
+<p><code>POST /authors</code> reads a body. The body is <code>unknown</code>, so the handler narrows it step by step with <code>typeof</code> and <code>in</code>, exactly as in <a href="/learn/ts-runtime">TypeScript and JavaScript together</a>, before it touches <code>body.name</code>:</p>
+<example file="src/routes/authors.ts" project="store" browser="no">
+import { HttpError } from "../http/errors.js";
+import type { Router } from "../http/router.js";
+import { authors } from "../store.js";
+
+export function addAuthorRoutes(router: Router): void {
+  router.add("GET", "/authors", () => ({ status: 200, body: authors.all() }));
+
+  router.add("POST", "/authors", (request) => {
+    const body = request.body;
+    if (typeof body !== "object" || body === null || !("name" in body)) {
+      throw new HttpError(400, "invalid_body", "Send an object with a name");
+    }
+    if (typeof body.name !== "string" || body.name.trim() === "") {
+      throw new HttpError(400, "invalid_body", "name must be a non-empty string");
+    }
+    const author = authors.save({ id: authors.newId(), name: body.name.trim() });
+    return { status: 201, body: author };
+  });
+}
+</example>
+<p><strong>201 Created</strong> is the status for "I made a new thing". One last file builds the whole router:</p>
+<example file="src/routes/index.ts" project="store" browser="no">
+import { Router } from "../http/router.js";
+import { addAuthorRoutes } from "./authors.js";
+import { addBookRoutes } from "./books.js";
+
+export function createRouter(): Router {
+  const router = new Router();
+  addAuthorRoutes(router);
+  addBookRoutes(router);
+  return router;
+}
+</example>
+</section>
+
+<section>
+<h2 id="server">Put it on the network</h2>
+<p><code>app.ts</code> is the bridge between node:http and everything you wrote. For each request it finds the route, reads the body, builds an <code>ApiRequest</code>, calls the handler and sends the result. One <code>try</code>/<code>catch</code> turns every thrown error into a response, so a handler never has to:</p>
+<example file="src/app.ts" project="store" browser="no">
+import { createServer } from "node:http";
+import type { Server } from "node:http";
+
+import { HttpError, toErrorResponse } from "./http/errors.js";
+import { readJson, sendJson } from "./http/json.js";
+import type { Router } from "./http/router.js";
+
+export function createApp(router: Router): Server {
+  return createServer(async (req, res) => {
+    const method = req.method ?? "GET";
+    const url = new URL(req.url ?? "/", "http://localhost");
+    try {
+      const match = router.match(method, url.pathname);
+      if (match.kind === "not-found") {
+        throw new HttpError(404, "not_found", `Nothing at ${url.pathname}`);
+      }
+      if (match.kind === "wrong-method") {
+        throw new HttpError(405, "method_not_allowed", `Use ${match.allowed.join(" or ")}`);
+      }
+      const body = await readJson(req);
+      const request = { method, path: url.pathname, params: match.params, query: url.searchParams, headers: req.headers, body };
+      sendJson(res, await match.handler(request));
+    } catch (error) {
+      sendJson(res, toErrorResponse(error));
+    }
+  });
+}
+</example>
+<p><code>new URL(req.url, "http://localhost")</code> splits <code>/books?authorId=2</code> into a <code>pathname</code> and <code>searchParams</code>. The second argument is only there because <code>req.url</code> has no host.</p>
+<p>And the entry point, the file you run. It is short on purpose: read the configuration, build the app, listen.</p>
+<example file="src/server.ts" project="store" browser="no">
+import { createApp } from "./app.js";
+import { loadConfig } from "./config.js";
+import { createRouter } from "./routes/index.js";
+
+const config = loadConfig(process.env);
+const server = createApp(createRouter());
+
+server.listen(config.port, () => {
+  console.log(`BookStore API on http://localhost:${config.port}`);
+});
+</example>
+<p>To check the whole thing, this script starts the app on <strong>port 0</strong>, which means "any free port, you choose". Then it sends real requests with <code>fetch</code>, prints the answers, and closes the server:</p>
+<example file="try-server.ts" project="store" browser="no">
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
+
+import { createApp } from "./src/app.js";
+import { createRouter } from "./src/routes/index.js";
+
+const server = createApp(createRouter()).listen(0);
+await once(server, "listening");
+const { port } = server.address() as AddressInfo;
+
+async function call(method: string, path: string, body?: unknown): Promise<void> {
+  const response = await fetch(`http://localhost:${port}${path}`, {
+    method,
+    headers: body === undefined ? {} : { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  console.log(method, path, response.status, await response.text());
+}
+
+await call("GET", "/books?authorId=2");
+await call("GET", "/books/1");
+await call("GET", "/books/99");
+await call("GET", "/books/abc");
+await call("POST", "/authors", { name: "  Octavia E. Butler " });
+await call("POST", "/authors", { name: 42 });
+await call("DELETE", "/books/1");
+await call("GET", "/orders");
+server.close();
+</example>
+<output>
+GET /books?authorId=2 200 [{"id":2,"title":"A Wizard of Earthsea","authorId":2,"priceCents":999}]
+GET /books/1 200 {"id":1,"title":"Things Fall Apart","authorId":1,"priceCents":1299}
+GET /books/99 404 {"error":"not_found","message":"Book not found"}
+GET /books/abc 400 {"error":"invalid_id","message":"id must be a whole number from 1 to 2147483647"}
+POST /authors 201 {"id":3,"name":"Octavia E. Butler"}
+POST /authors 400 {"error":"invalid_body","message":"name must be a non-empty string"}
+DELETE /books/1 405 {"error":"method_not_allowed","message":"Use GET"}
+GET /orders 404 {"error":"not_found","message":"Nothing at /orders"}
+</output>
+<p>Every line is a status code and a JSON body. The router gave 405 and 404, <code>toId</code> gave 400, the handlers gave 200, 201 and their own 404 and 400. The author's name came back trimmed, and got the next id, 3.</p>
+<p>Now run it for real. In one terminal:</p>
+<shell>
+$ npm run dev
+
+> bookstore@1.0.0 dev
+> tsx watch src/server.ts
+
+BookStore API on http://localhost:3000
+</shell>
+<p>In a second terminal, ask it for a book, create an author, and send a body that is not JSON:</p>
+<shell>
+$ curl -i http://localhost:3000/books/1
+HTTP/1.1 200 OK
+content-type: application/json; charset=utf-8
+content-length: 67
+Date: Wed, 23 Sep 2026 13:43:09 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"id":1,"title":"Things Fall Apart","authorId":1,"priceCents":1299}
+$ curl -X POST http://localhost:3000/authors -H 'content-type: application/json' -d '{"name":"Octavia E. Butler"}'
+{"id":3,"name":"Octavia E. Butler"}
+$ curl -X POST http://localhost:3000/authors -d 'name=Octavia'
+{"error":"not_json","message":"Send JSON with Content-Type: application/json"}
+</shell>
+<p>The last request has no JSON content type (curl's <code>-d</code> sends a form by default), so <code>readJson</code> refused it with 415. Stop the server with <kbd>Ctrl</kbd> + <kbd>C</kbd>. It forgets the new author, because the data only lives in memory.</p>
+<tip>On Windows PowerShell, type <code>curl.exe</code> instead of <code>curl</code>, and use double quotes outside and <code>\"</code> inside the JSON.</tip>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="One author by id">
+<p>Add <code>GET /authors/:id</code>. It answers 200 with the author, 404 when there is none, and 400 for an id like <code>abc</code>. Check it with a script that starts the server on port 0.</p>
+<solution>
+<p>Add this route inside <code>addAuthorRoutes</code>, and import <code>toId</code> from <code>../http/params.js</code>. Here it is in its own file so you can run it:</p>
+<example file="try-author-by-id.ts" project="store" browser="no">
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
+
+import { createApp } from "./src/app.js";
+import { HttpError } from "./src/http/errors.js";
+import { toId } from "./src/http/params.js";
+import { createRouter } from "./src/routes/index.js";
+import { authors } from "./src/store.js";
+
+const router = createRouter().add("GET", "/authors/:id", (request) => {
+  const author = authors.get(toId(request.params["id"], "id"));
+  if (author === undefined) throw new HttpError(404, "not_found", "Author not found");
+  return { status: 200, body: author };
+});
+
+const server = createApp(router).listen(0);
+await once(server, "listening");
+const { port } = server.address() as AddressInfo;
+for (const path of ["/authors/2", "/authors/9", "/authors/abc"]) {
+  const response = await fetch(`http://localhost:${port}${path}`);
+  console.log(path, response.status, await response.text());
+}
+server.close();
+</example>
+<output>
+/authors/2 200 {"id":2,"name":"Ursula K. Le Guin"}
+/authors/9 404 {"error":"not_found","message":"Author not found"}
+/authors/abc 400 {"error":"invalid_id","message":"id must be a whole number from 1 to 2147483647"}
+</output>
+</solution>
+</exercise>
+<exercise title="A bad PORT">
+<p>Start the server with <code>PORT=eighty npm start</code>. What happens, and why is that better than starting on port 3000 anyway?</p>
+<solution>
+<shell>
+$ PORT=eighty npm start
+
+> bookstore@1.0.0 start
+> tsx src/server.ts
+
+~/bookstore/src/config.ts:11
+    throw new Error(`PORT must be a whole number from 0 to 65535, got "${raw}"`);
+          ^
+
+Error: PORT must be a whole number from 0 to 65535, got "eighty"
+    at loadConfig (~/bookstore/src/config.ts:11:11)
+    at <anonymous> (~/bookstore/src/server.ts:5:16)
+…
+Node.js v24.19.0
+</shell>
+<p>The server refuses to start and says exactly which setting is wrong. If it quietly used 3000 instead, the person who set <code>PORT</code> would think their app was on port 80 and waste time finding out why nothing answers there.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A TypeScript backend with no framework needs <code>typescript</code>, <code>tsx</code> and <code>@types/node</code>, a <code>tsconfig.json</code> and a folder per kind of code.</li>
+<li><code>config.ts</code> reads environment variables once, checks them and fails fast.</li>
+<li>Handlers take a plain <code>ApiRequest</code> and return a plain <code>ApiResponse</code>. Only <code>app.ts</code> and <code>json.ts</code> know about node:http.</li>
+<li>The router matches method and path patterns like <code>/books/:id</code>, and tells 404 apart from 405.</li>
+<li>Every failure is a status code and a JSON body. Bodies are size-limited and must be JSON. Unknown errors become a generic 500.</li>
+</ul>
+<p>Next, the data moves into PostgreSQL, and every request body gets checked properly.</p>
+</section>

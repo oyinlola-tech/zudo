@@ -1,0 +1,564 @@
+---
+title: From monolith to modular monolith
+description: Split one growing application into modules with clear boundaries. Each module has a small public API, owns its data, and talks to the others through that API, events and commands, all inside one deployable app.
+minutes: 45
+youNeed: The Task API project and the lessons on events and CQRS
+youBuild: A ShopFlow modular monolith with a catalog and an orders module that talk through a public API, events and a command bus
+keywords: modular monolith, monolith, module boundaries, bounded context, domain boundaries, public api, zudojs generate module, events between modules, cqrs in a monolith, shared infrastructure
+tier: advanced
+---
+<section>
+<h2 id="monolith">What a monolith is</h2>
+<p>The Task API you built is a <strong>monolith</strong>: one program, one codebase, deployed as one unit. Every feature runs in the same process and can call any other feature directly.</p>
+<p>That is a good thing. A monolith is simple to run, simple to debug, and a function call between two features costs nothing. Most successful products started as one.</p>
+<p>The trouble starts when the code grows and nothing stops one part from reaching into another. Here is a tiny shop written that way. The orders code changes the catalog's data directly:</p>
+<example file="tangled.js">
+const products = new Map([["mug", { name: "Mug", price: 12, stock: 2 }]]);
+const orders = [];
+
+function placeOrder(sku, quantity) {
+  const product = products.get(sku);
+  product.stock -= quantity;
+  orders.push({ sku, quantity, total: product.price * quantity });
+}
+
+function blackFriday() {
+  for (const product of products.values()) product.price = 0;
+}
+
+placeOrder("mug", 3);
+blackFriday();
+console.log(products.get("mug"));
+console.log(orders);
+</example>
+<output>
+{ name: 'Mug', price: 0, stock: -1 }
+[ { sku: 'mug', quantity: 3, total: 36 } ]
+</output>
+<p>Two bugs, and neither function looks wrong on its own:</p>
+<ul>
+<li>The stock is <code>-1</code>. The rule "you cannot sell what you do not have" belongs to the catalog, but the orders code changed the stock itself and skipped it.</li>
+<li>Someone added <code>blackFriday()</code> months later. It changes every price, and nobody who owns products was asked.</li>
+</ul>
+<p>In a real codebase these two functions sit in different folders, written by different people. When every part can touch every other part's data, you get what developers call a <strong>big ball of mud</strong>: a change in one place breaks something far away, and nobody can tell what depends on what.</p>
+</section>
+
+<section>
+<h2 id="modular">The modular monolith</h2>
+<p>A <strong>modular monolith</strong> is still one program and one deployment. The difference is inside: the code is split into <strong>modules</strong>, and each module has a hard edge around it.</p>
+<ul>
+<li><strong>A module owns one area of the business.</strong> In ShopFlow, the online shop you build in the capstone, that means <code>catalog</code> (products and stock), <code>orders</code> (carts and checkout), <code>users</code> and <code>payments</code>. Such an area is called a <strong>domain boundary</strong>, or a <em>bounded context</em>.</li>
+<li><strong>A module has a small public API.</strong> Other modules may call only what it exports on purpose. Everything else is private.</li>
+<li><strong>A module owns its data.</strong> Only the catalog module reads and writes the products table. Orders asks the catalog.</li>
+<li><strong>Infrastructure is shared.</strong> The logger, the configuration, the event bus, the database connection and the HTTP server are the same for every module. Only the <em>data</em> and the <em>rules</em> are split.</li>
+</ul>
+<p>Modules talk to each other in three ways, and this lesson shows each one:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Way</th><th>Use it when</th><th>ZudoJS tool</th></tr></thead>
+<tbody>
+<tr><td>Call the other module's public API</td><td>You need an answer right now ("is this in stock?")</td><td>A TypeScript interface, wired with <code>@zudojs/container</code></td></tr>
+<tr><td>Publish an event</td><td>Something happened and others may care ("an order was placed")</td><td><code>@zudojs/events</code></td></tr>
+<tr><td>Send a command or query by name</td><td>You want to ask for work without importing the module at all</td><td><code>@zudojs/cqrs</code></td></tr>
+</tbody>
+</table></div>
+<tip>A modular monolith is also the best way to prepare for microservices, the topic of <a href="/learn/zudo-microservices">the next lesson</a>. A module with a clean edge can later be moved into its own service. A tangled one cannot.</tip>
+</section>
+
+<section>
+<h2 id="generate">Generate a modular monolith</h2>
+<p>The ZudoJS CLI you met in <a href="/learn/zudo-create-project">Create the Task API project</a> has a template for this. Create ShopFlow with it, with the <code>events</code> and <code>cqrs</code> capabilities:</p>
+<shell>
+$ npx zudojs-cli@latest create shopflow --architecture modular-monolith --package-manager npm --capabilities "events,cqrs"
+◇  Project structure created
+◇  Backend project generated (30 files)
+
+added 72 packages, and audited 73 packages in 15s
+…
+◆  Dependencies installed
+◇  Project validated
+◇  Git repository initialized
+│
+◇  Next steps ──╮
+│               │
+│  cd shopflow  │
+│  npm run dev  │
+│               │
+├───────────────╯
+│
+└  Project created successfully.
+$ cd shopflow
+</shell>
+<p>A new modular monolith has no modules yet. Add two with <code>zudojs generate module</code>:</p>
+<shell>
+$ npx zudojs-cli generate module catalog
+Detected architecture: modular-monolith
+Warning: Could not register the module in app.ts automatically. Add:
+  import { CatalogModule } from "./modules/index.js";
+  new CatalogModule() in the modules passed to createRuntime
+Generated 5 files:
+  - src/modules/catalog/catalog.module.ts
+  - src/modules/catalog/index.ts
+  - src/modules/index.ts
+  - src/modules/catalog/features/catalog.feature.ts
+  - src/modules/catalog/features/index.ts
+$ npx zudojs-cli generate module orders
+…
+$ tree src/modules
+src/modules
+├── catalog
+│   ├── catalog.module.ts
+│   ├── features
+│   │   ├── catalog.feature.ts
+│   │   └── index.ts
+│   └── index.ts
+├── index.ts
+└── orders
+    ├── features
+    │   ├── index.ts
+    │   └── orders.feature.ts
+    ├── index.ts
+    └── orders.module.ts
+
+5 directories, 9 files
+</shell>
+<p>Each module is a folder with the same shape:</p>
+<ul>
+<li><code>catalog.module.ts</code> is the module class. The runtime calls its <code>onInitialize</code> when the app starts and <code>onShutdown</code> when it stops, as you saw in <a href="/learn/zudo-runtime">the runtime lesson</a>.</li>
+<li><code>features/</code> holds the module's code: services, repositories, handlers. It is private to the module.</li>
+<li><code>index.ts</code> is the module's <strong>public API</strong>. Whatever it exports is what other modules may use. Right now it exports only the module class.</li>
+<li><code>src/modules/index.ts</code> collects the modules for <code>app.ts</code>.</li>
+</ul>
+<p>The warning is real: in CLI 2.0.1, the <code>app.ts</code> of a fresh modular monolith has no module list yet, so the generator cannot add the module for you. Do it by hand. Open <code>src/app.ts</code> and add the import and the loop:</p>
+<example file="app.ts (part)" browser="no">
+import { CatalogModule, OrdersModule } from "./modules/index.js";
+
+// inside createApp():
+const modules = new Map<string, Module>();
+for (const module of [new CatalogModule(), new OrdersModule()]) {
+  modules.set(module.id, module);
+}
+</example>
+<p>Orders will need the catalog, so tell the runtime. In <code>src/modules/orders/orders.module.ts</code>, add a <code>dependencies</code> list to the constructor:</p>
+<example file="orders.module.ts (part)" browser="no">
+public constructor() {
+  super({ version: "0.1.0", dependencies: ["catalog"] });
+}
+</example>
+<p>Start the app. The runtime starts the catalog first because orders depends on it:</p>
+<shell>
+$ npm run dev
+
+> shopflow@0.1.0 dev
+> tsx watch src/server.ts
+
+{
+  timestamp: '2026-09-23T13:25:18.309Z',
+  level: 'info',
+  message: '2026-09-23T13:25:18.309Z [INFO] [shopflow] catalog module initialized',
+  logger: 'shopflow',
+  metadata: {}
+}
+{
+  timestamp: '2026-09-23T13:25:18.314Z',
+  level: 'info',
+  message: '2026-09-23T13:25:18.314Z [INFO] [shopflow] orders module initialized',
+  logger: 'shopflow',
+  metadata: {}
+}
+…
+Listening on port 3000
+</shell>
+</section>
+
+<section>
+<h2 id="public-api">A module's public API</h2>
+<p>Now fill the catalog with real rules. The examples below are small single files so you can run them on this page. In the project, each lives in its module folder, as the file name comments say.</p>
+<p>The catalog exports an <strong>interface</strong>, <code>CatalogApi</code>, and a function that creates it. The <code>Map</code> of products lives inside the function, so no other code can reach it:</p>
+<example file="catalog.ts" project="shop">
+// src/modules/catalog/index.ts: the catalog's public API
+import { ConflictError, NotFoundError } from "@zudojs/errors";
+
+export interface Product {
+  readonly sku: string;
+  readonly name: string;
+  readonly price: number;
+  readonly stock: number;
+}
+
+export interface CatalogApi {
+  getProduct(sku: string): Product;
+  reserve(sku: string, quantity: number): void;
+}
+
+export function createCatalog(): CatalogApi {
+  const products = new Map([
+    ["mug", { name: "Mug", price: 12, stock: 2 }],
+    ["tee", { name: "T-shirt", price: 20, stock: 10 }],
+  ]);
+
+  function find(sku: string) {
+    const product = products.get(sku);
+    if (!product) throw new NotFoundError(`No product ${sku}`);
+    return product;
+  }
+
+  return {
+    getProduct: (sku) => ({ sku, ...find(sku) }),
+    reserve(sku, quantity) {
+      const product = find(sku);
+      if (quantity > product.stock) throw new ConflictError(`Only ${product.stock} ${sku} left`);
+      product.stock -= quantity;
+    },
+  };
+}
+</example>
+<p>The orders module receives a <code>CatalogApi</code>. It does not know how the catalog stores products, and it does not care:</p>
+<example file="orders.ts" project="shop">
+// src/modules/orders/index.ts: the orders module's public API
+import type { CatalogApi } from "./catalog.js";
+
+export interface Order {
+  readonly id: number;
+  readonly sku: string;
+  readonly quantity: number;
+  readonly total: number;
+}
+
+export function createOrders(catalog: CatalogApi) {
+  const orders: Order[] = [];
+  return {
+    placeOrder(sku: string, quantity: number): Order {
+      const product = catalog.getProduct(sku);
+      catalog.reserve(sku, quantity);
+      const order = { id: orders.length + 1, sku, quantity, total: product.price * quantity };
+      orders.push(order);
+      return order;
+    },
+  };
+}
+</example>
+<example file="main.ts" project="shop">
+import { createCatalog } from "./catalog.js";
+import { createOrders } from "./orders.js";
+
+const catalog = createCatalog();
+const orders = createOrders(catalog);
+
+console.log(orders.placeOrder("mug", 1));
+try {
+  orders.placeOrder("mug", 3);
+} catch (error) {
+  console.log((error as Error).name, (error as Error).message);
+}
+console.log(catalog.getProduct("mug"));
+</example>
+<output>
+{ id: 1, sku: 'mug', quantity: 1, total: 12 }
+ConflictError Only 1 mug left
+{ sku: 'mug', name: 'Mug', price: 12, stock: 1 }
+</output>
+<p>The same bug from the tangled shop cannot happen here. The only way to change stock is <code>reserve</code>, and <code>reserve</code> checks the rule. The second order was refused and the stock stayed at 1.</p>
+<p><code>main.ts</code> plays the role of <code>app.ts</code>: the one place that creates every module and hands each one what it needs. That place is called the <strong>composition root</strong>. In a bigger app you register these APIs in the container from <a href="/learn/zudo-container">the dependency injection lesson</a>, under a token each module exports.</p>
+<p>TypeScript also guards the edge. If the orders code tries to reach the catalog's data, it does not compile:</p>
+<example file="sneaky.ts" project="shop" check="tsc-error">
+import { createCatalog } from "./catalog.js";
+
+const catalog = createCatalog();
+catalog.products.set("mug", { name: "Mug", price: 0, stock: 99 });
+</example>
+<output kind="tsc">
+sneaky.ts:4:9 - error TS2339: Property 'products' does not exist on type 'CatalogApi'.
+
+4 catalog.products.set("mug", { name: "Mug", price: 0, stock: 99 });
+          ~~~~~~~~
+
+
+Found 1 error in sneaky.ts:4
+</output>
+<p>Types are a strong fence, but not the only one you need. A developer can still write <code>import { something } from "../catalog/features/catalog.feature.js"</code> and use a private file. The rule for your team is simple: <strong>import another module only through its <code>index.ts</code></strong>. You will write a small check for that in the practice section.</p>
+</section>
+
+<section>
+<h2 id="data">Each module owns its data</h2>
+<p>When ShopFlow gets a real database, the boundary must hold there too. Two habits keep it:</p>
+<ul>
+<li><strong>One schema per module.</strong> PostgreSQL can group tables into <em>schemas</em>, named folders inside one database: <code>catalog.products</code>, <code>orders.orders</code>, <code>orders.order_lines</code>. Only the catalog module's code touches <code>catalog.*</code>.</li>
+<li><strong>No joins across modules.</strong> Orders stores the <code>sku</code> and the price it charged, a copy taken at checkout time. It does not join <code>catalog.products</code> to show an order. If the product is renamed later, the order still says what the customer bought.</li>
+</ul>
+<p>Sharing one database server is fine and is what "shared infrastructure" means. Sharing <em>tables</em> between modules is what turns them back into a ball of mud.</p>
+</section>
+
+<section>
+<h2 id="events">Events between modules</h2>
+<p>A direct call is right when orders <em>needs an answer</em> from the catalog. It is wrong when orders only wants to say "this happened". If checkout called the e-mail module, the analytics module and the loyalty-points module one by one, orders would depend on all of them, and one slow module would slow down every checkout.</p>
+<p>Instead, orders <strong>publishes an event</strong> with <code>@zudojs/events</code>, from <a href="/learn/zudo-events">the events lesson</a>, and any module may subscribe. The event definition is part of the orders module's public API:</p>
+<example file="contracts.ts" project="events">
+// src/modules/orders/index.ts exports this definition
+import { defineEvent } from "@zudojs/events";
+
+export interface OrderPlaced {
+  readonly orderId: number;
+  readonly sku: string;
+  readonly quantity: number;
+  readonly email: string;
+}
+
+export const OrderPlacedEvent = defineEvent<"order.placed", OrderPlaced>("order.placed");
+</example>
+<example file="modules.ts" project="events">
+import { createEventBus, type Event } from "@zudojs/events";
+import { OrderPlacedEvent, type OrderPlaced } from "./contracts.js";
+
+const bus = createEventBus();
+
+// notifications module: subscribes, never imported by orders
+bus.on<Event<OrderPlaced>>(OrderPlacedEvent.type, (event) => {
+  console.log(`notifications: e-mail ${event.payload.email} about order ${event.payload.orderId}`);
+});
+
+// analytics module: also subscribes, and has a bug
+bus.on<Event<OrderPlaced>>(OrderPlacedEvent.type, () => {
+  throw new Error("analytics database is down");
+});
+
+// orders module: publishes, and does not know who listens
+const result = await bus.publish(
+  OrderPlacedEvent.create({ orderId: 1, sku: "mug", quantity: 1, email: "ada@example.com" }),
+);
+console.log("handlers:", result.handlerCount, "ok:", result.succeeded, "failed:", result.failed);
+for (const error of result.errors) {
+  const cause = error instanceof Error && error.cause instanceof Error ? error.cause.message : String(error);
+  console.log("logged:", cause);
+}
+</example>
+<output>
+notifications: e-mail ada@example.com about order 1
+handlers: 2 ok: 1 failed: 1
+logged: analytics database is down
+</output>
+<p>Three things to notice:</p>
+<ul>
+<li>The orders code only knows <code>OrderPlacedEvent</code>. Adding a loyalty-points module later means adding one more <code>bus.on</code>, with no change to orders.</li>
+<li>The analytics handler threw, and the e-mail was still sent. In its default <code>CONTINUE</code> mode the bus runs every handler and collects the failures in <code>result.errors</code>, so one broken module does not break checkout. Log those errors: a failure nobody sees is a failure nobody fixes.</li>
+<li>The event carries everything a subscriber needs (<code>email</code>, <code>sku</code>). A subscriber that had to call back into orders to learn more would be coupled to orders again.</li>
+</ul>
+<warn title="IN-PROCESS EVENTS ARE NOT DURABLE">This bus lives in memory. If the process crashes right after the order is saved and before the event is handled, the e-mail is never sent. Inside one app that is often acceptable. When it is not, save the event in the same database transaction as the order and publish it afterwards. That is the <em>outbox pattern</em>, and <a href="/learn/zudo-microservices">the next lesson</a> builds one.</warn>
+</section>
+
+<section>
+<h2 id="cqrs">Commands and queries between modules</h2>
+<p>With <code>@zudojs/cqrs</code>, from <a href="/learn/zudo-cqrs">the CQRS lesson</a>, one module can ask another for work <strong>by name</strong>. The asking module imports only the message types, never the other module's code. A <strong>command</strong> changes something (<code>PlaceOrder</code>). A <strong>query</strong> only reads (<code>GetProduct</code>).</p>
+<p>Inside a monolith this gives you one more thing: every write goes through one bus, so logging, timing and permission checks can wrap all of them in one place, as middleware.</p>
+<example file="messages.ts" project="cqrs">
+// Shared contracts: the only thing modules import from each other
+import type { CommandOf, QueryOf } from "@zudojs/cqrs";
+
+export interface ProductView {
+  readonly sku: string;
+  readonly price: number;
+}
+
+export type GetProduct = QueryOf<"GetProduct", { sku: string }>;
+export type PlaceOrder = CommandOf<"PlaceOrder", { sku: string; quantity: number }>;
+</example>
+<example file="app.ts" project="cqrs">
+import { createCommandBus, createQueryBus, timingMiddleware } from "@zudojs/cqrs";
+import type { GetProduct, PlaceOrder, ProductView } from "./messages.js";
+
+const queries = createQueryBus();
+const commands = createCommandBus({
+  middleware: [timingMiddleware({ onTiming: ({ request }) => console.log(`audit: ${request.type}`) })],
+});
+
+// catalog module registers its query handler
+const prices = new Map([["mug", 12], ["tee", 20]]);
+queries.register<GetProduct, ProductView>("GetProduct", async (query) => ({
+  sku: query.sku,
+  price: prices.get(query.sku) ?? 0,
+}));
+
+// orders module registers its command handler; it asks the catalog by name
+commands.register<PlaceOrder, { total: number }>("PlaceOrder", async (command) => {
+  const product = await queries.execute<GetProduct, ProductView>({ type: "GetProduct", sku: command.sku });
+  return { total: product.price * command.quantity };
+});
+
+// an HTTP controller sends the command
+const result = await commands.execute<PlaceOrder, { total: number }>({ type: "PlaceOrder", sku: "tee", quantity: 2 });
+console.log(result);
+</example>
+<output>
+audit: PlaceOrder
+{ total: 40 }
+</output>
+<p>The orders handler never imported the catalog. It knows that a query called <code>GetProduct</code> exists and what it returns, which is exactly what <code>messages.ts</code> says. The <code>timingMiddleware</code> saw the command without either module doing anything: that is where an audit log belongs.</p>
+<note>Do not put every call through a bus by reflex. A plain interface call, as in <code>CatalogApi</code>, is easier to read and to test. Reach for commands and queries when you want the extra middleware, or when you want the two modules to share nothing but message names.</note>
+</section>
+
+<section>
+<h2 id="runtime">Wiring modules into the runtime</h2>
+<p>Here is the whole picture as the runtime sees it. The shared infrastructure (one logger, one container, one event bus) is created once and passed to the runtime. Each module gets what it needs through its constructor, and declares which modules it depends on:</p>
+<example file="runtime.ts" browser="no">
+import { createContainer } from "@zudojs/container";
+import { BaseModule, type Module } from "@zudojs/core";
+import { createEventBus, type EventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
+
+class CatalogModule extends BaseModule {
+  readonly id = "catalog";
+  readonly name = "catalog";
+  constructor() { super({ version: "0.1.0" }); }
+  override async onInitialize() { console.log("catalog: ready"); }
+  override async onShutdown() { console.log("catalog: stopped"); }
+}
+
+class OrdersModule extends BaseModule {
+  readonly id = "orders";
+  readonly name = "orders";
+  constructor(private readonly bus: EventBus) { super({ version: "0.1.0", dependencies: ["catalog"] }); }
+  override async onInitialize() {
+    this.bus.on("order.placed", () => {});
+    console.log("orders: ready, subscribed to order.placed");
+  }
+  override async onShutdown() { console.log("orders: stopped"); }
+}
+
+const eventBus = createEventBus();
+const modules = new Map<string, Module>();
+for (const module of [new OrdersModule(eventBus), new CatalogModule()]) modules.set(module.id, module);
+
+const runtime = createRuntime(
+  { modules, eventBus, container: createContainer(), logger: createLogger({ name: "shopflow", level: LoggerLevel.ERROR }) },
+  { applicationName: "shopflow", environment: "development", handleSignals: false },
+);
+await runtime.start();
+console.log("state:", runtime.state);
+await runtime.stop();
+</example>
+<output>
+catalog: ready
+orders: ready, subscribed to order.placed
+state: running
+orders: stopped
+catalog: stopped
+</output>
+<p>Orders was listed first, but the catalog started first, because orders declared <code>dependencies: ["catalog"]</code>. On shutdown the order is reversed, so orders stops using the catalog before the catalog goes away. <code>LoggerLevel.ERROR</code> keeps the runtime's own log lines out of this output.</p>
+</section>
+
+<section>
+<h2 id="when">Rules of thumb</h2>
+<ul>
+<li><strong>Draw boundaries around business areas, not technical layers.</strong> <code>catalog</code>, <code>orders</code> and <code>payments</code> are good modules. <code>controllers</code>, <code>services</code> and <code>utils</code> are folders inside a module.</li>
+<li><strong>Keep the public API small.</strong> Export a few functions and types from <code>index.ts</code>. Every export is a promise you have to keep.</li>
+<li><strong>Ask, don't reach.</strong> Call the public API, publish an event, or send a command. Never read another module's tables or private files.</li>
+<li><strong>Stay in one process as long as you can.</strong> A modular monolith gives you most of the order of microservices, with none of the network problems. Move a module into its own service only when you have a concrete reason, such as a very different load or a separate team. <a href="/learn/zudo-microservices">The next lesson</a> is about exactly that.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Add a stock-level query to the catalog">
+<p>Give <code>CatalogApi</code> a third method, <code>inStock(sku): boolean</code>. Use it in <code>createOrders</code> so <code>placeOrder</code> refuses a sold-out product before calling <code>reserve</code>. Why is it still important that <code>reserve</code> checks the stock itself?</p>
+<solution>
+<example file="stock.ts">
+interface CatalogApi {
+  inStock(sku: string): boolean;
+  reserve(sku: string, quantity: number): void;
+}
+
+function createCatalog(): CatalogApi {
+  const stock = new Map([["mug", 1]]);
+  return {
+    inStock: (sku) => (stock.get(sku) ?? 0) > 0,
+    reserve(sku, quantity) {
+      const left = stock.get(sku) ?? 0;
+      if (quantity > left) throw new Error(`Only ${left} ${sku} left`);
+      stock.set(sku, left - quantity);
+    },
+  };
+}
+
+const catalog = createCatalog();
+for (const quantity of [1, 1]) {
+  if (!catalog.inStock("mug")) {
+    console.log("sold out");
+    continue;
+  }
+  catalog.reserve("mug", quantity);
+  console.log("reserved", quantity);
+}
+</example>
+<output>
+reserved 1
+sold out
+</output>
+<p><code>inStock</code> is a quick check for a nicer error message. Between that check and <code>reserve</code>, another request may buy the last mug. The rule must live in the one place that changes the stock, which is <code>reserve</code>.</p>
+</solution>
+</exercise>
+<exercise title="Write a boundary check">
+<p>Write a function <code>checkImport(fromModule, specifier)</code> that returns an error message when code in one module imports a file from inside another module, and <code>null</code> when the import is allowed. Allowed: anything inside the same module, and another module's <code>index.js</code>. Test it with the three imports below.</p>
+<solution>
+<example file="boundaries.js">
+function checkImport(fromModule, specifier) {
+  const match = specifier.match(/modules\/([^/]+)\/(.+)$/);
+  if (!match) return null;
+  const [, target, rest] = match;
+  if (target === fromModule || rest === "index.js") return null;
+  return `${fromModule} may not import ${target}/${rest}: use ${target}/index.js`;
+}
+
+console.log(checkImport("orders", "../../modules/catalog/index.js"));
+console.log(checkImport("orders", "../../modules/catalog/features/catalog.feature.js"));
+console.log(checkImport("orders", "../../modules/orders/features/orders.feature.js"));
+</example>
+<output>
+null
+orders may not import catalog/features/catalog.feature.js: use catalog/index.js
+null
+</output>
+<p>Run a check like this over every file in a unit test, and the build fails the day someone crosses a boundary. Lint tools can do the same with a "restricted imports" rule.</p>
+</solution>
+</exercise>
+<exercise title="Subscribe a loyalty module">
+<p>Add a <code>loyalty</code> subscriber to the events example that gives one point per unit bought, and prints the running total for the customer. Do not change the orders code.</p>
+<solution>
+<example file="loyalty.ts">
+import { createEventBus, defineEvent, type Event } from "@zudojs/events";
+
+interface OrderPlaced {
+  readonly email: string;
+  readonly quantity: number;
+}
+const OrderPlacedEvent = defineEvent<"order.placed", OrderPlaced>("order.placed");
+
+const bus = createEventBus();
+const points = new Map<string, number>();
+
+bus.on<Event<OrderPlaced>>(OrderPlacedEvent.type, (event) => {
+  const { email, quantity } = event.payload;
+  points.set(email, (points.get(email) ?? 0) + quantity);
+  console.log(`loyalty: ${email} has ${points.get(email)} points`);
+});
+
+await bus.publish(OrderPlacedEvent.create({ email: "ada@example.com", quantity: 2 }));
+await bus.publish(OrderPlacedEvent.create({ email: "ada@example.com", quantity: 3 }));
+</example>
+<output>
+loyalty: ada@example.com has 2 points
+loyalty: ada@example.com has 5 points
+</output>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A monolith is one deployable program. It is a fine start; it only becomes a problem when every part can reach into every other part.</li>
+<li>A modular monolith keeps one deployment but splits the code into modules along business areas. Each module has a small public API and owns its data.</li>
+<li><code>zudojs create --architecture modular-monolith</code> and <code>zudojs generate module</code> give you the folders. Register each module in <code>app.ts</code> and declare its <code>dependencies</code>.</li>
+<li>Modules talk through public interfaces (answers now), events (something happened) and commands or queries (work by name). Logger, config, event bus and database server are shared; tables are not.</li>
+</ul>
+<p>Next, you take one of these modules out of the process and into its own service, and meet everything that the network makes harder.</p>
+</section>

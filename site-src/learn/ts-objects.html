@@ -1,0 +1,470 @@
+---
+title: Interfaces, unions and literal types
+description: Name object shapes with interfaces and type aliases, mark properties optional or readonly, extend and combine shapes, and model data that can take several forms with unions, literal types and discriminated unions.
+minutes: 40
+youNeed: Typing functions
+youBuild: A typed user management module with roles, account states and safe profile updates
+keywords: typescript interface vs type, type alias, optional properties, readonly properties, extends interface, intersection types, union types, literal types, narrowing, in operator, discriminated union, exhaustive switch
+---
+<section>
+<h2 id="interface-vs-type">Two ways to name a shape</h2>
+<p>You have written <code>type Task = { ... }</code> since <a href="/learn/ts-setup">Why TypeScript exists</a>. That is a <strong>type alias</strong>: a name for any type. For object shapes there is a second way, the <strong>interface</strong>. Here is the same user, described both ways:</p>
+<example file="shapes.ts" project="objects">
+type UserAlias = {
+  id: number;
+  email: string;
+  name: string;
+};
+
+interface User {
+  id: number;
+  email: string;
+  name: string;
+}
+
+const a: UserAlias = { id: 1, email: "ada@example.com", name: "Ada" };
+const b: User = a;
+console.log(b.name, b.email);
+</example>
+<output>
+Ada ada@example.com
+</output>
+<p>Assigning <code>a</code> to <code>b</code> works even though the names differ. TypeScript compares <strong>shapes</strong>, not names: any object with the right properties fits. This is called <strong>structural typing</strong>.</p>
+<p>So which one should you use?</p>
+<ul>
+<li><strong>interface</strong> only describes objects (and classes). It can be extended with <code>extends</code>, and the compiler's error messages show its name.</li>
+<li><strong>type</strong> can name anything: a union like <code>"todo" | "done"</code>, a tuple, a function type. Only a type alias can do those.</li>
+</ul>
+<p>A simple rule, and the one ZudoJS follows: <strong>use <code>interface</code> for object shapes, and <code>type</code> for everything else.</strong></p>
+</section>
+
+<section>
+<h2 id="optional-readonly">Optional and readonly properties</h2>
+<p>Two marks change how a property behaves:</p>
+<example file="user.ts" project="objects">
+export interface User {
+  readonly id: number;
+  email: string;
+  name: string;
+  nickname?: string;
+}
+
+export const ada: User = { id: 1, email: "ada@example.com", name: "Ada Lovelace" };
+</example>
+<ul>
+<li><code>readonly id</code>: once a user exists, nobody may change its id.</li>
+<li><code>nickname?</code>: the question mark makes the property <strong>optional</strong>. A user may have a nickname or not. Its type is <code>string | undefined</code>.</li>
+</ul>
+<p>Now the compiler guards every user in the program:</p>
+<example file="guard.ts" project="objects" check="tsc-error" browser="no">
+import type { User } from "./user.js";
+
+const user: User = { id: 1, email: "ada@example.com", name: "Ada" };
+
+user.id = 2;
+user.email = null;
+const other: User = { id: 2, name: "Grace" };
+console.log(user.nickname.toUpperCase());
+</example>
+<output kind="tsc">
+guard.ts:5:6 - error TS2540: Cannot assign to 'id' because it is a read-only property.
+
+5 user.id = 2;
+       ~~
+
+guard.ts:6:1 - error TS2322: Type 'null' is not assignable to type 'string'.
+
+6 user.email = null;
+  ~~~~~~~~~~
+
+guard.ts:7:7 - error TS2741: Property 'email' is missing in type '{ id: number; name: string; }' but required in type 'User'.
+
+7 const other: User = { id: 2, name: "Grace" };
+        ~~~~~
+
+  user.ts:3:3 - 'email' is declared here.
+    3   email: string;
+        ~~~~~
+
+guard.ts:8:13 - error TS18048: 'user.nickname' is possibly 'undefined'.
+
+8 console.log(user.nickname.toUpperCase());
+              ~~~~~~~~~~~~~
+
+
+Found 4 errors in the same file, starting at: guard.ts:5
+</output>
+<p>Four mistakes, four errors. The import says <code>import type</code>, because <code>User</code> is only a type; <a href="/learn/ts-modules">Modules in TypeScript</a> explains why that matters.</p>
+<warn title="READONLY IS A COMPILE-TIME PROMISE">Like every type, <code>readonly</code> is removed before the code runs. It stops <em>your code</em> from changing the id, but plain JavaScript could still change it. Use <code>Object.freeze</code> when you need the runtime to enforce it. Also, <code>readonly</code> is shallow: a <code>readonly roles: string[]</code> cannot be replaced, but you can still <code>push</code> into it. Write <code>readonly roles: readonly string[]</code> to lock both.</warn>
+</section>
+
+<section>
+<h2 id="extending">Extending and combining shapes</h2>
+<p>Many shapes share properties. An interface can <strong>extend</strong> another, which copies in all its properties and adds more:</p>
+<example file="extend.ts" project="objects">
+interface Person {
+  name: string;
+  email: string;
+}
+
+interface User extends Person {
+  readonly id: number;
+}
+
+interface Admin extends User {
+  readonly permissions: readonly string[];
+}
+
+type Timestamps = { createdAt: string; updatedAt: string };
+type StoredUser = User & Timestamps;
+
+const grace: Admin = { id: 2, name: "Grace", email: "grace@example.com", permissions: ["users:write"] };
+const stored: StoredUser = {
+  id: 1,
+  name: "Ada",
+  email: "ada@example.com",
+  createdAt: "2026-01-05",
+  updatedAt: "2026-03-01",
+};
+
+function greet(person: Person): string {
+  return `Hello, ${person.name}`;
+}
+
+console.log(greet(grace), "|", greet(stored), "|", grace.permissions.join(", "));
+</example>
+<output>
+Hello, Grace | Hello, Ada | users:write
+</output>
+<ul>
+<li><code>Admin extends User</code>: an admin is a user with permissions. Every <code>Admin</code> is also a <code>User</code> and a <code>Person</code>.</li>
+<li><code>User &amp; Timestamps</code> is an <strong>intersection</strong>: a value that has <em>all</em> the properties of both. It is the <code>type</code> way of combining shapes, and it also works with shapes you did not write yourself.</li>
+<li><code>greet</code> asks only for a <code>Person</code>. Both an admin and a stored user have a name and an email, so both are accepted. A function should ask for the smallest shape it needs.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="unions">Unions and literal types</h2>
+<p>A <strong>union</strong> type, written with <code>|</code>, says a value is one of several types. You already used <code>Task | undefined</code>. A <strong>literal type</strong> is a type with exactly one value, such as <code>"admin"</code>. Put literals in a union and you get a fixed list of allowed values, which is what an <code>enum</code> is for in other languages:</p>
+<example file="role.ts" project="objects" check="tsc-error">
+type Role = "member" | "editor" | "admin";
+
+const role: Role = "superuser";
+
+let status = "active";
+const fixedStatus = "active";
+const allowed: "active" | "suspended" = status;
+const alsoAllowed: "active" | "suspended" = fixedStatus;
+</example>
+<output kind="tsc">
+role.ts:3:7 - error TS2322: Type '"superuser"' is not assignable to type 'Role'.
+
+3 const role: Role = "superuser";
+        ~~~~
+
+role.ts:7:7 - error TS2322: Type 'string' is not assignable to type '"active" | "suspended"'.
+
+7 const allowed: "active" | "suspended" = status;
+        ~~~~~~~
+
+
+Found 2 errors in the same file, starting at: role.ts:3
+</output>
+<p>The first error is what you expect: <code>"superuser"</code> is not a role. The second one is a surprise at first. <code>status</code> holds <code>"active"</code>, an allowed value, so why is it refused, while <code>fixedStatus</code> on the last line is fine?</p>
+<p>A <code>const</code> can never change, so <code>fixedStatus</code> keeps the literal type <code>"active"</code>. A <code>let</code> gets the wider type <code>string</code>. When you want a variable to hold only certain words, annotate it: <code>let status: "active" | "suspended" = "active"</code>.</p>
+</section>
+
+<section>
+<h2 id="narrowing">Narrowing a union</h2>
+<p>Before you use a union value, you check which member it is. TypeScript follows the check and <strong>narrows</strong> the type inside each branch. You have seen <code>typeof</code> and <code>=== undefined</code>. For objects, the <code>in</code> operator checks whether a property exists:</p>
+<example file="contact.ts" project="objects">
+type Contact = string | { email: string } | { phone: string; country: string };
+
+function describeContact(contact: Contact): string {
+  if (typeof contact === "string") {
+    return `name only: ${contact}`;
+  }
+  if ("email" in contact) {
+    return `email ${contact.email}`;
+  }
+  return `phone +${contact.country} ${contact.phone}`;
+}
+
+console.log(describeContact("Ada"));
+console.log(describeContact({ email: "ada@example.com" }));
+console.log(describeContact({ phone: "20 7946 0000", country: "44" }));
+</example>
+<output>
+name only: Ada
+email ada@example.com
+phone +44 20 7946 0000
+</output>
+<p>After <code>typeof contact === "string"</code> returns, only the two object shapes are left. After the <code>"email" in contact</code> check returns, only the phone shape is left, so <code>contact.country</code> is allowed on the last line without any check.</p>
+</section>
+
+<section>
+<h2 id="discriminated">Discriminated unions</h2>
+<p>The most useful union in real code is the <strong>discriminated union</strong>: several object shapes that share one property with a different literal value in each. That property, often called <code>kind</code> or <code>status</code>, tells them apart. Here is a user account that is active, invited or suspended, each with its own data:</p>
+<example file="account.ts" project="objects">
+type AccountState =
+  | { kind: "active"; lastLogin: string }
+  | { kind: "invited"; invitedBy: number }
+  | { kind: "suspended"; reason: string; until: string };
+
+function describeState(state: AccountState): string {
+  switch (state.kind) {
+    case "active":
+      return `active, last login ${state.lastLogin}`;
+    case "invited":
+      return `invited by user ${state.invitedBy}`;
+    case "suspended":
+      return `suspended until ${state.until}: ${state.reason}`;
+    default: {
+      const unreachable: never = state;
+      return unreachable;
+    }
+  }
+}
+
+console.log(describeState({ kind: "active", lastLogin: "2026-09-20" }));
+console.log(describeState({ kind: "invited", invitedBy: 1 }));
+console.log(describeState({ kind: "suspended", reason: "spam", until: "2026-10-01" }));
+</example>
+<output>
+active, last login 2026-09-20
+invited by user 1
+suspended until 2026-10-01: spam
+</output>
+<p>Inside <code>case "suspended"</code>, TypeScript knows <code>state</code> has <code>reason</code> and <code>until</code>. Reading <code>state.reason</code> in the <code>"active"</code> case would be an error. The <code>default</code> branch is the exhaustiveness check you learned in <a href="/learn/ts-types#void-never">Basic types</a>: add a fourth state and every <code>switch</code> that forgot it stops compiling.</p>
+<p>Compare this with the alternative, one shape with many optional properties: <code>{ kind: string; lastLogin?: string; invitedBy?: number; reason?: string; until?: string }</code>. That allows nonsense like an active user with a suspension reason, and forces a check on every read. With a discriminated union, impossible states cannot even be written.</p>
+</section>
+
+<section>
+<h2 id="build">Build: a user management module</h2>
+<p>Put it all together. First the types, in their own file:</p>
+<example file="user.types.ts" project="users">
+export type Role = "member" | "editor" | "admin";
+
+export type AccountState =
+  | { kind: "active" }
+  | { kind: "suspended"; reason: string };
+
+export interface User {
+  readonly id: number;
+  email: string;
+  name: string;
+  role: Role;
+  state: AccountState;
+}
+
+export interface NewUser {
+  email: string;
+  name: string;
+}
+
+export interface ProfileUpdate {
+  name?: string;
+  email?: string;
+}
+</example>
+<p><code>NewUser</code> is what someone sends to sign up. It has no <code>id</code>, <code>role</code> or <code>state</code>, because the server decides those, never the client. Now the functions:</p>
+<example file="users.ts" project="users">
+import type { NewUser, ProfileUpdate, Role, User } from "./user.types.js";
+
+const users: User[] = [];
+
+export function createUser(input: NewUser): User {
+  const user: User = { id: users.length + 1, email: input.email, name: input.name, role: "member", state: { kind: "active" } };
+  users.push(user);
+  return user;
+}
+
+export function changeRole(actor: User, target: User, role: Role): void {
+  if (actor.role !== "admin" || actor.state.kind !== "active") {
+    throw new Error(`user ${actor.id} may not change roles`);
+  }
+  target.role = role;
+}
+
+export function suspend(actor: User, target: User, reason: string): void {
+  if (actor.role !== "admin" || actor.id === target.id) {
+    throw new Error(`user ${actor.id} may not suspend user ${target.id}`);
+  }
+  target.state = { kind: "suspended", reason };
+}
+
+export function updateProfile(user: User, changes: ProfileUpdate): void {
+  if (changes.name !== undefined) user.name = changes.name;
+  if (changes.email !== undefined) user.email = changes.email;
+}
+
+export function describe(user: User): string {
+  const state = user.state.kind === "active" ? "active" : `suspended (${user.state.reason})`;
+  return `#${user.id} ${user.name} <${user.email}> ${user.role}, ${state}`;
+}
+</example>
+<p>And a program that uses them:</p>
+<example file="main.ts" project="users">
+import { changeRole, createUser, describe, suspend, updateProfile } from "./users.js";
+
+const ada = createUser({ email: "ada@example.com", name: "Ada" });
+const eve = createUser({ email: "eve@example.com", name: "Eve" });
+
+ada.role = "admin";
+changeRole(ada, eve, "editor");
+updateProfile(eve, { name: "Eve Smith" });
+
+try {
+  changeRole(eve, eve, "admin");
+} catch (error) {
+  console.log(String(error));
+}
+
+suspend(ada, eve, "spam");
+console.log(describe(ada));
+console.log(describe(eve));
+</example>
+<output>
+Error: user 2 may not change roles
+#1 Ada <ada@example.com> admin, active
+#2 Eve Smith <eve@example.com> editor, suspended (spam)
+</output>
+<p>The first admin is made by hand (<code>ada.role = "admin"</code>), as a setup script would do. After that, only an active admin can change roles, and nobody can suspend themselves. Eve, an editor, cannot make herself an admin.</p>
+<h3>A security trap the types do not catch</h3>
+<p><code>updateProfile</code> copies <code>name</code> and <code>email</code> one by one. It is tempting to write it in one line with the spread you know from <a href="/learn/js-data">the objects lesson</a>. This version is <strong>insecure, on purpose</strong>:</p>
+<example file="insecure.ts" project="users">
+import type { ProfileUpdate, User } from "./user.types.js";
+
+function updateProfileInsecure(user: User, changes: ProfileUpdate): User {
+  return { ...user, ...changes };
+}
+
+const eve: User = { id: 2, email: "eve@example.com", name: "Eve", role: "member", state: { kind: "active" } };
+const requestBody = JSON.parse('{"name": "Eve", "role": "admin"}');
+
+console.log(updateProfileInsecure(eve, requestBody).role);
+</example>
+<output>
+admin
+</output>
+<p>This compiles without a single error, and Eve just made herself an admin. The type <code>ProfileUpdate</code> says there is no <code>role</code>, but the request body is data from outside, and <code>JSON.parse</code> returns <code>any</code>, which the compiler trusts blindly. At runtime, the spread copies every property the client sent. This is a real and common hole called <strong>mass assignment</strong>.</p>
+<p>The fix is the version in <code>users.ts</code>: copy only the fields a user may change, by name. Types describe what you <em>expect</em>; they do not remove what an attacker <em>adds</em>. <a href="/learn/ts-runtime">TypeScript and JavaScript together</a> shows how to check outside data properly.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Add a deleted state">
+<p>Add a third account state, <code>{ kind: "deleted"; deletedAt: string }</code>, to the <code>AccountState</code> union in <code>account.ts</code>, and run <code>npx tsc --noEmit</code>. What does the compiler report, and why is that good? Then handle the new case.</p>
+<solution>
+<p>The <code>default</code> branch of <code>describeState</code> fails with an error like <code>Type '{ kind: "deleted"; deletedAt: string; }' is not assignable to type 'never'</code>, which points at every <code>switch</code> that forgot the new state. Add a case:</p>
+<example file="deleted.ts" project="ex-deleted">
+type AccountState =
+  | { kind: "active"; lastLogin: string }
+  | { kind: "deleted"; deletedAt: string };
+
+function describeState(state: AccountState): string {
+  switch (state.kind) {
+    case "active":
+      return `active, last login ${state.lastLogin}`;
+    case "deleted":
+      return `deleted on ${state.deletedAt}`;
+    default: {
+      const unreachable: never = state;
+      return unreachable;
+    }
+  }
+}
+
+console.log(describeState({ kind: "deleted", deletedAt: "2026-09-01" }));
+</example>
+<output>
+deleted on 2026-09-01
+</output>
+</solution>
+</exercise>
+<exercise title="Shapes for a payment">
+<p>Model a payment method as a discriminated union: a card (<code>last4</code>, <code>expires</code>), a bank transfer (<code>iban</code>) or cash. Write <code>label(method)</code> that prints e.g. <code>card ending 4242</code>. Why is a card number's last four digits a <code>string</code>, not a <code>number</code>?</p>
+<solution>
+<example file="payment.ts" project="ex-payment">
+type PaymentMethod =
+  | { kind: "card"; last4: string; expires: string }
+  | { kind: "bank"; iban: string }
+  | { kind: "cash" };
+
+function label(method: PaymentMethod): string {
+  switch (method.kind) {
+    case "card":
+      return `card ending ${method.last4} (expires ${method.expires})`;
+    case "bank":
+      return `bank transfer from ${method.iban.slice(0, 4)}…`;
+    case "cash":
+      return "cash on delivery";
+  }
+}
+
+console.log(label({ kind: "card", last4: "0042", expires: "12/28" }));
+console.log(label({ kind: "bank", iban: "GB33BUKB20201555555555" }));
+console.log(label({ kind: "cash" }));
+</example>
+<output>
+card ending 0042 (expires 12/28)
+bank transfer from GB33…
+cash on delivery
+</output>
+<p>As a number, <code>0042</code> would become <code>42</code> and lose its leading zeros. Anything you never do arithmetic on, such as card digits, phone numbers and postcodes, is a string. This <code>switch</code> has no <code>default</code>, and still compiles: the compiler sees that every case returns, so the function cannot reach its end. Add a fourth kind and it reports TS2366, which you met in <a href="/learn/ts-functions">Typing functions</a>.</p>
+</solution>
+</exercise>
+<exercise title="Who may suspend whom?">
+<p>In the user module, <code>suspend</code> checks that the actor is an admin, but not that the actor is active. A suspended admin can still suspend others. Fix it, and make sure an admin cannot suspend another admin either.</p>
+<solution>
+<example file="suspend.ts" project="ex-suspend">
+type Role = "member" | "editor" | "admin";
+type AccountState = { kind: "active" } | { kind: "suspended"; reason: string };
+interface User {
+  readonly id: number;
+  role: Role;
+  state: AccountState;
+}
+
+function suspend(actor: User, target: User, reason: string): void {
+  const allowed =
+    actor.role === "admin" && actor.state.kind === "active" && target.role !== "admin" && actor.id !== target.id;
+  if (!allowed) throw new Error(`user ${actor.id} may not suspend user ${target.id}`);
+  target.state = { kind: "suspended", reason };
+}
+
+const ada: User = { id: 1, role: "admin", state: { kind: "active" } };
+const bob: User = { id: 2, role: "admin", state: { kind: "suspended", reason: "audit" } };
+const eve: User = { id: 3, role: "member", state: { kind: "active" } };
+
+const attempts: [User, User][] = [[bob, eve], [ada, bob], [ada, eve]];
+for (const [actor, target] of attempts) {
+  try {
+    suspend(actor, target, "spam");
+    console.log(`user ${target.id} suspended`);
+  } catch (error) {
+    console.log(String(error));
+  }
+}
+</example>
+<output>
+Error: user 2 may not suspend user 3
+Error: user 1 may not suspend user 2
+user 3 suspended
+</output>
+<p>Write permission checks as one clear "allowed" condition, and deny by default: the action only happens when every rule says yes.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Use <code>interface</code> for object shapes and <code>type</code> for unions, tuples and functions. TypeScript compares shapes, not names.</li>
+<li><code>readonly</code> blocks changes at compile time; <code>?</code> makes a property optional (<code>T | undefined</code>).</li>
+<li><code>extends</code> builds one interface on another; <code>A &amp; B</code> combines two shapes.</li>
+<li>Literal types in a union (<code>"member" | "admin"</code>) allow only listed values. <code>const</code> keeps literal types; <code>let</code> widens to <code>string</code>.</li>
+<li>Narrow unions with <code>typeof</code>, <code>in</code> and equality checks. A discriminated union with an exhaustive <code>switch</code> makes impossible states impossible to write.</li>
+<li>Types do not remove extra properties sent by a client. Copy allowed fields by name.</li>
+</ul>
+</section>

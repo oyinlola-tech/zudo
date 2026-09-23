@@ -1,0 +1,688 @@
+---
+title: Schemas and validation in depth
+description: Validate everything that crosses the Task API's boundary with @zudojs/schema. Read issues, coerce query strings, transform and refine values, block unknown fields, validate requests in routes and responses on the way out, and guard against hostile JSON with @zudojs/validation.
+minutes: 50
+youNeed: Configuration, and Your first Zudo code
+youBuild: A Task API that validates route parameters, query strings and bodies, supports filtered lists and partial updates, and never sends a field it did not mean to
+keywords: zudojs schema, validation, parse vs safeParse, SchemaIssue, coercion, schema.coerce, query string validation, transform, refine, partial, strict, unknown keys, mass assignment, request validation, response validation, allow-list, SchemaError issues, zudojs validation, assertDepthWithinLimit, assertSizeWithinLimit
+---
+<section>
+<h2 id="boundary">Validate at the boundary</h2>
+<p>In <a href="/learn/zudo-first-code">Your first Zudo code</a> you met <code>@zudojs/schema</code>: describe data once, then <code>parse</code> (throws a <code>SchemaError</code>) or <code>safeParse</code> (returns <code>{ success, data }</code> or <code>{ success, issues }</code>). You have since used schemas for request bodies and for configuration. This lesson goes deeper.</p>
+<p>The rule behind all of it: every value that enters your program from outside is <strong>untrusted</strong> until a schema has checked it. For an HTTP API, "outside" means the route parameters, the query string, the headers and the body. The place where outside data comes in is the <strong>trust boundary</strong>. Validate there, once, and the code behind it (the services) can rely on clean, typed data.</p>
+<p>First, a closer look at the <strong>issues</strong> a failed check returns, and how to turn them into something a client can use:</p>
+<example file="issues.ts">
+import { schema } from "@zudojs/schema";
+import type { SchemaIssue } from "@zudojs/schema";
+
+const NewTask = schema.object({
+  title: schema.string().trim().min(3).max(100),
+  priority: schema.default(schema.enum(["low", "normal", "high"] as const), "normal"),
+  tags: schema.default(schema.array(schema.string().max(20)).max(5), []),
+});
+
+function fieldErrors(issues: readonly SchemaIssue[]): Record<string, string> {
+  const errors: Record<string, string> = {};
+  for (const issue of issues) {
+    errors[issue.path.join(".") || "(body)"] ??= issue.message;
+  }
+  return errors;
+}
+
+const result = NewTask.safeParse({ title: "no", priority: "urgent", tags: ["home", 42] });
+if (!result.success) {
+  console.log(result.issues[1]);
+  console.log(fieldErrors(result.issues));
+}
+
+const early = NewTask.safeParse({ title: 1, priority: 2 }, { abortEarly: true });
+console.log(early.success ? "ok" : early.issues.length);
+</example>
+<output>
+{
+  code: 'invalid_enum',
+  path: [ 'priority' ],
+  message: 'Expected one of "low", "normal", "high"',
+  expected: '"low", "normal", "high"',
+  received: '"urgent"'
+}
+{
+  title: 'String must be at least 3 characters',
+  priority: 'Expected one of "low", "normal", "high"',
+  'tags.1': 'Expected string, received number'
+}
+1
+</output>
+<p>An issue has a <code>code</code> for your program, a <code>path</code> to the field (<code>["tags", 1]</code> means the second tag), a <code>message</code> for people, and often <code>expected</code> and <code>received</code>. <code>fieldErrors</code> turns the list into one message per field, which is easy for a web form to show next to each input. <code>abortEarly: true</code> stops at the first problem when you do not need them all.</p>
+</section>
+
+<section>
+<h2 id="coercion">Coercion: query strings are strings</h2>
+<p>You saw in <a href="/learn/zudo-http#query">Routes, requests and responses</a> that every query value is a string, or an array of strings for a repeated key, and checking them by hand took many lines. <strong>Coercion</strong> means converting a value to the right type <em>before</em> checking it. <code>schema.coerce.number()</code> and <code>schema.coerce.boolean()</code> do that, strictly:</p>
+<example file="query.ts">
+import { schema } from "@zudojs/schema";
+import type { Infer } from "@zudojs/schema";
+
+const ListTasksQuery = schema.object({
+  page: schema.coerce.number().int().min(1).default(1),
+  limit: schema.coerce.number().int().min(1).max(50).default(20),
+  done: schema.coerce.boolean().optional(),
+  priority: schema.optional(schema.enum(["low", "normal", "high"] as const)),
+});
+export type ListTasks = Infer<typeof ListTasksQuery>;
+
+for (const query of [
+  {},
+  { page: "2", limit: "10", done: "false", priority: "high" },
+  { done: "yes" },
+  { limit: "7.5", page: "" },
+  { page: ["1", "2"], priority: "urgent" },
+]) {
+  const result = ListTasksQuery.safeParse(query);
+  console.log(JSON.stringify(query), "->", result.success ? result.data : result.issues.map((i) => `${i.path.join(".")}: ${i.message}`));
+}
+</example>
+<output>
+{} -> { page: 1, limit: 20, done: undefined, priority: undefined }
+{"page":"2","limit":"10","done":"false","priority":"high"} -> { page: 2, limit: 10, done: false, priority: 'high' }
+{"done":"yes"} -> { page: 1, limit: 20, done: true, priority: undefined }
+{"limit":"7.5","page":""} -> [
+  'page: Cannot coerce string to number',
+  'limit: Expected integer, received 7.5'
+]
+{"page":["1","2"],"priority":"urgent"} -> [
+  'page: Cannot coerce array to number',
+  'priority: Expected one of "low", "normal", "high"'
+]
+</output>
+<p>Read the results:</p>
+<ul>
+<li>An empty query got the defaults: page 1, 20 per page.</li>
+<li><code>"2"</code> became the number 2, and <code>"false"</code> the boolean <code>false</code>. <code>"yes"</code> is also accepted as <code>true</code>, like <code>"1"</code> and <code>"on"</code>.</li>
+<li><code>"7.5"</code> is a number but not a whole one, and an empty <code>page=</code> is refused instead of becoming 0.</li>
+<li>A repeated key (an array) cannot become one number, and <code>"urgent"</code> is not an allowed priority.</li>
+</ul>
+<p>Only coerce input that really arrives as text: query strings, route parameters, headers, form fields, environment variables. A JSON body has real numbers and booleans, so use the normal <code>schema.number()</code> there; coercing would accept <code>"1"</code> where the client should have sent <code>1</code>.</p>
+</section>
+
+<section>
+<h2 id="transform">Transformations</h2>
+<p>A schema can also <strong>transform</strong>: return a changed value after the check passes. You already use small built-in ones, <code>trim()</code> and <code>toLowerCase()</code>. <code>.transform(fn)</code> runs your own function, and the output type follows whatever the function returns:</p>
+<example file="transform.ts">
+import { schema } from "@zudojs/schema";
+import type { Infer } from "@zudojs/schema";
+
+const TagList = schema
+  .string()
+  .max(200)
+  .transform((text) => text.split(",").map((tag) => tag.trim().toLowerCase()).filter((tag) => tag.length > 0));
+
+type TagListOutput = Infer<typeof TagList>;
+
+const output: TagListOutput = TagList.parse(" Home, URGENT,,errands ");
+console.log(output);
+console.log(TagList.safeParse(42).success);
+</example>
+<output>
+[ 'home', 'urgent', 'errands' ]
+false
+</output>
+<p>The schema accepts a <code>string</code>, and <code>Infer</code> says what it gives back: a <code>string[]</code>. The transform only ran because the input was a valid string of at most 200 characters; for <code>42</code> it never ran.</p>
+<note><code>SchemaInput&lt;typeof TagList&gt;</code> should name the input type, <code>string</code>. In <code>@zudojs/schema</code> 1.1.1 it wrongly gives the output type <code>string[]</code> for schemas built with the <code>.transform()</code> method. The wrapper form, <code>schema.transform(schema.string(), fn)</code>, gets it right.</note>
+<p><code>.transform()</code> and <code>.refine()</code> exist as methods on string and number schemas. For any other schema, such as an object, use the wrapper functions <code>schema.transform(inner, fn)</code> and <code>schema.refine(inner, check, message)</code>.</p>
+</section>
+
+<section>
+<h2 id="refine">Refinements: your own rules</h2>
+<p>Built-in rules cover types, lengths and formats. A <strong>refinement</strong> adds a rule of your own: a function that returns <code>true</code> when the value is fine, plus the message to report when it is not.</p>
+<p>The Task API gets due dates. <code>schema.string().date()</code> checks that a string <em>looks</em> like <code>YYYY-MM-DD</code>. Test it on some dates that do not exist:</p>
+<example file="dates.ts">
+import { schema } from "@zudojs/schema";
+
+const LooksLikeDate = schema.string().date();
+
+function isRealDate(text: string): boolean {
+  const [year, month, day] = text.split("-").map(Number);
+  const date = new Date(Date.UTC(year ?? 0, (month ?? 0) - 1, day ?? 0));
+  return date.toISOString().slice(0, 10) === text;
+}
+
+const DueDate = LooksLikeDate.refine(isRealDate, "Must be a real calendar date");
+
+for (const text of ["2026-10-01", "2026-02-30", "2026-13-45", "1 October"]) {
+  const result = DueDate.safeParse(text);
+  console.log(text.padEnd(10), LooksLikeDate.safeParse(text).success, result.success ? "ok" : result.issues[0]?.message);
+}
+</example>
+<output>
+2026-10-01 true ok
+2026-02-30 true Must be a real calendar date
+2026-13-45 true Must be a real calendar date
+1 October  false Invalid date format
+</output>
+<p>The middle column shows that <code>.date()</code> alone accepted 30 February and month 13: in <code>@zudojs/schema</code> 1.1.1 it only checks the shape of the text. The refinement closes that gap. <code>isRealDate</code> builds the date and checks that it did not roll over into another month (30 February would become 2 March).</p>
+<p>A rule that compares two fields belongs on the object. <code>schema.refine</code> wraps the object schema. The <code>path</code>-less issue it reports belongs to the whole object:</p>
+<example file="object-refine.ts">
+import { schema } from "@zudojs/schema";
+
+const Reminder = schema.refine(
+  schema.object({ remindOn: schema.string().date(), dueOn: schema.string().date() }),
+  (value) => value.remindOn <= value.dueOn,
+  "The reminder must not be after the due date",
+);
+
+console.log(Reminder.safeParse({ remindOn: "2026-09-30", dueOn: "2026-10-01" }).success);
+console.log(Reminder.safeParse({ remindOn: "2026-10-05", dueOn: "2026-10-01" }));
+</example>
+<output>
+true
+{
+  success: false,
+  issues: [
+    {
+      code: 'custom',
+      path: [],
+      message: 'The reminder must not be after the due date'
+    }
+  ]
+}
+</output>
+<p>Comparing the two strings works because dates in <code>YYYY-MM-DD</code> form sort in the same order as the dates themselves. Keep refinements <strong>synchronous and pure</strong>: they check the value, nothing else. "Does this title already exist?" needs the database, so it belongs in the service, which throws <code>ConflictError</code>, not in the schema.</p>
+</section>
+
+<section>
+<h2 id="updates">Partial updates and unknown fields</h2>
+<p>A <code>PATCH /tasks/:id</code> request changes only the fields it sends. The obvious idea is <code>NewTaskSchema.partial()</code>, which makes every field optional. Look at what it does with fields that have a <strong>default</strong>:</p>
+<example file="partial-trap.ts">
+import { schema } from "@zudojs/schema";
+
+const NewTaskSchema = schema.object({
+  title: schema.string().trim().min(3).max(100),
+  priority: schema.default(schema.enum(["low", "normal", "high"] as const), "normal"),
+});
+
+const changes = NewTaskSchema.partial().parse({ title: "Walk the dog" });
+console.log(changes);
+</example>
+<output>
+{ title: 'Walk the dog', priority: 'normal' }
+</output>
+<p>The client only sent a title, but the result also contains <code>priority: 'normal'</code>: the default still runs inside <code>partial()</code>. Merged into a stored task with priority <code>high</code>, this update would quietly reset it to <code>normal</code>. Defaults describe <em>creating</em> a task; an update must not invent values. So write the update schema on its own, with no defaults.</p>
+<p>What about fields the client must not change at all, such as <code>id</code> or <code>createdAt</code>? By default an object schema <strong>strips</strong> unknown keys: they disappear from the result. That is already safe. <code>.strict()</code> goes further and <strong>rejects</strong> them, so a client that sends a field you do not accept learns about its mistake instead of wondering why nothing changed:</p>
+<example file="update-schema.ts">
+import { schema } from "@zudojs/schema";
+
+const UpdateTaskSchema = schema.refine(
+  schema
+    .object({
+      title: schema.string().trim().min(3).max(100),
+      done: schema.boolean(),
+      priority: schema.enum(["low", "normal", "high"] as const),
+    })
+    .partial()
+    .strict(),
+  (changes) => Object.values(changes).some((value) => value !== undefined),
+  "Send at least one field to change",
+);
+
+for (const body of [{ done: true }, { title: "Walk", id: 1, createdAt: "2020-01-01" }, {}]) {
+  const result = UpdateTaskSchema.safeParse(body);
+  console.log(JSON.stringify(body), "->", result.success ? result.data : result.issues.map((i) => i.message));
+}
+</example>
+<output>
+{"done":true} -> { title: undefined, done: true, priority: undefined }
+{"title":"Walk","id":1,"createdAt":"2020-01-01"} -> [ 'Unknown key: id', 'Unknown key: createdAt' ]
+{} -> [ 'Send at least one field to change' ]
+</output>
+<p>Blindly copying request fields onto a stored object is a classic security hole called <strong>mass assignment</strong>: a client adds <code>"ownerId": 1</code> or <code>"role": "admin"</code> to a request and takes over data or rights. An explicit schema that lists exactly the changeable fields, strict or stripping, is the defence. Never spread the raw body (<code>{ ...task, ...body }</code>); spread only the parsed result.</p>
+</section>
+
+<section>
+<h2 id="route">Validating requests in a route</h2>
+<p>A route has up to three inputs to check: route parameters, the query string and the body. A small helper makes each check one line. It uses <code>parse</code>, so a failure throws a <code>SchemaError</code>, which <code>@zudojs/http</code> already answers with 400. To also show <em>which</em> fields failed, this version catches the error and returns the issues:</p>
+<example file="route.ts" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+import type { HttpRequestContext } from "@zudojs/http";
+import { SchemaError } from "@zudojs/errors";
+import { schema } from "@zudojs/schema";
+import type { SchemaIssue } from "@zudojs/schema";
+
+const Params = schema.object({ id: schema.coerce.number().int().min(1) });
+const Query = schema.object({ fields: schema.optional(schema.enum(["title", "all"] as const)) });
+
+const router = createRouter();
+router.get("/tasks/:id", (ctx) => {
+  try {
+    const { id } = Params.parse(ctx.params);
+    const { fields } = Query.parse(ctx.query);
+    const task = { id, title: "Buy milk", done: false };
+    return createResponseContext().json(fields === "title" ? { id, title: task.title } : task);
+  } catch (error) {
+    if (error instanceof SchemaError) {
+      const issues = (error.issues as readonly SchemaIssue[]).map((i) => `${i.path.join(".")}: ${i.message}`);
+      return createResponseContext({ status: 400 }).json({ error: "ERR_VALIDATION", issues });
+    }
+    throw error;
+  }
+});
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+});
+await server.start();
+for (const path of ["/tasks/1?fields=title", "/tasks/0", "/tasks/abc?fields=everything"]) {
+  const response = await fetch(`http://127.0.0.1:${server.address?.port}${path}`);
+  console.log(path, response.status, await response.text());
+}
+await server.stop();
+</example>
+<output>
+/tasks/1?fields=title 200 {"id":1,"title":"Buy milk"}
+/tasks/0 400 {"error":"ERR_VALIDATION","issues":["id: Expected >= 1, received 0"]}
+/tasks/abc?fields=everything 400 {"error":"ERR_VALIDATION","issues":["id: Cannot coerce string to number"]}
+</output>
+<p><code>error.issues as readonly SchemaIssue[]</code> is the type assertion you know from <a href="/learn/zudo-first-code#service">Your first Zudo code</a>. It is needed because, in the published <code>@zudojs/errors</code> 1.2.0, <code>SchemaError.issues</code> is typed <code>unknown[]</code>: <code>@zudojs/errors</code> sits below <code>@zudojs/schema</code> and cannot import its types. That is a known bug and a fix is on the way; until then, the assertion is safe here because this error came from a schema. With <code>safeParse</code> you need no assertion at all, because <code>result.issues</code> is properly typed.</p>
+<p>Catching in every route would repeat the same lines everywhere. In <a href="/learn/zudo-errors">The ZudoJS error system</a> one error handler does it for all routes, so routes can simply call <code>parse</code>.</p>
+</section>
+
+<section>
+<h2 id="response">Validating responses</h2>
+<p>Validation is not only for what comes in. What goes <em>out</em> matters too. A stored task may carry fields that are none of the client's business: an internal owner id, a flag for soft deletion, a password hash on a user record. If a route sends the stored object as it is, every field goes out, including ones added next year by someone who never looked at this route.</p>
+<p>A <strong>response schema</strong> is an allow-list: because object schemas strip unknown keys, parsing the stored object keeps only the listed fields. It also catches bugs, such as a missing field, before the client sees them:</p>
+<example file="response.ts">
+import { schema } from "@zudojs/schema";
+import type { Infer } from "@zudojs/schema";
+
+const TaskResponse = schema.object({
+  id: schema.number().int().min(1),
+  title: schema.string().max(100),
+  done: schema.boolean(),
+  priority: schema.enum(["low", "normal", "high"] as const),
+});
+type TaskResponse = Infer<typeof TaskResponse>;
+
+const stored = {
+  id: 7,
+  title: "Buy milk",
+  done: false,
+  priority: "normal",
+  ownerId: 42,
+  deletedAt: null,
+  internalNotes: "flagged by the spam filter",
+};
+
+const body: TaskResponse = TaskResponse.parse(stored);
+console.log(body);
+
+const broken = TaskResponse.safeParse({ ...stored, priority: undefined });
+console.log(broken.success ? "ok" : broken.issues[0]);
+</example>
+<output>
+{ id: 7, title: 'Buy milk', done: false, priority: 'normal' }
+{
+  code: 'required',
+  path: [ 'priority' ],
+  message: 'Required field missing: priority'
+}
+</output>
+<p>The three internal fields were dropped. And a stored task with a missing priority, a bug somewhere in your own code, was caught instead of sent. That is a server error, not a client error, so in a route let it become a 500 and fix the bug.</p>
+<p>Validating every response costs a little time. Many teams validate responses in development and tests, and only apply the allow-list (by parsing) in production. For small objects like tasks, simply always parsing is fine.</p>
+</section>
+
+<section>
+<h2 id="guards">Guards for hostile JSON</h2>
+<p>A schema walks through a value to check it. A hostile client can send JSON built to make that walk expensive: an array nested thousands of levels deep, or megabytes of data in one field. <code>@zudojs/validation</code> has cheap <strong>structural guards</strong> that stop as soon as a limit is passed, before any schema runs. It is already in the Task API's dependencies:</p>
+<example file="guards.ts">
+import { assertDepthWithinLimit, assertSizeWithinLimit } from "@zudojs/validation";
+import { BaseError } from "@zudojs/errors";
+
+const bodies: [string, unknown][] = [
+  ["normal", { title: "Buy milk", tags: ["home"] }],
+  ["too deep", JSON.parse("[".repeat(1000) + "]".repeat(1000))],
+  ["too big", { title: "x".repeat(50_000) }],
+];
+
+for (const [label, body] of bodies) {
+  try {
+    assertDepthWithinLimit(body, 10);
+    assertSizeWithinLimit(body, 16_384);
+    console.log(label, "-> passed");
+  } catch (error) {
+    const e = error as BaseError;
+    console.log(label, "->", e.name, e.statusCode, e.message);
+  }
+}
+</example>
+<output>
+normal -> passed
+too deep -> SerializationDepthError 500 Maximum serialization depth exceeded: 11 > 10
+too big -> SerializationPayloadTooLargeError 413 Serialized payload too large: 100013 bytes (max: 16384)
+</output>
+<p>Both hostile bodies were stopped. The size check is an estimate: it counts two bytes per character, so it is deliberately on the high side.</p>
+<p>Look at the status codes. The size error is a 413, as it should be. The depth error says 500, although the <code>@zudojs/validation</code> documentation promises 400; in version 1.0.3 a deep body would therefore be answered as a server error. The Task API code below turns it into a 400 itself, because a too-deep body is the client's mistake.</p>
+<note><code>@zudojs/validation</code> also offers a complete schema system based on the Zod library (<code>validate</code>, <code>z.object(...)</code>). It does not share schemas with <code>@zudojs/schema</code>. Pick one per project; this course uses <code>@zudojs/schema</code> and only borrows the guards.</note>
+</section>
+
+<section>
+<h2 id="task-api">Put it in the Task API</h2>
+<p>Now give the Task API a filtered, paginated list and a <code>PATCH</code> route. First the schemas. Replace <code>src/validators/task.schema.ts</code>:</p>
+<example file="src/validators/task.schema.ts" project="task-api" browser="no">
+import { schema } from "@zudojs/schema";
+import type { Infer } from "@zudojs/schema";
+
+const Title = schema.string().trim().min(3).max(100);
+const Priority = schema.enum(["low", "normal", "high"] as const);
+
+export const NewTaskSchema = schema.object({
+  title: Title,
+  done: schema.default(schema.boolean(), false),
+  priority: schema.default(Priority, "normal"),
+});
+export type NewTask = Infer<typeof NewTaskSchema>;
+
+export const UpdateTaskSchema = schema.refine(
+  schema.object({ title: Title, done: schema.boolean(), priority: Priority }).partial().strict(),
+  (changes) => Object.values(changes).some((value) => value !== undefined),
+  "Send at least one field to change",
+);
+export type TaskChanges = Infer<typeof UpdateTaskSchema>;
+
+export const TaskIdParams = schema.object({ id: schema.coerce.number().int().min(1) });
+
+export const ListTasksQuery = schema.object({
+  page: schema.coerce.number().int().min(1).default(1),
+  limit: schema.coerce.number().int().min(1).max(50).default(20),
+  done: schema.coerce.boolean().optional(),
+  priority: schema.optional(Priority),
+});
+export type ListTasks = Infer<typeof ListTasksQuery>;
+
+export const TaskResponse = schema.object({
+  id: schema.number(),
+  title: schema.string().max(100),
+  done: schema.boolean(),
+  priority: Priority,
+  createdAt: schema.string().max(40),
+});
+</example>
+<p>The <code>TaskStore</code> is unchanged. The service gets a filtered <code>list</code> and an <code>update</code> method. Its input types come from the schemas, so it trusts that the route has validated them:</p>
+<details class="lx-solution"><summary>Show the unchanged task store</summary>
+<file name="src/repositories/task.store.ts" project="task-api">
+export type Priority = "low" | "normal" | "high";
+
+export interface StoredTask {
+  readonly id: number;
+  readonly title: string;
+  readonly done: boolean;
+  readonly priority: Priority;
+  readonly createdAt: string;
+}
+
+export class TaskStore {
+  public readonly tasks = new Map<number, StoredTask>();
+  public connected = false;
+  private lastId = 0;
+
+  public nextId(): number {
+    this.lastId += 1;
+    return this.lastId;
+  }
+}
+</file>
+</details>
+<example file="src/services/task.service.ts" project="task-api" browser="no">
+import { ConflictError, NotFoundError } from "@zudojs/errors";
+import type { StoredTask, TaskStore } from "../repositories/task.store.js";
+import { ListTasksQuery, NewTaskSchema } from "../validators/task.schema.js";
+import type { ListTasks, TaskChanges } from "../validators/task.schema.js";
+
+export interface Clock {
+  now(): Date;
+}
+
+export class TaskService {
+  public constructor(private readonly store: TaskStore, private readonly clock: Clock) {}
+
+  public create(input: unknown): StoredTask {
+    const data = NewTaskSchema.parse(input);
+    this.assertUniqueTitle(data.title);
+    const task: StoredTask = { id: this.store.nextId(), ...data, createdAt: this.clock.now().toISOString() };
+    this.store.tasks.set(task.id, task);
+    return task;
+  }
+
+  public list(query: ListTasks = ListTasksQuery.parse({})): StoredTask[] {
+    const matching = [...this.store.tasks.values()].filter(
+      (t) => (query.done === undefined || t.done === query.done) && (query.priority === undefined || t.priority === query.priority),
+    );
+    const start = (query.page - 1) * query.limit;
+    return matching.slice(start, start + query.limit);
+  }
+
+  public get(id: number): StoredTask {
+    const task = this.store.tasks.get(id);
+    if (!task) {
+      throw new NotFoundError(`Task ${id} not found`);
+    }
+    return task;
+  }
+
+  public update(id: number, changes: TaskChanges): StoredTask {
+    const task = this.get(id);
+    if (changes.title !== undefined && changes.title !== task.title) {
+      this.assertUniqueTitle(changes.title);
+    }
+    const updated: StoredTask = {
+      ...task,
+      title: changes.title ?? task.title,
+      done: changes.done ?? task.done,
+      priority: changes.priority ?? task.priority,
+    };
+    this.store.tasks.set(id, updated);
+    return updated;
+  }
+
+  private assertUniqueTitle(title: string): void {
+    if ([...this.store.tasks.values()].some((t) => t.title === title)) {
+      throw new ConflictError(`A task called "${title}" already exists`);
+    }
+  }
+}
+</example>
+<p>When <code>list</code> is called without a query, it uses the schema's defaults (page 1, 20 tasks), so the check scripts from earlier lessons keep working. <code>update</code> copies each field explicitly: only the three changeable fields can ever change, whatever the request contained. In <code>src/utils/http.ts</code>, <code>readJson</code> now runs the guards on every body:</p>
+<example file="src/utils/http.ts" project="task-api" browser="no">
+import { badRequest, HttpError } from "@zudojs/http";
+import type { HttpRequestContext } from "@zudojs/http";
+import { assertDepthWithinLimit, assertSizeWithinLimit } from "@zudojs/validation";
+
+export function readJson(request: HttpRequestContext): unknown {
+  const type = request.getHeader("content-type") ?? "";
+  if (!type.startsWith("application/json")) {
+    throw new HttpError(415, "Send JSON with Content-Type: application/json", { code: "UNSUPPORTED_MEDIA_TYPE" });
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(new TextDecoder().decode(request.body as Uint8Array));
+  } catch {
+    throw badRequest("The request body is not valid JSON");
+  }
+  try {
+    assertDepthWithinLimit(body, 10);
+  } catch {
+    throw badRequest("The request body is nested too deeply");
+  }
+  assertSizeWithinLimit(body, 65_536);
+  return body;
+}
+</example>
+<p>The routes validate every input and send every task through <code>TaskResponse</code>. The old <code>parseId</code> helper is replaced by the <code>TaskIdParams</code> schema:</p>
+<example file="src/routes/tasks.routes.ts" project="task-api" browser="no">
+import { createResponseContext } from "@zudojs/http";
+import type { HttpRouter } from "@zudojs/http";
+import type { StoredTask } from "../repositories/task.store.js";
+import type { TaskService } from "../services/task.service.js";
+import { readJson } from "../utils/http.js";
+import { ListTasksQuery, TaskIdParams, TaskResponse, UpdateTaskSchema } from "../validators/task.schema.js";
+
+const send = (task: StoredTask) => TaskResponse.parse(task);
+
+export function registerTaskRoutes(router: HttpRouter, tasks: TaskService): void {
+  router.get("/tasks", (ctx) =>
+    createResponseContext().json(tasks.list(ListTasksQuery.parse(ctx.query)).map(send)),
+  );
+
+  router.get("/tasks/:id", (ctx) =>
+    createResponseContext().json(send(tasks.get(TaskIdParams.parse(ctx.params).id))),
+  );
+
+  router.post("/tasks", (ctx) => {
+    const task = tasks.create(readJson(ctx.request));
+    return createResponseContext({ status: 201 }).setHeader("location", `/tasks/${task.id}`).json(send(task));
+  });
+
+  router.patch("/tasks/:id", (ctx) => {
+    const { id } = TaskIdParams.parse(ctx.params);
+    const changes = UpdateTaskSchema.parse(readJson(ctx.request));
+    return createResponseContext().json(send(tasks.update(id, changes)));
+  });
+}
+</example>
+<p>A check script exercises all of it against a real server:</p>
+<example file="src/check-validation.ts" project="task-api" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createRouter } from "@zudojs/http";
+import type { HttpRequestContext } from "@zudojs/http";
+import { TaskStore } from "./repositories/task.store.js";
+import { registerTaskRoutes } from "./routes/tasks.routes.js";
+import { TaskService } from "./services/task.service.js";
+
+const service = new TaskService(new TaskStore(), { now: () => new Date("2026-09-23T09:00:00Z") });
+const router = createRouter();
+registerTaskRoutes(router, service);
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+});
+await server.start();
+const base = `http://127.0.0.1:${server.address?.port}`;
+const json = { "content-type": "application/json" };
+
+for (const title of ["Buy milk", "Walk the dog", "Water the plants"]) {
+  await fetch(`${base}/tasks`, { method: "POST", headers: json, body: JSON.stringify({ title, priority: "high" }) });
+}
+for (const [method, path, body] of [
+  ["PATCH", "/tasks/2", '{"done":true,"id":99}'],
+  ["PATCH", "/tasks/2", '{"done":true}'],
+  ["GET", "/tasks?done=false&limit=1&page=2", undefined],
+  ["GET", "/tasks?limit=500", undefined],
+  ["PATCH", "/tasks/2", JSON.stringify({ title: "x".repeat(40_000) })],
+] as const) {
+  const response = await fetch(base + path, { method, headers: json, body });
+  console.log(method, path, response.status, (await response.text()).slice(0, 120));
+}
+await server.stop();
+</example>
+<output>
+PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+PATCH /tasks/2 200 {"id":2,"title":"Walk the dog","done":true,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}
+GET /tasks?done=false&limit=1&page=2 200 [{"id":3,"title":"Water the plants","done":false,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}]
+GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+PATCH /tasks/2 413 {"error":"Content Too Large"}
+</output>
+<p>The unknown <code>id</code> was refused, the valid change went through, the list was filtered and paged, an out-of-range limit got a 400, and a huge body never reached a schema. The 400 bodies still only say "Validation failed". The next lesson fixes that for every route at once. Run the same script in your project:</p>
+<shell title="Terminal on your computer">
+$ npx tsc --noEmit
+$ npx tsx src/check-validation.ts
+PATCH /tasks/2 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+PATCH /tasks/2 200 {"id":2,"title":"Walk the dog","done":true,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}
+GET /tasks?done=false&limit=1&page=2 200 [{"id":3,"title":"Water the plants","done":false,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}]
+GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
+PATCH /tasks/2 413 {"error":"Content Too Large"}
+</shell>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A search parameter">
+<p>Add a <code>q</code> parameter to <code>ListTasksQuery</code> for searching titles. It is optional, is trimmed, must be 1 to 50 characters, and is compared in lower case, so turn it to lower case in the schema. Test it with <code>?q=%20MILK%20</code> (the <code>%20</code> are spaces) and with <code>?q=</code>.</p>
+<solution>
+<example file="search.ts">
+import { schema } from "@zudojs/schema";
+
+const ListTasksQuery = schema.object({
+  q: schema.string().trim().toLowerCase().min(1).max(50).optional(),
+});
+
+for (const q of [" MILK ", ""]) {
+  const result = ListTasksQuery.safeParse({ q });
+  console.log(JSON.stringify(q), "->", result.success ? result.data : result.issues[0]?.message);
+}
+console.log(ListTasksQuery.parse({}));
+</example>
+<output>
+" MILK " -> { q: 'milk' }
+"" -> String must be at least 1 characters
+{ q: undefined }
+</output>
+<p><code>URLSearchParams</code> and the router decode <code>%20</code> into a space before your schema sees the value. An empty <code>q=</code> is refused rather than matching everything; leaving the parameter out entirely is what "no search" looks like.</p>
+</solution>
+</exercise>
+<exercise title="Spot the mass assignment">
+<p>This update function has a security hole. Find it, and fix it using <code>UpdateTaskSchema</code>.</p>
+<example file="hole.ts" check="skip">
+function updateTask(task: StoredTask, body: Record<string, unknown>): StoredTask {
+  return { ...task, ...body } as StoredTask;
+}
+</example>
+<solution>
+<p><code>{ ...task, ...body }</code> copies <em>every</em> field of the request body onto the task: <code>id</code>, <code>createdAt</code>, and in later lessons <code>ownerId</code>. A client could move a task to another user or overwrite its id. The <code>as StoredTask</code> hides the problem from TypeScript. The fix parses first and copies only known fields:</p>
+<example file="fixed.ts">
+import { schema } from "@zudojs/schema";
+
+const UpdateTaskSchema = schema
+  .object({ title: schema.string().trim().min(3).max(100), done: schema.boolean() })
+  .partial()
+  .strict();
+
+interface StoredTask {
+  readonly id: number;
+  readonly ownerId: number;
+  readonly title: string;
+  readonly done: boolean;
+}
+
+function updateTask(task: StoredTask, body: unknown): StoredTask {
+  const changes = UpdateTaskSchema.parse(body);
+  return { ...task, title: changes.title ?? task.title, done: changes.done ?? task.done };
+}
+
+const task: StoredTask = { id: 1, ownerId: 7, title: "Buy milk", done: false };
+console.log(updateTask(task, { done: true }));
+try {
+  updateTask(task, { done: true, ownerId: 1 });
+} catch (error) {
+  console.log((error as Error).name, (error as Error).message);
+}
+</example>
+<output>
+{ id: 1, ownerId: 7, title: 'Buy milk', done: true }
+SchemaError Validation failed
+</output>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Validate at the trust boundary: route parameters, query strings, headers and bodies. Services then work with clean, typed data.</li>
+<li>Issues have <code>code</code>, <code>path</code> and <code>message</code>; turn them into per-field messages for clients.</li>
+<li>Query strings, parameters and environment variables are text: use <code>schema.coerce</code>. JSON bodies are not: use the normal schemas.</li>
+<li><code>.transform()</code> changes the output (and its type); <code>.refine()</code> and <code>schema.refine()</code> add your own synchronous rules. Check that dates are real, not just date-shaped.</li>
+<li>Write update schemas by hand without defaults, use <code>.strict()</code> to refuse unknown fields, and never spread a raw body onto stored data (mass assignment).</li>
+<li>A response schema is an allow-list for what leaves the server.</li>
+<li><code>@zudojs/validation</code>'s depth and size guards stop hostile JSON before a schema walks it.</li>
+</ul>
+<p>Validation errors are still answered with a bare "Validation failed". The next lesson builds one error handler that gives every error the right status and a helpful, safe body.</p>
+</section>

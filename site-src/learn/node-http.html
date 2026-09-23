@@ -1,0 +1,539 @@
+---
+title: An HTTP server with no framework
+description: Build a web server with nothing but Node.js's node:http module. Read the method, path, headers, query and body of each request, send JSON back with the right status code, and route requests by hand.
+minutes: 40
+youNeed: npm and packages
+youBuild: A small tasks server that lists, finds and creates tasks, tested with fetch and curl
+keywords: node http createServer, node http server without express, request method url headers, response statusCode setHeader end, routing by hand, route parameters, query parameters URLSearchParams, request body json, body size limit, http status codes, curl
+---
+<section>
+<h2 id="first-server">Your first server</h2>
+<p>In <a href="/learn/how-the-web-works">How the web works</a> you saw that a browser or an app sends a <strong>request</strong> to a server, and the server sends back a <strong>response</strong> with a status code and a body. Node.js can be that server with its built-in <code>node:http</code> module, and no packages at all.</p>
+<p><code>createServer</code> takes one function, the <strong>request handler</strong>. Node.js calls it once for every request, with two objects: <code>req</code> (the request that arrived) and <code>res</code> (the response you are building). <code>server.listen(port)</code> starts listening on a port.</p>
+<p>A server runs until you stop it, which makes it hard to show its output on a page. So every example in this lesson does the same four things: start the server on port <code>0</code>, which means "any free port", call itself with <code>fetch</code>, print what came back, and close the server. You will run a real, long-lived server at the end.</p>
+<example file="hello-server.js" browser="no">
+import { once } from "node:events";
+import { createServer } from "node:http";
+
+const server = createServer((req, res) => {
+  res.statusCode = 200;
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.end("Hello from Node.js\n");
+});
+
+server.listen(0);
+await once(server, "listening");
+const { port } = server.address();
+
+const response = await fetch(`http://localhost:${port}/`);
+console.log(response.status, response.headers.get("content-type"));
+console.log(await response.text());
+
+server.close();
+</example>
+<output>
+200 text/plain; charset=utf-8
+Hello from Node.js
+
+</output>
+<ul>
+<li><code>res.statusCode</code> sets the status code. 200 means OK.</li>
+<li><code>res.setHeader(name, value)</code> adds a <strong>header</strong>, a named piece of information about the response. <code>Content-Type</code> tells the client what kind of data the body is.</li>
+<li><code>res.end(body)</code> sends the body and finishes the response. Every request must end with exactly one <code>res.end</code>, or the client waits forever.</li>
+<li><code>once(server, "listening")</code> waits until the server is ready. <code>server.address().port</code> is the free port the system picked.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="request">What a request contains</h2>
+<p>The <code>req</code> object tells you what the client wants: the <strong>method</strong> (<code>GET</code> to read, <code>POST</code> to create, and others), the <strong>URL</strong> (the path and query after the host name) and the <strong>headers</strong>. This server sends those three things back as JSON:</p>
+<example file="echo.js" browser="no">
+import { once } from "node:events";
+import { createServer } from "node:http";
+
+const server = createServer((req, res) => {
+  const info = {
+    method: req.method,
+    url: req.url,
+    accept: req.headers.accept,
+    userAgent: req.headers["user-agent"],
+  };
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify(info));
+});
+
+server.listen(0);
+await once(server, "listening");
+const base = `http://localhost:${server.address().port}`;
+
+const response = await fetch(`${base}/tasks?done=true`, {
+  method: "DELETE",
+  headers: { Accept: "application/json" },
+});
+console.log(await response.json());
+
+server.close();
+</example>
+<output>
+{
+  method: 'DELETE',
+  url: '/tasks?done=true',
+  accept: 'application/json',
+  userAgent: 'node'
+}
+</output>
+<p>Header names arrive in lower case, whatever case the client used, so you always read <code>req.headers.accept</code> or <code>req.headers["user-agent"]</code>. <code>fetch</code> in Node.js calls itself <code>node</code>; a browser or <code>curl</code> sends its own name.</p>
+<p>A JSON response is text too: <code>JSON.stringify</code> turns the object into text, and <code>Content-Type: application/json</code> tells the client how to read it. On the other side, <code>response.json()</code> turns it back into an object.</p>
+</section>
+
+<section>
+<h2 id="routes">Routes by hand</h2>
+<p>A <strong>route</strong> is a method plus a path that the server knows how to answer, such as <code>GET /tasks</code>. With no framework, routing is an <code>if</code> for each route. Anything else gets <strong>404 Not Found</strong>, and a known path with the wrong method gets <strong>405 Method Not Allowed</strong>:</p>
+<example file="routes.js" browser="no">
+import { once } from "node:events";
+import { createServer } from "node:http";
+
+const tasks = [
+  { id: 1, title: "Buy milk", done: false },
+  { id: 2, title: "Write report", done: true },
+];
+
+function sendJson(res, status, body) {
+  res.statusCode = status;
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify(body));
+}
+
+const server = createServer((req, res) => {
+  if (req.url === "/tasks" && req.method === "GET") {
+    return sendJson(res, 200, tasks);
+  }
+  if (req.url === "/tasks") {
+    res.setHeader("Allow", "GET");
+    return sendJson(res, 405, { error: "Method Not Allowed" });
+  }
+  sendJson(res, 404, { error: "Not Found" });
+});
+
+server.listen(0);
+await once(server, "listening");
+const base = `http://localhost:${server.address().port}`;
+
+for (const [method, path] of [["GET", "/tasks"], ["PUT", "/tasks"], ["GET", "/users"]]) {
+  const response = await fetch(base + path, { method });
+  console.log(method, path, response.status, await response.text());
+}
+
+server.close();
+</example>
+<output>
+GET /tasks 200 [{"id":1,"title":"Buy milk","done":false},{"id":2,"title":"Write report","done":true}]
+PUT /tasks 405 {"error":"Method Not Allowed"}
+GET /users 404 {"error":"Not Found"}
+</output>
+<p><code>sendJson</code> is a small helper so every JSON answer sets its status and header the same way. The 405 answer also sends an <code>Allow</code> header saying which methods would have worked.</p>
+</section>
+
+<section>
+<h2 id="params">Route parameters and query parameters</h2>
+<h3>Route parameters</h3>
+<p>To fetch one task, the id goes in the path: <code>/tasks/2</code>. The varying part of a path is called a <strong>route parameter</strong>. Without a framework, you match it yourself. This function compares a pattern like <code>/tasks/:id</code> with a real path, part by part. It is plain JavaScript, so you can run it in the browser:</p>
+<example file="match.js">
+function matchRoute(pattern, path) {
+  const patternParts = pattern.split("/");
+  const pathParts = path.split("/");
+  if (patternParts.length !== pathParts.length) return null;
+
+  const params = {};
+  for (let i = 0; i < patternParts.length; i++) {
+    if (patternParts[i].startsWith(":")) {
+      params[patternParts[i].slice(1)] = decodeURIComponent(pathParts[i]);
+    } else if (patternParts[i] !== pathParts[i]) {
+      return null;
+    }
+  }
+  return params;
+}
+
+console.log(matchRoute("/tasks/:id", "/tasks/42"));
+console.log(matchRoute("/tasks/:id", "/tasks"));
+console.log(matchRoute("/users/:userId/tasks/:id", "/users/7/tasks/3"));
+console.log(matchRoute("/tasks/:id", "/tasks/buy%20milk"));
+</example>
+<output>
+{ id: '42' }
+null
+{ userId: '7', id: '3' }
+{ id: 'buy milk' }
+</output>
+<p>A parameter is always text, and it is input from a stranger. <code>"42"</code> is not the number 42, and the last call shows that anything can arrive, even with spaces encoded as <code>%20</code>. Always check it before use:</p>
+<example file="parse-id.js">
+function parseId(text) {
+  if (!/^[1-9][0-9]{0,8}$/.test(text)) return null;
+  return Number(text);
+}
+
+for (const input of ["42", "0", "-3", "4.5", "abc", "12abc", "99999999999"]) {
+  console.log(JSON.stringify(input), "->", parseId(input));
+}
+</example>
+<output>
+"42" -> 42
+"0" -> null
+"-3" -> null
+"4.5" -> null
+"abc" -> null
+"12abc" -> null
+"99999999999" -> null
+</output>
+<p>The pattern accepts only whole numbers from 1 up to nine digits. <code>Number("12abc")</code> would give <code>NaN</code> and <code>Number("")</code> gives <code>0</code>, so checking the text first is safer than converting and hoping.</p>
+<h3>Query parameters</h3>
+<p>The part of a URL after <code>?</code> is the <strong>query string</strong>, used for options such as filters: <code>/tasks?done=true&amp;limit=10</code>. <code>req.url</code> contains it, and the global <code>URL</code> class takes it apart. <code>req.url</code> is only the path, so give <code>URL</code> a base to complete it:</p>
+<example file="query.js">
+const url = new URL("/tasks?done=true&limit=10&tag=home&tag=urgent", "http://localhost");
+
+console.log(url.pathname);
+console.log(url.searchParams.get("done"));
+console.log(url.searchParams.get("limit"));
+console.log(url.searchParams.get("page"));
+console.log(url.searchParams.getAll("tag"));
+</example>
+<output>
+/tasks
+true
+10
+null
+[ 'home', 'urgent' ]
+</output>
+<p>Route on <code>url.pathname</code>, not on <code>req.url</code>, or <code>/tasks?done=true</code> would not match <code>/tasks</code>. Query values are text too (<code>"true"</code>, <code>"10"</code>), and a missing one is <code>null</code>.</p>
+</section>
+
+<section>
+<h2 id="body">Reading a request body</h2>
+<p>A <code>POST</code> request carries data in its <strong>body</strong>, usually JSON. You met streams in <a href="/learn/node-streams">Streams and buffers</a>: <code>req</code> is a readable stream, so the body arrives in chunks. Collect them, join them, then decode. Three things can go wrong, and each has its own status code:</p>
+<ul>
+<li>The body is too big: <strong>413 Content Too Large</strong>. Without a limit, anyone can send gigabytes and fill your server's memory.</li>
+<li>The body is not JSON: <strong>415 Unsupported Media Type</strong> when the <code>Content-Type</code> is wrong, or <strong>400 Bad Request</strong> when the text does not parse.</li>
+</ul>
+<example file="body.js" browser="no">
+import { once } from "node:events";
+import { createServer } from "node:http";
+
+const LIMIT = 1024;
+
+async function readJson(req) {
+  if (!req.headers["content-type"]?.startsWith("application/json")) {
+    return { status: 415, error: "Send JSON with Content-Type: application/json" };
+  }
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > LIMIT) return { status: 413, error: `Body larger than ${LIMIT} bytes` };
+    chunks.push(chunk);
+  }
+  try {
+    return { body: JSON.parse(Buffer.concat(chunks).toString("utf8")) };
+  } catch {
+    return { status: 400, error: "Body is not valid JSON" };
+  }
+}
+
+const server = createServer(async (req, res) => {
+  const result = await readJson(req);
+  res.statusCode = result.error ? result.status : 200;
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify(result.error ? { error: result.error } : { received: result.body }));
+});
+
+server.listen(0);
+await once(server, "listening");
+const base = `http://localhost:${server.address().port}`;
+const json = { "Content-Type": "application/json" };
+
+const tries = [
+  { headers: json, body: '{"title":"Buy milk"}' },
+  { headers: json, body: "{title: Buy milk" },
+  { headers: { "Content-Type": "text/plain" }, body: "Buy milk" },
+  { headers: json, body: JSON.stringify({ title: "x".repeat(2000) }) },
+];
+for (const options of tries) {
+  const response = await fetch(base, { method: "POST", ...options });
+  console.log(response.status, await response.text());
+}
+
+server.close();
+</example>
+<output>
+200 {"received":{"title":"Buy milk"}}
+400 {"error":"Body is not valid JSON"}
+415 {"error":"Send JSON with Content-Type: application/json"}
+413 {"error":"Body larger than 1024 bytes"}
+</output>
+<p>The chunks are joined as bytes with <code>Buffer.concat</code> before decoding, so a character cut in half between two chunks is decoded correctly. The loop stops reading as soon as the limit is passed, instead of reading everything first. Real limits are larger, often 100 KB to 1 MB for JSON, but never missing.</p>
+<note>The error message the client sees is short and written by you. The <code>SyntaxError</code> from <code>JSON.parse</code> stays on the server. Error messages you did not write can reveal details about your code, so never send them to clients as they are.</note>
+</section>
+
+<section>
+<h2 id="status-codes">Status codes you will use</h2>
+<p>The status code is the first thing a client checks. The first digit says what kind of answer it is: 2xx success, 4xx the client made a mistake, 5xx the server failed. These cover almost everything a JSON API does:</p>
+<ul>
+<li><strong>200 OK</strong>: here is what you asked for.</li>
+<li><strong>201 Created</strong>: a new record was made. Often sent with a <code>Location</code> header pointing to it.</li>
+<li><strong>204 No Content</strong>: done, nothing to send back (typical for a delete).</li>
+<li><strong>400 Bad Request</strong>: the input is broken or invalid.</li>
+<li><strong>401 Unauthorized</strong>: who are you? Log in first. <strong>403 Forbidden</strong>: I know who you are, and you may not do this.</li>
+<li><strong>404 Not Found</strong>: no such route or record. <strong>405 Method Not Allowed</strong>: the path exists, but not with this method.</li>
+<li><strong>413 Content Too Large</strong> and <strong>415 Unsupported Media Type</strong>: the body is too big or of the wrong type.</li>
+<li><strong>500 Internal Server Error</strong>: something broke on the server. Not the client's fault.</li>
+</ul>
+<p><code>node:http</code> knows the standard phrase for each code:</p>
+<example file="codes.js" browser="no">
+import { STATUS_CODES } from "node:http";
+
+for (const code of [200, 201, 204, 400, 401, 403, 404, 405, 413, 415, 500]) {
+  console.log(code, STATUS_CODES[code]);
+}
+</example>
+<output>
+200 OK
+201 Created
+204 No Content
+400 Bad Request
+401 Unauthorized
+403 Forbidden
+404 Not Found
+405 Method Not Allowed
+413 Payload Too Large
+415 Unsupported Media Type
+500 Internal Server Error
+</output>
+<p>Node.js still uses the older name for 413, "Payload Too Large". The current HTTP standard calls it "Content Too Large"; the number is what counts. <a href="/learn/http-deep">HTTP in depth</a> covers the rest.</p>
+</section>
+
+<section>
+<h2 id="build">Build: a small tasks server</h2>
+<p>Put everything together: list tasks with an optional <code>?done=</code> filter, fetch one by id, and create one from a JSON body. Save it as <code>server.js</code>. It exports a <code>createTaskServer</code> function and, only when you run it directly, starts listening on port 3000:</p>
+<example file="server.js" project="tasks-server" browser="no">
+import { createServer } from "node:http";
+
+const tasks = [{ id: 1, title: "Buy milk", done: false }];
+let nextId = 2;
+
+function sendJson(res, status, body) {
+  res.statusCode = status;
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify(body));
+}
+
+async function readJson(req, limit = 10_000) {
+  let text = "";
+  for await (const chunk of req.setEncoding("utf8")) {
+    text += chunk;
+    if (text.length > limit) return { error: "Body too large" };
+  }
+  try {
+    return { body: JSON.parse(text) };
+  } catch {
+    return { error: "Body is not valid JSON" };
+  }
+}
+
+async function handle(req, res) {
+  const url = new URL(req.url, "http://localhost");
+  const idMatch = url.pathname.match(/^\/tasks\/([1-9][0-9]{0,8})$/);
+
+  if (url.pathname === "/tasks" && req.method === "GET") {
+    const done = url.searchParams.get("done");
+    const list = done === null ? tasks : tasks.filter((t) => String(t.done) === done);
+    return sendJson(res, 200, list);
+  }
+  if (url.pathname === "/tasks" && req.method === "POST") {
+    const { body, error } = await readJson(req);
+    if (error) return sendJson(res, 400, { error });
+    if (typeof body?.title !== "string" || body.title.trim() === "" || body.title.length > 200) {
+      return sendJson(res, 400, { error: "title must be a non-empty string of at most 200 characters" });
+    }
+    const task = { id: nextId++, title: body.title.trim(), done: false };
+    tasks.push(task);
+    res.setHeader("Location", `/tasks/${task.id}`);
+    return sendJson(res, 201, task);
+  }
+  if (idMatch && req.method === "GET") {
+    const task = tasks.find((t) => t.id === Number(idMatch[1]));
+    return task ? sendJson(res, 200, task) : sendJson(res, 404, { error: "Task not found" });
+  }
+  sendJson(res, 404, { error: "Not Found" });
+}
+
+export function createTaskServer() {
+  return createServer(handle);
+}
+
+if (process.argv[1] === import.meta.filename) {
+  const port = Number(process.env.PORT ?? 3000);
+  createTaskServer().listen(port, () => console.log(`Listening on http://localhost:${port}`));
+}
+</example>
+<p>A few details:</p>
+<ul>
+<li><code>req.setEncoding("utf8")</code> makes the stream decode bytes to text for you, and it handles characters split between chunks correctly.</li>
+<li>The route for one task uses a regular expression that only matches a valid id, so <code>/tasks/abc</code> falls through to 404.</li>
+<li>The title is validated: it must be text, not empty, and not absurdly long. <code>body?.title</code> also copes with a body of <code>null</code>.</li>
+<li><code>process.argv[1] === import.meta.filename</code> is true only when you run <code>node server.js</code>, not when another file imports it. That lets the next file test the server without starting it on port 3000.</li>
+</ul>
+<p>The test file starts it on a free port and exercises every route:</p>
+<example file="try-server.js" project="tasks-server" browser="no">
+import { once } from "node:events";
+import { createTaskServer } from "./server.js";
+
+const server = createTaskServer().listen(0);
+await once(server, "listening");
+const base = `http://localhost:${server.address().port}`;
+
+async function call(method, path, body) {
+  const options = { method, headers: { "Content-Type": "application/json" } };
+  if (body !== undefined) options.body = body;
+  const response = await fetch(base + path, options);
+  const location = response.headers.get("location");
+  console.log(method, path, "->", response.status, await response.text(), location ?? "");
+}
+
+await call("POST", "/tasks", JSON.stringify({ title: "  Write report  " }));
+await call("POST", "/tasks", JSON.stringify({ title: "" }));
+await call("POST", "/tasks", "not json");
+await call("GET", "/tasks/2");
+await call("GET", "/tasks/9");
+await call("GET", "/tasks/abc");
+await call("GET", "/tasks?done=false");
+
+server.close();
+</example>
+<output>
+POST /tasks -> 201 {"id":2,"title":"Write report","done":false} /tasks/2
+POST /tasks -> 400 {"error":"title must be a non-empty string of at most 200 characters"}
+POST /tasks -> 400 {"error":"Body is not valid JSON"}
+GET /tasks/2 -> 200 {"id":2,"title":"Write report","done":false}
+GET /tasks/9 -> 404 {"error":"Task not found"}
+GET /tasks/abc -> 404 {"error":"Not Found"}
+GET /tasks?done=false -> 200 [{"id":1,"title":"Buy milk","done":false},{"id":2,"title":"Write report","done":false}]
+</output>
+<h3>Run it for real</h3>
+<p>Now start it as a real server. It keeps running until you press <kbd>Ctrl</kbd> + <kbd>C</kbd>:</p>
+<shell>
+$ node server.js
+Listening on http://localhost:3000
+</shell>
+<p>Open <a href="http://localhost:3000/tasks">http://localhost:3000/tasks</a> in your browser, or use <code>curl</code> from a second terminal. <code>-i</code> prints the status line and headers, <code>-X</code> sets the method, <code>-H</code> adds a header and <code>-d</code> sends a body:</p>
+<shell>
+$ curl -i http://localhost:3000/tasks
+HTTP/1.1 200 OK
+Content-Type: application/json
+Date: Wed, 23 Sep 2026 13:52:43 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Content-Length: 42
+
+[{"id":1,"title":"Buy milk","done":false}]
+$ curl -i -X POST http://localhost:3000/tasks -H "Content-Type: application/json" -d '{"title":"Call Ada"}'
+HTTP/1.1 201 Created
+Location: /tasks/2
+Content-Type: application/json
+Date: Wed, 23 Sep 2026 13:52:43 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Content-Length: 40
+
+{"id":2,"title":"Call Ada","done":false}
+$ curl http://localhost:3000/tasks/2
+{"id":2,"title":"Call Ada","done":false}
+$ curl http://localhost:3000/nothing
+{"error":"Not Found"}
+</shell>
+<p>Node.js added <code>Date</code>, <code>Connection</code>, <code>Keep-Alive</code> and <code>Content-Length</code> by itself. <code>Keep-Alive</code> lets a client reuse the same connection for its next request, which is faster. On Windows PowerShell, type <code>curl.exe</code> instead of <code>curl</code>, and put the JSON in double quotes with the inner quotes doubled or escaped; or simply use the test file above.</p>
+<p>The tasks live in an array in memory, so they are gone when you stop the server. The next lesson grows this into a complete Task API, and shows what starts to hurt when you build everything by hand.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Delete a task">
+<p>Add <code>DELETE /tasks/:id</code> to a server: answer <strong>204</strong> with no body when the task existed, and 404 otherwise. Test it by deleting the same task twice.</p>
+<solution>
+<example file="delete.js" browser="no">
+import { once } from "node:events";
+import { createServer } from "node:http";
+
+const tasks = [{ id: 1, title: "Buy milk", done: false }];
+
+const server = createServer((req, res) => {
+  const match = req.url.match(/^\/tasks\/([1-9][0-9]{0,8})$/);
+  if (match && req.method === "DELETE") {
+    const index = tasks.findIndex((t) => t.id === Number(match[1]));
+    if (index !== -1) {
+      tasks.splice(index, 1);
+      res.statusCode = 204;
+      return res.end();
+    }
+  }
+  res.statusCode = 404;
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify({ error: "Not Found" }));
+});
+
+server.listen(0);
+await once(server, "listening");
+const url = `http://localhost:${server.address().port}/tasks/1`;
+
+for (let i = 0; i < 2; i++) {
+  const response = await fetch(url, { method: "DELETE" });
+  console.log(response.status, JSON.stringify(await response.text()));
+}
+server.close();
+</example>
+<output>
+204 ""
+404 "{\"error\":\"Not Found\"}"
+</output>
+<p>A 204 response has an empty body: <code>res.end()</code> with nothing in it.</p>
+</solution>
+</exercise>
+<exercise title="Limit and offset">
+<p>Write <code>readPaging(searchParams)</code> that reads <code>limit</code> (default 10, at most 50) and <code>offset</code> (default 0) from a query string, and returns an error message for anything that is not a whole number in range.</p>
+<solution>
+<example file="paging.js">
+function readPaging(searchParams) {
+  const limitText = searchParams.get("limit") ?? "10";
+  const offsetText = searchParams.get("offset") ?? "0";
+  if (!/^[0-9]{1,6}$/.test(limitText) || !/^[0-9]{1,6}$/.test(offsetText)) {
+    return { error: "limit and offset must be whole numbers" };
+  }
+  const limit = Number(limitText);
+  if (limit < 1 || limit > 50) return { error: "limit must be between 1 and 50" };
+  return { limit, offset: Number(offsetText) };
+}
+
+for (const query of ["", "?limit=5&offset=10", "?limit=500", "?offset=-1"]) {
+  console.log(query || "(none)", readPaging(new URL("/tasks" + query, "http://localhost").searchParams));
+}
+</example>
+<output>
+(none) { limit: 10, offset: 0 }
+?limit=5&offset=10 { limit: 5, offset: 10 }
+?limit=500 { error: 'limit must be between 1 and 50' }
+?offset=-1 { error: 'limit and offset must be whole numbers' }
+</output>
+<p>A maximum for <code>limit</code> matters: without it, one request for <code>?limit=10000000</code> makes the server build a giant response.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li><code>createServer(handler)</code> calls your handler for every request with <code>req</code> and <code>res</code>. Set <code>res.statusCode</code> and headers, then finish with exactly one <code>res.end</code>.</li>
+<li><code>req.method</code>, <code>req.url</code> and <code>req.headers</code> (lower-case names) describe the request. Parse the URL with <code>new URL(req.url, "http://localhost")</code> and route on <code>pathname</code>.</li>
+<li>Route and query parameters are text from strangers: match them exactly and validate them before use.</li>
+<li>A body is a stream of chunks. Enforce a size limit, check the <code>Content-Type</code>, and turn a failed <code>JSON.parse</code> into a 400 with your own message.</li>
+<li>Test a server by starting it on port 0 and calling it with <code>fetch</code>; try it by hand with <code>curl</code>.</li>
+</ul>
+</section>

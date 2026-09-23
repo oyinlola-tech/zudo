@@ -1,0 +1,450 @@
+---
+title: Testing a ZudoJS app
+description: Test the Task API with Vitest and @zudojs/testing. Control time with a test clock, replace services with mocks and recording buses, wire fakes through a test container, clean up in the right order, and run integration tests against a real HTTP server.
+minutes: 45
+youNeed: The testing basics lesson, and the Task API with its events, queue and HTTP routes
+youBuild: A Vitest suite for the Task API with unit tests on fake time and fake services, and an integration test over real HTTP
+keywords: zudojs testing, vitest, createTestClock, createMockFn, createSpyLogger, createTestEventBus, createTestQueue, createTestContainer, createCleanupManager, integration test, structural assertions
+tier: core
+---
+<section>
+<h2 id="what">What @zudojs/testing adds</h2>
+<p>In <a href="/learn/testing-basics">the testing basics lesson</a> you wrote tests with <code>describe</code>, <code>it</code> and <code>expect</code>, used mocks, and ran them with Vitest. That is all you need for plain functions. A ZudoJS app has more moving parts: a clock, a logger, an event bus, a queue, a container, an HTTP server. <code>@zudojs/testing</code> gives you a controllable stand-in, a <strong>test double</strong>, for each of them, plus assertions that compare values by their content. It does not run tests. Vitest still does that. Install both as <strong>development dependencies</strong> (<code>-D</code>): your tests need them, your running app does not.</p>
+<shell title="Terminal on your computer">
+$ npm install -D vitest @zudojs/testing
+
+added 44 packages, and audited 63 packages in 9s
+
+13 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+</shell>
+<p>The small examples in this lesson are ordinary <code>.ts</code> files that print what the helpers recorded; run them with <code>npx tsx file.ts</code>. At the end you put everything into a Vitest test file.</p>
+</section>
+
+<section>
+<h2 id="service">A service that can be tested</h2>
+<p>Code is easy to test when it gets its dependencies from outside instead of creating them itself. You met that idea, <strong>dependency injection</strong>, in <a href="/learn/zudo-container">the container lesson</a>. This task service never calls <code>new Date()</code>, a real logger or a real mail server. It receives <code>now</code>, <code>logger</code>, <code>events</code> and <code>mailer</code>:</p>
+<example file="task-service.ts" project="tt" browser="no">
+import { ConflictError } from "@zudojs/errors";
+import type { Logger } from "@zudojs/logger";
+
+export interface Task {
+  readonly id: number;
+  readonly title: string;
+  readonly dueAt: Date;
+}
+export interface TaskDeps {
+  readonly now: () => Date;
+  readonly logger: Logger;
+  readonly events: { publish(input: { type: string; payload: unknown }): Promise<unknown> };
+  readonly mailer: { send(to: string, subject: string): Promise<void> };
+  readonly maxOpenTasks: number;
+}
+
+export function createTaskService(deps: TaskDeps) {
+  const tasks: Task[] = [];
+  return {
+    async create(title: string, dueInDays: number): Promise<Task> {
+      if (tasks.length >= deps.maxOpenTasks) {
+        throw new ConflictError(`You already have ${deps.maxOpenTasks} open tasks.`);
+      }
+      const dueAt = new Date(deps.now().getTime() + dueInDays * 86_400_000);
+      const task: Task = { id: tasks.length + 1, title, dueAt };
+      tasks.push(task);
+      deps.logger.info("task created", { taskId: task.id });
+      await deps.events.publish({ type: "task.created", payload: { taskId: task.id } });
+      return task;
+    },
+    overdue(): Task[] {
+      return tasks.filter((task) => task.dueAt < deps.now());
+    },
+    async remind(email: string): Promise<number> {
+      const late = this.overdue();
+      for (const task of late) await deps.mailer.send(email, `Overdue: ${task.title}`);
+      return late.length;
+    },
+  };
+}
+</example>
+<p>In production you pass <code>() => new Date()</code>, a real logger and a real mailer. In a test you pass doubles you control. <code>events</code> only needs a <code>publish</code> method, not a whole event bus. A small dependency like that is easy to replace.</p>
+</section>
+
+<section>
+<h2 id="clock">Time you control</h2>
+<p>"Remind me about overdue tasks" depends on the time. A test that waits two real days is useless, and a test that reads the real clock gives different results on different days. <code>createTestClock(start)</code> is a clock that only moves when you tell it to:</p>
+<example file="clock.ts" project="tt" browser="no">
+import { createTestClock } from "@zudojs/testing";
+
+const clock = createTestClock("2026-10-01T09:00:00Z");
+console.log(clock.now.toISOString());
+clock.advance(90_000);
+console.log(clock.now.toISOString());
+clock.add({ days: 2, hours: 3 });
+console.log(clock.now.toISOString(), clock.timestamp);
+</example>
+<output>
+2026-10-01T09:00:00.000Z
+2026-10-01T09:01:30.000Z
+2026-10-03T12:01:30.000Z 1791028890000
+</output>
+<p><code>advance(ms)</code> moves forward by milliseconds, <code>add</code> by seconds, minutes, hours or days, and <code>set(date)</code> jumps to any time. The code under test gets <code>() => clock.now</code>. Watch out: <code>clock.reset()</code> jumps to the <em>real</em> current time, not back to your start. Call <code>clock.set(start)</code> for that.</p>
+</section>
+
+<section>
+<h2 id="doubles">Mocks, spy logger and a recording event bus</h2>
+<p>Now give the service three doubles and look at what they recorded. <code>createMockFn()</code> is a fake function that records every call; <code>mockResolvedValue(v)</code> makes it return a promise of <code>v</code>. <code>createSpyLogger(name)</code> is a complete logger that prints nothing and remembers every line in <code>calls</code>. <code>createTestEventBus()</code> is a real event bus from <code>@zudojs/events</code> whose <code>publish</code> also records each event in <code>published</code>.</p>
+<example file="doubles.ts" project="tt" browser="no">
+import { createMockFn, createSpyLogger, createTestClock, createTestEventBus } from "@zudojs/testing";
+import { createTaskService } from "./task-service.js";
+
+const clock = createTestClock("2026-10-01T09:00:00Z");
+const logger = createSpyLogger("tasks");
+const events = createTestEventBus();
+const send = createMockFn<[string, string], Promise<void>>();
+send.mockResolvedValue(undefined);
+const tasks = createTaskService({ now: () => clock.now, logger, events, mailer: { send }, maxOpenTasks: 3 });
+
+await tasks.create("Buy milk", 1);
+await tasks.create("File taxes", 7);
+clock.add({ days: 2 });
+console.log("overdue:", tasks.overdue().map((task) => task.title));
+console.log("reminders sent:", await tasks.remind("ada@example.com"));
+console.log("mailer calls:", send.calls);
+console.log("log lines:", logger.calls.map((call) => `${call.method} ${call.message} ${JSON.stringify(call.metadata)}`));
+console.log("events:", events.published.map((recorded) => recorded.event.type));
+events.dispose();
+</example>
+<output>
+overdue: [ 'Buy milk' ]
+reminders sent: 1
+mailer calls: [ [ 'ada@example.com', 'Overdue: Buy milk' ] ]
+log lines: [ 'info task created {"taskId":1}', 'info task created {"taskId":2}' ]
+events: [ 'task.created', 'task.created' ]
+</output>
+<p>Two days later, only "Buy milk" (due after one day) is overdue. One e-mail went out, with the exact address and subject. No time passed, no e-mail was sent, nothing was printed by the logger. Two more doubles: <code>createStub&lt;T&gt;(overrides)</code> makes an object whose methods do nothing unless you write them, and <code>createSpyMethod(object, "name")</code> records the calls of a real object's method until you call <code>restore()</code>.</p>
+<warn title="THE RECORDING SITS ON THE WRAPPER">The test event bus records only what goes through <em>its own</em> <code>publish</code>, which takes <code>{ type, payload }</code> like <code>publishEvent</code>. An event published straight on <code>events.bus</code> reaches the handlers, but is <strong>not</strong> in <code>published</code>. Give your code the wrapper, as above. The same is true for <code>createTestMessageBus</code> (<code>send</code>) and <code>createTestQueue</code> (<code>add</code>).</warn>
+</section>
+
+<section>
+<h2 id="container">A test container and test config</h2>
+<p>A real Task API wires its services in a <strong>container</strong>. A test should use the same wiring code, and only swap the outside world. <code>createTestContainer({ overrides })</code> gives you a started container with your fakes already registered. <code>createTestConfigManager(values)</code> gives you a real <code>ConfigManager</code> filled with test values. First, the app's wiring:</p>
+<example file="wiring.ts" project="tt" browser="no">
+import { createToken, type Container } from "@zudojs/container";
+import type { ConfigManager } from "@zudojs/config";
+import { createTaskService, type TaskDeps } from "./task-service.js";
+
+export const LOGGER = createToken<TaskDeps["logger"]>("logger");
+export const CONFIG = createToken<ConfigManager>("config");
+export const EVENTS = createToken<TaskDeps["events"]>("events");
+export const MAILER = createToken<TaskDeps["mailer"]>("mailer");
+export const CLOCK = createToken<() => Date>("clock");
+export const TASKS = createToken<ReturnType<typeof createTaskService>>("tasks");
+
+export function registerTasks(container: Container): void {
+  container.registerFactory(TASKS, () => createTaskService({
+    now: container.resolve(CLOCK),
+    logger: container.resolve(LOGGER),
+    events: container.resolve(EVENTS),
+    mailer: container.resolve(MAILER),
+    maxOpenTasks: container.resolve(CONFIG).get<number>("tasks.maxOpenTasks") ?? 20,
+  }));
+}
+</example>
+<p>The test registers fakes for everything outside, then calls the <em>real</em> <code>registerTasks</code>. Config says a user may only have one open task:</p>
+<example file="container.ts" project="tt" browser="no">
+import { assertRejects, createMockFn, createSpyLogger, createTestClock, createTestConfigManager, createTestContainer, createTestEventBus } from "@zudojs/testing";
+import { CLOCK, CONFIG, EVENTS, LOGGER, MAILER, TASKS, registerTasks } from "./wiring.js";
+
+const clock = createTestClock("2026-10-01T09:00:00Z");
+const config = createTestConfigManager({ "tasks.maxOpenTasks": 1 });
+const test = createTestContainer({
+  overrides: [
+    { token: CLOCK, useValue: () => clock.now },
+    { token: CONFIG, useValue: config.manager },
+    { token: LOGGER, useValue: createSpyLogger("tasks") },
+    { token: EVENTS, useValue: createTestEventBus() },
+    { token: MAILER, useValue: { send: createMockFn<[string, string], Promise<void>>() } },
+  ],
+});
+registerTasks(test.container);
+
+const tasks = test.resolve(TASKS);
+await tasks.create("Buy milk", 1);
+const error = await assertRejects(() => tasks.create("Walk the dog", 1), "open tasks");
+console.log(error.name, "-", error.message);
+await test.dispose();
+await config.dispose();
+</example>
+<output>
+ConflictError - You already have 1 open tasks.
+</output>
+<p>The limit came from the test config, through the real wiring, into the real service. If someone breaks <code>registerTasks</code>, for example by reading the wrong config key, this test notices. A test that builds the service by hand would not.</p>
+</section>
+
+<section>
+<h2 id="app">A test application and cleanup</h2>
+<p>Tests start things that must be stopped: servers, queues, timers, database connections. If a test forgets one, the next test fails for no clear reason, or Vitest never exits. A <strong>cleanup manager</strong> is a list of "undo" functions. <code>dispose()</code> runs them all in <strong>reverse</strong> order, last started, first stopped, and reports every one that failed. <code>createTestApplication</code> bundles a container, a logger, a clock and a cleanup manager, with the container and logger cleanups already registered. Pass your own spy logger and clock: by default it uses a real logger that prints, and a clock set to the real time.</p>
+<example file="app-context.ts" project="tt" browser="no">
+import { createQueueName } from "@zudojs/queue";
+import { createSpyLogger, createTestApplication, createTestClock, createTestQueue } from "@zudojs/testing";
+
+const logger = createSpyLogger("task-api");
+const app = createTestApplication({ name: "task-api", logger, clock: createTestClock("2026-10-01T09:00:00Z") });
+const reminders = createTestQueue<{ taskId: number }>(createQueueName("reminders"));
+app.cleanup.register(async () => {
+  await reminders.close();
+  console.log("[cleanup] queue closed");
+}, "queue");
+app.cleanup.register(() => console.log("[cleanup] fake server stopped"), "server");
+
+await reminders.add("remind", { taskId: 1 }, { delay: 60_000 });
+console.log(app.name, app.clock.now.toISOString(), "cleanups:", app.cleanup.count);
+console.log(reminders.findByName("remind").map((recorded) => recorded.job.data));
+await app.dispose();
+console.log("disposed:", app.cleanup.disposed);
+</example>
+<output>
+task-api 2026-10-01T09:00:00.000Z cleanups: 4
+[ { taskId: 1 } ]
+[cleanup] fake server stopped
+[cleanup] queue closed
+disposed: true
+</output>
+<p>The count is 4: the application registered the container and the logger, you added the queue and the server. The server was registered last and stopped first, because a server must stop before the things it uses close. <code>createTestQueue</code> recorded the job, with its data, and <code>findByName</code> found it.</p>
+</section>
+
+<section>
+<h2 id="assertions">Structural assertions</h2>
+<p>An <strong>assertion</strong> throws when a value is wrong. The assertions in <code>@zudojs/testing</code> compare values <strong>structurally</strong>: by content, not by how they print. That matters, because printing hides things:</p>
+<example file="assertions.ts" project="tt" browser="no">
+import { ConflictError } from "@zudojs/errors";
+import { assertErrorCode, assertRejects, assertResponseBody, createHTTPResponse, deepEqual, findDifference } from "@zudojs/testing";
+
+console.log(deepEqual({ tags: new Set(["home"]), due: new Date(0) }, { due: new Date(0), tags: new Set(["home"]) }));
+console.log(JSON.stringify({ tags: new Set(["home"]) }) === JSON.stringify({ tags: new Set(["work"]) }));
+console.log(findDifference({ task: { tags: ["home", "urgent"] } }, { task: { tags: ["home", "later"] } }));
+const response = createHTTPResponse(201, { id: 1, title: "Buy milk", done: false });
+try {
+  assertResponseBody(response, { id: 1, title: "Buy milk", done: true });
+} catch (error) {
+  console.log((error as Error).name, "-", (error as Error).message);
+}
+const error = await assertRejects(async () => { throw new ConflictError("You already have 3 open tasks."); }, "open tasks");
+assertErrorCode(error, "ERR_CONFLICT");
+console.log("rejected with", error.name);
+</example>
+<output>
+true
+true
+{
+  path: 'value.task.tags[1]',
+  reason: 'expected "later", received "urgent"'
+}
+Error - Response body mismatch at body.done: expected true, received false.
+rejected with ConflictError
+</output>
+<p>The second line is the trap: <code>JSON.stringify</code> turns every <code>Set</code> into <code>{}</code>, so two different sets look equal. <code>deepEqual</code> compares their members. <code>findDifference</code> and every failing assertion name the <em>path</em> of the first difference, so you see where it broke. <code>assertRejects(fn, text)</code> checks that an async function fails with a message containing <code>text</code> and returns the error for more checks; use <code>assertThrows</code> for synchronous code.</p>
+</section>
+
+<section>
+<h2 id="http">Integration tests over real HTTP</h2>
+<p>A <strong>unit test</strong> checks one piece with fakes around it. An <strong>integration test</strong> checks that the pieces work together: here, the real router, the real JSON parsing, the real error mapping and the real service. Only the clock, the mailer and the bus stay fake. This is the Task API's <code>POST /tasks</code> route:</p>
+<example file="http-app.ts" project="tt" browser="no">
+import { isConflictError } from "@zudojs/errors";
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+import type { HttpRequestContext, HttpServer } from "@zudojs/http";
+import type { createTaskService } from "./task-service.js";
+
+export async function startTaskApi(tasks: ReturnType<typeof createTaskService>): Promise<HttpServer> {
+  const router = createRouter();
+  router.post("/tasks", async (ctx) => {
+    let body: { title?: unknown };
+    try {
+      body = JSON.parse(new TextDecoder().decode(ctx.request.body as Uint8Array)) as { title?: unknown };
+    } catch {
+      return createResponseContext().setStatus(400).json({ error: "The body is not JSON" });
+    }
+    if (typeof body.title !== "string" || body.title.trim().length < 3) {
+      return createResponseContext().setStatus(422).json({ error: "title must have at least 3 characters" });
+    }
+    try {
+      return createResponseContext().setStatus(201).json(await tasks.create(body.title.trim(), 1));
+    } catch (error) {
+      if (isConflictError(error)) return createResponseContext().setStatus(409).json({ error: error.message });
+      throw error;
+    }
+  });
+  const server = createHttpServer({
+    adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+    handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+  });
+  return server.start();
+}
+</example>
+<p>The integration test is the last test in the suite below. It starts this server on port 0 (any free port), sends real requests with <code>fetch</code>, and wraps each answer with <code>createHTTPResponse(status, body, headers)</code> so that the HTTP assertions, such as <code>assertCreated</code> and <code>assertResponseBodyContains</code>, can check it. The 409 it expects comes from a <code>ConflictError</code> thrown deep in the service and mapped to a status by the route. Only an integration test checks that whole chain.</p>
+<note>A ready-made HTTP test client, <code>createHttpTestClient</code>, is coming to <code>@zudojs/testing</code>. It starts your router on a free port, sends requests in a chain such as <code>.post("/tasks").send(body).expect(201)</code>, and keeps cookies. The docs page already describes it, but it is not in version 1.1.2 on npm. Until then, <code>fetch</code> plus <code>createHTTPResponse</code> does the job.</note>
+</section>
+
+<section>
+<h2 id="vitest">Put it together in Vitest</h2>
+<p>Now turn the examples into a test suite. Every test gets fresh doubles in <code>beforeEach</code>, so no test can see another test's tasks or clock. <code>afterEach</code> disposes the cleanup manager, so every server and bus is closed, even when a test fails in the middle:</p>
+<file name="tasks.test.ts" project="tt">
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { isConflictError } from "@zudojs/errors";
+import {
+  assertCreated, assertEventPublished, assertRejects, assertResponseBodyContains, assertResponseStatus,
+  createCleanupManager, createHTTPResponse, createMockFn, createSpyLogger, createTestClock, createTestEventBus,
+} from "@zudojs/testing";
+import type { CleanupManager, MockFn, TestClock, TestEventBus } from "@zudojs/testing";
+import { startTaskApi } from "./http-app.js";
+import { createTaskService } from "./task-service.js";
+
+let clock: TestClock;
+let events: TestEventBus;
+let cleanup: CleanupManager;
+let send: MockFn<[string, string], Promise<void>>;
+let tasks: ReturnType<typeof createTaskService>;
+
+beforeEach(() => {
+  clock = createTestClock("2026-10-01T09:00:00Z");
+  events = createTestEventBus();
+  cleanup = createCleanupManager();
+  cleanup.register(() => events.dispose(), "events");
+  send = createMockFn<[string, string], Promise<void>>();
+  send.mockResolvedValue(undefined);
+  tasks = createTaskService({ now: () => clock.now, logger: createSpyLogger(), events, mailer: { send }, maxOpenTasks: 2 });
+});
+afterEach(() => cleanup.dispose());
+
+describe("task service", () => {
+  it("publishes task.created", async () => {
+    await tasks.create("Buy milk", 1);
+    assertEventPublished(events.published, "task.created");
+  });
+
+  it("reminds only about overdue tasks", async () => {
+    await tasks.create("Buy milk", 1);
+    await tasks.create("File taxes", 7);
+    clock.add({ days: 2 });
+    expect(await tasks.remind("ada@example.com")).toBe(1);
+    expect(send.calls).toEqual([["ada@example.com", "Overdue: Buy milk"]]);
+  });
+
+  it("refuses a third open task", async () => {
+    await tasks.create("One", 1);
+    await tasks.create("Two", 1);
+    const error = await assertRejects(() => tasks.create("Three", 1), "open tasks");
+    expect(isConflictError(error)).toBe(true);
+  });
+});
+
+describe("POST /tasks", () => {
+  it("answers 201, 422 and 409", async () => {
+    const server = await startTaskApi(tasks);
+    cleanup.register(async () => { await server.stop(); }, "server");
+    const post = async (body: unknown) => {
+      const response = await fetch(`http://127.0.0.1:${server.address?.port}/tasks`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      });
+      return createHTTPResponse(response.status, await response.json(), response.headers);
+    };
+    const created = await post({ title: "Buy milk" });
+    assertCreated(created);
+    assertResponseBodyContains(created, { id: 1, title: "Buy milk" });
+    assertResponseStatus(await post({ title: "x" }), 422);
+    await post({ title: "Walk the dog" });
+    assertResponseStatus(await post({ title: "Call Ada" }), 409);
+  });
+});
+</file>
+<shell title="Terminal on your computer">
+$ npx vitest run --reporter=verbose
+
+ RUN  v5.0.1 ~/task-api
+
+ ✓ tasks.test.ts > task service > publishes task.created 21ms
+ ✓ tasks.test.ts > task service > reminds only about overdue tasks 8ms
+ ✓ tasks.test.ts > task service > refuses a third open task 4ms
+ ✓ tasks.test.ts > POST /tasks > answers 201, 422 and 409 173ms
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  15:30:06
+   Duration  2.16s (import 79%, tests 12%, transform 8%)
+</shell>
+<p>Two days of fake time and a real HTTP server, in a fraction of a second of test time. Now check that the tests can fail. Change <code>clock.add({ days: 2 })</code> to <code>clock.add({ hours: 12 })</code> and run again:</p>
+<shell title="Terminal on your computer">
+$ npx vitest run
+…
+ FAIL  tasks.test.ts > task service > reminds only about overdue tasks
+AssertionError: expected +0 to be 1 // Object.is equality
+…
+ ❯ tasks.test.ts:38:51
+     37|     clock.add({ hours: 12 });
+     38|     expect(await tasks.remind("ada@example.com")).toBe(1);
+       |                                                   ^
+…
+      Tests  1 failed | 3 passed (4)
+</shell>
+<p>After 12 hours nothing is overdue yet, so no reminder was sent. The clock really drives the result. Change it back.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A mailer that fails">
+<p>What should <code>remind</code> do when the mail server is down? Make the mock fail with <code>mockRejectedValue</code>, and check with <code>assertRejects</code> that <code>remind</code> passes the error on. Print how many times the mailer was called.</p>
+<solution>
+<example file="failing-mailer.ts" project="tt" browser="no">
+import { assertRejects, createMockFn, createSpyLogger, createTestClock, createTestEventBus } from "@zudojs/testing";
+import { createTaskService } from "./task-service.js";
+
+const clock = createTestClock("2026-10-01T09:00:00Z");
+const send = createMockFn<[string, string], Promise<void>>();
+send.mockRejectedValue(new Error("SMTP server unreachable"));
+const events = createTestEventBus();
+const tasks = createTaskService({ now: () => clock.now, logger: createSpyLogger(), events, mailer: { send }, maxOpenTasks: 3 });
+await tasks.create("Buy milk", 1);
+clock.add({ days: 2 });
+const error = await assertRejects(() => tasks.remind("ada@example.com"), "unreachable");
+console.log(error.message, "- mailer calls:", send.callCount);
+events.dispose();
+</example>
+<output>
+SMTP server unreachable - mailer calls: 1
+</output>
+<p>This test documents today's behaviour: the first failure stops the loop. If you decide later that <code>remind</code> should try every task and report the failures, change the test first and watch it fail.</p>
+</solution>
+</exercise>
+<exercise title="Messages you did not send">
+<p>Use <code>createTestMessageBus</code>. Send an <code>email.send</code> message through the wrapper, then check with <code>assertMessageDispatched</code> that it was sent and with <code>assertMessageNotDispatched</code> that no <code>sms.send</code> was.</p>
+<solution>
+<example file="messages.ts" project="tt" browser="no">
+import { assertMessageDispatched, assertMessageNotDispatched, createTestMessageBus } from "@zudojs/testing";
+
+const messages = createTestMessageBus();
+await messages.send({ type: "email.send", payload: { to: "ada@example.com", subject: "Overdue: Buy milk" } });
+assertMessageDispatched(messages.dispatched, "email.send");
+assertMessageNotDispatched(messages.dispatched, "sms.send");
+console.log(messages.findByType("email.send").map((recorded) => recorded.message.payload));
+messages.dispose();
+</example>
+<output>
+[ { to: 'ada@example.com', subject: 'Overdue: Buy milk' } ]
+</output>
+<p>"Not sent" checks matter too: a bug that sends an SMS to every user is worse than one that sends nothing.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Pass time, logging, events and mail into your code, so a test can replace each one. <code>createTestClock</code> moves time instantly. <code>createMockFn</code>, <code>createSpyLogger</code>, <code>createStub</code> and <code>createSpyMethod</code> replace and record.</li>
+<li>The test event bus, message bus and queue record only calls through their own <code>publish</code>, <code>send</code> and <code>add</code>.</li>
+<li><code>createTestContainer</code> and <code>createTestConfigManager</code> let tests use the app's real wiring with fakes at the edges. A cleanup manager stops everything in reverse order, even after a failure.</li>
+<li>Structural assertions compare content, sets and dates included. Integration tests start the real server on port 0 and check real answers.</li>
+</ul>
+<p>Next, you make the Task API tell you what it is doing in production, with structured logs.</p>
+</section>

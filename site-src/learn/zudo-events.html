@@ -252,15 +252,15 @@ for (const error of result.errors) {
 }
 </example>
 <output>
-onError: handler Event handler "send-email" failed while processing "task.completed".
 statistics updated
+onError: handler Event handler "send-email" failed while processing "task.completed".
 handled: true succeeded: 1 failed: 1
 send-email -> mail server is down
 </output>
 <ul>
 <li>The failure did not stop <code>update-stats</code>. This is the <code>CONTINUE</code> error mode, the bus default.</li>
 <li>Each failure is wrapped in an <code>EventHandlerError</code>. Its <code>handlerId</code> says which handler failed (give your handlers an <code>id</code>), and its <code>cause</code> is what the handler threw.</li>
-<li>The <code>onError</code> hook sees every failure, even when nobody reads the result. In the Task API, log it there with the logger. An error that is only in an unread result is an error nobody will ever see.</li>
+<li>The <code>onError</code> hook sees every failure once the handlers have run, even when nobody reads the result. In the Task API, log it there with the logger. An error that is only in an unread result is an error nobody will ever see.</li>
 </ul>
 <p>Two more ways a handler can fail:</p>
 <example file="handler-limits.ts">
@@ -270,9 +270,8 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const bus = createEventBus();
 
 bus.on("task.completed", (event) => {
-  const payload = event.payload as { title: string };
-  payload.title = "changed";
-}, { id: "sneaky" });
+  console.log("payload frozen:", Object.isFrozen(event.payload));
+}, { id: "look-only" });
 bus.on("task.completed", async () => {
   await wait(100);
 }, { id: "slow-report", timeoutMs: 20 });
@@ -291,12 +290,13 @@ try {
 }
 </example>
 <output>
-sneaky -> Cannot assign to read only property 'title' of object '#<Object>'
+payload frozen: true
 slow-report -> Event processing exceeded the timeout of 20ms.
-publish rejected: Event handler "sneaky" failed while processing "task.completed".
+payload frozen: true
+publish rejected: Event handler "slow-report" failed while processing "task.completed".
 </output>
 <ul>
-<li>A handler that changes the payload fails, because the payload it receives is frozen.</li>
+<li>The payload a handler receives is frozen too, not only the event. In a module (every <code>.ts</code> file you write is one), <code>event.payload.title = "x"</code> throws a <code>TypeError</code>, so a handler that tries to change the payload fails. Copy the data if you need to change it. The object you passed to <code>publish</code> is not frozen: the bus freezes a copy.</li>
 <li><code>timeoutMs</code> fails a handler that takes too long, so one hanging handler cannot hold up the whole publish. Note that the slow code itself keeps running in the background. Only its result is ignored.</li>
 <li>In the <code>THROW</code> error mode, the first failing handler rejects the publish, and the handlers after it do not run. Use it when every handler must succeed, for example in a test.</li>
 </ul>

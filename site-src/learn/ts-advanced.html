@@ -1,0 +1,443 @@
+---
+title: Advanced and utility types
+description: Build new types from existing ones with keyof, typeof, indexed access, mapped, conditional and template literal types, and use the built-in utility types (Partial, Pick, Omit, Record, ReturnType, Awaited and more) to keep one source of truth.
+minutes: 45
+youNeed: Generics
+youBuild: Task API types derived from one Task interface - create input, patch, summary, labels and event names - so they can never drift apart
+keywords: typescript keyof, typeof type, indexed access types, as const, mapped types, conditional types, infer, template literal types, utility types, Partial, Required, Pick, Omit, Record, Readonly, ReturnType, Parameters, Awaited, NonNullable, Exclude
+---
+<section>
+<h2 id="why">One source of truth</h2>
+<p>A Task API needs several shapes of a task: the full task, what a client sends to create one (no <code>id</code>), what it sends to change one (every field optional), a short summary for lists. You could write four interfaces by hand. Then someone adds a <code>priority</code> field to one and forgets the other three.</p>
+<p>This lesson shows how to <strong>compute</strong> types from other types, so that there is one definition and everything else follows from it. You already did a little of this in <a href="/learn/ts-generics#constraints">Generics</a> with <code>keyof T</code> and <code>T[K]</code>.</p>
+</section>
+
+<section>
+<h2 id="keyof-typeof">keyof and typeof</h2>
+<p><code>typeof</code> exists in JavaScript: <code>typeof x</code> gives a string like <code>"number"</code> while the program runs. In a <strong>type position</strong> (after a colon, or in a <code>type</code> declaration) TypeScript's <code>typeof</code> means something else: "the type of this variable". <code>keyof</code> then gives the union of a type's property names:</p>
+<example file="settings.ts" project="adv">
+const defaults = { pageSize: 20, sort: "newest", showDone: false };
+
+type Settings = typeof defaults;
+type SettingName = keyof Settings;
+
+function setting<K extends SettingName>(settings: Settings, name: K, value: Settings[K]): Settings {
+  return { ...settings, [name]: value };
+}
+
+let mine: Settings = defaults;
+mine = setting(mine, "pageSize", 50);
+mine = setting(mine, "showDone", true);
+console.log(mine);
+</example>
+<output>
+{ pageSize: 50, sort: 'newest', showDone: true }
+</output>
+<p><code>Settings</code> is <code>{ pageSize: number; sort: string; showDone: boolean }</code>, taken from the value, so you never write it twice. <code>SettingName</code> is <code>"pageSize" | "sort" | "showDone"</code>. And <code>Settings[K]</code>, an <strong>indexed access type</strong>, is the type of the property called <code>K</code>. Together they tie the value to the name:</p>
+<example file="settings.ts" project="adv" check="tsc-error">
+const defaults = { pageSize: 20, sort: "newest", showDone: false };
+type Settings = typeof defaults;
+
+function setting<K extends keyof Settings>(settings: Settings, name: K, value: Settings[K]): Settings {
+  return { ...settings, [name]: value };
+}
+
+setting(defaults, "pageSize", "big");
+setting(defaults, "theme", "dark");
+</example>
+<output kind="tsc">
+settings.ts:8:31 - error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+
+8 setting(defaults, "pageSize", "big");
+                                ~~~~~
+
+settings.ts:9:19 - error TS2345: Argument of type '"theme"' is not assignable to parameter of type '"pageSize" | "showDone" | "sort"'.
+
+9 setting(defaults, "theme", "dark");
+                    ~~~~~~~
+
+
+Found 2 errors in the same file, starting at: settings.ts:8
+</output>
+</section>
+
+<section>
+<h2 id="indexed-access">Indexed access and as const</h2>
+<p>Indexed access works on any type. <code>Task["status"]</code> is the type of a task's status, and <code>T[number]</code> is the type of an array's elements. Combined with <code>as const</code>, this lets you write a list once and use it both at runtime and as a type:</p>
+<example file="status.ts" project="adv">
+export const STATUSES = ["todo", "doing", "done"] as const;
+export type Status = (typeof STATUSES)[number];
+
+export interface Task {
+  readonly id: number;
+  title: string;
+  status: Status;
+  tags: string[];
+  dueDate: string | null;
+}
+
+type TaskId = Task["id"];
+type Tag = Task["tags"][number];
+
+const id: TaskId = 7;
+const tag: Tag = "home";
+for (const status of STATUSES) console.log(status);
+console.log(id, tag);
+</example>
+<output>
+todo
+doing
+done
+7 home
+</output>
+<ul>
+<li><code>as const</code> tells TypeScript the array will never change, so it keeps the exact values: its type is <code>readonly ["todo", "doing", "done"]</code>, not <code>string[]</code>.</li>
+<li><code>(typeof STATUSES)[number]</code> is "the type of any element": <code>"todo" | "doing" | "done"</code>.</li>
+<li><code>STATUSES</code> still exists when the program runs, so you can loop over it, show it in a dropdown, or check input against it. Add a status to the array and the <code>Status</code> type follows.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="utility-types">The utility types</h2>
+<p>TypeScript ships with generic types that transform other types. They are called <strong>utility types</strong>, and you will see them all over real code, ZudoJS included:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Utility</th><th>Gives</th></tr></thead>
+<tbody>
+<tr><td><code>Partial&lt;T&gt;</code></td><td>Every property optional</td></tr>
+<tr><td><code>Required&lt;T&gt;</code></td><td>Every property required</td></tr>
+<tr><td><code>Readonly&lt;T&gt;</code></td><td>Every property <code>readonly</code></td></tr>
+<tr><td><code>Pick&lt;T, "a" | "b"&gt;</code></td><td>Only the listed properties</td></tr>
+<tr><td><code>Omit&lt;T, "a" | "b"&gt;</code></td><td>Every property except the listed ones</td></tr>
+<tr><td><code>Record&lt;K, V&gt;</code></td><td>An object with a key of type <code>V</code> for every <code>K</code></td></tr>
+<tr><td><code>ReturnType&lt;F&gt;</code>, <code>Parameters&lt;F&gt;</code></td><td>What a function type returns, and its parameters as a tuple</td></tr>
+<tr><td><code>Awaited&lt;T&gt;</code></td><td>What <code>await</code> gives for a <code>Promise&lt;T&gt;</code></td></tr>
+<tr><td><code>NonNullable&lt;T&gt;</code></td><td><code>T</code> without <code>null</code> and <code>undefined</code></td></tr>
+<tr><td><code>Exclude&lt;U, X&gt;</code></td><td>The members of union <code>U</code> that are not in <code>X</code></td></tr>
+</tbody>
+</table></div>
+<h3>Input shapes: Omit, Partial and Pick</h3>
+<p>Here are the Task API's shapes, all derived from the <code>Task</code> interface above:</p>
+<example file="task-shapes.ts" project="adv">
+import type { Task } from "./status.js";
+
+export type NewTask = Omit<Task, "id">;
+export type TaskPatch = Partial<Omit<Task, "id">>;
+export type TaskSummary = Pick<Task, "id" | "title">;
+
+function applyPatch(task: Task, patch: TaskPatch): Task {
+  return {
+    ...task,
+    title: patch.title ?? task.title,
+    status: patch.status ?? task.status,
+    tags: patch.tags ?? task.tags,
+    dueDate: patch.dueDate === undefined ? task.dueDate : patch.dueDate,
+  };
+}
+
+const input: NewTask = { title: "Buy milk", status: "todo", tags: [], dueDate: null };
+const task: Task = { id: 1, ...input };
+const updated = applyPatch(task, { status: "doing", dueDate: "2026-10-01" });
+const summary: TaskSummary = { id: updated.id, title: updated.title };
+console.log(updated, summary);
+</example>
+<output>
+{
+  id: 1,
+  title: 'Buy milk',
+  status: 'doing',
+  tags: [],
+  dueDate: '2026-10-01'
+} { id: 1, title: 'Buy milk' }
+</output>
+<p><code>applyPatch</code> copies each field by name instead of spreading the patch, for the reason you saw in <a href="/learn/ts-objects#build">the user module</a>: never let outside data overwrite fields it should not touch. Note also <code>dueDate</code>: a patch may set it to <code>null</code> ("remove the due date"), which is different from leaving it out.</p>
+<p>Now the payoff. Each derived type catches a real bug:</p>
+<example file="task-shapes.ts" project="adv" check="tsc-error">
+import type { Task } from "./status.js";
+
+type NewTask = Omit<Task, "id">;
+type TaskPatch = Partial<Omit<Task, "id">>;
+
+const input: NewTask = { id: 99, title: "Buy milk", status: "todo", tags: [], dueDate: null };
+const patch: TaskPatch = { status: "finished" };
+const frozen: Readonly<Task> = { id: 1, title: "Call Ada", status: "todo", tags: [], dueDate: null };
+frozen.title = "Call Grace";
+</example>
+<output kind="tsc">
+task-shapes.ts:6:26 - error TS2353: Object literal may only specify known properties, and 'id' does not exist in type 'NewTask'.
+
+6 const input: NewTask = { id: 99, title: "Buy milk", status: "todo", tags: [], dueDate: null };
+                           ~~
+
+task-shapes.ts:7:28 - error TS2322: Type '"finished"' is not assignable to type '"doing" | "done" | "todo" | undefined'.
+
+7 const patch: TaskPatch = { status: "finished" };
+                             ~~~~~~
+
+  status.ts:7:3 - The expected type comes from property 'status' which is declared here on type 'Partial<Omit<Task, "id">>'
+    7   status: Status;
+        ~~~~~~
+
+task-shapes.ts:9:8 - error TS2540: Cannot assign to 'title' because it is a read-only property.
+
+9 frozen.title = "Call Grace";
+         ~~~~~
+
+
+Found 3 errors in the same file, starting at: task-shapes.ts:6
+</output>
+<p>A client may not choose its own <code>id</code>; a patch cannot set a status that does not exist; a <code>Readonly</code> task cannot be changed. None of these types repeats a single property of <code>Task</code>.</p>
+<h3>Record and Required</h3>
+<example file="record.ts" project="adv">
+import type { Status } from "./status.js";
+
+const labels: Record<Status, string> = { todo: "To do", doing: "In progress", done: "Done" };
+
+interface ListOptions {
+  pageSize?: number;
+  sort?: "newest" | "oldest";
+}
+
+function resolveOptions(options: ListOptions): Required<ListOptions> {
+  return { pageSize: options.pageSize ?? 20, sort: options.sort ?? "newest" };
+}
+
+console.log(labels.doing);
+console.log(resolveOptions({ sort: "oldest" }));
+</example>
+<output>
+In progress
+{ pageSize: 20, sort: 'oldest' }
+</output>
+<p><code>Record&lt;Status, string&gt;</code> needs a label for <strong>every</strong> status. Add <code>"blocked"</code> to <code>STATUSES</code>, and this object stops compiling until you add its label. <code>Required&lt;ListOptions&gt;</code> is the options after defaults are filled in, so code that receives it never checks for <code>undefined</code>.</p>
+<h3>Types from functions: ReturnType, Parameters, Awaited</h3>
+<p>Sometimes the function comes first, and you want its types without writing them again:</p>
+<example file="derive.ts" project="adv">
+async function loadStats(userId: number, includeDone: boolean) {
+  return { userId, open: 3, done: includeDone ? 5 : 0 };
+}
+
+type StatsArgs = Parameters<typeof loadStats>;
+type Stats = Awaited<ReturnType<typeof loadStats>>;
+
+function printStats(stats: Stats): void {
+  console.log(`user ${stats.userId}: ${stats.open} open, ${stats.done} done`);
+}
+
+const args: StatsArgs = [7, true];
+printStats(await loadStats(...args));
+</example>
+<output>
+user 7: 3 open, 5 done
+</output>
+<ul>
+<li><code>typeof loadStats</code> is the function's type. <code>ReturnType</code> of it is <code>Promise&lt;{ userId: number; open: number; done: number }&gt;</code>.</li>
+<li><code>Awaited</code> removes the <code>Promise</code>, giving the object type.</li>
+<li><code>Parameters</code> gives the tuple <code>[userId: number, includeDone: boolean]</code>.</li>
+</ul>
+<h3>NonNullable and Exclude</h3>
+<example file="non-null.ts" project="adv">
+import type { Status } from "./status.js";
+
+type OpenStatus = Exclude<Status, "done">;
+type Email = NonNullable<string | null | undefined>;
+
+const open: OpenStatus[] = ["todo", "doing"];
+const maybeEmails = ["ada@example.com", null, "grace@example.com", undefined];
+const emails: Email[] = maybeEmails.filter((email) => email != null);
+
+console.log(open, emails);
+</example>
+<output>
+[ 'todo', 'doing' ] [ 'ada@example.com', 'grace@example.com' ]
+</output>
+<p><code>Exclude&lt;Status, "done"&gt;</code> is <code>"todo" | "doing"</code>, and <code>NonNullable</code> leaves just <code>string</code>. Recent TypeScript versions also understand that <code>filter((email) =&gt; email != null)</code> removes the nulls, so the result is a <code>string[]</code> and fits <code>Email[]</code>.</p>
+</section>
+
+<section>
+<h2 id="mapped">Mapped types</h2>
+<p>How are <code>Partial</code> and <code>Readonly</code> made? With a <strong>mapped type</strong>: a type that loops over the keys of another type, like <code>for … in</code> loops over an object's keys. <code>{ [K in keyof T]: … }</code> means "for each property name <code>K</code> of <code>T</code>, make a property with this type":</p>
+<example file="mapped.ts" project="adv">
+import type { Task } from "./status.js";
+
+type NewTask = Omit<Task, "id">;
+type Touched<T> = { [K in keyof T]: boolean };
+type Errors<T> = { [K in keyof T]?: string };
+type MyPartial<T> = { [K in keyof T]?: T[K] };
+
+const touched: Touched<NewTask> = { title: true, status: false, tags: false, dueDate: true };
+const errors: Errors<NewTask> = { title: "must be at least 3 characters" };
+const draft: MyPartial<NewTask> = { title: "Bu" };
+
+const shown = Object.keys(errors).filter((field) => touched[field as keyof NewTask]);
+console.log(draft, shown);
+</example>
+<output>
+{ title: 'Bu' } [ 'title' ]
+</output>
+<p>This is a form: <code>Touched</code> remembers which fields the user has visited, <code>Errors</code> holds a message per field, and <code>MyPartial</code> is exactly how the built-in <code>Partial</code> is written. Add a field to <code>Task</code>, and all three follow. (The <code>as keyof NewTask</code> is needed because <code>Object.keys</code> always returns <code>string[]</code>; <a href="/learn/ts-runtime#assertions">TypeScript and JavaScript together</a> says when such an <code>as</code> is safe.)</p>
+<p>Inside a mapped type, <code>?</code> and <code>readonly</code> add those marks, and <code>-?</code> and <code>-readonly</code> remove them. <code>Required&lt;T&gt;</code> is <code>{ [K in keyof T]-?: T[K] }</code>.</p>
+</section>
+
+<section>
+<h2 id="conditional">Conditional types and infer</h2>
+<p>A <strong>conditional type</strong> chooses between two types with a test, written like the <code>? :</code> operator: <code>T extends U ? X : Y</code> means "if <code>T</code> fits <code>U</code>, then <code>X</code>, else <code>Y</code>". Inside the test, <code>infer</code> captures a part of the type in a new name:</p>
+<example file="conditional.ts" project="adv" check="tsc-error">
+type IsText<T> = T extends string ? "text" : "other";
+type ElementOf<T> = T extends readonly (infer E)[] ? E : never;
+type Unwrap<T> = T extends Promise<infer V> ? V : T;
+
+const a: IsText<"hello"> = "other";
+const b: ElementOf<boolean[]> = "yes";
+const c: Unwrap<Promise<number>> = "42";
+const d: Unwrap<string> = 42;
+</example>
+<output kind="tsc">
+conditional.ts:5:7 - error TS2322: Type '"other"' is not assignable to type '"text"'.
+
+5 const a: IsText<"hello"> = "other";
+        ~
+
+conditional.ts:6:7 - error TS2322: Type 'string' is not assignable to type 'boolean'.
+
+6 const b: ElementOf<boolean[]> = "yes";
+        ~
+
+conditional.ts:7:7 - error TS2322: Type 'string' is not assignable to type 'number'.
+
+7 const c: Unwrap<Promise<number>> = "42";
+        ~
+
+conditional.ts:8:7 - error TS2322: Type 'number' is not assignable to type 'string'.
+
+8 const d: Unwrap<string> = 42;
+        ~
+
+
+Found 4 errors in the same file, starting at: conditional.ts:5
+</output>
+<p>This file is written to fail, as a trick to <em>see</em> types: assign a wrong value, and the error message names the type the compiler computed. (In VS Code you can simply hover.) Reading the messages:</p>
+<ul>
+<li><code>IsText&lt;"hello"&gt;</code> is <code>"text"</code>.</li>
+<li><code>ElementOf&lt;boolean[]&gt;</code> is <code>boolean</code>: <code>infer E</code> captured the element type.</li>
+<li><code>Unwrap&lt;Promise&lt;number&gt;&gt;</code> is <code>number</code>, and <code>Unwrap&lt;string&gt;</code> is just <code>string</code>, because it is not a promise. That is roughly how <code>Awaited</code> works.</li>
+</ul>
+<p>When the tested type is a union, a conditional type is applied to each member separately. That is how <code>Exclude&lt;U, X&gt;</code> works: it is <code>U extends X ? never : U</code>, and <code>never</code> members disappear from a union. You will rarely write conditional types in application code, but reading them helps you understand library types.</p>
+</section>
+
+<section>
+<h2 id="template-literals">Template literal types</h2>
+<p>Template strings have a type-level twin. A <strong>template literal type</strong> builds string types from other string types, and with unions it produces every combination:</p>
+<example file="events.ts" project="adv">
+type Entity = "task" | "user";
+type Action = "created" | "updated" | "deleted";
+type EventName = `${Entity}.${Action}`;
+type ApiPath = `/${string}`;
+
+const handlers = new Map<EventName, string[]>();
+
+function on(event: EventName, handlerName: string): void {
+  handlers.set(event, [...(handlers.get(event) ?? []), handlerName]);
+}
+
+const base: ApiPath = "/tasks";
+on("task.created", "sendWelcomeEmail");
+on("user.deleted", "removeSessions");
+console.log(base, [...handlers.keys()]);
+</example>
+<output>
+/tasks [ 'task.created', 'user.deleted' ]
+</output>
+<p><code>EventName</code> is a union of six strings, from <code>"task.created"</code> to <code>"user.deleted"</code>, without writing any of them out. <code>ApiPath</code> is any string that starts with <code>/</code>. Typos in event names are a classic source of silent bugs: the event fires, nobody listens. Here they cannot compile:</p>
+<example file="events.ts" project="adv" check="tsc-error">
+type EventName = `${"task" | "user"}.${"created" | "updated" | "deleted"}`;
+type ApiPath = `/${string}`;
+
+function on(event: EventName, handlerName: string): void {}
+
+on("task.create", "sendWelcomeEmail");
+const base: ApiPath = "tasks";
+</example>
+<output kind="tsc">
+events.ts:6:4 - error TS2345: Argument of type '"task.create"' is not assignable to parameter of type '"task.created" | "task.deleted" | "task.updated" | "user.created" | "user.deleted" | "user.updated"'.
+
+6 on("task.create", "sendWelcomeEmail");
+     ~~~~~~~~~~~~~
+
+events.ts:7:7 - error TS2322: Type '"tasks"' is not assignable to type '`/${string}`'.
+
+7 const base: ApiPath = "tasks";
+        ~~~~
+
+
+Found 2 errors in the same file, starting at: events.ts:6
+</output>
+<p>TypeScript also has four built-in helpers for string types: <code>Uppercase</code>, <code>Lowercase</code>, <code>Capitalize</code> and <code>Uncapitalize</code>. For example, <code>`on${Capitalize&lt;Action&gt;}`</code> gives <code>"onCreated" | "onUpdated" | "onDeleted"</code>.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A public user">
+<p>Given <code>interface User { id: number; email: string; name: string; passwordHash: string; role: "member" | "admin" }</code>, write a type <code>PublicUser</code> without <code>passwordHash</code>, and a function <code>toPublic(user: User): PublicUser</code>. Why should <code>toPublic</code> build a new object by name instead of deleting a property from a copy?</p>
+<solution>
+<example file="public-user.ts" project="ex-public">
+interface User {
+  id: number;
+  email: string;
+  name: string;
+  passwordHash: string;
+  role: "member" | "admin";
+}
+
+type PublicUser = Omit<User, "passwordHash">;
+
+function toPublic(user: User): PublicUser {
+  return { id: user.id, email: user.email, name: user.name, role: user.role };
+}
+
+const ada: User = { id: 1, email: "ada@example.com", name: "Ada", passwordHash: "(a real hash)", role: "admin" };
+console.log(toPublic(ada));
+</example>
+<output>
+{ id: 1, email: 'ada@example.com', name: 'Ada', role: 'admin' }
+</output>
+<p>Listing the fields to <strong>keep</strong> is safe by default: when someone later adds a secret field, such as <code>resetToken</code>, it is not sent unless you add it here. Deleting the fields to hide is unsafe by default: the new secret leaks until someone remembers to delete it too. And the type alone would not protect you: <code>return user;</code> also compiles, because a full <code>User</code> has every property a <code>PublicUser</code> needs, and the extra <code>passwordHash</code> is only refused in a fresh object literal. The runtime object would still carry the hash.</p>
+</solution>
+</exercise>
+<exercise title="Labels for every event">
+<p>Using <code>EventName</code> from the lesson, write <code>const descriptions: Record&lt;EventName, string&gt;</code>. How many properties must it have? What happens if you add <code>"archived"</code> to <code>Action</code>?</p>
+<solution>
+<p>Six, one for each combination of <code>Entity</code> and <code>Action</code>. Adding <code>"archived"</code> makes it eight, and the compiler reports the object as missing <code>"task.archived"</code> and <code>"user.archived"</code> until you add them. That is the point: the list of descriptions can never fall behind the list of events.</p>
+</solution>
+</exercise>
+<exercise title="Write your own Nullable">
+<p>Write a mapped type <code>Nullable&lt;T&gt;</code> that allows <code>null</code> for every property of <code>T</code>, and use it for a task where any field may be missing in an old database row.</p>
+<solution>
+<example file="nullable.ts" project="ex-nullable">
+type Nullable<T> = { [K in keyof T]: T[K] | null };
+
+interface Task {
+  id: number;
+  title: string;
+  dueDate: string;
+}
+
+const legacyRow: Nullable<Task> = { id: 3, title: null, dueDate: null };
+console.log(legacyRow.title ?? "(untitled)", legacyRow.dueDate ?? "(no due date)");
+</example>
+<output>
+(untitled) (no due date)
+</output>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>In a type position, <code>typeof value</code> is the value's type, <code>keyof T</code> the union of its property names, and <code>T[K]</code> a property's type.</li>
+<li><code>as const</code> plus <code>(typeof LIST)[number]</code> gives one list for runtime and type.</li>
+<li><code>Partial</code>, <code>Required</code>, <code>Readonly</code>, <code>Pick</code>, <code>Omit</code> and <code>Record</code> derive shapes from one interface. <code>ReturnType</code>, <code>Parameters</code> and <code>Awaited</code> derive types from functions.</li>
+<li>Mapped types loop over keys; conditional types choose with <code>extends ? :</code> and capture parts with <code>infer</code>.</li>
+<li>Template literal types build string unions such as event names, so typos do not compile.</li>
+</ul>
+</section>

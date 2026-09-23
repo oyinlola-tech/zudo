@@ -1,0 +1,572 @@
+---
+title: Security for every public API
+description: Protect the Task API from the open internet with @zudojs/security and the security helpers in @zudojs/http. Rate limiting, CORS, CSRF, security headers, HSTS and CSP, secure cookies, body limits, SSRF protection and input checks, each shown blocking a real attack.
+minutes: 50
+youNeed: The Task API project, and the authentication and permissions lessons
+youBuild: A Task API that refuses login floods, other websites, oversized bodies and SSRF URLs, and sends safe headers on every response
+keywords: zudojs security, rate limiting, 429, cors, csrf, security headers, hsts, content security policy, secure cookies, body size limit, 413, ssrf, url validation, sql injection, xss, defense in depth
+---
+<section>
+<h2 id="layers">Defense in depth</h2>
+<p>Your Task API now knows who is calling (<a href="/learn/zudo-auth">authentication</a>) and what they may do (<a href="/learn/zudo-permissions">permissions</a>). But once it is on the internet, anyone can send it anything: a million login attempts, a 2 GB body, a request from a web page on another site, a URL that points into your own network.</p>
+<p>No single check stops all of that. Instead, you put several independent checks in a row, so that an attack that gets past one layer is stopped by the next. This is called <strong>defense in depth</strong>. Here are the layers of a public API, in the order a request meets them:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Layer</th><th>Stops</th><th>In this lesson</th></tr></thead>
+<tbody>
+<tr><td>HTTPS and HSTS</td><td>Reading or changing traffic on the network.</td><td>Security headers</td></tr>
+<tr><td>Request guard and body limit</td><td>Malformed requests, huge bodies (<code>413</code>).</td><td>Request limits</td></tr>
+<tr><td>Rate limit</td><td>Password guessing, floods (<code>429</code>).</td><td>Rate limiting</td></tr>
+<tr><td>CORS and CSRF</td><td>Other websites using your users' browsers.</td><td>CORS, CSRF, cookies</td></tr>
+<tr><td>Authentication, then permissions</td><td>Unknown users (<code>401</code>), forbidden actions (<code>403</code>).</td><td>Previous two lessons</td></tr>
+<tr><td>Validation</td><td>Bad input (<code>400</code>).</td><td><a href="/learn/zudo-validation">Validation lesson</a></td></tr>
+<tr><td>Safe use of the input</td><td>SQL injection, XSS, SSRF.</td><td>SSRF, input checks</td></tr>
+<tr><td>Response headers</td><td>Browsers misusing your responses.</td><td>Security headers</td></tr>
+</tbody>
+</table></div>
+<p>ZudoJS splits this work between two packages:</p>
+<ul>
+<li><code>@zudojs/security</code> has the <strong>building blocks</strong>: plain functions that answer questions like "is this origin allowed?" or "is this URL safe to fetch?". They know nothing about HTTP servers.</li>
+<li><code>@zudojs/http</code> has <strong>middleware</strong> built on those blocks, ready to put in front of your routes: rate limiting, CORS and security headers, plus a request guard and a body limit that are on by default.</li>
+</ul>
+<p>Add the building blocks to the Task API:</p>
+<shell title="Terminal on your computer">
+$ npm install @zudojs/security
+up to date, audited 7 packages in 4s
+
+found 0 vulnerabilities
+</shell>
+<p>"up to date" is not an error. @zudojs/http already uses @zudojs/security for its own middleware, so the code was on your disk. The command adds it to your <code>package.json</code>, because your own code is about to import it directly.</p>
+<note>@zudojs/security uses Node.js features, so the examples in this lesson run on your computer, not in the browser terminal. Save each one in the <code>task-api</code> folder and run it with <code>npx tsx</code>, like <code>npx tsx rate-limit.ts</code>. You should see exactly the output shown under it.</note>
+</section>
+
+<section>
+<h2 id="rate-limit">Rate limiting</h2>
+<p>A login endpoint answers one question: is this password right? An attacker who can ask a million times a minute will eventually guess. <strong>Rate limiting</strong> counts how many requests each client made recently and refuses the rest with <code>429 Too Many Requests</code>.</p>
+<p>The limiter needs to know who the client is. On the internet the only thing you know for sure is the <strong>IP address</strong> of the connection. Here an attacker tries seven passwords from one address. To dodge the limit, they also send a different <code>X-Forwarded-For</code> header each time, a header that proxies use to say "I am forwarding for this address":</p>
+<example file="rate-limit.ts" browser="no">
+import { createRateLimiter, extractClientIp, retryAfterSeconds } from "@zudojs/security";
+
+const loginLimiter = createRateLimiter({ windowMs: 15 * 60_000, max: 5 });
+
+for (let attempt = 1; attempt <= 7; attempt++) {
+  const headers = { "x-forwarded-for": `198.51.100.${attempt}` };
+  const ip = extractClientIp(headers, { remoteAddress: "203.0.113.7" });
+  const result = loginLimiter.check({ ip });
+  const answer = result.allowed ? "check the password" : `429, retry in ${retryAfterSeconds(result)} seconds`;
+  console.log(`attempt ${attempt} from ${ip}: ${answer}`);
+}
+loginLimiter.destroy();
+</example>
+<output>
+attempt 1 from 203.0.113.7: check the password
+attempt 2 from 203.0.113.7: check the password
+attempt 3 from 203.0.113.7: check the password
+attempt 4 from 203.0.113.7: check the password
+attempt 5 from 203.0.113.7: check the password
+attempt 6 from 203.0.113.7: 429, retry in 900 seconds
+attempt 7 from 203.0.113.7: 429, retry in 900 seconds
+</output>
+<p>Five attempts in 15 minutes were allowed, then every further attempt got <code>429</code>. The fake header changed nothing: <code>extractClientIp</code> used <code>remoteAddress</code>, the real address of the connection, because anyone can type any <code>X-Forwarded-For</code> they like.</p>
+<p>If your API runs behind a proxy or load balancer that you operate, every request seems to come from that proxy. Then pass <code>trustProxy: 1</code> (the number of proxies <em>you</em> run), and the function reads the address your proxy added, ignoring whatever the client wrote before it.</p>
+<warn title="ONE PROCESS ONLY">The counts live in the memory of one process. If you run three copies of the Task API, an attacker gets <code>3 × max</code> attempts. It still slows guessing down a lot, but for an exact limit across servers you need a shared store such as Redis.</warn>
+</section>
+
+<section>
+<h2 id="cors">CORS: which websites may call you</h2>
+<p>Your users log in to the Task API from your web app at <code>https://app.example.com</code>. Their browser also visits other websites. Could JavaScript on <code>https://evil.example</code> call your API and read the answer? By default the browser says no: it enforces the <strong>same-origin policy</strong>. An <strong>origin</strong> is the scheme, host and port of a page, like <code>https://app.example.com</code>.</p>
+<p><strong>CORS</strong> (Cross-Origin Resource Sharing) is how your API tells the browser "this other origin may read my responses". The browser sends an <code>Origin</code> header, and your API answers with <code>Access-Control-Allow-Origin</code> if that origin is on your list. The list must be exact. Watch how attackers try to look like your app:</p>
+<example file="cors.ts" browser="no">
+import { generateSimpleHeaders, isOriginAllowed } from "@zudojs/security";
+
+const config = { origin: ["https://app.example.com"], credentials: true };
+
+for (const origin of [
+  "https://app.example.com",
+  "https://app.example.com.evil.example",
+  "https://evil-app.example.com",
+  "http://app.example.com",
+  "null",
+]) {
+  console.log(origin.padEnd(38), isOriginAllowed(origin, config) ?? "refused");
+}
+console.log(generateSimpleHeaders("https://evil.example", config));
+
+try {
+  generateSimpleHeaders("https://evil.example", { origin: "*", credentials: true });
+} catch (error) {
+  if (error instanceof Error) console.log(error.name, "-", error.message);
+}
+</example>
+<output>
+https://app.example.com                https://app.example.com
+https://app.example.com.evil.example   refused
+https://evil-app.example.com           refused
+http://app.example.com                 refused
+null                                   refused
+{ Vary: 'Origin', 'Access-Control-Allow-Credentials': 'true' }
+ConfigurationError - CORS: credentials cannot be combined with a wildcard origin ("*"). Enumerate the allowed origins, or supply a function or RegExp.
+</output>
+<p>Only the exact origin passes. A longer name that <em>starts</em> with yours, a look-alike, plain <code>http</code> and the special <code>null</code> origin (sent by sandboxed pages and local files) are all refused. For a refused origin there is no <code>Access-Control-Allow-Origin</code> header, so the browser hides the response from the evil page.</p>
+<p><code>credentials: true</code> means the browser may send cookies with the request. Combining it with <code>"*"</code> ("any origin may read") would let every website on the internet act as your logged-in user, so the package refuses to build that configuration at all.</p>
+<warn title="SECURITY: REGULAR EXPRESSIONS AS ORIGINS">You may also pass a <code>RegExp</code>. Anchor it with <code>^</code> and <code>$</code>: <code>/^https:\/\/app\.example\.com$/</code>. Without the anchors, <code>/https:\/\/app\.example\.com/</code> also matches <code>https://app.example.com.evil.example</code>. An array of exact strings is the safest choice.</warn>
+<p>Remember what CORS is: a rule the <em>browser</em> follows. It does not stop <code>curl</code>, a script or another server from calling your API. Those are stopped by authentication, permissions and rate limits.</p>
+</section>
+
+<section>
+<h2 id="csrf">CSRF: forged requests</h2>
+<p>If your web app keeps the session in a <strong>cookie</strong>, the browser attaches that cookie to <em>every</em> request to your API, even one started by another website. A hidden form on <code>evil.example</code> can post to <code>/tasks/3/delete</code>, and it arrives with the victim's session. The page cannot read the answer (CORS), but the damage is done. This is <strong>Cross-Site Request Forgery</strong>, or <strong>CSRF</strong>.</p>
+<p>The defence is a <strong>CSRF token</strong>: a signed random value your server gives to your own pages. Every request that changes something must send it back in a header. The evil page cannot know it. A CSRF token is signed with a secret, and that secret comes from the environment. Here is what happens when it is missing:</p>
+<example file="csrf-secret.ts" browser="no">
+import { createCsrfProtection } from "@zudojs/security";
+
+try {
+  createCsrfProtection({ secret: process.env.CSRF_SECRET ?? "" });
+} catch (error) {
+  if (error instanceof Error) console.log(error.name, "-", error.message);
+}
+</example>
+<output>
+ConfigurationError - CSRF secret cannot be empty: pass a random string of at least 32 characters, e.g. randomBytes(32).toString("hex")
+</output>
+<p>It refuses to start rather than sign tokens with an empty key. Generate a real secret once, with <code>openssl rand -hex 32</code> or the <code>randomBytes</code> call the message shows, and store it in your environment like your JWT secret. The next example makes a fresh one just for the demo, then plays four requests against a logged-in user:</p>
+<example file="csrf.ts" browser="no">
+import { randomBytes } from "node:crypto";
+import { createCsrfProtection } from "@zudojs/security";
+
+const csrf = createCsrfProtection({ secret: randomBytes(32).toString("hex") });
+
+const ada = csrf.issue({ sessionId: "session-ada" });
+const mallory = csrf.issue({ sessionId: "session-mallory" });
+const cookieHeader = ada.setCookie.split(";")[0];
+
+const attempts = [
+  { name: "GET, no token needed      ", method: "GET", headers: {} },
+  { name: "forged POST, no token     ", method: "POST", headers: {} },
+  { name: "forged POST, mallory token", method: "POST", headers: { "x-csrf-token": mallory.token } },
+  { name: "ada's own page            ", method: "POST", headers: { "x-csrf-token": ada.token } },
+];
+for (const { name, method, headers } of attempts) {
+  console.log(name, csrf.verify({ method, headers, cookieHeader }, { sessionId: "session-ada" }));
+}
+console.log(ada.setCookie.replace(ada.token, "<token>"));
+</example>
+<output>
+GET, no token needed       true
+forged POST, no token      false
+forged POST, mallory token false
+ada's own page             true
+_csrf=<token>; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=3600
+</output>
+<p>Only the request that carries Ada's own token passes. The attacker cannot use a token from their own account either, because each token is tied to one session by <code>sessionId</code>: always pass it, at issue time and at verify time. Safe methods like <code>GET</code> pass without a token, so <strong>never change data in a GET handler</strong>.</p>
+<p>Look at the cookie the package writes: <code>HttpOnly</code> (page scripts cannot read it), <code>Secure</code> (HTTPS only) and <code>SameSite=Strict</code> (not sent at all on requests from other sites). <code>SameSite</code> alone already blocks most CSRF in modern browsers; the token is the second layer.</p>
+<tip title="DO I NEED CSRF TOKENS?">Only if the browser sends your credentials automatically, which means cookies. The Task API from <a href="/learn/zudo-auth">the authentication lesson</a> sends its JWT in an <code>Authorization</code> header that your own JavaScript adds. Another website cannot make the browser add that header, so that API is not open to CSRF. The moment you move the token into a cookie, add CSRF protection.</tip>
+</section>
+
+<section>
+<h2 id="cookies">Secure cookies</h2>
+<p>Whenever you do set a cookie, three attributes do most of the work: <code>Secure</code>, <code>HttpOnly</code> and <code>SameSite</code>. <code>createSecureCookie</code> turns all three on, and <code>serializeCookie</code> refuses combinations a browser would reject:</p>
+<example file="cookies.ts" browser="no">
+import { createSecureCookie, serializeCookie } from "@zudojs/security";
+
+console.log(createSecureCookie("sid", "f3a9c1", { maxAge: 3600 }));
+
+const userInput = "x; Domain=evil.example";
+console.log(createSecureCookie("theme", userInput));
+
+try {
+  serializeCookie({ name: "sid", value: "f3a9c1", sameSite: "none", secure: false });
+} catch (error) {
+  if (error instanceof Error) console.log(error.name, "-", error.message);
+}
+</example>
+<output>
+sid=f3a9c1; Max-Age=3600; Secure; HttpOnly; SameSite=Lax
+theme=x%3B%20Domain%3Devil.example; Secure; HttpOnly; SameSite=Lax
+ValidationError - Cannot serialize cookie "sid": SameSite=None requires the Secure attribute
+</output>
+<p>The second line is an attack: a value that tries to add its own <code>Domain</code> attribute. It was percent-encoded into harmless text. The third call wanted a cookie sent to every site (<code>SameSite=None</code>) over plain HTTP, which is refused.</p>
+</section>
+
+<section>
+<h2 id="headers">Security headers, HSTS and CSP</h2>
+<p><strong>Security headers</strong> are response headers that ask the browser to protect your users. <code>generateSecurityHeaders()</code> returns a strict default set:</p>
+<example file="headers.ts" browser="no">
+import { generateSecurityHeaders, validateCspDirective } from "@zudojs/security";
+
+console.log(generateSecurityHeaders());
+console.log(validateCspDirective("script-src 'self' 'unsafe-inline'"));
+</example>
+<output>
+{
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'X-XSS-Protection': '0',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'X-DNS-Prefetch-Control': 'off',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Resource-Policy': 'same-origin',
+  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+  'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload',
+  'Permissions-Policy': 'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()'
+}
+unsafe-inline weakens CSP
+</output>
+<p>The important ones:</p>
+<ul>
+<li><strong>Content-Security-Policy</strong> (CSP) lists where a page may load scripts, styles and images from. <code>script-src 'self'</code> means "only scripts from my own origin", so a script an attacker injected into a page will not run. It is the strongest defence against XSS in the browser. <code>validateCspDirective</code> warns when a policy weakens it with <code>'unsafe-inline'</code>.</li>
+<li><strong>Strict-Transport-Security</strong> (HSTS) tells the browser "use only HTTPS for this site for the next two years". After the first visit, nobody on the network can downgrade your users to plain HTTP. Browsers ignore it on plain HTTP responses. Only send it once your whole domain works over HTTPS, and think before keeping <code>preload</code>: it asks browsers to hard-code your domain as HTTPS-only, which is hard to undo.</li>
+<li><strong>X-Frame-Options: DENY</strong> and <code>frame-ancestors 'none'</code> stop other sites from showing your pages inside a frame to trick users into clicking (clickjacking).</li>
+<li><strong>X-Content-Type-Options: nosniff</strong> stops the browser from guessing that an uploaded text file is really a script.</li>
+</ul>
+<p>In the Task API you do not copy these by hand: <code>createSecurityMiddleware()</code> from @zudojs/http adds a similar set to every response. You will see it in the final server.</p>
+</section>
+
+<section>
+<h2 id="limits">Request limits</h2>
+<p>Reading a request body costs memory. Without a limit, one client can send a body of several gigabytes and take your server down. The Node adapter of @zudojs/http has a limit on by default (10 MB) and answers <code>413 Payload Too Large</code> above it. A JSON API rarely needs more than a few kilobytes per request, so set <code>maxBodySize</code> much lower. Upload routes are the exception, and usually live in a separate service.</p>
+<p>If you read bodies yourself, the security package has the same checks as functions. Be careful where the number comes from:</p>
+<example file="limits.ts" browser="no">
+import { createBodySizeChecker, validateContentLength } from "@zudojs/security";
+
+console.log(validateContentLength("20000", 16_384));
+console.log(validateContentLength("12abc", 16_384));
+console.log(validateContentLength("512", 16_384));
+
+try {
+  createBodySizeChecker(Number(process.env.BODY_LIMIT));
+} catch (error) {
+  if (error instanceof Error) console.log(error.name, "-", error.message);
+}
+</example>
+<output>
+Content-Length 20000 exceeds maximum 16384 bytes
+Content-Length is not a valid number: 12abc
+undefined
+ConfigurationError - Body limit maxSize must be a finite number of bytes above 0, got: NaN
+</output>
+<p>Each check returns an error message, or <code>undefined</code> when all is well. The last one is a classic bug: <code>BODY_LIMIT</code> is not set, <code>Number(undefined)</code> is <code>NaN</code>, and a comparison with <code>NaN</code> is always false, so a naive <code>size &gt; limit</code> check would let every body through. The package refuses to build a checker with that limit.</p>
+</section>
+
+<section>
+<h2 id="ssrf">SSRF: URLs your server fetches</h2>
+<p>Imagine a feature: "paste a link, and the Task API shows a preview of the page". Your server fetches the URL. But your server sits <em>inside</em> your network. A user can paste a URL that points to something only your server can reach:</p>
+<ul>
+<li><code>http://169.254.169.254/latest/meta-data/</code>: the cloud metadata service, which hands out the server's cloud credentials;</li>
+<li><code>http://localhost:5432/</code>: your database;</li>
+<li><code>http://10.0.0.8/admin</code>: an internal admin panel.</li>
+</ul>
+<p>Making your server send requests for an attacker is called <strong>Server-Side Request Forgery</strong>, or <strong>SSRF</strong>. <code>isSafeUrl</code> refuses private, loopback and link-local addresses, however they are written:</p>
+<example file="ssrf.ts" browser="no">
+import { isSafeUrl } from "@zudojs/security";
+
+for (const url of [
+  "https://example.com/article",
+  "http://169.254.169.254/latest/meta-data/",
+  "http://localhost:5432/",
+  "http://10.0.0.8/admin",
+  "http://2130706433/",
+  "http://0x7f000001/",
+  "http://[::ffff:127.0.0.1]/",
+  "http://user:pass@example.com/",
+  "file:///etc/passwd",
+]) {
+  console.log(isSafeUrl(url) ? "allowed" : "blocked", url);
+}
+</example>
+<output>
+allowed https://example.com/article
+blocked http://169.254.169.254/latest/meta-data/
+blocked http://localhost:5432/
+blocked http://10.0.0.8/admin
+blocked http://2130706433/
+blocked http://0x7f000001/
+blocked http://[::ffff:127.0.0.1]/
+blocked http://user:pass@example.com/
+blocked file:///etc/passwd
+</output>
+<p><code>2130706433</code> and <code>0x7f000001</code> are <code>127.0.0.1</code> written as one decimal or hexadecimal number, and <code>[::ffff:127.0.0.1]</code> is the same address in IPv6 form. They are all refused, as are URLs with a password in them and every scheme except <code>http</code> and <code>https</code>.</p>
+<p>There is one thing <code>isSafeUrl</code> cannot see: <strong>DNS</strong>. An attacker can register a normal-looking name, like <code>preview.attacker.example</code>, and point it at <code>169.254.169.254</code>. The URL looks public. So after the URL check, look up the name yourself and check every address it resolves to with <code>isPrivateHostname</code>. The example passes in a fake DNS table so it gives the same answer on every computer. In your app you use the real <code>lookup</code> shown in the comment:</p>
+<example file="ssrf-dns.ts" browser="no">
+import { isPrivateHostname, isSafeUrl } from "@zudojs/security";
+
+type Resolver = (hostname: string) => Promise<string[]>;
+// Real app: import { lookup } from "node:dns/promises";
+// const resolve: Resolver = async (h) => (await lookup(h, { all: true })).map((a) => a.address);
+
+async function checkPreviewUrl(url: string, resolve: Resolver): Promise<string> {
+  if (!isSafeUrl(url)) return "blocked: not a public http(s) URL";
+  const addresses = await resolve(new URL(url).hostname);
+  if (addresses.length === 0 || addresses.some(isPrivateHostname)) return "blocked: resolves to a private address";
+  return `ok: ${addresses.join(", ")}`;
+}
+
+const fakeDns: Record<string, string[]> = {
+  "news.example.org": ["93.184.215.14"],
+  "preview.attacker.example": ["169.254.169.254"],
+  "mixed.attacker.example": ["93.184.215.14", "10.0.0.8"],
+};
+const resolve: Resolver = async (hostname) => fakeDns[hostname] ?? [];
+
+for (const host of ["news.example.org", "preview.attacker.example", "mixed.attacker.example"]) {
+  console.log(host.padEnd(25), await checkPreviewUrl(`https://${host}/page`, resolve));
+}
+</example>
+<output>
+news.example.org          ok: 93.184.215.14
+preview.attacker.example  blocked: resolves to a private address
+mixed.attacker.example    blocked: resolves to a private address
+</output>
+<warn title="TWO MORE HOLES TO CLOSE">A clever DNS server can answer "public" to your check and "private" a moment later, when <code>fetch</code> looks the name up again (<strong>DNS rebinding</strong>). And a public page can answer with a redirect to <code>http://169.254.169.254/</code>. So when you fetch: use <code>redirect: "manual"</code> and check every redirect target the same way, and for high-risk features connect to the exact address you checked, or send outbound requests through a proxy that only reaches the public internet.</warn>
+</section>
+
+<section>
+<h2 id="input">Input checks are the last line, not the first</h2>
+<p>@zudojs/security can look at text and guess whether it is an attack. <code>detectThreats</code> returns labels such as <code>SQL_INJECTION</code> or <code>XSS</code>. These are <strong>heuristics</strong>: patterns that often appear in attacks. See how well they guess:</p>
+<example file="detect.ts" browser="no">
+import { detectThreats, escapeHtml } from "@zudojs/security";
+
+for (const input of [
+  "Buy milk",
+  "1' OR '1'='1",
+  "<img src=x onerror=alert(1)>",
+  "Please select a date and update the notes",
+  "Meet at 5 -- bring snacks",
+  "1 or true",
+]) {
+  console.log(JSON.stringify(input).padEnd(46), detectThreats(input));
+}
+console.log(escapeHtml("<img src=x onerror=alert(1)>"));
+</example>
+<output>
+"Buy milk"                                     []
+"1' OR '1'='1"                                 [ 'SQL_INJECTION' ]
+"<img src=x onerror=alert(1)>"                 [ 'XSS' ]
+"Please select a date and update the notes"    [ 'SQL_INJECTION' ]
+"Meet at 5 -- bring snacks"                    [ 'SQL_INJECTION' ]
+"1 or true"                                    []
+&lt;img src=x onerror=alert(1)&gt;
+</output>
+<p>Two innocent task titles were flagged as SQL injection, just for containing the words "select" and "update", or <code>--</code>. And <code>1 or true</code>, which really is an attack, was not flagged at all. Here it is against a real database, using PGlite from <a href="/learn/zudo-database">the database lesson</a>:</p>
+<example file="injection.ts" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  CREATE TABLE tasks (id integer PRIMARY KEY, user_id text NOT NULL, title text NOT NULL);
+  INSERT INTO tasks VALUES (1, 'ada', 'Buy milk'), (3, 'linus', 'Fix bug'), (4, 'grace', 'Rotate keys');
+`);
+const id = "1 or true"; // what the attacker put in GET /tasks/:id
+
+// INSECURE: the id is pasted into the SQL text.
+const leaked = await db.query(`SELECT id, user_id FROM tasks WHERE user_id = 'ada' AND id = ${id}`);
+console.log("string-built:", leaked.rows);
+
+// SECURE: the id is sent separately, as a value.
+try {
+  await db.query("SELECT id, user_id FROM tasks WHERE user_id = $1 AND id = $2", ["ada", id]);
+} catch (error) {
+  if (error instanceof Error) console.log("parameterized:", error.message);
+}
+await db.close();
+</example>
+<output>
+string-built: [
+  { id: 1, user_id: 'ada' },
+  { id: 3, user_id: 'linus' },
+  { id: 4, user_id: 'grace' }
+]
+parameterized: invalid input syntax for type integer: "1 or true"
+</output>
+<p>The string-built query turned the attacker's text into SQL, and Ada received every user's tasks. The parameterized query sent <code>1 or true</code> as a <em>value</em> for an integer column, and the database refused it. That is the whole defence: no detector needed.</p>
+<p>So use each tool for what it is good at:</p>
+<ul>
+<li><strong>SQL injection</strong>: parameterized queries, always. Nothing else.</li>
+<li><strong>XSS</strong>: encode output for where it goes. <code>escapeHtml</code> turns <code>&lt;</code> into <code>&amp;lt;</code>, so text shows as text in HTML. Add a strict CSP as the second layer.</li>
+<li><strong>Bad input</strong>: validate with a schema that says what <em>is</em> allowed (<a href="/learn/zudo-validation">the validation lesson</a>). An allow-list beats any block-list.</li>
+<li><strong>Detectors</strong>: log and alert on what <code>detectThreats</code> finds, to spot someone probing your API. Never block a request only because of it, and never treat "no threats found" as "safe".</li>
+</ul>
+</section>
+
+<section>
+<h2 id="together">Put it together: the Task API under attack</h2>
+<p>Now wire the layers into the Task API with the middleware from @zudojs/http. You met the pipeline and the router in <a href="/learn/zudo-middleware">the middleware lesson</a>. The layers that apply to every route go in the pipeline. The login rate limit goes on the login route only, because it should be much stricter than a limit for the whole API:</p>
+<example file="app.ts" project="secure-api" browser="no">
+import {
+  HttpMiddlewarePipeline, badRequest, createCorsMiddleware, createHttpServer, createNodeHttpAdapter,
+  createRateLimitMiddleware, createResponseContext, createRouter, createSecurityMiddleware, unauthorized,
+} from "@zudojs/http";
+import type { HttpRequestContext } from "@zudojs/http";
+import { isSafeUrl } from "@zudojs/security";
+
+const router = createRouter();
+const loginLimit = createRateLimitMiddleware({ windowMs: 15 * 60_000, max: 5 });
+
+router.post("/login", () => {
+  throw unauthorized("Wrong email or password"); // the attacker never guesses right
+}, { middleware: [loginLimit] });
+router.get("/tasks", () => createResponseContext().json([{ id: 1, title: "Buy milk" }]));
+router.post("/tasks", () => createResponseContext().setStatus(201).json({ created: true }));
+router.post("/previews", (ctx) => {
+  const body: unknown = JSON.parse(new TextDecoder().decode(ctx.request.body as Uint8Array));
+  const url = (body as { url?: unknown }).url;
+  if (typeof url !== "string" || !isSafeUrl(url)) throw badRequest("That URL cannot be previewed");
+  return createResponseContext().setStatus(202).json({ queued: url });
+});
+
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(createSecurityMiddleware());
+pipeline.use(createCorsMiddleware({
+  allowOrigin: ["https://app.example.com"],
+  credentials: true,
+  allowMethods: "GET,POST",
+  allowHeaders: "content-type,authorization",
+}));
+pipeline.use(async (context) => (await router.dispatch(context.request)).response);
+
+export const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ port: 0, maxBodySize: 16_384 }),
+  handler: (request: HttpRequestContext) => pipeline.execute(request, createResponseContext()),
+});
+</example>
+<p>The body limit is set on the adapter: 16 KB is plenty for a task. The adapter also runs a <strong>request guard</strong> by default, which refuses malformed requests (bad paths like <code>/../</code>, oversized headers, request-smuggling tricks) with <code>400</code> before your code sees them. The preview route only accepts a URL and queues it; the DNS check from the SSRF section runs right before the real fetch. Now attack it:</p>
+<example file="attack.ts" project="secure-api" browser="no">
+import { server } from "./app.js";
+
+await server.start();
+const base = `http://127.0.0.1:${server.address?.port}`;
+const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
+  fetch(`${base}${path}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
+
+console.log("1. Password guessing with a fake X-Forwarded-For");
+for (let i = 1; i <= 7; i++) {
+  const res = await post("/login", { email: "ada@example.com", password: `guess${i}` }, { "x-forwarded-for": `198.51.100.${i}` });
+  console.log(`   try ${i}:`, res.status, res.headers.get("retry-after") ?? "");
+}
+console.log("2. A page on another website reads /tasks");
+for (const origin of ["https://app.example.com", "https://evil.example"]) {
+  const res = await fetch(`${base}/tasks`, { headers: { origin } });
+  console.log(`   ${origin}:`, res.status, "allow-origin =", res.headers.get("access-control-allow-origin"));
+}
+console.log("3. A 50 KB task title");
+const big = await post("/tasks", { title: "x".repeat(50_000) });
+console.log("  ", big.status, await big.text());
+console.log("4. SSRF through the preview feature");
+for (const url of ["http://169.254.169.254/latest/meta-data/", "http://[::ffff:10.0.0.8]/", "https://example.com/article"]) {
+  const res = await post("/previews", { url });
+  console.log("  ", res.status, await res.text());
+}
+console.log("5. Headers on every response");
+const res = await fetch(`${base}/tasks`);
+for (const name of ["x-frame-options", "x-content-type-options", "strict-transport-security"]) {
+  console.log(`   ${name}: ${res.headers.get(name)}`);
+}
+await server.stop();
+</example>
+<output>
+1. Password guessing with a fake X-Forwarded-For
+   try 1: 401
+   try 2: 401
+   try 3: 401
+   try 4: 401
+   try 5: 401
+   try 6: 429 900
+   try 7: 429 900
+2. A page on another website reads /tasks
+   https://app.example.com: 200 allow-origin = https://app.example.com
+   https://evil.example: 200 allow-origin = null
+3. A 50 KB task title
+   413 {"error":"Payload Too Large"}
+4. SSRF through the preview feature
+   400 {"error":"That URL cannot be previewed","code":"BAD_REQUEST"}
+   400 {"error":"That URL cannot be previewed","code":"BAD_REQUEST"}
+   202 {"queued":"https://example.com/article"}
+5. Headers on every response
+   x-frame-options: DENY
+   x-content-type-options: nosniff
+   strict-transport-security: max-age=31536000; includeSubDomains; preload
+</output>
+<p>Every attack was stopped by a different layer:</p>
+<ol>
+<li>Five wrong passwords got <code>401</code>, then the limiter answered <code>429</code> with <code>Retry-After: 900</code> (seconds). Changing <code>X-Forwarded-For</code> did not help: the adapter does not trust that header unless you configure <code>trustProxy</code>, so it keyed the limit on the real connection address.</li>
+<li>The evil origin got its data sent, but no <code>Access-Control-Allow-Origin</code> header (<code>null</code> is what <code>headers.get</code> returns for a missing header), so the browser hides the response from its script. The status is still <code>200</code> because CORS is enforced by the browser, not by the server.</li>
+<li>The oversized body was refused with <code>413</code> before any route ran.</li>
+<li>The metadata address and the IPv6 form of a private address got <code>400</code>. A public URL was accepted.</li>
+<li>The security middleware added its headers to every response.</li>
+</ol>
+<p>Run it on your computer. Both files go in the same folder:</p>
+<shell title="Terminal on your computer">
+$ npx tsc --noEmit
+$ npx tsx attack.ts
+</shell>
+<p><code>tsc</code> prints nothing, and <code>attack.ts</code> prints the report above.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A second limiter for the whole API">
+<p>Besides the strict login limit, add a generous limit for every route: 3 requests per minute for this exercise (use something like 300 in real life). Build it with <code>createRateLimiter</code> from @zudojs/security and check it for one IP, four times.</p>
+<solution>
+<example file="api-limit.ts" project="api-limit" browser="no">
+import { createRateLimiter } from "@zudojs/security";
+
+const apiLimiter = createRateLimiter({ windowMs: 60_000, max: 3 });
+for (let request = 1; request <= 4; request++) {
+  const result = apiLimiter.check({ ip: "203.0.113.7" });
+  console.log(request, result.allowed ? "ok" : "429", "remaining:", result.remaining);
+}
+apiLimiter.destroy();
+</example>
+<output>
+1 ok remaining: 2
+2 ok remaining: 1
+3 ok remaining: 0
+4 429 remaining: 0
+</output>
+<p>In the Task API, pass the same options to <code>createRateLimitMiddleware</code> and add it to the pipeline with <code>pipeline.use</code>, so it runs for every route.</p>
+</solution>
+</exercise>
+
+<exercise title="Allow a staging app">
+<p>Your team also runs a staging copy of the web app at <code>https://staging.app.example.com</code>. Change the CORS configuration so it is allowed too, and prove that <code>https://staging.app.example.com.evil.example</code> is still refused.</p>
+<solution>
+<example file="staging.ts" project="staging" browser="no">
+import { isOriginAllowed } from "@zudojs/security";
+
+const config = {
+  origin: ["https://app.example.com", "https://staging.app.example.com"],
+  credentials: true,
+};
+for (const origin of ["https://staging.app.example.com", "https://staging.app.example.com.evil.example"]) {
+  console.log(origin, isOriginAllowed(origin, config) ?? "refused");
+}
+</example>
+<output>
+https://staging.app.example.com https://staging.app.example.com
+https://staging.app.example.com.evil.example refused
+</output>
+<p>Adding another exact string is the safe way. In a real app, read the list from configuration, one origin per environment.</p>
+</solution>
+</exercise>
+
+<exercise title="Which layer stops it?">
+<p>For each attack, name the layer that stops it: (a) a script on <code>evil.example</code> reads a user's tasks with <code>fetch</code>; (b) a hidden form on <code>evil.example</code> posts to the API using the user's session cookie; (c) a user sets their avatar URL to <code>http://localhost:6379/</code>; (d) a task title contains <code>&lt;script&gt;</code>.</p>
+<solution>
+<p>(a) CORS: the browser hides the response because the origin is not on the allow-list. (b) CSRF protection: the form cannot send the token, and a <code>SameSite</code> cookie is not sent at all. (c) SSRF checks: <code>isSafeUrl</code> refuses <code>localhost</code>, and the DNS check refuses names that point to private addresses. (d) Output encoding: <code>escapeHtml</code> (or your frontend framework) shows it as text, and the CSP stops injected scripts from running. A detector may log it, but it is not the defence.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Defense in depth: several independent layers, so one mistake is not a breach.</li>
+<li>Rate limit logins strictly, and the whole API generously. Key on the real connection address; trust <code>X-Forwarded-For</code> only from proxies you run (<code>trustProxy</code>).</li>
+<li>CORS is an exact allow-list of origins. Never <code>*</code> with credentials, and anchor any <code>RegExp</code>. CORS only binds browsers.</li>
+<li>Cookie sessions need CSRF tokens bound to the session. Cookies should be <code>Secure</code>, <code>HttpOnly</code> and <code>SameSite</code>. Secrets come from the environment.</li>
+<li>Send security headers on every response: a strict CSP, HSTS once you are fully on HTTPS, <code>nosniff</code>, and frame protection.</li>
+<li>Limit body size, and check that limits read from the environment are real numbers.</li>
+<li>Before fetching a user's URL: <code>isSafeUrl</code>, then resolve the name and check every address, and handle redirects.</li>
+<li>Threat detectors are a last line for logging. Parameterized SQL, output encoding and schema validation are the real defences.</li>
+</ul>
+<p>The Task API is now protected at every layer. The next part of the course moves work out of the request: caching, events and background jobs.</p>
+</section>

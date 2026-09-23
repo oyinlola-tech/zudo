@@ -10,12 +10,8 @@ tier: advanced
 <section>
 <h2 id="what">What RPC is</h2>
 <p>Your Task API talks to browsers over HTTP with routes like <code>POST /tasks</code>. Sometimes the caller is not a browser but <strong>another service</strong> of yours. A billing service may want to ask the task service "how many tasks does this user have?".</p>
-<p>You could build a REST route for that. But between your own services, it is often simpler to think in functions, not in URLs and methods. That is <strong>RPC</strong>, a <strong>remote procedure call</strong>: you call a function by name, it runs in another process, and the result comes back.</p>
-<example file="idea.js" check="skip" browser="no">
-// In the billing service. The work happens in the task service.
-const count = await tasks.call("tasks.count", { userId: "u_1" });
-</example>
-<p>Three pieces make that line work:</p>
+<p>Between your own services, it is often simpler to think in functions than in URLs and methods. That is <strong>RPC</strong>, a <strong>remote procedure call</strong>: you call a function by name, it runs in another process, and the result comes back.</p>
+<p>In the billing service, a line like <code>await tasks.call("tasks.count", { userId: "u_1" })</code> then runs code in the task service. Three pieces make that work:</p>
 <ul>
 <li>A <strong>procedure</strong>: the function on the far side, with a name like <code>"tasks.count"</code>.</li>
 <li>A <strong>server</strong>: it holds the procedures and runs the right one for each request.</li>
@@ -152,17 +148,22 @@ console.log(all.map((t) => t.title));
 </output>
 <p><code>client.call&lt;Input, Output&gt;(name, input)</code> reads like a local function call. The two type parameters say what you send and what you expect back.</p>
 <warn title="THE TYPES ARE A PROMISE, NOT A CHECK">The <code>Task</code> in <code>call&lt;…, Task&gt;</code> is only what you <em>tell</em> TypeScript. Nothing checks at runtime that the other service really sent a <code>Task</code>. If the answer matters, validate it with a schema, exactly like any other data that comes from outside.</warn>
-<note>A built-in in-memory transport and a built-in HTTP transport are coming to <code>@zudojs/rpc</code>, and the docs page already describes them. They are not in the version on npm yet. Until then, the small transports in this lesson do the same job.</note>
+<note>A built-in in-memory transport and a built-in HTTP transport are coming to <code>@zudojs/rpc</code>, and the docs page already describes them. They are not in the version on npm yet. Until then, the small transports in this lesson (in process here, over HTTP below) do the same job.</note>
 </section>
 
 <section>
 <h2 id="errors">Validation and errors across the wire</h2>
 <p>A payload comes from another program, so it is <strong>untrusted</strong>, even when that program is yours. The input schema rejects bad payloads before your handler sees them. On the client, a failed call throws an <code>RPCError</code>. Its <code>code</code> is the code the server sent:</p>
 <example file="errors.ts" project="rpc" browser="no">
-import { RPCClient, isRPCError } from "@zudojs/rpc";
+import { createRPCProcedure, RPCClient, isRPCError } from "@zudojs/rpc";
 import { createTaskServer } from "./procedures.js";
 
-const server = createTaskServer();
+const server = createTaskServer({
+  onInternalError: (error, requestId) => console.log(`[server log] ${requestId}: ${error}`),
+});
+server.register(createRPCProcedure("tasks.export", async () => {
+  throw new Error("connect ECONNREFUSED 10.0.0.5:5432");
+}));
 const client = new RPCClient({ send: (request) => server.handle(request) });
 
 async function show(procedure: string, input: unknown): Promise<void> {
@@ -176,10 +177,10 @@ async function show(procedure: string, input: unknown): Promise<void> {
 }
 
 await show("tasks.create", { title: "no" });
-await show("tasks.get", { id: "1; DROP TABLE tasks" });
 await show("tasks.get", { id: 7 });
+await show("tasks.export", {});
 </example>
-<output>
+<output mask="uuid">
 RPC_VALIDATION_ERROR - Invalid input for procedure "tasks.create".
   details: [
   {
@@ -188,48 +189,16 @@ RPC_VALIDATION_ERROR - Invalid input for procedure "tasks.create".
     message: 'String must be at least 3 characters'
   }
 ]
-RPC_VALIDATION_ERROR - Invalid input for procedure "tasks.get".
-  details: [
-  {
-    path: 'id',
-    code: 'invalid_type',
-    message: 'Expected number, received string'
-  }
-]
 TASK_NOT_FOUND - Task 7 not found
+[server log] 5a3760e7-86a0-4021-b5e0-a70153d1df9b: Error: connect ECONNREFUSED 10.0.0.5:5432
+RPC_INTERNAL_ERROR - The server encountered an internal error while handling this request.
 </output>
 <ul>
-<li>The first two calls failed validation. <code>details</code> lists every problem with its <code>path</code>, so the caller can fix the request. The id that tries to sneak SQL in never reaches the handler.</li>
-<li>The third call passed validation. The handler threw the <code>RPCError</code> with its own code, <code>TASK_NOT_FOUND</code>, and <code>expose: true</code>. That code reached the caller unchanged.</li>
-<li><code>"details" in error</code> is needed because the <code>RPCError</code> type does not declare <code>details</code>, even though the client sets it.</li>
+<li>The first call failed validation. <code>details</code> lists every problem with its <code>path</code>, so the caller can fix the request. A payload that fails the schema, such as <code>{ id: "1; DROP TABLE tasks" }</code>, never reaches the handler.</li>
+<li>The second call passed validation. The handler threw an <code>RPCError</code> with its own code and <code>expose: true</code>, so <code>TASK_NOT_FOUND</code> reached the caller unchanged.</li>
+<li>The third handler crashed with an ordinary error. Its message contains a host and a port, which an outsider must never see. The caller got a fixed message, and the real error went to <code>onInternalError</code> with the request id, so you can log it.</li>
 </ul>
-<h3>Errors that must not leave the server</h3>
-<p>What if the handler crashes with an ordinary error, for example a database driver message? That message can contain host names, SQL or file paths. The server never sends it. The caller gets a fixed message, and the real error goes to <code>onInternalError</code> with the request id, so you can log it:</p>
-<example file="internal.ts" project="rpc" browser="no">
-import { createRPCProcedure, RPCClient, isRPCError } from "@zudojs/rpc";
-import { createTaskServer } from "./procedures.js";
-
-const server = createTaskServer({
-  onInternalError: (error, requestId) => {
-    console.log(`[server log] request ${requestId}:`, String(error));
-  },
-});
-server.register(createRPCProcedure("tasks.export", async () => {
-  throw new Error("connect ECONNREFUSED 10.0.0.5:5432");
-}));
-
-const client = new RPCClient({ send: (request) => server.handle(request) });
-try {
-  await client.call("tasks.export", {});
-} catch (error) {
-  if (isRPCError(error)) console.log("[caller sees]", error.code, "-", error.message);
-}
-</example>
-<output mask="uuid">
-[server log] request 5a3760e7-86a0-4021-b5e0-a70153d1df9b: Error: connect ECONNREFUSED 10.0.0.5:5432
-[caller sees] RPC_INTERNAL_ERROR - The server encountered an internal error while handling this request.
-</output>
-<p>The rule is the same as for HTTP errors: only an error with <code>expose: true</code> shows its message to the caller. Every other error, including a <code>NotFoundError</code> from <code>@zudojs/errors</code>, becomes <code>RPC_INTERNAL_ERROR</code>. That is why <code>tasks.get</code> throws an <code>RPCError</code> with its own code: it is a failure the caller is meant to see.</p>
+<p>Only an error with <code>expose: true</code> shows its message to the caller. Every other error, even a <code>NotFoundError</code> from <code>@zudojs/errors</code>, becomes <code>RPC_INTERNAL_ERROR</code>. <code>"details" in error</code> is needed because the <code>RPCError</code> type does not declare <code>details</code>, even though the client sets it.</p>
 </section>
 
 <section>
@@ -246,20 +215,13 @@ server.register(createRPCProcedure("tasks.summary", async () => ({
   count: 2,
 })));
 
-const overTheWire = new RPCClient({
-  async send(request) {
-    const response = await server.handle(JSON.parse(JSON.stringify(request)));
-    return JSON.parse(JSON.stringify(response));
-  },
+const client = new RPCClient({
+  send: async (request) => JSON.parse(JSON.stringify(await server.handle(request))),
 });
-
-const summary = await overTheWire.call<{}, Record<string, unknown>>("tasks.summary", {});
-console.log(summary);
-console.log(typeof summary.dueAt);
+console.log(await client.call("tasks.summary", {}));
 </example>
 <output>
 { dueAt: '2026-10-01T09:00:00.000Z', tags: {}, count: 2 }
-string
 </output>
 <p>The <code>Date</code> arrived as a string. The <code>Set</code> became an empty object, so its data is gone. The <code>undefined</code> field disappeared. None of this raised an error.</p>
 <p>The fix is to design results that are plain JSON: dates as ISO strings, sets as arrays, and <code>null</code> instead of <code>undefined</code>. If you need richer types, the serialization lesson showed how <code>@zudojs/serialization</code> encodes them. Then both sides must use the same serializer.</p>
@@ -294,20 +256,14 @@ const frame = createRPCRequest({
   metadata: { userId: "admin" },
 });
 
-console.log(await server.handle(frame));
-console.log(await server.handle(frame, { auth: { userId: "ada" } }));
+const anonymous = await server.handle(frame);
+console.log(anonymous.success, anonymous.error);
+const verified = await server.handle(frame, { auth: { userId: "ada" } });
+console.log(verified.success, verified.result);
 </example>
 <output>
-{
-  id: 'req-1',
-  success: false,
-  error: { code: 'RPC_UNAUTHENTICATED', message: 'Sign in first.' }
-}
-{
-  id: 'req-1',
-  success: true,
-  result: { owner: 'ada', metadataSays: 'admin' }
-}
+false { code: 'RPC_UNAUTHENTICATED', message: 'Sign in first.' }
+true { owner: 'ada', metadataSays: 'admin' }
 </output>
 <p>The first call claimed to be <code>admin</code> in its metadata and was still refused, because nothing verified that claim. The second call had a verified identity, <code>ada</code>. The handler used it, and the metadata's claim stayed just a string that nobody trusts.</p>
 </section>
@@ -410,13 +366,7 @@ console.log("Token loaded.");
 <output>
 TASKS_RPC_TOKEN is missing or shorter than 32 characters. Refusing to start.
 </output>
-<p>That is what you see without the variable. Create a strong token once and pass it in when you start the service:</p>
-<shell title="Terminal on your computer">
-$ export TASKS_RPC_TOKEN=$(node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))")
-$ npx tsx rpc-token.ts
-Token loaded.
-</shell>
-<note>A ready-made HTTP transport and fetch handler for <code>@zudojs/rpc</code> are coming in a future release. They do what <code>rpc-http.ts</code> does, plus body size limits and status codes per error code.</note>
+<p>That is what you see without the variable. Create one with <code>node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"</code> and give the same value to both services.</p>
 </section>
 
 <section>
@@ -446,28 +396,27 @@ const client = new RPCClient({ send: (request) => server.handle(request) });
 try {
   await client.call("tasks.report", {});
 } catch (error) {
-  if (error instanceof RPCTimeoutError) console.log("[client]", error.name, "-", error.message);
+  if (error instanceof RPCTimeoutError) console.log("[client]", error.message);
 }
 
 try {
   const deadline = Date.now() + 150;
   await client.call("tasks.report", {}, { timeout: 150, metadata: { deadline } });
 } catch (error) {
-  if (error instanceof RPCTimeoutError) console.log("[client]", error.name, "-", error.message);
+  if (error instanceof RPCTimeoutError) console.log("[client]", error.message);
 }
 await sleep(400);
 </example>
 <output mask="ms">
-[client] RPCTimeoutError - RPC operation timed out after 250ms.
+[client] RPC operation timed out after 250ms.
 [server] stopped at step 3
-[client] RPCTimeoutError - RPC operation timed out after 150ms.
+[client] RPC operation timed out after 150ms.
 [server] stopped at step 2
 </output>
 <ul>
 <li>First call: the procedure allows 250 ms. The caller got the timeout error at 250 ms, and the handler noticed the aborted signal after its third step and stopped.</li>
-<li>Second call: the caller only waited 150 ms and said so with a deadline. The server honoured it and the handler stopped after step 2, instead of working for a caller that had already left.</li>
+<li>Second call: the caller only waited 150 ms and said so with a deadline. The server honoured it and the handler stopped after step 2, instead of working for a caller that had already left. Always send a deadline when your caller has a time limit.</li>
 </ul>
-<p>Without the deadline, the server would keep working until its own 250 ms. Always send one when your caller has a time limit.</p>
 </section>
 
 <section>
@@ -522,42 +471,6 @@ tasks: [] after 3 sends
 
 <section>
 <h2 id="practice">Practice</h2>
-<exercise title="Complete a task">
-<p>Add a <code>tasks.complete</code> procedure that takes <code>{ id }</code>, marks the task as done and returns it. A missing task must fail with the <code>TASK_NOT_FOUND</code> code. Call it through a client.</p>
-<solution>
-<example file="complete.ts" project="rpc-complete" browser="no">
-import { createRPCProcedure, RPCClient, RPCError, RPCServer, isRPCError } from "@zudojs/rpc";
-import { schema } from "@zudojs/schema";
-
-interface Task { readonly id: number; readonly title: string; readonly done: boolean }
-const tasks = new Map<number, Task>([[1, { id: 1, title: "Buy milk", done: false }]]);
-
-const server = new RPCServer();
-server.register(createRPCProcedure("tasks.complete", async (input: { id: number }) => {
-  const task = tasks.get(input.id);
-  if (!task) {
-    throw new RPCError(`Task ${input.id} not found`, { code: "TASK_NOT_FOUND", statusCode: 404, expose: true });
-  }
-  const done: Task = { ...task, done: true };
-  tasks.set(done.id, done);
-  return done;
-}, { input: schema.object({ id: schema.number().int().min(1) }), idempotent: true }));
-
-const client = new RPCClient({ send: (request) => server.handle(request) });
-console.log(await client.call("tasks.complete", { id: 1 }));
-try {
-  await client.call("tasks.complete", { id: 2 });
-} catch (error) {
-  if (isRPCError(error)) console.log(error.code);
-}
-</example>
-<output>
-{ id: 1, title: 'Buy milk', done: true }
-TASK_NOT_FOUND
-</output>
-<p>Completing a task twice gives the same result, so this procedure is idempotent and safe to retry.</p>
-</solution>
-</exercise>
 <exercise title="Only admins may delete">
 <p>Write a middleware that lets a call through only when the <strong>verified</strong> identity has <code>role: "admin"</code>, and answers <code>RPC_FORBIDDEN</code> otherwise. Test it with a frame whose metadata claims <code>role: "admin"</code> but whose verified identity is a normal user.</p>
 <solution>

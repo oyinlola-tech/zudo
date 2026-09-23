@@ -1,0 +1,544 @@
+---
+title: Handling errors
+description: Tell syntax, runtime and logic errors apart, throw and catch errors, read an Error object's name, message, cause and stack, write your own error classes, and turn errors into safe API answers.
+minutes: 40
+youNeed: this, prototypes and classes, and the lessons before it
+youBuild: The logic of a calculator API that validates its input, throws typed errors and maps them to HTTP status codes and messages
+keywords: javascript errors, syntax error, runtime error, logic error, throw, try catch finally, Error object, error name message stack, error cause, custom error class, instanceof, rethrow, status code, error handling
+---
+<section>
+<h2 id="kinds">Three kinds of errors</h2>
+<p>An <strong>error</strong> is anything that stops your program from doing what you meant. There are three kinds, and each one shows up at a different moment.</p>
+<h3>Syntax errors: the code cannot even start</h3>
+<p>A <strong>syntax error</strong> means the code is not valid JavaScript: a missing bracket, a typo in a keyword. Node.js reads the whole file before it runs any of it, so a syntax error stops everything, even the lines above the mistake. Save this file as <code>syntax.js</code> in a project folder with <code>"type": "module"</code> (see <a href="/learn/setup">Your first program</a>):</p>
+<example file="syntax.js" browser="no" check="skip">
+console.log("Starting the task report");
+
+function countOpen(tasks {
+  return tasks.filter((task) => !task.done).length;
+}
+</example>
+<shell title="Terminal on your computer">
+$ node syntax.js
+file://~/errors-demo/syntax.js:3
+function countOpen(tasks {
+                         ^
+
+SyntaxError: Unexpected token '{'
+    at compileSourceTextModule (node:internal/modules/esm/utils:318:16)
+…
+
+Node.js v24.19.0
+</shell>
+<p>The first line, <code>Starting the task report</code>, never printed. Node.js points at line 3 with <code>^</code>: it expected a <code>)</code> to close the parameter list. Your editor usually underlines syntax errors in red before you even run the code.</p>
+<h3>Runtime errors: the code crashes while running</h3>
+<p>A <strong>runtime error</strong> happens while the program runs, when an operation is impossible, such as reading a property of <code>undefined</code>. Everything before it runs; nothing after it does:</p>
+<example file="crash.js" browser="no" check="skip">
+console.log("Starting the task report");
+
+const tasks = JSON.parse('[{"title":"Buy milk","done":false}]');
+console.log(tasks.lenght.toFixed(0));
+
+console.log("Report finished");
+</example>
+<shell title="Terminal on your computer">
+$ node crash.js
+Starting the task report
+file://~/errors-demo/crash.js:4
+console.log(tasks.lenght.toFixed(0));
+                         ^
+
+TypeError: Cannot read properties of undefined (reading 'toFixed')
+    at file://~/errors-demo/crash.js:4:26
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at async node:internal/modules/esm/loader:643:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+
+Node.js v24.19.0
+</shell>
+<p>The typo <code>lenght</code> gave <code>undefined</code>, and calling a method on <code>undefined</code> threw a <code>TypeError</code>. The program stopped, so <code>Report finished</code> never printed. In a backend, an uncaught error like this can stop the whole server. <a href="/learn/js-scope">Scope and how code runs</a> showed how to read the stack trace underneath.</p>
+<h3>Logic errors: wrong answers, no message</h3>
+<p>A <strong>logic error</strong> is the worst kind: the code runs without complaint and gives the wrong result.</p>
+<example file="logic.js">
+function averagePriority(tasks) {
+  let total = 0;
+  for (const task of tasks) {
+    total += task.priority;
+  }
+  return total / tasks.length + 1;
+}
+
+console.log(averagePriority([{ priority: 2 }, { priority: 4 }]));
+</example>
+<output>
+4
+</output>
+<p>The average of 2 and 4 is 3, not 4. Someone wrote <code>+ 1</code> by mistake. JavaScript cannot know what you meant, so nothing warns you. Logic errors are found by checking results against known answers, which is what tests do. You will write them in <a href="/learn/testing-basics">Testing</a>.</p>
+</section>
+
+<section>
+<h2 id="throw-catch">throw, try, catch and finally</h2>
+<p>When your own code cannot do what was asked, it should say so loudly rather than carry on with bad data. <code>throw</code> stops the current function and hands an error to whoever called it, then to their caller, and so on up the call stack. <code>try</code>/<code>catch</code> is where you receive it. If nothing catches it, the program crashes as you saw above.</p>
+<example file="catch.js">
+function parseTask(text) {
+  const data = JSON.parse(text);
+  if (typeof data.title !== "string") {
+    throw new Error("title must be a string");
+  }
+  return data;
+}
+
+const inputs = ['{"title":"Buy milk"}', '{"title":42}', "{not json"];
+
+for (const input of inputs) {
+  try {
+    const task = parseTask(input);
+    console.log("OK:", task.title);
+  } catch (error) {
+    console.log(`${error.name}: ${error.message}`);
+  } finally {
+    console.log("  (checked one input)");
+  }
+}
+</example>
+<output>
+OK: Buy milk
+  (checked one input)
+Error: title must be a string
+  (checked one input)
+SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)
+  (checked one input)
+</output>
+<p>Three things happened:</p>
+<ul>
+<li>Good JSON with a string title passed. The <code>catch</code> block was skipped.</li>
+<li>Our own <code>throw</code> rejected a title that was a number. The line <code>console.log("OK:" ...)</code> never ran: <code>throw</code> jumped straight to <code>catch</code>.</li>
+<li><code>JSON.parse</code> itself threw a <code>SyntaxError</code> on text that was not JSON. You did not write that <code>throw</code>: built-in functions throw too.</li>
+</ul>
+<p>The loop carried on after each error, because each one was caught. That is the point of <code>catch</code>: one bad request must not stop the server from answering the next one.</p>
+<note>The exact wording of the <code>SyntaxError</code> comes from the JavaScript engine. Node.js and Chrome use the same engine, V8, which is why the browser terminal prints the same message.</note>
+<h3>finally always runs</h3>
+<p><code>finally</code> runs whether the <code>try</code> block succeeded, threw, or even returned. Use it for clean-up that must happen no matter what, such as closing a file or giving a database connection back:</p>
+<example file="finally.js">
+let openConnections = 0;
+
+function query(sql) {
+  openConnections += 1;
+  try {
+    if (sql === "") throw new Error("empty query");
+    return `rows for: ${sql}`;
+  } finally {
+    openConnections -= 1;
+  }
+}
+
+console.log(query("SELECT * FROM tasks"));
+try {
+  query("");
+} catch (error) {
+  console.log("failed:", error.message);
+}
+console.log("open connections:", openConnections);
+</example>
+<output>
+rows for: SELECT * FROM tasks
+failed: empty query
+open connections: 0
+</output>
+<p>The first call returned from inside <code>try</code>, the second threw. In both cases <code>finally</code> ran and closed the connection. Without it, every failed query would leak a connection until the server ran out.</p>
+</section>
+
+<section>
+<h2 id="error-objects">What is inside an error</h2>
+<p>An error is an ordinary object made from the <code>Error</code> class or one of its built-in subclasses. The ones you will meet most:</p>
+<ul>
+<li><code>TypeError</code>: a value has the wrong type for the operation, such as calling something that is not a function.</li>
+<li><code>ReferenceError</code>: a name that does not exist, or a <code>let</code>/<code>const</code> used before its line (<a href="/learn/js-scope">Scope</a>).</li>
+<li><code>RangeError</code>: a value is out of range, or the call stack overflowed.</li>
+<li><code>SyntaxError</code>: invalid code, or invalid JSON passed to <code>JSON.parse</code>.</li>
+</ul>
+<p>Every error has a <code>name</code>, a <code>message</code> and a <code>stack</code>, the stack trace as text:</p>
+<example file="error-object.js">
+function checkPriority(priority) {
+  if (priority < 1 || priority > 5) {
+    throw new RangeError(`priority must be 1 to 5, got ${priority}`);
+  }
+  return priority;
+}
+
+try {
+  checkPriority(9);
+} catch (error) {
+  console.log(error instanceof RangeError, error instanceof Error);
+  console.log(error.name);
+  console.log(error.message);
+  console.log(error.stack.split("\n")[0]);
+  console.log(error.stack.split("\n")[1].trim().split(" (")[0]);
+}
+</example>
+<output>
+true true
+RangeError
+priority must be 1 to 5, got 9
+RangeError: priority must be 1 to 5, got 9
+at checkPriority
+</output>
+<p>The first line of <code>stack</code> is the name and message. The next lines are the call stack, top first: the error was made in <code>checkPriority</code>. The example cuts off the file path, which is different on every computer. In real code you log the whole <code>stack</code> for yourself, and never send it to users (more on that in the build below).</p>
+<warn title="Always throw Error objects">JavaScript lets you <code>throw</code> anything, even a string: <code>throw "not found"</code>. Don't. A string has no <code>name</code>, no <code>stack</code>, and <code>instanceof</code> cannot recognise it, so whoever catches it cannot tell what happened or where. Always throw an <code>Error</code> or a subclass.</warn>
+<h3>Wrapping an error with cause</h3>
+<p>Often you catch a low-level error and want to report it in words that make sense at your level: not "unexpected token" but "could not load the settings". Pass the original error as the <strong>cause</strong>, so the detail is not lost:</p>
+<example file="cause.js">
+function loadSettings(text) {
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error("Could not load settings", { cause: error });
+  }
+}
+
+try {
+  loadSettings("{ theme: dark }");
+} catch (error) {
+  console.log(error.message);
+  console.log("cause:", error.cause.name, "-", error.cause.message);
+}
+</example>
+<output>
+Could not load settings
+cause: SyntaxError - Expected property name or '}' in JSON at position 2 (line 1 column 3)
+</output>
+<p>The caller gets a clear message, and <code>error.cause</code> still holds the original <code>SyntaxError</code> for debugging.</p>
+</section>
+
+<section>
+<h2 id="custom-errors">Your own error classes</h2>
+<p>A backend has to answer differently for different failures. "That task does not exist" is not the same as "your input is wrong", and neither is the same as "the database is down". Give each kind of failure its own <strong>class</strong>, so the code that catches it can tell them apart with <code>instanceof</code>.</p>
+<p>You learned <code>extends</code> and <code>super</code> in <a href="/learn/js-classes">this, prototypes and classes</a>. An error class is a class that extends <code>Error</code>. Start with a common base class that carries what every API error needs: an HTTP <strong>status code</strong> (the number the server sends back, such as 404 for "Not Found") and a short machine-readable <code>code</code>:</p>
+<example file="errors.js" project="errors">
+export class AppError extends Error {
+  constructor(message, { status = 500, code = "INTERNAL", cause } = {}) {
+    super(message, { cause });
+    this.name = new.target.name;
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export class NotFoundError extends AppError {
+  constructor(message) {
+    super(message, { status: 404, code: "NOT_FOUND" });
+  }
+}
+
+export class ValidationError extends AppError {
+  constructor(message, field) {
+    super(message, { status: 400, code: "VALIDATION" });
+    this.field = field;
+  }
+}
+</example>
+<p><code>new.target</code> is the class that <code>new</code> was actually called with, so <code>this.name</code> becomes <code>"NotFoundError"</code> or <code>"ValidationError"</code> automatically. Now use them:</p>
+<example file="find.js" project="errors">
+import { NotFoundError, ValidationError } from "./errors.js";
+
+const tasks = [{ id: 1, title: "Buy milk", done: false }];
+
+function getTask(id) {
+  if (!Number.isInteger(id)) {
+    throw new ValidationError("id must be a whole number", "id");
+  }
+  const task = tasks.find((t) => t.id === id);
+  if (!task) {
+    throw new NotFoundError(`Task ${id} not found`);
+  }
+  return task;
+}
+
+for (const id of [1, 7, "abc"]) {
+  try {
+    console.log(getTask(id));
+  } catch (error) {
+    if (error instanceof NotFoundError || error instanceof ValidationError) {
+      console.log(error.status, error.name, error.message);
+    } else {
+      throw error;
+    }
+  }
+}
+</example>
+<output>
+{ id: 1, title: 'Buy milk', done: false }
+404 NotFoundError Task 7 not found
+400 ValidationError id must be a whole number
+</output>
+<p>The <code>else { throw error; }</code> part matters. Only handle the errors you expect, and <strong>re-throw</strong> anything else so it keeps going up and is not silently lost. A <code>catch</code> that swallows every error hides bugs.</p>
+<p>This pattern is exactly how ZudoJS works. <code>@zudojs/errors</code> ships <code>NotFoundError</code>, <code>ValidationError</code>, <code>ConflictError</code> and dozens more, each with the right status code, so after this lesson you will rarely write these classes yourself. You will meet them in <a href="/learn/zudo-errors">Errors in ZudoJS</a>.</p>
+</section>
+
+<section>
+<h2 id="build">Build: a reliable calculator API</h2>
+<p>Put it all together in the logic of a small API. A client asks for a calculation with three values, for example from the address <code>/calculate?a=10&amp;b=4&amp;op=divide</code>. Values from a URL always arrive as <strong>strings</strong>, and they may be missing or nonsense. The API must:</p>
+<ol>
+<li>Validate the input and throw a <code>ValidationError</code> for anything wrong.</li>
+<li>Throw its own error for a calculation that is impossible, dividing by zero.</li>
+<li>Turn every error into an answer with a status code and a safe message, and never crash.</li>
+</ol>
+<p>First, the error classes. They are the ones from above plus one new class. Status 422 means "I understood the request, but I cannot do it":</p>
+<example file="errors.js" project="calc">
+export class AppError extends Error {
+  constructor(message, { status = 500, code = "INTERNAL" } = {}) {
+    super(message);
+    this.name = new.target.name;
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export class ValidationError extends AppError {
+  constructor(message, field) {
+    super(message, { status: 400, code: "VALIDATION" });
+    this.field = field;
+  }
+}
+
+export class DivisionByZeroError extends AppError {
+  constructor() {
+    super("cannot divide by zero", { status: 422, code: "DIVISION_BY_ZERO" });
+  }
+}
+</example>
+<p>Next, the calculator. It knows nothing about HTTP. It only validates and calculates, and throws when it cannot:</p>
+<example file="calculator.js" project="calc">
+import { DivisionByZeroError, ValidationError } from "./errors.js";
+
+const OPERATIONS = {
+  add: (a, b) => a + b,
+  subtract: (a, b) => a - b,
+  multiply: (a, b) => a * b,
+  divide: (a, b) => {
+    if (b === 0) throw new DivisionByZeroError();
+    return a / b;
+  },
+};
+
+function toNumber(value, field) {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new ValidationError(`${field} is required`, field);
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    throw new ValidationError(`${field} must be a number`, field);
+  }
+  return number;
+}
+
+export function calculate({ a, b, op }) {
+  if (!Object.hasOwn(OPERATIONS, op)) {
+    throw new ValidationError(`unknown operation "${op}"`, "op");
+  }
+  return OPERATIONS[op](toNumber(a, "a"), toNumber(b, "b"));
+}
+</example>
+<p>Two safety details:</p>
+<ul>
+<li>The operation name is looked up in an <strong>allow-list</strong>, the <code>OPERATIONS</code> object. The input is never run as code. Never use <code>eval</code> to "calculate" what a user typed: that would let them run any code on your server.</li>
+<li><code>Object.hasOwn</code> matters. A plain <code>OPERATIONS[op]</code> check would accept <code>op=constructor</code> or <code>op=toString</code>, because every object inherits those from <code>Object.prototype</code> (<a href="/learn/js-classes">the prototype chain</a>).</li>
+</ul>
+<p>Finally, the API layer. It is the only place that knows about status codes. It catches every error and turns it into a response:</p>
+<example file="api.js" project="calc">
+import { calculate } from "./calculator.js";
+import { AppError, ValidationError } from "./errors.js";
+
+export function handleCalculate(query) {
+  try {
+    return { status: 200, body: { result: calculate(query) } };
+  } catch (error) {
+    if (error instanceof AppError) {
+      const body = { error: { code: error.code, message: error.message } };
+      if (error instanceof ValidationError) body.error.field = error.field;
+      return { status: error.status, body };
+    }
+    console.log(`[internal] ${error.name}: ${error.message}`);
+    return { status: 500, body: { error: { code: "INTERNAL", message: "Something went wrong" } } };
+  }
+}
+
+const requests = [
+  { a: "10", b: "4", op: "divide" },
+  { a: "10", b: "0", op: "divide" },
+  { a: "ten", b: "4", op: "add" },
+  { b: "4", op: "add" },
+  { a: "1", b: "2", op: "constructor" },
+  null,
+];
+
+for (const query of requests) {
+  const response = handleCalculate(query);
+  console.log(response.status, JSON.stringify(response.body));
+}
+</example>
+<output>
+200 {"result":2.5}
+422 {"error":{"code":"DIVISION_BY_ZERO","message":"cannot divide by zero"}}
+400 {"error":{"code":"VALIDATION","message":"a must be a number","field":"a"}}
+400 {"error":{"code":"VALIDATION","message":"a is required","field":"a"}}
+400 {"error":{"code":"VALIDATION","message":"unknown operation \"constructor\"","field":"op"}}
+[internal] TypeError: Cannot destructure property 'a' of 'object null' as it is null.
+500 {"error":{"code":"INTERNAL","message":"Something went wrong"}}
+</output>
+<p>Every request got an answer, and the program never crashed. Look at each one:</p>
+<ul>
+<li>A good request returns 200 with the result.</li>
+<li>Dividing by zero is a well-formed request that cannot be done: 422.</li>
+<li>Bad or missing input returns 400, with the <code>field</code> that is wrong so a client can highlight it.</li>
+<li><code>op=constructor</code> was refused by the allow-list.</li>
+<li>The <code>null</code> request caused an error nobody planned for, a <code>TypeError</code> inside <code>calculate</code>. It is not an <code>AppError</code>, so the API logs the real details for the developers and sends the client only a generic 500 message.</li>
+</ul>
+<warn title="Never send internal errors to the client">An unexpected error's message and stack can reveal file paths, library versions, SQL or data. Attackers collect those details. Log them where only you can read them, and send the client a generic message. Errors you designed for users, like <code>ValidationError</code>, are safe to show.</warn>
+<p>Errors in asynchronous code, such as a database call that fails, follow the same rules with one twist: you need <code>await</code>. That is in the next lesson, <a href="/learn/js-async">Asynchronous JavaScript</a>.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Add a ConflictError">
+<p>Add a <code>ConflictError</code> class with status 409 (Conflict) and code <code>CONFLICT</code>, extending <code>AppError</code>. Write <code>createUser(users, email)</code> that throws it when the e-mail is already taken, and show the status and message when it happens.</p>
+<solution>
+<example file="conflict.js">
+class AppError extends Error {
+  constructor(message, { status = 500, code = "INTERNAL" } = {}) {
+    super(message);
+    this.name = new.target.name;
+    this.status = status;
+    this.code = code;
+  }
+}
+
+class ConflictError extends AppError {
+  constructor(message) {
+    super(message, { status: 409, code: "CONFLICT" });
+  }
+}
+
+function createUser(users, email) {
+  if (users.some((user) => user.email === email)) {
+    throw new ConflictError(`${email} is already registered`);
+  }
+  const user = { id: users.length + 1, email };
+  users.push(user);
+  return user;
+}
+
+const users = [];
+console.log(createUser(users, "ada@example.com"));
+
+try {
+  createUser(users, "ada@example.com");
+} catch (error) {
+  console.log(error.status, error.name, error.message);
+}
+</example>
+<output>
+{ id: 1, email: 'ada@example.com' }
+409 ConflictError ada@example.com is already registered
+</output>
+</solution>
+</exercise>
+<exercise title="Find the swallowed error">
+<p>This function is supposed to return <code>null</code> only when the text is not valid JSON. Why does it also return <code>null</code> when the JSON is fine? Fix it so that only the <code>SyntaxError</code> from <code>JSON.parse</code> is turned into <code>null</code>.</p>
+<example file="swallow-bug.js">
+function readTitle(text) {
+  try {
+    const data = JSON.parse(text);
+    return data.title.toUpperCase();
+  } catch {
+    return null;
+  }
+}
+
+console.log(readTitle('{"title":"buy milk"}'));
+console.log(readTitle("{oops"));
+console.log(readTitle('{"name":"buy milk"}'));
+</example>
+<output>
+BUY MILK
+null
+null
+</output>
+<solution>
+<p>The third input is valid JSON, but it has no <code>title</code>, so <code>data.title.toUpperCase()</code> throws a <code>TypeError</code>. The <code>catch</code> catches <em>every</em> error and hides that bug behind <code>null</code>. Only catch what you expect, and re-throw the rest:</p>
+<example file="swallow-fix.js">
+function readTitle(text) {
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (error) {
+    if (error instanceof SyntaxError) return null;
+    throw error;
+  }
+  if (typeof data.title !== "string") {
+    throw new TypeError("title must be a string");
+  }
+  return data.title.toUpperCase();
+}
+
+console.log(readTitle('{"title":"buy milk"}'));
+console.log(readTitle("{oops"));
+try {
+  readTitle('{"name":"buy milk"}');
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+BUY MILK
+null
+TypeError: title must be a string
+</output>
+<p>The <code>try</code> block now contains only the one line that may throw the error you expect. The missing title is reported as its own clear error instead of being hidden.</p>
+</solution>
+</exercise>
+<exercise title="Extend the calculator">
+<p>Add a <code>power</code> operation to the calculator. Make it throw a <code>ValidationError</code> on field <code>b</code> when the exponent is larger than 100, so nobody can ask the server for huge numbers. What status code will the API answer with?</p>
+<solution>
+<p>Add a <code>power</code> entry to <code>OPERATIONS</code> in <code>calculator.js</code>. Here it is on its own, with a copy of <code>ValidationError</code> so you can run it:</p>
+<example file="power.js">
+class ValidationError extends Error {
+  constructor(message, field) {
+    super(message);
+    this.name = "ValidationError";
+    this.status = 400;
+    this.field = field;
+  }
+}
+
+const power = (a, b) => {
+  if (b > 100) throw new ValidationError("b must be at most 100", "b");
+  return a ** b;
+};
+
+console.log(power(2, 10));
+try {
+  power(2, 1000);
+} catch (error) {
+  console.log(error.status, `field ${error.field}:`, error.message);
+}
+</example>
+<output>
+1024
+400 field b: b must be at most 100
+</output>
+<p>Because it is a <code>ValidationError</code>, <code>handleCalculate</code> answers 400 with the field <code>b</code>, without any change to the API layer. That is the payoff of typed errors: new failures fit into the existing mapping.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Syntax errors stop the file before it runs. Runtime errors throw while it runs. Logic errors give wrong answers silently, and only tests find them.</li>
+<li><code>throw</code> hands an error up the call stack. <code>try</code>/<code>catch</code> receives it. <code>finally</code> always runs, so put clean-up there.</li>
+<li>Errors have <code>name</code>, <code>message</code> and <code>stack</code>. Wrap a low-level error with <code>new Error(message, { cause })</code>. Always throw <code>Error</code> objects, never strings.</li>
+<li>Give each kind of failure its own class, check it with <code>instanceof</code>, and re-throw what you do not handle.</li>
+<li>Validate outside input with an allow-list, map known errors to status codes, and answer unknown errors with a generic 500 while logging the details privately.</li>
+</ul>
+</section>
