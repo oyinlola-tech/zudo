@@ -28,7 +28,8 @@ import { assertValidPatternPart } from "./utils.js";
  * namespace is either absent (`undefined`) or a valid identity part.
  *
  * @param namespace - The namespace to check.
- * @throws {CacheError} `CACHE_INVALID_KEY` when `namespace` is `""`.
+ * @throws {CacheError} `ERR_INVALID_INPUT` (`ErrorCode.INVALID_INPUT`) when
+ *   `namespace` is `""`.
  */
 export function assertNonEmptyNamespace(
   namespace: CacheNamespace | undefined,

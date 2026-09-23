@@ -66,15 +66,15 @@ describe("auth error HTTP semantics", () => {
     {
       name: "TokenRevokedError",
       error: new TokenRevokedError(),
-      statusCode: 403,
-      code: ErrorCode.FORBIDDEN,
-      category: ErrorCategory.AUTHORIZATION,
+      statusCode: 401,
+      code: ErrorCode.TOKEN_REVOKED,
+      category: ErrorCategory.AUTHENTICATION,
     },
     {
       name: "AccountDeactivatedError",
       error: new AccountDeactivatedError(),
       statusCode: 403,
-      code: ErrorCode.FORBIDDEN,
+      code: ErrorCode.ACCOUNT_DEACTIVATED,
       category: ErrorCategory.AUTHORIZATION,
     },
     {
@@ -88,7 +88,7 @@ describe("auth error HTTP semantics", () => {
       name: "AccountLockedError",
       error: new AccountLockedError(),
       statusCode: 423,
-      code: ErrorCode.FORBIDDEN,
+      code: ErrorCode.ACCOUNT_LOCKED,
       category: ErrorCategory.RATE_LIMIT,
     },
     {

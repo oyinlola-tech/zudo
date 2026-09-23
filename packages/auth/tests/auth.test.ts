@@ -376,6 +376,8 @@ describe("Permissions Engine", () => {
         {
           name: "owner",
           permissions: ["posts:write"],
+          // An ownership check establishes the right on its own.
+          effect: "grant",
           evaluate: (ctx) => ({
             allowed:
               ctx.actor.id ===
@@ -400,6 +402,8 @@ describe("Permissions Engine", () => {
         {
           name: "owner",
           permissions: ["posts:write"],
+          // An ownership check establishes the right on its own.
+          effect: "grant",
           evaluate: (ctx) => ({
             allowed:
               ctx.actor.id ===

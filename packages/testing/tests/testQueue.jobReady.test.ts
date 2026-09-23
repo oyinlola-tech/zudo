@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import { createQueueName } from "@zudojs/queue";
 
 import { createTestQueue } from "../src/index.js";
 
 describe("createTestQueue().queue.onJobReady", () => {
   it("forwards to the in-memory queue so a Worker is woken when a job is added", async () => {
-    const { queue } = createTestQueue<{ n: number }>("jobs");
+    const { queue } = createTestQueue<{ n: number }>(createQueueName("jobs"));
     const listener = vi.fn();
     const unsubscribe = queue.onJobReady?.(listener);
     await queue.add("work", { n: 1 });

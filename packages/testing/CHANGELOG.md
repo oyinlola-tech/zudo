@@ -1,5 +1,36 @@
 # @zudojs/testing
 
+## 1.2.0
+
+### Minor Changes
+
+- [`391cb09`](https://github.com/oyinlola-tech/zudo/commit/391cb09fb7e9b95c8034f35ae2450aba6611683a) Thanks [@oyinlola-tech](https://github.com/oyinlola-tech)! - Add `createHttpTestClient(target)`, a supertest-style client that drives a real app over HTTP. Targets: a base URL, a Node `http.Server` or `(req, res)` listener (started on an ephemeral port and closed afterwards), a web `(Request) => Response` handler or `{ fetch }` object (dispatched in-process), or an `@zudojs/http` `HttpServer`, `NodeHttpAdapter`, `HttpRouter`, `HttpMiddlewarePipeline` or handler (served through a real `NodeHttpAdapter` on an ephemeral port). Fluent `.get/.post/.put/.patch/.delete/.head/.options`, `.set`, `.query`, `.send`, `.auth`, `.timeout`, a per-client cookie jar, and chained `.expect(status)`, `.expect(header, value | RegExp)`, `.expectJson(partial)`, `.expectText()` that fail with readable `AssertionError`s. Responses are `TestHTTPResponse`s, so the existing response assertions accept them, and `client.request(createTestHTTPRequest()...build())` sends a built request. Also: `InMemoryTestStorage.set()` rejects a `NaN` TTL (it silently never expired) and `delete()` returns `false` for an already-expired key; `createHTTPRequest()` copies `query`/`params`. The cookie jar scopes cookies by the path the server saw, including a base URL's path prefix. Before, a cookie set with `Path=/api` by a client created for `http://host/api` was never sent back. A request timeout past Node's timer range no longer fires after 1 ms.
+
+  The recording doubles now record every path, not only calls made through their own wrapper method. `createTestEventBus()` returns an `EventBus` that records `publish`, `publishEvent` and `emit`, whether they are called on the double or on `bus` (now the same instance). `publish` takes a full `Event`, as `EventBus.publish` does, or an `EventInput` as before. `createTestMessageBus()` is a `MessageBus` that records both `send` and `dispatch`. `createTestQueue()` is a `Queue` that records `add` on the double and on the underlying `queue`. Before, `createTestEventBus().bus.publishEvent(...)`, `createTestMessageBus().bus.send(...)` and `createTestQueue().queue.add(...)` ran but recorded nothing, so tests passed while asserting on empty lists. Each double can be passed where the real type is expected, and destructured methods keep working.
+
+  **Behaviour change:** `createTestApplication()` is now quiet and deterministic by default. Its logger defaults to a silent recording `createSpyLogger(name)` (read `app.logger.calls`) instead of a real logger that printed, and its test clock is pinned at `DEFAULT_TEST_APPLICATION_TIME` (2026-01-01T00:00:00.000Z) instead of starting at the wall-clock time. To opt back in, pass `logger: createLogger({ name })`, `clock`, or the new `startTime` option (`startTime: Date.now()` for wall-clock time). `TestApplication` and `TestApplicationOptions` take an optional logger type parameter, so `app.logger` is typed as the logger you passed, or as a `SpyLogger` by default.
+
+  `createTestQueue().queue` forwards `onJobReady`, so a Worker on a test queue is woken as soon as a job is added instead of waiting for its poll interval.
+
+### Patch Changes
+
+- [`88b15a5`](https://github.com/oyinlola-tech/zudo/commit/88b15a57fc944e7a93135e537bfe23a0f5bce1c5) Thanks [@oyinlola-tech](https://github.com/oyinlola-tech)! - The npm `homepage` now links to this package's documentation page on https://zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+- Updated dependencies [[`391cb09`](https://github.com/oyinlola-tech/zudo/commit/391cb09fb7e9b95c8034f35ae2450aba6611683a), `9f073ae`, `9f073ae`, `9f073ae`, `9f073ae`, [`88b15a5`](https://github.com/oyinlola-tech/zudo/commit/88b15a57fc944e7a93135e537bfe23a0f5bce1c5), `9f073ae`, [`391cb09`](https://github.com/oyinlola-tech/zudo/commit/391cb09fb7e9b95c8034f35ae2450aba6611683a), [`391cb09`](https://github.com/oyinlola-tech/zudo/commit/391cb09fb7e9b95c8034f35ae2450aba6611683a), [`391cb09`](https://github.com/oyinlola-tech/zudo/commit/391cb09fb7e9b95c8034f35ae2450aba6611683a)]:
+  - @zudojs/errors@1.3.0
+  - @zudojs/storage@1.2.0
+  - @zudojs/serialization@1.2.0
+  - @zudojs/events@1.3.0
+  - @zudojs/security@1.3.0
+  - @zudojs/queue@1.4.0
+  - @zudojs/messaging@1.2.0
+  - @zudojs/config@1.3.0
+  - @zudojs/container@1.2.0
+  - @zudojs/constants@1.1.2
+  - @zudojs/http@1.4.0
+  - @zudojs/logger@1.4.0
+  - @zudojs/middleware@1.1.0
+  - @zudojs/types@1.2.0
+
 ## 1.1.2
 
 ### Patch Changes

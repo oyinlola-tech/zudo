@@ -1,5 +1,45 @@
 # @zudojs/api
 
+## 1.2.0
+
+### Minor Changes
+
+- [`391cb09`](https://github.com/oyinlola-tech/zudo/commit/391cb09fb7e9b95c8034f35ae2450aba6611683a) Thanks [@oyinlola-tech](https://github.com/oyinlola-tech)! - Ship working transports and bindings.
+
+  `@zudojs/rpc` now includes transports. `createRPCMemoryTransport(server)` connects a client to a server in the same process, round-tripping frames through JSON by default. `createRPCHttpTransport({ url })` calls a remote server with the global `fetch`; timeouts and cancellation abort the request. `createRPCFetchHandler(server)` is a web-standard `(request: Request) => Promise<Response>` handler that any HTTP server can mount. It bounds request bodies, decodes them with `@zudojs/serialization`, answers every failure with an RPC error frame, and never sends stack traces or internal messages. The client now rebuilds typed errors from the wire (`RPCValidationError`, `RPCProcedureNotFoundError`, `RPCAuthenticationError`, `RPCForbiddenError`, …) and keeps the wire `code` and `details` on them. `mapRPCError` exposes the server's error-to-wire mapping.
+
+  `@zudojs/api` now serves one operation over four transports, all running through the same executor, interceptors and schema validation, with one client-safe error shape (`APIWireError`):
+
+  - HTTP: `createApiFetchHandler(operations)`, a web-standard fetch handler. Routes come from `metadata.http` (`{ method, path: "/users/:id" }`) and default to `POST /<name>`.
+  - RPC: `registerApiRpcProcedures(server, operations)`.
+  - Queues: `bindApiQueue(queue, operations)`.
+  - CLI: `runApiCli(operations, argv)`. It parses `--field value` and `--json`, prints the result, and returns a sysexits-style exit code.
+
+  `describeApiRoutes` returns the structural `APIOperationRoute` contract. `toOpenAPIRouteDescriptors(operations, { basePath })` converts the operations into `@zudojs/openapi` route descriptors, so `createOpenAPIDocumentFromRoutes` documents them in one call, including the success and error envelopes. Both fetch handlers mount on `@zudojs/http` with `mountFetchHandler(router, "/api", handler)`. `TransportContextKey` tells interceptors which binding a call came through.
+
+  Hardening from the release security review. The RPC server refuses (`RPC_INVALID_REQUEST`) a frame whose `payload` or `metadata` holds a `__proto__`, `constructor` or `prototype` key at any depth (opt out with `limits: { allowUnsafeKeys: true }`; `findUnsafeKey(value)` is exported), and every API binding refuses such keys in its input: 400 over HTTP, a validation error over RPC, queues and the CLI. `RPCContextOptions.signal` carries the caller's signal into dispatch, so a client that disconnects from `createRPCFetchHandler`, or a memory-transport caller that aborts, cancels the procedure (`context.signal` aborts, `RPC_CANCELLED`) instead of letting it run to its timeout. `createRPCHttpTransport` clamps its deadline to the timer range: a timeout past about 24.8 days, or `Infinity`, used to fail every call at once. The API RPC binding no longer sends the message of an `expose: false` error whose code has an RPC equivalent (such as `createAPIError(msg, { code: ErrorCode.API_UNAVAILABLE })`); it travels with the generic internal message, as over HTTP. `createApiFetchHandler` answers 415 to a body route called with a non-JSON content type even when the body is empty, so a cross-site HTML form cannot trigger an input-less operation.
+
+  RPC client fixes found by running the package in plain scripts. The client deadline and the `retry()` backoff timers are no longer unref'd, so a script awaiting a call stays alive until it times out. Before, Node exited with code 13 ("unsettled top-level await") first. Both timers are still cleared the moment the call settles. `error.code` on every error an `RPCClient` rejects with is now the wire code. `RPC_TIMEOUT`, `RPC_CANCELLED` and `RPC_UNAVAILABLE` used to come back with the class codes (`ERR_RPC_TIMEOUT` …), and so did the client's own deadline and cancellation errors. `instanceof` is unchanged. `RPCError` (in `@zudojs/errors`) declares a readonly `details` and accepts it as an option. A `@zudojs/errors` error thrown with `expose: true` (`NotFoundError`, `ConflictError`, `ValidationError`, `AuthenticationError`, `AuthorizationError`, `RateLimitError` …) now reaches the caller under the matching code (new `RPC_NOT_FOUND` 404 and `RPC_CONFLICT` 409, plus `RPC_VALIDATION_ERROR`, `RPC_UNAUTHENTICATED`, `RPC_FORBIDDEN`, `RPC_RATE_LIMITED` …) with its own message, instead of as `RPC_INTERNAL_ERROR`. Non-exposed errors stay internal.
+
+  Fixes reported by the lesson writers in `@zudojs/api`:
+
+  - **Security, behaviour change:** `APIExecutor` now runs the interceptors before input validation. Validation is the innermost step, immediately before the handler, on the input the interceptors finally pass. Before, input was validated first. An anonymous call with invalid input therefore got a 422 `ERR_API_VALIDATION` that described the schema, instead of the 401 its authentication interceptor would have returned. Logging, metrics and rate-limit interceptors never saw invalid calls. An interceptor that replaced `context.input` bypassed the schema entirely (the handler received `{ title: "" }` despite `min(3)`). Interceptors now see invalid calls, with the 422 as `context.result`. What changes for interceptor authors: `context.input` is the input as the caller sent it (not yet validated, coerced or transformed), and a replacement is validated before the handler runs. The bindings keep their error shapes (HTTP status and `APIWireError`, RPC error classes, queue failure messages, CLI exit codes). The prototype-pollution guard still refuses `__proto__` / `constructor` / `prototype` keys before any interceptor or handler sees the input.
+  - The handler's `context.signal` now aborts when the operation times out, with the `APITimeoutError` the call fails with (504) as its reason, and when the caller's signal aborts, with the `OPERATION_CANCELLED` error as its reason. Before, the executor stopped waiting but the signal never fired, so a handler kept running and repeated its side effects after the caller had given up. Every handler now receives a signal, even when the caller supplied none; it is not aborted on normal completion. The handler's context is a view of the caller's context: `requestId`, `state`, `get`/`set` and `metadata` are shared with the interceptors.
+  - `defineOperation` infers the handler's `input` from the `input` schema: a Standard Schema's declared output type, or a `safeParse` schema's success `data` (`@zudojs/schema`, Zod). Inline definitions such as `registry.register(defineOperation({ input: TodoInput, handler: async (input) => input.title }))` now compile. Before, the `AnyAPIOperation` contextual type flowed into `defineOperation`'s generics and inferred `input` as `never` (as `unknown` outside a call). The return type no longer takes part in inference. Explicit type arguments (`defineOperation<TInput, TOutput>(...)`) behave as before. New types: `InferAPISchemaOutput`, `APIInputSchema`, `DefineOperationWithSchemaOptions`.
+
+### Patch Changes
+
+- [`88b15a5`](https://github.com/oyinlola-tech/zudo/commit/88b15a57fc944e7a93135e537bfe23a0f5bce1c5) Thanks [@oyinlola-tech](https://github.com/oyinlola-tech)! - The npm `homepage` now links to this package's documentation page on https://zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+- Updated dependencies [[`391cb09`](https://github.com/oyinlola-tech/zudo/commit/391cb09fb7e9b95c8034f35ae2450aba6611683a), `9f073ae`, `9f073ae`, `9f073ae`, `9f073ae`, [`88b15a5`](https://github.com/oyinlola-tech/zudo/commit/88b15a57fc944e7a93135e537bfe23a0f5bce1c5), `9f073ae`, [`391cb09`](https://github.com/oyinlola-tech/zudo/commit/391cb09fb7e9b95c8034f35ae2450aba6611683a), [`391cb09`](https://github.com/oyinlola-tech/zudo/commit/391cb09fb7e9b95c8034f35ae2450aba6611683a), [`391cb09`](https://github.com/oyinlola-tech/zudo/commit/391cb09fb7e9b95c8034f35ae2450aba6611683a)]:
+  - @zudojs/rpc@1.4.0
+  - @zudojs/errors@1.3.0
+  - @zudojs/serialization@1.2.0
+  - @zudojs/security@1.3.0
+  - @zudojs/queue@1.4.0
+  - @zudojs/openapi@1.5.0
+  - @zudojs/schema@1.2.0
+  - @zudojs/types@1.2.0
+
 ## 1.1.1
 
 ### Patch Changes

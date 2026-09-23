@@ -76,6 +76,10 @@ import {
   ScopedResolutionError,
 } from "./containerResolution.error.js";
 import { describeToken } from "../containerToken/containerToken.type.js";
+import {
+  assertAutoRegistrable,
+  isAutoRegistrable,
+} from "./containerResolution.autoRegister.js";
 import { DependentIndex } from "./containerResolution.dependents.js";
 
 /** Normalized per-resolution settings. */
@@ -212,6 +216,7 @@ export class ContainerResolver {
     let registration = this.registry.get(token);
     if (!registration) {
       if (state.autoRegisterClasses && typeof token === "function") {
+        assertAutoRegistrable(token);
         if (state.allowRegistration) {
           registration = this.registry.register(
             token,
@@ -332,7 +337,7 @@ export class ContainerResolver {
         const target = unwrapToken(provider.useExisting);
         if (
           !this.registry.has(target) &&
-          !(state.autoRegisterClasses && typeof target === "function")
+          !(state.autoRegisterClasses && isAutoRegistrable(target))
         ) {
           throw new ContainerError(
             `useExisting target "${describeToken(target)}" for token ` +
@@ -435,7 +440,7 @@ export class ContainerResolver {
   ): boolean {
     const t = unwrapToken(token);
     return (
-      this.registry.has(t) || (autoRegisterClasses && typeof t === "function")
+      this.registry.has(t) || (autoRegisterClasses && isAutoRegistrable(t))
     );
   }
 

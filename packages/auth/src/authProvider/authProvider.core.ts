@@ -19,6 +19,11 @@ import type {
 import type { SessionStore, SessionId } from "../authTypes/authSession.type.js";
 import type { LoginThrottleConfig } from "../authTypes/authAttempt.type.js";
 import { createLoginThrottleGate } from "./authProvider.throttle.js";
+import {
+  createExternalSessionStarter,
+  type ExternalSessionOptions,
+} from "./authProvider.external.js";
+import { normalizeLoginIdentifier } from "../authUtils/authUtils.identifier.js";
 import type { GuardContext, GuardResult } from "../authTypes/authRbac.type.js";
 import type { PermissionEngine } from "@zudojs/permissions";
 import {
@@ -131,6 +136,23 @@ export interface AuthServiceConfig {
    * and verify them through this service.
    */
   readonly allowSessionlessTokens?: boolean;
+  /**
+   * Methods `createSessionForUser()` may start a session for, e.g.
+   * `["oauth"]`. Default: none, so `createSessionForUser()` throws.
+   *
+   * That method checks no credential — your code asserts the user is
+   * already authenticated — so it is off until you name the flows that
+   * verify authentication themselves (an OAuth callback that validated
+   * `state` and exchanged the code).
+   */
+  readonly externalSessionMethods?: readonly string[];
+  /**
+   * How `login()` normalizes the submitted identifier before `findUser()`
+   * sees it. Default: {@link normalizeLoginIdentifier} (NFKC, trim, and
+   * lower-case for an email). Pass `false` to hand `findUser()` the raw
+   * string, or your own function to match how you store identifiers.
+   */
+  readonly normalizeIdentifier?: false | ((identifier: string) => string);
 }
 
 /**
@@ -151,6 +173,21 @@ export interface AuthService {
   refresh(refreshToken: string): Promise<TokenPair>;
   logout(sessionId: SessionId, refreshToken?: string): Promise<void>;
   logoutAll(userId: UserId): Promise<void>;
+  /**
+   * Start a session for a user your code has already authenticated some
+   * other way — OAuth (`@zudojs/auth-oauth`), a passkey, a magic link — and
+   * return tokens exactly as `login()` does, without a password check.
+   *
+   * Only for methods listed in `externalSessionMethods`; otherwise it throws
+   * `AuthConfigurationError`. The user is loaded with `findUserById()`, and
+   * an unknown user (`InvalidCredentialsError`) or a deactivated one
+   * (`AccountDeactivatedError`) is refused. Never pass it a user id taken
+   * from the request.
+   */
+  createSessionForUser(
+    userId: UserId,
+    options: ExternalSessionOptions,
+  ): Promise<LoginResult>;
   checkAccess(context: GuardContext): Promise<GuardResult>;
   hashPassword(password: string): Promise<string>;
   verifyPasswordHash(password: string, hash: string): Promise<boolean>;
@@ -186,6 +223,8 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
     allowInsecureFallbackGuard,
     fallbackAdminRole,
     allowSessionlessTokens,
+    externalSessionMethods,
+    normalizeIdentifier,
   } = config;
 
   // Fail at construction, not at the first login: a bad secret or a NaN
@@ -197,6 +236,18 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
   assertPositiveSeconds(absoluteSessionTtlSeconds, "absoluteSessionTtlSeconds");
 
   const throttle = createLoginThrottleGate(loginThrottle);
+  const normalize =
+    normalizeIdentifier === false
+      ? (identifier: string) => identifier
+      : (normalizeIdentifier ?? normalizeLoginIdentifier);
+  const createSessionForUser = createExternalSessionStarter({
+    methods: externalSessionMethods,
+    findUserById,
+    sessionStore,
+    tokenConfig,
+    sessionTtlSeconds,
+    absoluteSessionTtlSeconds,
+  });
 
   /**
    * Reject the token unless the session it was issued against is still
@@ -245,12 +296,15 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
      * deactivated account are indistinguishable to the caller: the same
      * `InvalidCredentialsError` is thrown, and the unknown-user path performs
      * the same scrypt work as the known-user path.
+     *
+     * The identifier is normalized first (see `normalizeIdentifier`), so
+     * `findUser()` and the lockout counters see one spelling of it.
      */
     async login(
       credentials: UserCredentials,
       context?: { readonly userAgent?: string; readonly ip?: string },
     ): Promise<LoginResult> {
-      const identifier = credentials.identifier;
+      const identifier = normalize(credentials.identifier);
       const slot = await throttle.begin(identifier);
 
       const user = await findUser(identifier);
@@ -391,6 +445,8 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
     async logoutAll(userId: UserId): Promise<void> {
       await sessionStore.destroyAllForUser(userId);
     },
+
+    createSessionForUser,
 
     /**
      * Check if a user has a specific permission.

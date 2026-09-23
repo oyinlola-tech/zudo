@@ -1,3 +1,5 @@
+import { QueryFailedError } from "@zudojs/errors";
+
 import type { Query } from "../cqrsTypes/cqrsTypes.type.js";
 
 /**
@@ -109,11 +111,19 @@ export function isFailedQueryResult<TResult, TQuery extends Query = Query>(
 }
 
 /**
- * Returns the underlying query result value.
+ * Returns the value of a successful query result.
+ *
+ * @throws {QueryFailedError} when the result's status is `"failure"`. The
+ *   failure payload is on `error.failure` (and `error.cause`). Before 1.2
+ *   the payload was returned as if it were the query's value.
  */
 export function unwrapQueryResult<TResult, TQuery extends Query = Query>(
   result: QueryResult<TResult, TQuery>,
 ): TResult {
+  if (result.status === "failure") {
+    throw new QueryFailedError(String(result.queryType), result.result);
+  }
+
   return result.result;
 }
 

@@ -1,3 +1,5 @@
+import { CommandFailedError } from "@zudojs/errors";
+
 import type { Command } from "../cqrsTypes/cqrsTypes.type.js";
 
 /**
@@ -117,12 +119,20 @@ export function isFailedCommandResult<
 }
 
 /**
- * Maps a command result to its underlying value.
+ * Returns the value of a successful command result.
+ *
+ * @throws {CommandFailedError} when the result's status is `"failure"`.
+ *   The failure payload is on `error.failure` (and `error.cause`). Before
+ *   1.2 the payload was returned as if it were the command's value.
  */
 export function unwrapCommandResult<
   TResult,
   TCommand extends Command = Command,
 >(result: CommandResult<TResult, TCommand>): TResult {
+  if (result.status === "failure") {
+    throw new CommandFailedError(String(result.commandType), result.result);
+  }
+
   return result.result;
 }
 

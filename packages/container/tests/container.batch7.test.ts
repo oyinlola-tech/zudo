@@ -85,10 +85,14 @@ describe("BATCH7-CONTAINER-4: factory deps are typed from the inject list", () =
     container.registerValue("seed", 2);
     container.registerFactory(A, () => 1);
     container.registerFactory(C, (...deps: unknown[]) => deps.length, loose);
-    container.registerFactory(B, (seed) => {
-      expectTypeOf(seed).toEqualTypeOf<unknown>();
-      return (seed as number) * 2;
-    }, ["seed"]);
+    container.registerFactory(
+      B,
+      (seed) => {
+        expectTypeOf(seed).toEqualTypeOf<unknown>();
+        return (seed as number) * 2;
+      },
+      ["seed"],
+    );
 
     expect(container.resolve(A)).toBe(1);
     expect(container.resolve(B)).toBe(4);

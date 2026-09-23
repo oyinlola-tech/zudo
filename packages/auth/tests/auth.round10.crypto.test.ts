@@ -65,8 +65,13 @@ describe("security/XPKG-01 (phase 2): hashing delegates to @zudojs/crypto", () =
   }
 
   it("flags every non-current hash for rehash", async () => {
-    const weakerParams = await cryptoHashPassword("pw", { saltBytes: 16 });
+    const weakerParams = await cryptoHashPassword("pw", { parallelization: 1 });
     expect(needsRehash(weakerParams.encoded)).toBe(true);
+    const mixedLengths = await cryptoHashPassword("pw", {
+      saltBytes: 16,
+      keyBytes: 64,
+    });
+    expect(needsRehash(mixedLengths.encoded)).toBe(true);
     const pbkdf2 =
       "v1$pbkdf2-sha256$600000$AAAAAAAAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     expect(needsRehash(pbkdf2)).toBe(true);

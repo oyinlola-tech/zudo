@@ -1,5 +1,28 @@
 # zudojs-cli
 
+## 2.1.0
+
+### Minor Changes
+
+- [`391cb09`](https://github.com/oyinlola-tech/zudo/commit/391cb09fb7e9b95c8034f35ae2450aba6611683a) Thanks [@oyinlola-tech](https://github.com/oyinlola-tech)! - Generated projects now work out of the box, and every generator and `add` feature writes wired, compiling code.
+
+  - **Projects:** `src/server.ts` builds a router (`registerRoutes`), serves `/openapi.json` and `/docs` when the openapi capability is on, applies @zudojs/security headers, closed-by-default CORS and rate limiting, and shuts down integrations → HTTP → runtime. Typed env config in `src/configs`, a composition root in `src/container.ts`, an example `/api/v1/examples` CRUD resource and a `createHttpTestClient` test. Same wiring in modular-monolith modules and every microservice app.
+  - **`zudojs generate resource <name>`:** DTO, repository (in-memory, or Prisma when the app has it), service, controller, CRUD routes with OpenAPI metadata and a test, registered between `// zudojs:*` markers. `route`, `controller`, `repository` and `dto` write their layer plus any missing lower ones. Names with `/`, `\` or `..` are refused; running the same name twice fails cleanly; `--force` rewrites.
+  - **`zudojs add`** writes real integrations: `database` (alias `postgres`/`prisma`; Prisma 7), `redis`, `websockets`, `email`, `docker` (multi-stage non-root Dockerfile, `.dockerignore`, `compose.yaml` bound to 127.0.0.1), plus `queue`, `scheduler`, `cache`, `messaging`, `observability`, `storage`, `openapi`. `docs` and `security` are refused with an explanation.
+  - **Generators add what they import:** `generate command`/`query` (and any schematic) add missing `@zudojs/*` packages to the owning package.json instead of leaving TS2307. camelCase names keep their word boundaries (`createBook` → `create-book`, `CreateBookCommand`). "1 file" instead of "1 files".
+  - **Menu and names:** `zudo` is an alias binary; `new` is an alias of `create`; running with no arguments in a terminal opens a numbered menu (never in CI or pipes); help and errors echo the name you typed. The `zudojs` npm package installs the CLI (`npm install -g zudojs`).
+  - **Parser fixes:** only the first word selects a command (a typo no longer runs a different one and exits 0); options before the command, extra arguments after `-v`, `--port=` and non-finite numbers are usage errors (exit 2); unknown commands exit 3 with "did you mean"; `--__proto__`-style options are refused; control characters in echoed input are escaped.
+  - **Dependencies:** `@zudojs/*` ranges in generated projects match this CLI build (no more `^1.0.0` resolving to releases without the APIs used). Frontend fallbacks updated to current majors (Vite 8, React 19.3, Next 16, Nuxt 4, Astro 7, Angular 22 with `@angular/build`, SvelteKit 2.70); backends get TypeScript 7, Vitest 5, @types/node 26. New pnpm frontend projects no longer end up empty, and Nuxt no longer always falls back.
+  - The CLI compiles under TypeScript 7.
+
+### Patch Changes
+
+- Updated dependencies [[`391cb09`](https://github.com/oyinlola-tech/zudo/commit/391cb09fb7e9b95c8034f35ae2450aba6611683a), `9f073ae`, `9f073ae`, `9f073ae`, [`88b15a5`](https://github.com/oyinlola-tech/zudo/commit/88b15a57fc944e7a93135e537bfe23a0f5bce1c5), `9f073ae`, [`391cb09`](https://github.com/oyinlola-tech/zudo/commit/391cb09fb7e9b95c8034f35ae2450aba6611683a)]:
+  - @zudojs/errors@1.3.0
+  - @zudojs/config@1.3.0
+  - @zudojs/core@1.2.2
+  - @zudojs/logger@1.4.0
+
 ## 2.0.1
 
 ### Patch Changes

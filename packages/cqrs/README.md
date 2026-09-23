@@ -113,6 +113,27 @@ like any other failure. Each middleware may call `next()` at most once.
 succeeds (or fails with its own error). Pass `onTimingError` to see those
 observer failures.
 
+## Result values
+
+`createCommandResult` / `createFailedCommandResult` (and the `Query`
+equivalents) wrap a value with its status and execution metadata, for
+infrastructure that represents failures as values. `unwrapCommandResult`
+returns the value of a successful result and **throws** for a failed one:
+`CommandFailedError` (or `QueryFailedError` from `unwrapQueryResult`), with the
+failure payload on `error.failure` and `error.cause`. Both errors are defined in
+`@zudojs/errors` and re-exported here. Before 1.2 the failure payload was
+returned as if it were the value.
+
+```typescript
+import { unwrapCommandResult, CommandFailedError } from "@zudojs/cqrs";
+
+try {
+  const order = unwrapCommandResult(result);
+} catch (error) {
+  if (error instanceof CommandFailedError) console.error(error.failure);
+}
+```
+
 ## Features
 
 - Command bus for write operations

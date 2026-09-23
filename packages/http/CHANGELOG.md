@@ -1,5 +1,67 @@
 # @zudojs/http
 
+## 1.4.0
+
+### Minor Changes
+
+- Guards now refuse with real status codes, and permission policies no longer grant access on their own.
+
+  **Security — `@zudojs/permissions`: a policy's allow is no longer a grant (behaviour change).** An allowing policy used to grant the permission without any role check, so a "business-hours" policy handed `task:delete` to an actor with no roles, and the README taught that pattern. A policy is now, by default, an extra condition on top of RBAC/ABAC (`effect: "constrain"`): it can deny, but an allow only means "no objection", and the actor's roles, permissions or rules must still grant the permission. A policy that really establishes the right on its own, such as an ownership check, opts in with `effect: "grant"`. To get the old behaviour back for every policy that sets no `effect`, pass `createPermissionEngine({ defaultPolicyEffect: "grant" })`. **If you relied on a policy to grant access, those checks now deny until you add `effect: "grant"`.** A granting policy still never overrides a denial, and only the exact value `"grant"` grants (a typo constrains). An allow from constraining policies alone now reports `reason: "policy_pass"` internally. New exports: `PolicyEffect`, `policyGrants`, `DEFAULT_POLICY_EFFECT`.
+
+  **Security / misreporting — denials were sent as `200`.** A route middleware that returned a plain `{ status, body, headers }` object had it ignored by `@zudojs/http`, so `authorize()` and the tenancy middleware refused requests (the handler never ran) but clients, caches and monitoring saw `200`. The fix is a small, explicit contract:
+
+  - `@zudojs/middleware`: new `createGuardResponse({ status, body?, headers? })`, `isGuardResponse()`, the `GuardResponse` type and the `GUARD_RESPONSE` brand (`Symbol.for("zudojs.middleware.guardResponse")`). A structured body gets `content-type: application/json` by default. A status outside 100–599 throws `RangeError`.
+  - `@zudojs/http`: the router, `HttpMiddlewarePipeline` and `RouteDispatcher` send a guard response with its status, headers and JSON body, keeping headers an outer middleware already set. `HttpMiddlewareResult` includes `GuardResponse`. New helpers `applyGuardResponse` and `guardResponseToContext`. An unbranded object keeps its previous meaning, so data with a `status` key is never read as a response. `@zudojs/http` now depends on `@zudojs/middleware`.
+  - `@zudojs/permissions`: `createForbiddenResponse`, `createUnauthorizedResponse` and `createJsonResponse` (and therefore `authorize()`, `createRequirePermissionMiddleware`, `createRequirePermissionsMiddleware` and `createActorMiddleware({ requireActor: true })`) return guard responses. `PermissionHttpResponse` is now an alias of `GuardResponse` (same fields plus the brand). `createJsonResponse` throws `RangeError` for a status outside 100–599.
+  - `@zudojs/tenancy`: `createResolveTenantMiddleware`, `createRequireTenantMiddleware`, `createTenantGuardMiddleware` and the helpers `createBadRequest`, `createUnauthorized`, `createForbidden`, `createNotFound`, `createJsonErrorResponse` return guard responses, including the custom `notFoundResponse` / `deniedResponse` bodies. New helper `createJsonResponse(status, body)`.
+
+  **Middleware types are assignable to `@zudojs/http`.** The `HttpMiddleware` types mirrored in `@zudojs/permissions` and `@zudojs/tenancy` are now generic over what `next()` returns, so every exported guard can be put in a route's `middleware` list without `as never`. A hand-written middleware typed with these mirrors can no longer return a plain `{ status, body, headers }` object (it was never sent as a response); return `createGuardResponse(...)` instead. New type `HttpMiddlewareOutcome`.
+
+  **`@zudojs/tenancy`: `createResolverChain([...])` infers its context.** The README Quick Start (`createResolverChain([createJwtResolver(), createDomainResolver({ repository }), createSubdomainResolver(...)])`) failed with TS2322 unless you wrote `<HttpResolverContext>`. The context is now the intersection of what the resolvers read; an explicit type argument still works. New type `ResolverChainContext`.
+
+  **`@zudojs/auth`:**
+
+  - `AccountLockedError` (423) and `AuthRateLimitError` (429) carry `retryAfterSeconds` and a `Retry-After` header in `headers`, which `@zudojs/http` copies onto the response; the lockout's value is the time left on the lock.
+  - Distinct error codes (behaviour change for clients that match codes): `AccountLockedError` is `ERR_ACCOUNT_LOCKED`, `AccountDeactivatedError` is `ERR_ACCOUNT_DEACTIVATED`, and `TokenRevokedError` is `ERR_TOKEN_REVOKED`; all three used to be `ERR_FORBIDDEN`. **`TokenRevokedError` is now `401` (category authentication) instead of `403`**, since the client has to authenticate again.
+  - `needsRehash()` returns `false` for a hash made with `@zudojs/crypto`'s own `hashPassword()` defaults (same N, r, p; 16-byte salt and 32-byte key), which it used to flag on every login.
+  - Security: `login()` normalizes the identifier before `findUser()` sees it (NFKC, trim, and lower-case for an email address; usernames keep their case). Use the new `normalizeLoginIdentifier()` at registration so both sides agree. `normalizeIdentifier: false` passes the raw string, or supply your own function. Lockout counters were already case-insensitive.
+  - New `createSessionForUser(userId, { method, userAgent?, ip?, metadata? })` issues a session and tokens for a user authenticated outside `login()`, such as the `@zudojs/auth-oauth` callback, without a password check. It is off by default: it throws `AuthConfigurationError` unless `method` is listed in the new `externalSessionMethods` option. It refuses unknown and deactivated users and records `metadata.authMethod` on the session. `@zudojs/auth` now depends on `@zudojs/types`.
+
+  **`@zudojs/errors`:** new codes `ErrorCode.TOKEN_REVOKED`, `ErrorCode.ACCOUNT_LOCKED` and `ErrorCode.ACCOUNT_DEACTIVATED`.
+
+- [`391cb09`](https://github.com/oyinlola-tech/zudo/commit/391cb09fb7e9b95c8034f35ae2450aba6611683a) Thanks [@oyinlola-tech](https://github.com/oyinlola-tech)! - OpenAPI is now generated from the application instead of being added to the manager by hand. `@zudojs/http` routes take an `openapi` option (summary, tags, operationId, `params`/`query`/`headers`/`body` schemas, responses, security, `deprecated`, `false` to hide; merged from router groups), and `generateOpenAPIDocument(router, options)`, `createRouterOpenAPI(router, options)` and `mountOpenAPI(router, options)` (serves `/openapi.json`, optional YAML and a Swagger UI/ReDoc page at `/docs`) build the document from the routes the router actually registered: `:id`/`{id}` become templates, regex constraints become parameter patterns, optional segments expand, wildcards are documented or excluded, `all()`/`CONNECT` and automatic HEAD/OPTIONS never appear, and routes can be excluded by path, RegExp or predicate. `mountFetchHandler(router, basePath, handler)` serves a web-standard `(Request) => Response` handler from a router (headers, body, status, every Set-Cookie and a streamed body preserved; the request's signal aborts on client disconnect), with `toWebRequest` exported on its own.
+
+  `@zudojs/openapi` adds the transport-neutral `createOpenAPIDocumentFromRoutes(routes, options)` / `createOpenAPIManagerFromRoutes` over the structural `OpenAPIRouteDescriptor`, `OpenAPIManager.setRoutes()` and `routeWarnings()`, and route metadata accepts `@zudojs/schema` or raw schemas for `params`, `query`, `headers`, `cookies`, `body` and response `schema`. Every path template slot is now documented even when undeclared, and `security: []` (a public operation) is no longer dropped.
+
+  Fixes in `@zudojs/http`: `RequestContextInit.signal` was silently discarded, so the router's `ctx.signal` could never fire (the Node adapter now aborts it when the client disconnects); a `Response` returned by a route handler had every `Set-Cookie` folded into one invalid header; a streamed response body kept being read after the client disconnected and the source was never cancelled.
+
+  From the release security review: `mountFetchHandler`'s and `toWebRequest`'s `origin` option now pins the handler's origin for every request. Before, it was only a fallback, and the client's `Host` header always chose it. A group's `openapi` defaults no longer override a route's `metadata: { openapi: false }` or `{ hidden: true }`, which had published hidden routes. `toWebRequest` labels a parsed body it re-encodes as `application/json` unless the request already had a JSON content type.
+
+  **Behaviour change in `@zudojs/openapi`:** a route with no documented responses, including `responses: {}`, no longer gets an invented `"200": { description: "OK" }`. That invented response documented a `204` DELETE as `200`, and it meant the validator's "at least one response" check could never fire. Such an operation now gets a spec-valid `default` response described as "Undocumented response" (`UNDOCUMENTED_RESPONSE_DESCRIPTION`). A route warning (`DELETE /users/:id: no responses are documented; ...`) goes to `manager.routeWarnings()`, to `onSchemaWarning("routes", …)`, and to the new `onRouteWarning(message)` manager option, which `createOpenAPIDocumentFromRoutes` and `createOpenAPIManagerFromRoutes` accept too. Because `@zudojs/http`'s `generateOpenAPIDocument` options share `onRouteWarning`, it now receives these warnings along with the duplicate-route warnings it already reported. Declare the responses an operation returns to silence them.
+
+  Fixes in `@zudojs/http` from lesson feedback:
+  - `request.id` reuses an incoming `x-request-id` when it is 1-128 characters of `[A-Za-z0-9._:-]`, as documented; any other value is ignored and a UUID generated. The Node adapter always generated one. Opt out with `createNodeHttpAdapter({ trustRequestId: false })`; `resolveIncomingRequestId()` is exported.
+  - `HttpClient` retries a request that hit `timeout` for methods in `retryMethods` (default `GET`, `HEAD`, `OPTIONS`; never `POST` unless listed), controlled by the new `retryOnTimeout` (defaults to `retryOnNetworkError`). Timeouts were never retried. Backoff jitter is now "full jitter", a random wait between 0 and the computed delay, instead of up to a fixed extra 1000 ms whatever `retryDelay` was; `jitter: false` waits exactly the delay. See the README's "HTTP client: retries and backoff".
+  - Route handlers may return a plain JSON value, sent as `200` with a JSON body like a server handler's (`undefined`/`null` stay `204`); a plain object was a type error and went out as an empty `204`. New `RouterHandlerResult` / `RouterJsonValue` types; the router and `RouteDispatcher` agree.
+  - Route parameters are set on the request before route middleware runs, so `request.getParam("id")` works in guards and `extractResource` loaders; they always denied.
+  - `createRateLimitMiddleware`'s 429 is sent as `application/json` (it was `text/plain`) and always has `Retry-After`, even when a custom limiter handler leaves it out.
+  - `createHttpServer` takes `HttpServerOptions`: `adapter`, `handler` and `errorHandler` are typed, so `handler: async (request) => request.path` compiles under `strict` (it was TS7006 on `unknown` options).
+  - **Behaviour change:** an error thrown in the middleware pipeline propagates as the error that was thrown. A middleware around `await next()` used to get `HttpMiddlewareError` and the server's `errorHandler` `HttpMiddlewarePipelineError` (original in `cause` / `errors[0].cause`), so `instanceof NotFoundError` failed in both. If `onError` throws, its own error propagates instead of a pipeline wrapper. Code that unwrapped `.cause` / `.errors` should check the error directly.
+  - `new HttpError(415, message)` without a `code` gets its code from the status (`"UNSUPPORTED_MEDIA_TYPE"`, like the `notFound()` factories) instead of `ERR_OPERATION_FAILED`; new `defaultErrorCode(status)`.
+
+  `@zudojs/http`: the request guard's default `requestIdPattern` now matches the rule used to reuse an incoming `x-request-id` (`[A-Za-z0-9._:-]`, up to 128 characters), so trace ids containing `.` or `:` are no longer refused with 400 before they can be reused.
+
+### Patch Changes
+
+- [`88b15a5`](https://github.com/oyinlola-tech/zudo/commit/88b15a57fc944e7a93135e537bfe23a0f5bce1c5) Thanks [@oyinlola-tech](https://github.com/oyinlola-tech)! - The npm `homepage` now links to this package's documentation page on https://zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+- Updated dependencies [[`391cb09`](https://github.com/oyinlola-tech/zudo/commit/391cb09fb7e9b95c8034f35ae2450aba6611683a), `9f073ae`, `9f073ae`, `9f073ae`, [`88b15a5`](https://github.com/oyinlola-tech/zudo/commit/88b15a57fc944e7a93135e537bfe23a0f5bce1c5), `9f073ae`, [`391cb09`](https://github.com/oyinlola-tech/zudo/commit/391cb09fb7e9b95c8034f35ae2450aba6611683a), [`391cb09`](https://github.com/oyinlola-tech/zudo/commit/391cb09fb7e9b95c8034f35ae2450aba6611683a), [`391cb09`](https://github.com/oyinlola-tech/zudo/commit/391cb09fb7e9b95c8034f35ae2450aba6611683a)]:
+  - @zudojs/errors@1.3.0
+  - @zudojs/security@1.3.0
+  - @zudojs/crypto@1.3.1
+  - @zudojs/logger@1.4.0
+  - @zudojs/middleware@1.1.0
+  - @zudojs/openapi@1.5.0
+
 ## 1.3.0
 
 ### Minor Changes

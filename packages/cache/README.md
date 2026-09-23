@@ -80,10 +80,36 @@ await cache.withLock("import", runImport, { namespace: tenantId });
 In glob patterns, `*` matches within a single key segment and never crosses
 the `:` separator; `**` as a whole segment spans namespaces deliberately.
 
-An empty-string namespace is rejected with `CACHE_INVALID_KEY`, in the config
-and per call. A tenant id that failed to resolve to `""` can therefore never
-fall through to the unscoped global keyspace. Omit `namespace` to use that
-keyspace deliberately.
+An empty-string namespace is rejected, in the config and per call. A tenant id
+that failed to resolve to `""` can therefore never fall through to the unscoped
+global keyspace. Omit `namespace` to use that keyspace deliberately.
+
+## Invalid input
+
+A key, namespace, pattern or tag that fails validation throws a `CacheError`
+whose `code` is `ErrorCode.INVALID_INPUT` from `@zudojs/errors` — the string
+`"ERR_INVALID_INPUT"`. (Earlier docs named this `CACHE_INVALID_KEY`; no such
+code has ever been thrown.) An invalid TTL uses its own code,
+`"CACHE_INVALID_TTL"`.
+
+```typescript
+import { ErrorCode } from "@zudojs/errors";
+
+try {
+  await cache.get("");
+} catch (error) {
+  if (error instanceof CacheError && error.code === ErrorCode.INVALID_INPUT) {
+    // reject the request: the key came from the caller
+  }
+}
+```
+
+Invalid input is a caller error, so `failSilently` never hides it. Each
+rejection counts in `getStats().errors` and emits `cache.error`, exactly like
+an invalid TTL or an adapter failure.
+
+Since 1.2.0 an invalid tag (`tags: [""]`) is `ERR_INVALID_INPUT` too; it used
+to be `CACHE_OPERATION_FAILED`, which reads as an adapter fault.
 
 ## Tags across instances
 
@@ -116,6 +142,7 @@ const subscription = cache.subscribe("cache.miss", (event) => {
 });
 
 cache.getStats(); // { hits, misses, sets, deletes, errors, hitRate }
+await cache.ttl("user.1"); // remaining whole milliseconds, rounded down
 cache.getLatencyStats(CacheOperation.GET); // p50 / p95 / p99
 cache.getHotKeys(10);
 await cache.size();

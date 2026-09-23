@@ -14,3 +14,7 @@ export {
   type PasswordVerifier,
 } from "./authProvider.core.js";
 export { createMemoryLoginAttemptStore } from "./authAttempt.memory.js";
+export {
+  type ExternalSessionOptions,
+  type ExternalSessionResult,
+} from "./authProvider.external.js";

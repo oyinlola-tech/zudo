@@ -47,6 +47,21 @@ container.registerFactory(API, (db) => new Api(db), [DB]); // deps via inject li
 container.registerExisting("db-alias", DB); // alias to another token
 ```
 
+A factory's parameters are typed from its `inject` list, in order: with
+`DB = createToken<Db>("Db")`, `(db) => new Api(db)` receives `db: Db`, and a
+factory whose parameters do not match the tokens is a compile error. Class
+tokens type the same way; plain string and symbol tokens give `unknown`.
+`factoryProvider(factory, inject)` and `provideFactory(token, factory,
+inject)` infer the same way.
+
+```typescript
+container.registerFactory(
+  REPORT,
+  (db, clock) => new Report(db, clock), // db: Db, clock: Clock
+  [DB, Clock],
+);
+```
+
 ## Tokens
 
 Tokens can be strings, symbols, classes, or `InjectionToken`s from
@@ -58,6 +73,9 @@ Tokens can be strings, symbols, classes, or `InjectionToken`s from
 - `createGlobalToken(key)` uses `Symbol.for(key)`: any other call with the
   same key anywhere in the process yields the **same** token. That is by
   design for cross-package sharing; namespace your keys (e.g. `"myapp:db"`).
+- Error messages and default registration names show a symbol token by its
+  description: `createToken<Db>("Database")` appears as `Database`, not
+  `Symbol(Database)` (`describeToken(token)` returns the same string).
 
 ## Lifetimes (`scope` option)
 
@@ -185,7 +203,13 @@ const container = createContainer({
   registers it on the fly as `TRANSIENT`. When registrations are frozen the
   class is instantiated _ephemerally_ without being registered. Set to
   `false` to require explicit registration (`canResolve`/`resolveOptional`
-  respect this).
+  respect this). Only a class whose constructor declares no required
+  parameters (`Class.length === 0`) is auto-registered: auto-registration
+  has no inject list, so `resolve(NeedsDep)` for
+  `constructor(dep: Dep)` throws `RegistrationNotFoundError` naming the
+  class and telling you to register it with an `inject` list, instead of
+  building it with `dep = undefined`. Parameters with defaults do not
+  count.
 - `detectCircularDependencies` — circular chains throw
   `CircularDependencyError` with the full chain. When disabled,
   `maxResolutionDepth` still stops runaway recursion.

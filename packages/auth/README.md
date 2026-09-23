@@ -126,7 +126,21 @@ logout can revoke them. **The service therefore rejects a token without a
 Accepting them by default let a session-less refresh chain outlive
 `logoutAll()`.
 
+### Login identifiers
+
+`login()` normalizes the identifier before `findUser()` sees it: NFKC, trim,
+and lower-case when it is an email address (a username keeps its case). So
+`" Alice@Example.COM"` finds the account stored as `alice@example.com`, and
+case variants share one lockout budget. Store identifiers through the same
+exported `normalizeLoginIdentifier()` at registration. Pass
+`normalizeIdentifier: false` to receive the raw string, or your own function.
+
 ### Brute-force lockout
+
+A locked identifier gets `AccountLockedError` (`423`, `ERR_ACCOUNT_LOCKED`)
+with `retryAfterSeconds` set to the time left on the lockout and a
+`Retry-After` header in `error.headers`, which `@zudojs/http` copies onto the
+response. `AuthRateLimitError` (`429`) carries `Retry-After` the same way.
 
 A failure is reserved *before* the password is checked and cleared on
 success, so a parallel burst gets exactly `maxFailedAttempts` guesses before
@@ -142,6 +156,36 @@ verification, so put a per-IP limiter (`createRateLimiter` from
 unlocked failure streak after `failureTtlSeconds` of inactivity (default 900)
 and caps the tracked identifiers at `maxEntries` (default 100 000, oldest
 unlocked evicted first), so spraying identifiers cannot grow it without bound.
+
+### Sessions for OAuth and other sign-ins
+
+A user authenticated some other way — the OAuth callback of
+[`@zudojs/auth-oauth`](../auth-oauth), a passkey, a magic link — gets a
+session and tokens from `createSessionForUser()`, exactly as `login()` would
+issue them, without a password check:
+
+```typescript
+const auth = createAuthService({
+  /* … */
+  externalSessionMethods: ["oauth"], // off by default
+});
+
+// In the OAuth callback, after state/PKCE were verified and the provider
+// identity was mapped to one of your users:
+const { tokens, sessionId } = await auth.createSessionForUser(user.id, {
+  method: "oauth",
+  metadata: { provider: "github" }, // stored on the session
+  ip: req.socket.remoteAddress,
+});
+```
+
+It checks no credential — your code asserts the user is authenticated — so
+it throws `AuthConfigurationError` unless the `method` is listed in
+`externalSessionMethods`. It still loads the user with `findUserById()` and
+refuses an unknown user (`InvalidCredentialsError`) or a deactivated one
+(`AccountDeactivatedError`). **Never pass it a user id taken from the
+request.** The session records `metadata.authMethod`, and `logout()` /
+`logoutAll()` revoke it like any other.
 
 ### Refresh-token rotation
 
@@ -163,8 +207,11 @@ const decision = await auth.checkAccess({
 });
 ```
 
-When a `permissions` engine is configured the decision comes from it. When it
-is not, `checkAccess()` **throws** `AuthConfigurationError` rather than
+When a `permissions` engine is configured the decision comes from it, with
+`resourceOwnerId` passed as the resource `{ ownerId }`. An ownership policy
+that should grant on its own must say `effect: "grant"` — since
+`@zudojs/permissions` 1.4 an allowing policy only constrains what the roles
+grant. When it is not, `checkAccess()` **throws** `AuthConfigurationError` rather than
 guessing. Setting `allowInsecureFallbackGuard: true` opts into a built-in
 fallback that grants a resource owner *every* permission and grants the
 `fallbackAdminRole` (default `"admin"`) everything; its allowed results carry
@@ -210,7 +257,9 @@ with OWASP's N=2^14, r=8, p=5 row. Hashes written by earlier versions of this
 package (`scrypt$N$r$p$…`, including the p=1 default and the param-less legacy
 format) still verify, and `needsRehash()` returns `true` for every hash that is
 not a current-parameter `@zudojs/crypto` scrypt hash, so they upgrade on the
-next login. `hashPassword("")` throws `AuthError` (`INVALID_INPUT`).
+next login. A hash made by `@zudojs/crypto`'s own `hashPassword()` with its
+defaults (same N, r, p; 16-byte salt, 32-byte key) is current too, and
+`needsRehash()` returns `false` for it. `hashPassword("")` throws `AuthError` (`INVALID_INPUT`).
 
 - `createAuthService()` validates its configuration up front: bad or
   identical secrets, a non-positive or `NaN` `sessionTtlSeconds` /
@@ -244,23 +293,25 @@ throw.
 
 Every error carries an accurate HTTP status and is safe to expose:
 
-| Error | Status | Category |
-| --- | --- | --- |
-| `AuthError` | 401 | authentication |
-| `InvalidCredentialsError` | 401 | authentication |
-| `TokenExpiredError` | 401 | authentication |
-| `TokenInvalidError` | 401 | authentication |
-| `SessionExpiredError` | 401 | authentication |
-| `TokenRevokedError` | 403 | authorization |
-| `AccountDeactivatedError` | 403 | authorization |
-| `AccessDeniedError` | 403 | authorization |
-| `AccountLockedError` | 423 | rate_limit |
-| `AuthRateLimitError` | 429 | rate_limit |
-| `AuthConfigurationError` | 500 | configuration (not exposed) |
+| Error | Status | Code | Category |
+| --- | --- | --- | --- |
+| `AuthError` | 401 | `ERR_AUTHENTICATION` | authentication |
+| `InvalidCredentialsError` | 401 | `ERR_INVALID_CREDENTIALS` | authentication |
+| `TokenExpiredError` | 401 | `ERR_TOKEN_EXPIRED` | authentication |
+| `TokenInvalidError` | 401 | `ERR_TOKEN_INVALID` | authentication |
+| `TokenRevokedError` | 401 | `ERR_TOKEN_REVOKED` | authentication |
+| `SessionExpiredError` | 401 | `ERR_SESSION_EXPIRED` | authentication |
+| `AccountDeactivatedError` | 403 | `ERR_ACCOUNT_DEACTIVATED` | authorization |
+| `AccessDeniedError` | 403 | `ERR_ACCESS_DENIED` | authorization |
+| `AccountLockedError` | 423 | `ERR_ACCOUNT_LOCKED` | rate_limit |
+| `AuthRateLimitError` | 429 | `ERR_RATE_LIMITED` | rate_limit |
+| `AuthConfigurationError` | 500 | `ERR_CONFIGURATION_INVALID` | configuration (not exposed) |
 
-`AccountLockedError` and `AuthRateLimitError` carry
-`metadata.retryAfterSeconds` for a `Retry-After` header; `AccessDeniedError`
-carries `metadata.requiredPermission`.
+`AccountLockedError` and `AuthRateLimitError` carry `retryAfterSeconds` (also
+in `metadata`) and a `Retry-After` header in `headers`; `AccessDeniedError`
+carries `metadata.requiredPermission`. Before 1.3, `TokenRevokedError` was
+`403 ERR_FORBIDDEN`, and the lockout and deactivation errors shared
+`ERR_FORBIDDEN` too, so a client could not tell them apart.
 
 `login()` throws the same `InvalidCredentialsError` for an unknown user and a
 wrong password, and performs equivalent scrypt work on both paths, so the
@@ -273,7 +324,8 @@ after the password has been proven correct.
   [`@zudojs/auth-oauth`](../auth-oauth), which implements the
   authorization-code flow with PKCE, mandatory `state`, and provider presets
   for Google, GitHub, Microsoft, Apple and Discord. Nothing OAuth-related is
-  exported from this package any more.
+  exported from this package any more; once the callback has identified the
+  user, `createSessionForUser()` issues the session.
 - **No password-reset flow.** `generateRandomToken()` gives you a random
   token; storage, expiry, single-use enforcement and constant-time comparison
   are yours to build.

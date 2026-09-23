@@ -16,6 +16,12 @@ import {
 export { CqrsError };
 
 /**
+ * Thrown by `unwrapCommandResult` / `unwrapQueryResult` for a failed
+ * result. Owned by `@zudojs/errors` and re-exported here.
+ */
+export { CommandFailedError, QueryFailedError } from "@zudojs/errors";
+
+/**
  * Thrown when a CQRS request is invalid.
  *
  * The error code defaults to `ERR_INVALID_INPUT`; request-specific

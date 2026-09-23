@@ -12,7 +12,7 @@ import type {
 import {
   AccountLockedError,
   AuthRateLimitError,
-} from "../authErrors/authError.base.js";
+} from "../authErrors/authError.throttle.js";
 
 const DEFAULT_MAX_FAILED_ATTEMPTS = 5;
 const DEFAULT_LOCKOUT_SECONDS = 900;

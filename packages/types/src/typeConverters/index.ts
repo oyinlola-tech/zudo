@@ -1,5 +1,5 @@
 /**
- * Runtime type conversion helpers: JSON parsing, string/number/boolean conversion, case transforms.
+ * Runtime type conversion helpers: JSON parsing, string/number/boolean conversion, case transforms, count formatting.
  *
  * @module typeConverters
  */
@@ -17,3 +17,4 @@ export {
   kebabToCamel,
   camelToKebab,
 } from "./typeConverters.core.js";
+export { formatCount } from "./typeConverters.count.js";
