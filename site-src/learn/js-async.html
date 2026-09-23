@@ -1,0 +1,193 @@
+---
+title: Asynchronous JavaScript
+description: Learn why a backend waits without blocking, and how to write code that waits with promises, async and await.
+minutes: 30
+youNeed: Lessons 1 to 3
+youBuild: A fake database that answers after a delay
+keywords: javascript async await, promises, setTimeout, Promise.all, event loop, try catch async
+---
+<section>
+<h2 id="why">Why a backend waits</h2>
+<p>A backend spends most of its time waiting: for the database to answer, for a file to be read, for another service to reply. If it stopped everything while it waited, it could only serve one person at a time.</p>
+<p>JavaScript solves this by never standing still. When code has to wait, it says "call me back when the answer is ready" and moves on. That is <strong>asynchronous</strong> code.</p>
+<p><code>setTimeout</code> is the simplest way to see it. It runs a function later, after a number of milliseconds:</p>
+<example file="timeout.js">
+console.log("1. Ask the database for tasks");
+
+setTimeout(() => {
+  console.log("3. The database answered");
+}, 100);
+
+console.log("2. Carry on with other work");
+</example>
+<output>
+1. Ask the database for tasks
+2. Carry on with other work
+3. The database answered
+</output>
+<p>Line 2 printed before line 3, even though it comes later in the file. JavaScript did not wait for the timer: it registered the function, kept going, and ran the function when the time was up.</p>
+</section>
+
+<section>
+<h2 id="promises">Promises</h2>
+<p>Callbacks get messy when one wait depends on another. Modern JavaScript uses a <strong>Promise</strong> instead: an object that stands for a value you will have later. Here is a helper that waits a number of milliseconds and a fake database that answers after a short delay:</p>
+<example file="promise.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function findTask(id) {
+  return wait(50).then(() => ({ id, title: "Buy milk", done: false }));
+}
+
+const promise = findTask(1);
+console.log(promise instanceof Promise);
+
+promise.then((task) => {
+  console.log("Found:", task.title);
+});
+</example>
+<output>
+true
+Found: Buy milk
+</output>
+<p><code>findTask</code> returns straight away with a promise. <code>.then(...)</code> registers what to do once the promise has its value.</p>
+</section>
+
+<section>
+<h2 id="async-await">async and await</h2>
+<p>Chains of <code>.then</code> are hard to read. Mark a function <code>async</code> and you can write <code>await</code> in front of a promise. The function pauses at that line until the value is ready, while the rest of the program keeps running. The code reads top to bottom again:</p>
+<example file="await.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const db = [
+  { id: 1, title: "Buy milk", done: false },
+  { id: 2, title: "Write report", done: true },
+];
+
+async function findTask(id) {
+  await wait(50);
+  return db.find((task) => task.id === id);
+}
+
+async function main() {
+  console.log("Looking up task 2...");
+  const task = await findTask(2);
+  console.log(task);
+  const missing = await findTask(7);
+  console.log(missing);
+}
+
+main();
+</example>
+<output>
+Looking up task 2...
+{ id: 2, title: 'Write report', done: true }
+undefined
+</output>
+<p>An <code>async</code> function always returns a promise, even when it returns a plain value. That is why the database helper is <code>async</code>: anything that talks to the outside world is.</p>
+<tip>In an ES module, which is what your project is since lesson 1, you can also use <code>await</code> at the top level of a file, outside any function. The next examples do that.</tip>
+</section>
+
+<section>
+<h2 id="errors">When waiting fails</h2>
+<p>Databases go down and networks drop. A promise can <strong>reject</strong> with an error instead of giving a value. With <code>await</code>, you handle that with <code>try</code> and <code>catch</code>, the same way you will handle any error:</p>
+<example file="reject.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function saveTask(task) {
+  await wait(20);
+  if (task.title === "") {
+    throw new Error("title must not be empty");
+  }
+  return { ...task, id: 3 };
+}
+
+try {
+  const saved = await saveTask({ title: "Call Ada", done: false });
+  console.log("Saved:", saved);
+  await saveTask({ title: "", done: false });
+  console.log("This line never runs");
+} catch (error) {
+  console.log("Could not save:", error.message);
+}
+</example>
+<output>
+Saved: { title: 'Call Ada', done: false, id: 3 }
+Could not save: title must not be empty
+</output>
+<p><code>throw</code> stops the function and rejects its promise. <code>await</code> turns that rejection back into a thrown error, and <code>catch</code> receives it. Lesson 5 covers errors properly.</p>
+</section>
+
+<section>
+<h2 id="parallel">Waiting for several things at once</h2>
+<p><code>await</code> one after another is slow when the waits do not depend on each other. <code>Promise.all</code> starts them all together and waits for every one:</p>
+<example file="all.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function countTasks() {
+  await wait(100);
+  return 3;
+}
+
+async function countUsers() {
+  await wait(100);
+  return 2;
+}
+
+const started = Date.now();
+const [tasks, users] = await Promise.all([countTasks(), countUsers()]);
+const tookMs = Date.now() - started;
+
+console.log({ tasks, users });
+console.log("Took less than 200ms:", tookMs < 200);
+</example>
+<output>
+{ tasks: 3, users: 2 }
+Took less than 200ms: true
+</output>
+<p>Each wait is 100 ms, yet the pair finishes in about 100 ms, not 200, because they ran at the same time. <code>const [tasks, users] = ...</code> is destructuring again, this time for an array.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Complete a task in the fake database">
+<p>Write an <code>async</code> function <code>completeTask(id)</code> that waits 30 ms, finds the task, throws an error with the message <code>Task 9 not found</code> (with the real id) if it is missing, and otherwise returns a copy with <code>done: true</code>. Call it for an existing task and a missing one.</p>
+<solution>
+<example file="complete.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const db = [{ id: 1, title: "Buy milk", done: false }];
+
+async function completeTask(id) {
+  await wait(30);
+  const task = db.find((t) => t.id === id);
+  if (!task) {
+    throw new Error(`Task ${id} not found`);
+  }
+  return { ...task, done: true };
+}
+
+console.log(await completeTask(1));
+
+try {
+  await completeTask(9);
+} catch (error) {
+  console.log(error.message);
+}
+</example>
+<output>
+{ id: 1, title: 'Buy milk', done: true }
+Task 9 not found
+</output>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A backend waits a lot. JavaScript keeps working while it waits instead of blocking.</li>
+<li>A promise is a value that arrives later. <code>async</code> functions return promises, and <code>await</code> pauses until one is ready.</li>
+<li>A failed promise becomes a thrown error at <code>await</code>. Catch it with <code>try</code>/<code>catch</code>.</li>
+<li><code>Promise.all</code> runs independent waits at the same time.</li>
+</ul>
+</section>

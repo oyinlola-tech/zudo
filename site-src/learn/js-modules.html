@@ -1,0 +1,212 @@
+---
+title: Modules and errors
+description: Split a program into files with import and export, and handle things that go wrong with throw, try, catch and your own error classes.
+minutes: 30
+youNeed: Lessons 1 to 4
+youBuild: A task store in its own file, with a NotFound error
+keywords: javascript modules, import export, es modules, try catch finally, custom error class, instanceof, JSON.parse error
+---
+<section>
+<h2 id="modules">One file is not enough</h2>
+<p>Real backends have hundreds of files. Each file is a <strong>module</strong>: it keeps its variables to itself and <strong>exports</strong> only what other files should use. Another file <strong>imports</strong> those names.</p>
+<p>Make a new folder for this lesson, run <code>npm init -y</code> and <code>npm pkg set type=module</code> in it as in lesson 1, then create two files. The first one holds the tasks:</p>
+<example file="tasks.js" project="store">
+const tasks = [
+  { id: 1, title: "Buy milk", done: false },
+  { id: 2, title: "Write report", done: true },
+];
+
+let nextId = 3;
+
+export function listTasks() {
+  return tasks;
+}
+
+export function addTask(title) {
+  const task = { id: nextId, title, done: false };
+  nextId += 1;
+  tasks.push(task);
+  return task;
+}
+</example>
+<p>The second one uses it:</p>
+<example file="main.js" project="store">
+import { addTask, listTasks } from "./tasks.js";
+
+addTask("Call Ada");
+console.log(listTasks());
+</example>
+<output>
+[
+  { id: 1, title: 'Buy milk', done: false },
+  { id: 2, title: 'Write report', done: true },
+  { id: 3, title: 'Call Ada', done: false }
+]
+</output>
+<p>Run <code>main.js</code>, not <code>tasks.js</code>. The browser terminal knows about both files on this page, so <strong>Run in browser</strong> works too. On your computer:</p>
+<shell>
+$ node main.js
+[
+  { id: 1, title: 'Buy milk', done: false },
+  { id: 2, title: 'Write report', done: true },
+  { id: 3, title: 'Call Ada', done: false }
+]
+</shell>
+<p>A few rules to remember:</p>
+<ul>
+<li>A relative import starts with <code>./</code> and includes the file extension: <code>"./tasks.js"</code>, not <code>"./tasks"</code>.</li>
+<li><code>tasks</code> and <code>nextId</code> are not exported, so no other file can reach them. The only way to add a task is through <code>addTask</code>. Hiding details like this keeps a codebase safe to change.</li>
+<li>A package import has no <code>./</code>: <code>import { schema } from "@zudojs/schema"</code>. Node.js finds it in the <code>node_modules</code> folder that <code>npm install</code> fills.</li>
+</ul>
+<warn>If you see <code>SyntaxError: Cannot use import statement outside a module</code>, your <code>package.json</code> is missing <code>"type": "module"</code>. Run <code>npm pkg set type=module</code>.</warn>
+</section>
+
+<section>
+<h2 id="throw-catch">Throwing and catching errors</h2>
+<p>When code cannot do what was asked, it should say so loudly rather than carry on with bad data. <code>throw</code> stops the current function and hands an error to whoever called it. <code>try</code>/<code>catch</code> is where you receive it:</p>
+<example file="catch.js">
+function parseTask(text) {
+  const data = JSON.parse(text);
+  if (typeof data.title !== "string") {
+    throw new Error("title must be a string");
+  }
+  return data;
+}
+
+const inputs = ['{"title":"Buy milk"}', '{"title":42}', "{not json"];
+
+for (const input of inputs) {
+  try {
+    const task = parseTask(input);
+    console.log("OK:", task.title);
+  } catch (error) {
+    console.log(`${error.name}: ${error.message}`);
+  } finally {
+    console.log("  (checked one input)");
+  }
+}
+</example>
+<output>
+OK: Buy milk
+  (checked one input)
+Error: title must be a string
+  (checked one input)
+SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)
+  (checked one input)
+</output>
+<p>Three things happened:</p>
+<ul>
+<li>Good JSON with a string title passed.</li>
+<li>Our own <code>throw</code> rejected a title that was a number.</li>
+<li><code>JSON.parse</code> itself threw a <code>SyntaxError</code> on text that was not JSON. You did not write that <code>throw</code>. Built-in functions throw too.</li>
+</ul>
+<p><code>finally</code> runs whether or not there was an error. Use it for clean-up, such as closing a file.</p>
+<note>The exact wording of the <code>SyntaxError</code> comes from the JavaScript engine. Node.js and Chrome use the same engine, which is why the browser terminal prints the same message.</note>
+</section>
+
+<section>
+<h2 id="error-classes">Your own error classes</h2>
+<p>A backend has to answer differently for different failures: "that task does not exist" is not the same as "the database is down". Give each failure its own <strong>class</strong>, so the code that catches it can tell them apart.</p>
+<p>A class is a template for objects. <code>extends Error</code> means "an error, plus my extras". Here the extra is <code>statusCode</code>, the number an HTTP API sends back. 404 means Not Found:</p>
+<example file="errors.js" project="errors">
+export class NotFoundError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "NotFoundError";
+    this.statusCode = 404;
+  }
+}
+</example>
+<example file="find.js" project="errors">
+import { NotFoundError } from "./errors.js";
+
+const tasks = [{ id: 1, title: "Buy milk", done: false }];
+
+function getTask(id) {
+  const task = tasks.find((t) => t.id === id);
+  if (!task) {
+    throw new NotFoundError(`Task ${id} not found`);
+  }
+  return task;
+}
+
+for (const id of [1, 7]) {
+  try {
+    console.log(getTask(id));
+  } catch (error) {
+    if (error instanceof NotFoundError) {
+      console.log(error.statusCode, error.message);
+    } else {
+      throw error;
+    }
+  }
+}
+</example>
+<output>
+{ id: 1, title: 'Buy milk', done: false }
+404 Task 7 not found
+</output>
+<p><code>instanceof</code> asks "was this error made from that class?". The <code>else { throw error; }</code> part matters: only handle the errors you expect, and let anything else keep going up so it is not silently lost.</p>
+<p>This pattern is exactly how ZudoJS works. <code>@zudojs/errors</code> ships <code>NotFoundError</code>, <code>ValidationError</code>, <code>ConflictError</code> and dozens more, each with the right status code, so you will not write these classes yourself after this lesson.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Add a ValidationError">
+<p>Add a <code>ValidationError</code> class with status code 400 (Bad Request) to <code>errors.js</code>. Write <code>createTask(title)</code> that throws it when the title is empty, and show that the catching code can tell the two errors apart.</p>
+<solution>
+<example file="errors.js" project="practice">
+export class NotFoundError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "NotFoundError";
+    this.statusCode = 404;
+  }
+}
+
+export class ValidationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ValidationError";
+    this.statusCode = 400;
+  }
+}
+</example>
+<example file="create.js" project="practice">
+import { NotFoundError, ValidationError } from "./errors.js";
+
+function createTask(title) {
+  if (title.trim() === "") {
+    throw new ValidationError("title must not be empty");
+  }
+  return { id: 2, title, done: false };
+}
+
+function describe(error) {
+  if (error instanceof ValidationError) return "Fix your input";
+  if (error instanceof NotFoundError) return "Check the id";
+  return "Something else went wrong";
+}
+
+try {
+  createTask("  ");
+} catch (error) {
+  console.log(error.statusCode, error.name, "-", describe(error));
+}
+</example>
+<output>
+400 ValidationError - Fix your input
+</output>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Each file is a module. <code>export</code> what others may use and <code>import</code> it by path, with the extension.</li>
+<li><code>throw</code> reports a failure; <code>try</code>/<code>catch</code>/<code>finally</code> handles it.</li>
+<li>Give each kind of failure its own class, check it with <code>instanceof</code>, and re-throw what you don't handle.</li>
+</ul>
+<p>That completes the JavaScript part. Next, you will add types to this same code, and watch TypeScript catch mistakes JavaScript let through.</p>
+</section>
