@@ -1,5 +1,12 @@
 # @zudojs/logger
 
+## 1.4.2
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.3.1
+
 ## 1.4.1
 
 ### Patch Changes

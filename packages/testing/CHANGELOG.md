@@ -1,5 +1,24 @@
 # @zudojs/testing
 
+## 1.2.3
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/messaging@1.2.2
+  - @zudojs/queue@1.5.0
+  - @zudojs/errors@1.3.1
+  - @zudojs/config@1.3.2
+  - @zudojs/constants@1.1.3
+  - @zudojs/container@1.2.2
+  - @zudojs/events@1.3.2
+  - @zudojs/http@1.4.3
+  - @zudojs/logger@1.4.2
+  - @zudojs/middleware@1.1.1
+  - @zudojs/security@1.3.2
+  - @zudojs/serialization@1.2.2
+  - @zudojs/storage@1.2.2
+
 ## 1.2.2
 
 ### Patch Changes

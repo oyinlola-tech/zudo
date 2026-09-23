@@ -1,5 +1,22 @@
 # @zudojs/api
 
+## 1.2.2
+
+### Patch Changes
+
+- - **@zudojs/api:** a handler's context is now typed `APIHandlerContext` (`APIContext & { readonly signal: AbortSignal }`, newly exported), matching the runtime guarantee that every handler receives a signal. `ctx.signal` no longer needs a `!` under strict TypeScript. Contexts built by callers (`createAPIContext`, `executor.execute(op, input, context)`) may still omit the signal, and handlers annotated with the plain `APIContext` are still accepted.
+  - **@zudojs/messaging:** `MessageDispatchAbortedError.cause` is now the abort signal's `reason` (for an abort during or between handlers, and for a signal that was already aborted). It used to be `undefined`.
+  - **@zudojs/errors:** `MessageDispatchAbortedError` accepts a `cause` option, like `InvalidMessageError`.
+  - **@zudojs/queue:** new `job:dead-lettered` event (`{ job, error, reason? }`), emitted once when a job is moved to the dead-letter store (attempts exhausted, or stalled `maxStalledCount` times), so dead-letter alerting no longer needs attempt arithmetic or polling `getStats().deadLettered`. The README now documents that `job:failed` fires on every failed attempt with `job.state` `"failed"` on retryable and final attempts alike; that behaviour is unchanged.
+- Updated dependencies []:
+  - @zudojs/queue@1.5.0
+  - @zudojs/errors@1.3.1
+  - @zudojs/openapi@1.5.1
+  - @zudojs/rpc@1.4.2
+  - @zudojs/schema@1.2.2
+  - @zudojs/security@1.3.2
+  - @zudojs/serialization@1.2.2
+
 ## 1.2.1
 
 ### Patch Changes

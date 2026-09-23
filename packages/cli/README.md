@@ -178,7 +178,7 @@ current directory.
 | Option            | Applies to                    | Description                                                        |
 | ----------------- | ----------------------------- | ------------------------------------------------------------------ |
 | `--module <name>` | every schematic but `module`  | Generates inside `<root>/modules/<name>` instead of the schematic's default directory |
-| `--service <name>`| microservice projects, CQRS   | Selects the app a schematic belongs to; also names the CQRS service for `command`/`query` |
+| `--service <name>`| microservice projects          | Selects the microservice app a schematic (including `command`/`query`) is written into |
 | `--dry-run`       | all                           | Lists the files without writing anything                           |
 | `--force`         | all                           | Overwrites files that already exist                                |
 

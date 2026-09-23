@@ -1,5 +1,13 @@
 # @zudojs/auth-oauth
 
+## 1.2.4
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.3.1
+  - @zudojs/security@1.3.2
+
 ## 1.2.3
 
 ### Patch Changes

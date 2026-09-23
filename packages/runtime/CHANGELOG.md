@@ -1,5 +1,17 @@
 # @zudojs/runtime
 
+## 1.3.2
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.3.1
+  - @zudojs/constants@1.1.3
+  - @zudojs/container@1.2.2
+  - @zudojs/core@1.2.3
+  - @zudojs/events@1.3.2
+  - @zudojs/logger@1.4.2
+
 ## 1.3.1
 
 ### Patch Changes

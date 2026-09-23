@@ -1,5 +1,13 @@
 # @zudojs/scheduler
 
+## 1.2.1
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.3.1
+  - @zudojs/constants@1.1.3
+
 ## 1.2.0
 
 ### Minor Changes

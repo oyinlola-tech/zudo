@@ -1,5 +1,13 @@
 # @zudojs/database
 
+## 1.3.2
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.3.1
+  - @zudojs/logger@1.4.2
+
 ## 1.3.1
 
 ### Patch Changes

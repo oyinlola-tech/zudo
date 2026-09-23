@@ -1,5 +1,19 @@
 # zudojs-cli
 
+## 2.1.2
+
+### Patch Changes
+
+- - **`generate command` / `generate query` compile against `@zudojs/cqrs` 1.2.** They used to import `BaseCommand` / `BaseQuery`, which cqrs no longer exports, and wrote handlers with no `commandType` / `queryType` or `execute` that returned `{ success }`, so a fresh project failed `tsc` with TS2724/TS2305/TS2720. Each now writes a `CommandOf` / `QueryOf` type with a `create<Name>Command` / `create<Name>Query` factory, a `CommandHandler` / `QueryHandler` subclass, and a `register<Name>Command(bus)` / `register<Name>Query(bus)` helper. The bus discriminator is the PascalCase name (`"CreateUser"`), exported as `CREATE_USER_COMMAND` / `CREATE_USER_QUERY`.
+  - **`generate service` uses the same layout as the resource schematics.** It used to write `src/services/<name>/<name>.service.ts` plus empty `commands/` and `queries/` barrels, while `generate controller`, `repository` and `resource` use `src/services/<name>.service.ts`. Running `generate controller <name>` after `generate service <name>` then created a second, unrelated service. `generate service` now writes `src/services/<name>.service.ts`, with its DTO and repository if they are missing, and `generate controller` reuses that service. The empty CQRS barrels are no longer written.
+  - **`add docker` Dockerfiles install from the lockfile.** A single-app project's Dockerfile used to copy only `package.json` and run a floating `npm install`. It now copies the package manager's lockfile and runs a frozen install: `npm ci`; `pnpm install --frozen-lockfile` (with `pnpm-workspace.yaml`, after `corepack enable`); `yarn install --frozen-lockfile` on yarn 1 or `--immutable` on yarn 2 and later; or `bun install --frozen-lockfile`. bun is installed in the build stage for this. The lockfile is copied with a wildcard, so an image can still be built before the first install, with a comment in the Dockerfile explaining this. The whole-workspace Dockerfile installs from the lockfile too. A per-app Dockerfile inside a workspace still installs from `package.json` alone, because the workspace lockfile cannot pin one app's install on its own; a comment in that Dockerfile explains why.
+  - OpenAPI summaries and generated doc comments use the right article: "Get an example" rather than "Get a example".
+- Updated dependencies []:
+  - @zudojs/errors@1.3.1
+  - @zudojs/config@1.3.2
+  - @zudojs/core@1.2.3
+  - @zudojs/logger@1.4.2
+
 ## 2.1.1
 
 ### Patch Changes
