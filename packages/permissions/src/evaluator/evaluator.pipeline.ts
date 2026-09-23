@@ -18,7 +18,7 @@ import type {
   AuthorizationOptions,
   PolicyEffect,
 } from "../permissionTypes/index.js";
-import { policyGrants } from "../policy/policyEffect.js";
+import { policyGrants } from "../policy/policyEffect.core.js";
 import { resolveRolePermissions } from "../role/roleHierarchy.js";
 import {
   matches,

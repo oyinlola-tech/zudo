@@ -153,6 +153,30 @@ denies when either is missing. It is only as good as the value you pass: fill
 the tenant `@zudojs/tenancy` resolved), **never from a request header** — a
 caller would set the header to the resource's tenant and pass.
 
+Enforce it as a **deny** rule, `not(tenantIsolation())`:
+
+```typescript
+import { createPermissionEngine, not, tenantIsolation } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{ name: "accountant", permissions: ["invoice:read"] }],
+  rules: [
+    {
+      name: "tenant-isolation",
+      effect: "deny",
+      resource: "invoice",
+      action: "*",
+      condition: not(tenantIsolation()), // other tenant, or no tenant → deny
+    },
+  ],
+});
+```
+
+A conditional **allow** rule with `tenantIsolation()` only adds a way in: a
+role that grants `invoice:read` allows the check whatever the condition says,
+so that role reads every tenant's invoices. The deny form refuses cross-tenant
+access even for roles that hold the permission, and no policy can override it.
+
 ## Policies
 
 A policy is a named, prioritised hook that runs alongside the rules. By

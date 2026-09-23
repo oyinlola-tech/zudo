@@ -10,4 +10,4 @@ export {
   type PolicyRegistryOptions,
 } from "./policyRegistry.js";
 
-export { DEFAULT_POLICY_EFFECT, policyGrants } from "./policyEffect.js";
+export { DEFAULT_POLICY_EFFECT, policyGrants } from "./policyEffect.core.js";

@@ -2,7 +2,7 @@
  * Policy effect resolution: whether an allowing policy may grant access on
  * its own or only constrains what RBAC/ABAC already granted.
  *
- * @module policy/policyEffect
+ * @module policy/policyEffect.core
  */
 
 import type {
