@@ -24,7 +24,9 @@ describe("modular monolith application", () => {
 
     const { createApp } = await import("../../src/app.js");
     app = await createApp();
-  });
+    // Importing the app and opening SQLite is slow when the whole monorepo's
+    // suites run in parallel; the default 10s hook timeout flaked there.
+  }, 60_000);
 
   afterAll(async () => {
     await app?.stop();

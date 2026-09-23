@@ -15,11 +15,10 @@ keywords: zudojs http, createHttpServer, createNodeHttpAdapter, createRouter, ro
 </ul>
 <example file="first-server.ts" browser="no">
 import { createHttpServer, createNodeHttpAdapter } from "@zudojs/http";
-import type { HttpRequestContext } from "@zudojs/http";
 
 const server = createHttpServer({
   adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
-  handler: (request: HttpRequestContext) => ({ message: "Hello from the Task API", path: request.path }),
+  handler: (request) => ({ message: "Hello from the Task API", path: request.path }),
 });
 
 await server.start();
@@ -42,8 +41,8 @@ stopped
 <li><code>port: 0</code> asks the operating system for any free port. <code>server.address?.port</code> tells you which one it picked. That way the example never clashes with another program. Your real server uses a fixed port such as 3000.</li>
 <li>The handler returned a plain object, and the server sent it as JSON with status 200 and the right <code>content-type</code>.</li>
 <li>The example starts the server, sends itself a request with <code>fetch</code>, prints the answer and stops. Every example in this lesson works like that, so you can run it and see the result. A real server keeps running until you stop it.</li>
+<li>You did not write a type for the handler's parameter. TypeScript knows <code>request</code> is an <code>HttpRequestContext</code>, the type <code>@zudojs/http</code> uses for an incoming request, so <code>request.path</code> is checked.</li>
 </ul>
-<note>Write the type of the handler's parameter, <code>(request: HttpRequestContext)</code>, yourself. In <code>@zudojs/http</code> 1.3.0, <code>createHttpServer</code> does not pass that type on, so without it strict TypeScript reports "Parameter 'request' implicitly has an 'any' type".</note>
 </section>
 
 <section>
@@ -52,12 +51,12 @@ stopped
 <p>So the next examples stay short, this helper file starts a server for a router, runs some requests and stops it:</p>
 <example file="serve.ts" project="http" browser="no">
 import { createHttpServer, createNodeHttpAdapter } from "@zudojs/http";
-import type { HttpRequestContext, HttpRouter } from "@zudojs/http";
+import type { HttpRouter } from "@zudojs/http";
 
 export async function withServer(router: HttpRouter, run: (base: string) => Promise<void>): Promise<void> {
   const server = createHttpServer({
     adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
-    handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+    handler: async (request) => (await router.dispatch(request)).response,
   });
   await server.start();
   try {
@@ -73,7 +72,7 @@ export async function show(label: string, response: Response): Promise<void> {
 </example>
 <p>Now two routes. <code>:id</code> in a path is a <strong>route parameter</strong>: it matches one piece of the path, and its value lands in <code>ctx.params.id</code>:</p>
 <example file="routes.ts" project="http" browser="no">
-import { createResponseContext, createRouter } from "@zudojs/http";
+import { createRouter } from "@zudojs/http";
 import { NotFoundError } from "@zudojs/errors";
 import { show, withServer } from "./serve.js";
 
@@ -83,13 +82,13 @@ const tasks = [
 ];
 
 const router = createRouter();
-router.get("/tasks", () => createResponseContext().json(tasks));
+router.get("/tasks", () => tasks);
 router.get("/tasks/:id", (ctx) => {
   const task = tasks.find((t) => String(t.id) === ctx.params.id);
   if (!task) {
     throw new NotFoundError(`Task ${ctx.params.id} not found`);
   }
-  return createResponseContext().json(task);
+  return task;
 });
 
 await withServer(router, async (base) => {
@@ -114,7 +113,7 @@ DELETE /tasks/1 -> 405 {"error":"Method Not Allowed","method":"DELETE","path":"/
 <li>Throwing <code>NotFoundError</code> from <a href="/learn/zudo-first-code">@zudojs/errors</a> became a 404 with its <code>code</code>. You do not build error responses by hand.</li>
 <li>An unknown path gets 404, and a known path with the wrong method gets <strong>405 Method Not Allowed</strong> with the list of allowed methods. The router does both for you.</li>
 </ul>
-<p>Unlike the server's handler, a route must return a response built with <code>createResponseContext()</code>. If you return a plain object from a route, TypeScript reports an error, and in plain JavaScript the client would get an empty <code>204</code> response. Always finish a route with <code>createResponseContext()</code> and <code>.json(...)</code>, <code>.setStatus(...)</code> or <code>.setHeader(...)</code>, so it says exactly what it sends.</p>
+<p>Both routes simply returned their data, and the router sent it as JSON with status 200. When a route needs something else, such as another status code, a header or a cookie, it returns a response built with <code>createResponseContext()</code> instead. You will see that in the next sections. A route that returns nothing answers <strong>204 No Content</strong>.</p>
 </section>
 
 <section>
@@ -181,7 +180,7 @@ done=yes -> 400 {"error":"done must be true or false"}
 
 <section>
 <h2 id="body">Request bodies</h2>
-<p>A <code>POST</code> request carries data in its <strong>body</strong>. In <code>@zudojs/http</code> 1.3.0 the body arrives as <strong>raw bytes</strong>: a <code>Uint8Array</code>, already read from the network for you and limited to 10 MB by default (bigger bodies get <strong>413 Payload Too Large</strong>). It is <em>not</em> parsed. The server cannot know whether the bytes are JSON, a form or an image, so turning them into data is your job:</p>
+<p>A <code>POST</code> request carries data in its <strong>body</strong>. In <code>@zudojs/http</code> the body arrives as <strong>raw bytes</strong>: a <code>Uint8Array</code>, already read from the network for you and limited to 10 MB by default (bigger bodies get <strong>413 Payload Too Large</strong>). It is <em>not</em> parsed. The server cannot know whether the bytes are JSON, a form or an image, so turning them into data is your job:</p>
 <example file="raw-body.ts" project="http" browser="no">
 import { createResponseContext, createRouter } from "@zudojs/http";
 import { show, withServer } from "./serve.js";
@@ -210,7 +209,7 @@ import type { HttpRequestContext } from "@zudojs/http";
 export function readJson(request: HttpRequestContext): unknown {
   const type = request.getHeader("content-type") ?? "";
   if (!type.startsWith("application/json")) {
-    throw new HttpError(415, "Send JSON with Content-Type: application/json", { code: "UNSUPPORTED_MEDIA_TYPE" });
+    throw new HttpError(415, "Send JSON with Content-Type: application/json");
   }
   const text = new TextDecoder().decode(request.body as Uint8Array);
   try {
@@ -222,7 +221,7 @@ export function readJson(request: HttpRequestContext): unknown {
 </example>
 <ul>
 <li>It checks the <code>Content-Type</code> header first (you met it in <a href="/learn/http-deep#headers">HTTP in depth</a>). Anything that is not JSON gets <strong>415 Unsupported Media Type</strong>.</li>
-<li><code>badRequest(...)</code> and <code>new HttpError(status, message, { code })</code> come from <code>@zudojs/http</code>. Thrown from a route, they become a response with that status. Give <code>HttpError</code> a <code>code</code> of your own; without one it reports the vague default <code>ERR_OPERATION_FAILED</code>.</li>
+<li><code>badRequest(...)</code> and <code>new HttpError(status, message)</code> come from <code>@zudojs/http</code>. Thrown from a route, they become a response with that status. <code>HttpError</code> picks its <code>code</code> from the status: 415 becomes <code>UNSUPPORTED_MEDIA_TYPE</code>. You can pass your own as a third argument, <code>{ code: "..." }</code>.</li>
 <li>It returns <code>unknown</code>, not <code>any</code>: the data is not trusted until a schema has checked it.</li>
 </ul>
 <p>Now a <code>POST /tasks</code> route that reads, validates and creates. The schema is the <code>NewTaskSchema</code> from the <a href="/learn/zudo-container#task-api">previous lesson</a>. A successful create answers <strong>201 Created</strong> with a <code>Location</code> header that says where the new task lives:</p>
@@ -320,7 +319,7 @@ await withServer(router, async (base) => {
 <div class="lx-table-wrap"><table>
 <thead><tr><th>Status</th><th>When</th><th>How in @zudojs/http</th></tr></thead>
 <tbody>
-<tr><td>200 OK</td><td>Here is what you asked for.</td><td><code>createResponseContext().json(data)</code></td></tr>
+<tr><td>200 OK</td><td>Here is what you asked for.</td><td><code>return data</code>, or <code>createResponseContext().json(data)</code></td></tr>
 <tr><td>201 Created</td><td>A new resource exists now.</td><td><code>createResponseContext({ status: 201 })</code> plus a <code>location</code> header</td></tr>
 <tr><td>204 No Content</td><td>Done, nothing to send back.</td><td><code>createResponseContext({ status: 204 })</code></td></tr>
 <tr><td>400 Bad Request</td><td>The input is wrong.</td><td>A <code>SchemaError</code>, or <code>throw badRequest(...)</code></td></tr>
@@ -445,7 +444,7 @@ import type { HttpRequestContext } from "@zudojs/http";
 export function readJson(request: HttpRequestContext): unknown {
   const type = request.getHeader("content-type") ?? "";
   if (!type.startsWith("application/json")) {
-    throw new HttpError(415, "Send JSON with Content-Type: application/json", { code: "UNSUPPORTED_MEDIA_TYPE" });
+    throw new HttpError(415, "Send JSON with Content-Type: application/json");
   }
   const text = new TextDecoder().decode(request.body as Uint8Array);
   try {
@@ -470,9 +469,9 @@ import type { TaskService } from "../services/task.service.js";
 import { parseId, readJson } from "../utils/http.js";
 
 export function registerTaskRoutes(router: HttpRouter, tasks: TaskService): void {
-  router.get("/tasks", () => createResponseContext().json(tasks.list()));
+  router.get("/tasks", () => tasks.list());
 
-  router.get("/tasks/:id", (ctx) => createResponseContext().json(tasks.get(parseId(ctx.params.id))));
+  router.get("/tasks/:id", (ctx) => tasks.get(parseId(ctx.params.id)));
 
   router.post("/tasks", (ctx) => {
     const task = tasks.create(readJson(ctx.request));
@@ -483,7 +482,6 @@ export function registerTaskRoutes(router: HttpRouter, tasks: TaskService): void
 <p><code>parseId</code> refuses ids such as <code>abc</code>, <code>1.5</code> or <code>-3</code> with a 400, before the service ever sees them. This script checks the routes against a real server, with a fixed clock:</p>
 <example file="src/check-http.ts" project="task-api" browser="no">
 import { createHttpServer, createNodeHttpAdapter, createRouter } from "@zudojs/http";
-import type { HttpRequestContext } from "@zudojs/http";
 import { TaskStore } from "./repositories/task.store.js";
 import { registerTaskRoutes } from "./routes/tasks.routes.js";
 import { TaskService } from "./services/task.service.js";
@@ -494,7 +492,7 @@ registerTaskRoutes(router, service);
 
 const server = createHttpServer({
   adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
-  handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+  handler: async (request) => (await router.dispatch(request)).response,
 });
 await server.start();
 const base = `http://127.0.0.1:${server.address?.port}`;
@@ -526,7 +524,6 @@ import {
   createNodeHttpAdapter,
   createResponseContext,
   createRouter,
-  type HttpRequestContext,
 } from "@zudojs/http";
 
 import { createApp } from "./app.js";
@@ -549,7 +546,7 @@ const server = createHttpServer({
     host: process.env["HOST"] ?? "0.0.0.0",
     port: resolvePort(),
   }),
-  handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+  handler: async (request) => (await router.dispatch(request)).response,
 });
 </example>
 <p>Start it with <code>npm run dev</code>, and try the API from a second terminal:</p>
@@ -571,6 +568,7 @@ $ curl http://localhost:3000/tasks/7
 </shell>
 <tip>On Windows PowerShell, type <code>curl.exe</code>, and put the JSON in double quotes with the inner quotes escaped: <code>-d "{\"title\":\"Buy milk\"}"</code>.</tip>
 <p>The new task got id 2, and the list shows it next to the one the <code>tasks</code> module added at startup. Both live in the one <code>TaskStore</code> singleton, shared by the modules and the service through the container.</p>
+<tip>The router can also document your API. Give a route an <code>openapi</code> option (a summary, tags, and schemas for its input and output), and <code>mountOpenAPI(router, { info: { title: "Task API", version: "1.0.0" } })</code> from <code>@zudojs/http</code> serves the generated document at <code>/openapi.json</code> and a docs page at <code>/docs</code>. <a href="/learn/zudo-openapi">OpenAPI documents</a> covers API documentation. A related helper, <code>mountFetchHandler(router, path, handler)</code>, serves a web-standard <code>(request: Request) =&gt; Response</code> handler under a path of your router.</tip>
 </section>
 
 <section>
@@ -647,7 +645,7 @@ limit=1&limit=2 -> 400 {"error":"limit must be a whole number from 1 to 50","cod
 <li><code>createHttpServer</code> + <code>createNodeHttpAdapter</code> run a server; <code>port: 0</code> picks a free port, which is handy in tests.</li>
 <li><code>createRouter()</code> maps a method and a path to a handler. <code>:id</code> parameters and query values are always strings; repeated query keys become arrays. Unknown paths get 404 and wrong methods 405 automatically.</li>
 <li>The request body is raw bytes. Check the <code>Content-Type</code>, decode with <code>TextDecoder</code>, parse JSON inside <code>try</code>, then validate with a schema.</li>
-<li>Routes return <code>createResponseContext()</code> with the right status: 201 plus <code>Location</code> for a create, 204 for a delete.</li>
+<li>A route can return plain data, sent as JSON with status 200. For any other answer it returns <code>createResponseContext()</code> with the right status: 201 plus <code>Location</code> for a create, 204 for a delete.</li>
 <li>Throwing <code>NotFoundError</code>, <code>ConflictError</code>, <code>badRequest()</code> or a <code>SchemaError</code> becomes the matching 4xx. Any other error becomes a generic 500.</li>
 <li>Cookies set with <code>response.cookie()</code> are <code>HttpOnly</code>, <code>Secure</code> and <code>SameSite=Lax</code> by default.</li>
 </ul>

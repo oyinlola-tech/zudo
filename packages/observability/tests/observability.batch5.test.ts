@@ -80,8 +80,10 @@ describe("redaction is on by default", () => {
     expect(records[0]?.context?.["password"]).toBe("hunter2");
   });
 
-  it("an explicit field list still replaces the defaults", async () => {
-    const { obs, records } = capture({ redaction: { fields: ["ssn"] } });
+  it("an explicit field list replaces the defaults with replaceDefaults", async () => {
+    const { obs, records } = capture({
+      redaction: { fields: ["ssn"], replaceDefaults: true },
+    });
     obs.logger.info("x", { ssn: "1", password: "p" });
     await obs.shutdown();
     expect(records[0]?.context?.["ssn"]).toBe("[REDACTED]");

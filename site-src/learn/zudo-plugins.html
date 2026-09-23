@@ -102,7 +102,26 @@ stop  notifications
 PluginDependencyError - Plugin "slack" depends on "notifications" which is not registered.
 PluginDependencyVersionError - Plugin "slack" requires "notifications@^1.2.0", but version 2.0.0 is registered. Register a "notifications" that satisfies ^1.2.0, relax the constraint on "slack", or construct the manager with { checkVersions: false }.
 </output>
-<p>Slack was registered first, but notifications started first, because Slack depends on it. On shutdown the order is reversed. Both problems are found <strong>before any hook runs</strong>: a missing plugin, and a notifications 2.0.0 that does not satisfy <code>^1.2.0</code>, because a new major version may have changed its interface. A dependency marked <code>optional: true</code> is used for ordering when it is there, and ignored when it is not.</p>
+<p>Slack was registered first, but notifications started first, because Slack depends on it. On shutdown the order is reversed. Both problems are found <strong>before any hook runs</strong>: a missing plugin, and a notifications 2.0.0 that does not satisfy <code>^1.2.0</code>, because a new major version may have changed its interface.</p>
+<p>Some dependencies are nice to have. Slack can post without the notifications plugin, only less nicely. List those under <code>optionalDependencies</code>: when the plugin is there, it starts first; when it is missing, nothing fails:</p>
+<example file="optional.ts" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+import type { Plugin } from "@zudojs/plugins";
+
+const slack: Plugin = {
+  metadata: { name: "slack", version: "1.0.0" },
+  optionalDependencies: [{ name: "notifications", version: "^1.2.0" }],
+  start: () => console.log("start slack"),
+};
+
+const manager = new PluginManager();
+manager.register(slack);
+await manager.start(createPluginContext({ name: "task-api" }));
+</example>
+<output>
+start slack
+</output>
+<warn title="optional: true DOES NOT MAKE A DEPENDENCY OPTIONAL">The dependency type also has an <code>optional</code> field, so TypeScript accepts <code>dependencies: [{ name: "notifications", optional: true }]</code>. The manager ignores that field: a missing <code>notifications</code> still throws <code>PluginDependencyError</code>. Use <code>optionalDependencies</code>.</warn>
 </section>
 
 <section>
@@ -208,36 +227,7 @@ slack disposed unhealthy cannot reach slack.com
 
 <section>
 <h2 id="task-api">Put it together: plugins for the Task API</h2>
-<p>Plugins need a way to react to what the Task API does. The host offers that through <code>context.events</code>: any object with <code>on</code>, <code>off</code> and <code>emit</code>. This small <strong>event hub</strong> is enough. It also catches errors, so a broken plugin handler cannot break the request that emitted the event:</p>
-<example file="src/plugins/event-hub.ts" project="host" browser="no">
-import type { PluginEvents } from "@zudojs/plugins";
-
-type Handler = (event: unknown) => void;
-
-export function createEventHub(onError: (error: unknown, name: string) => void): PluginEvents {
-  const handlers = new Map<string, Set<Handler>>();
-  return {
-    on(name, handler) {
-      const set = handlers.get(name) ?? new Set<Handler>();
-      set.add(handler);
-      handlers.set(name, set);
-    },
-    off(name, handler) {
-      handlers.get(name)?.delete(handler);
-    },
-    emit(name, payload) {
-      for (const handler of handlers.get(name) ?? []) {
-        try {
-          handler(payload);
-        } catch (error) {
-          onError(error, name);
-        }
-      }
-    },
-  };
-}
-</example>
-<note>Why not the event bus from <a href="/learn/zudo-events">the events lesson</a>? Its <code>on</code>, <code>off</code> and <code>emit</code> have different shapes (for example <code>off</code> takes a subscription), so TypeScript refuses it as <code>PluginEvents</code>. A hub like this one, or a small adapter around the bus, fits.</note>
+<p>Plugins need a way to react to what the Task API does. The host offers that through <code>context.events</code>. Pass it the event bus you built in <a href="/learn/zudo-events">the events lesson</a>. The plugin system adapts it for plugins: a plugin calls <code>on(name, handler)</code> and its handler receives the event's <code>payload</code>. The bus also catches errors, so a broken plugin handler cannot break the request that published the event. (This works since @zudojs/plugins 1.3.0. The adapter is exported as <code>toPluginEvents</code>, if you need it yourself.)</p>
 <p>The audit-log plugin subscribes when it starts, and unsubscribes in its cleanup list. It only uses what the context gives it, so it works in any host that offers <code>events</code> and a <code>logger</code>:</p>
 <example file="src/plugins/audit-log.plugin.ts" project="host" browser="no">
 import type { Plugin } from "@zudojs/plugins";
@@ -261,21 +251,21 @@ export function createAuditLogPlugin(): Plugin {
   };
 }
 </example>
-<p>The host builds the context with its logger and the hub, loads the plugins, and emits <code>task.completed</code> whenever a task is done. The Slack plugin needs a secret webhook address, which comes from an environment variable. When it is missing, the host logs a warning and starts without Slack, instead of failing or putting a secret in the code:</p>
+<p>The host builds the context with its logger and the bus, loads the plugins, and publishes <code>task.completed</code> whenever a task is done. The Slack plugin needs a secret webhook address, which comes from an environment variable. When it is missing, the host logs a warning and starts without Slack, instead of failing or putting a secret in the code:</p>
 <example file="src/plugins/load.ts" project="host" browser="no">
+import { createEventBus } from "@zudojs/events";
 import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
 import { createPluginContext, PluginManager } from "@zudojs/plugins";
 import { createAuditLogPlugin } from "./audit-log.plugin.js";
-import { createEventHub } from "./event-hub.js";
 
 const logger = createLogger({
   name: "task-api",
   formatter: createTextLoggerFormatter({ includeTimestamp: false }),
-  transports: [(entry) => console.log(entry.message)],
+  transports: [(entry) => console.log(entry.formatted ?? entry.message)],
 });
-const events = createEventHub((error, name) => logger.error("plugin handler failed", { event: name, error: String(error) }));
+const events = createEventBus();
 events.on("plugin:started", (event) => {
-  const { plugin } = event as { plugin: { name: string; version?: string } };
+  const { plugin } = event.payload as { plugin: { name: string; version?: string } };
   logger.info("plugin started", { name: plugin.name, version: plugin.version });
 });
 
@@ -292,20 +282,23 @@ if (webhook) {
 const context = createPluginContext({ name: "task-api", version: "0.1.0" }, { logger, events });
 await manager.start(context);
 
-events.emit("task.completed", { taskId: 7, userId: "ada" });
+const done = await events.publishEvent({ type: "task.completed", payload: { taskId: 7, userId: "ada" } });
+console.log("task 7:", done.handlerCount, "handler, failed:", done.failed);
 console.log("diagnostics:", manager.diagnostics().healthy, "healthy");
 
 await manager.stop(context);
-events.emit("task.completed", { taskId: 8, userId: "ada" });
-console.log("after stop, nobody listened to task 8");
+const after = await events.publishEvent({ type: "task.completed", payload: { taskId: 8, userId: "ada" } });
+console.log("task 8 after stop:", after.handlerCount, "handlers");
 </example>
 <output>
 [WARN] [task-api] SLACK_WEBHOOK_URL is not set, running without the slack plugin
 [INFO] [task-api] plugin started name=audit-log version=1.0.0
 [INFO] [task-api] audit: task completed taskId=7 userId=ada
+task 7: 1 handler, failed: 0
 diagnostics: 1 healthy
-after stop, nobody listened to task 8
+task 8 after stop: 0 handlers
 </output>
+<p>The plugin manager itself publishes <code>plugin:started</code> (and <code>plugin:stopped</code>, and more) on the same bus, which is where the "plugin started" line comes from. After <code>stop</code>, the audit log's cleanup list unsubscribed its handler, so task 8 reached nobody. If a plugin handler throws, <code>failed</code> counts it and <code>errors</code> holds the error for your log; the other handlers still run.</p>
 <p>The host only knows the plugin interface. You could add a Slack, a statistics or a reminder plugin without touching this code, except for the one <code>register</code> line. And <code>allowedCapabilities</code> refuses to register a plugin that asks for more than the host grants.</p>
 <warn title="A PLUGIN RUNS WITH ALL THE POWER OF YOUR APP">Plugins are ordinary JavaScript in your process: a plugin can read every environment variable, open any file and send your data anywhere. <code>capabilities</code> is a declaration that the manager checks against your allow-list. It catches mistakes, but it is not a sandbox, and it cannot stop hostile code. Only install plugins you trust, pin their versions, and review what they do, exactly as with any other npm dependency.</warn>
 </section>
@@ -348,7 +341,7 @@ after stop, nobody listened to task 8
     "@zudojs/plugins": "^1.2.0"
   },
   "devDependencies": {
-    "@zudojs/plugins": "^1.2.1",
+    "@zudojs/plugins": "^1.3.0",
     "typescript": "^7.0.2"
   }
 }
@@ -388,10 +381,10 @@ npm notice Tarball Details
 npm notice name: @acme/zudo-plugin-audit-log
 npm notice version: 1.0.0
 npm notice filename: acme-zudo-plugin-audit-log-1.0.0.tgz
-npm notice package size: 753 B
+npm notice package size: 754 B
 npm notice unpacked size: 1.4 kB
-npm notice shasum: d3960360a58f7eb4b80760aadddb4742394050a2
-npm notice integrity: sha512-fLcqjX4vlKEvc[...]oXk5IkePu1fuA==
+npm notice shasum: d0a9da502d45b919d2af4d873693bef1bb6e3047
+npm notice integrity: sha512-IUF9tRPkgZ0cI[...]yFAz/fY6muE6w==
 npm notice total files: 4
 npm notice
 acme-zudo-plugin-audit-log-1.0.0.tgz
@@ -405,9 +398,9 @@ acme-zudo-plugin-audit-log-1.0.0.tgz
 <p>Write <code>createStatsPlugin()</code>: it counts <code>task.completed</code> events per user and, in <code>stop</code>, logs the counts with <code>context.logger</code>. Remember to unsubscribe in the cleanup list.</p>
 <solution>
 <example file="src/plugins/stats.ts" project="host" browser="no">
+import { createEventBus } from "@zudojs/events";
 import { createPluginContext, PluginManager } from "@zudojs/plugins";
 import type { Plugin } from "@zudojs/plugins";
-import { createEventHub } from "./event-hub.js";
 
 function createStatsPlugin(): Plugin {
   const perUser = new Map<string, number>();
@@ -427,13 +420,15 @@ function createStatsPlugin(): Plugin {
   };
 }
 
-const events = createEventHub((error) => console.log("handler failed:", error));
+const events = createEventBus();
 const logger = { info: console.log, warn: console.log, error: console.log };
 const manager = new PluginManager();
 manager.register(createStatsPlugin());
 const context = createPluginContext({ name: "task-api" }, { events, logger });
 await manager.start(context);
-for (const userId of ["ada", "linus", "ada"]) events.emit("task.completed", { taskId: 1, userId });
+for (const userId of ["ada", "linus", "ada"]) {
+  await events.publishEvent({ type: "task.completed", payload: { taskId: 1, userId } });
+}
 await manager.stop(context);
 </example>
 <output>

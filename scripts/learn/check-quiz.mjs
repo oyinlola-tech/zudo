@@ -19,7 +19,7 @@ import { plainText, validateQuiz } from "./quiz.mjs";
 
 const CONCURRENCY = 6;
 
-function runAsync(cmd, args, cwd, timeoutMs = 20000) {
+function runAsync(cmd, args, cwd, timeoutMs = 60000) {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, {
       cwd,

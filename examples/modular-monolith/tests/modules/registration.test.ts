@@ -67,7 +67,7 @@ describe("module registration", () => {
       events: createEventBus(),
       logger: createAppLogger(LoggerLevel.ERROR),
     });
-  });
+  }, 60_000);
 
   it.each(COMMANDS)("registers the %s command", (type) => {
     expect(commandBus.has(type)).toBe(true);

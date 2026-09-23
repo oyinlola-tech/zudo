@@ -86,7 +86,9 @@ Redaction is **on by default**, as it is in `@zudojs/logger`: with no
 (`DEFAULT_LOGGER_SECRET_FIELDS` — password, passphrase, secret, token, jwt,
 bearer, auth, authorization, cookie, session, sid, credential, api key,
 private key, client secret, card number, cvv, ssn, pin, otp and more) is
-redacted here too, along with this package's own `DEFAULT_SENSITIVE_FIELDS`.
+redacted here too. `DEFAULT_SENSITIVE_FIELDS` is that effective default list:
+the logger's `DEFAULT_LOGGER_SECRET_FIELDS` plus a few spellings of its own
+(`apikey`, `access_token`, `cardnumber`, …).
 Pass a config to change the rules, or `redaction: false` to turn it off.
 Before 1.2 redaction was off unless configured, so a `password` field was
 exported in the clear.
@@ -100,8 +102,8 @@ redacted the same way one written to a log field is.
 const obs = createObservability({
   serviceName: "api",
   redaction: {
-    // Setting `fields` replaces the default list (and the logger's rules).
-    fields: ["password", "token", "ssn"],
+    // `fields` adds to the defaults; they stay in force.
+    fields: ["nationalId", "taxNumber"],
     patterns: [/^x-.*-secret$/i],
     // "contains" (the default) matches on word boundaries: "userPassword"
     // and "x-api-key" match, "shippingAddress" and "authorId" do not.
@@ -114,6 +116,22 @@ obs.logger.info("login", {
   username: "ada",
   password: "hunter2", // → "[REDACTED]"
   headers: [{ authorization: "…" }], // arrays are traversed too
+});
+```
+
+`fields` **extends** the defaults (since 1.2.1): the default names and the
+logger's matcher stay in force, so a field list can only add redaction —
+`fields: ["nationalId"]` and `fields: [...DEFAULT_SENSITIVE_FIELDS, "nationalId"]`
+mean the same thing. In 1.2.0 a list replaced the defaults, and because
+`DEFAULT_SENSITIVE_FIELDS` then lacked `jwt`, `sid`, `pwd`, `passphrase` and
+`bearer`, spreading it redacted less than the default. To use your list alone,
+opt out explicitly:
+
+```typescript
+createObservability({
+  serviceName: "api",
+  // Only `ssn` is redacted — no default names, no logger matcher.
+  redaction: { fields: ["ssn"], replaceDefaults: true },
 });
 ```
 

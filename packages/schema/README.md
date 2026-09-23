@@ -54,6 +54,11 @@ invalid causes `parse` to throw, rather than being returned as a partial
 result. `Infer<T>` gives a schema's output type and `SchemaInput<T>` its
 declared input type, which is unaffected by `parse` accepting `unknown`.
 
+A type mismatch names what arrived in both the message and the issue's
+`received` field. `null`, arrays and `NaN` are named as such rather than by
+their `typeof`: `objectSchema({}).safeParse(null)` reports "Expected object,
+received null", and `stringSchema().safeParse([])` reports "received array".
+
 ## Limits and untrusted input
 
 Parsing is bounded, so a hostile payload cannot exhaust the stack or the CPU:

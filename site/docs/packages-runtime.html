@@ -546,6 +546,9 @@ databaseConnected = <span class="kw">true</span>;
         <div class="callout callout-warning mt-4">
           <strong class="text-zudo-yellow">Watch out:</strong> do not add your own <code>process.on("SIGTERM", ...)</code> that also calls <code>stop()</code> while <code>handleSignals</code> is on. You get two shutdowns racing; the second signal is then read as "exit now".
         </div>
+        <div class="callout callout-warning mt-4">
+          <strong class="text-zudo-yellow">Watch out (v1.3.0): a failed signal-driven shutdown is only logged.</strong> The changelog says a failing shutdown triggered by <code>SIGTERM</code> or <code>SIGINT</code> now logs a <code>RuntimeSignalError</code>. With a runtime from <code>createRuntime</code> it does not: the runtime's own signal handler catches the <code>stop()</code> failure first and logs <code>Shutdown failed.</code> with just <code>errorMessage</code>, so <code>SignalHandler</code>'s <code>RuntimeSignalError</code> path is never reached. The state becomes <code>failed</code> and the signal handlers are removed, but nothing exits the process: with a module whose <code>onShutdown</code> hangs past <code>shutdownTimeout</code>, the process exits with code <code>0</code> once the event loop drains. If an orchestrator should see the failure, subscribe to <code>runtime.failed</code> (<code>phase: "stop"</code>) on your event bus and set <code>process.exitCode = 1</code> there.
+        </div>
       </section>
 
       <!-- Events -->
@@ -687,7 +690,7 @@ registry.<span class="fn">register</span>(<span class="str">"worker"</span>, wor
   });
 });</div>
 
-        <p class="mt-6 mb-3">When you need the runtime object itself, build one with <code class="bg-black/5 px-1">createTestRuntime</code> and drive it by hand.</p>
+        <p class="mt-6 mb-3">When you need the runtime object itself, build one with <code class="bg-black/5 px-1">createTestRuntime</code> and drive it by hand. It creates its own container and, since v1.3.0, disposes it on <code class="bg-black/5 px-1">stop()</code> (<code class="bg-black/5 px-1">disposeContainerOnStop: true</code>); pass <code class="bg-black/5 px-1">disposeContainerOnStop: false</code> to keep it.</p>
         <div class="code-block"><span class="kw">import</span> { <span class="fn">createTestRuntime</span>, <span class="fn">createMockModule</span> } <span class="kw">from</span> <span class="str">"@zudojs/runtime/testing"</span>;
 
 <span class="kw">const</span> runtime = <span class="fn">createTestRuntime</span>([<span class="fn">createMockModule</span>(<span class="str">"users"</span>)], {
@@ -712,8 +715,8 @@ registry.<span class="fn">register</span>(<span class="str">"worker"</span>, wor
             <tr><th>Member</th><th>What it does</th><th>Notes</th></tr>
           </thead>
           <tbody>
-            <tr><td><span class="code-inline">start()</span></td><td>Brings every module up in dependency order.</td><td>Rolls back and throws <code>RuntimeStartError</code> (original on <code>cause</code>) on failure. Calling it twice is a no-op.</td></tr>
-            <tr><td><span class="code-inline">stop()</span></td><td>Tears every module down in reverse order.</td><td>Works from <code>failed</code>; safe to call repeatedly. Does not dispose the container.</td></tr>
+            <tr><td><span class="code-inline">start()</span></td><td>Brings every module up in dependency order.</td><td>Rolls back and throws <code>RuntimeStartError</code> (original on <code>cause</code>; <code>RuntimeInitializationError</code> or <code>RuntimeRollbackError</code> where they apply) on failure. Calling it twice is a no-op.</td></tr>
+            <tr><td><span class="code-inline">stop()</span></td><td>Tears every module down in reverse order.</td><td>Works from <code>failed</code>; safe to call repeatedly. Disposes the container only with <code>disposeContainerOnStop: true</code>.</td></tr>
             <tr><td><span class="code-inline">state</span></td><td>The current lifecycle state.</td><td>One <code>RuntimeState</code> string.</td></tr>
             <tr><td><span class="code-inline">status</span></td><td>State plus timestamps, error and shutdown failures.</td><td>Recomputed on every read.</td></tr>
             <tr><td><span class="code-inline">context</span></td><td>Identity, services and live state in one object.</td><td>Recomputed on every read.</td></tr>
@@ -748,6 +751,7 @@ registry.<span class="fn">register</span>(<span class="str">"worker"</span>, wor
             <tr><td><span class="code-inline">trackHealth</span></td><td>true</td><td>Derive health and emit health events.</td></tr>
             <tr><td><span class="code-inline">readinessCheckTimeout</span></td><td>5000</td><td>Milliseconds one readiness check may take before it counts as failed.</td></tr>
             <tr><td><span class="code-inline">parallelInitialization</span></td><td>false</td><td>Initialize modules at the same dependency depth together instead of one by one.</td></tr>
+            <tr><td><span class="code-inline">disposeContainerOnStop</span></td><td>false</td><td>Dispose the container after every module has shut down. New in v1.3.0; <code>createTestRuntime</code> sets it to <code>true</code>.</td></tr>
             <tr><td><span class="code-inline">metadata</span></td><td>{}</td><td>Free-form values surfaced on the context.</td></tr>
           </tbody>
         </table>
@@ -799,12 +803,12 @@ registry.<span class="fn">register</span>(<span class="str">"worker"</span>, wor
             <tr><td><span class="code-inline">RuntimeStateError</span></td><td>An illegal state move is attempted.</td><td>E.g. starting a stopped runtime.</td></tr>
             <tr><td><span class="code-inline">RuntimeStartError</span></td><td>A module hook, or the configuration manager, fails during startup.</td><td>Carries <code>phase</code> (<code>"initialize"</code> or <code>"start"</code>) and <code>failedModuleId</code>; the error your module threw is on <code>cause</code>.</td></tr>
             <tr><td><span class="code-inline">RuntimeStopError</span></td><td>Shutdown fails.</td><td>Carries <code>phase</code>.</td></tr>
-            <tr><td><span class="code-inline">RuntimeInitializationError</span></td><td>Exported, but not thrown by the runtime in 1.2.1.</td><td>A failing <code>onInitialize</code> surfaces as <code>RuntimeStartError</code> with <code>phase: "initialize"</code>.</td></tr>
+            <tr><td><span class="code-inline">RuntimeInitializationError</span></td><td>An <code>onInitialize</code> hook, or the configuration manager, fails during startup.</td><td>Extends <code>RuntimeStartError</code> with <code>phase: "initialize"</code>; accepts a <code>failedModuleId</code>. Thrown since v1.3.0.</td></tr>
             <tr><td><span class="code-inline">RuntimeTimeoutError</span></td><td>Startup, shutdown or a check runs too long.</td><td>Carries <code>operation</code> and <code>timeoutMs</code>.</td></tr>
-            <tr><td><span class="code-inline">RuntimeRollbackError</span></td><td>Exported, but not thrown by the runtime in 1.2.1.</td><td>Rollback failures are logged, and <code>start()</code> still rejects with the startup error.</td></tr>
+            <tr><td><span class="code-inline">RuntimeRollbackError</span></td><td>Startup fails and the rollback that follows also fails.</td><td>Extends <code>RuntimeStartError</code>. <code>originalError</code> is the startup error, <code>rollbackError</code> what failed during rollback (an <code>AggregateError</code> for several). Thrown since v1.3.0.</td></tr>
             <tr><td><span class="code-inline">RuntimeCircularDependencyError</span></td><td>Modules depend on each other in a loop.</td><td>Carries the <code>cycle</code>.</td></tr>
             <tr><td><span class="code-inline">RuntimeDependencyError</span></td><td>A module depends on an unregistered id.</td><td>Carries <code>moduleId</code> and <code>dependencyId</code>.</td></tr>
-            <tr><td><span class="code-inline">RuntimeSignalError</span></td><td>Exported, but not thrown by the runtime in 1.2.1.</td><td>Carries <code>signal</code>.</td></tr>
+            <tr><td><span class="code-inline">RuntimeSignalError</span></td><td>Logged by <code>SignalHandler</code> when the shutdown it triggered rejects; never thrown, since a signal handler has no caller.</td><td>Carries <code>signal</code> and, since v1.3.0, an optional <code>cause</code>. See the note under Signals: a runtime from <code>createRuntime</code> catches its own stop failure first and logs <code>Shutdown failed.</code> instead.</td></tr>
             <tr><td><span class="code-inline">toRuntimeError(error, phase)</span></td><td>Wraps anything thrown into a <code>RuntimeError</code>.</td><td>Passes an existing one through unchanged.</td></tr>
           </tbody>
         </table>
@@ -817,7 +821,8 @@ registry.<span class="fn">register</span>(<span class="str">"worker"</span>, wor
           <tbody>
             <tr><td><span class="code-inline">DEFAULT_RUNTIME_OPTIONS</span></td><td>The default option values.</td><td>Frozen object.</td></tr>
             <tr><td><span class="code-inline">RUNTIME_STATE_TRANSITIONS</span></td><td>The legal moves per state.</td><td>Backs <code>canTransition</code>.</td></tr>
-            <tr><td><span class="code-inline">TERMINAL_STATES / STARTABLE_STATES / STOPPABLE_STATES</span></td><td>State groupings.</td><td>Frozen arrays.</td></tr>
+            <tr><td><span class="code-inline">TERMINAL_STATES / STARTABLE_STATES / STOPPABLE_STATES</span></td><td>State groupings.</td><td>Frozen arrays. <code>TERMINAL_STATES</code> is <code>["stopped"]</code> since v1.3.0.</td></tr>
+            <tr><td><span class="code-inline">CONTAINER_SHUTDOWN_ID</span></td><td><code>"(container)"</code></td><td>The <code>shutdownFailures</code> id under which a failed container disposal is recorded.</td></tr>
             <tr><td><span class="code-inline">Runtime, RuntimeDependencies</span></td><td>The runtime interface and its inputs.</td><td>Type-only exports.</td></tr>
             <tr><td><span class="code-inline">RuntimeOptions, ResolvedRuntimeOptions</span></td><td>Options before and after defaults.</td><td>Type-only.</td></tr>
             <tr><td><span class="code-inline">RuntimeState, RuntimeStatus, RuntimeHealth, RuntimeHealthState</span></td><td>State and health shapes.</td><td>Type-only.</td></tr>
@@ -839,8 +844,8 @@ registry.<span class="fn">register</span>(<span class="str">"worker"</span>, wor
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Caching <code>runtime.status</code> in a variable and reading it later.</strong> Each read builds a fresh snapshot; the one you held onto is frozen in the past. Read <code>runtime.status</code> at the moment you need it.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Ignoring <code>status.shutdownFailures</code>.</strong> The state reaches <code>stopped</code> either way. Only that list tells you a module failed to release its resources.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Checking the startup error's type directly.</strong> <code>start()</code> wraps a module's failure in <code>RuntimeStartError</code>, so <code>error instanceof YourError</code> is false. Look at <code>error.cause</code>.</span></li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Assuming <code>stop()</code> closes container services.</strong> It does not call <code>container.dispose()</code>. Call it yourself after the runtime has stopped.</span></li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Waiting for the <code>starting</code> state or the <code>runtime.starting</code> event.</strong> Neither ever happens in 1.2.1; the runtime goes from <code>initializing</code> straight to <code>running</code>.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Assuming <code>stop()</code> closes container services.</strong> By default it does not call <code>container.dispose()</code>. Pass <code>disposeContainerOnStop: true</code>, or call it yourself after the runtime has stopped.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Checking <code>state === "initializing"</code> inside <code>onReady</code>.</strong> Since v1.3.0 <code>onReady</code> runs in <code>starting</code>. Test for the state you actually mean, or subscribe to <code>runtime.starting</code> / <code>runtime.running</code>.</span></li>
         </ul>
       </section>
 

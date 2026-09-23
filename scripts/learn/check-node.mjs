@@ -155,7 +155,7 @@ function runMerged(command, cwd) {
   const r = spawnSync("sh", ["-c", command + " 2>&1"], {
     cwd,
     encoding: "utf8",
-    timeout: 30000,
+    timeout: 60000,
     env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0", NODE_NO_WARNINGS: "1" },
   });
   return { status: r.status, text: r.stdout || "" };

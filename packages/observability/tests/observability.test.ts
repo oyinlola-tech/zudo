@@ -688,6 +688,7 @@ describe("Redaction", () => {
   it("redacts with custom config", () => {
     const redactor = createRedactor({
       fields: ["custom_field"],
+      replaceDefaults: true,
       replacement: "***",
     });
     expect(redactor("custom_field", "value")).toBe("***");

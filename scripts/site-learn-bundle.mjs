@@ -94,7 +94,12 @@ async function main() {
     keepNames: true,
     chunkNames: "chunks/[name]-[hash]",
     plugins: [shimPlugin],
-    banner: { js: "/* @zudojs browser build for the Learn terminal. MIT licensed. */" },
+    /* Some packages defer work with Node's setImmediate; browsers have no such function. */
+    banner: {
+      js:
+        "/* @zudojs browser build for the Learn terminal. MIT licensed. */\n" +
+        "if (typeof globalThis.setImmediate !== 'function') { globalThis.setImmediate = (fn, ...args) => setTimeout(fn, 0, ...args); globalThis.clearImmediate = (id) => clearTimeout(id); }",
+    },
     logLevel: "warning",
     metafile: true,
   });
