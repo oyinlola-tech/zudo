@@ -196,6 +196,7 @@
 <span class="kw">const</span> obs = <span class="fn">createObservability</span>({
   <span class="prop">serviceName</span>: <span class="str">"orders-api"</span>,
   <span class="prop">logLevel</span>: <span class="tp">LogLevel</span>.<span class="const">INFO</span>,
+  <span class="prop">redaction</span>: {}, <span class="cmt">// off unless you set it; see Redaction</span>
 });
 
 obs.<span class="prop">logger</span>.<span class="fn">info</span>(<span class="str">"server started"</span>, { <span class="prop">port</span>: <span class="num">3000</span> });
@@ -209,7 +210,7 @@ span.<span class="fn">end</span>();
 <span class="cmt">// Pushes everything still buffered, then closes the exporters.</span>
 <span class="kw">await</span> obs.<span class="fn">shutdown</span>();</div>
 
-        <p class="mb-4 leading-relaxed"><strong>What you should see.</strong> Three JSON lines on stdout: one log record, one span, and one metric snapshot. The log line looks like this (formatted here for reading; it prints on a single line):</p>
+        <p class="mb-4 leading-relaxed"><strong>What you should see.</strong> Four JSON lines on stdout: one log record, one span, and the metric snapshot <em>twice</em> (see the note below). The log line looks like this (formatted here for reading; it prints on a single line):</p>
         <div class="code-block mb-4">{
   <span class="prop">"timestamp"</span>: <span class="str">"2026-09-09T10:15:00.412Z"</span>,
   <span class="prop">"level"</span>: <span class="str">"info"</span>,
@@ -221,6 +222,11 @@ span.<span class="fn">end</span>();
         <div class="callout callout-warning mb-4">
           <p class="text-sm font-bold mb-1">WATCH OUT</p>
           <p class="text-sm">Printing to the console is the default, not a choice you made. <code>useConsoleExporters</code> defaults to <code>true</code>, so a deployed service will spray JSON at stdout until you pass real exporters or set it to <code>false</code>.</p>
+        </div>
+
+        <div class="callout callout-warning mb-4">
+          <p class="text-sm font-bold mb-1">WATCH OUT — THE LAST METRIC SNAPSHOT IS EXPORTED TWICE</p>
+          <p class="text-sm">In 1.1.1, <code>shutdown()</code> exports the final metric snapshot twice, so the <code>http.requests</code> line above appears two times with the same value and timestamp. A backend that <em>adds up</em> counter exports will count the last interval double. Deduplicate on name, labels and timestamp in your exporter, or treat exported counter values as cumulative totals rather than increments.</p>
         </div>
 
         <div class="callout callout-tip mb-4">
@@ -493,9 +499,10 @@ span.<span class="fn">end</span>();
 
         <p class="mb-4 leading-relaxed"><em>Redaction</em> means replacing a sensitive value with a placeholder before it leaves the process. Telemetry is the classic accidental leak: a request body lands in a log context, the log ships to a vendor, and a password is now in someone else's database.</p>
 
-        <div class="callout callout-danger mb-4">
-          <p class="text-sm font-bold mb-1">DANGER — REDACTION IS OFF BY DEFAULT</p>
-          <p class="text-sm">If you do not set <code>redaction</code> in your config, <strong>nothing is redacted</strong>. There is no implicit protection. Setting <code>redaction: {}</code> is enough to switch on the built-in field list.</p>
+        <div class="border-4 border-black bg-zudo-red/10 p-4 mb-6">
+          <p class="font-bold mb-2">Redaction is OFF by default here, which is the opposite of <code class="bg-black/5 px-1">@zudojs/logger</code>.</p>
+          <p class="text-sm mb-2">If you do not set <code class="bg-black/5 px-1">redaction</code> in the config, <strong>nothing is redacted</strong>. <code class="bg-black/5 px-1">obs.logger.info("login", { email, password })</code> prints <code class="bg-black/5 px-1">"password":"hunter2"</code> in clear text, and span attributes go out the same way. <code class="bg-black/5 px-1">@zudojs/logger</code>'s <code class="bg-black/5 px-1">createLogger</code> prints <code class="bg-black/5 px-1">password=[REDACTED]</code> for the same call, so code moved from one to the other silently starts leaking.</p>
+          <p class="text-sm">Always pass <code class="bg-black/5 px-1">redaction: {}</code> (or your own <code class="bg-black/5 px-1">fields</code> list spread over <code class="bg-black/5 px-1">DEFAULT_SENSITIVE_FIELDS</code>) to <code class="bg-black/5 px-1">createObservability</code>. With it, the same call prints <code class="bg-black/5 px-1">"password":"[REDACTED]"</code>.</p>
         </div>
 
         <p class="mb-4 leading-relaxed">Once you opt in, redaction is applied inside the logger and inside the span, so every processor and exporter downstream sees the already-redacted value.</p>

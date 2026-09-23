@@ -236,7 +236,7 @@ pnpm add @zudojs/config
 yarn add @zudojs/config</div>
 
         <div class="callout callout-note">
-          <strong class="text-zudo-blue">Dependency:</strong> @zudojs/config depends on @zudojs/errors (workspace:*). It uses ConfigurationError and related error factories from that package.
+          <strong class="text-zudo-blue">Dependency:</strong> @zudojs/config 1.2.0 depends on @zudojs/errors 1.2.0 and @zudojs/constants 1.1.1 (exact versions, installed for you). It uses ConfigurationError and related error factories from @zudojs/errors.
         </div>
       </section>
 
@@ -299,12 +299,17 @@ yarn add @zudojs/config</div>
 
 <span class="cm">// Or create a validated configuration. `validated` takes the object</span>
 <span class="cm">// schema itself — its `properties` map — not a wrapper with a `schema` key.</span>
-<span class="kw">const</span> { manager: validatedManager, config } = <span class="kw">await</span> configFactory.<span class="fn">validated</span>({
-  properties: {
-    <span class="str">'app.name'</span>: { type: <span class="tp">ConfigValueType</span>.STRING, required: <span class="num">true</span> },
-    <span class="str">'app.port'</span>: { type: <span class="tp">ConfigValueType</span>.NUMBER, min: <span class="num">1</span>, max: <span class="num">65535</span> },
+<span class="cm">// Options go in the second argument; without values, the required</span>
+<span class="cm">// 'app.name' is missing and validated() throws ConfigManagerValidationError.</span>
+<span class="kw">const</span> { manager: validatedManager, config } = <span class="kw">await</span> configFactory.<span class="fn">validated</span>(
+  {
+    properties: {
+      <span class="str">'app.name'</span>: { type: <span class="tp">ConfigValueType</span>.STRING, required: <span class="num">true</span> },
+      <span class="str">'app.port'</span>: { type: <span class="tp">ConfigValueType</span>.NUMBER, min: <span class="num">1</span>, max: <span class="num">65535</span> },
+    },
   },
-});</div>
+  { initialValues: { <span class="str">'app.name'</span>: <span class="str">'My App'</span>, <span class="str">'app.port'</span>: <span class="num">3000</span> } },
+);</div>
         <div class="border-2 border-black bg-zudo-yellow/20 p-4 mt-3 mb-6">
           <strong class="text-zudo-yellow">Use the <code>ConfigValueType</code> enum for <code>type</code>.</strong> A bare string literal such as <code>type: 'string'</code> widens to <code>string</code> in a plain object and will not satisfy <code>ConfigSchema</code>. <code>ConfigValueType.STRING</code> is the value <code>"string"</code>, so the runtime shape is identical &mdash; it just keeps the literal type intact.
         </div>
@@ -389,7 +394,7 @@ yarn add @zudojs/config</div>
         </div>
 
         <h3 class="text-lg font-bold mb-3">Interface</h3>
-        <div class="code-block mb-6"><span class="kw">interface</span> <span class="tp">ConfigEntry</span>&lt;<span class="tp">T</span>&gt; {
+        <div class="code-block mb-6"><span class="kw">interface</span> <span class="tp">ConfigEntry</span>&lt;<span class="tp">T</span> <span class="kw">extends</span> <span class="tp">ConfigValue</span> = <span class="tp">ConfigValue</span>&gt; {
   <span class="kw">readonly</span> <span class="tp">key</span>: <span class="tp">string</span>;
   <span class="kw">readonly</span> <span class="tp">value</span>: <span class="tp">T</span>;
   <span class="kw">readonly</span> <span class="tp">source</span>: <span class="tp">string</span>;
@@ -397,14 +402,14 @@ yarn add @zudojs/config</div>
   <span class="kw">readonly</span> <span class="tp">priority</span>: <span class="tp">number</span>;
   <span class="kw">readonly</span> <span class="tp">sensitive</span>: <span class="tp">boolean</span>;
   <span class="kw">readonly</span> <span class="tp">resolved</span>: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> <span class="tp">createdAt</span>: <span class="tp">Date</span>;
+  <span class="kw">readonly</span> <span class="tp">createdAt</span>: <span class="tp">number</span>;  <span class="cm">// epoch milliseconds, not a Date</span>
 }</div>
 
         <h3 class="text-lg font-bold mb-3">Functions</h3>
         <div class="code-block"><span class="kw">import</span> {
   <span class="fn">createConfigEntry</span>, <span class="fn">isConfigEntry</span>,
   <span class="fn">toSafeConfigEntry</span>, <span class="fn">serializeConfigEntry</span>,
-  <span class="fn">sortConfigEntries</span>
+  <span class="fn">sortConfigEntries</span>, <span class="tp">ConfigSourceType</span>
 } <span class="kw">from</span> <span class="str">'@zudojs/config'</span>;
 
 <span class="kw">const</span> entry = <span class="fn">createConfigEntry</span>({
@@ -470,10 +475,11 @@ yarn add @zudojs/config</div>
 } <span class="kw">from</span> <span class="str">'@zudojs/config'</span>;
 
 <span class="cm">// In-memory source — declares no priority, so it lands at -1</span>
+<span class="cm">// The second argument is required and must carry a name.</span>
 <span class="kw">const</span> memSource = <span class="fn">createMemoryConfigSource</span>({
   <span class="str">'app.name'</span>: <span class="str">'My App'</span>,
   <span class="str">'app.port'</span>: <span class="num">3000</span>,
-});
+}, { name: <span class="str">'memory'</span> });
 
 <span class="cm">// Defaults source (lowest priority)</span>
 <span class="kw">const</span> defaults = <span class="fn">createDefaultsConfigSource</span>({
@@ -557,17 +563,20 @@ store.<span class="fn">set</span>(<span class="str">'api_key_name'</span>, <span
 
         <h3 class="text-lg font-bold mb-3">Prefix Queries</h3>
         <div class="code-block mb-6"><span class="cm">// Get all entries with a given prefix</span>
-<span class="kw">const</span> dbEntries = store.<span class="fn">getByPrefix</span>(<span class="str">'db.'</span>);
+<span class="cm">// Pass the prefix WITHOUT a trailing dot: 'db' matches 'db.host';</span>
+<span class="cm">// 'db.' matches nothing and returns [] (and {} below).</span>
+<span class="kw">const</span> dbEntries = store.<span class="fn">getByPrefix</span>(<span class="str">'db'</span>);
 
 <span class="cm">// Get values as an object with prefix stripped</span>
-<span class="kw">const</span> dbConfig = store.<span class="fn">getObjectByPrefix</span>(<span class="str">'db.'</span>);
+<span class="kw">const</span> dbConfig = store.<span class="fn">getObjectByPrefix</span>(<span class="str">'db'</span>);
 <span class="cm">// { host: 'localhost', port: 5432 }  (not 'db.host', 'db.port')</span></div>
 
         <h3 class="text-lg font-bold mb-3">Change Events</h3>
         <div class="code-block mb-6"><span class="kw">const</span> unsubscribe = store.<span class="fn">subscribe</span>((event) => {
   console.<span class="fn">log</span>(<span class="str">`Changed: <span class="kw">${</span>event.key<span class="kw">}</span>`</span>);
-  console.<span class="fn">log</span>(<span class="str">`Previous: <span class="kw">${</span>event.previous<span class="kw">}</span>`</span>);
-  console.<span class="fn">log</span>(<span class="str">`Current: <span class="kw">${</span>event.current<span class="kw">}</span>`</span>);
+  <span class="cm">// previous and current are whole ConfigEntry objects (or undefined), not values.</span>
+  console.<span class="fn">log</span>(<span class="str">`Previous: <span class="kw">${</span>String(event.previous?.value)<span class="kw">}</span>`</span>);
+  console.<span class="fn">log</span>(<span class="str">`Current: <span class="kw">${</span>String(event.current?.value)<span class="kw">}</span>`</span>);
 });
 
 store.<span class="fn">set</span>(<span class="str">'app.port'</span>, <span class="num">4000</span>);  <span class="cm">// Fires listener</span>
@@ -617,19 +626,26 @@ resolver.<span class="fn">date</span>(<span class="str">'app.created'</span>);  
 <span class="cm">// Object and Array</span>
 resolver.<span class="fn">object</span>&lt;<span class="tp">DbConfig</span>&gt;(<span class="str">'db'</span>);       <span class="cm">// typed object</span>
 resolver.<span class="fn">array</span>&lt;<span class="tp">string</span>&gt;(<span class="str">'app.tags'</span>);    <span class="cm">// typed array</span></div>
+        <div class="border-2 border-black bg-zudo-yellow/20 p-4 mt-3 mb-6">
+          <strong class="text-zudo-yellow">A fallback does not narrow the return type.</strong> Every typed accessor &mdash; <code>string</code>, <code>number</code>, <code>boolean</code>, <code>bigint</code>, <code>date</code>, <code>object</code>, <code>array</code>, on the resolver, the manager and a scoped resolver &mdash; is declared as returning <code>T | undefined</code>, even when you pass a fallback. <code>resolver.number('env.port', 8080)</code> returns <code>8080</code> at runtime, but <code>const port: number = resolver.number('env.port', 8080)</code> fails strict <code>tsc</code> with TS2322. Write <code>resolver.number('env.port') ?? 8080</code> to get a <code>number</code>, or use <code>requiredNumber()</code> when the key must exist.
+        </div>
 
         <h3 class="text-lg font-bold mb-3">Schema Validation</h3>
-        <div class="code-block mb-6"><span class="kw">import</span> { <span class="fn">createConfigResolver</span> } <span class="kw">from</span> <span class="str">'@zudojs/config'</span>;
+        <div class="code-block mb-6"><span class="kw">import</span> { <span class="tp">ConfigValueType</span> } <span class="kw">from</span> <span class="str">'@zudojs/config'</span>;
+<span class="kw">import</span> <span class="kw">type</span> { <span class="tp">ConfigNumberSchema</span> } <span class="kw">from</span> <span class="str">'@zudojs/config'</span>;
 
-<span class="kw">const</span> port = resolver.<span class="fn">resolve</span>(<span class="str">'app.port'</span>, {
-  type: <span class="str">'number'</span>,
+<span class="cm">// resolve() is typed to take the base ConfigSchema, so an inline literal</span>
+<span class="cm">// with min/max fails the excess-property check. Annotate it instead.</span>
+<span class="kw">const</span> portSchema: <span class="tp">ConfigNumberSchema</span> = {
+  type: <span class="tp">ConfigValueType</span>.NUMBER,
   min: <span class="num">1</span>,
   max: <span class="num">65535</span>,
   integer: <span class="num">true</span>,
-});
+};
+<span class="kw">const</span> port = resolver.<span class="fn">resolve</span>(<span class="str">'app.port'</span>, portSchema);
 
 <span class="cm">// Full diagnostic result</span>
-<span class="kw">const</span> result = resolver.<span class="fn">resolveResult</span>(<span class="str">'app.port'</span>, schema);
+<span class="kw">const</span> result = resolver.<span class="fn">resolveResult</span>(<span class="str">'app.port'</span>, portSchema);
 <span class="cm">// { key: 'app.port', value: 3000, found: true, valid: true, issues: [] }</span></div>
 
         <h3 class="text-lg font-bold mb-3">Scoped Resolver</h3>
@@ -666,21 +682,21 @@ dbPool.<span class="fn">number</span>(<span class="str">'maxSize'</span>); <span
 
         <h3 class="text-lg font-bold mb-3">Schema Types</h3>
         <div class="code-block mb-6"><span class="kw">enum</span> <span class="tp">ConfigValueType</span> {
-  STRING  = <span class="str">'STRING'</span>,
-  NUMBER  = <span class="str">'NUMBER'</span>,
-  BOOLEAN = <span class="str">'BOOLEAN'</span>,
-  BIGINT  = <span class="str">'BIGINT'</span>,
-  DATE    = <span class="str">'DATE'</span>,
-  OBJECT  = <span class="str">'OBJECT'</span>,
-  ARRAY   = <span class="str">'ARRAY'</span>,
-  NULL    = <span class="str">'NULL'</span>,
-  ANY     = <span class="str">'ANY'</span>,
+  STRING  = <span class="str">'string'</span>,
+  NUMBER  = <span class="str">'number'</span>,
+  BOOLEAN = <span class="str">'boolean'</span>,
+  BIGINT  = <span class="str">'bigint'</span>,
+  DATE    = <span class="str">'date'</span>,
+  OBJECT  = <span class="str">'object'</span>,
+  ARRAY   = <span class="str">'array'</span>,
+  NULL    = <span class="str">'null'</span>,
+  ANY     = <span class="str">'any'</span>,
 }</div>
 
         <h3 class="text-lg font-bold mb-3">Schema Interfaces</h3>
         <div class="code-block mb-6"><span class="cm">// Base schema</span>
-<span class="kw">interface</span> <span class="tp">ConfigSchema</span>&lt;<span class="tp">T</span>&gt; {
-  type: <span class="tp">ConfigValueType</span>;
+<span class="kw">interface</span> <span class="tp">ConfigSchema</span>&lt;<span class="tp">T</span> <span class="kw">extends</span> <span class="tp">ConfigValue</span> = <span class="tp">ConfigValue</span>&gt; {
+  type: <span class="tp">ConfigValueType</span> | <span class="kw">readonly</span> <span class="tp">ConfigValueType</span>[];  <span class="cm">// every field is readonly</span>
   required?: <span class="tp">boolean</span>;
   nullable?: <span class="tp">boolean</span>;
   default?: <span class="tp">T</span> | (() => <span class="tp">T</span>);
@@ -692,16 +708,16 @@ dbPool.<span class="fn">number</span>(<span class="str">'maxSize'</span>); <span
 
 <span class="cm">// String schema</span>
 <span class="kw">interface</span> <span class="tp">ConfigStringSchema</span> <span class="kw">extends</span> <span class="tp">ConfigSchema</span>&lt;<span class="tp">string</span>&gt; {
-  type: <span class="str">'STRING'</span>;
+  type: <span class="tp">ConfigValueType</span>.STRING;
   minLength?: <span class="tp">number</span>;
   maxLength?: <span class="tp">number</span>;
   pattern?: <span class="tp">string</span> | <span class="tp">RegExp</span>;
-  enum?: <span class="tp">string</span>[];
+  enum?: <span class="kw">readonly</span> <span class="tp">string</span>[];
 }
 
 <span class="cm">// Number schema</span>
 <span class="kw">interface</span> <span class="tp">ConfigNumberSchema</span> <span class="kw">extends</span> <span class="tp">ConfigSchema</span>&lt;<span class="tp">number</span>&gt; {
-  type: <span class="str">'NUMBER'</span>;
+  type: <span class="tp">ConfigValueType</span>.NUMBER;
   min?: <span class="tp">number</span>;
   max?: <span class="tp">number</span>;
   integer?: <span class="tp">boolean</span>;
@@ -729,14 +745,15 @@ dbPool.<span class="fn">number</span>(<span class="str">'maxSize'</span>); <span
 <span class="cm">// Throws ConfigSchemaValidationError if invalid</span></div>
 
         <h3 class="text-lg font-bold mb-3">Validation Error</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">ConfigSchemaValidationError</span> } <span class="kw">from</span> <span class="str">'@zudojs/config'</span>;
+        <div class="code-block"><span class="kw">import</span> { <span class="fn">assertValidConfig</span>, <span class="tp">ConfigSchemaValidationError</span> } <span class="kw">from</span> <span class="str">'@zudojs/config'</span>;
 
 <span class="kw">try</span> {
   <span class="fn">assertValidConfig</span>(values, schema);
 } <span class="kw">catch</span> (error) {
   <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">ConfigSchemaValidationError</span>) {
     console.<span class="fn">log</span>(error.issues);
-    <span class="cm">// [{ path: 'app.port', message: 'must be >= 1', code: 'MIN', ... }]</span>
+    <span class="cm">// [{ path: '$.app.port', message: 'Value must be greater than or equal to 1.',</span>
+    <span class="cm">//    code: 'MIN', severity: 'error' }]</span>
   }
 }</div>
       </section>
@@ -757,7 +774,9 @@ dbPool.<span class="fn">number</span>(<span class="str">'maxSize'</span>); <span
     console.<span class="fn">log</span>(<span class="str">`Loaded <span class="kw">${</span>Object.<span class="fn">keys</span>(result.values).length<span class="kw">}</span> values from <span class="kw">${</span>source.name<span class="kw">}</span>`</span>);
   },
   onSourceError: (source, error) => {
-    console.<span class="fn">error</span>(<span class="str">`Failed to load <span class="kw">${</span>source.name<span class="kw">}</span>: <span class="kw">${</span>error.message<span class="kw">}</span>`</span>);
+    <span class="cm">// error is typed unknown</span>
+    <span class="kw">const</span> message = error <span class="kw">instanceof</span> Error ? error.message : String(error);
+    console.<span class="fn">error</span>(<span class="str">`Failed to load <span class="kw">${</span>source.name<span class="kw">}</span>: <span class="kw">${</span>message<span class="kw">}</span>`</span>);
   },
 });</div>
 
@@ -795,12 +814,12 @@ loader.<span class="fn">removeSource</span>(<span class="str">'remote'</span>);
 
         <h3 class="text-lg font-bold mb-3">Lifecycle States</h3>
         <div class="code-block mb-6"><span class="kw">enum</span> <span class="tp">ConfigManagerState</span> {
-  CREATED    = <span class="str">'CREATED'</span>,     <span class="cm">// Initial state</span>
-  LOADING    = <span class="str">'LOADING'</span>,     <span class="cm">// Loading from sources</span>
-  READY      = <span class="str">'READY'</span>,       <span class="cm">// Configuration available</span>
-  RELOADING  = <span class="str">'RELOADING'</span>,   <span class="cm">// Reloading from sources</span>
-  FAILED     = <span class="str">'FAILED'</span>,      <span class="cm">// Load failed</span>
-  DISPOSED   = <span class="str">'DISPOSED'</span>,    <span class="cm">// Manager disposed</span>
+  CREATED    = <span class="str">'created'</span>,     <span class="cm">// Initial state</span>
+  LOADING    = <span class="str">'loading'</span>,     <span class="cm">// Loading from sources</span>
+  READY      = <span class="str">'ready'</span>,       <span class="cm">// Configuration available</span>
+  RELOADING  = <span class="str">'reloading'</span>,   <span class="cm">// Reloading from sources</span>
+  FAILED     = <span class="str">'failed'</span>,      <span class="cm">// Load failed</span>
+  DISPOSED   = <span class="str">'disposed'</span>,    <span class="cm">// Manager disposed</span>
 }</div>
 
         <h3 class="text-lg font-bold mb-3">Creating a Manager</h3>
@@ -815,7 +834,7 @@ loader.<span class="fn">removeSource</span>(<span class="str">'remote'</span>);
 });
 
 <span class="cm">// Create and load in one step</span>
-<span class="kw">const</span> manager = <span class="kw">await</span> <span class="fn">initializeConfigManager</span>({
+<span class="kw">const</span> loadedManager = <span class="kw">await</span> <span class="fn">initializeConfigManager</span>({
   sources: [envSource],
   initialValues: { <span class="str">'app.port'</span>: <span class="num">3000</span> },
 });</div>
@@ -823,7 +842,7 @@ loader.<span class="fn">removeSource</span>(<span class="str">'remote'</span>);
         <h3 class="text-lg font-bold mb-3">Lifecycle Methods</h3>
         <div class="code-block mb-6"><span class="kw">await</span> manager.<span class="fn">load</span>();      <span class="cm">// CREATED → LOADING → READY</span>
 <span class="kw">await</span> manager.<span class="fn">reload</span>();    <span class="cm">// READY → RELOADING → READY</span>
-manager.<span class="fn">getState</span>();        <span class="cm">// 'READY'</span>
+manager.<span class="fn">getState</span>();        <span class="cm">// 'ready' (ConfigManagerState.READY)</span>
 manager.<span class="fn">isReady</span>;           <span class="cm">// true</span>
 manager.<span class="fn">isLoading</span>;         <span class="cm">// false</span></div>
 
@@ -834,7 +853,13 @@ manager.<span class="fn">boolean</span>(<span class="str">'app.debug'</span>);
 manager.<span class="fn">required</span>&lt;<span class="tp">string</span>&gt;(<span class="str">'app.name'</span>);
 manager.<span class="fn">object</span>&lt;<span class="tp">DbConfig</span>&gt;(<span class="str">'db'</span>);
 manager.<span class="fn">array</span>&lt;<span class="tp">string</span>&gt;(<span class="str">'app.tags'</span>);
-manager.<span class="fn">scoped</span>(<span class="str">'db'</span>);</div>
+manager.<span class="fn">scoped</span>(<span class="str">'db'</span>);
+
+<span class="cm">// The manager has no requiredString/requiredNumber; its resolver does.</span>
+manager.<span class="fn">getResolver</span>().<span class="fn">requiredNumber</span>(<span class="str">'app.port'</span>);</div>
+        <div class="border-2 border-black bg-zudo-yellow/20 p-4 mt-3 mb-6">
+          <strong class="text-zudo-yellow"><code>required&lt;T&gt;()</code> is a cast, not a parse.</strong> It returns the stored value unchanged and only tells the compiler it is a <code>T</code>. With <code>DB__PORT=5432</code> from the environment, <code>manager.required&lt;number&gt;('db.port')</code> returns the <em>string</em> <code>"5432"</code> typed as <code>number</code>. Use <code>number()</code> / <code>boolean()</code>, or <code>getResolver().requiredNumber()</code> / <code>requiredBoolean()</code>, which parse the string and throw <code>ConfigResolutionError</code> when it does not parse.
+        </div>
 
         <h3 class="text-lg font-bold mb-3">Runtime Updates</h3>
         <div class="code-block mb-6">manager.<span class="fn">set</span>(<span class="str">'app.debug'</span>, <span class="num">true</span>);
@@ -849,7 +874,11 @@ manager.<span class="fn">set</span>(<span class="str">'db.password'</span>, <spa
 
         <h3 class="text-lg font-bold mb-3">Source Management</h3>
         <div class="code-block mb-6">manager.<span class="fn">addSource</span>(newSource);
-manager.<span class="fn">addSourceLoader</span>(<span class="str">'custom'</span>, <span class="kw">async</span> (ctx) => ({ ... }));
+manager.<span class="fn">addSourceLoader</span>(<span class="str">'flags'</span>, <span class="kw">async</span> () => ({
+  values: { <span class="str">'feature.beta'</span>: <span class="num">true</span> },
+  source: <span class="str">'flags'</span>,
+  type: <span class="tp">ConfigSourceType</span>.CUSTOM,
+}));
 manager.<span class="fn">removeSource</span>(<span class="str">'old-source'</span>);</div>
 
         <h3 class="text-lg font-bold mb-3">Validation and Status</h3>
@@ -858,12 +887,56 @@ manager.<span class="fn">removeSource</span>(<span class="str">'old-source'</spa
 
 <span class="cm">// Get status snapshot</span>
 <span class="kw">const</span> status = manager.<span class="fn">getStatus</span>();
-<span class="cm">// { state: 'READY', loaded: true, loading: false, size: 42, lastLoadedAt: Date }</span>
+<span class="cm">// { name: 'config', state: 'ready', loaded: true, loading: false, size: 42,</span>
+<span class="cm">//   lastLoadedAt: 1790176359562 }  — epoch milliseconds, not a Date</span>
 
-<span class="cm">// Subscribe to state changes</span>
+<span class="cm">// Subscribe to lifecycle STATE changes (load, reload, failure, dispose).</span>
+<span class="cm">// It does not fire on set()/delete(); use manager.getStore().subscribe() for values.</span>
 <span class="kw">const</span> unsub = manager.<span class="fn">subscribe</span>((status) => {
   console.<span class="fn">log</span>(<span class="str">`State: <span class="kw">${</span>status.state<span class="kw">}</span>`</span>);
 });</div>
+
+        <div class="border-4 border-black bg-zudo-red/10 p-4 mb-6">
+          <p class="font-bold mb-2">In 1.2.0, a <code class="bg-black/5 px-1">NUMBER</code> or <code class="bg-black/5 px-1">BOOLEAN</code> schema never passes on values from the environment.</p>
+          <p class="text-sm mb-2"><code class="bg-black/5 px-1">createEnvironmentConfigSource()</code> stores every variable as the raw string it read: <code class="bg-black/5 px-1">APP__PORT=8080</code> becomes <code class="bg-black/5 px-1">'app.port': '8080'</code> (<code class="bg-black/5 px-1">__</code> maps to <code class="bg-black/5 px-1">.</code>, and names are lower-cased). <code class="bg-black/5 px-1">validate()</code> checks the type first, so <code class="bg-black/5 px-1">{ type: ConfigValueType.NUMBER }</code> fails with <code class="bg-black/5 px-1">TYPE_MISMATCH</code> &mdash; "Expected number but received string." &mdash; and throws <code class="bg-black/5 px-1">ConfigManagerValidationError</code>. <code class="bg-black/5 px-1">BOOLEAN</code> fails the same way on <code class="bg-black/5 px-1">"true"</code>.</p>
+          <p class="text-sm mb-2">A <code class="bg-black/5 px-1">transform</code> does not rescue it: transforms run only <em>after</em> the type check and the <code class="bg-black/5 px-1">validate</code> callback have passed, and <code class="bg-black/5 px-1">validate</code> sees the raw string. The same applies to <code class="bg-black/5 px-1">configFactory.validated()</code>, <code class="bg-black/5 px-1">validateConfigObject()</code> and <code class="bg-black/5 px-1">resolve()</code>. Values that are already numbers or booleans (<code class="bg-black/5 px-1">initialValues</code>, a memory or defaults source) are not affected.</p>
+          <p class="text-sm">Validate the strings you actually have and parse when you read, or coerce the whole object with <a href="/docs/packages-schema" class="text-zudo-blue underline">@zudojs/schema</a>:</p>
+        </div>
+
+        <div class="code-block mb-6"><span class="kw">import</span> {
+  <span class="fn">createConfigManager</span>, <span class="fn">createEnvironmentConfigSource</span>, <span class="tp">ConfigValueType</span>,
+} <span class="kw">from</span> <span class="str">'@zudojs/config'</span>;
+<span class="kw">import</span> { schema } <span class="kw">from</span> <span class="str">'@zudojs/schema'</span>; <span class="cm">// npm install @zudojs/schema</span>
+
+<span class="cm">// APP__PORT=8080 APP__DEBUG=yes</span>
+<span class="kw">const</span> manager = <span class="fn">createConfigManager</span>({
+  sources: [<span class="fn">createEnvironmentConfigSource</span>()],
+});
+<span class="kw">await</span> manager.<span class="fn">load</span>();
+
+<span class="cm">// Option 1: validate the strings, then read with the parsing accessors.</span>
+manager.<span class="fn">validate</span>({
+  properties: {
+    <span class="str">'app.port'</span>: { type: <span class="tp">ConfigValueType</span>.STRING, required: <span class="num">true</span>, pattern: <span class="str">/^\d{1,5}$/</span> },
+    <span class="str">'app.debug'</span>: {
+      type: <span class="tp">ConfigValueType</span>.STRING,
+      <span class="kw">enum</span>: [<span class="str">'true'</span>, <span class="str">'false'</span>, <span class="str">'yes'</span>, <span class="str">'no'</span>, <span class="str">'1'</span>, <span class="str">'0'</span>, <span class="str">'on'</span>, <span class="str">'off'</span>],
+    },
+  },
+});
+<span class="kw">const</span> port = manager.<span class="fn">getResolver</span>().<span class="fn">requiredNumber</span>(<span class="str">'app.port'</span>); <span class="cm">// 8080 (number)</span>
+<span class="kw">const</span> debug = manager.<span class="fn">boolean</span>(<span class="str">'app.debug'</span>) ?? <span class="num">false</span>;           <span class="cm">// true</span>
+
+<span class="cm">// Option 2: coerce and range-check everything in one parse.</span>
+<span class="kw">const</span> <span class="tp">AppConfig</span> = schema.<span class="fn">object</span>({
+  <span class="str">'app.port'</span>: schema.coerce.<span class="fn">number</span>().<span class="fn">int</span>().<span class="fn">min</span>(<span class="num">1</span>).<span class="fn">max</span>(<span class="num">65535</span>),
+  <span class="str">'app.debug'</span>: schema.coerce.<span class="fn">boolean</span>().<span class="fn">default</span>(<span class="num">false</span>),
+});
+<span class="kw">const</span> result = <span class="tp">AppConfig</span>.<span class="fn">safeParse</span>(manager.<span class="fn">toObject</span>());
+<span class="kw">if</span> (!result.success) {
+  <span class="kw">throw new</span> Error(<span class="str">`invalid configuration: <span class="kw">${</span>JSON.stringify(result.issues)<span class="kw">}</span>`</span>);
+}
+<span class="kw">const</span> config = result.data; <span class="cm">// { 'app.port': number; 'app.debug': boolean }</span></div>
 
         <h3 class="text-lg font-bold mb-3">Cleanup</h3>
         <div class="code-block"><span class="kw">await</span> manager.<span class="fn">dispose</span>();
@@ -878,19 +951,19 @@ manager.<span class="fn">removeSource</span>(<span class="str">'old-source'</spa
         <div class="code-block mb-6"><span class="kw">import</span> { <span class="fn">configFactory</span> } <span class="kw">from</span> <span class="str">'@zudojs/config'</span>;
 
 <span class="cm">// Create without loading</span>
-<span class="kw">const</span> manager = configFactory.<span class="fn">create</span>({ initialValues });
+<span class="kw">const</span> created = configFactory.<span class="fn">create</span>({ initialValues });
 
 <span class="cm">// Create and load</span>
-<span class="kw">const</span> manager = <span class="kw">await</span> configFactory.<span class="fn">initialize</span>({ sources });
+<span class="kw">const</span> loaded = <span class="kw">await</span> configFactory.<span class="fn">initialize</span>({ sources });
 
 <span class="cm">// Create from key-value map</span>
-<span class="kw">const</span> manager = configFactory.<span class="fn">fromValues</span>({ <span class="str">'key'</span>: <span class="str">'value'</span> });
+<span class="kw">const</span> fromValues = configFactory.<span class="fn">fromValues</span>({ <span class="str">'key'</span>: <span class="str">'value'</span> });
 
 <span class="cm">// Create from sources</span>
-<span class="kw">const</span> manager = configFactory.<span class="fn">fromSources</span>([source1, source2]);
+<span class="kw">const</span> fromSources = configFactory.<span class="fn">fromSources</span>([source1, source2]);
 
 <span class="cm">// Create from existing store</span>
-<span class="kw">const</span> manager = configFactory.<span class="fn">fromStore</span>(existingStore);
+<span class="kw">const</span> fromStore = configFactory.<span class="fn">fromStore</span>(existingStore);
 
 <span class="cm">// Create, load, and validate</span>
 <span class="cm">// validated(schema, options) — the schema is the first argument.</span>
@@ -960,21 +1033,21 @@ REMOTE      = <span class="str">'remote'</span>        <span class="cm">// type 
 CUSTOM      = <span class="str">'custom'</span>        <span class="cm">// createCustomConfigSource</span></div>
 
         <h3 class="text-lg font-bold mb-3">ConfigValueType</h3>
-        <div class="code-block mb-6">STRING = <span class="str">'STRING'</span>  |  NUMBER = <span class="str">'NUMBER'</span>  |  BOOLEAN = <span class="str">'BOOLEAN'</span>
-BIGINT = <span class="str">'BIGINT'</span>  |  DATE = <span class="str">'DATE'</span>      |  OBJECT = <span class="str">'OBJECT'</span>
-ARRAY = <span class="str">'ARRAY'</span>   |  NULL = <span class="str">'NULL'</span>      |  ANY = <span class="str">'ANY'</span></div>
+        <div class="code-block mb-6">STRING = <span class="str">'string'</span>  |  NUMBER = <span class="str">'number'</span>  |  BOOLEAN = <span class="str">'boolean'</span>
+BIGINT = <span class="str">'bigint'</span>  |  DATE = <span class="str">'date'</span>      |  OBJECT = <span class="str">'object'</span>
+ARRAY = <span class="str">'array'</span>   |  NULL = <span class="str">'null'</span>      |  ANY = <span class="str">'any'</span></div>
 
         <h3 class="text-lg font-bold mb-3">ConfigValidationSeverity</h3>
-        <div class="code-block mb-6">ERROR   = <span class="str">'ERROR'</span>
-WARNING = <span class="str">'WARNING'</span></div>
+        <div class="code-block mb-6">ERROR   = <span class="str">'error'</span>
+WARNING = <span class="str">'warning'</span></div>
 
         <h3 class="text-lg font-bold mb-3">ConfigManagerState</h3>
-        <div class="code-block">CREATED   = <span class="str">'CREATED'</span>    <span class="cm">// Initial state</span>
-LOADING   = <span class="str">'LOADING'</span>    <span class="cm">// Loading from sources</span>
-READY     = <span class="str">'READY'</span>      <span class="cm">// Configuration available</span>
-RELOADING = <span class="str">'RELOADING'</span>  <span class="cm">// Reloading from sources</span>
-FAILED    = <span class="str">'FAILED'</span>     <span class="cm">// Load failed</span>
-DISPOSED  = <span class="str">'DISPOSED'</span>   <span class="cm">// Manager disposed</span></div>
+        <div class="code-block">CREATED   = <span class="str">'created'</span>    <span class="cm">// Initial state</span>
+LOADING   = <span class="str">'loading'</span>    <span class="cm">// Loading from sources</span>
+READY     = <span class="str">'ready'</span>      <span class="cm">// Configuration available</span>
+RELOADING = <span class="str">'reloading'</span>  <span class="cm">// Reloading from sources</span>
+FAILED    = <span class="str">'failed'</span>     <span class="cm">// Load failed</span>
+DISPOSED  = <span class="str">'disposed'</span>   <span class="cm">// Manager disposed</span></div>
       </section>
 
       <!-- ==================== SECTION: ERRORS ==================== -->
@@ -997,7 +1070,7 @@ DISPOSED  = <span class="str">'DISPOSED'</span>   <span class="cm">// Manager di
                 <td class="border border-black px-4 py-2 font-mono text-xs">ConfigManagerValidationError</td>
                 <td class="border border-black px-4 py-2">ConfigurationError</td>
                 <td class="border border-black px-4 py-2">issues: readonly unknown[]</td>
-                <td class="border border-black px-4 py-2">manager.validate() fails against object schema</td>
+                <td class="border border-black px-4 py-2">manager.validate() or configFactory.validated() fails against the schema</td>
               </tr>
               <tr class="bg-gray-50">
                 <td class="border border-black px-4 py-2 font-mono text-xs">ConfigSchemaValidationError</td>
@@ -1034,11 +1107,12 @@ DISPOSED  = <span class="str">'DISPOSED'</span>   <span class="cm">// Manager di
             <h3 class="font-bold mb-2">1. Application Configuration with Environment Variables</h3>
             <div class="code-block"><span class="kw">const</span> manager = <span class="kw">await</span> <span class="fn">initializeConfigManager</span>({
   sources: [
-    <span class="fn">createDefaultsConfigSource</span>({ <span class="str">'app.port'</span>: <span class="num">3000</span> }),
-    <span class="fn">createMemoryConfigSource</span>(process.env, { name: <span class="str">'env'</span> }),
+    <span class="fn">createDefaultsConfigSource</span>({ <span class="str">'app.port'</span>: <span class="num">3000</span> }),   <span class="cm">// priority -1000</span>
+    <span class="fn">createEnvironmentConfigSource</span>(),                     <span class="cm">// priority 100</span>
   ],
 });
-<span class="cm">// Environment variables override defaults</span></div>
+<span class="cm">// APP__PORT=8080 is read as 'app.port': '8080' (a string) and overrides the default.</span>
+<span class="kw">const</span> port = manager.<span class="fn">number</span>(<span class="str">'app.port'</span>) ?? <span class="num">3000</span>; <span class="cm">// 8080 — number() parses the string</span></div>
           </div>
 
           <div class="border-4 border-black p-6">
@@ -1055,30 +1129,29 @@ DISPOSED  = <span class="str">'DISPOSED'</span>   <span class="cm">// Manager di
 
           <div class="border-4 border-black p-6">
             <h3 class="font-bold mb-2">3. Type-Safe Configuration Access</h3>
-            <div class="code-block"><span class="kw">interface</span> <span class="tp">AppConfig</span> {
-  <span class="str">'app.name'</span>: <span class="tp">string</span>;
-  <span class="str">'app.port'</span>: <span class="tp">number</span>;
-  <span class="str">'db.host'</span>: <span class="tp">string</span>;
-  <span class="str">'db.port'</span>: <span class="tp">number</span>;
-}
+            <div class="code-block"><span class="cm">// The required* helpers live on the full resolver, not on scoped ones.</span>
+<span class="kw">const</span> resolver = manager.<span class="fn">getResolver</span>();
+<span class="kw">const</span> host = resolver.<span class="fn">requiredString</span>(<span class="str">'db.host'</span>);  <span class="cm">// string; throws if missing</span>
+<span class="kw">const</span> port = resolver.<span class="fn">requiredNumber</span>(<span class="str">'db.port'</span>);  <span class="cm">// number; parses "5432", throws if it cannot</span>
 
+<span class="cm">// A scoped resolver reads with a prefix; add your own default.</span>
 <span class="kw">const</span> db = manager.<span class="fn">scoped</span>(<span class="str">'db'</span>);
-<span class="kw">const</span> host = db.<span class="fn">requiredString</span>(<span class="str">'host'</span>);  <span class="cm">// type-safe</span>
-<span class="kw">const</span> port = db.<span class="fn">requiredNumber</span>(<span class="str">'port'</span>);  <span class="cm">// auto-parsed</span></div>
+<span class="kw">const</span> poolSize = db.<span class="fn">number</span>(<span class="str">'poolSize'</span>) ?? <span class="num">10</span>;      <span class="cm">// number</span></div>
           </div>
 
           <div class="border-4 border-black p-6">
             <h3 class="font-bold mb-2">4. Configuration Validation with Schemas</h3>
-            <div class="code-block"><span class="kw">const</span> { manager, config } = <span class="kw">await</span> configFactory.<span class="fn">validated</span>({
-  schema: {
-    type: <span class="str">'object'</span>,
+            <div class="code-block"><span class="kw">const</span> { manager, config } = <span class="kw">await</span> configFactory.<span class="fn">validated</span>(
+  {
     properties: {
-      <span class="str">'app.port'</span>: { type: <span class="str">'number'</span>, min: <span class="num">1</span>, max: <span class="num">65535</span> },
-      <span class="str">'app.name'</span>: { type: <span class="str">'string'</span>, required: <span class="num">true</span> },
-    }
-  }
-});
-<span class="cm">// Throws ConfigSchemaValidationError if validation fails</span></div>
+      <span class="str">'app.port'</span>: { type: <span class="tp">ConfigValueType</span>.NUMBER, min: <span class="num">1</span>, max: <span class="num">65535</span> },
+      <span class="str">'app.name'</span>: { type: <span class="tp">ConfigValueType</span>.STRING, required: <span class="num">true</span> },
+    },
+  },
+  { initialValues: { <span class="str">'app.name'</span>: <span class="str">'My App'</span>, <span class="str">'app.port'</span>: <span class="num">3000</span> } },
+);
+<span class="cm">// Throws ConfigManagerValidationError if validation fails.</span>
+<span class="cm">// NUMBER/BOOLEAN fail on environment strings; see Validation and Status above.</span></div>
           </div>
 
           <div class="border-4 border-black p-6">
@@ -1086,9 +1159,10 @@ DISPOSED  = <span class="str">'DISPOSED'</span>   <span class="cm">// Manager di
             <div class="code-block"><span class="cm">// Update a value at runtime</span>
 manager.<span class="fn">set</span>(<span class="str">'app.debug'</span>, <span class="num">true</span>);
 
-<span class="cm">// Listen for changes</span>
-manager.<span class="fn">subscribe</span>((status) => {
-  console.<span class="fn">log</span>(<span class="str">`Config updated: <span class="kw">${</span>status.size<span class="kw">}</span> entries`</span>);
+<span class="cm">// Listen for value changes on the store (manager.subscribe() only</span>
+<span class="cm">// reports lifecycle state changes, not set() or delete()).</span>
+manager.<span class="fn">getStore</span>().<span class="fn">subscribe</span>((event) => {
+  console.<span class="fn">log</span>(<span class="str">`Config updated: <span class="kw">${</span>event.key<span class="kw">}</span>`</span>);
 });
 
 <span class="cm">// Reload from sources</span>
@@ -1103,9 +1177,10 @@ manager.<span class="fn">subscribe</span>((status) => {
 <span class="kw">const</span> cacheConfig = manager.<span class="fn">scoped</span>(<span class="str">'cache'</span>);
 
 <span class="cm">// Modules access only their own config</span>
-<span class="kw">const</span> secret = authConfig.<span class="fn">requiredString</span>(<span class="str">'jwtSecret'</span>);
-<span class="kw">const</span> host = dbConfig.<span class="fn">requiredString</span>(<span class="str">'host'</span>);
-<span class="kw">const</span> ttl = cacheConfig.<span class="fn">number</span>(<span class="str">'ttl'</span>, <span class="num">3600</span>);</div>
+<span class="kw">const</span> secret = authConfig.<span class="fn">string</span>(<span class="str">'jwtSecret'</span>);
+<span class="kw">if</span> (secret === <span class="kw">undefined</span>) <span class="kw">throw</span> <span class="fn">missingConfigurationError</span>(<span class="str">'auth.jwtSecret'</span>);
+<span class="kw">const</span> host = dbConfig.<span class="fn">string</span>(<span class="str">'host'</span>) ?? <span class="str">'localhost'</span>;
+<span class="kw">const</span> ttl = cacheConfig.<span class="fn">number</span>(<span class="str">'ttl'</span>) ?? <span class="num">3600</span>;</div>
           </div>
         </div>
       </section>

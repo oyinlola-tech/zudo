@@ -142,7 +142,7 @@
 
       <!-- HEADER -->
             <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.1.1</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.1.2</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/container</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           A token-based dependency injection container: register how each service is built, and let the container create, share and clean it up for you.
@@ -309,7 +309,7 @@ console.<span class="fn">log</span>(<span class="fn">describeToken</span>(CONFIG
 console.<span class="fn">log</span>(<span class="fn">describeToken</span>(Clock));                     <span class="cmt">// Clock</span>
         </div>
         <div class="callout callout-warning">
-          <strong>Watch out:</strong> <code>createToken("db")</code> called twice gives two <em>different</em> tokens, even with the same description. Create each token once, export it from a shared file, and import it everywhere else. Otherwise you register under one token and ask for another, and get <code>RegistrationNotFoundError</code>.
+          <strong>Watch out:</strong> <code>createToken("db")</code> called twice gives two <em>different</em> tokens, even with the same description. Create each token once, export it from a shared file, and import it everywhere else. Otherwise you register under one token and ask for another, and get <code>RegistrationNotFoundError</code> (or, when the unregistered token is a dependency, a <code>DependencyResolutionError</code> with it as <code>cause</code>). Both messages name the token as <code>Symbol(db)</code>, whichever copy you used.
         </div>
       </section>
 
@@ -360,14 +360,24 @@ container.<span class="fn">registerClass</span>(API, Api, { inject: [DB, <span c
 container.<span class="fn">registerFactory</span>(<span class="str">"api-url"</span>, (label) =&gt; <span class="str">`https://${label}.example.com`</span>, [<span class="str">"label"</span>]);
 container.<span class="fn">registerExisting</span>(<span class="str">"database"</span>, DB);
 
+<span class="cmt">// Factory parameters are typed unknown: cast each one to its token's type.</span>
+<span class="kw">const</span> API_V2 = <span class="fn">createToken</span>&lt;Api&gt;(<span class="str">"api-v2"</span>);
+container.<span class="fn">registerFactory</span>(API_V2, (db, label) =&gt; <span class="kw">new</span> Api(db <span class="kw">as</span> Db, label <span class="kw">as</span> string), [DB, <span class="str">"label"</span>]);
+
 <span class="kw">const</span> api = container.<span class="fn">resolve</span>(API);
 console.<span class="fn">log</span>(api.<span class="fn">get</span>(<span class="str">"1"</span>));                                            <span class="cmt">// api:rows:1</span>
 console.<span class="fn">log</span>(container.<span class="fn">resolve</span>(<span class="str">"api-url"</span>));                            <span class="cmt">// https://api.example.com</span>
 console.<span class="fn">log</span>(container.<span class="fn">resolve</span>(<span class="str">"database"</span>) === container.<span class="fn">resolve</span>(DB)); <span class="cmt">// true</span>
+console.<span class="fn">log</span>(container.<span class="fn">resolve</span>(API_V2).<span class="fn">get</span>(<span class="str">"2"</span>));                         <span class="cmt">// api:rows:2</span>
         </div>
         <p class="mb-3">
-          All four shortcuts call <code class="bg-gray-100 px-1">register(token, provider, options)</code> underneath. You can call it directly with a provider object such as <code class="bg-gray-100 px-1">{ useFactory: (db) =&gt; build(db), inject: [DB] }</code> and options such as <code class="bg-gray-100 px-1">{ scope: ContainerScope.SINGLETON }</code>.
+          All four shortcuts call <code class="bg-gray-100 px-1">register(token, provider, options)</code> underneath. You can call it directly with a provider object such as <code class="bg-gray-100 px-1">{ useFactory: (db) =&gt; build(db as Db), inject: [DB] }</code> and options such as <code class="bg-gray-100 px-1">{ scope: ContainerScope.SINGLETON }</code>.
         </p>
+        <div class="border-4 border-black bg-zudo-red/10 p-4 mb-6">
+          <p class="font-bold mb-2">Factory arguments are typed <code class="bg-black/5 px-1">unknown</code>, and <code class="bg-black/5 px-1">inject</code> is not checked against the factory.</p>
+          <p class="text-sm mb-2"><code class="bg-black/5 px-1">registerFactory</code> takes <code class="bg-black/5 px-1">(...deps: unknown[]) =&gt; T</code>, and <code class="bg-black/5 px-1">inject</code> (or <code class="bg-black/5 px-1">useFactory</code>'s <code class="bg-black/5 px-1">inject</code>) is a plain list of tokens. TypeScript cannot connect the two, so the type carried by <code class="bg-black/5 px-1">DB</code> never reaches the parameter. The shape <code class="bg-black/5 px-1">container.registerFactory(API, (db) =&gt; new Api(db), [DB])</code>, as the package README writes it, fails strict <code class="bg-black/5 px-1">tsc</code> with TS2345 (<em>Argument of type 'unknown' is not assignable to parameter of type 'Db'</em>). Annotating the parameter as <code class="bg-black/5 px-1">(db: Db) =&gt;</code> fails too.</p>
+          <p class="text-sm">Cast inside the factory, as in <code class="bg-black/5 px-1">API_V2</code> above, or use <code class="bg-black/5 px-1">registerClass(API, Api, { inject: [DB] })</code>, which needs no cast. Nothing checks the list's length, order or types, at compile time or at run time: tokens in the wrong order hand the wrong objects to your factory without any error.</p>
+        </div>
         <div class="callout callout-warning">
           <strong>Watch out:</strong> registering the same token twice throws <code>DuplicateRegistrationError</code>. To swap a registration on purpose, call <code>container.replace(token, provider)</code>, or create the container with <code>{ registry: { allowDuplicates: true } }</code> so the later registration wins.
         </div>
@@ -527,6 +537,9 @@ container.<span class="fn">registerFactory</span>(<span class="str">"b"</span>, 
         <p class="mb-4">
           When a factory or constructor throws, the container wraps the failure in <code class="bg-gray-100 px-1">DependencyResolutionError</code>. The original error is kept as <code class="bg-gray-100 px-1">cause</code>, and <code class="bg-gray-100 px-1">token</code> and <code class="bg-gray-100 px-1">chain</code> show which link broke. The message reads like <code class="bg-gray-100 px-1">Failed to resolve b: kaboom (chain: a -&gt; b)</code>.
         </p>
+        <p class="mb-4">
+          Tokens made with <code class="bg-gray-100 px-1">createToken()</code> or <code class="bg-gray-100 px-1">createGlobalToken()</code> appear in every error message, and in <code class="bg-gray-100 px-1">chain</code>, as <code class="bg-gray-100 px-1">Symbol(description)</code> &mdash; the same string <code class="bg-gray-100 px-1">describeToken()</code> returns. With <code class="bg-gray-100 px-1">createToken&lt;Api&gt;("Api")</code> depending on <code class="bg-gray-100 px-1">createToken&lt;Db&gt;("Database")</code>, a throwing database factory reads <code class="bg-gray-100 px-1">Failed to resolve Symbol(Database): kaboom (chain: Symbol(Api) -&gt; Symbol(Database))</code>, and a missing one <code class="bg-gray-100 px-1">No registration found for token "Symbol(Database)".</code> Give each token a description you will recognise in a log.
+        </p>
         <p class="mb-3">Asking for a token that was never registered throws <code class="bg-gray-100 px-1">RegistrationNotFoundError</code>. If "maybe missing" is a normal case, use <code class="bg-gray-100 px-1">resolveOptional()</code> or check first with <code class="bg-gray-100 px-1">has()</code> and <code class="bg-gray-100 px-1">canResolve()</code>.</p>
         <div class="code-block">
 <span class="kw">import</span> { createContainer, createToken } <span class="kw">from</span> <span class="str">"@zudojs/container"</span>;
@@ -542,7 +555,7 @@ console.<span class="fn">log</span>(container.<span class="fn">has</span>(FLAG))
 console.<span class="fn">log</span>(container.<span class="fn">resolveOptional</span>(FLAG)); <span class="cmt">// true</span>
         </div>
         <p class="mb-4">
-          One convenience: with the default <code class="bg-gray-100 px-1">autoRegisterClasses: true</code>, resolving a class that was never registered registers it on the fly as TRANSIENT, provided its constructor takes no arguments. <code class="bg-gray-100 px-1">container.resolve(MyService)</code> then just works. Set the option to <code class="bg-gray-100 px-1">false</code> if you prefer to require explicit registration.
+          One convenience: with the default <code class="bg-gray-100 px-1">autoRegisterClasses: true</code>, resolving a class that was never registered registers it on the fly as TRANSIENT and builds it with <strong>no arguments</strong>. That is right for a class whose constructor takes none; a class whose constructor expects dependencies is still built, with every parameter <code class="bg-gray-100 px-1">undefined</code> and no error. Register such classes explicitly with <code class="bg-gray-100 px-1">inject</code>. Set the option to <code class="bg-gray-100 px-1">false</code> if you prefer to require explicit registration.
         </p>
         <div class="callout callout-tip">
           <strong>Tip:</strong> <code>resolveOptional()</code> only hides "not registered". A registered token whose factory throws, or whose dependency is missing, still throws so that real bugs are not swallowed.
@@ -710,6 +723,7 @@ console.<span class="fn">log</span>(container.<span class="fn">resolve</span>(MA
       <section id="common-mistakes" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMMON MISTAKES</h2>
         <ul class="space-y-3 text-sm">
+          <li class="border-l-4 border-zudo-red pl-3"><strong>Writing <code>registerFactory(API, (db) =&gt; new Api(db), [DB])</code>.</strong> <code>db</code> is <code>unknown</code>, so strict <code>tsc</code> rejects it (TS2345). Fix: <code>new Api(db as Db)</code>, or <code>registerClass(API, Api, { inject: [DB] })</code>.</li>
           <li class="border-l-4 border-zudo-red pl-3"><strong>Calling <code>createToken("db")</code> in two files.</strong> You get two unrelated tokens, and <code>resolve()</code> throws <code>RegistrationNotFoundError</code>. Fix: create each token once in a shared module and import it.</li>
           <li class="border-l-4 border-zudo-blue pl-3"><strong>Forgetting <code>inject</code> on a class with constructor arguments.</strong> The container calls <code>new Service()</code> with nothing, and the fields are <code>undefined</code>. Fix: <code>registerClass(TOKEN, Service, { inject: [DEP_A, DEP_B] })</code> in constructor order.</li>
           <li class="border-l-4 border-zudo-yellow pl-3"><strong>Resolving a SCOPED token from the container.</strong> <code>ScopedResolutionError</code>. Fix: <code>const scope = container.createScope()</code> and <code>scope.resolve(TOKEN)</code>, then <code>await scope.dispose()</code>.</li>

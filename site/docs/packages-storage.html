@@ -382,6 +382,25 @@ console.<span class="fn">log</span>(page.objects.<span class="fn">map</span>((o)
         <p class="mb-4">
           Passing <code class="code-inline">columns</code> is the stronger guard: a name that passes the character check but is not on your list is refused with <code class="code-inline">STORAGE_IDENTIFIER_NOT_ALLOWED</code>. Without it, a body carrying <code class="code-inline">is_admin</code> would be written happily. The same guards are exported for your own SQL: <code class="code-inline">assertIdentifier</code>, <code class="code-inline">assertIdentifiers</code>, <code class="code-inline">assertRowBound</code>, <code class="code-inline">assertSortDirection</code>.
         </p>
+        <div class="callout callout-warning mb-4">
+          <strong class="text-sm uppercase tracking-wider">One list for writes, filters and sorting</strong>
+          <p class="text-sm mt-1"><code class="code-inline">columns</code> is not only a write allow-list. The same list is checked for the keys of <code class="code-inline">create()</code> and <code class="code-inline">update()</code>, for the keys of a <code class="code-inline">count(where)</code> filter, and for <code class="code-inline">findAll({ orderBy })</code>. Leave <code class="code-inline">created_at</code> out and <code class="code-inline">findAll({ orderBy: "created_at" })</code> is refused; add it and a request body can now set <code class="code-inline">created_at</code> too. So list every column you read, filter or sort by, and pick the writable fields yourself before calling <code class="code-inline">create</code>/<code class="code-inline">update</code> (for example by parsing the body with a schema that only has those fields). Do not treat <code class="code-inline">columns</code> as your mass-assignment protection for server-owned columns like <code class="code-inline">is_admin</code> or <code class="code-inline">tenant_id</code> if you ever need to filter on them.</p>
+        </div>
+
+        <div class="border-4 border-black bg-zudo-red/10 p-4 mb-6">
+          <p class="font-bold mb-2">A key set to <code class="bg-black/5 px-1">undefined</code> is written as <code class="bg-black/5 px-1">NULL</code>.</p>
+          <p class="text-sm mb-2"><code class="bg-black/5 px-1">create()</code> and <code class="bg-black/5 px-1">update()</code> write every own key of the object you pass, including keys whose value is <code class="bg-black/5 px-1">undefined</code>, and the driver sends <code class="bg-black/5 px-1">undefined</code> as <code class="bg-black/5 px-1">NULL</code>. <code class="bg-black/5 px-1">@zudojs/schema</code> 1.1.1's <code class="bg-black/5 px-1">.partial()</code> produces exactly that: parsing <code class="bg-black/5 px-1">{ email: "new@example.com" }</code> with <code class="bg-black/5 px-1">schema.object({ email, name }).partial()</code> returns <code class="bg-black/5 px-1">{ email: "new@example.com", name: undefined }</code>. Pass that to <code class="bg-black/5 px-1">update()</code> and you get <code class="bg-black/5 px-1">UPDATE users SET email = $1, name = $2 …</code> with <code class="bg-black/5 px-1">name = null</code>: a PATCH that only meant to change the email wipes the name.</p>
+          <p class="text-sm">Drop <code class="bg-black/5 px-1">undefined</code> values before writing:</p>
+        </div>
+        <div class="code-block mb-4"><span class="kw">const</span> patch = UserPatch.<span class="fn">parse</span>(body); <span class="cmt">// { email: "new@example.com", name: undefined }</span>
+
+<span class="kw">const</span> changes = <span class="tp">Object</span>.<span class="fn">fromEntries</span>(
+  <span class="tp">Object</span>.<span class="fn">entries</span>(patch).<span class="fn">filter</span>(([, value]) =&gt; value !== <span class="kw">undefined</span>),
+) <span class="kw">as</span> <span class="tp">Partial</span>&lt;<span class="tp">User</span>&gt;;
+
+<span class="kw">await</span> users.<span class="fn">update</span>(<span class="str">"u_1"</span>, changes);
+<span class="cmt">// UPDATE users SET email = $1 WHERE id = $2 RETURNING *  [ 'new@example.com', 'u_1' ]</span>
+<span class="cmt">// To clear a column on purpose, send null, which is kept.</span></div>
 
         <div class="callout callout-danger">
           <strong class="text-sm uppercase tracking-wider">Column names outside that character set are refused</strong>
@@ -545,6 +564,7 @@ console.<span class="fn">log</span>(manager.<span class="fn">getPhase</span>());
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> Phases run <code class="code-inline">uninitialized &rarr; initializing &rarr; ready &rarr; draining &rarr; drained &rarr; shutdown</code>. <code class="code-inline">start()</code> outside <code class="code-inline">ready</code> throws <code class="code-inline">STORAGE_LIFECYCLE_INVALID_PHASE</code>.</li>
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> If a component's <code class="code-inline">initialize()</code> throws, the manager returns to <code class="code-inline">uninitialized</code> and rethrows.</li>
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <code class="code-inline">drain()</code> and <code class="code-inline">shutdown()</code> visit every component even when one fails, then throw one <code class="code-inline">StorageError</code> whose <code class="code-inline">cause</code> is an <code class="code-inline">AggregateError</code>.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <strong>Components are drained and shut down in registration order, not in reverse.</strong> Register a database, then a cache that writes to it, and the database is drained first, while the cache may still be flushing into it. <code class="code-inline">initialize()</code> uses the same order, so no single registration order is right for both directions: register dependencies first (so they start first), and drain and shut down the components that depend on them yourself before calling <code class="code-inline">manager.drain()</code>.</li>
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> An empty manager or checker reports <code class="code-inline">healthy: false</code>. It has nothing to attest to, and green would mislead.</li>
         </ul>
       </section>

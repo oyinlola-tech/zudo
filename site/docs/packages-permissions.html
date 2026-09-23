@@ -467,15 +467,16 @@ permissions.<span class="fn">remove</span>(<span class="str">"post:admin"</span>
 <span class="fn">ruleMatches</span>(rule, { resource: <span class="str">"post"</span>, action: <span class="str">"write"</span> }); <span class="cm">// false</span></div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">evaluateRules</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">evaluateRules</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
+        <p class="mb-4"><code class="bg-black/5 px-1">evaluateRules</code> is <strong>async</strong>, because a rule's conditions may be. It returns a <code class="bg-black/5 px-1">Promise</code>, so <code class="bg-black/5 px-1">await</code> it: without <code class="bg-black/5 px-1">await</code>, <code class="bg-black/5 px-1">result.allowed</code> is <code class="bg-black/5 px-1">undefined</code>, and <code class="bg-black/5 px-1">if (result)</code> is always true. For rules with no conditions, <code class="bg-black/5 px-1">evaluateRulesSync(rules, target)</code> returns the same result synchronously; it skips a conditional allow and applies a conditional deny.</p>
+        <div class="code-block"><span class="kw">import</span> { <span class="fn">evaluateRules</span>, <span class="kw">type</span> <span class="tp">PermissionRule</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
 
 <span class="kw">const</span> rules: <span class="tp">PermissionRule</span>[] = [
   { effect: <span class="str">"allow"</span>, action: <span class="str">"read"</span>, resource: <span class="str">"post"</span>, priority: <span class="num">10</span> },
   { effect: <span class="str">"deny"</span>, action: <span class="str">"read"</span>, resource: <span class="str">"post"</span>, priority: <span class="num">20</span> },
 ];
 
-<span class="kw">const</span> result = <span class="fn">evaluateRules</span>(rules, { resource: <span class="str">"post"</span>, action: <span class="str">"read"</span> });
-<span class="cm">// { allowed: false, matchedRule: { effect: "deny", priority: 20 } }</span></div>
+<span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">evaluateRules</span>(rules, { resource: <span class="str">"post"</span>, action: <span class="str">"read"</span> });
+<span class="cm">// { allowed: false, matchedRule: { effect: "deny", …, priority: 20 }, applicable: [ …both rules ] }</span></div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">compileRules &amp; findMatchingRules</h3>
         <div class="code-block"><span class="kw">import</span> { <span class="fn">compileRules</span>, <span class="fn">findMatchingRules</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
@@ -555,10 +556,24 @@ permissions.<span class="fn">remove</span>(<span class="str">"post:admin"</span>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">not(fn)</td><td class="p-3">Negate a condition</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">always()</td><td class="p-3">Unconditional pass</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">never()</td><td class="p-3">Unconditional fail</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">isOwner(field?)</td><td class="p-3">Actor owns the resource (checks resource[field] === actor.id)</td></tr>
-              <tr><td class="p-3 font-mono">tenantIsolation(aField?, rField?)</td><td class="p-3">Actor and resource share the same tenant</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">isOwner(field?)</td><td class="p-3">Actor owns the resource: <code>resource[field]</code> equals <code>actor.id</code>. A string and a number are compared as strings, so a numeric <code>ownerId: 42</code> from a database row matches <code>actor.id: "42"</code> from a token. No other conversion happens: <code>" 42"</code>, a <code>bigint</code> or an ObjectId-like object does not match, and a missing resource or a <code>null</code>/<code>undefined</code> id on either side is always <code>false</code>. Default field <code>"ownerId"</code>.</td></tr>
+              <tr><td class="p-3 font-mono">tenantIsolation(aField?, rField?)</td><td class="p-3">The tenant in the check's <code>metadata</code> (field <code>aField</code>, default <code>"tenantId"</code>) equals <code>resource[rField]</code>. False when either is missing. The actor's tenant is read from <code>metadata</code>, not from the actor, so fill it from a verified token claim or the tenant <code>@zudojs/tenancy</code> resolved, never from a request header.</td></tr>
             </tbody>
           </table>
+        </div>
+
+        <div class="border-4 border-black bg-zudo-red/10 p-4 mt-6">
+          <p class="font-bold mb-2">Enforce tenant isolation with a deny rule, not an allow rule.</p>
+          <p class="text-sm mb-2">Grants add up. If a role already grants <code class="bg-black/5 px-1">invoice:read</code>, an allow rule with <code class="bg-black/5 px-1">condition: tenantIsolation()</code> changes nothing: the role alone lets a member of tenant A read tenant B's invoice. A deny rule wins over every grant:</p>
+          <div class="code-block">rules: [{
+  name: <span class="str">"cross-tenant"</span>,
+  effect: <span class="str">"deny"</span>,
+  resource: <span class="str">"invoice"</span>,
+  action: <span class="str">"read"</span>,
+  condition: <span class="fn">not</span>(<span class="fn">tenantIsolation</span>()),
+}]
+<span class="cm">// role grants invoice:read → tenant A reading B's invoice: false, B reading B's: true</span></div>
+          <p class="text-sm mt-2">Use the allow-rule form only when no role grants the permission on its own.</p>
         </div>
       </section>
 
@@ -657,7 +672,8 @@ policies.<span class="fn">forPermission</span>(<span class="str">"post:publish"<
 <span class="cm">// { allowed: true, steps: [</span>
 <span class="cm">//   { type: "role", detail: "Role: editor", matched: true },</span>
 <span class="cm">//   { type: "permission", detail: "Permission: post:update", matched: true },</span>
-<span class="cm">//   { type: "permission", detail: "Rule matched", matched: true }</span>
+<span class="cm">//   { type: "rule", detail: "Rule allow: post:update", matched: true },</span>
+<span class="cm">//   { type: "permission", detail: "Decision: allow (role_permission)", matched: true }</span>
 <span class="cm">// ]}</span></div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">resolveActorPermissions</h3>
@@ -803,7 +819,7 @@ roleStore.<span class="fn">set</span>(<span class="str">"user-1"</span>, [<span 
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CACHING</h2>
         <p class="mb-4">Hand the cache to the engine and it manages the keys itself. A key carries the actor id, a digest of everything else the actor holds (<code class="bg-black/5 px-1">roles</code>, <code class="bg-black/5 px-1">permissions</code>, <code class="bg-black/5 px-1">type</code>, any other field a condition may read), the permission, the resource id and the engine's configuration generation. The same user id with different roles &mdash; an admin token in one tenant and a viewer token in another, or a demoted token &mdash; therefore never shares a decision. Role and policy registry changes, and <code class="bg-black/5 px-1">invalidateRoles()</code>, clear the decision cache.</p>
 
-        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createMemoryPermissionCache</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createMemoryPermissionCache</span>, <span class="fn">createPermissionEngine</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
 
 <span class="kw">const</span> engine = <span class="fn">createPermissionEngine</span>({
   roles,
@@ -876,6 +892,46 @@ roleStore.<span class="fn">set</span>(<span class="str">"user-1"</span>, [<span 
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">HTTP MIDDLEWARE</h2>
         <p class="mb-4">Middleware factories that integrate the authorization engine with <code class="bg-black/5 px-1">@zudojs/http</code>'s middleware pipeline.</p>
 
+        <div class="border-4 border-black bg-zudo-red/10 p-4 mb-6">
+          <p class="font-bold mb-2">Inside <code class="bg-black/5 px-1">@zudojs/http</code> 1.3.0, a refusal from these guards is sent as HTTP 200, not 401/403.</p>
+          <p class="text-sm mb-2">When <code class="bg-black/5 px-1">authorize()</code>, <code class="bg-black/5 px-1">createRequirePermissionMiddleware()</code>, <code class="bg-black/5 px-1">createRequirePermissionsMiddleware()</code> or <code class="bg-black/5 px-1">createActorMiddleware({ requireActor: true })</code> refuses, it returns a plain object <code class="bg-black/5 px-1">{ status: 403, body, headers }</code> (401 with no actor). <code class="bg-black/5 px-1">@zudojs/http</code> treats any value that is not one of its own response contexts as data. Tested against a real server: as route middleware (<code class="bg-black/5 px-1">router.put(path, handler, { middleware: [authorize(…)] })</code>) the client gets <strong>200 with an empty body</strong>; in an <code class="bg-black/5 px-1">HttpMiddlewarePipeline</code> it gets <strong>200</strong> with <code class="bg-black/5 px-1">{"status":403,"body":{…},"headers":{…}}</code> as the JSON body. The handler does not run in either case, so nothing is modified, but clients, caches and monitoring see a success, and a front end that checks <code class="bg-black/5 px-1">response.ok</code> carries on as if the write worked.</p>
+          <p class="text-sm">With <code class="bg-black/5 px-1">@zudojs/http</code>, throw instead: <code class="bg-black/5 px-1">UnauthorizedError</code> and <code class="bg-black/5 px-1">ForbiddenError</code> from <code class="bg-black/5 px-1">@zudojs/errors</code> are answered with 401 and 403. Do it in your own guard, as below, or at the top of the handler. Keep the factories on this page for frameworks that understand a returned <code class="bg-black/5 px-1">{ status, body, headers }</code>, and test the status code you actually get.</p>
+        </div>
+
+        <div class="code-block mb-6"><span class="kw">import</span> { <span class="tp">ForbiddenError</span>, <span class="tp">UnauthorizedError</span> } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+<span class="kw">import</span> { <span class="fn">createResponseContext</span>, <span class="fn">createRouter</span> } <span class="kw">from</span> <span class="str">"@zudojs/http"</span>;
+<span class="kw">import type</span> { <span class="tp">HttpMiddleware</span>, <span class="tp">HttpRequestContext</span> } <span class="kw">from</span> <span class="str">"@zudojs/http"</span>;
+<span class="kw">import</span> { <span class="fn">createPermissionEngine</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
+<span class="kw">import type</span> { <span class="tp">PermissionActor</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
+
+<span class="kw">const</span> engine = <span class="fn">createPermissionEngine</span>({
+  roles: [
+    { name: <span class="str">"editor"</span>, permissions: [<span class="str">"post:update"</span>] },
+    { name: <span class="str">"viewer"</span>, permissions: [<span class="str">"post:read"</span>] },
+  ],
+});
+
+<span class="cm">// Build the actor from a verified token or session, never from a client header.</span>
+<span class="kw">declare function</span> <span class="fn">currentActor</span>(request: <span class="tp">HttpRequestContext</span>): <span class="tp">Promise</span>&lt;<span class="tp">PermissionActor</span> | <span class="tp">undefined</span>&gt;;
+
+<span class="cm">// @zudojs/http answers UnauthorizedError with 401 and ForbiddenError with 403.</span>
+<span class="kw">function</span> <span class="fn">requirePermission</span>(permission: <span class="tp">string</span>): <span class="tp">HttpMiddleware</span> {
+  <span class="kw">return async</span> (context, next) =&gt; {
+    <span class="kw">const</span> actor = <span class="kw">await</span> <span class="fn">currentActor</span>(context.request);
+    <span class="kw">if</span> (!actor) <span class="kw">throw new</span> <span class="tp">UnauthorizedError</span>(<span class="str">"Sign in first"</span>);
+    <span class="kw">if</span> (!(<span class="kw">await</span> engine.<span class="fn">can</span>(actor, permission))) <span class="kw">throw new</span> <span class="tp">ForbiddenError</span>(<span class="str">"Forbidden"</span>);
+    <span class="kw">return</span> <span class="fn">next</span>();
+  };
+}
+
+<span class="kw">const</span> router = <span class="fn">createRouter</span>();
+router.<span class="fn">put</span>(<span class="str">"/posts/:id"</span>, () =&gt; <span class="fn">createResponseContext</span>().<span class="fn">json</span>({ updated: <span class="kw">true</span> }), {
+  middleware: [<span class="fn">requirePermission</span>(<span class="str">"post:update"</span>)],
+});
+<span class="cm">// viewer → 403 {"error":"Forbidden","code":"ERR_HTTP_FORBIDDEN"}</span>
+<span class="cm">// no actor → 401 {"error":"Sign in first","code":"ERR_HTTP_UNAUTHORIZED"}</span>
+<span class="cm">// editor → 200 {"updated":true}</span></div>
+
         <h3 class="text-lg font-bold mb-3 mt-6">Types</h3>
         <div class="code-block"><span class="kw">type</span> <span class="tp">HttpMiddleware</span> = (
   context: <span class="tp">HttpMiddlewareContext</span>,
@@ -893,6 +949,7 @@ roleStore.<span class="fn">set</span>(<span class="str">"user-1"</span>, [<span 
   <span class="fn">createRequirePermissionsMiddleware</span>,
   <span class="fn">createForbiddenResponse</span>,
   <span class="fn">createJsonResponse</span>,
+  ACTOR_STATE_KEY,
 } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
 
 <span class="cm">// Extract actor from request</span>
@@ -926,11 +983,19 @@ roleStore.<span class="fn">set</span>(<span class="str">"user-1"</span>, [<span 
 );</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">HTTP Options</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">AuthorizeMiddlewareOptions</span> {
-  <span class="fn">extractActor</span>(context: <span class="tp">HttpMiddlewareContext</span>):
+        <div class="code-block"><span class="kw">interface</span> <span class="tp">AuthorizeMiddlewareOptions</span> <span class="kw">extends</span> <span class="tp">DeniedResponseOptions</span> {
+  <span class="kw">readonly</span> extractActor?: (context: <span class="tp">HttpMiddlewareContext</span>) =&gt;
     <span class="tp">PermissionActor</span> | <span class="tp">Promise</span>&lt;<span class="tp">PermissionActor</span>&gt; | <span class="tp">undefined</span>;
   <span class="kw">readonly</span> authorization?: <span class="tp">AuthorizationOptions</span>;
+  <span class="kw">readonly</span> forwardSignal?: <span class="tp">boolean</span>;
+  <span class="kw">readonly</span> extractMetadata?: (context: <span class="tp">HttpMiddlewareContext</span>) =&gt; <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt; | <span class="tp">undefined</span>;
+  <span class="kw">readonly</span> onError?: (error: <span class="tp">unknown</span>, source: <span class="tp">string</span>) =&gt; <span class="tp">void</span>;
+}
+
+<span class="kw">interface</span> <span class="tp">DeniedResponseOptions</span> {
   <span class="kw">readonly</span> deniedResponse?: (decision: <span class="tp">PermissionDecision</span>) =&gt; <span class="tp">unknown</span>;
+  <span class="kw">readonly</span> unauthenticatedResponse?: () =&gt; <span class="tp">unknown</span>;
+  <span class="kw">readonly</span> authenticateChallenge?: <span class="tp">string</span>;
 }
 
 <span class="kw">interface</span> <span class="tp">RequirePermissionMiddlewareOptions</span> <span class="kw">extends</span> <span class="tp">AuthorizeMiddlewareOptions</span> {
@@ -1086,7 +1151,11 @@ roleRegistry.<span class="fn">define</span>({
 <span class="kw">if</span> (<span class="kw">await</span> ability.<span class="fn">can</span>(<span class="str">"post:update"</span>)) {
   <span class="cm">// Update the post</span>
 }
-<span class="kw">await</span> ability.<span class="fn">authorize</span>(<span class="str">"post:delete"</span>);
+<span class="kw">try</span> {
+  <span class="kw">await</span> ability.<span class="fn">authorize</span>(<span class="str">"post:delete"</span>); <span class="cm">// editors cannot delete</span>
+} <span class="kw">catch</span> (error) {
+  <span class="cm">// PermissionDeniedError (403, reason "no_matching_rule")</span>
+}
 
 <span class="cm">// 6. HTTP middleware</span>
 <span class="kw">const</span> authMiddleware = <span class="fn">authorize</span>(engine, <span class="str">"post:update"</span>, {
@@ -1104,7 +1173,8 @@ console.<span class="fn">log</span>(explanation.steps);
 <span class="cm">// [</span>
 <span class="cm">//   { type: "role", detail: "Role: editor", matched: true },</span>
 <span class="cm">//   { type: "permission", detail: "Permission: post:update", matched: true },</span>
-<span class="cm">//   { type: "permission", detail: "Rule matched", matched: true }</span>
+<span class="cm">//   { type: "rule", detail: "Rule allow: post:update", matched: true },</span>
+<span class="cm">//   { type: "permission", detail: "Decision: allow (role_permission)", matched: true }</span>
 <span class="cm">// ]</span></div>
       </section>
 

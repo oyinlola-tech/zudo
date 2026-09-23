@@ -145,7 +145,7 @@
 <p class="mb-4 leading-relaxed">Prisma stays visible. Repositories wrap a Prisma model (for example <code>prisma.user</code>), and transaction callbacks receive Prisma's own transaction client. The package normalises lifecycle, errors and pagination; it does not hide Prisma from you.</p>
 <div class="grid md:grid-cols-2 gap-4 mb-4">
 <div class="border-4 border-black p-4"><div class="font-black mb-2">When you need it</div><ul class="list-disc pl-5 space-y-1 text-sm"><li>You use Prisma 7 with PostgreSQL and want one place that connects, checks health and disconnects.</li><li>Several tables need the same CRUD, soft-delete and pagination behaviour.</li><li>You want database errors mapped to 404 / 409 / 503 without hand-written <code>switch</code> statements.</li><li>You need migrations, seeds or locks that are safe when two app instances start at once.</li></ul></div>
-<div class="border-4 border-black p-4"><div class="font-black mb-2">When you don't</div><ul class="list-disc pl-5 space-y-1 text-sm"><li>You use MySQL, SQLite or MongoDB. The client works with any Prisma client, but the migration, seed and lock helpers emit PostgreSQL SQL only.</li><li>You are happy calling <code>prisma.user.findMany()</code> directly and have one or two tables.</li><li>You need nested transactions or savepoints. Prisma interactive transactions are used as-is.</li></ul></div>
+<div class="border-4 border-black p-4"><div class="font-black mb-2">When you don't</div><ul class="list-disc pl-5 space-y-1 text-sm"><li>You do not use Prisma. There is no driver of its own: the client, repositories and transactions all call a Prisma client (or a Prisma driver adapter), so Drizzle, Kysely, TypeORM or a raw <code>pg</code> pool cannot be plugged in.</li><li>You use MySQL, SQLite or MongoDB. The client works with any Prisma client, but the migration, seed and lock helpers emit PostgreSQL SQL only.</li><li>You are happy calling <code>prisma.user.findMany()</code> directly and have one or two tables.</li><li>You need nested transactions or savepoints. Prisma interactive transactions are used as-is.</li></ul></div>
 </div>
 </section>
 
@@ -328,6 +328,29 @@ console.<span class="fn">log</span>(renamed);
 
 <span class="kw">await</span> client.<span class="fn">disconnect</span>();</div>
 <p class="mb-4 leading-relaxed">If the callback throws, Prisma rolls the transaction back and <code>withTransaction</code> rethrows a <code>DatabaseError</code> that carries <code>transactionId</code> and <code>transactionStatus: "failed"</code>. <code>getTransactionContextFromError(error)</code> recovers that context.</p>
+<div class="border-4 border-black bg-zudo-red/10 p-4 mb-6">
+<p class="font-bold mb-2">Whatever you throw inside the callback comes out as a 500.</p>
+<p class="text-sm mb-2"><code class="bg-black/5 px-1">withTransaction</code>, <code class="bg-black/5 px-1">withTransactionRetry</code> and <code class="bg-black/5 px-1">client.transaction</code> wrap <em>every</em> error from the callback in a <code class="bg-black/5 px-1">DatabaseError</code> with <code class="bg-black/5 px-1">statusCode: 500</code>, <code class="bg-black/5 px-1">code: "ERR_DATABASE"</code> and <code class="bg-black/5 px-1">expose: false</code>. The error you threw is kept in <code class="bg-black/5 px-1">.cause</code>. So a <code class="bg-black/5 px-1">NotFoundError</code> (404) or <code class="bg-black/5 px-1">ValidationError</code> (400) raised inside a transaction reaches your HTTP layer as an internal server error with a generic message. Unwrap your own errors after the transaction:</p>
+</div>
+<div class="code-block"><span class="kw">import</span> { BaseError, DatabaseError, NotFoundError } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+
+<span class="kw">try</span> {
+  <span class="kw">await</span> <span class="fn">withTransaction</span>(client, <span class="kw">async</span> (tx) =&gt; {
+    <span class="kw">const</span> user = <span class="kw">await</span> users.<span class="fn">withTransaction</span>(tx).<span class="fn">findById</span>(id);
+    <span class="kw">if</span> (!user) <span class="kw">throw new</span> <span class="tp">NotFoundError</span>(<span class="str">"User not found"</span>);
+    <span class="cmt">// ...more writes</span>
+  });
+} <span class="kw">catch</span> (error) {
+  <span class="cmt">// Give your own errors their status back; keep real database failures as they are.</span>
+  <span class="kw">if</span> (
+    error <span class="kw">instanceof</span> <span class="tp">DatabaseError</span> &amp;&amp;
+    error.cause <span class="kw">instanceof</span> <span class="tp">BaseError</span> &amp;&amp;
+    !(error.cause <span class="kw">instanceof</span> <span class="tp">DatabaseError</span>)
+  ) {
+    <span class="kw">throw</span> error.cause; <span class="cmt">// NotFoundError, 404</span>
+  }
+  <span class="kw">throw</span> error;
+}</div>
 <table class="doc-table mb-4"><thead><tr><th>Option</th><th>What it does</th></tr></thead><tbody><tr><td><code>isolationLevel</code></td><td><code>"ReadUncommitted"</code>, <code>"ReadCommitted"</code>, <code>"RepeatableRead"</code> or <code>"Serializable"</code>.</td></tr><tr><td><code>timeoutMs</code>, <code>maxWaitMs</code></td><td>Forwarded to Prisma: how long the transaction may run, and how long to wait for a connection.</td></tr><tr><td><code>transactionId</code>, <code>metadata</code></td><td>Attached to the context and to any error thrown.</td></tr><tr><td><code>signal</code></td><td>Abort the transaction from outside. The abort is raised inside the Prisma callback, so the transaction is rolled back and the caller rejects with <code>DatabaseAbortError</code>.</td></tr></tbody></table>
 <p class="mb-4 leading-relaxed">PostgreSQL sometimes aborts a <code>Serializable</code> transaction because another one touched the same rows. <code>withTransactionRetry</code> has the same signature and re-runs the callback (default 3 retries, doubling delay from 100 ms, each delay capped at <code>maxRetryDelayMs</code>, 30 s by default; pass <code>jitter: "full"</code> to spread contending retries) when <code>isRetryableTransactionError</code> says the failure is temporary.</p>
 <div class="callout callout-danger mb-4"><strong>Danger:</strong> retries re-run the <em>whole</em> callback. Anything you do inside it that is not a database write, such as sending an email, can happen more than once.</div>
@@ -382,6 +405,20 @@ console.<span class="fn">log</span>(page.meta);
 console.<span class="fn">log</span>(first.data.length, first.meta.hasNextPage, second.data.length);
 <span class="cmt">// 25 true 25</span></div>
 <p class="mb-4 leading-relaxed">Page and limit are normalised for you: <code>NaN</code>, negative or missing values fall back to page 1 and limit 20, and the limit is capped at 100 (<code>MAX_LIMIT</code>). The repository always adds the id column as a tiebreaker to cursor sorts so the order is stable.</p>
+<p class="mb-4 leading-relaxed">Cursor pagination only goes forward. <code>meta.previousCursor</code> is declared in the type but <code>paginateCursor</code> never sets it: on the second page <code>hasPreviousPage</code> is <code>true</code> and <code>previousCursor</code> is <code>undefined</code>. To offer a "Back" button, keep the cursors you have already used (for example in the client's history) and request the earlier one again.</p>
+<div class="callout callout-warning mb-4"><strong class="text-zudo-yellow">Validate the cursor.</strong> A cursor that is not base64 JSON, names an unexpected field, or fails the signature check makes <code>paginateCursor</code> throw a plain <code>TypeError</code> (<em>Invalid pagination cursor</em>, <em>…unexpected field…</em>, <em>…signature</em>), not a <code>@zudojs/errors</code> error. Your HTTP layer then answers a mistyped or edited <code>?cursor=</code> with a 500. Turn it into a 400:</div>
+<div class="code-block"><span class="kw">import</span> { ValidationError } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+
+<span class="kw">async function</span> <span class="fn">listUsers</span>(cursor: <span class="tp">string</span> | <span class="tp">undefined</span>) {
+  <span class="kw">try</span> {
+    <span class="kw">return await</span> users.<span class="fn">paginateCursor</span>(<span class="kw">undefined</span>, { cursor, limit: <span class="num">25</span>, sort });
+  } <span class="kw">catch</span> (error) {
+    <span class="kw">if</span> (cursor !== <span class="kw">undefined</span> &amp;&amp; error <span class="kw">instanceof</span> <span class="tp">TypeError</span> &amp;&amp; <span class="str">/cursor/i</span>.<span class="fn">test</span>(error.message)) {
+      <span class="kw">throw new</span> <span class="tp">ValidationError</span>(<span class="str">"Invalid cursor"</span>); <span class="cmt">// 400</span>
+    }
+    <span class="kw">throw</span> error;
+  }
+}</div>
 <div class="callout callout-warning mb-4"><strong class="text-zudo-yellow">Watch out:</strong> a cursor is a base64 string the browser sends back. Without a <code>cursorSecret</code> on the repository anyone can forge one. Set the secret on any repository whose cursors leave your server; they are then HMAC-signed and rejected if edited.</div>
 </section>
 

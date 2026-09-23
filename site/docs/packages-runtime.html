@@ -123,7 +123,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.1</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/runtime</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Application runtime orchestrator for the Zudojs framework. Manages the complete lifecycle from creation through shutdown with deterministic dependency ordering, rollback, signal handling, readiness tracking, and health checks.
@@ -246,8 +246,8 @@ stopped</div>
         <div class="code-block"><span class="kw">type</span> <span class="tp">RuntimeState</span> =
   | <span class="str">"created"</span>       <span class="cm">// built, nothing has run yet</span>
   | <span class="str">"initializing"</span>  <span class="cm">// running module hooks to bring modules up</span>
-  | <span class="str">"initialized"</span>   <span class="cm">// every module initialized</span>
-  | <span class="str">"starting"</span>      <span class="cm">// modules are being started</span>
+  | <span class="str">"initialized"</span>   <span class="cm">// in the type, but never entered (see below)</span>
+  | <span class="str">"starting"</span>      <span class="cm">// in the type, but never entered (see below)</span>
   | <span class="str">"running"</span>       <span class="cm">// everything is up</span>
   | <span class="str">"stopping"</span>      <span class="cm">// modules are being torn down</span>
   | <span class="str">"stopped"</span>       <span class="cm">// everything is down</span>
@@ -271,6 +271,12 @@ stopped</div>
           </tbody>
         </table>
 
+        <div class="border-4 border-black bg-zudo-red/10 p-4 mb-6">
+          <p class="font-bold mb-2">In 1.2.1 the runtime never enters <code class="bg-black/5 px-1">initialized</code> or <code class="bg-black/5 px-1">starting</code>.</p>
+          <p class="text-sm mb-2">A normal boot goes <code class="bg-black/5 px-1">created &rarr; initializing &rarr; running</code>. The state stays <code class="bg-black/5 px-1">initializing</code> while every <code class="bg-black/5 px-1">onInitialize</code> <em>and</em> every <code class="bg-black/5 px-1">onReady</code> hook runs, then jumps straight to <code class="bg-black/5 px-1">running</code>. The two middle states exist in the type and in the table above, but nothing moves into them, and the <code class="bg-black/5 px-1">runtime.initialized</code> / <code class="bg-black/5 px-1">runtime.starting</code> events are never published.</p>
+          <p class="text-sm">So do not wait for <code class="bg-black/5 px-1">state === "starting"</code> or use it to tell "initializing" apart from "readying" &mdash; a hook that reads <code class="bg-black/5 px-1">runtime.state</code> sees <code class="bg-black/5 px-1">"initializing"</code> in both.</p>
+        </div>
+
         <div class="callout callout-note">
           <strong class="text-zudo-blue">In plain words:</strong> <code>failed</code> is not the end. A failed start only rolls back the modules that actually started, so you can still call <code>stop()</code> to release everything else.
         </div>
@@ -286,6 +292,7 @@ stopped</div>
 <span class="fn">console</span>.<span class="fn">log</span>(<span class="fn">canTransition</span>(<span class="str">"created"</span>, <span class="str">"initializing"</span>)); <span class="cm">// true</span>
 <span class="fn">console</span>.<span class="fn">log</span>(<span class="fn">canTransition</span>(<span class="str">"stopped"</span>, <span class="str">"running"</span>));   <span class="cm">// false</span>
 <span class="fn">console</span>.<span class="fn">log</span>(<span class="fn">isTerminalState</span>(<span class="str">"stopped"</span>));               <span class="cm">// true</span>
+<span class="fn">console</span>.<span class="fn">log</span>(<span class="fn">isTerminalState</span>(<span class="str">"failed"</span>));                <span class="cm">// true — yet stop() still works from "failed"</span>
 <span class="fn">console</span>.<span class="fn">log</span>(<span class="fn">isRunning</span>(<span class="str">"running"</span>));                     <span class="cm">// true</span>
 <span class="fn">console</span>.<span class="fn">log</span>(<span class="fn">hasFailed</span>(<span class="str">"failed"</span>));                      <span class="cm">// true</span></div>
 
@@ -319,7 +326,7 @@ stopped</div>
           </thead>
           <tbody>
             <tr><td><span class="code-inline">onInitialize</span></td><td>Bringing the module up: open connections, read config.</td><td>Dependencies first</td></tr>
-            <tr><td><span class="code-inline">onReady</span></td><td>After every module has initialized: start accepting work.</td><td>Dependencies first</td></tr>
+            <tr><td><span class="code-inline">onReady</span></td><td>After every module has initialized: start accepting work. <code>runtime.state</code> is still <code>initializing</code> here.</td><td>Dependencies first</td></tr>
             <tr><td><span class="code-inline">onShutdown</span></td><td>Shutting down: stop accepting work, drain.</td><td>Reverse</td></tr>
             <tr><td><span class="code-inline">onDestroy</span></td><td>Last call: release everything the module still holds.</td><td>Reverse</td></tr>
           </tbody>
@@ -398,16 +405,23 @@ down: database</div>
       <!-- Startup and Shutdown -->
       <section id="startup-and-shutdown" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">STARTUP AND SHUTDOWN</h2>
-        <p class="mb-4"><code class="bg-black/5 px-1">start()</code> initializes every module in order, then readies them. If any module throws, the runtime rolls back: modules that already started are stopped and destroyed in reverse, the state becomes <code class="bg-black/5 px-1">failed</code>, and the original error is re-thrown to you. A configuration manager that fails to load fails startup with <code class="bg-black/5 px-1">RuntimeStartError</code> (<code class="bg-black/5 px-1">phase: "initialize"</code>).</p>
+        <p class="mb-4"><code class="bg-black/5 px-1">start()</code> initializes every module in order, then readies them. If any module throws, the runtime rolls back: modules that already started are stopped and destroyed in reverse, and the state becomes <code class="bg-black/5 px-1">failed</code>.</p>
+        <p class="mb-4"><code class="bg-black/5 px-1">start()</code> does <strong>not</strong> re-throw the error your module threw. It rejects with a <code class="bg-black/5 px-1">RuntimeStartError</code> whose <code class="bg-black/5 px-1">cause</code> is your original error, whose <code class="bg-black/5 px-1">phase</code> is <code class="bg-black/5 px-1">"initialize"</code> (an <code class="bg-black/5 px-1">onInitialize</code> threw) or <code class="bg-black/5 px-1">"start"</code> (an <code class="bg-black/5 px-1">onReady</code> threw), and whose <code class="bg-black/5 px-1">failedModuleId</code> names the module. So <code class="bg-black/5 px-1">error instanceof MyDbError</code> is always false in the catch block; test <code class="bg-black/5 px-1">error.cause</code> instead. A configuration manager that fails to load also fails startup with <code class="bg-black/5 px-1">RuntimeStartError</code> (<code class="bg-black/5 px-1">phase: "initialize"</code>, no <code class="bg-black/5 px-1">failedModuleId</code>). A startup that outlives <code class="bg-black/5 px-1">startupTimeout</code> rejects with <code class="bg-black/5 px-1">RuntimeTimeoutError</code> instead, which has no cause.</p>
         <p class="mb-4"><code class="bg-black/5 px-1">stop()</code> goes the other way, and is safe to call more than once — stopping an already-stopped runtime does nothing.</p>
 
-        <p class="mb-3">Handling a failed start:</p>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">RuntimeTimeoutError</span> } <span class="kw">from</span> <span class="str">"@zudojs/runtime"</span>;
+        <p class="mb-3">Handling a failed start, and getting at the original error:</p>
+        <div class="code-block"><span class="kw">import</span> { <span class="tp">RuntimeStartError</span>, <span class="tp">RuntimeTimeoutError</span> } <span class="kw">from</span> <span class="str">"@zudojs/runtime"</span>;
 
 <span class="kw">try</span> {
   <span class="kw">await</span> runtime.<span class="fn">start</span>();
 } <span class="kw">catch</span> (error) {
-  <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">RuntimeTimeoutError</span>) {
+  <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">RuntimeStartError</span>) {
+    <span class="cm">// error.cause is the error your module threw.</span>
+    <span class="fn">console</span>.<span class="fn">error</span>(
+      <span class="str">`module </span>${error.failedModuleId}<span class="str"> failed in </span>${error.phase}<span class="str">:`</span>,
+      error.cause,
+    );
+  } <span class="kw">else if</span> (error <span class="kw">instanceof</span> <span class="tp">RuntimeTimeoutError</span>) {
     <span class="fn">console</span>.<span class="fn">error</span>(<span class="str">`</span>${error.operation}<span class="str"> timed out after </span>${error.timeoutMs}<span class="str">ms`</span>);
   } <span class="kw">else</span> {
     <span class="fn">console</span>.<span class="fn">error</span>(<span class="str">"startup failed:"</span>, error);
@@ -415,8 +429,26 @@ down: database</div>
 
   <span class="cm">// Release whatever startup did not roll back, then exit non-zero.</span>
   <span class="kw">await</span> runtime.<span class="fn">stop</span>();
+  <span class="kw">await</span> container.<span class="fn">dispose</span>(); <span class="cm">// the runtime never does this for you</span>
   <span class="fn">process</span>.<span class="fn">exit</span>(<span class="num">1</span>);
 }</div>
+        <p class="mt-3 mb-4">With a module whose <code class="bg-black/5 px-1">onInitialize</code> throws <code class="bg-black/5 px-1">new Error("connect ECONNREFUSED")</code>, this prints <code class="bg-black/5 px-1">module database failed in initialize: Error: connect ECONNREFUSED</code>.</p>
+
+        <div class="border-4 border-black bg-zudo-red/10 p-4 mb-6">
+          <p class="font-bold mb-2"><code class="bg-black/5 px-1">stop()</code> does not dispose the DI container.</p>
+          <p class="text-sm mb-2">The runtime calls every module's <code class="bg-black/5 px-1">onShutdown</code> and <code class="bg-black/5 px-1">onDestroy</code>, but it never calls <code class="bg-black/5 px-1">dispose()</code> on the <code class="bg-black/5 px-1">container</code> you passed in. Any <code class="bg-black/5 px-1">SINGLETON</code> the container created &mdash; a connection pool, a file handle, a client with open sockets &mdash; is still open after <code class="bg-black/5 px-1">runtime.stop()</code> resolves and <code class="bg-black/5 px-1">runtime.state</code> reads <code class="bg-black/5 px-1">"stopped"</code>. That is true for a signal-driven stop too.</p>
+          <p class="text-sm">Dispose the container yourself, <em>after</em> the runtime has stopped (modules may still resolve services while they shut down, and a disposed container throws on every use).</p>
+        </div>
+
+        <div class="code-block"><span class="kw">await</span> runtime.<span class="fn">stop</span>();       <span class="cm">// modules are shut down; container singletons are still open</span>
+<span class="kw">await</span> container.<span class="fn">dispose</span>();  <span class="cm">// now each singleton's dispose() runs, newest first</span>
+
+<span class="cm">// When SIGTERM/SIGINT triggers the stop instead of your own code,</span>
+<span class="cm">// dispose from the runtime.stopped event on the bus you passed in:</span>
+eventBus.<span class="fn">on</span>(<span class="str">"runtime.stopped"</span>, <span class="kw">async</span> () =&gt; {
+  <span class="kw">await</span> container.<span class="fn">dispose</span>();
+});</div>
+        <p class="mt-3 mb-4">The fatal-error path (<code class="bg-black/5 px-1">uncaughtException</code>, <code class="bg-black/5 px-1">unhandledRejection</code>) calls <code class="bg-black/5 px-1">process.exit(1)</code> as soon as the stop settles, so an asynchronous <code class="bg-black/5 px-1">dispose()</code> started from that event may not finish there.</p>
 
         <p class="mt-6 mb-3">Two options bound how long either direction may take. A module whose hook never settles no longer hangs the process forever.</p>
         <table class="doc-table mb-6">
@@ -468,7 +500,7 @@ databaseConnected = <span class="kw">true</span>;
           </thead>
           <tbody>
             <tr><td><span class="code-inline">created</span>, <span class="code-inline">stopped</span></td><td>unknown</td></tr>
-            <tr><td><span class="code-inline">initializing</span>, <span class="code-inline">initialized</span>, <span class="code-inline">starting</span></td><td>starting</td></tr>
+            <tr><td><span class="code-inline">initializing</span> (and <span class="code-inline">initialized</span>, <span class="code-inline">starting</span>, which 1.2.1 never enters)</td><td>starting</td></tr>
             <tr><td><span class="code-inline">running</span></td><td>healthy or degraded, from the checks</td></tr>
             <tr><td><span class="code-inline">stopping</span></td><td>stopping</td></tr>
             <tr><td><span class="code-inline">failed</span></td><td>unhealthy</td></tr>
@@ -535,9 +567,9 @@ eventBus.<span class="fn">on</span>(<span class="str">"runtime.health.changed"</
 <span class="cm">// Pass this same eventBus in the runtime's dependencies.</span>
 <span class="cm">// A clean boot prints: health: unknown -&gt; starting, then starting -&gt; healthy</span></div>
 
-        <p class="mt-6 mb-3">Nineteen event types are emitted, in four families:</p>
+        <p class="mt-6 mb-3">Sixteen event types are emitted, in four families:</p>
         <ul class="space-y-2 mb-4">
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Runtime</strong> — <code>runtime.created</code>, <code>.initializing</code>, <code>.initialized</code>, <code>.starting</code>, <code>.running</code>, <code>.stopping</code>, <code>.stopped</code>, <code>.failed</code></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Runtime</strong> — <code>runtime.initializing</code>, <code>.running</code>, <code>.stopping</code>, <code>.stopped</code>, <code>.failed</code>. There is no <code>runtime.created</code>, <code>.initialized</code> or <code>.starting</code> event, and none is in the <code>RuntimeEventType</code> union.</li>
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Module</strong> — <code>runtime.module.initializing</code>, <code>.initialized</code>, <code>.starting</code>, <code>.started</code>, <code>.stopping</code>, <code>.stopped</code>, <code>.failed</code></li>
           <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Shutdown</strong> — <code>runtime.shutdown.drain</code>, <code>runtime.shutdown.complete</code></li>
           <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>Derived state</strong> — <code>runtime.health.changed</code>, <code>runtime.readiness.changed</code></li>
@@ -680,8 +712,8 @@ registry.<span class="fn">register</span>(<span class="str">"worker"</span>, wor
             <tr><th>Member</th><th>What it does</th><th>Notes</th></tr>
           </thead>
           <tbody>
-            <tr><td><span class="code-inline">start()</span></td><td>Brings every module up in dependency order.</td><td>Rolls back and throws on failure. Calling it twice is a no-op.</td></tr>
-            <tr><td><span class="code-inline">stop()</span></td><td>Tears every module down in reverse order.</td><td>Works from <code>failed</code>; safe to call repeatedly.</td></tr>
+            <tr><td><span class="code-inline">start()</span></td><td>Brings every module up in dependency order.</td><td>Rolls back and throws <code>RuntimeStartError</code> (original on <code>cause</code>) on failure. Calling it twice is a no-op.</td></tr>
+            <tr><td><span class="code-inline">stop()</span></td><td>Tears every module down in reverse order.</td><td>Works from <code>failed</code>; safe to call repeatedly. Does not dispose the container.</td></tr>
             <tr><td><span class="code-inline">state</span></td><td>The current lifecycle state.</td><td>One <code>RuntimeState</code> string.</td></tr>
             <tr><td><span class="code-inline">status</span></td><td>State plus timestamps, error and shutdown failures.</td><td>Recomputed on every read.</td></tr>
             <tr><td><span class="code-inline">context</span></td><td>Identity, services and live state in one object.</td><td>Recomputed on every read.</td></tr>
@@ -702,7 +734,7 @@ registry.<span class="fn">register</span>(<span class="str">"worker"</span>, wor
           <tbody>
             <tr><td><span class="code-inline">environment</span></td><td><em>required</em></td><td>"development" | "test" | "staging" | "production".</td></tr>
             <tr><td><span class="code-inline">applicationName</span></td><td><em>required</em></td><td>Name used in logs and events.</td></tr>
-            <tr><td><span class="code-inline">applicationVersion</span></td><td>"1.0.0"</td><td>Version reported on the context.</td></tr>
+            <tr><td><span class="code-inline">applicationVersion</span></td><td>"0.1.0"</td><td>Version reported on the context.</td></tr>
             <tr><td><span class="code-inline">runtimeId</span></td><td>generated</td><td>Identifier for this runtime instance.</td></tr>
             <tr><td><span class="code-inline">handleSignals</span></td><td>true</td><td>Shut down on SIGTERM and SIGINT.</td></tr>
             <tr><td><span class="code-inline">handleFatalErrors</span></td><td>true</td><td>Shut down and exit 1 on an uncaught error.</td></tr>
@@ -714,6 +746,8 @@ registry.<span class="fn">register</span>(<span class="str">"worker"</span>, wor
             <tr><td><span class="code-inline">emitEvents</span></td><td>true</td><td>Publish lifecycle events on the bus.</td></tr>
             <tr><td><span class="code-inline">trackReadiness</span></td><td>true</td><td>Mark ready automatically once all checks pass.</td></tr>
             <tr><td><span class="code-inline">trackHealth</span></td><td>true</td><td>Derive health and emit health events.</td></tr>
+            <tr><td><span class="code-inline">readinessCheckTimeout</span></td><td>5000</td><td>Milliseconds one readiness check may take before it counts as failed.</td></tr>
+            <tr><td><span class="code-inline">parallelInitialization</span></td><td>false</td><td>Initialize modules at the same dependency depth together instead of one by one.</td></tr>
             <tr><td><span class="code-inline">metadata</span></td><td>{}</td><td>Free-form values surfaced on the context.</td></tr>
           </tbody>
         </table>
@@ -728,7 +762,6 @@ registry.<span class="fn">register</span>(<span class="str">"worker"</span>, wor
             <tr><td><span class="code-inline">resolveDependencies(map)</span></td><td>Returns <span class="code-inline">order</span> and <span class="code-inline">parallelGroups</span>.</td><td>Throws on a missing dependency or a cycle.</td></tr>
             <tr><td><span class="code-inline">buildDependencyGraph(map)</span></td><td>Returns nodes, order and any cycles.</td><td>Does not throw on a cycle; it reports one.</td></tr>
             <tr><td><span class="code-inline">validateDependencies(map)</span></td><td>Throws if a module names a dependency that is not in the map.</td><td>Returns nothing; <span class="code-inline">resolveDependencies</span> calls it for you.</td></tr>
-            <tr><td><span class="code-inline">validateDependencies(map)</span></td><td>Throws if a dependency is not registered.</td><td>Returns nothing.</td></tr>
             <tr><td><span class="code-inline">computeRuntimeHealth(state, readiness)</span></td><td>Derives health from a state and check results.</td><td>What <code>runtime.health</code> uses.</td></tr>
             <tr><td><span class="code-inline">createRuntimeOptions(options)</span></td><td>Applies defaults, then validates.</td><td><code>resolveRuntimeOptions</code> and <code>validateRuntimeOptions</code> do each half.</td></tr>
             <tr><td><span class="code-inline">createRuntimeContext(deps)</span></td><td>Builds a context object.</td><td>The runtime does this for you.</td></tr>
@@ -764,14 +797,14 @@ registry.<span class="fn">register</span>(<span class="str">"worker"</span>, wor
           </thead>
           <tbody>
             <tr><td><span class="code-inline">RuntimeStateError</span></td><td>An illegal state move is attempted.</td><td>E.g. starting a stopped runtime.</td></tr>
-            <tr><td><span class="code-inline">RuntimeStartError</span></td><td>Startup fails.</td><td>Carries <code>phase</code> and <code>failedModuleId</code>.</td></tr>
+            <tr><td><span class="code-inline">RuntimeStartError</span></td><td>A module hook, or the configuration manager, fails during startup.</td><td>Carries <code>phase</code> (<code>"initialize"</code> or <code>"start"</code>) and <code>failedModuleId</code>; the error your module threw is on <code>cause</code>.</td></tr>
             <tr><td><span class="code-inline">RuntimeStopError</span></td><td>Shutdown fails.</td><td>Carries <code>phase</code>.</td></tr>
-            <tr><td><span class="code-inline">RuntimeInitializationError</span></td><td>A module fails to initialize.</td><td>—</td></tr>
+            <tr><td><span class="code-inline">RuntimeInitializationError</span></td><td>Exported, but not thrown by the runtime in 1.2.1.</td><td>A failing <code>onInitialize</code> surfaces as <code>RuntimeStartError</code> with <code>phase: "initialize"</code>.</td></tr>
             <tr><td><span class="code-inline">RuntimeTimeoutError</span></td><td>Startup, shutdown or a check runs too long.</td><td>Carries <code>operation</code> and <code>timeoutMs</code>.</td></tr>
-            <tr><td><span class="code-inline">RuntimeRollbackError</span></td><td>The rollback after a failure also fails.</td><td>Carries both errors.</td></tr>
+            <tr><td><span class="code-inline">RuntimeRollbackError</span></td><td>Exported, but not thrown by the runtime in 1.2.1.</td><td>Rollback failures are logged, and <code>start()</code> still rejects with the startup error.</td></tr>
             <tr><td><span class="code-inline">RuntimeCircularDependencyError</span></td><td>Modules depend on each other in a loop.</td><td>Carries the <code>cycle</code>.</td></tr>
             <tr><td><span class="code-inline">RuntimeDependencyError</span></td><td>A module depends on an unregistered id.</td><td>Carries <code>moduleId</code> and <code>dependencyId</code>.</td></tr>
-            <tr><td><span class="code-inline">RuntimeSignalError</span></td><td>An unexpected signal is received.</td><td>Carries <code>signal</code>.</td></tr>
+            <tr><td><span class="code-inline">RuntimeSignalError</span></td><td>Exported, but not thrown by the runtime in 1.2.1.</td><td>Carries <code>signal</code>.</td></tr>
             <tr><td><span class="code-inline">toRuntimeError(error, phase)</span></td><td>Wraps anything thrown into a <code>RuntimeError</code>.</td><td>Passes an existing one through unchanged.</td></tr>
           </tbody>
         </table>
@@ -805,6 +838,9 @@ registry.<span class="fn">register</span>(<span class="str">"worker"</span>, wor
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Treating <code>failed</code> as the end.</strong> Startup rollback shuts down started modules and destroys every module whose <code>onInitialize</code> ran (including one that threw); a module that finishes after a startup timeout is torn down when it settles, and <code>stop()</code> waits for that. Call <code>stop()</code> on a failed runtime to release it fully.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Caching <code>runtime.status</code> in a variable and reading it later.</strong> Each read builds a fresh snapshot; the one you held onto is frozen in the past. Read <code>runtime.status</code> at the moment you need it.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Ignoring <code>status.shutdownFailures</code>.</strong> The state reaches <code>stopped</code> either way. Only that list tells you a module failed to release its resources.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Checking the startup error's type directly.</strong> <code>start()</code> wraps a module's failure in <code>RuntimeStartError</code>, so <code>error instanceof YourError</code> is false. Look at <code>error.cause</code>.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Assuming <code>stop()</code> closes container services.</strong> It does not call <code>container.dispose()</code>. Call it yourself after the runtime has stopped.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Waiting for the <code>starting</code> state or the <code>runtime.starting</code> event.</strong> Neither ever happens in 1.2.1; the runtime goes from <code>initializing</code> straight to <code>running</code>.</span></li>
         </ul>
       </section>
 

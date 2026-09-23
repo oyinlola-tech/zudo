@@ -180,7 +180,7 @@
         <p class="mb-4 leading-relaxed">Install the package. It pulls in <code>@zudojs/errors</code> and <code>@zudojs/constants</code> on its own. It needs Node 24 or newer.</p>
         <div class="code-block mb-4">$ npm install @zudojs/tenancy</div>
 
-        <p class="mb-4 leading-relaxed">The HTTP middleware plugs into the <code>@zudojs/http</code> pipeline without depending on it: it reads headers through <code>request.getHeader()</code>, or from a plain object or <code>Map</code>. Install <code>@zudojs/http</code> if you want its server.</p>
+        <p class="mb-4 leading-relaxed">The HTTP middleware plugs into the <code>@zudojs/http</code> pipeline without depending on it: it reads headers through <code>request.getHeader()</code>, or from a plain object or <code>Map</code>. Install <code>@zudojs/http</code> if you want its server, and wrap the middleware as shown in <a href="#http-middleware" class="underline">HTTP middleware</a> so its refusals keep their status codes.</p>
         <div class="code-block mb-4">$ npm install @zudojs/http</div>
 
         <div class="callout callout-note mb-4">
@@ -212,13 +212,14 @@ repository.<span class="fn">add</span>({
 });
 
 <span class="cmt">// A resolver reads the tenant id off whatever the request gives it.</span>
-<span class="kw">const</span> resolver = <span class="fn">createHeaderResolver</span>({ trust: <span class="str">"verified"</span> });
+<span class="cmt">// A header is written by the client, so it is "untrusted" (see Trust levels).</span>
+<span class="kw">const</span> resolver = <span class="fn">createHeaderResolver</span>();
 <span class="kw">const</span> resolution = <span class="kw">await</span> resolver.<span class="fn">resolve</span>({
   getHeader: (name) =&gt; (name === <span class="str">"x-tenant-id"</span> ? <span class="str">"Acme"</span> : <span class="kw">undefined</span>),
 });
 <span class="kw">if</span> (!resolution) <span class="kw">throw</span> <span class="kw">new</span> <span class="tp">Error</span>(<span class="str">"no tenant on this request"</span>);
 console.<span class="fn">log</span>(resolution);
-<span class="cmt">// { tenantId: "acme", source: "header", trust: "verified" }</span>
+<span class="cmt">// { tenantId: "acme", source: "header", trust: "untrusted" }</span>
 
 <span class="kw">const</span> tenant = <span class="kw">await</span> repository.<span class="fn">findById</span>(resolution.tenantId);
 <span class="kw">if</span> (!tenant) <span class="kw">throw</span> <span class="kw">new</span> <span class="tp">Error</span>(<span class="str">"unknown tenant"</span>);
@@ -233,6 +234,9 @@ tenants.<span class="fn">run</span>(tenant, () =&gt; {
 });</div>
         <p class="mb-4 leading-relaxed">
           Two things to notice. The header said <code>"Acme"</code> but the resolved ID is <code>"acme"</code> — IDs are normalized. And nothing was passed into the callback: <code>requireCurrentTenant()</code> found the tenant on its own.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          The header keeps the example short, but note the <code>trust: "untrusted"</code> in the result. Anyone can send <code>x-tenant-id: acme</code>, so on its own it proves nothing about which tenant the caller belongs to. In a real app, take the tenant from a verified token or from the host name (see <a href="#trust-levels" class="underline">Trust levels</a>); the HTTP middleware refuses a header-only tenant by default.
         </p>
       </section>
 
@@ -460,6 +464,9 @@ console.<span class="fn">log</span>(<span class="fn">meetsTrustLevel</span>(<spa
   console.<span class="fn">log</span>(error <span class="kw">instanceof</span> <span class="tp">TenantTrustLevelError</span>);  <span class="cmt">// true</span>
 }</div>
         <p class="mb-4 leading-relaxed"><strong>Common mistake:</strong> raising the header resolver to <code>verified</code> because a route stopped working. If a client can still send that header directly, you have just handed it the ability to choose its tenant.</p>
+        <div class="callout callout-warning mb-4">
+          <p class="text-sm"><strong>A tenant id the client sent is a claim, not a fact.</strong> <code>x-tenant-id</code>, a <code>/t/:tenant</code> path segment, a query parameter or a body field are all chosen by whoever sends the request, so a logged-in user of tenant A can put tenant B there. Trust is about <em>where the id came from</em>, not whether it looks valid or exists in your repository. Keep such sources <code>untrusted</code> and let <code>minimumTrust</code> (default <code>"verified"</code>) refuse them. If you do accept one, for example on an admin route, also check that the authenticated user is a member of that tenant before serving anything.</p>
+        </div>
       </section>
 
       <!-- ==================== TENANT CONTEXT ==================== -->
@@ -644,6 +651,45 @@ repository.<span class="fn">add</span>({
         <p class="mb-4 leading-relaxed">
           Register <code>resolveTenant</code> before <code>requireTenant</code>, and both before your routes. By default (<code>minimumTrust: "verified"</code>) a tenant named only by an untrusted header or a URL path is refused; pass <code>minimumTrust: "untrusted"</code> to opt down.
         </p>
+        <p class="mb-4 leading-relaxed">
+          <strong>Common mistake:</strong> passing the resolvers inline, as in <code>createResolverChain([createJwtResolver(), createSubdomainResolver(…)])</code>. TypeScript infers the chain's context from the first resolver and rejects the others with <code>TS2322</code> (<em>Property 'getHost' is missing in type 'JwtContext'</em>). Type the array as above, or name the context: <code>createResolverChain&lt;HttpResolverContext&gt;([…])</code>.
+        </p>
+
+        <div class="border-4 border-black bg-zudo-red/10 p-4 mb-6">
+          <p class="font-bold mb-2">Inside <code class="bg-black/5 px-1">@zudojs/http</code> 1.3.0, these refusals are sent as HTTP 200.</p>
+          <p class="text-sm mb-2">The 400/401/403/404 answers listed above are plain <code class="bg-black/5 px-1">{ status, body, headers }</code> objects, and <code class="bg-black/5 px-1">@zudojs/http</code> only honours a status on its own response contexts. Tested against a real server with <code class="bg-black/5 px-1">resolveTenant</code> as route middleware: a header-only tenant, an unknown host and a request with no tenant all came back <strong>200 with an empty body</strong>. (In an <code class="bg-black/5 px-1">HttpMiddlewarePipeline</code> the refusal object is sent as a 200 JSON body instead.) The route handler did not run, so no tenant data leaked, but clients and monitoring see a success, and a <code class="bg-black/5 px-1">404 Tenant not found</code> becomes an empty 200 page. The same applies to <code class="bg-black/5 px-1">createRequireTenantMiddleware</code> and <code class="bg-black/5 px-1">createTenantGuardMiddleware</code>.</p>
+          <p class="text-sm">Wrap each tenancy middleware so a refusal becomes a real response. The wrapper below keeps the status, headers and body the middleware chose and passes every allowed request through unchanged, still inside the tenant context:</p>
+        </div>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createResponseContext</span> } <span class="kw">from</span> <span class="str">"@zudojs/http"</span>;
+<span class="kw">import type</span> { <span class="tp">HttpMiddleware</span>, <span class="tp">HttpResponseContext</span> } <span class="kw">from</span> <span class="str">"@zudojs/http"</span>;
+<span class="kw">import</span> { <span class="fn">createResolveTenantMiddleware</span> } <span class="kw">from</span> <span class="str">"@zudojs/tenancy"</span>;
+
+<span class="kw">type</span> <span class="tp">TenancyMiddleware</span> = <span class="tp">ReturnType</span>&lt;<span class="kw">typeof</span> createResolveTenantMiddleware&gt;;
+<span class="kw">interface</span> <span class="tp">Refusal</span> {
+  <span class="kw">readonly</span> status: <span class="tp">number</span>;
+  <span class="kw">readonly</span> body: <span class="tp">unknown</span>;
+  <span class="kw">readonly</span> headers: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">string</span>&gt;&gt;;
+}
+
+<span class="cmt">// If the tenancy middleware called next(), return what the route produced.</span>
+<span class="cmt">// Otherwise it refused: send its status instead of letting http send 200.</span>
+<span class="kw">export function</span> <span class="fn">withHttpStatus</span>(middleware: <span class="tp">TenancyMiddleware</span>): <span class="tp">HttpMiddleware</span> {
+  <span class="kw">return async</span> (context, next) =&gt; {
+    <span class="kw">let</span> response: <span class="tp">HttpResponseContext</span> | <span class="tp">undefined</span>;
+    <span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">middleware</span>(context, <span class="kw">async</span> () =&gt; {
+      response = <span class="kw">await</span> <span class="fn">next</span>();
+      <span class="kw">return</span> response;
+    });
+    <span class="kw">if</span> (response) <span class="kw">return</span> response;
+    <span class="kw">const</span> { status, headers, body } = result <span class="kw">as</span> <span class="tp">Refusal</span>;
+    <span class="kw">return</span> <span class="fn">createResponseContext</span>({ status, headers, body: <span class="tp">JSON</span>.<span class="fn">stringify</span>(body) });
+  };
+}
+
+<span class="cmt">// router.get("/orders", listOrders, { middleware: [withHttpStatus(resolveTenant)] });</span>
+<span class="cmt">// header only → 403 {"error":"Tenant could not be established for this route"}</span>
+<span class="cmt">// unknown host → 404 {"error":"Tenant not found"}</span></div>
 
         <h3 class="text-lg font-bold mb-3 mt-8">Where JWT claims come from</h3>
         <p class="mb-4 leading-relaxed">
