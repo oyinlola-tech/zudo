@@ -4,7 +4,7 @@ description: Describe the Task API in an OpenAPI document with @zudojs/openapi. 
 minutes: 40
 youNeed: The Task API project, and the lessons on validation, HTTP routing and @zudojs/api
 youBuild: An openapi.json and openapi.yaml for the Task API, checked by a validator and served with a documentation page at /docs
-keywords: zudojs openapi, OpenAPI 3.1, OpenAPI 3.0, swagger, redoc, api documentation, OpenAPIManager, addSchema, convertSchema, openapi validation, openapi yaml
+keywords: zudojs openapi, OpenAPI 3.1, OpenAPI 3.0, swagger, redoc, api documentation, OpenAPIManager, addSchema, convertSchema, openapi validation, openapi yaml, generateOpenAPIDocument, mountOpenAPI, createOpenAPIDocumentFromRoutes
 tier: advanced
 ---
 <section>
@@ -20,14 +20,14 @@ tier: advanced
 <shell title="Terminal on your computer">
 $ npm install @zudojs/openapi
 
-added 1 package, and audited 16 packages in 3s
+up to date, audited 17 packages in 3s
 
 1 package is looking for funding
   run `npm fund` for details
 
 found 0 vulnerabilities
 </shell>
-<p>Every example is a <code>.ts</code> file that you run with <code>npx tsx file.ts</code>.</p>
+<p>"up to date": <code>@zudojs/api</code> from the last lesson already brought the package along. Installing it yourself adds it to your <code>package.json</code>. Every example is a <code>.ts</code> file that you run with <code>npx tsx file.ts</code>.</p>
 </section>
 
 <section>
@@ -72,7 +72,7 @@ console.log(JSON.stringify(document.paths["/tasks/{id}"]?.get?.parameters));
 </output>
 <ul>
 <li>The router style path <code>/tasks/:id</code> became <code>/tasks/{id}</code>, the way OpenAPI writes a <strong>path parameter</strong>.</li>
-<li>The <code>id</code> parameter got <code>required: true</code>. OpenAPI demands that for every path parameter.</li>
+<li>The <code>id</code> parameter got <code>required: true</code>. OpenAPI demands that for every path parameter. Even if you forget to declare it, the manager documents every <code>{…}</code> slot of the path, as a string. Declaring it, as here, lets you say that it is a whole number.</li>
 <li><code>operationId</code> is a unique name for the operation. Client generators turn it into a method name.</li>
 <li><code>branding: false</code> keeps the output short. Without it, the manager adds the ZudoJS logo to <code>info</code> as <code>x-logo</code>, a field some viewers read.</li>
 </ul>
@@ -167,7 +167,7 @@ for (const version of ["3.0.3", "3.1.0"]) {
 
 <section>
 <h2 id="validate">Validate the document</h2>
-<p>A document can be valid JSON and still be wrong. <code>manager.validate()</code> checks the OpenAPI rules and returns <code>{ valid, errors, warnings }</code>. This document has three mistakes that are easy to make:</p>
+<p>A document can be valid JSON and still be wrong. <code>manager.validate()</code> checks the OpenAPI rules and returns <code>{ valid, errors, warnings }</code>. This document has two mistakes that are easy to make:</p>
 <example file="broken.ts" project="oa" browser="no">
 import { OpenAPIManager } from "@zudojs/openapi";
 
@@ -187,21 +187,27 @@ for (const issue of result.errors) console.log("-", issue.path.join("."), ":", i
 </example>
 <output>
 valid: false
-- paths./tasks/{id}.delete.parameters : Path template "{id}" has no matching parameter with in: "path".
 - paths./tasks/{id}.delete.security : Security requirement "bearer" does not match any scheme in components.securitySchemes.
 - paths./tasks.get.responses.200.content.application/json.schema : Reference "#/components/schemas/Task" does not resolve within the document.
 </output>
 <ul>
-<li>The path has <code>{id}</code>, but no parameter describes it.</li>
 <li>The operation asks for a security scheme called <code>bearer</code> that the document never declares. Such a document <em>looks</em> protected, but tools cannot tell how to send a token.</li>
 <li>The <code>$ref</code> points at a <code>Task</code> schema that was never added.</li>
 </ul>
-<p>In a build script, <code>manager.generate(true)</code> validates and throws an <code>OpenAPIValidationError</code>. Its <code>format()</code> method prints one line per problem:</p>
+<p>The <code>DELETE</code> route did not declare its <code>{id}</code> parameter, and that is not an error: the manager filled it in. Some gaps are only <strong>warnings</strong>. In a build script, <code>manager.generate(true)</code> validates and throws an <code>OpenAPIValidationError</code> for real errors. Its <code>format()</code> method prints one line per problem:</p>
 <example file="strict.ts" project="oa" browser="no">
 import { OpenAPIManager, OpenAPIValidationError } from "@zudojs/openapi";
 
 const manager = new OpenAPIManager({ info: { title: "Task API", version: "1.0.0" }, branding: false });
-manager.addRoute({ method: "get", path: "/tasks/:id", metadata: { openapi: { operationId: "tasks.get" } } });
+manager.addRoute({ method: "delete", path: "/tasks/:id", metadata: { openapi: {
+  operationId: "tasks.delete", security: [{ bearer: [] }],
+} } });
+
+const operation = manager.generate().paths["/tasks/{id}"]?.delete;
+console.log(JSON.stringify(operation?.parameters));
+console.log(JSON.stringify(operation?.responses));
+console.log(manager.routeWarnings());
+
 try {
   manager.generate(true);
 } catch (error) {
@@ -209,10 +215,19 @@ try {
 }
 </example>
 <output>
+[{"name":"id","in":"path","required":true,"schema":{"type":"string"}}]
+{"default":{"description":"Undocumented response"}}
+[
+  'DELETE /tasks/:id: no responses are documented; emitted "default: Undocumented response".'
+]
 OpenAPI validation failed with 1 error.
-  error: paths./tasks/{id}.get.parameters — Path template "{id}" has no matching parameter with in: "path".
+  error: paths./tasks/{id}.delete.security — Security requirement "bearer" does not match any scheme in components.securitySchemes.
 </output>
-<warn title="A MISSING RESPONSE BECOMES 200 OK">That route documents no responses at all, yet the validator did not complain about it. In <code>@zudojs/openapi</code> 1.4.0 the manager quietly adds <code>"200": { "description": "OK" }</code> to every operation without responses. For a <code>DELETE</code> that answers 204, that is simply wrong. Always write the responses yourself.</warn>
+<ul>
+<li>The forgotten <code>id</code> parameter was documented as a required string.</li>
+<li>The route documents no responses. The manager does not invent a <code>200 OK</code> (wrong for a <code>DELETE</code> that answers 204). It writes a <code>default</code> response called "Undocumented response" and records a warning in <code>routeWarnings()</code>. Pass <code>onRouteWarning: (message) =&gt; …</code> to the manager to log each one as it happens. Declare the responses and the warning goes away.</li>
+<li>The unknown security scheme is a real error, so <code>generate(true)</code> threw.</li>
+</ul>
 </section>
 
 <section>
@@ -253,9 +268,9 @@ info:
   title: Task API
 …
 $ wc -l openapi.json openapi.yaml
- 124 openapi.json
-  78 openapi.yaml
- 202 total
+ 125 openapi.json
+  79 openapi.yaml
+ 204 total
 $ tail -n 12 openapi.yaml
         done:
           type: boolean
@@ -324,46 +339,68 @@ await server.stop();
 </section>
 
 <section>
-<h2 id="from-operations">Docs from your operations</h2>
-<p>In <a href="/learn/zudo-api">the previous lesson</a> every operation of the Task API lived in an <code>APIOperationRegistry</code>, and one route, <code>POST /api/:operation</code>, served them all. The registry already knows each operation's name, input schema, output schema, description and tags. So the document can come straight from it:</p>
-<example file="from-operations.ts" project="oa" browser="no">
-import { APIOperationRegistry, defineOperation } from "@zudojs/api";
-import { OpenAPIManager, createComponentReference } from "@zudojs/openapi";
-import type { Infer } from "@zudojs/schema";
+<h2 id="from-router">Docs straight from your router</h2>
+<p>So far you described each route twice: once in the router that serves it, and once in the manager. Two lists drift apart. With <code>@zudojs/http</code>, a route can carry its own documentation in an <code>openapi</code> option, and <code>generateOpenAPIDocument(router, options)</code> builds the document from the routes the router really has. <code>mountOpenAPI(router, options)</code> goes one step further and serves <code>/openapi.json</code> and a <code>/docs</code> page:</p>
+<example file="router-docs.ts" project="oa" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createRouter, generateOpenAPIDocument, mountOpenAPI } from "@zudojs/http";
+import { schema } from "@zudojs/schema";
 import { NewTask, Task } from "./task-api.js";
 
-const registry = new APIOperationRegistry();
-registry.register(defineOperation<Infer<typeof NewTask>, Infer<typeof Task>>({
-  name: "tasks.create", input: NewTask, output: Task,
-  metadata: { description: "Create a task", tags: ["Tasks"] },
-  handler: async (input) => ({ id: 1, title: input.title, done: false }),
-}));
-registry.freeze();
+const TaskId = schema.object({ id: schema.coerce.number().int().min(1) });
+const tasks = [{ id: 1, title: "Buy milk", done: false }];
 
-const manager = new OpenAPIManager({ version: "3.1.0", info: { title: "Task API", version: "1.0.0" }, branding: false });
-for (const operation of registry.getAll()) {
-  const content = (part: string) => ({ "application/json": { schema: createComponentReference("schemas", part) } });
-  if (operation.input) manager.addSchema(`${operation.name}.input`, operation.input);
-  if (operation.output) manager.addSchema(`${operation.name}.output`, operation.output);
-  manager.addRoute({ method: "post", path: `/api/${operation.name}`, metadata: { openapi: {
-    operationId: operation.name,
-    summary: operation.metadata?.description,
-    tags: operation.metadata?.tags,
-    requestBody: operation.input ? { required: true, content: content(`${operation.name}.input`) } : undefined,
-    responses: {
-      "200": { description: "Success", content: operation.output ? content(`${operation.name}.output`) : undefined },
-      "422": { description: "The input failed validation" },
-    },
-  } } });
-}
-const document = manager.generate(true);
-console.log(Object.keys(document.paths), Object.keys(document.components?.schemas ?? {}));
+const router = createRouter();
+router.get("/tasks", async () => tasks, { openapi: {
+  operationId: "tasks.list", tags: ["Tasks"], summary: "List your tasks",
+  responses: { "200": { schema: schema.array(Task) } },
+} });
+router.post("/tasks", async () => tasks[0], { openapi: {
+  operationId: "tasks.create", tags: ["Tasks"], body: NewTask,
+  responses: { "201": { schema: Task }, "422": { description: "The body failed validation" } },
+} });
+router.delete("/tasks/:id", async () => undefined, { openapi: {
+  operationId: "tasks.delete", tags: ["Tasks"], params: TaskId,
+  responses: { "204": { description: "Deleted" }, "404": { description: "No task with this id" } },
+} });
+router.get("/health", async () => ({ ok: true }), { openapi: false });
+
+const options = {
+  info: { title: "Task API", version: "1.0.0" },
+  securitySchemes: { bearerAuth: { type: "http" as const, scheme: "bearer" } },
+  security: [{ bearerAuth: [] }],
+  validate: true,
+};
+const document = generateOpenAPIDocument(router, options);
+for (const [path, item] of Object.entries(document.paths)) console.log(path, Object.keys(item ?? {}));
+console.log(JSON.stringify(document.paths["/tasks/{id}"]?.delete?.parameters));
+
+mountOpenAPI(router, options);
+const server = await createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+}).start();
+const base = `http://127.0.0.1:${server.address?.port}`;
+const spec = await fetch(`${base}/openapi.json`);
+console.log(spec.status, spec.headers.get("content-type"), Object.keys((await spec.json()).paths));
+const page = await fetch(`${base}/docs`);
+console.log(page.status, page.headers.get("content-type"));
+await server.stop();
 </example>
 <output>
-[ '/api/tasks.create' ] [ 'tasks.create.input', 'tasks.create.output' ]
+/tasks [ 'get', 'post' ]
+/tasks/{id} [ 'delete' ]
+[{"name":"id","in":"path","required":true,"schema":{"type":"integer","minimum":1}}]
+200 application/json; charset=utf-8 [ '/tasks', '/tasks/{id}' ]
+200 text/html; charset=utf-8
 </output>
-<p>Add an operation to the registry, and it appears in the document the next time you build it. Nothing to forget.</p>
-<note>A faster way is coming: the next releases of <code>@zudojs/openapi</code>, <code>@zudojs/http</code> and <code>@zudojs/api</code> build a document straight from an <code>@zudojs/http</code> router or an operation registry, and can mount <code>/openapi.json</code> and <code>/docs</code> for you. The docs pages already describe them, but they are not in the versions on npm yet. Until then, the loop above does the same job.</note>
+<p>The route options use short forms that save you the OpenAPI boilerplate:</p>
+<ul>
+<li><code>body: NewTask</code> becomes a required JSON request body. <code>params</code>, <code>query</code> and <code>headers</code> take an object schema, and each property becomes a parameter: <code>id</code> is now an integer of at least 1.</li>
+<li><code>responses: { "201": { schema: Task } }</code> becomes a JSON response with that schema.</li>
+<li><code>openapi: false</code> keeps <code>/health</code> out of the document. The two routes <code>mountOpenAPI</code> added, <code>/openapi.json</code> and <code>/docs</code>, stay out too.</li>
+<li>Add a route to the router, and it is in the document the next time someone opens <code>/openapi.json</code>. There is no second list to forget.</li>
+</ul>
+<p>The same works for the operations of <a href="/learn/zudo-api">the previous lesson</a>: <code>toOpenAPIRouteDescriptors(registry, { basePath: "/api" })</code> turns them into route descriptions, and <code>createOpenAPIDocumentFromRoutes(routes, options)</code> from this package builds the document from any such list. The <code>middleware</code> option of <code>mountOpenAPI</code> can put the docs behind a sign-in when they are only for your team.</p>
 </section>
 
 <section>
@@ -421,11 +458,12 @@ OpenAPI document OK: 3.0.3 2 paths
 <h2 id="recap">Recap</h2>
 <ul>
 <li>An OpenAPI document describes every path, method, input and response of an HTTP API, in JSON or YAML, for people and tools.</li>
-<li><code>OpenAPIManager</code> builds it from routes. <code>/tasks/:id</code> becomes <code>/tasks/{id}</code>, and every path parameter must be described.</li>
+<li><code>OpenAPIManager</code> builds it from routes. <code>/tasks/:id</code> becomes <code>/tasks/{id}</code>, and every path parameter is documented, declared or not.</li>
 <li><code>addSchema</code> turns <code>@zudojs/schema</code> schemas into components, so the document and the runtime checks share one source.</li>
 <li>Pick 3.1 unless a tool needs 3.0. The converter writes the right keywords for each.</li>
-<li><code>validate()</code> or <code>generate(true)</code> catches missing parameters, unknown security schemes and broken references. Always write the responses yourself.</li>
+<li><code>validate()</code> or <code>generate(true)</code> catches unknown security schemes and broken references. A route with no responses gets a <code>default</code> response and a warning, so declare the responses yourself.</li>
 <li><code>toJSON</code> and <code>toYAML</code> save the document; <code>toResponse</code> and <code>toUIResponse</code> serve it with a docs page.</li>
+<li>With <code>@zudojs/http</code>, routes carry their own <code>openapi</code> option. <code>generateOpenAPIDocument(router)</code> builds the document and <code>mountOpenAPI(router)</code> serves <code>/openapi.json</code> and <code>/docs</code>.</li>
 <li>Documentation is public. Hiding a route from it is not security.</li>
 </ul>
 <p>Next, you test the Task API: unit tests, fakes and integration tests with <code>@zudojs/testing</code>.</p>
