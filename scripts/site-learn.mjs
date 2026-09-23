@@ -10,9 +10,12 @@
  *
  * Lesson sources live in site-src/learn (see scripts/learn/source.mjs for the tags).
  * The generated pages are committed, because Vercel never runs this script.
+ * After adding a lesson, run `pnpm site:seo` and `pnpm site:llms` so the new page
+ * gets its SEO tags, sitemap entry and Markdown mirror. Rebuilding keeps the SEO
+ * block a page already has, so a plain rebuild does not undo site:seo.
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { format } from "node:util";
@@ -28,16 +31,27 @@ const args = process.argv.slice(2);
 const only = args.includes("--only") ? args[args.indexOf("--only") + 1] : null;
 const wantAll = args.includes("--check");
 
+const SEO_BLOCK = /[ \t]*<!-- seo:start -->[\s\S]*?<!-- seo:end -->/;
+
+/* Writes a page, carrying over the SEO block site:seo filled in earlier. */
+function writePage(file, html) {
+  if (existsSync(file)) {
+    const old = readFileSync(file, "utf8").match(SEO_BLOCK);
+    if (old) html = html.replace(SEO_BLOCK, old[0]);
+  }
+  writeFileSync(file, html);
+}
+
 function build() {
   const { course, lessons } = readCourse(ROOT);
   const highlight = loadHighlighter(ROOT);
   mkdirSync(OUT, { recursive: true });
   for (const lesson of lessons) {
     const html = lessonPage({ course, lessons, lesson, bodyHtml: renderBody(lesson, highlight), toc: headings(lesson) });
-    writeFileSync(join(OUT, lesson.slug + ".html"), html);
+    writePage(join(OUT, lesson.slug + ".html"), html);
   }
   course.index.bodyHtml = renderBody({ body: readFileSync(join(ROOT, "site-src", "learn", "index.html"), "utf8") }, highlight);
-  writeFileSync(join(OUT, "index.html"), indexPage({ course, lessons }));
+  writePage(join(OUT, "index.html"), indexPage({ course, lessons }));
   updateSearchIndex(lessons);
   console.log(`site/learn: ${lessons.length} lessons + index`);
   return lessons;

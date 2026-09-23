@@ -3,6 +3,7 @@
  * Publishes the docs in forms AI agents and LLMs read well:
  *
  *   site/docs/<page>.md   Markdown mirror of every docs page
+ *   site/learn/<page>.md  Markdown mirror of every Learn course page (course order)
  *   site/llms.txt         index in the llmstxt.org format
  *   site/llms-full.txt    every docs page in one Markdown file
  *
@@ -290,7 +291,7 @@ function pageInfo(file, dir = DOCS) {
   const html = readFileSync(join(dir, file), "utf8");
   const slug = file.replace(/\.html$/, "");
   const title = meta(html, /<title>([^<]*)<\/title>/).replace(
-    /\s+[—|]\s+ZudoJS$/,
+    /\s+[—|]\s+(Learn )?ZudoJS$/,
     "",
   );
   const description = meta(
@@ -308,6 +309,7 @@ function pageInfo(file, dir = DOCS) {
 const TOP_PAGES = ["brand.html", "sponsors.html"];
 
 const GROUPS = [
+  ["Learn (course, in order)", (s, p) => p.learn],
   ["Getting started", (s) => s.startsWith("getting-started")],
   ["Concepts", (s) => s.startsWith("concepts")],
   ["Architecture", (s) => s.startsWith("architecture")],
@@ -362,6 +364,39 @@ for (const file of files) {
   if (html !== info.html) writeFileSync(join(DOCS, file), html);
 }
 
+/* The Learn course: index first, then lessons in course order. */
+const LEARN = join(ROOT, "learn");
+const course = JSON.parse(
+  readFileSync(fileURLToPath(new URL("../site-src/learn/course.json", import.meta.url)), "utf8"),
+);
+const learnSlugs = ["index", ...course.parts.flatMap((p) => p.lessons)];
+learnSlugs.forEach((slug, order) => {
+  const file = slug + ".html";
+  if (!existsSync(join(LEARN, file))) return;
+  const info = pageInfo(file, LEARN);
+  if (!info.main) return;
+  const url = slug === "index" ? `${BASE}/learn` : `${BASE}/learn/${slug}`;
+  const body = toMarkdown(info.main);
+  writeFileSync(
+    join(LEARN, slug + ".md"),
+    [
+      "---",
+      `title: ${JSON.stringify(info.title)}`,
+      `description: ${JSON.stringify(info.description)}`,
+      `source: ${url}`,
+      "---",
+      "",
+      body,
+      "",
+    ].join("\n"),
+  );
+  pages.push({ ...info, slug: "learn/" + slug, url, mdUrl: `${BASE}/learn/${slug}.md`, body, learn: true, order });
+
+  const tag = `  <link rel="alternate" type="text/markdown" href="/learn/${slug}.md" title="Markdown version">`;
+  const html = info.html.replace(LINK_TAG, "").replace(/(<\/title>)/, `$1\n${tag}`);
+  if (html !== info.html) writeFileSync(join(LEARN, file), html);
+});
+
 for (const file of TOP_PAGES) {
   const info = pageInfo(file, ROOT);
   if (!info.main) continue;
@@ -398,7 +433,7 @@ const claimed = new Set();
 const sections = GROUPS.map(([name, match]) => {
   const list = pages
     .filter((p) => !claimed.has(p.slug) && match(p.slug, p))
-    .sort(byOrder);
+    .sort((a, b) => (a.learn && b.learn ? a.order - b.order : byOrder(a, b)));
   list.forEach((p) => claimed.add(p.slug));
   return [name, list];
 }).filter(([, list]) => list.length);
@@ -413,7 +448,7 @@ const llms = [
   ...sections.flatMap(([name, list]) => [
     `## ${name}`,
     "",
-    ...list.map((p) => `- [${p.title}](${p.url}.md): ${p.description}`),
+    ...list.map((p) => `- [${p.title}](${p.mdUrl || p.url + ".md"}): ${p.description}`),
     "",
   ]),
 ].join("\n");

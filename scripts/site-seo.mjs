@@ -64,6 +64,7 @@ function htmlFiles(dir) {
 
 function pathFor(rel) {
   if (rel === "index.html") return "/";
+  if (rel.endsWith("/index.html")) return "/" + rel.slice(0, -"/index.html".length);
   return "/" + rel.replace(/\.html$/, "");
 }
 
@@ -153,6 +154,9 @@ function homeLd() {
  */
 function breadcrumbLd(rel, title) {
   const crumbs = [["ZudoJS", `${BASE}/`]];
+  if (rel.startsWith("learn/") && rel !== "learn/index.html") {
+    crumbs.push(["Learn", `${BASE}/learn`]);
+  }
   if (rel.startsWith("docs/")) {
     if (rel !== "docs/getting-started.html")
       crumbs.push(["Docs", `${BASE}/docs/getting-started`]);
@@ -397,7 +401,7 @@ function crawlHeaders() {
   const mirrors = indexable
     .filter((p) => p.rel !== "index.html")
     .map((p) => ({
-      source: pathFor(p.rel) + ".md",
+      source: "/" + p.rel.replace(/\.html$/, ".md"),
       headers: [{ key: "Link", value: `<${p.url}>; rel="canonical"` }],
     }));
   const noindex = NOINDEX_FILES.map((source) => ({
