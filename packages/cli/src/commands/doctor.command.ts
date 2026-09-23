@@ -10,6 +10,7 @@ import type { CLIContext } from "../cliType/cliType.type.js";
 import { CLIValidationError } from "../errors/index.js";
 import { FEATURE_PACKAGES } from "../constants/index.js";
 import { parseManifest } from "../manifest/manifestFile.helper.js";
+import { findProjectRoot } from "../resolvers/project.resolver.js";
 import {
   resolveProjectLayout,
   type ProjectLayout,
@@ -32,13 +33,14 @@ export interface DoctorCheck {
 }
 
 /**
- * Runs every diagnostic for the project at `cwd`.
+ * Runs every diagnostic for the project containing `cwd` (any directory
+ * inside it: the root is found by walking up, as `generate` does).
  *
  * Exported so the checks can be run against a scaffolded directory in tests
  * without going through the logger.
  */
 export function runDoctorChecks(cwd: string): DoctorCheck[] {
-  const layout = resolveProjectLayout(cwd);
+  const layout = resolveProjectLayout(projectRootFor(cwd));
   const checks: DoctorCheck[] = [checkProject(layout)];
 
   if (!layout) {
@@ -57,6 +59,11 @@ export function runDoctorChecks(cwd: string): DoctorCheck[] {
   return checks;
 }
 
+/** The workspace root above `cwd`, or `cwd` itself outside any project. */
+function projectRootFor(cwd: string): string {
+  return findProjectRoot(cwd, { workspace: true }) ?? cwd;
+}
+
 /**
  * Environment checks: Node.js, Git and the project's own package manager.
  *
@@ -67,7 +74,7 @@ export function runDoctorChecks(cwd: string): DoctorCheck[] {
 export async function runEnvironmentChecks(
   cwd: string,
 ): Promise<DoctorCheck[]> {
-  const layout = resolveProjectLayout(cwd);
+  const layout = resolveProjectLayout(projectRootFor(cwd));
   const result = await new EnvironmentValidator().validate(
     layout?.projectType ?? "backend",
     layout?.packageManager,

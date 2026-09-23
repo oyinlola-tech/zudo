@@ -36,7 +36,7 @@ ${renderMarkerBlock(MARKERS.routes, lines.entries, "  ")}
 }
 
 /**
- * Renders `routes/index.ts` of a module: `register<Module>Routes`.
+ * Renders `routes/index.ts` of a module: `register<Module>ModuleRoutes`.
  * `containerFromHere` is the import path of `container.js`.
  */
 export function renderModuleRoutesIndex(

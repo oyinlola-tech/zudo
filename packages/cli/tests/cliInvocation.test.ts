@@ -81,6 +81,11 @@ describe("invoked name", () => {
     expect(resolveInvokedName("/x/zudo-evil")).toBe("zudojs");
   });
 
+  it("answers to zudojs for the zudojs-cli bin (npx zudojs-cli)", () => {
+    expect(resolveInvokedName("/usr/local/bin/zudojs-cli")).toBe("zudojs");
+    expect(resolveInvokedName("C:\\npm\\zudojs-cli.cmd")).toBe("zudojs");
+  });
+
   it("rewrites command examples only", () => {
     const words = ["create", "dev"];
     expect(

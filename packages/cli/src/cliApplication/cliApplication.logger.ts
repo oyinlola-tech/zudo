@@ -76,8 +76,9 @@ export function createCLILogger(options: CLILoggerOptions = {}): Logger {
         name: "cli-stdio",
         enabled: true,
         write(entry: LoggerEntry): void {
-          // The formatter's output arrives as the entry message.
-          const line = entry.message;
+          // @zudojs/logger carries the formatter's line in `formatted` and
+          // keeps `message` raw; older releases put the line in `message`.
+          const line = entry.formatted ?? entry.message;
           switch (entry.levelName) {
             case "fatal":
             case "error":

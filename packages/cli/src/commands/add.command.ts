@@ -34,6 +34,7 @@ import {
   type RecipeOutcome,
 } from "../recipes/index.js";
 import { existsSync, readFileSync } from "node:fs";
+import { findProjectRoot } from "../resolvers/project.resolver.js";
 
 interface PackageJsonShape {
   dependencies?: Record<string, string>;
@@ -140,7 +141,10 @@ export async function runAddCommand(context: CLIContext): Promise<void> {
     assertSafePathSegment(service, "--service");
   }
 
-  const layout = resolveProjectLayout(context.cwd);
+  // Walks up, so `add` works from any directory inside the project; an app
+  // of a workspace resolves to the workspace, whose manifest is updated.
+  const root = findProjectRoot(context.cwd, { workspace: true });
+  const layout = root === null ? null : resolveProjectLayout(root);
 
   if (!layout) {
     throw new CLIValidationError(

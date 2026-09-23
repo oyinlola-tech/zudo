@@ -11,6 +11,7 @@ import { CLI_VERSION } from "../constants/index.js";
 import { checkForNewerVersion } from "../cliVersion/cliVersion.update.js";
 import { resolveProjectLayout } from "../resolvers/layout/projectLayout.core.js";
 import { ConfigurationResolver } from "../resolvers/configuration/configurationResolver.core.js";
+import { findProjectRoot } from "../resolvers/project.resolver.js";
 
 export async function runInfoCommand(context: CLIContext): Promise<void> {
   context.logger.info("Zudojs CLI");
@@ -26,7 +27,9 @@ export async function runInfoCommand(context: CLIContext): Promise<void> {
 
   context.logger.info("");
 
-  const layout = resolveProjectLayout(context.cwd);
+  // From any directory inside the project, like `generate` and `build`.
+  const root = findProjectRoot(context.cwd, { workspace: true });
+  const layout = root === null ? null : resolveProjectLayout(root);
 
   if (!layout) {
     context.logger.info("Not in a Zudojs project directory.");

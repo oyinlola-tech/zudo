@@ -149,7 +149,7 @@ describe("zudojs add (monolith)", () => {
     expect(compose).toContain("${POSTGRES_PASSWORD:?");
     expect(compose).toContain('"127.0.0.1:5432:5432"');
     expect(compose).not.toMatch(/POSTGRES_PASSWORD: [a-z]/);
-    expect(read(root, ".env.example")).toContain("POSTGRES_PASSWORD=change-me");
+    expect(read(root, ".env.example")).toMatch(/generate with: openssl rand -hex 32\nPOSTGRES_PASSWORD=\n/);
     expect(read(root, ".dockerignore")).toContain(".env");
   });
 });
