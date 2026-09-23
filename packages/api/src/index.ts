@@ -4,7 +4,9 @@
  * Application-facing API layer for the Zudojs framework.
  *
  * Provides transport-agnostic operation definitions, execution context,
- * interceptors, and result types.
+ * interceptors, and result types — plus bindings that expose the same
+ * operations over HTTP (a web-standard fetch handler), RPC, queues and
+ * the command line.
  *
  * @example
  * ```ts
@@ -84,7 +86,11 @@ export {
 } from "./api/constants.js";
 
 // Context
-export type { APIContext, APIContextKey } from "./api/context/context.type.js";
+export type {
+  APIContext,
+  APIContextKey,
+  APITransportKind,
+} from "./api/context/context.type.js";
 
 export {
   createAPIContext,
@@ -96,6 +102,7 @@ export {
   TenantIdContextKey,
   UserIdContextKey,
   StartTimeContextKey,
+  TransportContextKey,
 } from "./api/context/context.type.js";
 
 // Handler
@@ -113,6 +120,12 @@ export {
   defineOperation,
   resolveOperationTimeout,
 } from "./api/operation/operation.type.js";
+
+export type {
+  APIInputSchema,
+  DefineOperationWithSchemaOptions,
+  InferAPISchemaOutput,
+} from "./api/operation/operationSchema.type.js";
 
 // Schema recognition
 export type { APISchemaIssue, APISchemaResult } from "./api/schema/index.js";
@@ -134,3 +147,7 @@ export { createNoopInterceptor } from "./api/interceptors/interceptor.type.js";
 export type { APIExecutorOptions } from "./api/executor/index.js";
 
 export { APIExecutor, normalizeAPIError } from "./api/executor/index.js";
+
+// Bindings: one operation, many transports (HTTP fetch handler, RPC,
+// queues, CLI) and the structural route contract for @zudojs/http.
+export * from "./api/bindings/index.js";

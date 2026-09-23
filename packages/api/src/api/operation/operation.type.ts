@@ -1,6 +1,16 @@
 import type { APIHandler } from "../handler/handler.type.js";
 
+import type { APIOperationHttpOptions } from "../bindings/route/apiRoute.type.js";
+
+import type {
+  APIInputSchema,
+  DefineOperationWithSchemaOptions,
+  InferAPISchemaOutput,
+} from "./operationSchema.type.js";
+
 import { assertAPISchema } from "../schema/index.js";
+
+import { assertValidHttpOptions } from "../bindings/route/apiRoute.resolver.js";
 
 import {
   DEFAULT_OPERATION_TIMEOUT,
@@ -27,6 +37,13 @@ export interface APIOperationMetadata {
   readonly timeout?: number;
 
   readonly idempotent?: boolean;
+
+  /**
+   * HTTP binding used by `createApiFetchHandler` and `describeApiRoutes`:
+   * method and path template (`"/users/:id"`). Defaults to
+   * `POST /<name>`. Validated by {@link defineOperation}.
+   */
+  readonly http?: APIOperationHttpOptions;
 }
 
 /**
@@ -228,6 +245,9 @@ export function freezeOperationMetadata(
   if (Array.isArray(metadata.tags)) {
     Object.freeze(metadata.tags);
   }
+  if (typeof metadata.http === "object" && metadata.http !== null) {
+    Object.freeze(metadata.http);
+  }
   return Object.freeze(metadata);
 }
 
@@ -238,10 +258,27 @@ export function freezeOperationMetadata(
  * unusable timeout fails here, at startup, rather than on the first
  * request that reaches the operation.
  *
+ * Without type arguments, the handler's `input` is inferred from the
+ * `input` schema (a Standard Schema's output type, or a `safeParse`
+ * schema's success `data`), also inline in `registry.register(...)` or an
+ * operation list. With explicit type arguments
+ * (`defineOperation<TInput, TOutput>(...)`) they are used as given. The
+ * return type never takes part in inference, so a contextual type such as
+ * `AnyAPIOperation` cannot turn the handler's `input` into `never`.
+ *
  * @throws {TypeError} if `name` or `handler` has the wrong type, or if
  * `input` / `output` is set but is not a recognised schema.
  * @throws {RangeError} if `name` or a supplied `timeout` is out of range.
  */
+export function defineOperation<
+  TSchema extends APIInputSchema,
+  TOutput = unknown,
+>(
+  options: DefineOperationWithSchemaOptions<TSchema, TOutput>,
+): APIOperation<NoInfer<InferAPISchemaOutput<TSchema>>, NoInfer<TOutput>>;
+export function defineOperation<TInput = unknown, TOutput = unknown>(
+  options: DefineOperationOptions<TInput, TOutput>,
+): APIOperation<NoInfer<TInput>, NoInfer<TOutput>>;
 export function defineOperation<TInput = unknown, TOutput = unknown>(
   options: DefineOperationOptions<TInput, TOutput>,
 ): APIOperation<TInput, TOutput> {
@@ -253,6 +290,7 @@ export function defineOperation<TInput = unknown, TOutput = unknown>(
   if (options.metadata?.timeout !== undefined) {
     assertValidTimeout(options.metadata.timeout, "Operation metadata.timeout");
   }
+  assertValidHttpOptions(options.metadata?.http, options.name);
 
   // Explicit field list rather than `...options`: an operation carries
   // exactly the contract fields, never arbitrary extra properties.

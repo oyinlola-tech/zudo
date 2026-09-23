@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { MAX_REQUEST_ID_LENGTH } from "../constants.js";
 
-import type { APIContextKey } from "./contextKey.type.js";
+import type { APIContextKey, APITransportKind } from "./contextKey.type.js";
 
 import {
   RequestIdContextKey,
@@ -10,6 +10,7 @@ import {
   TenantIdContextKey,
   UserIdContextKey,
   StartTimeContextKey,
+  TransportContextKey,
   createContextKey,
 } from "./contextKey.type.js";
 
@@ -172,7 +173,7 @@ function createReadonlyMapView<K, V>(source: Map<K, V>): ReadonlyMap<K, V> {
   return Object.freeze(view);
 }
 
-export type { APIContextKey };
+export type { APIContextKey, APITransportKind };
 
 export {
   RequestIdContextKey,
@@ -180,5 +181,6 @@ export {
   TenantIdContextKey,
   UserIdContextKey,
   StartTimeContextKey,
+  TransportContextKey,
   createContextKey,
 };

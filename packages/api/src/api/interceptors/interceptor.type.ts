@@ -11,13 +11,14 @@ export interface APIExecutionContext<TInput = unknown, TOutput = unknown> {
   readonly operation: APIOperation<TInput, TOutput>;
 
   /**
-   * The input the handler will receive.
+   * The input as the caller sent it, not yet validated.
    *
    * Writable on purpose: an interceptor may replace it before calling
-   * `next()` (to sanitize, scope to a tenant, or apply a default) and the
-   * handler receives the replacement. The executor reads this field at
-   * handler-invocation time, so a replacement made by any interceptor in
-   * the chain takes effect.
+   * `next()` (to sanitize, scope to a tenant, or apply a default). The
+   * executor reads this field after the last interceptor calls `next()`,
+   * validates it against the operation's `input` schema, and hands the
+   * validated value to the handler, so a replacement made by any
+   * interceptor in the chain takes effect and cannot bypass the schema.
    */
   input: TInput;
 

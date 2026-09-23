@@ -62,3 +62,14 @@ export const UserIdContextKey =
 
 export const StartTimeContextKey =
   /* #__PURE__ */ createContextKey<number>("startTime");
+
+/**
+ * The binding an operation was invoked through. Set by every built-in
+ * binding (`createApiFetchHandler`, the RPC, queue and CLI bindings) under
+ * {@link TransportContextKey}, so an interceptor can vary its behaviour by
+ * entry point without the handler knowing.
+ */
+export type APITransportKind = "http" | "rpc" | "queue" | "cli";
+
+export const TransportContextKey =
+  /* #__PURE__ */ createContextKey<APITransportKind>("transport");

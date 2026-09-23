@@ -2,7 +2,7 @@ import type { APIContext } from "../context/context.type.js";
 
 import type { APIResult } from "../result/apiResult.type.js";
 
-import { apiFailure, apiSuccess } from "../result/apiResult.type.js";
+import { apiFailure } from "../result/apiResult.type.js";
 
 import type { APIOperation } from "../operation/operation.type.js";
 
@@ -13,124 +13,35 @@ import type {
   APIExecutionContext,
 } from "../interceptors/interceptor.type.js";
 
-import {
-  APIError,
-  APIInternalError,
-  APITimeoutError,
-  APIValidationError,
-  createAPIError,
-  ErrorCode,
-  isAPIError,
-} from "../errors/index.js";
+import { APIInternalError } from "../errors/index.js";
 
-import type { APISchemaIssue } from "../schema/index.js";
-
-import { validateWithSchema } from "../schema/index.js";
+import { MAX_INTERCEPTORS, MAX_VALIDATION_ISSUES } from "../constants.js";
 
 import {
-  MAX_INTERCEPTORS,
-  MAX_VALIDATION_ISSUES,
-  MAX_VALIDATION_ISSUE_LENGTH,
-} from "../constants.js";
+  abortedError,
+  withContextSignal,
+  withDeadline,
+} from "./executor.deadline.js";
+
+import { normalizeAPIError } from "./executor.normalize.js";
+
+import type { APIExecutorOptions } from "./executor.type.js";
+
+import {
+  validateOperationInput,
+  validateOperationOutput,
+} from "./executor.validation.js";
+
+export { normalizeAPIError } from "./executor.normalize.js";
+
+export type { APIExecutorOptions } from "./executor.type.js";
 
 export type { APIExecutionContext } from "../interceptors/interceptor.type.js";
-
-/**
- * Error normalizer for converting unknown errors into APIError instances.
- *
- * APIErrors pass through untouched. Everything else is wrapped in an
- * `APIInternalError` (`expose: false`) carrying a generic message; the
- * original error is preserved on `cause` for logging.
- *
- * The wrapper's own message is deliberately *not* a copy of the original.
- * `BaseError.toJSON()` in `@zudojs/errors` 0.1.0 emits `message`, `stack`
- * and the serialized `cause` regardless of `expose`, so a transport doing
- * `res.json(result.error)` would otherwise ship the raw driver message
- * (connection strings, constraint names, file paths, tokens) to a client.
- */
-export function normalizeAPIError(
-  error: unknown,
-  operationName?: string,
-): APIError {
-  if (isAPIError(error)) {
-    return error;
-  }
-
-  const where =
-    operationName !== undefined && operationName !== ""
-      ? `operation "${operationName}"`
-      : "an API operation";
-
-  const wrapped =
-    error instanceof Error
-      ? new APIInternalError(
-          `An unexpected internal error occurred in ${where}.`,
-        )
-      : new APIInternalError(
-          `A non-error value (${describeValueType(error)}) was thrown in ${where}.`,
-        );
-
-  // `APIInternalError`'s subclass constructor forwards only
-  // `{ endpoint, method }`, so `cause` cannot be passed through it.
-  // `APIError` / `createAPIError` *do* accept `cause`, but constructing
-  // through them would lose the `APIInternalError` class identity that
-  // consumers match on. `cause` is a declared writable class field on
-  // `BaseError`, so assigning it after construction is equivalent for
-  // `toJSON()` and for `error.cause` reads; only the native `[[cause]]`
-  // slot differs.
-  (wrapped as { cause?: unknown }).cause = error;
-
-  return wrapped;
-}
-
-function describeValueType(value: unknown): string {
-  if (value === null) {
-    return "null";
-  }
-  if (Array.isArray(value)) {
-    return "array";
-  }
-  return typeof value;
-}
 
 type MutableExecutionContext<TInput, TOutput> = Omit<
   APIExecutionContext<TInput, TOutput>,
   "result"
 > & { result?: APIResult<TOutput> };
-
-/**
- * Options for {@link APIExecutor}.
- */
-export interface APIExecutorOptions {
-  /** Interceptor pipeline, outermost first. */
-  readonly interceptors?: readonly APIInterceptor[];
-
-  /**
-   * Whether raw schema issue messages are copied into the client-facing
-   * `APIValidationError` (which is `expose: true`).
-   *
-   * Default `false`. Schema messages routinely interpolate the received
-   * value — Zod's built-in messages do for several checks, and most
-   * hand-written `message:` strings do — which would put submitted
-   * secrets straight into a 422 body. With the default, clients receive
-   * one entry per failing path (`"user.email: invalid"`) naming *where*
-   * validation failed but never echoing *what* was submitted.
-   *
-   * Set to `true` only when every schema in the process is known to
-   * produce value-free messages.
-   */
-  readonly exposeValidationMessages?: boolean;
-
-  /**
-   * Maximum number of validation issues carried on a single
-   * `APIValidationError`. Defaults to {@link MAX_VALIDATION_ISSUES}.
-   *
-   * A schema over a large array emits one issue per failing element, so
-   * an uncapped list is an amplification vector: the executor is the
-   * layer on the untrusted-input boundary and caps it here.
-   */
-  readonly maxValidationIssues?: number;
-}
 
 /**
  * Executes an API operation through its interceptor pipeline.
@@ -140,6 +51,9 @@ export interface APIExecutorOptions {
  * schema (a Standard Schema or a `safeParse` schema such as
  * `@zudojs/schema`). A declared schema of any other kind fails closed
  * with an `APIInternalError`; it is never skipped.
+ *
+ * Interceptors wrap everything, input validation included: validation
+ * runs innermost, on the input the interceptors pass to the handler.
  */
 export class APIExecutor {
   private readonly interceptors: readonly APIInterceptor[];
@@ -181,6 +95,14 @@ export class APIExecutor {
 
   /**
    * Executes an operation with the given input and context.
+   *
+   * Order: the interceptors run first, outermost first; input validation
+   * runs innermost, immediately before the handler, on the input the
+   * interceptors finally pass. So an authentication interceptor refuses an
+   * anonymous call before its input is inspected (a 401, not a 422 that
+   * describes the schema), logging, metrics and rate-limit interceptors see
+   * invalid calls too, and an interceptor that replaces `context.input`
+   * cannot bypass the schema.
    */
   async execute<TInput = unknown, TOutput = unknown>(
     operation: APIOperation<TInput, TOutput>,
@@ -191,33 +113,15 @@ export class APIExecutor {
       return apiFailure(abortedError(operation.name));
     }
 
-    let effectiveInput = input;
-    if (operation.input !== undefined) {
-      try {
-        const validation = await validateWithSchema(operation.input, input);
-        if (!validation.ok) {
-          return apiFailure(
-            new APIValidationError(
-              `Invalid input for operation "${operation.name}".`,
-              this.clientIssues(validation.issues),
-            ),
-          );
-        }
-        effectiveInput = validation.value as TInput;
-      } catch (error) {
-        return apiFailure(normalizeAPIError(error, operation.name));
-      }
-    }
-
     const executionContext: MutableExecutionContext<TInput, TOutput> = {
       operation,
-      input: effectiveInput,
+      input,
       context,
     };
 
     // Reads `executionContext.input` at call time, so an interceptor that
-    // replaces the input before calling `next()` actually changes what the
-    // handler receives.
+    // replaces the input before calling `next()` changes what is validated
+    // and what the handler receives.
     const executeHandler = (): Promise<APIResult<TOutput>> =>
       this.invokeHandler(operation, executionContext.input, context);
 
@@ -229,8 +133,12 @@ export class APIExecutor {
   }
 
   /**
-   * Invokes the operation handler under its timeout and abort signal, and
-   * validates the handler's output against `operation.output`.
+   * Validates the input, then invokes the operation handler under its
+   * timeout and abort signal, and validates the handler's output against
+   * `operation.output`.
+   *
+   * The handler receives a context whose `signal` aborts when the deadline
+   * elapses or the caller's signal aborts, so it can stop its work.
    */
   private async invokeHandler<TInput, TOutput>(
     operation: APIOperation<TInput, TOutput>,
@@ -241,12 +149,21 @@ export class APIExecutor {
       return apiFailure(abortedError(operation.name));
     }
 
+    const validated = await validateOperationInput(operation, input, {
+      maxIssues: this.maxValidationIssues,
+      exposeMessages: this.exposeValidationMessages,
+    });
+    if (!validated.ok) {
+      return apiFailure(validated.error);
+    }
+
     const timeoutMs = resolveOperationTimeout(operation);
 
     let output: TOutput;
     try {
       output = await withDeadline(
-        operation.handler(input, context),
+        (signal) =>
+          operation.handler(validated.data, withContextSignal(context, signal)),
         timeoutMs,
         operation.name,
         context.signal,
@@ -255,70 +172,7 @@ export class APIExecutor {
       return apiFailure(normalizeAPIError(error, operation.name));
     }
 
-    return this.validateOutput(operation, output);
-  }
-
-  /**
-   * Validates handler output against `operation.output`.
-   *
-   * A response that does not match its declared schema is a server bug,
-   * not a client mistake, so failures surface as an `APIInternalError`
-   * (500, `expose: false`) naming only the failing paths — never the
-   * offending values, which are exactly the fields (password hashes,
-   * internal audit columns) that should not reach a client.
-   */
-  private async validateOutput<TInput, TOutput>(
-    operation: APIOperation<TInput, TOutput>,
-    output: TOutput,
-  ): Promise<APIResult<TOutput>> {
-    if (operation.output === undefined) {
-      return apiSuccess(output);
-    }
-
-    let validation: Awaited<ReturnType<typeof validateWithSchema>>;
-    try {
-      validation = await validateWithSchema(operation.output, output);
-    } catch (error) {
-      return apiFailure(normalizeAPIError(error, operation.name));
-    }
-
-    if (!validation.ok) {
-      const paths = validation.issues
-        .slice(0, this.maxValidationIssues)
-        .map(formatIssuePath)
-        .join(", ");
-      return apiFailure(
-        new APIInternalError(
-          `Invalid output for operation "${operation.name}" at: ${paths}.`,
-        ),
-      );
-    }
-
-    return apiSuccess(validation.value as TOutput);
-  }
-
-  /**
-   * Converts schema issues into the capped, redacted list carried on the
-   * client-facing `APIValidationError`.
-   */
-  private clientIssues(
-    issues: ReadonlyArray<APISchemaIssue>,
-  ): readonly string[] {
-    const limit = this.maxValidationIssues;
-    const shown = issues
-      .slice(0, limit)
-      .map((issue) =>
-        this.exposeValidationMessages
-          ? truncate(issue.message, MAX_VALIDATION_ISSUE_LENGTH)
-          : `${formatIssuePath(issue)}: invalid`,
-      );
-
-    const omitted = issues.length - shown.length;
-    if (omitted > 0) {
-      shown.push(`… and ${omitted} more issue(s) omitted.`);
-    }
-
-    return shown;
+    return validateOperationOutput(operation, output, this.maxValidationIssues);
   }
 
   /**
@@ -364,103 +218,4 @@ export class APIExecutor {
 
     return dispatch(0);
   }
-}
-
-// ─── Internal helpers ─────────────────────────────────────────────────────
-
-function truncate(value: string, max: number): string {
-  const text = typeof value === "string" ? value : String(value);
-  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
-}
-
-/**
- * Renders a Standard Schema issue path as a dotted string. Path segments
- * are field names, never submitted values, so they are safe to expose.
- */
-function formatIssuePath(issue: APISchemaIssue): string {
-  const path = issue.path;
-  if (path === undefined || path.length === 0) {
-    return "(root)";
-  }
-
-  return path
-    .map((segment) => {
-      const key =
-        typeof segment === "object" && segment !== null && "key" in segment
-          ? segment.key
-          : segment;
-      return truncate(String(key), 64);
-    })
-    .join(".");
-}
-
-/**
- * Error for an execution cancelled by the caller's `AbortSignal`.
- *
- * Carries `ErrorCode.OPERATION_CANCELLED` — branch on that, not on the
- * status code. `statusCode` is 499, an nginx convention ("Client Closed
- * Request") rather than an IANA status; this package is
- * transport-agnostic, so each adapter should map the *code* onto whatever
- * its protocol calls "cancelled" (gRPC `CANCELLED`, a dropped queue
- * message, a non-zero CLI exit) rather than passing 499 to the wire.
- */
-function abortedError(operationName: string): APIError {
-  return createAPIError(`Operation "${operationName}" was aborted.`, {
-    code: ErrorCode.OPERATION_CANCELLED,
-    statusCode: 499,
-    expose: true,
-  });
-}
-
-/**
- * Awaits a handler promise, rejecting when the timeout elapses or the
- * abort signal fires. The handler itself keeps running (promises are not
- * cancellable), but the caller stops waiting and resources are released.
- *
- * `timeoutMs` is always a positive integer here — `defineOperation`
- * rejects anything else and `resolveOperationTimeout` substitutes the
- * default for hand-rolled operations — so the deadline can never be
- * silently disabled.
- */
-function withDeadline<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  operationName: string,
-  signal?: AbortSignal,
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    const cleanup = (): void => {
-      if (timer !== undefined) clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-    };
-
-    const onAbort = (): void => {
-      cleanup();
-      reject(abortedError(operationName));
-    };
-
-    timer = setTimeout(() => {
-      cleanup();
-      reject(new APITimeoutError(timeoutMs));
-    }, timeoutMs);
-
-    signal?.addEventListener("abort", onAbort, { once: true });
-
-    // `Promise.resolve` rather than `promise.then`: a hand-rolled operation
-    // whose handler returns synchronously is a legal JavaScript caller, and
-    // calling `.then` on its plain value failed with "promise.then is not a
-    // function" reported as an internal error of the operation.
-    Promise.resolve(promise).then(
-      (value) => {
-        cleanup();
-        resolve(value);
-      },
-      (error: unknown) => {
-        cleanup();
-        reject(error);
-      },
-    );
-  });
 }
