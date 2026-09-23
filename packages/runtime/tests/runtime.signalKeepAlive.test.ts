@@ -25,13 +25,23 @@ const fixture = join(packageDir, "tests/fixtures/signalShutdown.fixture.mjs");
 
 interface ChildOutcome {
   readonly exitCode: number | null;
-  readonly report: { code: number; state: string; events: string[] };
+  readonly report: {
+    code: number;
+    state: string;
+    events: string[];
+    failures: string[];
+  };
 }
 
-/** Newest modification time under `dir`, in milliseconds. */
+/**
+ * Newest modification time under `dir`, in milliseconds. `.tsbuildinfo` is
+ * skipped: `tsc --noEmit` (typecheck) rewrites it without emitting, which
+ * made a stale `dist/` look fresh.
+ */
 function newestMtime(dir: string): number {
   let newest = 0;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name.endsWith(".tsbuildinfo")) continue;
     const path = join(dir, entry.name);
     const mtime = entry.isDirectory()
       ? newestMtime(path)
@@ -99,6 +109,15 @@ describe("SIGTERM under plain node", () => {
 
     expect(report.events).toEqual(["onShutdown"]);
     expect(report.state).toBe("stopped");
+    expect(exitCode).toBe(1);
+  });
+
+  it("exits non-zero and emits runtime.failed once when shutdownTimeout elapses", async () => {
+    const { exitCode, report } = await runFixture("hang");
+
+    expect(report.events).toEqual(["onShutdown"]);
+    expect(report.state).toBe("failed");
+    expect(report.failures).toEqual(["stop"]);
     expect(exitCode).toBe(1);
   });
 

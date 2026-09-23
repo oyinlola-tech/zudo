@@ -92,9 +92,11 @@ export interface PermissionEngineOptions {
    * `"constrain"` — an allowing policy is an extra condition and cannot
    * grant a permission the actor's roles, permissions or rules do not.
    *
-   * `"grant"` restores the behaviour before 1.4, where every allowing policy
-   * was an independent grant. Prefer `effect: "grant"` on the individual
-   * policies that really establish the right on their own.
+   * `"grant"` restores the behaviour before 1.4 for every policy with no
+   * `effect`: an allowing policy is an independent grant and a denying one
+   * denies. Prefer `effect: "grant"` on the individual policies that really
+   * establish the right on their own — those grant on allow and abstain on
+   * deny, so they cannot take away what roles grant.
    */
   readonly defaultPolicyEffect?: PolicyEffect;
   /** How competing rules combine. Default: `"deny-overrides"`. */

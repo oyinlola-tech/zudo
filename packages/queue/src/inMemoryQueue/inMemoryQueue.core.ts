@@ -126,8 +126,11 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
     }
 
     this.ownsDeadLetterStore = this.options.deadLetterStore === undefined;
+    // A caller's store is typed `DeadLetterStore<unknown>` (see
+    // `QueueOptions.deadLetterStore`); this queue only ever adds its own
+    // `TData` jobs to it, so it is read back as a store of `TData`.
     this.deadLetterStore =
-      this.options.deadLetterStore ??
+      (this.options.deadLetterStore as DeadLetterStore<TData> | undefined) ??
       createInMemoryDeadLetterStore<TData>({
         maxEntries: DEFAULT_DEAD_LETTER_JOBS,
       });

@@ -14,16 +14,13 @@ import type {
   TenantRequirement,
   TenantTrustLevel,
 } from "../tenancyTypes/tenantInterface.js";
-import type {
-  TenantResolver,
-  TenantResolution,
-} from "../tenancyTypes/resolverTypes.js";
+import type { TenantResolution } from "../tenancyTypes/resolverTypes.js";
 import type { TenantRepository } from "../tenancyTypes/repositoryTypes.js";
 import type { TenantContextStorage } from "../context/contextStorage.core.js";
 import type { HttpMiddleware, HttpMiddlewareContext } from "./httpTypes.js";
 import type {
   HttpResolverContext,
-  TenantClaims,
+  TenantClaimsReader,
 } from "./httpResolverContext.js";
 import { createHttpResolverContext } from "./httpResolverContext.js";
 import {
@@ -34,7 +31,11 @@ import {
   createUnauthorized,
 } from "./httpHelpers.js";
 import { meetsTrustLevel } from "../security/guard.core.js";
-import { loadResolvedTenant } from "./httpSupport/index.js";
+import {
+  loadResolvedTenant,
+  toTenantResolver,
+  type TenantResolverSource,
+} from "./httpSupport/index.js";
 import {
   TenantResolutionConflictError,
   TenantResolutionError,
@@ -50,10 +51,22 @@ export const TENANT_CONTEXT_STATE_KEY = "tenancy:context";
 
 // ─── Options ──────────────────────────────────────────────────────────────
 
-/** Options for the resolve tenant middleware. */
-export interface ResolveTenantMiddlewareOptions {
-  /** Resolver chain or single resolver to determine tenant. */
-  readonly resolver: TenantResolver<HttpResolverContext>;
+/**
+ * Options for the resolve tenant middleware.
+ *
+ * `Context` is the middleware context `getClaims` reads. It defaults to this
+ * package's mirror; a `getClaims` typed with `@zudojs/http`'s
+ * `HttpMiddlewareContext` sets it to that, with no cast.
+ */
+export interface ResolveTenantMiddlewareOptions<
+  Context extends HttpMiddlewareContext = HttpMiddlewareContext,
+> {
+  /**
+   * A single resolver, or a resolver chain from `createResolverChain` passed
+   * as it is. A chain is adapted with its `asResolver()`, so calling that
+   * yourself is no longer needed (it still works).
+   */
+  readonly resolver: TenantResolverSource<HttpResolverContext>;
   /** Repository to load the full tenant after resolution. */
   readonly repository: TenantRepository;
   /** Tenant context storage for propagation. */
@@ -91,10 +104,11 @@ export interface ResolveTenantMiddlewareOptions {
    * suspended tenant is refused whether or not this is set.
    */
   readonly optional?: boolean;
-  /** Reads verified token claims for the JWT resolver. */
-  readonly getClaims?: (
-    context: HttpMiddlewareContext,
-  ) => TenantClaims | undefined;
+  /**
+   * Reads verified token claims for the JWT resolver. Defaults to the
+   * `tenancy:claims` state key. May be typed with `@zudojs/http`'s context.
+   */
+  readonly getClaims?: TenantClaimsReader<Context>;
   /** Custom error response for missing tenant. */
   readonly notFoundResponse?: (
     resolution: TenantResolution | undefined,
@@ -118,9 +132,10 @@ export interface RequireTenantMiddlewareOptions {
  * Enforces trust and tenant status itself rather than relying on a second
  * middleware being installed: the safe behaviour has to be the default.
  */
-export function createResolveTenantMiddleware(
-  options: ResolveTenantMiddlewareOptions,
-): HttpMiddleware {
+export function createResolveTenantMiddleware<
+  Context extends HttpMiddlewareContext = HttpMiddlewareContext,
+>(options: ResolveTenantMiddlewareOptions<Context>): HttpMiddleware {
+  const resolver = toTenantResolver(options.resolver);
   const minimumTrust = options.minimumTrust ?? "verified";
   const slugLookup = options.slugLookup !== false;
   // Unknown and unavailable tenants get the same answer, so a caller cannot
@@ -134,8 +149,8 @@ export function createResolveTenantMiddleware(
     let resolution: TenantResolution | undefined;
 
     try {
-      resolution = await options.resolver.resolve(
-        createHttpResolverContext(context, options.getClaims),
+      resolution = await resolver.resolve(
+        createHttpResolverContext(context as Context, options.getClaims),
       );
     } catch (error) {
       // A resolver chain throws when a credential was rejected or when two

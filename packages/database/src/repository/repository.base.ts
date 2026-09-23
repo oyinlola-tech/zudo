@@ -36,62 +36,16 @@ import type {
   ToPrismaIncludeOptions,
 } from "../relations/relations.definition.js";
 import {
+  type RepositoryDelegate,
+  type RepositoryDelegateOperations,
+  toDelegateOperations,
+} from "./repository.delegate.js";
+import {
   type RepositoryOperation,
   createAbortError,
   createTimeoutError,
   mapRepositoryError,
 } from "./repository.errors.js";
-
-/**
- * Generic Prisma-style delegate contract.
- *
- * This keeps the repository base class independent from generated
- * Prisma model types while still supporting standard CRUD operations.
- */
-export interface RepositoryDelegate<
-  TEntity,
-  TId = string,
-  TCreateInput = Partial<TEntity>,
-  TUpdateInput = Partial<TEntity>,
-  TWhereInput = unknown,
-> {
-  findUnique(args: { where: unknown }): Promise<TEntity | null>;
-
-  findFirst(args: {
-    where?: TWhereInput;
-    orderBy?: unknown;
-    select?: unknown;
-  }): Promise<TEntity | null>;
-
-  findMany(args?: {
-    where?: TWhereInput;
-    skip?: number;
-    take?: number;
-    orderBy?: unknown;
-    select?: unknown;
-    include?: unknown;
-  }): Promise<readonly TEntity[]>;
-
-  create(args: { data: TCreateInput }): Promise<TEntity>;
-
-  update(args: { where: unknown; data: TUpdateInput }): Promise<TEntity>;
-
-  delete(args: { where: unknown }): Promise<TEntity>;
-
-  count(args?: { where?: TWhereInput }): Promise<number>;
-
-  upsert?(args: {
-    where: unknown;
-    create: TCreateInput;
-    update: TUpdateInput;
-  }): Promise<TEntity>;
-
-  createMany?(args: {
-    data: readonly TCreateInput[];
-  }): Promise<{ count: number }>;
-
-  deleteMany?(args: { where?: TWhereInput }): Promise<{ count: number }>;
-}
 
 /**
  * Soft-delete configuration.
@@ -178,7 +132,7 @@ export abstract class BaseRepository<
   Repository<TEntity, TId, TCreateInput, TUpdateInput, TWhereInput>,
   SoftDeletableRepository<TEntity, TId, TCreateInput, TUpdateInput, TWhereInput>
 {
-  protected readonly delegate: RepositoryDelegate<
+  protected readonly delegate: RepositoryDelegateOperations<
     TEntity,
     TId,
     TCreateInput,
@@ -219,7 +173,7 @@ export abstract class BaseRepository<
       throw new TypeError("A repository delegate is required.");
     }
 
-    this.delegate = delegate;
+    this.delegate = toDelegateOperations(delegate);
 
     this.modelName = options.modelName ?? "DatabaseEntity";
 
@@ -299,7 +253,7 @@ export abstract class BaseRepository<
       throw new TypeError("A repository delegate is required.");
     }
 
-    return this.rebind({ delegate });
+    return this.rebind({ delegate: toDelegateOperations(delegate) });
   }
 
   /**

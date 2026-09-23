@@ -24,8 +24,10 @@ export {
 export type {
   HttpResolverContext,
   TenantClaims,
+  TenantClaimsReader,
 } from "./httpResolverContext.js";
 export { readRequestHeader } from "./httpSupport/index.js";
+export type { TenantResolverSource } from "./httpSupport/index.js";
 export {
   createBadRequest,
   createForbidden,

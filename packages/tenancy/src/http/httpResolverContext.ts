@@ -25,6 +25,19 @@ export interface HttpResolverContext {
   getClaims(): TenantClaims | undefined;
 }
 
+/**
+ * Reads verified token claims for a request.
+ *
+ * Generic over the middleware context it reads, so a helper written against
+ * `@zudojs/http`'s own `HttpMiddlewareContext` is accepted as it is. The
+ * constraint is this package's structural mirror, which the real context
+ * satisfies; tenancy cannot depend on http (a higher tier), so the mirror is
+ * the only shape it can name.
+ */
+export type TenantClaimsReader<
+  Context extends HttpMiddlewareContext = HttpMiddlewareContext,
+> = (context: Context) => TenantClaims | undefined;
+
 /** State key under which upstream auth middleware publishes token claims. */
 export const TENANT_CLAIMS_STATE_KEY = "tenancy:claims";
 
@@ -37,9 +50,11 @@ export const TENANT_CLAIMS_STATE_KEY = "tenancy:claims";
  *   an authentication middleware is expected to publish them.
  * @returns An accessor object every shipped resolver understands.
  */
-export function createHttpResolverContext(
-  context: HttpMiddlewareContext,
-  getClaims?: (context: HttpMiddlewareContext) => TenantClaims | undefined,
+export function createHttpResolverContext<
+  Context extends HttpMiddlewareContext = HttpMiddlewareContext,
+>(
+  context: Context,
+  getClaims?: TenantClaimsReader<Context>,
 ): HttpResolverContext {
   return {
     getHeader(name: string): string | undefined {

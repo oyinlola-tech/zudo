@@ -70,6 +70,7 @@ import { createEvent } from "@zudojs/events";
 
 import {
   RuntimeRollbackError,
+  RuntimeStartError,
   RuntimeStateError,
   RuntimeStopError,
   toRuntimeError,
@@ -505,7 +506,13 @@ export class DefaultRuntime implements Runtime {
         errorMessage: runtimeError.message,
       });
 
-      if (this.options.emitEvents) {
+      // A module failure was already published by executeStartup, with the
+      // failing module and phase; publishing it again here reported one
+      // failure twice. A timeout or other error is published here.
+      const alreadyPublished =
+        error instanceof RuntimeStartError && error.failedModuleId !== undefined;
+
+      if (this.options.emitEvents && !alreadyPublished) {
         this.emitEvent(
           "runtime.failed",
           createFailureEventPayload(
@@ -613,6 +620,11 @@ export class DefaultRuntime implements Runtime {
       this.emitEvent("runtime.stopping");
     }
 
+    // `executeShutdown` publishes `runtime.failed` itself when it rejects,
+    // so the catch below only publishes for a failure raised after it.
+    // Publishing on both paths delivered every failed stop twice.
+    let shutdownSettled = false;
+
     try {
       const result = await executeShutdown(
         this.lifecycle,
@@ -622,6 +634,8 @@ export class DefaultRuntime implements Runtime {
         this.options.shutdownTimeout,
         this.options.emitEvents,
       );
+
+      shutdownSettled = true;
 
       const containerFailure = await this.releaseContainer();
 
@@ -661,7 +675,7 @@ export class DefaultRuntime implements Runtime {
         errorMessage: runtimeError.message,
       });
 
-      if (this.options.emitEvents) {
+      if (this.options.emitEvents && shutdownSettled) {
         this.emitEvent(
           "runtime.failed",
           createFailureEventPayload(

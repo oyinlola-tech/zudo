@@ -75,3 +75,18 @@ describe("post-release — the received type names null, arrays and NaN", () => 
     expect(firstIssue(numberSchema(), "x").received).toBe("string");
   });
 });
+
+describe("impossible dates and times say so", () => {
+  it("names a well-formed but impossible value instead of blaming the format", async () => {
+    const { stringSchema } = await import("../src/index.js");
+    const date = stringSchema().date().safeParse("2026-02-30");
+    expect(date.success).toBe(false);
+    if (!date.success) expect(date.issues[0]?.message).toBe("Not a real calendar date");
+    const bad = stringSchema().date().safeParse("30/02/2026");
+    if (!bad.success) expect(bad.issues[0]?.message).toBe("Invalid date format");
+    const time = stringSchema().time().safeParse("25:61");
+    if (!time.success) expect(time.issues[0]?.message).toBe("Not a real time of day");
+    const dt = stringSchema().datetime().safeParse("2026-02-30T10:00:00Z");
+    if (!dt.success) expect(dt.issues[0]?.message).toBe("Not a real date and time");
+  });
+});

@@ -6,6 +6,10 @@ import { SerializationTags } from "@zudojs/constants";
 import { SerializeError } from "@zudojs/errors";
 import { isPlainObject } from "@zudojs/types";
 import type { TypeTransformer } from "../serializerTypes/index.js";
+import {
+  createBuiltinTransformers,
+  type TransformerLookup,
+} from "./transformerLookup.core.js";
 
 /**
  * Normalises what a transformer's `serialize` returned into the tagged
@@ -47,22 +51,45 @@ const LOSSY_TYPES: ReadonlyArray<readonly [string, (value: object) => boolean]> 
   ["DataView", (value) => value instanceof DataView],
 ];
 
+let builtins: TransformerLookup | undefined;
+
+/**
+ * Whether a built-in transformer handles `value`. When one does and the
+ * value still reached {@link assertNotLossy}, the built-ins were disabled.
+ */
+function hasBuiltinTransformer(value: object): boolean {
+  builtins ??= createBuiltinTransformers();
+  return builtins.findForValue(value) !== undefined;
+}
+
+/** `"a Map"`, `"an Error"`. */
+function withArticle(name: string): string {
+  return `${/^[AEIOU]/.test(name) ? "an" : "a"} ${name}`;
+}
+
 /**
  * Throws when a value that no transformer handles would be written as `{}`
  * (a `Map`, `Set`, `Error`, `RegExp`, ...), instead of silently losing its
  * contents. Only reachable when the built-in transformers are disabled or
  * a type has no transformer.
  *
+ * Suggests re-enabling the built-ins only when one of them handles the
+ * type; otherwise the fix is registering a transformer.
+ *
  * @throws {SerializeError} naming the type and how to fix it.
  */
 export function assertNotLossy(value: object): void {
   for (const [name, matches] of LOSSY_TYPES) {
     if (matches(value)) {
+      const fix = hasBuiltinTransformer(value)
+        ? `Register a transformer for ${name}, or keep the built-in ` +
+          `transformers enabled (do not pass builtins: false).`
+        : `Register a transformer for ${name}.`;
+
       throw new SerializeError(
-        `Cannot serialize a ${name} with preserveTypes: no transformer is ` +
-          `registered for it, and JSON would write it as {} and lose its ` +
-          `contents. Register a transformer for ${name}, or keep the ` +
-          `built-in transformers enabled (do not pass builtins: false).`,
+        `Cannot serialize ${withArticle(name)} with preserveTypes: no ` +
+          `transformer is registered for it, and JSON would write it as {} ` +
+          `and lose its contents. ${fix}`,
         { format: "json" },
       );
     }

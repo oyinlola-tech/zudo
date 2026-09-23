@@ -23,8 +23,8 @@ import {
   assertDatabaseHealth,
   checkDatabaseHealth,
   createLockManager,
-  type RepositoryDelegate,
 } from "../src/index.js";
+import type { UserDelegate } from "./helpers/prismaClientUserDelegate.fixture.js";
 
 interface User {
   id: string;
@@ -33,7 +33,10 @@ interface User {
   deletedAt: Date | null;
 }
 
-declare const userDelegate: RepositoryDelegate<User, string, Partial<User>, Partial<User>, Record<string, unknown>>;
+// The README passes `prisma.user`. This package's own generated client has no
+// User model, so the generated `prisma-client` User delegate stands in for it:
+// a real generated shape, not a stub, and passed with no cast.
+declare const prismaUser: UserDelegate;
 
 // 1. Build the Prisma client with a driver adapter and hand it to the wrapper.
 const prisma = new PrismaClient({
@@ -52,7 +55,7 @@ class UserRepository extends BaseRepository<User> {
   }
 }
 
-const users = new UserRepository(userDelegate);
+const users = new UserRepository(prismaUser);
 const alice = await users.create({ email: "alice@example.com", name: "Alice" });
 await users.softDelete(alice.id);
 

@@ -164,7 +164,9 @@ describe("values no transformer handles are never silently written as {}", () =>
     })();
     expect(error).toBeInstanceOf(SerializeError);
     expect(isSerializationError(error)).toBe(true);
-    expect((error as Error).message).toContain(`Cannot serialize a ${name}`);
+    expect((error as Error).message).toMatch(
+      new RegExp(`Cannot serialize an? ${name} `),
+    );
   });
 
   it("builtins: false without a registry uses no transformers at all", () => {

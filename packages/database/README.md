@@ -72,6 +72,11 @@ await withTransaction(client, async (tx) => {
 await client.disconnect();
 ```
 
+A generated model delegate such as `prisma.user` is passed as-is, with no cast.
+`RepositoryDelegate` accepts any Prisma-style delegate whose rows match the
+entity type; `this.delegate` inside a subclass is typed with the arguments the
+repository passes (`RepositoryDelegateOperations`).
+
 `createDatabaseClient` accepts either a pre-built `prisma` instance or an
 `adapter` (in which case it constructs the `PrismaClient` for you). It throws a
 `DatabaseError` if neither is supplied.

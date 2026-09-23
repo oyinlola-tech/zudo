@@ -19,7 +19,12 @@ import {
   createUnauthorizedResponse,
   type DeniedResponseOptions,
 } from "./httpHelpers.js";
-import { loadResource, type ResourceExtractor } from "./httpResource.helper.js";
+import {
+  loadResource,
+  refuseMissingResource,
+  type MissingResourceOptions,
+  type ResourceExtractor,
+} from "./httpResource.helper.js";
 
 // ─── Options ──────────────────────────────────────────────────────────────
 
@@ -52,12 +57,14 @@ export interface AuthorizeMiddlewareOptions extends DeniedResponseOptions {
 }
 
 /** Options for the requirePermission middleware. */
-export interface RequirePermissionMiddlewareOptions extends AuthorizeMiddlewareOptions {
+export interface RequirePermissionMiddlewareOptions
+  extends AuthorizeMiddlewareOptions, MissingResourceOptions {
   /** The permission to check (e.g. "post:update"). */
   readonly permission: string;
   /**
    * Loads the resource the permission is checked against (optional). May be
    * async; it is awaited, and a loader that throws or rejects denies (403).
+   * What `undefined` or `null` answers is set by `onMissingResource`.
    */
   readonly extractResource?: ResourceExtractor;
 }
@@ -159,6 +166,15 @@ export function createRequirePermissionMiddleware(
       context.state.set(DECISION_STATE_KEY, loaded.decision);
       return createForbiddenResponse(loaded.decision, options);
     }
+    const missing = refuseMissingResource(
+      options.extractResource,
+      loaded.resource,
+      options,
+    );
+    if (missing) {
+      context.state.set(DECISION_STATE_KEY, missing.decision);
+      return missing.response;
+    }
     const decision = await engine.check(
       actor,
       options.permission,
@@ -187,10 +203,12 @@ export function authorize(
 }
 
 /** Options for {@link createRequirePermissionsMiddleware}. */
-export interface RequirePermissionsMiddlewareOptions extends AuthorizeMiddlewareOptions {
+export interface RequirePermissionsMiddlewareOptions
+  extends AuthorizeMiddlewareOptions, MissingResourceOptions {
   /**
    * Loads the resource checked for every permission (optional). May be
    * async; it is awaited, and a loader that throws or rejects denies (403).
+   * What `undefined` or `null` answers is set by `onMissingResource`.
    */
   readonly extractResource?: ResourceExtractor;
   /**
@@ -232,6 +250,12 @@ export function createRequirePermissionsMiddleware(
       options.onError,
     );
     if (!loaded.ok) return createForbiddenResponse(loaded.decision, options);
+    const missing = refuseMissingResource(
+      options.extractResource,
+      loaded.resource,
+      options,
+    );
+    if (missing) return missing.response;
     const resource = loaded.resource;
     const authorization = buildAuthorization(context, options);
     const results = new Map<string, PermissionDecision>();

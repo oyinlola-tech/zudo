@@ -32,7 +32,7 @@ describe("README example", () => {
     ]);
 
     const middleware = createResolveTenantMiddleware({
-      resolver: resolver.asResolver(),
+      resolver,
       repository,
       storage,
     });

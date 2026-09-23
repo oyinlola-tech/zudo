@@ -57,6 +57,35 @@ console.log(await queue.getStats());
 await queue.close();
 ```
 
+## Dead-letter store
+
+Each queue keeps the most recent 1000 dead-lettered jobs in a store of its own,
+cleared by `close()`. To choose the cap, or to keep the jobs after the queue
+closes, pass a store as `deadLetterStore`. No type annotation is needed, for
+an untyped store or one typed for the queue's payload.
+
+```typescript
+import {
+  createInMemoryDeadLetterStore,
+  createInMemoryQueue,
+  createQueueName,
+} from "@zudojs/queue";
+
+// Keep only the 50 most recent failures.
+const store = createInMemoryDeadLetterStore({ maxEntries: 50 });
+const broken = createInMemoryQueue(createQueueName("broken"), {
+  deadLetterStore: store,
+});
+
+// A store typed for the payload, so its entries read as DeadLetterJob<Email>.
+const failedEmails = createInMemoryDeadLetterStore<Email>();
+const emails = createInMemoryQueue<Email>(createQueueName("emails"), {
+  deadLetterStore: failedEmails,
+});
+```
+
+`close()` leaves a store you passed in alone; its contents are yours.
+
 ## Features
 
 - In-memory queue for development and testing

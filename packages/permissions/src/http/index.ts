@@ -29,13 +29,20 @@ export {
   createForbiddenResponse,
   createUnauthorizedResponse,
   createJsonResponse,
+  createNotFoundResponse,
   type DeniedResponseOptions,
+  type NotFoundResponseOptions,
   type PermissionHttpResponse,
 } from "./httpHelpers.js";
 
 export {
   loadResource,
+  refuseMissingResource,
   RESOURCE_ERROR_DECISION,
+  RESOURCE_NOT_FOUND_DECISION,
+  type MissingResourceMode,
+  type MissingResourceOptions,
+  type MissingResourceRefusal,
   type ResourceExtractor,
   type ResourceOutcome,
 } from "./httpResource.helper.js";

@@ -98,8 +98,11 @@ picked up.
 or `createSerializer`) to use only your registry. A value that no transformer
 handles and that JSON would write as `{}` (a `Map`, `Set`, `WeakMap`, `Error`,
 `RegExp`, `ArrayBuffer`, ...) then throws `SerializeError` under
-`preserveTypes` instead of being silently emptied. To compose a registry by
-hand, start from `createBuiltinTransformers()`.
+`preserveTypes` instead of being silently emptied. A type no built-in covers
+(`RegExp`, `WeakMap`, `ArrayBuffer`, `DataView`, ...) throws the same way with
+the built-ins on. The message names the fix: register a transformer, or, when
+a built-in handles the type and you turned them off, keep them enabled. To
+compose a registry by hand, start from `createBuiltinTransformers()`.
 
 ## Untrusted input
 

@@ -12,6 +12,8 @@ import {
   invalidConfigurationError,
 } from "@zudojs/errors";
 
+import type { ConfigValidationIssue } from "../configSchema/configSchema.type.js";
+
 /**
  * Error thrown when complete configuration validation fails.
  *
@@ -19,9 +21,9 @@ import {
  * the base ConfigurationError from @zudojs/errors.
  */
 export class ConfigManagerValidationError extends ConfigurationError {
-  readonly issues: readonly unknown[];
+  readonly issues: readonly ConfigValidationIssue[];
 
-  constructor(issues: readonly unknown[]) {
+  constructor(issues: readonly ConfigValidationIssue[]) {
     super(
       `Configuration validation failed with ${issues.length} issue${issues.length === 1 ? "" : "s"}.`,
       {

@@ -102,9 +102,12 @@ rather than calling `process.exit()`, so your own `SIGTERM` listeners and
 pending writes still finish:
 
 - clean shutdown: the exit code is left alone (0 unless you set one);
-- failed shutdown — `stop()` rejected, or a module's hook failed
-  (`status.shutdownFailures` is non-empty): `process.exitCode` is set
-  to `1` and the failure is logged as a `RuntimeSignalError`;
+- failed shutdown — `stop()` rejected (including an `onShutdown` that
+  outlives `shutdownTimeout`, which leaves the runtime `failed`), or a
+  module's hook failed (`status.shutdownFailures` is non-empty):
+  `process.exitCode` is set to `1` and the failure is logged as a
+  `RuntimeSignalError`. A failed stop publishes `runtime.failed`
+  (`phase: "stop"`) once;
 - fatal error (`exitOnFatalError`): `process.exit(1)` once shutdown ends;
 - second `SIGTERM`/`SIGINT` during shutdown (`forceExitOnSecondSignal`):
   `process.exit(1)` at once.

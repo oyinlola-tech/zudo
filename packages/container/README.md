@@ -162,9 +162,13 @@ container.register(API, {
 });
 ```
 
-Classes without an `inject` list are constructed with zero arguments. There
-is no reflection/decorator magic — dependencies are exactly the tokens you
-list, resolved in order.
+Classes without an `inject` list are constructed with zero arguments, so
+only a constructor that declares no parameters may omit it (parameters with
+a default value do not count). Registering such a class without `inject`
+is allowed, but resolving it throws a `ProviderResolutionError` naming the
+class and the `inject: [...]` fix, instead of building it with `undefined`
+dependencies. There is no reflection/decorator magic — dependencies are
+exactly the tokens you list, resolved in order.
 
 ## Duplicate registrations
 

@@ -107,6 +107,7 @@ export {
   isPrismaErrorLike,
   toDatabaseOperation,
   type RepositoryDelegate,
+  type RepositoryDelegateOperations,
   type BaseRepositoryOptions,
   type SoftDeleteOptions,
   type CursorQueryOptions,

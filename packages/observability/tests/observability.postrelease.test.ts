@@ -101,7 +101,10 @@ describe("`fields` extends the defaults", () => {
     const obs = createObservability({
       serviceName: "postrelease",
       useConsoleExporters: false,
-      logExporter: { export: async (batch) => void records.push(...batch) },
+      logExporter: {
+        export: async (batch) => void records.push(...batch),
+        shutdown: async () => {},
+      },
       redaction: { fields: ["nationalId"] },
     });
     obs.logger.info("x", { nationalId: "1", jwt: "j", user: "ada" });

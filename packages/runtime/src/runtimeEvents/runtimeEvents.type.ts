@@ -7,25 +7,10 @@ import type {
  * Runtime lifecycle events.
  *
  * These events are emitted through the EventBus when
- * the runtime transitions through its lifecycle.
+ * the runtime transitions through its lifecycle. Derived from
+ * {@link RuntimeEventMap}, so every event with a payload type is named here.
  */
-export type RuntimeEventType =
-  | "runtime.initializing"
-  | "runtime.running"
-  | "runtime.stopping"
-  | "runtime.stopped"
-  | "runtime.failed"
-  | "runtime.module.initializing"
-  | "runtime.module.initialized"
-  | "runtime.module.starting"
-  | "runtime.module.started"
-  | "runtime.module.stopping"
-  | "runtime.module.stopped"
-  | "runtime.module.failed"
-  | "runtime.shutdown.drain"
-  | "runtime.shutdown.complete"
-  | "runtime.health.changed"
-  | "runtime.readiness.changed";
+export type RuntimeEventType = keyof RuntimeEventMap;
 
 /**
  * Base payload for all runtime events.
@@ -86,14 +71,10 @@ export interface RuntimeReadinessEventPayload extends RuntimeEventPayload {
 /**
  * Event types carrying a {@link RuntimeModuleEventPayload}.
  */
-export type RuntimeModuleEventType =
-  | "runtime.module.initializing"
-  | "runtime.module.initialized"
-  | "runtime.module.starting"
-  | "runtime.module.started"
-  | "runtime.module.stopping"
-  | "runtime.module.stopped"
-  | "runtime.module.failed";
+export type RuntimeModuleEventType = Extract<
+  RuntimeEventType,
+  `runtime.module.${string}`
+>;
 
 /**
  * Maps event types to their payload types.

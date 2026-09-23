@@ -45,11 +45,18 @@ const resolver = createResolverChain([
 // (default "verified"), then runs the rest of the request inside the tenant
 // context. acme.example.com reaches t-1001 through its slug.
 const middleware = createResolveTenantMiddleware({
-  resolver: resolver.asResolver(),
+  resolver, // a chain as it is, or a single resolver
   repository,
   storage,
 });
 ```
+
+`resolver` takes a chain directly. Before 1.3.1 it took only a single
+`TenantResolver`, so a chain had to go through `chain.asResolver()`: passing
+the chain itself was a type error, and cast through, every request was
+refused, because a chain's `resolve` returns `{ resolution, candidates,
+conflict }` rather than a resolution. The middleware now recognises a chain by
+its `asResolver` method and adapts it. `resolver.asResolver()` still works.
 
 The chain's context type is inferred from its resolvers — what the JWT,
 domain and subdomain resolvers read, which `HttpResolverContext` provides — so
@@ -66,6 +73,25 @@ into a route's `middleware` list:
 ```typescript
 router.get("/projects", listProjects, { middleware: [middleware] });
 ```
+
+`getClaims` reads verified token claims for the JWT resolver (by default they
+come from the `tenancy:claims` state key). It may be typed with
+`@zudojs/http`'s own `HttpMiddlewareContext`, so a helper your auth layer
+already has plugs in without a cast:
+
+```typescript
+import type { HttpMiddlewareContext } from "@zudojs/http";
+import type { TenantClaims } from "@zudojs/tenancy";
+
+const claimsOf = (context: HttpMiddlewareContext) =>
+  context.state.get<TenantClaims>("auth:claims");
+
+createResolveTenantMiddleware({ resolver, repository, storage, getClaims: claimsOf });
+```
+
+The option is generic over the context it reads, bounded by this package's
+structural mirror, which the real context satisfies. A reader for something
+that is not a middleware context, such as a bare request, is still refused.
 
 A refusal — 400, 401, 403, 404 — is a `GuardResponse` (`createGuardResponse`
 from `@zudojs/middleware`), which `@zudojs/http` sends with that status. The

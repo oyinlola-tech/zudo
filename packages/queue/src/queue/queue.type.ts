@@ -76,8 +76,15 @@ export interface QueueOptions {
    * emitter, reachable as `queue.events`.
    */
   readonly eventEmitter?: QueueEventEmitter;
-  /** Store that receives jobs which exhausted their attempts. */
-  readonly deadLetterStore?: DeadLetterStore<never>;
+  /**
+   * Store that receives jobs which exhausted their attempts.
+   *
+   * Any store is accepted without an annotation: the untyped
+   * `createInMemoryDeadLetterStore()` and one typed for the queue's payload,
+   * `createInMemoryDeadLetterStore<TData>()`. (1.4.0 typed this
+   * `DeadLetterStore<never>`, which rejected both.)
+   */
+  readonly deadLetterStore?: DeadLetterStore<unknown>;
   /**
    * Whether `add()` rejects while the queue is paused.
    *

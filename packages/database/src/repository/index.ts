@@ -6,12 +6,16 @@
 
 export {
   BaseRepository,
-  type RepositoryDelegate,
   type BaseRepositoryOptions,
   type SoftDeleteOptions,
   type CursorQueryOptions,
   type TransactionClientLike,
 } from "./repository.base.js";
+
+export {
+  type RepositoryDelegate,
+  type RepositoryDelegateOperations,
+} from "./repository.delegate.js";
 
 export {
   mapRepositoryError,

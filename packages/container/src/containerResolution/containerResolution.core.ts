@@ -78,6 +78,7 @@ import {
 import { describeToken } from "../containerToken/containerToken.type.js";
 import {
   assertAutoRegistrable,
+  assertClassInjectable,
   isAutoRegistrable,
 } from "./containerResolution.autoRegister.js";
 import { DependentIndex } from "./containerResolution.dependents.js";
@@ -374,6 +375,7 @@ export class ContainerResolver {
       }
       if (isClassProvider(provider)) {
         const deps = provider.inject ?? [];
+        assertClassInjectable(describeToken(token), provider.useClass, deps);
         const args = deps.map(
           (d) =>
             this.resolveInternal(unwrapToken(d), state, singletonAncestor)

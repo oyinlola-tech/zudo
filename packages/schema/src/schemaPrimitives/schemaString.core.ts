@@ -34,6 +34,13 @@ import {
 const FORMAT_RANGE_CHECKS: Readonly<Record<string, (value: string) => boolean>> =
   { date: isCalendarDate, datetime: isCalendarDateTime, time: isClockTime };
 
+/** Messages for a value with the right shape that fails its range check. */
+const RANGE_MESSAGES: Readonly<Record<string, string>> = {
+  date: "Not a real calendar date",
+  datetime: "Not a real date and time",
+  time: "Not a real time of day",
+};
+
 /** Configuration for string schema constraints. */
 interface StringSchemaConfig {
   readonly min?: number;
@@ -182,15 +189,21 @@ export class StringSchema extends Schema<string> {
       );
     }
     const protocols = format === "url" ? this._config.urlProtocols : undefined;
+    const shapeOk = protocols === undefined && pattern.test(value);
     const valid =
       protocols === undefined
-        ? pattern.test(value) && (FORMAT_RANGE_CHECKS[format]?.(value) ?? true)
+        ? shapeOk && (FORMAT_RANGE_CHECKS[format]?.(value) ?? true)
         : isUrlWithProtocol(value, protocols);
     if (!valid) {
       addIssue(ctx, {
         code: SchemaIssueCode.INVALID_FORMAT,
         path: [...ctx.path],
-        message: `Invalid ${format} format`,
+        // "2026-02-30" has the right shape; calling it an invalid format
+        // sent people looking for a typo that is not there.
+        message:
+          shapeOk && RANGE_MESSAGES[format] !== undefined
+            ? RANGE_MESSAGES[format]
+            : `Invalid ${format} format`,
         expected: format,
       });
       return true;

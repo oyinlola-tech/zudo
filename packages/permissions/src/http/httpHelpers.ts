@@ -74,6 +74,26 @@ export function createUnauthorizedResponse(
   });
 }
 
+/** Options for {@link createNotFoundResponse}. */
+export interface NotFoundResponseOptions {
+  /** Builds the 404 body for a resource that does not exist. */
+  readonly notFoundResponse?: () => unknown;
+}
+
+/**
+ * Create a 404 Not Found JSON response, for a guard whose resource loader
+ * found nothing (`onMissingResource: "notFound"`).
+ */
+export function createNotFoundResponse(
+  options?: NotFoundResponseOptions,
+): PermissionHttpResponse {
+  const body = options?.notFoundResponse
+    ? options.notFoundResponse()
+    : { error: "Not Found", message: "Resource not found" };
+
+  return createGuardResponse({ status: 404, body, headers: JSON_HEADERS });
+}
+
 /**
  * Create a JSON response.
  */

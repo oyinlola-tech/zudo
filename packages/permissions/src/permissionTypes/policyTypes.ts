@@ -64,7 +64,13 @@ export interface PermissionCache {
  *   permissions or rules must still grant the permission. Its deny denies.
  * - `"grant"`: the policy is an independent grant. Its allow grants the
  *   permission even when no role or rule does — an ownership check, say.
- *   Use it only for a policy that establishes the right on its own.
+ *   Its deny (or a throw or timeout) *abstains*: the policy adds access but
+ *   never takes away what roles, permissions or rules grant. Use an explicit
+ *   deny rule or a constraining policy to deny.
+ *
+ * As an engine's `defaultPolicyEffect`, `"grant"` instead restores the
+ * pre-1.4 behaviour for policies that set no `effect`: an allow grants and a
+ * deny denies.
  */
 export type PolicyEffect = "constrain" | "grant";
 
@@ -75,7 +81,7 @@ export interface PermissionPolicyDefinition {
    * Whether this policy's allow can grant a permission the actor's roles do
    * not include. Default: the engine's `defaultPolicyEffect`, which is
    * `"constrain"` — a policy only ever narrows access. Any value other than
-   * `"grant"` constrains.
+   * `"grant"` constrains. With `"grant"`, a deny abstains rather than denies.
    */
   readonly effect?: PolicyEffect;
   /**

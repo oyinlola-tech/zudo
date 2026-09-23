@@ -235,13 +235,29 @@ const engine = createPermissionEngine({
     },
   ],
 });
+
+await engine.can(author, "post:update", post); // true: the policy grants
+await engine.can(editor, "post:update", post); // true: the role grants
+await engine.can(viewer, "post:update", post); // false: neither does
 ```
+
+A granting policy **grants when it allows and abstains when it does not**
+(including when it throws or times out): it adds access, and never takes away
+what roles, direct permissions or rules grant. So the policy returns only the
+ownership test — no `|| actorHasRole(actor, "editor")` is needed to keep
+editors working. In 1.4.0 a granting policy's `allowed: false` denied, so an
+ownership policy locked out every editor who was not the author. To deny, use
+an explicit deny rule, `deniedPermissions`, or a constraining policy.
 
 A granting policy still never overrides a denial — from another policy, an
 explicit deny, or a deny rule that applied. Only the exact value `"grant"`
-grants; a typo constrains. `createPermissionEngine({ defaultPolicyEffect:
-"grant" })` restores the pre-1.4 behaviour for every policy that sets no
-`effect` — prefer marking the individual policies.
+grants; a typo constrains.
+
+`createPermissionEngine({ defaultPolicyEffect: "grant" })` restores the
+pre-1.4 behaviour, unchanged, for every policy that sets no `effect`: an
+allowing policy grants and a denying one denies. It exists for backward
+compatibility — prefer marking the individual policies with `effect: "grant"`,
+which abstain instead of denying even under that engine default.
 
 `policyTimeout: 0` means "expire immediately", not "no timeout" — omit it to
 disable.
@@ -507,6 +523,46 @@ const guard = authorize(engine, "post:update", {
 - `createRequirePermissionsMiddleware(engine, permissions, { mode })` checks
   several permissions, short-circuiting on the first that decides the outcome.
   An empty list denies in either mode.
+
+### A resource that does not exist
+
+By default a guard checks the permission even when `extractResource` returns
+`undefined` or `null`, with no resource. Rules and policies that read the
+resource see nothing, so the answer comes from the rest of the model. A role
+that grants `post:update` lets the request through, and the handler still has
+to answer 404. A resource-owner rule denies with 403. `onMissingResource`
+moves that answer into the guard:
+
+```typescript
+const guard = authorize(engine, "post:update", {
+  extractActor: (context) => context.state.get("auth:user"),
+  extractResource: (context) => posts.find(context.request.getParam?.("id")),
+  onMissingResource: "notFound", // 404 when the loader returns undefined/null
+  notFoundResponse: () => ({ error: "Not Found" }), // optional body
+});
+```
+
+| `onMissingResource` | A missing resource answers |
+| ------------------- | -------------------------- |
+| `"check"` (default) | whatever the engine decides with no resource, as before |
+| `"forbid"`          | **403**, without evaluating |
+| `"notFound"`        | **404**, without evaluating |
+
+The option applies only to a guard that has an `extractResource`. An
+unauthenticated request still gets 401 first, and a loader that throws still
+gets 403. The guard records `RESOURCE_NOT_FOUND_DECISION`
+(`reason: "resource_not_found"`) under `permissions:decision`.
+`createRequirePermissionsMiddleware` takes the same two options. The 404 body
+is built by `createNotFoundResponse`.
+
+**The trade-off.** A 404 hides whether a resource exists only when every
+answer is consistent. With `"notFound"`, an authenticated caller who lacks the
+permission gets 404 for an id that does not exist and 403 for one that does,
+so the two statuses confirm which ids exist. To conceal existence from callers
+who are not authorised, every route over the resource must answer the same
+way, and a denial on an existing resource must also answer 404. These guards
+do not do that for you. Use `"notFound"` to take the lookup-and-404 out of the
+handler. On its own it does not conceal anything.
 
 The middleware composes with the real `@zudojs/http` pipeline without
 depending on it: the HTTP types are mirrored structurally (headers, params and
