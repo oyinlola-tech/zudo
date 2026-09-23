@@ -1,9 +1,11 @@
 /**
  * Learn pages: wires each example's "Run in browser" button to the docked
- * terminal (js/playground.js) and remembers which lessons you finished.
+ * terminal (js/playground.js), its "Edit" button to the editor (js/ide.js),
+ * and remembers which lessons you finished (a passed test marks it too).
  *
  * Public API (used by scripts/site-learn.mjs --browser):
  *   window.ZudoLearn.run(index) → Promise<{ kind, text }[]>
+ *   window.ZudoLearn.edit(index), window.ZudoLearn.markDone(slug)
  */
 (function () {
   'use strict';
@@ -52,6 +54,28 @@
     });
   }
 
+  /* "Edit": open this example, and the files of its project up to it, in the editor (js/ide.js). */
+  function edit(index) {
+    var fig = document.querySelector('.lx-example[data-index="' + index + '"]');
+    if (!fig || !window.ZudoIDE) return;
+    var project = fig.getAttribute('data-project') || 'examples';
+    var files = [];
+    var all = fig.getAttribute('data-project')
+      ? document.querySelectorAll('.lx-example[data-project="' + project + '"]')
+      : [fig];
+    for (var i = 0; i < all.length; i++) {
+      files.push({ project: project, path: all[i].getAttribute('data-file'), content: source(all[i]) });
+      if (all[i] === fig) break;
+    }
+    window.ZudoIDE.open({ files: files, focus: { project: project, path: fig.getAttribute('data-file') } });
+  }
+
+  function markDone(slug) {
+    var list = readDone();
+    if (list.indexOf(slug) === -1) { list.push(slug); writeDone(list); }
+    paintDone();
+  }
+
   function paintDone() {
     var done = readDone();
     document.querySelectorAll('[data-lesson]').forEach(function (el) {
@@ -88,6 +112,17 @@
         run(btn.getAttribute('data-index'));
         return;
       }
+      var ed = e.target.closest && e.target.closest('.lx-edit');
+      if (ed) {
+        e.preventDefault();
+        edit(ed.getAttribute('data-index'));
+        return;
+      }
+      if (e.target.closest && e.target.closest('.lx-open-ide')) {
+        e.preventDefault();
+        if (window.ZudoIDE) window.ZudoIDE.open({});
+        return;
+      }
       var done = e.target.closest && e.target.closest('.lx-done');
       if (done) {
         var slug = done.getAttribute('data-lesson');
@@ -101,7 +136,7 @@
     paintDone();
     dockCopyButtons();
     requestAnimationFrame(dockCopyButtons);
-    window.ZudoLearn = { run: run };
+    window.ZudoLearn = { run: run, edit: edit, markDone: markDone };
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

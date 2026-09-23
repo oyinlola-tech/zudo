@@ -1126,7 +1126,18 @@
 
   var lineTotal = 0;
 
+  /* Other widgets (the Learn editor and tests) can watch every line a run prints. */
+  var lineListeners = [];
+  function onLine(fn) {
+    lineListeners.push(fn);
+    return function () { lineListeners = lineListeners.filter(function (f) { return f !== fn; }); };
+  }
+  function notify(ev) {
+    lineListeners.slice().forEach(function (fn) { try { fn(ev); } catch (e) { /* a listener must not break the run */ } });
+  }
+
   function line(kind, text, sig) {
+    notify({ kind: kind, text: text, sig: sig || '' });
     var div = document.createElement('div');
     div.className = 'pg-line pg-line-' + kind;
     var s = document.createElement('span');
@@ -1170,6 +1181,7 @@
   }
 
   function clearTerm() {
+    notify({ kind: 'clear', text: '', sig: '' });
     term.innerHTML = '';
     lineTotal = 0;
     countEl.textContent = '';
@@ -1343,10 +1355,12 @@
   var TIMER_PARAMS = ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'];
   function timerArgs(t) { return [t.setTimeout, t.clearTimeout, t.setInterval, t.clearInterval]; }
 
+  var quietRun = false;
+
   function run() {
     if (running) return runPromise || Promise.resolve();
     var src = ta.value;
-    store(LS.code, src);
+    if (!quietRun) store(LS.code, src);
 
     clearTerm();
     var file = fileEl.textContent || 'playground.ts';
@@ -1420,10 +1434,32 @@
     }).filter(function (l) { return ['cmd', 'ok', 'sys', 'ret'].indexOf(l.kind) === -1; });
   }
 
-  function exec(code, name) {
-    load(code, name);
-    return Promise.resolve(run()).then(output);
+  /* opts.show === false runs without opening the panel and without replacing
+     the code the learner keeps in it (the editor and the tests use this). */
+  function exec(code, name, opts) {
+    var quiet = opts && opts.show === false;
+    var run0 = function () {
+      if (quiet) {
+        var keep = { code: ta.value, file: fileEl.textContent, dirty: fileEl.classList.contains('is-dirty') };
+        examplesSel.selectedIndex = -1;
+        setFile(name || 'snippet.ts');
+        setCode(code, true);
+        quietRun = true;
+        return Promise.resolve(run()).then(output).then(function (out) {
+          quietRun = false;
+          setFile(keep.file);
+          setCode(keep.code, keep.dirty);
+          return out;
+        }, function (e) { quietRun = false; throw e; });
+      }
+      load(code, name);
+      return Promise.resolve(run()).then(output);
+    };
+    /* One run at a time: wait for a run that is still going. */
+    return running && runPromise ? Promise.resolve(runPromise).then(run0) : run0();
   }
+
+  function isRunning() { return running; }
 
   /* Replace the files that `import "./x.js"` can see (the lesson page's project). */
   function registerFiles(files) {
@@ -1588,6 +1624,7 @@
     window.ZudoPlayground = {
       open: open, close: close, toggle: toggle, load: load, run: run, examples: EXAMPLES,
       exec: exec, output: output, registerFiles: registerFiles, highlight: highlight, inspect: inspect,
+      onLine: onLine, isRunning: isRunning,
     };
     document.dispatchEvent(new CustomEvent('zudo:playground-ready'));
   }
