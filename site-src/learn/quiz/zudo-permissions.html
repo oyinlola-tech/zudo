@@ -1,0 +1,1062 @@
+<question id="pm-401-403" type="choice">
+<q>Ada is logged in with a valid token and tries to delete Linus's task. The permission engine says no. Which status should the API answer?</q>
+<option>401 Unauthorized</option>
+<option correct>403 Forbidden</option>
+<option>404 Not Found</option>
+<option>400 Bad Request</option>
+<explain><p>401 means "I don't know who you are" (authentication failed). The server knows this is Ada; the answer to what she asked is no, so it is <strong>403</strong>.</p></explain>
+</question>
+
+<question id="pm-escalation" type="choice">
+<q>What is a <strong>privilege escalation</strong>?</q>
+<option>A user who forgot their password</option>
+<option correct>A normal user who manages to act as an admin, or to edit other people's data</option>
+<option>An admin who logs in twice</option>
+<option>A request that takes too long</option>
+<explain><p>Authorization bugs that let someone do more than they should are among the most common serious security bugs in real APIs. Much of the lesson shows such attacks and how they are refused.</p></explain>
+</question>
+
+<question id="pm-rbac" type="choice">
+<q>In role-based access control (RBAC), how do users get their rights?</q>
+<option>Each right is given to each person, one by one</option>
+<option correct>Rights are given to a few roles, like <code>member</code> and <code>admin</code>, and each user gets one or more roles</option>
+<option>Every user gets every right, and some are taken away</option>
+<option>The client sends the rights it needs with each request</option>
+<explain><p>Roles keep rights manageable: change the <code>member</code> role once and every member changes with it.</p></explain>
+</question>
+
+<question id="pm-roles-table" type="output">
+<q>What does this print?</q>
+<code file="roles.js">
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [
+    { name: "viewer", permissions: ["task:read"] },
+    { name: "member", permissions: ["task:create"], inherits: ["viewer"] },
+    { name: "admin", permissions: ["task:*", "user:read"], inherits: ["member"] },
+  ],
+});
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const grace = createPermissionActor("grace", { roles: ["admin"] });
+console.log(await engine.can(ada, "task:read"), await engine.can(ada, "task:delete"));
+console.log(await engine.can(grace, "task:delete"), await engine.can(grace, "user:delete"));
+</code>
+<option correct>true false
+true false</option>
+<option>false false
+true true</option>
+<option>true false
+true true</option>
+<option>true true
+true false</option>
+<explain><p>A member inherits <code>task:read</code> from viewer but has no <code>task:delete</code>. Grace's <code>task:*</code> covers delete, but no role grants <code>user:delete</code>, so even an admin is refused: anything not granted is denied.</p></explain>
+</question>
+
+<question id="pm-deny-default" type="choice">
+<q>No role grants <code>user:delete</code>. What does <code>engine.can(admin, "user:delete")</code> answer?</q>
+<option><code>true</code>, because admins can do everything</option>
+<option correct><code>false</code>: anything no role grants is refused</option>
+<option>It throws an error</option>
+<option><code>undefined</code></option>
+<explain><p>An authorization system should always <strong>deny by default</strong>. "Admin" is just a name; it gets exactly what its permissions say.</p></explain>
+</question>
+
+<question id="pm-can-async" type="choice">
+<q>Why must you write <code>await engine.can(actor, "task:read")</code>?</q>
+<option>Because it sends a request to a permission server</option>
+<option correct>It is async, because some checks load data; without <code>await</code> you get a Promise, which is always truthy</option>
+<option>Because it is slow on purpose</option>
+<option>You don't: <code>can</code> returns a boolean directly</option>
+<explain><p>A forgotten <code>await</code> is dangerous: <code>if (engine.can(...))</code> tests a Promise object, which is truthy, so everyone would be allowed.</p></explain>
+</question>
+
+<question id="code-pm-editor" type="code" file="editor-role.js">
+<q><p>Add an <code>editor</code> role between <code>member</code> and <code>admin</code>. Editors can do everything a member can and can update any task, but must not delete tasks. Admin should inherit from editor. The program prints a small table.</p></q>
+<starter>
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [
+    { name: "viewer", permissions: ["task:read"] },
+    { name: "member", permissions: ["task:create"], inherits: ["viewer"] },
+    // your code here: add the editor role, and let admin inherit from it
+    { name: "admin", permissions: ["task:*", "user:read"], inherits: ["member"] },
+  ],
+});
+
+for (const role of ["member", "editor", "admin"]) {
+  const actor = createPermissionActor(`user-${role}`, { roles: [role] });
+  console.log(role, await engine.can(actor, "task:update"), await engine.can(actor, "task:delete"));
+}
+</starter>
+<solution>
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [
+    { name: "viewer", permissions: ["task:read"] },
+    { name: "member", permissions: ["task:create"], inherits: ["viewer"] },
+    { name: "editor", permissions: ["task:update"], inherits: ["member"] },
+    { name: "admin", permissions: ["task:*", "user:read"], inherits: ["editor"] },
+  ],
+});
+
+for (const role of ["member", "editor", "admin"]) {
+  const actor = createPermissionActor(`user-${role}`, { roles: [role] });
+  console.log(role, await engine.can(actor, "task:update"), await engine.can(actor, "task:delete"));
+}
+</solution>
+<expected>
+member false false
+editor true false
+admin true true
+</expected>
+<explain><p>Give the editor the one exact permission it needs, <code>task:update</code>, not <code>task:*</code>, which would include delete. <code>inherits</code> brings in everything a member can do.</p></explain>
+</question>
+
+<question id="pm-wildcard-read" type="output">
+<q>Someone wanted members to "read everything they need" and wrote <code>*:read</code>. What does this print?</q>
+<code file="wildcard.js">
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{ name: "member", permissions: ["*:read", "task:create"] }],
+});
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const results = [];
+for (const permission of ["task:read", "user:read", "audit.log:read", "task:delete"]) {
+  results.push(await engine.can(ada, permission));
+}
+console.log(results);
+</code>
+<option correct>[ true, true, true, false ]</option>
+<option>[ true, false, false, false ]</option>
+<option>[ true, true, false, false ]</option>
+<option>[ true, true, true, true ]</option>
+<explain><p><code>*:read</code> means "read on every resource": users, the audit log, anything added later. Nothing failed and nothing was logged. List what the role needs, <code>task:read</code>, instead.</p></explain>
+</question>
+
+<question id="pm-wildcard-future" type="choice">
+<q>Next month you add a <code>user:export</code> action. Which roles get it on day one without anyone deciding so?</q>
+<option>None: new actions must be granted explicitly</option>
+<option correct>Every role holding a matching wildcard, such as <code>user:*</code> or <code>*:*</code></option>
+<option>Only roles named <code>admin</code></option>
+<option>Only roles that already have <code>user:read</code></option>
+<explain><p>A wildcard grants permissions that do not exist yet. Review wildcard grants whenever you add a new action.</p></explain>
+</question>
+
+<question id="pm-billing-wildcard" type="output">
+<q>What does this print?</q>
+<code file="dotted.js">
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({ roles: [{ name: "accountant", permissions: ["billing.*:read"] }] });
+const sam = createPermissionActor("sam", { roles: ["accountant"] });
+console.log(await engine.can(sam, "billing:read"), await engine.can(sam, "billing.invoice:read"));
+console.log(await engine.can(sam, "billing.invoice:delete"), await engine.can(sam, "billingx:read"));
+</code>
+<option correct>true true
+false false</option>
+<option>false true
+false false</option>
+<option>true true
+true false</option>
+<option>true true
+false true</option>
+<explain><p><code>billing.*:read</code> matches <code>billing:read</code> and every <code>billing.something:read</code>. It does not cover other actions, and <code>billingx</code> is a different resource.</p></explain>
+</question>
+
+<question id="pm-invalid-grants" type="output">
+<q>What does this print?</q>
+<code file="invalid-grants.js">
+import { createPermissionEngine } from "@zudojs/permissions";
+
+for (const grant of ["task:read", "*", "task*:read", "task:read ", "*:*"]) {
+  try {
+    createPermissionEngine({ roles: [{ name: "member", permissions: [grant] }] });
+    console.log(JSON.stringify(grant), "accepted");
+  } catch (error) {
+    console.log(JSON.stringify(grant), error.name);
+  }
+}
+</code>
+<option correct>"task:read" accepted
+"*" InvalidRoleError
+"task*:read" InvalidRoleError
+"task:read " InvalidRoleError
+"*:*" accepted</option>
+<option>"task:read" accepted
+"*" accepted
+"task*:read" accepted
+"task:read " accepted
+"*:*" accepted</option>
+<option>"task:read" accepted
+"*" accepted
+"task*:read" InvalidRoleError
+"task:read " accepted
+"*:*" accepted</option>
+<option>"task:read" accepted
+"*" InvalidRoleError
+"task*:read" InvalidRoleError
+"task:read " accepted
+"*:*" InvalidRoleError</option>
+<explain><p>Patterns that could never match are refused when the engine is created, even a trailing space. <code>*:*</code> is a valid (if very broad) grant. Failing loudly at startup beats a rule that silently never works.</p></explain>
+</question>
+
+<question id="pm-check-decision" type="output">
+<q>What does this print?</q>
+<code file="check.js">
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({ roles: [{ name: "member", permissions: ["task:read", "task:create"] }] });
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const yes = await engine.check(ada, "task:create");
+const no = await engine.check(ada, "task:delete");
+console.log(yes.allowed, yes.reason);
+console.log(no.allowed, no.reason, no.publicReason);
+</code>
+<option correct>true role_permission
+false no_matching_rule Access denied</option>
+<option>true role_permission
+false no_matching_rule no_matching_rule</option>
+<option>true undefined
+false Access denied undefined</option>
+<option>true role_permission
+false forbidden Access denied</option>
+<explain><p><code>check</code> gives the whole decision. <code>reason</code> is machine-readable, for your logs. <code>publicReason</code>, "Access denied", is the only one safe to send to the client.</p></explain>
+</question>
+
+<question id="pm-public-reason" type="choice">
+<q>A request is refused. What should the response body contain?</q>
+<option>The decision's <code>reason</code>, such as <code>rule_deny</code>, and the rule's name</option>
+<option correct>Only the <code>publicReason</code>, such as "Access denied"</option>
+<option>The full <code>explain</code> steps, so the user can fix it</option>
+<option>The list of the user's roles</option>
+<explain><p>Internal reasons and explain steps name your rules and policies, which tells an attacker how your system works. Keep them in your logs.</p></explain>
+</question>
+
+<question id="pm-unknown-role" type="output">
+<q>The database says Sam's role is <code>"Admin"</code>, with a capital A. What does this print?</q>
+<code file="unknown-role.js">
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{ name: "admin", permissions: ["task:*"] }],
+  onError: (_error, source) => console.log("reported by", source),
+});
+const sam = createPermissionActor("sam", { roles: ["Admin"] });
+console.log(await engine.can(sam, "task:delete"));
+</code>
+<option correct>reported by RoleHierarchy
+false</option>
+<option>true</option>
+<option>false</option>
+<option>reported by RoleHierarchy
+true</option>
+<explain><p>Role names are compared exactly: <code>"Admin"</code> is not <code>"admin"</code>. An unknown role gives nothing, and the engine reports it through <code>onError</code> so you can fix the data. Every failure denies.</p></explain>
+</question>
+
+<question id="pm-abac" type="choice">
+<q>Why can't roles alone say "a member may edit their own tasks"?</q>
+<option>Because roles cannot hold the <code>update</code> action</option>
+<option correct>The answer depends on the task (who owns it), not only on the user; that needs a rule that looks at the resource (ABAC)</option>
+<option>Because members have no roles</option>
+<option>Because ownership is checked by the database</option>
+<explain><p>Attribute-based access control (ABAC) rules look at the actor <em>and</em> the resource. <code>isOwner("userId")</code> compares the task's <code>userId</code> with the actor's id.</p></explain>
+</question>
+
+<question id="pm-owner-rule" type="output">
+<q>What does this print?</q>
+<code file="owner.js">
+import { createPermissionActor, createPermissionEngine, isOwner } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [
+    { name: "member", permissions: ["task:read", "task:create"], rules: [
+      { name: "own-tasks", effect: "allow", resource: "task", action: ["update", "delete"], condition: isOwner("userId") },
+    ] },
+    { name: "admin", permissions: ["task:*"], inherits: ["member"] },
+  ],
+});
+const task1 = { id: 1, userId: "ada" };
+const task3 = { id: 3, userId: "linus" };
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const grace = createPermissionActor("grace", { roles: ["admin"] });
+console.log(await engine.can(ada, "task:update", task1), await engine.can(ada, "task:update", task3));
+console.log(await engine.can(ada, "task:update"), await engine.can(grace, "task:update", task3));
+</code>
+<option correct>true false
+false true</option>
+<option>true false
+true true</option>
+<option>true true
+false true</option>
+<option>true false
+false false</option>
+<explain><p>Ada may update her own task, not Linus's. Without a task, the owner rule has nothing to compare, so it does not apply and she is refused: the safe choice. Grace passes through <code>task:*</code>.</p></explain>
+</question>
+
+<question id="pm-load-resource" type="choice">
+<q>Where should the task object you pass to <code>engine.can(actor, "task:update", task)</code> come from?</q>
+<option>From the request body, which contains the task being edited</option>
+<option correct>From your database, loaded by the id in the URL, before the check</option>
+<option>From the client's local storage</option>
+<option>It does not matter</option>
+<explain><p>If the task came from the body, the client would simply write its own id into <code>userId</code> and pass the owner check.</p></explain>
+</question>
+
+<question id="code-pm-owner" type="code" file="owner-rule.js">
+<q><p>Members may read tasks, and may update and delete only their own. The Task API stores the owner in <code>userId</code>. Add the missing rule to the member role, using <code>isOwner</code>.</p></q>
+<starter>
+import { createPermissionActor, createPermissionEngine, isOwner } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{
+    name: "member",
+    permissions: ["task:read"],
+    rules: [
+      // your code here
+    ],
+  }],
+});
+
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const mine = { id: 1, userId: "ada" };
+const theirs = { id: 3, userId: "linus" };
+console.log(await engine.can(ada, "task:delete", mine), await engine.can(ada, "task:delete", theirs));
+console.log(await engine.can(ada, "task:update", mine), await engine.can(ada, "task:read", theirs));
+</starter>
+<solution>
+import { createPermissionActor, createPermissionEngine, isOwner } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{
+    name: "member",
+    permissions: ["task:read"],
+    rules: [
+      { name: "own-tasks", effect: "allow", resource: "task", action: ["update", "delete"], condition: isOwner("userId") },
+    ],
+  }],
+});
+
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const mine = { id: 1, userId: "ada" };
+const theirs = { id: 3, userId: "linus" };
+console.log(await engine.can(ada, "task:delete", mine), await engine.can(ada, "task:delete", theirs));
+console.log(await engine.can(ada, "task:update", mine), await engine.can(ada, "task:read", theirs));
+</solution>
+<expected>
+true false
+true true
+</expected>
+<explain><p>An <code>allow</code> rule on <code>task</code> for <code>["update", "delete"]</code> with <code>isOwner("userId")</code>. Test both directions: the owner is allowed, someone else is refused.</p></explain>
+</question>
+
+<question id="pm-wrong-id" type="output">
+<q>Linus owns task 3. The attacker is user <code>"3"</code>. What does this print?</q>
+<code file="wrong-id.js">
+import { createPermissionActor, createPermissionEngine, isOwner } from "@zudojs/permissions";
+
+function engineWith(field) {
+  return createPermissionEngine({
+    roles: [{ name: "member", permissions: [], rules: [
+      { effect: "allow", resource: "task", action: "delete", condition: isOwner(field) },
+    ] }],
+  });
+}
+const task3 = { id: 3, userId: "linus" };
+const attacker = createPermissionActor("3", { roles: ["member"] });
+console.log(await engineWith("id").can(attacker, "task:delete", task3));
+console.log(await engineWith("userId").can(attacker, "task:delete", task3));
+</code>
+<option correct>true
+false</option>
+<option>false
+false</option>
+<option>false
+true</option>
+<option>true
+true</option>
+<explain><p><code>isOwner("id")</code> compares the <em>task's</em> id with the user's id. Task 3 and user "3" match, so the attacker deletes Linus's task. The right field, <code>userId</code>, refuses it. (<code>isOwner</code> treats the number 3 and the string "3" as the same id.)</p></explain>
+</question>
+
+<question id="pm-owner-default" type="choice">
+<q>Tasks store their owner in <code>userId</code>, and a rule uses <code>isOwner()</code> with no argument, which reads <code>ownerId</code>. What happens?</q>
+<option>Every member can delete every task</option>
+<option correct>It is safe but useless: a missing owner never matches, so even the real owner is refused</option>
+<option>The engine throws at startup</option>
+<option>It reads <code>userId</code> automatically</option>
+<explain><p>Getting the field wrong can fail either way: <code>"id"</code> lets attackers in, a missing field locks everyone out. That is why you test both the owner and a stranger.</p></explain>
+</question>
+
+<question id="pm-number-string-id" type="output">
+<q>The database stores <code>userId</code> as the number 7; the token gives the id as the string <code>"7"</code>. What does this print?</q>
+<code file="number-id.js">
+import { createPermissionActor, createPermissionEngine, isOwner } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{ name: "member", permissions: [], rules: [
+    { effect: "allow", resource: "task", action: "update", condition: isOwner("userId") },
+  ] }],
+});
+const user7 = createPermissionActor("7", { roles: ["member"] });
+console.log(await engine.can(user7, "task:update", { id: 1, userId: 7 }));
+console.log(await engine.can(user7, "task:update", { id: 2 }));
+</code>
+<option correct>true
+false</option>
+<option>false
+false</option>
+<option>true
+true</option>
+<option>false
+true</option>
+<explain><p><code>isOwner</code> treats 7 and "7" as the same id on purpose, because database ids are often numbers and token ids strings. A task with no owner never matches.</p></explain>
+</question>
+
+<question id="pm-missing-data" type="output">
+<q>Tasks belong to teams. An old task has no <code>teamId</code>, and the request carries no team either. What does this print?</q>
+<code file="missing-data.js">
+import { createPermissionActor, createPermissionEngine, tenantIsolation } from "@zudojs/permissions";
+
+const byHand = (ctx) => ctx.resource.teamId === ctx.metadata?.get("teamId");
+function engineWith(condition) {
+  return createPermissionEngine({
+    roles: [{ name: "member", permissions: [], rules: [{ effect: "allow", resource: "task", action: "read", condition }] }],
+  });
+}
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const oldTask = { id: 5, title: "Imported from the old system" };
+console.log(await engineWith(byHand).can(ada, "task:read", oldTask));
+console.log(await engineWith(tenantIsolation("teamId", "teamId")).can(ada, "task:read", oldTask));
+</code>
+<option correct>true
+false</option>
+<option>false
+false</option>
+<option>true
+true</option>
+<option>false
+true</option>
+<explain><p>The hand-written condition compares <code>undefined === undefined</code>, which is <code>true</code>, so a user with no team reads every task without one. The built-in <code>tenantIsolation</code> denies when either side is missing. Missing data must mean no.</p></explain>
+</question>
+
+<question id="code-pm-same-team" type="code" file="same-team.js">
+<q><p>Write <code>sameTeam</code>, a condition that allows only when the task's <code>teamId</code> and the request's <code>teamId</code> (from <code>ctx.metadata?.get("teamId")</code>) are <strong>both</strong> non-empty strings and equal. Missing data must mean no.</p></q>
+<starter>
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const sameTeam = (ctx) => {
+  // your code here
+};
+
+const engine = createPermissionEngine({
+  roles: [{ name: "member", permissions: [], rules: [{ effect: "allow", resource: "task", action: "read", condition: sameTeam }] }],
+});
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const blueTask = { id: 4, teamId: "blue" };
+const oldTask = { id: 5 };
+console.log(await engine.can(ada, "task:read", blueTask, { metadata: { teamId: "blue" } }));
+console.log(await engine.can(ada, "task:read", blueTask, { metadata: { teamId: "red" } }));
+console.log(await engine.can(ada, "task:read", oldTask), await engine.can(ada, "task:read", blueTask));
+</starter>
+<solution>
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const sameTeam = (ctx) => {
+  const taskTeam = ctx.resource?.teamId;
+  const userTeam = ctx.metadata?.get("teamId");
+  if (typeof taskTeam !== "string" || taskTeam === "") return false;
+  if (typeof userTeam !== "string" || userTeam === "") return false;
+  return taskTeam === userTeam;
+};
+
+const engine = createPermissionEngine({
+  roles: [{ name: "member", permissions: [], rules: [{ effect: "allow", resource: "task", action: "read", condition: sameTeam }] }],
+});
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const blueTask = { id: 4, teamId: "blue" };
+const oldTask = { id: 5 };
+console.log(await engine.can(ada, "task:read", blueTask, { metadata: { teamId: "blue" } }));
+console.log(await engine.can(ada, "task:read", blueTask, { metadata: { teamId: "red" } }));
+console.log(await engine.can(ada, "task:read", oldTask), await engine.can(ada, "task:read", blueTask));
+</solution>
+<expected>
+true
+false
+false false
+</expected>
+<explain><p>Check that both values exist before you compare them. Otherwise <code>undefined === undefined</code> lets anyone with no team read everything without one.</p></explain>
+</question>
+
+<question id="pm-metadata-source" type="choice">
+<q>A team condition reads <code>teamId</code> from the check's metadata. Where must that value come from?</q>
+<option>The <code>X-Team</code> request header</option>
+<option>The query string, <code>?team=blue</code></option>
+<option correct>Something the client cannot choose: the verified token or your database</option>
+<option>The request body</option>
+<explain><p>If the team came from a header or the query string, an attacker would simply send the task's team and pass.</p></explain>
+</question>
+
+<question id="pm-deny-locked" type="output">
+<q>A deny rule protects locked tasks. What does this print?</q>
+<code file="deny-locked.js">
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{ name: "admin", permissions: ["task:*"] }],
+  rules: [{
+    name: "locked-tasks",
+    effect: "deny",
+    resource: "task",
+    action: ["update", "delete"],
+    condition: (ctx) => ctx.resource.locked === true,
+  }],
+  onError: (_error, source) => console.log("reported by", source),
+});
+const grace = createPermissionActor("grace", { roles: ["admin"] });
+console.log(await engine.can(grace, "task:update", { id: 1 }));
+console.log(await engine.can(grace, "task:update", { id: 2, locked: true }));
+console.log(await engine.can(grace, "task:read", { id: 2, locked: true }));
+console.log(await engine.can(grace, "task:update"));
+</code>
+<option correct>true
+false
+true
+reported by RuleCondition.locked-tasks
+false</option>
+<option>true
+false
+false
+reported by RuleCondition.locked-tasks
+true</option>
+<option>true
+true
+true
+true</option>
+<option>true
+false
+true
+true</option>
+<explain><p>A deny rule beats even an admin's <code>task:*</code>, but only for the actions it names, so reading is still fine. With no task, the condition throws; the engine cannot tell whether the task is locked, so it applies the deny rule (fails closed) and reports the error.</p></explain>
+</question>
+
+<question id="pm-throwing-allow" type="output">
+<q>An <strong>allow</strong> rule's condition throws. What does this print?</q>
+<code file="throwing-allow.js">
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{ name: "member", permissions: [], rules: [
+    { name: "shared", effect: "allow", resource: "task", action: "read", condition: (ctx) => ctx.resource.sharing.public === true },
+  ] }],
+  onError: () => {},
+});
+const ada = createPermissionActor("ada", { roles: ["member"] });
+console.log(await engine.can(ada, "task:read", { id: 1, sharing: { public: true } }));
+console.log(await engine.can(ada, "task:read", { id: 2 }));
+</code>
+<option correct>true
+false</option>
+<option>true
+true</option>
+<option>true
+TypeError: Cannot read properties of undefined</option>
+<option>false
+false</option>
+<explain><p>An allow rule whose condition throws simply does not apply. A deny rule whose condition throws applies. Either way, an error can only make the answer "no".</p></explain>
+</question>
+
+<question id="pm-deny-overrides" type="choice">
+<q>A role grants <code>task:update</code>, and a deny rule for <code>task:update</code> applies. What is the answer, and why?</q>
+<option>Allowed, because the role grant came first</option>
+<option correct>Denied: by default the engine uses deny-overrides, so any applying deny rule wins over every grant</option>
+<option>It depends on the order of the rules</option>
+<option>The engine throws because the rules conflict</option>
+<explain><p>With deny-overrides, grants add up but one applying deny takes access away. That makes deny rules the right tool for restrictions.</p></explain>
+</question>
+
+<question id="pm-tenant-deny" type="output">
+<q>The member role grants <code>task:read</code>, so an allow rule would change nothing. Team isolation is enforced with a deny rule instead. What does this print?</q>
+<code file="tenant-deny.js">
+import { createPermissionActor, createPermissionEngine, not, tenantIsolation } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{ name: "member", permissions: ["task:read"] }],
+  rules: [{ name: "same-team", effect: "deny", resource: "task", action: "read", condition: not(tenantIsolation("teamId", "teamId")) }],
+});
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const blueTask = { id: 4, teamId: "blue" };
+console.log(await engine.can(ada, "task:read", blueTask, { metadata: { teamId: "red" } }));
+console.log(await engine.can(ada, "task:read", blueTask, { metadata: { teamId: "blue" } }));
+console.log(await engine.can(ada, "task:read", blueTask));
+</code>
+<option correct>false
+true
+false</option>
+<option>true
+true
+true</option>
+<option>false
+true
+true</option>
+<option>false
+false
+false</option>
+<explain><p><code>not(tenantIsolation(...))</code> is true whenever the teams differ <em>or</em> a team is missing, so the deny rule applies then. Only a matching team gets through the grant.</p></explain>
+</question>
+
+<question id="code-pm-tenant-deny" type="code" file="tenant-deny-code.js">
+<q><p>Members are granted <code>task:read</code> and <code>task:update</code>. Add an engine-wide <strong>deny</strong> rule named <code>same-team</code> for <code>task</code>, actions <code>read</code> and <code>update</code>, that applies when the actor's team (metadata <code>teamId</code>) and the task's <code>teamId</code> do not match or are missing. Use <code>not</code> and <code>tenantIsolation</code>.</p></q>
+<starter>
+import { createPermissionActor, createPermissionEngine, not, tenantIsolation } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{ name: "member", permissions: ["task:read", "task:update"] }],
+  rules: [
+    // your code here
+  ],
+});
+
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const redTask = { id: 7, teamId: "red" };
+const red = { metadata: { teamId: "red" } };
+const blue = { metadata: { teamId: "blue" } };
+console.log(await engine.can(ada, "task:read", redTask, red), await engine.can(ada, "task:update", redTask, red));
+console.log(await engine.can(ada, "task:read", redTask, blue), await engine.can(ada, "task:update", redTask));
+</starter>
+<solution>
+import { createPermissionActor, createPermissionEngine, not, tenantIsolation } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{ name: "member", permissions: ["task:read", "task:update"] }],
+  rules: [
+    { name: "same-team", effect: "deny", resource: "task", action: ["read", "update"], condition: not(tenantIsolation("teamId", "teamId")) },
+  ],
+});
+
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const redTask = { id: 7, teamId: "red" };
+const red = { metadata: { teamId: "red" } };
+const blue = { metadata: { teamId: "blue" } };
+console.log(await engine.can(ada, "task:read", redTask, red), await engine.can(ada, "task:update", redTask, red));
+console.log(await engine.can(ada, "task:read", redTask, blue), await engine.can(ada, "task:update", redTask));
+</solution>
+<expected>
+true true
+false false
+</expected>
+<explain><p>When a role already grants the permission, an allow rule adds nothing. A deny rule takes access away whenever the teams differ or are missing, and deny rules beat every grant.</p></explain>
+</question>
+
+<question id="pm-body-actor" type="output">
+<q>A careless handler builds the actor with the request body spread into it. What does this print?</q>
+<code file="body-actor.js">
+import { createPermissionActor, createPermissionEngine, isOwner } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [
+    { name: "member", permissions: ["task:read"], rules: [
+      { effect: "allow", resource: "task", action: "delete", condition: isOwner("userId") },
+    ] },
+    { name: "admin", permissions: ["task:*"] },
+  ],
+});
+const usersTable = new Map([["ada", ["member"]]]);
+const task3 = { id: 3, userId: "linus" };
+const insecureActor = (userId, body) => ({ id: userId, roles: ["member"], ...body });
+const secureActor = (userId) => createPermissionActor(userId, { roles: usersTable.get(userId) ?? [] });
+
+for (const body of [{ title: "x", roles: ["admin"] }, { title: "x", id: "linus" }]) {
+  console.log(await engine.can(insecureActor("ada", body), "task:delete", task3), await engine.can(secureActor("ada"), "task:delete", task3));
+}
+</code>
+<option correct>true false
+true false</option>
+<option>false false
+false false</option>
+<option>true false
+false false</option>
+<option>true true
+true true</option>
+<explain><p>With the spread, Ada sends <code>"roles": ["admin"]</code> and becomes an admin, or <code>"id": "linus"</code> and becomes the owner. The engine was correct both times; it was given a lie. The secure actor takes the id from the token and the roles from the database.</p></explain>
+</question>
+
+<question id="code-pm-secure-actor" type="code" file="secure-actor.js">
+<q><p>Finish <code>actorFor(tokenUserId, body)</code>. Build the actor with <code>createPermissionActor</code>: the id from <code>tokenUserId</code> (the verified token), the roles from <code>rolesInDatabase</code> (an empty list for an unknown user). Ignore the body completely.</p></q>
+<starter>
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{ name: "member", permissions: ["task:read"] }, { name: "admin", permissions: ["task:*", "user:*"] }],
+});
+const rolesInDatabase = new Map([["ada", ["member"]], ["grace", ["admin"]]]);
+
+function actorFor(tokenUserId, body) {
+  // your code here
+}
+
+const attack = { roles: ["admin"], id: "grace", isAdmin: true };
+const ada = actorFor("ada", attack);
+console.log(ada.id, ada.roles, await engine.can(ada, "user:delete"));
+console.log(await engine.can(actorFor("grace", {}), "user:delete"), (await engine.can(actorFor("mallory", attack), "task:read")));
+</starter>
+<solution>
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{ name: "member", permissions: ["task:read"] }, { name: "admin", permissions: ["task:*", "user:*"] }],
+});
+const rolesInDatabase = new Map([["ada", ["member"]], ["grace", ["admin"]]]);
+
+function actorFor(tokenUserId, body) {
+  return createPermissionActor(tokenUserId, { roles: rolesInDatabase.get(tokenUserId) ?? [] });
+}
+
+const attack = { roles: ["admin"], id: "grace", isAdmin: true };
+const ada = actorFor("ada", attack);
+console.log(ada.id, ada.roles, await engine.can(ada, "user:delete"));
+console.log(await engine.can(actorFor("grace", {}), "user:delete"), (await engine.can(actorFor("mallory", attack), "task:read")));
+</solution>
+<expected>
+ada [ 'member' ] false
+true false
+</expected>
+<explain><p>The actor's id comes only from the verified token, its roles only from your database. An unknown user gets no roles, so nothing is granted. The body never decides who the caller is.</p></explain>
+</question>
+
+<question id="pm-role-endpoint" type="choice">
+<q>How should an admin change a user's role?</q>
+<option>Any user may send <code>"roles"</code> in their profile update</option>
+<option correct>Through its own endpoint, protected by its own permission such as <code>user:update-role</code>, that only admins have</option>
+<option>By editing the JWT in the browser</option>
+<option>Through a hidden <code>isAdmin</code> field in the task update body</option>
+<explain><p>A <code>role</code>, <code>roles</code>, <code>userId</code> or <code>isAdmin</code> field is never on the list of fields a normal update accepts. Changing roles is a separate, admin-only action.</p></explain>
+</question>
+
+<question id="pm-restriction-deny" type="choice">
+<q>You need the restriction "tasks can only be changed during office hours". How does the lesson say to write it?</q>
+<option>As a new role called <code>office-hours</code></option>
+<option correct>As a deny rule that applies outside office hours, which can only ever take access away</option>
+<option>As a check in the client</option>
+<option>As a wildcard permission</option>
+<explain><p>A restriction must never be able to grant access by itself. A deny rule can only say no, so it cannot accidentally let in someone no role allowed.</p></explain>
+</question>
+
+<question id="pm-office-deny" type="output">
+<q>What does this print?</q>
+<code file="office-hours.js">
+import { createPermissionActor, createPermissionEngine, isOwner } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{ name: "member", permissions: ["task:read"], rules: [
+    { effect: "allow", resource: "task", action: "delete", condition: isOwner("userId") },
+  ] }],
+  rules: [{
+    name: "office-hours",
+    effect: "deny",
+    resource: "task",
+    action: ["create", "update", "delete"],
+    condition: (ctx) => {
+      const hour = ctx.metadata?.get("hour");
+      return typeof hour !== "number" || hour < 9 || hour >= 17;
+    },
+  }],
+});
+const guest = createPermissionActor("guest-17");
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const adasTask = { id: 1, userId: "ada" };
+console.log(await engine.can(guest, "task:delete", adasTask, { metadata: { hour: 10 } }));
+console.log(await engine.can(ada, "task:delete", adasTask, { metadata: { hour: 10 } }));
+console.log(await engine.can(ada, "task:delete", adasTask, { metadata: { hour: 20 } }));
+console.log(await engine.can(ada, "task:delete", adasTask));
+</code>
+<option correct>false
+true
+false
+false</option>
+<option>true
+true
+false
+false</option>
+<option>false
+true
+false
+true</option>
+<option>false
+false
+false
+false</option>
+<explain><p>The guest has no role, so the deny rule gives it nothing. Ada may delete her own task at 10:00 but not at 20:00. With no hour at all, the condition says "deny": missing data means no.</p></explain>
+</question>
+
+<question id="code-pm-office" type="code" file="office-code.js">
+<q><p>Finish <code>outsideOfficeHours</code>, the condition of a deny rule. Read <code>hour</code> from <code>ctx.metadata?.get("hour")</code>. Return <code>true</code> (deny) when the hour is not a number, or is before 9, or is 17 or later.</p></q>
+<starter>
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const outsideOfficeHours = (ctx) => {
+  // your code here
+};
+
+const engine = createPermissionEngine({
+  roles: [{ name: "member", permissions: ["task:update"] }],
+  rules: [{ name: "office-hours", effect: "deny", resource: "task", action: "update", condition: outsideOfficeHours }],
+});
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const at = (hour) => engine.can(ada, "task:update", { id: 1 }, { metadata: { hour } });
+console.log(await at(8), await at(9), await at(16), await at(17));
+console.log(await at("10"), await engine.can(ada, "task:update", { id: 1 }));
+</starter>
+<solution>
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const outsideOfficeHours = (ctx) => {
+  const hour = ctx.metadata?.get("hour");
+  return typeof hour !== "number" || hour < 9 || hour >= 17;
+};
+
+const engine = createPermissionEngine({
+  roles: [{ name: "member", permissions: ["task:update"] }],
+  rules: [{ name: "office-hours", effect: "deny", resource: "task", action: "update", condition: outsideOfficeHours }],
+});
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const at = (hour) => engine.can(ada, "task:update", { id: 1 }, { metadata: { hour } });
+console.log(await at(8), await at(9), await at(16), await at(17));
+console.log(await at("10"), await engine.can(ada, "task:update", { id: 1 }));
+</solution>
+<expected>
+false true true false
+false false
+</expected>
+<explain><p>The check starts with "is it a number?", so a missing hour or the text <code>"10"</code> is denied. The hour comes from your server's clock, never from the client.</p></explain>
+</question>
+
+<question id="pm-explain" type="output">
+<q>What does this print?</q>
+<code file="explain.js">
+import { createPermissionActor, createPermissionEngine, isOwner } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{ name: "member", permissions: ["task:read", "task:create"], rules: [
+    { name: "own-tasks", effect: "allow", resource: "task", action: ["update", "delete"], condition: isOwner("userId") },
+  ] }],
+});
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const result = await engine.explain(ada, "task:delete", { id: 1, userId: "ada" });
+console.log(result.allowed);
+for (const step of result.steps) console.log(step.matched ? "yes" : "no ", step.type, step.detail);
+</code>
+<option correct>true
+yes role Role: member
+no  permission No permission matched "task:delete" among 2 granted
+yes rule Rule allow: own-tasks
+yes permission Decision: allow (role_permission)</option>
+<option>true
+yes role Role: member
+yes permission task:delete
+yes permission Decision: allow (role_permission)</option>
+<option>false
+yes role Role: member
+no  permission No permission matched "task:delete" among 2 granted
+no  deny Decision: deny (no_matching_rule)</option>
+<option>true
+yes rule Rule allow: own-tasks</option>
+<explain><p>None of Ada's two granted permissions is <code>task:delete</code>, but the <code>own-tasks</code> rule applied because she owns the task. Naming your rules pays off: the trace tells you which one decided.</p></explain>
+</question>
+
+<question id="pm-explain-where" type="choice">
+<q>Where do <code>explain</code> results belong?</q>
+<option>In the 403 response, so users understand the refusal</option>
+<option correct>In your logs and debugging; never send the steps to a client</option>
+<option>In the JWT payload</option>
+<option>In the database, instead of roles</option>
+<explain><p>The steps describe your roles and rules. Sent to a client, they would give an attacker a map of your authorization system.</p></explain>
+</question>
+
+<question id="pm-route-order" type="choice">
+<q>A route that deletes a task does three things. Which order does the lesson use?</q>
+<option>Authorize → load the task → authenticate</option>
+<option correct>Authenticate (401) → load the task by the URL id (404) → authorize this user for this task (403)</option>
+<option>Load the task → authorize → authenticate</option>
+<option>Authenticate → authorize without the task → load the task</option>
+<explain><p>Authenticating first means an anonymous caller cannot even learn which task ids exist. The task must be loaded before the check, because the owner rule needs it.</p></explain>
+</question>
+
+<question id="code-pm-route" type="code" file="delete-route.js">
+<q><p>Finish <code>deleteTask(userId, taskId)</code>, the core of a <code>DELETE /tasks/:id</code> handler. Return <code>{ status: 401 }</code> when <code>userId</code> is missing, <code>{ status: 404 }</code> when the task does not exist, <code>{ status: 403, error: decision.publicReason }</code> when <code>engine.check</code> refuses, and otherwise delete it and return <code>{ status: 200, deleted: id }</code>. Roles come from <code>userRoles</code>.</p></q>
+<starter>
+import { createPermissionActor, createPermissionEngine, isOwner } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [
+    { name: "member", permissions: ["task:read"], rules: [
+      { name: "own-tasks", effect: "allow", resource: "task", action: "delete", condition: isOwner("userId") },
+    ] },
+    { name: "admin", permissions: ["task:*"] },
+  ],
+});
+const tasks = new Map([[1, { id: 1, userId: "ada" }], [3, { id: 3, userId: "linus" }]]);
+const userRoles = new Map([["ada", ["member"]], ["grace", ["admin"]]]);
+
+async function deleteTask(userId, taskId) {
+  // your code here
+}
+
+console.log(await deleteTask(undefined, 3));
+console.log(await deleteTask("ada", 3));
+console.log(await deleteTask("ada", 9));
+console.log(await deleteTask("ada", 1));
+console.log(await deleteTask("grace", 3));
+</starter>
+<solution>
+import { createPermissionActor, createPermissionEngine, isOwner } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [
+    { name: "member", permissions: ["task:read"], rules: [
+      { name: "own-tasks", effect: "allow", resource: "task", action: "delete", condition: isOwner("userId") },
+    ] },
+    { name: "admin", permissions: ["task:*"] },
+  ],
+});
+const tasks = new Map([[1, { id: 1, userId: "ada" }], [3, { id: 3, userId: "linus" }]]);
+const userRoles = new Map([["ada", ["member"]], ["grace", ["admin"]]]);
+
+async function deleteTask(userId, taskId) {
+  if (!userId) return { status: 401 };
+  const task = tasks.get(taskId);
+  if (!task) return { status: 404 };
+  const actor = createPermissionActor(userId, { roles: userRoles.get(userId) ?? [] });
+  const decision = await engine.check(actor, "task:delete", task);
+  if (!decision.allowed) return { status: 403, error: decision.publicReason };
+  tasks.delete(task.id);
+  return { status: 200, deleted: task.id };
+}
+
+console.log(await deleteTask(undefined, 3));
+console.log(await deleteTask("ada", 3));
+console.log(await deleteTask("ada", 9));
+console.log(await deleteTask("ada", 1));
+console.log(await deleteTask("grace", 3));
+</solution>
+<expected>
+{ status: 401 }
+{ status: 403, error: 'Access denied' }
+{ status: 404 }
+{ status: 200, deleted: 1 }
+{ status: 200, deleted: 3 }
+</expected>
+<explain><p>Authenticate, load, then authorize. Only the <code>publicReason</code> goes back to the client. Ada may delete her own task; Grace, an admin, may delete Linus's.</p></explain>
+</question>
+
+<question id="pm-support-header" type="choice">
+<q>A teammate lets support staff read any task with the condition <code>(ctx) =&gt; ctx.metadata?.get("support") === true</code>, filled from <code>request.getHeader("x-support") === "yes"</code>. What is wrong?</q>
+<option>Nothing: only support staff know the header</option>
+<option correct>Anyone can send <code>x-support: yes</code> and read every task; make <code>support</code> a role stored in your database and grant it <code>task:read</code></option>
+<option>The header should be <code>X-Support</code> with capitals</option>
+<option>It should use the query string instead</option>
+<explain><p>Anything the client sends can be forged. Who is support staff is a fact your database knows, so it belongs in the actor's roles.</p></explain>
+</question>
+
+<question id="code-pm-locked-admin" type="code" file="locked-admin.js">
+<q><p>A locked task must stop members, but an admin can still update it. Finish the deny rule's condition with <code>allOf</code> and <code>not</code>: it applies when the task is locked <strong>and</strong> the actor is not an admin.</p></q>
+<starter>
+import { allOf, createPermissionActor, createPermissionEngine, isOwner, not } from "@zudojs/permissions";
+
+const isLocked = (ctx) => ctx.resource?.locked === true;
+const isAdmin = (ctx) => ctx.actor.roles?.includes("admin") === true;
+
+const engine = createPermissionEngine({
+  roles: [
+    { name: "member", permissions: [], rules: [{ effect: "allow", resource: "task", action: "update", condition: isOwner("userId") }] },
+    { name: "admin", permissions: ["task:*"] },
+  ],
+  rules: [{
+    name: "locked",
+    effect: "deny",
+    resource: "task",
+    action: "update",
+    condition: null, // your code here
+  }],
+});
+
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const grace = createPermissionActor("grace", { roles: ["admin"] });
+const locked = { id: 1, userId: "ada", locked: true };
+const open = { id: 2, userId: "ada" };
+console.log(await engine.can(ada, "task:update", locked), await engine.can(grace, "task:update", locked));
+console.log(await engine.can(ada, "task:update", open));
+</starter>
+<solution>
+import { allOf, createPermissionActor, createPermissionEngine, isOwner, not } from "@zudojs/permissions";
+
+const isLocked = (ctx) => ctx.resource?.locked === true;
+const isAdmin = (ctx) => ctx.actor.roles?.includes("admin") === true;
+
+const engine = createPermissionEngine({
+  roles: [
+    { name: "member", permissions: [], rules: [{ effect: "allow", resource: "task", action: "update", condition: isOwner("userId") }] },
+    { name: "admin", permissions: ["task:*"] },
+  ],
+  rules: [{
+    name: "locked",
+    effect: "deny",
+    resource: "task",
+    action: "update",
+    condition: allOf(isLocked, not(isAdmin)),
+  }],
+});
+
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const grace = createPermissionActor("grace", { roles: ["admin"] });
+const locked = { id: 1, userId: "ada", locked: true };
+const open = { id: 2, userId: "ada" };
+console.log(await engine.can(ada, "task:update", locked), await engine.can(grace, "task:update", locked));
+console.log(await engine.can(ada, "task:update", open));
+</solution>
+<expected>
+false true
+true
+</expected>
+<explain><p><code>allOf(isLocked, not(isAdmin))</code> applies only when both are true. <code>isAdmin</code> reads roles your server built from the database, so it is safe to trust.</p></explain>
+</question>
+
+<question id="pm-grants-add-up" type="choice">
+<q>A role grants <code>task:read</code>. You add an <strong>allow</strong> rule "same team only" for <code>task:read</code>. Does the rule stop team red from reading blue tasks?</q>
+<option>Yes, the rule narrows the grant</option>
+<option correct>No: grants add up, so the role's <code>task:read</code> alone already allows it; enforce the team with a deny rule</option>
+<option>Yes, rules always run before grants</option>
+<option>The engine throws because they overlap</option>
+<explain><p>An allow rule can only add access. To take access away from something a role grants, you need a deny rule, such as <code>not(tenantIsolation("teamId", "teamId"))</code>.</p></explain>
+</question>
+
+<question id="pm-guest-no-roles" type="output">
+<q>What does this print?</q>
+<code file="guest.js">
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{ name: "member", permissions: ["task:read"] }, { name: "support", permissions: ["task:read"] }],
+});
+const rolesInDatabase = new Map([["ada", ["member"]], ["sam", ["support"]]]);
+for (const userId of ["ada", "sam", "guest-17"]) {
+  const actor = createPermissionActor(userId, { roles: rolesInDatabase.get(userId) ?? [] });
+  console.log(userId, await engine.can(actor, "task:read"), await engine.can(actor, "task:delete"));
+}
+</code>
+<option correct>ada true false
+sam true false
+guest-17 false false</option>
+<option>ada true false
+sam true true
+guest-17 false false</option>
+<option>ada true false
+sam true false
+guest-17 true false</option>
+<option>ada true true
+sam true true
+guest-17 false false</option>
+<explain><p>Roles come from the database. A user with no roles gets nothing, and nobody here was granted <code>task:delete</code>.</p></explain>
+</question>

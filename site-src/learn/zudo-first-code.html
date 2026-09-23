@@ -151,8 +151,8 @@ export class TaskService {
 </example>
 <p>An API answers every request with a <strong>status code</strong> and a JSON <strong>body</strong>, even when something failed. This last file sends a few requests to the service and turns every outcome into that shape. That is the job the HTTP layer will do for you in later lessons:</p>
 <example file="main.ts" project="api">
-import { BaseError, SchemaError } from "@zudojs/errors";
-import type { SchemaIssue } from "@zudojs/schema";
+import { BaseError } from "@zudojs/errors";
+import { isSchemaValidationError } from "@zudojs/schema";
 import { TaskService } from "./task.service.js";
 
 const service = new TaskService();
@@ -161,9 +161,8 @@ function respond(action: () => unknown): { status: number; body: unknown } {
   try {
     return { status: 200, body: action() };
   } catch (error) {
-    if (error instanceof SchemaError) {
-      const found = error.issues as readonly SchemaIssue[];
-      const issues = found.map((i) => `${i.path.join(".")}: ${i.message}`);
+    if (isSchemaValidationError(error)) {
+      const issues = error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
       return { status: 400, body: { error: error.code, issues } };
     }
     if (error instanceof BaseError && error.expose) {
@@ -217,7 +216,7 @@ console.log(respond(() => service.get(99)));
 <li><strong>400 Bad Request</strong>: a title that is too short and a priority that is not allowed, both reported at once.</li>
 <li><strong>404 Not Found</strong>: a task that does not exist.</li>
 </ul>
-<p>One line needs explaining: <code>error.issues as readonly SchemaIssue[]</code>. <code>SchemaError</code> lives in <code>@zudojs/errors</code>, a basic package that every other ZudoJS package builds on, so it cannot know the shape of <code>@zudojs/schema</code>'s issues and types them as <code>unknown</code>. The word <code>as</code> is a <strong>type assertion</strong>: you tell TypeScript "trust me, these are schema issues". It checks nothing at runtime, so only use it when, as here, you know where the value came from.</p>
+<p>One line needs explaining: <code>isSchemaValidationError(error)</code>. A <code>catch</code> block receives <code>unknown</code>, and <code>error instanceof SchemaError</code> alone is not enough here: <code>SchemaError</code> lives in <code>@zudojs/errors</code>, a basic package that every other ZudoJS package builds on, so it cannot know the shape of <code>@zudojs/schema</code>'s issues and types them as <code>unknown</code>. <code>isSchemaValidationError</code>, from <code>@zudojs/schema</code>, is a <strong>type guard</strong>, like the ones you wrote in <a href="/learn/ts-runtime">TypeScript and JavaScript together</a>: it checks at runtime that the error is a <code>SchemaError</code> and that every issue has the right shape, and then TypeScript knows <code>error.issues</code> is a list of schema issues with a <code>path</code> and a <code>message</code>. You need no <code>as</code> cast.</p>
 <p><code>error.expose</code> is <code>true</code> for errors whose message is safe to show a client. Anything unexpected becomes a plain 500 with a generic message. You never send internal details, such as a stack trace, to the outside world.</p>
 <p>Run it on your computer the same way as before. All four files go in the <code>ts-tasks</code> folder:</p>
 <shell>

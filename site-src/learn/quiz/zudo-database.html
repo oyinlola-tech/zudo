@@ -133,52 +133,6 @@ await client.disconnect();
 <explain><p>The runner records every applied migration in its <code>_migrations</code> table. The second <code>migrate()</code> sees both versions there and skips them, so it applies nothing and never runs <code>CREATE TABLE</code> again.</p></explain>
 </question>
 
-<question id="db-migrate-fails" type="output">
-<q>Migration 2 fails halfway. What does this print?</q>
-<code file="migrate-fails.js" browser="no">
-import { PGlite } from "@electric-sql/pglite";
-import { createDatabaseClient, createMigrationRunner, noopDatabaseLogger } from "@zudojs/database";
-
-const pg = new PGlite();
-const raw = (db) => ({
-  $queryRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).rows,
-  $executeRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).affectedRows ?? 0,
-});
-const client = createDatabaseClient({
-  prisma: { ...raw(pg), $connect: () => pg.waitReady, $disconnect: () => pg.close(),
-    $transaction: (work) => pg.transaction((tx) => work(raw(tx))) },
-  logger: noopDatabaseLogger,
-});
-await client.connect();
-
-const runner = createMigrationRunner(client, [
-  { version: 1, name: "create-tasks", up: (tx) => tx.$executeRawUnsafe("CREATE TABLE tasks (id serial PRIMARY KEY, title text NOT NULL)") },
-  { version: 2, name: "demo-rows", up: async (tx) => {
-    await tx.$executeRawUnsafe("INSERT INTO tasks (title) VALUES ('Buy milk')");
-    throw new Error("oops");
-  } },
-]);
-try {
-  await runner.migrate();
-} catch {
-  console.log("migrate failed");
-}
-const status = await runner.status();
-const rows = await client.queryRawUnsafe("SELECT count(*)::int AS n FROM tasks");
-console.log("version", status.currentVersion, "rows", rows[0].n);
-await client.disconnect();
-</code>
-<option correct>migrate failed
-version 1 rows 0</option>
-<option>migrate failed
-version 0 rows 0</option>
-<option>migrate failed
-version 1 rows 1</option>
-<option>migrate failed
-version 2 rows 1</option>
-<explain><p>Each migration runs in its own transaction. Migration 1 committed, so the version is 1 and the table exists. Migration 2 threw, so its <code>INSERT</code> was rolled back and the table is empty.</p></explain>
-</question>
-
 <question id="db-frozen-migration" type="choice">
 <q>Migration 1 already ran on the shared staging database. You need one more column in <code>tasks</code>. What do you do?</q>
 <option>Edit migration 1 to add the column and run <code>migrate()</code> again</option>
@@ -670,45 +624,6 @@ rows: 1</option>
 <explain><p>Serialization failures and deadlocks are safe to retry: running the whole callback again usually succeeds. A validation error would fail the same way every time, so it is not retried.</p></explain>
 </question>
 
-<question id="db-health-down" type="output">
-<q>What does this print once the database is gone?</q>
-<code file="health.js" browser="no">
-import { PGlite } from "@electric-sql/pglite";
-import { checkDatabaseHealth, createDatabaseClient, noopDatabaseLogger } from "@zudojs/database";
-
-const pg = new PGlite();
-const raw = (db) => ({
-  $queryRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).rows,
-  $executeRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).affectedRows ?? 0,
-});
-const client = createDatabaseClient({
-  prisma: { ...raw(pg), $connect: () => pg.waitReady,
-    $disconnect: async () => { if (!pg.closed) await pg.close(); },
-    $transaction: (work) => pg.transaction((tx) => work(raw(tx))) },
-  logger: noopDatabaseLogger,
-});
-await client.connect();
-
-async function healthRoute() {
-  const health = await checkDatabaseHealth(client, { timeoutMs: 2_000 });
-  return { status: health.healthy ? 200 : 503, body: { database: health.status } };
-}
-console.log(await healthRoute());
-await pg.close();
-console.log(await healthRoute());
-await client.disconnect();
-</code>
-<option correct>{ status: 200, body: { database: 'healthy' } }
-{ status: 503, body: { database: 'unhealthy' } }</option>
-<option>{ status: 200, body: { database: 'healthy' } }
-{ status: 200, body: { database: 'healthy' } }</option>
-<option>{ status: 200, body: { database: 'healthy' } }
-{ status: 500, body: { database: 'PGlite is closed' } }</option>
-<option>{ status: 200, body: { database: 'healthy' } }
-{ status: 503, body: { database: 'down' } }</option>
-<explain><p><code>checkDatabaseHealth</code> runs a tiny <code>SELECT 1</code> with a timeout. Once the database is gone it reports <code>unhealthy</code>, and the route answers <strong>503 Service Unavailable</strong>, so the load balancer stops sending traffic.</p></explain>
-</question>
-
 <question id="code-db-health" type="code" file="health-route.js">
 <q><p>Finish <code>healthRoute(check)</code>. <code>check</code> is an async function that returns <code>{ healthy, status, message }</code>. Answer <code>{ status: 200 }</code> or <code>{ status: 503 }</code>, with a body <code>{ database: … }</code> that holds only the <code>status</code> text. Never put <code>message</code> in the body: a health endpoint is public.</p></q>
 <starter>
@@ -933,4 +848,22 @@ try {
 Unknown field "password"
 </expected>
 <explain><p>Check the allow-list first, before the name goes near SQL. Then replace each capital letter with <code>_</code> and its lower-case form.</p></explain>
+</question>
+
+<question id="db-migrate-fails-choice" type="choice">
+<q>Migration 1 succeeds. Migration 2 inserts a row, then throws. What state is the database in afterwards?</q>
+<option>Nothing changed: migration 1 is undone too</option>
+<option correct>Migration 1 stays applied (version 1); migration 2's insert is rolled back and it is still pending</option>
+<option>Both are applied, including migration 2's row</option>
+<option>Migration 2 is marked applied, but its row is missing</option>
+<explain><p>Each migration runs in its own transaction. If one fails halfway, its changes are undone and the ones before it stay. The next <code>migrate()</code> tries migration 2 again.</p></explain>
+</question>
+
+<question id="db-health-503" type="choice">
+<q>The database is down. What should <code>GET /health</code> answer, using <code>checkDatabaseHealth</code>?</q>
+<option>200 with <code>{ database: "ok" }</code>, because the process itself is running</option>
+<option correct>503 Service Unavailable with <code>{ database: "unhealthy" }</code>, and no error text or host name in the body</option>
+<option>500 with the full error message, so operators can see it</option>
+<option>404, because the database was not found</option>
+<explain><p>An honest health route makes the load balancer stop sending traffic to a server that cannot answer. The endpoint is public, so the body names only the status; details go to the logs.</p></explain>
 </question>

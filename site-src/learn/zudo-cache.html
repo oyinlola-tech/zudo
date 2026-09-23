@@ -133,15 +133,18 @@ try {
   keys.build("tasks:list");
 } catch (error) {
   if (isCacheError(error)) {
-    console.log(error.statusCode, error.message);
+    console.log(error.code, error.statusCode);
+    console.log(error.message);
   }
 }
 </example>
 <output>
 taskapi:tasks.list
 taskapi:ada:tasks.list
-400 Invalid cache key part "tasks:list": parts must match /^[a-zA-Z0-9._\-]+$/ and must not contain the separator ":".
+ERR_INVALID_INPUT 400
+Invalid cache key part "tasks:list": parts must match /^[a-zA-Z0-9._\-]+$/ and must not contain the separator ":".
 </output>
+<p>A bad key is a bug in your code, so it throws a <code>CacheError</code> with the code <code>ERR_INVALID_INPUT</code> and status 400. It is never treated as a miss.</p>
 <p>Why so strict? If a key could contain a colon, a key such as <code>"ada:tasks.list"</code> would look exactly like the key <code>tasks.list</code> in the namespace <code>ada</code>. Someone who controls part of a key could then read or overwrite another user's entry.</p>
 <p>A <strong>namespace</strong> groups keys. The same key in two namespaces is two different entries. In the Task API, every user sees only their own tasks, so the user id is a natural namespace:</p>
 <example file="namespaces.ts">
@@ -187,6 +190,10 @@ await wait(150);
 console.log("150 ms later:", (await cache.get("tasks.ada")).hit);
 console.log("time left:", await cache.ttl("tasks.ada"), await cache.ttl("settings"));
 
+await cache.set("tasks.linus", ["Fix bug"], { ttl: 10_000 });
+const left = await cache.ttl("tasks.linus");
+console.log("whole ms:", Number.isInteger(left), left !== undefined && left !== null && left <= 10_000);
+
 try {
   await cache.set("tasks.ada", ["Buy milk"], { ttl: 0 });
 } catch (error) {
@@ -197,9 +204,10 @@ try {
 right away: true
 150 ms later: false
 time left: undefined null
+whole ms: true true
 CACHE_INVALID_TTL
 </output>
-<p>The entry with a 100 ms TTL was gone 150 ms later. <code>cache.ttl(key)</code> returns the milliseconds left, <code>undefined</code> for a missing key, and <code>null</code> for an entry stored with <code>ttl: null</code>, which never expires.</p>
+<p>The entry with a 100 ms TTL was gone 150 ms later. <code>cache.ttl(key)</code> returns the milliseconds left, <code>undefined</code> for a missing key, and <code>null</code> for an entry stored with <code>ttl: null</code>, which never expires. For a live entry you get whole milliseconds, a little under the TTL you set, because some time has passed since <code>set</code>.</p>
 <p>The last line shows a common mistake: <code>ttl: 0</code> does not mean "forever". It is rejected with <code>CACHE_INVALID_TTL</code>. Write <code>ttl: null</code> for an entry that never expires.</p>
 <p>How long should a TTL be? It is a trade-off. Longer means more hits and less database work. Shorter means stale data disappears sooner. A task list that you also clear on every change (next sections) can live for minutes. Data you cannot clear reliably, such as an answer from another company's API, should live only as long as you can accept it being out of date. The default is 5 minutes, and the maximum is 24 hours.</p>
 </section>
@@ -307,6 +315,7 @@ linus list: true
 </output>
 <p>Three of Ada's entries were cleared. Her profile had a different tag and stayed. Linus's list had the same tag, but tags live inside a namespace, so his entry was not touched until the pattern call removed it.</p>
 <warn title="WATCH OUT">If you tag an entry in a namespace and then call <code>invalidateByTag</code> without that namespace, nothing is cleared and no error is thrown. Pass the same namespace on both sides.</warn>
+<p>Tags follow the same rules as key parts. An empty tag, <code>tags: [""]</code>, throws <code>ERR_INVALID_INPUT</code>, the same code as a bad key.</p>
 <p>The rule to follow: <strong>every code path that writes the data also invalidates its cache entries</strong>, right after the write succeeds. Create, update, delete, and any background job that changes tasks.</p>
 </section>
 
@@ -414,6 +423,7 @@ entries: 1
 </output>
 <ul>
 <li><code>subscribe(type, handler)</code> listens for <code>cache.hit</code>, <code>cache.miss</code>, <code>cache.set</code>, <code>cache.delete</code>, <code>cache.clear</code> or <code>cache.error</code>, or <code>"*"</code> for all. You will learn how events work in general in <a href="/learn/zudo-events">the next lesson</a>.</li>
+<li><code>errors</code> counts failed operations, including input the cache refused, such as a bad key, namespace, pattern or tag. Each one also emits <code>cache.error</code>. A number that keeps growing usually means a bug in how you build keys.</li>
 <li><code>getHotKeys(n)</code> lists the most-read keys. It tells you where caching pays off most.</li>
 <li><code>getLatencyStats(CacheOperation.GET)</code> gives you how long reads take (p50, p95, p99). You will send numbers like these to a dashboard in <a href="/learn/zudo-observability">the observability lesson</a>.</li>
 </ul>

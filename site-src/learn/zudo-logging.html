@@ -37,7 +37,7 @@ console.log(records.filter((r) => r.taskId === 7).length, "events for task 7");
 
 <section>
 <h2 id="first-logger">Your first logger</h2>
-<p><code>@zudojs/logger</code> is already in the Task API: the CLI installed it, and <code>src/app.ts</code> creates the logger that the runtime uses. (<code>npm ls @zudojs/logger</code> shows version 1.3.0.) In a new project you would run <code>npm install @zudojs/logger</code>. Create a logger and write one entry:</p>
+<p><code>@zudojs/logger</code> is already in the Task API: the CLI installed it, and <code>src/app.ts</code> creates the logger that the runtime uses. (<code>npm ls @zudojs/logger</code> shows version 1.4.0.) In a new project you would run <code>npm install @zudojs/logger</code>. Create a logger and write one entry:</p>
 <example file="first.ts">
 import { createLogger } from "@zudojs/logger";
 
@@ -46,18 +46,12 @@ const logger = createLogger({ name: "task-api" });
 logger.info("task created", { taskId: 7, userId: "ada" });
 </example>
 <output mask="iso">
-{
-  timestamp: '2026-09-23T13:52:34.126Z',
-  level: 'info',
-  message: '2026-09-23T13:52:34.126Z [INFO] [task-api] task created taskId=7 userId=ada',
-  logger: 'task-api',
-  metadata: { taskId: 7, userId: 'ada' }
-}
+2026-09-23T17:13:02.238Z [INFO] [task-api] task created taskId=7 userId=ada
 </output>
-<p>These are the blocks you saw when you started the Task API with <code>npm run dev</code>. When you configure nothing, the logger prints every entry to the console as an object. Its <code>message</code> field holds a finished text line, and the other fields hold the same facts again, one by one. It works, but it is noisy. Two options decide what you see instead:</p>
+<p>These are the lines you saw when you started the Task API with <code>npm run dev</code>. When you configure nothing, the logger uses a text formatter and prints each entry to the console as one readable line. Two options decide what you see and where it goes:</p>
 <ul>
 <li>A <strong>formatter</strong> turns an entry into text: a readable line, or a line of JSON.</li>
-<li>A <strong>transport</strong> sends the formatted entry somewhere: the terminal, a file, a log service. It can be a plain function. It receives the entry, with the formatter's text in <code>entry.message</code>.</li>
+<li>A <strong>transport</strong> sends the entry somewhere: the terminal, a file, a log service. It can be a plain function. It receives the entry: <code>entry.message</code> is your raw message, and <code>entry.formatted</code> is the formatter's finished line. Its type says it may be missing, so write <code>entry.formatted ?? entry.message</code>.</li>
 </ul>
 <example file="format.ts">
 import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
@@ -65,7 +59,7 @@ import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
 const logger = createLogger({
   name: "task-api",
   formatter: createTextLoggerFormatter(),
-  transports: [(entry) => console.log(entry.message)],
+  transports: [(entry) => console.log(entry.formatted ?? entry.message, "| raw:", entry.message)],
 });
 
 logger.info("task created", { taskId: 7, userId: "ada", title: "Buy milk" });
@@ -75,7 +69,7 @@ logger.warn("slow query", { durationMs: 840 });
 2026-09-23T13:52:16.059Z [INFO] [task-api] task created taskId=7 userId=ada title="Buy milk"
 2026-09-23T13:52:16.064Z [WARN] [task-api] slow query durationMs=840
 </output>
-<p>One line per entry: time, level, logger name, message, then the metadata as <code>key=value</code> pairs. A value with a space gets quotes, so <code>title="Buy milk"</code> stays one field. To keep the rest of this page free of changing timestamps, the next examples pass <code>createTextLoggerFormatter({ includeTimestamp: false })</code>. Always keep the time in a real application.</p>
+<p>One line per entry: time, level, logger name, message, then the metadata as <code>key=value</code> pairs. A value with a space gets quotes, so <code>title="Buy milk"</code> stays one field. The raw <code>message</code> is still just <code>task created</code>: a transport that sends entries to a log service can send the fields, not the finished line. To keep the rest of this page free of changing timestamps, the next examples pass <code>createTextLoggerFormatter({ includeTimestamp: false })</code>. Always keep the time in a real application.</p>
 </section>
 
 <section>
@@ -94,21 +88,21 @@ logger.warn("slow query", { durationMs: 840 });
 </table></div>
 <p>A logger has a <strong>threshold</strong> level, <code>info</code> by default. It writes entries at that level or more serious, and silently drops the rest:</p>
 <example file="levels.ts">
-import { createLogger, createTextLoggerFormatter, LoggerLevel } from "@zudojs/logger";
+import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
 
 const logger = createLogger({
   name: "task-api",
   formatter: createTextLoggerFormatter({ includeTimestamp: false }),
-  transports: [(entry) => console.log(entry.message)],
+  transports: [(entry) => console.log(entry.formatted ?? entry.message)],
 });
 
 logger.debug("cache miss", { key: "tasks:ada" });
 logger.info("task created", { taskId: 7 });
 
-logger.setLevel(LoggerLevel.DEBUG);
+logger.setLevel("debug");
 logger.debug("cache miss", { key: "tasks:ada" });
 
-logger.setLevel(LoggerLevel.WARN);
+logger.setLevel("warn");
 logger.info("task created", { taskId: 8 });
 logger.error("could not save task", { taskId: 8 });
 </example>
@@ -117,7 +111,7 @@ logger.error("could not save task", { taskId: 8 });
 [DEBUG] [task-api] cache miss key=tasks:ada
 [ERROR] [task-api] could not save task taskId=8
 </output>
-<p>The first <code>debug</code> entry and the last <code>info</code> entry were dropped. That is the point of levels: you can leave <code>debug</code> lines in your code, and switch them on only while you look for a bug.</p>
+<p>The first <code>debug</code> entry and the last <code>info</code> entry were dropped. That is the point of levels: you can leave <code>debug</code> lines in your code, and switch them on only while you look for a bug. You can name a level as a string (<code>"debug"</code>, in any case) or with the <code>LoggerLevel</code> enum (<code>LoggerLevel.DEBUG</code>). An unknown name throws, so a typo cannot switch your logs off.</p>
 <p>The level belongs in configuration, not in code. At the end of this lesson you read it from a <code>LOG_LEVEL</code> environment variable.</p>
 </section>
 
@@ -131,7 +125,7 @@ const logger = createLogger({
   name: "task-api",
   metadata: { version: "0.1.0" },
   formatter: createTextLoggerFormatter({ includeTimestamp: false }),
-  transports: [(entry) => console.log(entry.message)],
+  transports: [(entry) => console.log(entry.formatted ?? entry.message)],
 });
 
 const dbLogger = logger.child({ name: "task-api.db", metadata: { component: "db" } });
@@ -159,7 +153,7 @@ import { createLogger, createLoggerContext, createTextLoggerFormatter } from "@z
 const logger = createLogger({
   name: "task-api",
   formatter: createTextLoggerFormatter({ includeTimestamp: false }),
-  transports: [(entry) => console.log(entry.message)],
+  transports: [(entry) => console.log(entry.formatted ?? entry.message)],
 });
 
 const requestLog = logger.withContext(
@@ -191,7 +185,7 @@ import type { Logger } from "@zudojs/logger";
 const logger = createLogger({
   name: "task-api",
   formatter: createTextLoggerFormatter({ includeTimestamp: false }),
-  transports: [(entry) => console.log(entry.message)],
+  transports: [(entry) => console.log(entry.formatted ?? entry.message)],
 });
 
 type Handler = (request: HttpRequestContext, log: Logger) => Promise<HttpResponseContext>;
@@ -247,8 +241,8 @@ import type { Logger } from "@zudojs/logger";
 
 const logger = createLogger({
   name: "task-api",
-  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
-  transports: [(entry) => console.log(entry.message.split("\n")[0])],
+  formatter: createTextLoggerFormatter({ includeTimestamp: false, includeStackTrace: false }),
+  transports: [(entry) => console.log(entry.formatted ?? entry.message)],
 });
 
 function logFailure(log: Logger, error: unknown, route: string): number {
@@ -268,7 +262,7 @@ logFailure(logger, new Error("connect ECONNREFUSED 127.0.0.1:5432"), "POST /task
 [WARN] [task-api] request rejected route="GET /tasks/9" status=404 reason="Task 9 not found"
 [ERROR] [task-api] request failed route="POST /tasks" status=500
 </output>
-<p>This example prints only the first line of each entry. Save it on your computer, change the transport to <code>console.log(entry.message)</code>, and run it. The error entry continues with the error and its stack trace, one call per line:</p>
+<p>The error entry ends with the error's name and message. <code>includeStackTrace: false</code> left out the stack trace to keep this page short. Save the example on your computer, remove that option, and run it. Now the error entry continues with the stack trace, one call per line:</p>
 <shell title="Terminal on your computer">
 $ npx tsx log-error.ts
 [WARN] [task-api] request rejected route="GET /tasks/9" status=404 reason="Task 9 not found"
@@ -298,7 +292,7 @@ const logger = createLogger({
   name: "task-api",
   redact: { keys: ["email"] },
   formatter: createTextLoggerFormatter({ includeTimestamp: false }),
-  transports: [(entry) => console.log(entry.message)],
+  transports: [(entry) => console.log(entry.formatted ?? entry.message)],
 });
 
 logger.info("login", {
@@ -357,14 +351,14 @@ export interface LoggerEnv {
 
 export function createAppLogger(env: LoggerEnv = process.env): Logger {
   const production = env.NODE_ENV === "production";
-  const level = env.LOG_LEVEL?.trim() ? loggerLevelFromName(env.LOG_LEVEL.trim().toLowerCase()) : LoggerLevel.INFO;
+  const level = env.LOG_LEVEL?.trim() ? loggerLevelFromName(env.LOG_LEVEL.trim()) : LoggerLevel.INFO;
   return createLogger({
     name: "task-api",
     level,
     environment: production ? "production" : "development",
     formatter: production ? createJsonLoggerFormatter() : createTextLoggerFormatter(),
     transports: [(entry) => {
-      process.stdout.write(entry.message + "\n");
+      process.stdout.write((entry.formatted ?? entry.message) + "\n");
     }],
   });
 }
@@ -457,9 +451,9 @@ Map(2) { 'info' => 2, 'warn' => 1 }
 </solution>
 </exercise>
 <exercise title="Find the leaks">
-<p>Which of these lines leak a secret into the logs, and how do you fix them? (a) <code>log.info("login", { user, password })</code> (b) <code>log.info(`token issued: ${token}`)</code> (c) <code>log.debug("request", { headers: request.headers })</code> (d) <code>log.info("user", { profile: { name, creditCard } })</code></p>
+<p>Which of these lines leak a secret into the logs, and how do you fix them? (a) <code>log.info("login", { user, password })</code> (b) <code>log.info(`token issued: ${token}`)</code> (c) <code>log.debug("request", { headers: request.headers })</code> (d) <code>log.info("user", { profile: { name, creditCard, phone } })</code></p>
 <solution>
-<p>(a) is safe: <code>password</code> is redacted by name. (b) leaks: the token is inside the message text, which is never redacted. Log <code>"token issued"</code> with a harmless field like <code>{ userId }</code> instead. (c) is safe for <code>authorization</code> and <code>cookie</code>, but you still log every other header, some of which may be personal. Log only the headers you need. (d) leaks: <code>creditCard</code> is not in the default list (<code>cardNumber</code> is). Add it with <code>redact: { keys: ["creditCard"] }</code>, or better, never put card data in a log object at all.</p>
+<p>(a) is safe: <code>password</code> is redacted by name. (b) leaks: the token is inside the message text, which is never redacted. Log <code>"token issued"</code> with a harmless field like <code>{ userId }</code> instead. (c) is safe for <code>authorization</code> and <code>cookie</code>, but you still log every other header, some of which may be personal. Log only the headers you need. (d) half leaks: <code>creditCard</code> is redacted by default (the list also knows <code>cardNumber</code>, <code>cvv</code> and <code>ssn</code>), but <code>phone</code> is personal data the logger does not know about. Add it with <code>redact: { keys: ["phone"] }</code>. Better still, log only the <code>userId</code>, and never put card data in a log object at all.</p>
 </solution>
 </exercise>
 </section>
