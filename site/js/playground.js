@@ -1274,7 +1274,9 @@
     return Promise.resolve(run()).then(output);
   }
 
+  /* Replace the files that `import "./x.js"` can see (the lesson page's project). */
   function registerFiles(files) {
+    virtualFiles = {};
     Object.keys(files || {}).forEach(function (k) { virtualFiles[k] = files[k]; });
   }
 

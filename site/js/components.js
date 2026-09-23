@@ -383,6 +383,7 @@
   var CHECK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>';
 
   function copyText(block) {
+    if (block.hasAttribute('data-copy')) return block.getAttribute('data-copy');
     var text = block.textContent
       .replace(/^\s*\d+\s{2,}/gm, '')     // strip rendered line numbers
       .replace(/^\$\s+/gm, '')             // strip shell prompts so commands paste clean
@@ -394,7 +395,7 @@
   function initCopyButtons() {
     var blocks = document.querySelectorAll('.code-block, .api-signature, pre, .hero-term-code');
     blocks.forEach(function (block) {
-      if (block.closest('.pg') || block.closest('.code-wrap') || block.querySelector('.code-block, pre')) return;
+      if (block.closest('.pg') || block.closest('.code-wrap') || block.classList.contains('lx-no-copy') || block.querySelector('.code-block, pre')) return;
       if (block.textContent.trim().length < 3) return;
       var wrapper = document.createElement('div');
       wrapper.className = 'code-wrap';
