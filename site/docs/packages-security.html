@@ -123,7 +123,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.1</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/security</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Security primitives for input validation, header security, CORS, CSRF protection, rate limiting, and security headers with secure defaults.
@@ -500,11 +500,16 @@ console.<span class="fn">log</span>(setCookie.<span class="fn">startsWith</span>
 console.<span class="fn">log</span>(<span class="fn">verify</span>(<span class="str">"POST"</span>, { cookie: <span class="str">`app_csrf=${token}`</span>, <span class="str">"x-app-csrf"</span>: token })); <span class="cmt">// true</span>
 console.<span class="fn">log</span>(<span class="fn">verify</span>(<span class="str">"POST"</span>, { cookie: <span class="str">`app_csrf=${token}`</span> }));                      <span class="cmt">// false — no header</span>
 console.<span class="fn">log</span>(<span class="fn">verify</span>(<span class="str">"POST"</span>, { cookie: <span class="str">"app_csrf=junk"</span>, <span class="str">"x-app-csrf"</span>: <span class="str">"junk"</span> }));   <span class="cmt">// false — malformed</span>
-console.<span class="fn">log</span>(<span class="fn">verify</span>(<span class="str">"GET"</span>, {}));                                                    <span class="cmt">// true — safe method</span></div>
+console.<span class="fn">log</span>(<span class="fn">verify</span>(<span class="str">"GET"</span>, {}));                                                    <span class="cmt">// true — safe method</span>
+console.<span class="fn">log</span>(<span class="fn">verify</span>(<span class="str">""</span>, {}));                                                       <span class="cmt">// false — an empty method is verified, not skipped</span></div>
 
         <p class="mb-4">
-          <code class="bg-black/5 px-1">verify</code> protects only the methods in the <code class="bg-black/5 px-1">methods</code> list. Any other method string, including an unknown one or an empty string, counts as safe and returns <code class="bg-black/5 px-1">true</code>, so pass the real request method and make sure your router never runs a state-changing handler for a method outside the list.
+          <code class="bg-black/5 px-1">verify</code> and <code class="bg-black/5 px-1">requiresCsrfProtection</code> fail closed. Only <code class="bg-black/5 px-1">GET</code>, <code class="bg-black/5 px-1">HEAD</code>, <code class="bg-black/5 px-1">OPTIONS</code> and <code class="bg-black/5 px-1">TRACE</code> skip the check, matched exactly after upper-casing and without trimming, so <code class="bg-black/5 px-1">"get"</code> is skipped but <code class="bg-black/5 px-1">" GET"</code> is not. Every other value is verified: an empty or blank method, <code class="bg-black/5 px-1">"POST "</code>, <code class="bg-black/5 px-1">"CONNECT"</code> and an unknown method such as <code class="bg-black/5 px-1">"FOO"</code> all need a valid token. When you configure <code class="bg-black/5 px-1">methods</code>, a standard HTTP method the list leaves out is also exempt: with <code class="bg-black/5 px-1">methods: ["DELETE"]</code>, <code class="bg-black/5 px-1">POST</code> and <code class="bg-black/5 px-1">PUT</code> skip the check, while <code class="bg-black/5 px-1">""</code> and <code class="bg-black/5 px-1">"FOO"</code> are still verified.
         </p>
+
+        <div class="callout callout-danger">
+          <strong>Changed in 1.3.1 (security):</strong> up to 1.3.0 any method outside the protected list skipped the check, so <code>""</code>, <code>" "</code>, <code>"POST "</code>, <code>"FOO"</code> and <code>"CONNECT"</code> returned <code>true</code> with no token. They now return <code>false</code> without a valid token. If a client of yours sends a non-standard method to a CSRF-protected route, it now needs a token.
+        </div>
 
         <div class="callout callout-danger">
           <strong>Changed in 1.2.0:</strong> <code>createCsrfProtection</code> and <code>requiresCsrfProtection</code> now throw a <code>ConfigurationError</code> when <code>methods</code> is present but empty, is not an array, or contains a blank entry. Until 1.1.0, <code>methods: []</code> turned CSRF off for every request in silence &mdash; and that is exactly what <code>process.env.CSRF_METHODS?.split(",").filter(Boolean) ?? []</code> produces when the variable is unset. Omit <code>methods</code> to get the defaults; pass a list only when you mean to change them.
@@ -831,7 +836,7 @@ console.<span class="fn">log</span>(parsed.cookies); <span class="cmt">// [ { na
 console.<span class="fn">log</span>(parsed.errors); <span class="cmt">// []</span></div>
 
         <p class="mb-4">
-          <code class="bg-black/5 px-1">serializeCookie</code> takes the same attributes as one object instead of separate arguments, and both functions <strong>throw</strong> a <code class="bg-black/5 px-1">ValidationError</code> rather than write something dangerous. <code class="bg-black/5 px-1">Domain</code> must be a hostname: labels of letters, digits and hyphens separated by dots, with an optional leading dot, at most 253 characters. <code class="bg-black/5 px-1">Path</code> may not contain control characters, DEL, <code class="bg-black/5 px-1">;</code> or <code class="bg-black/5 px-1">,</code>.
+          <code class="bg-black/5 px-1">serializeCookie</code> takes the same attributes as one object instead of separate arguments, and both functions <strong>throw</strong> a <code class="bg-black/5 px-1">ValidationError</code> rather than write something dangerous. <code class="bg-black/5 px-1">Domain</code> must be a hostname: labels of letters, digits and hyphens separated by dots, with an optional leading dot, at most 253 characters. <code class="bg-black/5 px-1">Path</code> must be printable ASCII (0x20&ndash;0x7E) with no <code class="bg-black/5 px-1">;</code> or <code class="bg-black/5 px-1">,</code>: percent-encode anything else, so write <code class="bg-black/5 px-1">/caf%C3%A9</code>, not <code class="bg-black/5 px-1">/café</code>. A space is allowed, as RFC 6265 allows it. <code class="bg-black/5 px-1">generateCsrfCookie</code> and <code class="bg-black/5 px-1">createCsrfProtection</code> apply the same <code class="bg-black/5 px-1">Path</code> check and throw <code class="bg-black/5 px-1">ValidationError</code> too.
         </p>
 
         <div class="code-block mb-4"><span class="kw">import</span> { serializeCookie, createSecureCookie } <span class="kw">from</span> <span class="str">"@zudojs/security"</span>;
@@ -854,11 +859,15 @@ console.<span class="fn">log</span>(<span class="fn">createSecureCookie</span>(<
   <span class="fn">createSecureCookie</span>(<span class="str">"sid"</span>, <span class="str">"v"</span>, { path: <span class="str">"/app;Domain=evil.example"</span> });
 } <span class="kw">catch</span> (error) {
   console.<span class="fn">log</span>((error <span class="kw">as</span> <span class="tp">Error</span>).message);
-  <span class="cmt">// 'Cookie Path contains invalid characters (injection risk): control characters, ";" and "," are not allowed, …'</span>
+  <span class="cmt">// 'Cookie Path contains invalid characters (injection risk): only printable ASCII is allowed (percent-encode anything else), and ";" and "," are not, …'</span>
 }</div>
 
         <div class="callout callout-warning">
           <strong>Changed in 1.3.0 (behaviour change):</strong> up to 1.2.x only a real CR, LF, NUL, <code>;</code> or <code>,</code> was refused, so a <code>Domain</code> of <code>a\r\nX-Evil: 1</code> written with literal backslashes, or one with spaces or a colon, went into the header unchanged. If you pass a <code>Domain</code> with a port or anything other than a hostname, it now throws.
+        </div>
+
+        <div class="callout callout-warning">
+          <strong>Changed in 1.3.1 (behaviour change):</strong> a cookie <code>Path</code> with non-ASCII characters, such as <code>"/ä"</code>, used to be written as it was. It now throws <code>ValidationError</code>; percent-encode it. <code>generateCsrfCookie</code> and <code>createCsrfProtection</code> used to write their <code>path</code> into <code>Set-Cookie</code> unchecked and now run the same check.
         </div>
 
         <div class="callout callout-warning">
@@ -1000,7 +1009,7 @@ console.<span class="fn">log</span>(<span class="const">DEFAULT_BODY_LIMITS</spa
             <tr><td><code>validateCsrfToken(token, secret, options?)</code></td><td>Checks signature, expiry and session binding.</td><td>Returns <code>boolean</code> (<code>false</code> for a malformed or forged token). <code>expiration</code> is the maximum lifetime you accept. Throws on a short secret.</td></tr>
             <tr><td><code>verifyDoubleSubmit(cookieToken, requestToken, secret, options?)</code></td><td>Checks that both copies match and are valid.</td><td>Constant-time comparison. The usual entry point. <code>false</code> for a missing or non-string token; throws only on a short secret.</td></tr>
             <tr><td><code>createCsrfProtection(config)</code></td><td>Binds a secret, lifetime, cookie/header names and methods to the primitives.</td><td>Returns <code>{ issue, verify, requiresProtection }</code>. Throws <code>ConfigurationError</code> on a short secret or an unusable <code>methods</code> list. <code>verify</code> returns <code>false</code>, never throws, for a bad token or a malformed request.</td></tr>
-            <tr><td><code>requiresCsrfProtection(method, config?)</code></td><td>Does this method change state?</td><td><code>false</code> for GET, HEAD, OPTIONS, TRACE. Throws <code>ConfigurationError</code> when <code>config.methods</code> is present but empty, not an array, or holds a blank entry.</td></tr>
+            <tr><td><code>requiresCsrfProtection(method, config?)</code></td><td>Does this method change state?</td><td><code>false</code> for GET, HEAD, OPTIONS, TRACE (and, with <code>config.methods</code>, a standard method the list leaves out); <code>true</code> for anything else, including an empty or unknown method. Throws <code>ConfigurationError</code> when <code>config.methods</code> is present but empty, not an array, or holds a blank entry.</td></tr>
             <tr><td><code>extractCsrfTokenFromHeaders(headers, headerName?)</code></td><td>Reads the token from headers.</td><td>Default <code>x-csrf-token</code>; lookup is case-insensitive.</td></tr>
             <tr><td><code>extractCsrfTokenFromCookies(cookieHeader, cookieName?)</code></td><td>Reads the token from a raw Cookie header.</td><td>Default cookie name <code>_csrf</code>.</td></tr>
             <tr><td><code>generateCsrfCookie(token, config?)</code></td><td>Builds the <code>Set-Cookie</code> value.</td><td><code>HttpOnly</code>, <code>Secure</code>, <code>SameSite=Strict</code> by default.</td></tr>
@@ -1066,7 +1075,7 @@ console.<span class="fn">log</span>(<span class="const">DEFAULT_BODY_LIMITS</spa
           <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
             <tr><td><code>createSecureCookie(name, value, options?, config?)</code></td><td>Builds a <code>Set-Cookie</code> value.</td><td>Secure, HttpOnly, SameSite=Lax by default. Throws on unsafe input.</td></tr>
-            <tr><td><code>serializeCookie(cookie, config?)</code></td><td>Same, taking a <code>ParsedCookie</code>.</td><td>Percent-encodes the value; validates every attribute. <code>Domain</code> must be a hostname; <code>Path</code> may not hold control characters, <code>;</code> or <code>,</code>.</td></tr>
+            <tr><td><code>serializeCookie(cookie, config?)</code></td><td>Same, taking a <code>ParsedCookie</code>.</td><td>Percent-encodes the value; validates every attribute. <code>Domain</code> must be a hostname; <code>Path</code> must be printable ASCII with no <code>;</code> or <code>,</code>.</td></tr>
             <tr><td><code>parseCookieHeader(header, config?)</code></td><td>Splits a Cookie header.</td><td>Returns <code>{ cookies, errors }</code>. Does not percent-decode.</td></tr>
             <tr><td><code>validateCookieName(name)</code> / <code>validateCookieValue(value)</code></td><td>Check one part.</td><td>Error message, or <code>undefined</code> when fine.</td></tr>
             <tr><td><code>stripSensitiveCookies(header, names?)</code></td><td>Removes session-like cookies.</td><td>Defaults to <code>DEFAULT_SENSITIVE_COOKIE_NAMES</code>, matched as whole words anywhere in the name (<code>isSensitiveCookieName</code>).</td></tr>

@@ -123,7 +123,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.4.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.4.1</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/permissions</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Authorization engine for the Zudojs framework. Supports RBAC, ABAC, resource policies, wildcards, role hierarchy, condition combinators, ability compilation, and explain mode.
@@ -598,10 +598,10 @@ permissions.<span class="fn">remove</span>(<span class="str">"post:admin"</span>
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">What a policy's answer means</h3>
-        <p class="mb-3 text-sm">A policy runs alongside the rules for every permission it lists. Policies run highest priority first and stop at the first denial. A policy that returns <code class="bg-black/5 px-1">allowed: false</code>, throws, or exceeds <code class="bg-black/5 px-1">policyTimeout</code> denies, and a denial always wins. What <code class="bg-black/5 px-1">allowed: true</code> means depends on the policy's <code class="bg-black/5 px-1">effect</code>:</p>
+        <p class="mb-3 text-sm">A policy runs alongside the rules for every permission it lists. Policies run highest priority first and stop at the first denial, and a denial always wins. What a policy's answer means depends on its <code class="bg-black/5 px-1">effect</code>:</p>
         <ul class="space-y-2 mb-4 text-sm">
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <span><code class="bg-black/5 px-1">"constrain"</code> (the default): &ldquo;no objection&rdquo;. The policy is an extra condition on top of RBAC/ABAC, so the actor's roles, direct permissions or rules must still grant the permission. It can take access away, never hand it out.</span></li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <span><code class="bg-black/5 px-1">"grant"</code>: an independent grant. The allow grants the permission even when no role or rule does, with reason <code class="bg-black/5 px-1">policy_allow</code>. Use it only for a policy that establishes the right on its own, such as an ownership check. Only the exact string <code class="bg-black/5 px-1">"grant"</code> grants; a typo constrains.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <span><code class="bg-black/5 px-1">"constrain"</code> (the default): &ldquo;no objection&rdquo;. The policy is an extra condition on top of RBAC/ABAC, so the actor's roles, direct permissions or rules must still grant the permission. An allow means &ldquo;no objection&rdquo;; <code class="bg-black/5 px-1">allowed: false</code>, a throw or a <code class="bg-black/5 px-1">policyTimeout</code> denies. It can take access away, never hand it out.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <span><code class="bg-black/5 px-1">"grant"</code>: an independent grant. The allow grants the permission even when no role or rule does, with reason <code class="bg-black/5 px-1">policy_allow</code>. <code class="bg-black/5 px-1">allowed: false</code>, a throw or a timeout <strong>abstains</strong>: the policy adds nothing, and the decision falls to the roles, permissions and rules. It can add access, never take it away. Use it only for a policy that establishes the right on its own, such as an ownership check. Only the exact string <code class="bg-black/5 px-1">"grant"</code> grants; a typo constrains.</span></li>
         </ul>
         <div class="code-block"><span class="kw">import</span> { <span class="fn">createPermissionEngine</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
 
@@ -629,8 +629,8 @@ maintenance = <span class="kw">true</span>;
 console.<span class="fn">log</span>(<span class="kw">await</span> engine.<span class="fn">can</span>(staff, <span class="str">"task:delete"</span>)); <span class="cm">// false — the policy denies</span></div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Policies that grant</h3>
-        <p class="mb-3 text-sm">A policy that establishes the right on its own says so with <code class="bg-black/5 px-1">effect: "grant"</code>. There is no &ldquo;abstain&rdquo;: under <code class="bg-black/5 px-1">"grant"</code> an allow grants and a deny still denies, so a policy that returns <code class="bg-black/5 px-1">false</code> for everyone but the author also locks out editors whose role grants the permission. Let them through explicitly:</p>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">actorHasRole</span>, <span class="fn">createPermissionEngine</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
+        <p class="mb-3 text-sm">A policy that establishes the right on its own says so with <code class="bg-black/5 px-1">effect: "grant"</code>. The rule is one-sided: when it allows, it grants; when it returns <code class="bg-black/5 px-1">false</code>, throws or times out, it abstains. An ownership policy therefore only has to answer &ldquo;is this the author?&rdquo; &mdash; an editor whose role grants the permission still gets in when the policy says <code class="bg-black/5 px-1">false</code>, and an actor with neither is still refused. A throw or timeout is still reported through <code class="bg-black/5 px-1">onError</code>.</p>
+        <div class="code-block"><span class="kw">import</span> { <span class="fn">createPermissionEngine</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
 
 <span class="kw">const</span> posts = <span class="fn">createPermissionEngine</span>({
   roles: [{ name: <span class="str">"editor"</span>, permissions: [<span class="str">"post:update"</span>] }],
@@ -638,12 +638,9 @@ console.<span class="fn">log</span>(<span class="kw">await</span> engine.<span c
     {
       name: <span class="str">"author-can-edit"</span>,
       permissions: [<span class="str">"post:update"</span>],
-      effect: <span class="str">"grant"</span>, <span class="cm">// an allow here grants, even with no role</span>
+      effect: <span class="str">"grant"</span>, <span class="cm">// an allow grants, even with no role; a false abstains</span>
       evaluate: ({ actor, resource }) =&gt; ({
-        <span class="cm">// A false here denies everyone, editors included, so let the role through too.</span>
-        allowed:
-          (resource <span class="kw">as</span> { authorId?: <span class="tp">string</span> } | <span class="kw">undefined</span>)?.authorId === actor.id ||
-          <span class="fn">actorHasRole</span>(actor, <span class="str">"editor"</span>),
+        allowed: (resource <span class="kw">as</span> { authorId?: <span class="tp">string</span> } | <span class="kw">undefined</span>)?.authorId === actor.id,
       }),
     },
   ],
@@ -653,12 +650,17 @@ console.<span class="fn">log</span>(<span class="kw">await</span> engine.<span c
 
 console.<span class="fn">log</span>(<span class="kw">await</span> posts.<span class="fn">check</span>({ id: <span class="str">"ada"</span> }, <span class="str">"post:update"</span>, post));
 <span class="cm">// { allowed: true, reason: "policy_allow", policy: "author-can-edit" }</span>
-console.<span class="fn">log</span>(<span class="kw">await</span> posts.<span class="fn">can</span>({ id: <span class="str">"bob"</span> }, <span class="str">"post:update"</span>, post));                    <span class="cm">// false</span>
-console.<span class="fn">log</span>(<span class="kw">await</span> posts.<span class="fn">can</span>({ id: <span class="str">"eve"</span>, roles: [<span class="str">"editor"</span>] }, <span class="str">"post:update"</span>, post)); <span class="cm">// true</span></div>
-        <p class="mt-3 mb-3 text-sm">A granting policy never overrides a denial from another policy, an explicit deny, or a deny rule that applied. <code class="bg-black/5 px-1">policyGrants(policy, defaultEffect?)</code> tells you whether a policy would grant, and <code class="bg-black/5 px-1">DEFAULT_POLICY_EFFECT</code> is <code class="bg-black/5 px-1">"constrain"</code>. Internally, an allow from constraining policies alone is recorded as <code class="bg-black/5 px-1">policy_pass</code>; the decision you get back then carries the grant's reason (such as <code class="bg-black/5 px-1">role_permission</code>) with <code class="bg-black/5 px-1">policy</code> naming the policies that ran.</p>
+console.<span class="fn">log</span>(<span class="kw">await</span> posts.<span class="fn">can</span>({ id: <span class="str">"bob"</span> }, <span class="str">"post:update"</span>, post));                    <span class="cm">// false — not the author, no role</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> posts.<span class="fn">check</span>({ id: <span class="str">"eve"</span>, roles: [<span class="str">"editor"</span>] }, <span class="str">"post:update"</span>, post));
+<span class="cm">// { allowed: true, reason: "role_permission", matchedPermission: "post:update" } — the policy abstained</span></div>
+        <p class="mt-3 mb-3 text-sm">A granting policy never overrides a denial from another policy, <code class="bg-black/5 px-1">deniedPermissions</code>, or a deny rule that applied. <code class="bg-black/5 px-1">createPermissionEngine({ defaultPolicyEffect: "grant" })</code> keeps the pre-1.4 semantics for policies that set no <code class="bg-black/5 px-1">effect</code>: there, an allow grants and a <code class="bg-black/5 px-1">false</code> still denies. <code class="bg-black/5 px-1">policyGrants(policy, defaultEffect?)</code> tells you whether a policy would grant, and <code class="bg-black/5 px-1">DEFAULT_POLICY_EFFECT</code> is <code class="bg-black/5 px-1">"constrain"</code>. Internally, an allow from constraining policies alone is recorded as <code class="bg-black/5 px-1">policy_pass</code>; the decision you get back then carries the grant's reason (such as <code class="bg-black/5 px-1">role_permission</code>) with <code class="bg-black/5 px-1">policy</code> naming the policies that ran.</p>
 
         <div class="callout callout-warning mb-6">
           <strong class="text-zudo-yellow">Changed in 1.4.0 (behaviour change, security):</strong> up to 1.3.x an allowing policy granted the permission on its own, so a policy meant as a restriction, such as business hours, let an actor with no roles through, and the old advice was to check the role inside every policy. That check is no longer needed. <strong>If you relied on a policy to grant access, those checks now deny</strong> until you add <code>effect: "grant"</code> to that policy. <code>createPermissionEngine({ defaultPolicyEffect: "grant" })</code> restores the old behaviour for every policy that sets no <code>effect</code>; prefer marking the individual policies.
+        </div>
+
+        <div class="callout callout-note mb-6">
+          <strong class="text-zudo-blue">Changed in 1.4.1:</strong> in 1.4.0 a policy with <code>effect: "grant"</code> that returned <code>false</code> denied, so an ownership policy locked out editors whose role grants the permission, and the workaround was <code>|| actorHasRole(actor, "editor")</code> inside the policy. A granting policy now abstains when it returns <code>false</code>, throws or times out, so that workaround can go. It is harmless if you keep it.
         </div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">createPolicyRegistry</h3>
@@ -1078,11 +1080,72 @@ router.<span class="fn">put</span>(<span class="str">"/posts/:id"</span>, () =&g
   <span class="kw">readonly</span> authenticateChallenge?: <span class="tp">string</span>;
 }
 
-<span class="kw">interface</span> <span class="tp">RequirePermissionMiddlewareOptions</span> <span class="kw">extends</span> <span class="tp">AuthorizeMiddlewareOptions</span> {
+<span class="kw">interface</span> <span class="tp">RequirePermissionMiddlewareOptions</span>
+  <span class="kw">extends</span> <span class="tp">AuthorizeMiddlewareOptions</span>, <span class="tp">MissingResourceOptions</span> {
   <span class="kw">readonly</span> permission: <span class="tp">string</span>;
   <span class="kw">readonly</span> extractResource?: (context: <span class="tp">HttpMiddlewareContext</span>) =&gt; <span class="tp">unknown</span> | <span class="tp">Promise</span>&lt;<span class="tp">unknown</span>&gt;;
+}
+
+<span class="cm">// Added in 1.4.1. Also accepted by createRequirePermissionsMiddleware.</span>
+<span class="kw">type</span> <span class="tp">MissingResourceMode</span> = <span class="str">"check"</span> | <span class="str">"forbid"</span> | <span class="str">"notFound"</span>;
+
+<span class="kw">interface</span> <span class="tp">MissingResourceOptions</span> <span class="kw">extends</span> <span class="tp">NotFoundResponseOptions</span> {
+  <span class="kw">readonly</span> onMissingResource?: <span class="tp">MissingResourceMode</span>; <span class="cm">// default "check"</span>
+}
+
+<span class="kw">interface</span> <span class="tp">NotFoundResponseOptions</span> {
+  <span class="kw">readonly</span> notFoundResponse?: () =&gt; <span class="tp">unknown</span>; <span class="cm">// builds the 404 body</span>
 }</div>
-        <p class="mt-4 mb-4"><code class="bg-black/5 px-1">extractResource</code> may be async and is awaited; a loader that throws or rejects answers 403. An empty list passed to <code class="bg-black/5 px-1">createRequirePermissionsMiddleware</code> denies. <code class="bg-black/5 px-1">createForbiddenResponse</code>, <code class="bg-black/5 px-1">createUnauthorizedResponse</code> and <code class="bg-black/5 px-1">createJsonResponse(status, body)</code> build the same guard responses for your own middleware; <code class="bg-black/5 px-1">createJsonResponse</code> throws <code class="bg-black/5 px-1">RangeError</code> for a status outside 100&ndash;599.</p>
+        <p class="mt-4 mb-4"><code class="bg-black/5 px-1">extractResource</code> may be async and is awaited; a loader that throws or rejects answers 403. An empty list passed to <code class="bg-black/5 px-1">createRequirePermissionsMiddleware</code> denies. <code class="bg-black/5 px-1">createForbiddenResponse</code>, <code class="bg-black/5 px-1">createUnauthorizedResponse</code>, <code class="bg-black/5 px-1">createNotFoundResponse</code> (since 1.4.1) and <code class="bg-black/5 px-1">createJsonResponse(status, body)</code> build the same guard responses for your own middleware; <code class="bg-black/5 px-1">createJsonResponse</code> throws <code class="bg-black/5 px-1">RangeError</code> for a status outside 100&ndash;599.</p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">A resource that does not exist: onMissingResource</h3>
+        <p class="mb-3 text-sm">Since 1.4.1, <code class="bg-black/5 px-1">authorize()</code>, <code class="bg-black/5 px-1">createRequirePermissionMiddleware</code> and <code class="bg-black/5 px-1">createRequirePermissionsMiddleware</code> take <code class="bg-black/5 px-1">onMissingResource</code>, which decides what the guard does when <code class="bg-black/5 px-1">extractResource</code> returns <code class="bg-black/5 px-1">undefined</code> or <code class="bg-black/5 px-1">null</code>:</p>
+        <ul class="space-y-2 mb-4 text-sm">
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <span><code class="bg-black/5 px-1">"check"</code> (the default): evaluate the permission with no resource, as the guards always have. A role grant alone lets the request through, so the handler still has to answer 404 itself.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <span><code class="bg-black/5 px-1">"notFound"</code>: answer <strong>404</strong> without evaluating. <code class="bg-black/5 px-1">notFoundResponse</code> shapes the body; the default is <code class="bg-black/5 px-1">{"error":"Not Found","message":"Resource not found"}</code>.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <span><code class="bg-black/5 px-1">"forbid"</code>: answer <strong>403</strong> without evaluating.</span></li>
+        </ul>
+        <p class="mb-3 text-sm">A request with no actor still gets 401 first. The option does nothing on a guard without <code class="bg-black/5 px-1">extractResource</code>. A refusal records <code class="bg-black/5 px-1">RESOURCE_NOT_FOUND_DECISION</code> (<code class="bg-black/5 px-1">reason: "resource_not_found"</code>) under <code class="bg-black/5 px-1">permissions:decision</code>.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createHttpServer</span>, <span class="fn">createNodeHttpAdapter</span>, <span class="fn">createRouter</span> } <span class="kw">from</span> <span class="str">"@zudojs/http"</span>;
+<span class="kw">import</span> { <span class="fn">authorize</span>, <span class="fn">createPermissionEngine</span>, <span class="kw">type</span> <span class="tp">PermissionActor</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
+
+<span class="kw">const</span> engine = <span class="fn">createPermissionEngine</span>({
+  roles: [{ name: <span class="str">"editor"</span>, permissions: [<span class="str">"post:update"</span>] }],
+});
+
+<span class="cm">// Stand-ins for your verified session lookup and your data store.</span>
+<span class="kw">const</span> sessions = <span class="kw">new</span> <span class="tp">Map</span>&lt;<span class="tp">string</span>, <span class="tp">PermissionActor</span>&gt;([
+  [<span class="str">"s-editor"</span>, { id: <span class="str">"u1"</span>, roles: [<span class="str">"editor"</span>] }],
+  [<span class="str">"s-guest"</span>, { id: <span class="str">"u2"</span> }],
+]);
+<span class="kw">const</span> posts = <span class="kw">new</span> <span class="tp">Map</span>([[<span class="str">"1"</span>, { id: <span class="str">"1"</span>, authorId: <span class="str">"u1"</span> }]]);
+
+<span class="kw">const</span> router = <span class="fn">createRouter</span>();
+router.<span class="fn">put</span>(<span class="str">"/posts/:id"</span>, () =&gt; ({ updated: <span class="kw">true</span> }), {
+  middleware: [
+    <span class="fn">authorize</span>(engine, <span class="str">"post:update"</span>, {
+      extractActor: (ctx) =&gt; sessions.<span class="fn">get</span>(ctx.request.<span class="fn">getHeader</span>?.(<span class="str">"x-session"</span>) ?? <span class="str">""</span>),
+      extractResource: (ctx) =&gt; posts.<span class="fn">get</span>(ctx.request.<span class="fn">getParam</span>?.(<span class="str">"id"</span>) ?? <span class="str">""</span>),
+      onMissingResource: <span class="str">"notFound"</span>, <span class="cm">// 404 before the permission is evaluated</span>
+      notFoundResponse: () =&gt; ({ error: <span class="str">"Not Found"</span>, message: <span class="str">"No such post"</span> }),
+    }),
+  ],
+});
+
+<span class="kw">const</span> server = <span class="fn">createHttpServer</span>({
+  adapter: <span class="fn">createNodeHttpAdapter</span>({ host: <span class="str">"127.0.0.1"</span>, port: <span class="num">3000</span> }),
+  handler: <span class="kw">async</span> (request) =&gt; (<span class="kw">await</span> router.<span class="fn">dispatch</span>(request)).response,
+});
+<span class="kw">await</span> server.<span class="fn">start</span>();
+
+<span class="cm">// PUT /posts/1,   x-session: s-editor → 200 {"updated":true}</span>
+<span class="cm">// PUT /posts/404, x-session: s-editor → 404 {"error":"Not Found","message":"No such post"}</span>
+<span class="cm">// PUT /posts/1,   x-session: s-guest  → 403 {"error":"Forbidden","message":"Access denied"}</span>
+<span class="cm">// PUT /posts/404, x-session: s-guest  → 404 {"error":"Not Found","message":"No such post"}</span>
+<span class="cm">// PUT /posts/404, no session          → 401 {"error":"Unauthorized","message":"Authentication required"}</span></div>
+        <div class="callout callout-warning mb-6">
+          <strong class="text-zudo-yellow">A 404 is not concealment on its own.</strong> Look at the guest rows above: an existing post answers 403 and a missing one 404, so the pair of statuses tells a caller which ids exist. <code>"notFound"</code> hides existence only if every route over the resource answers the same way and a denial on an existing resource is also answered 404, which these guards do not do for you. Use it to take the not-found check out of the handler, not to hide ids.
+        </div>
       </section>
 
       <!-- Observability -->

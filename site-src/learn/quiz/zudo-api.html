@@ -202,13 +202,56 @@ false</option>
 <explain><p><code>expose</code> is the flag that matters when you build a response. <code>true</code> means "safe to show to the caller"; <code>false</code> means "log it, send something generic".</p></explain>
 </question>
 
-<question id="public-error-fields" type="choice">
-<q>Which fields does the lesson's <code>publicError</code> send to a caller?</q>
-<option>The whole error object, including <code>cause</code> and <code>stack</code></option>
-<option correct><code>code</code>, <code>issues</code> for validation errors, and <code>message</code> only when <code>expose</code> is true</option>
-<option>Only <code>stack</code>, so developers can debug</option>
-<option>Only <code>statusCode</code></option>
-<explain><p>Pick fields on purpose. <code>code</code> and <code>issues</code> are safe; the message only when the error says it is safe. Never the cause or the stack.</p></explain>
+<question id="binding-error-shape" type="output">
+<q>The HTTP binding serves an operation whose handler crashes with a database message. What does this print?</q>
+<code file="binding-error.js" browser="no">
+import { APIOperationRegistry, createApiFetchHandler, defineOperation } from "@zudojs/api";
+
+const registry = new APIOperationRegistry();
+registry.register(defineOperation({
+  name: "tasks.export",
+  handler: async () => { throw new Error('relation "tasks" does not exist (host 10.0.0.5)'); },
+}));
+const handler = createApiFetchHandler(registry, { state: () => ({}) });
+const response = await handler(new Request("http://tasks.local/tasks.export", {
+  method: "POST",
+  headers: { "content-type": "application/json", "x-request-id": "web-7" },
+  body: "{}",
+}));
+const text = await response.text();
+console.log(response.status, text.includes("10.0.0.5"));
+console.log(JSON.parse(text).error);
+</code>
+<option correct>500 false
+{
+  code: 'ERR_API_INTERNAL',
+  message: 'An internal error occurred.',
+  statusCode: 500,
+  requestId: 'web-7'
+}</option>
+<option>500 true
+{
+  code: 'ERR_API_INTERNAL',
+  message: 'relation "tasks" does not exist (host 10.0.0.5)',
+  statusCode: 500,
+  requestId: 'web-7'
+}</option>
+<option>200 false
+{
+  code: 'ERR_API_INTERNAL',
+  message: 'An internal error occurred.',
+  statusCode: 500,
+  requestId: 'web-7'
+}</option>
+<option>500 true
+{
+  code: 'ERR_API_INTERNAL',
+  message: 'An internal error occurred.',
+  statusCode: 500,
+  requestId: 'web-7',
+  cause: 'relation "tasks" does not exist (host 10.0.0.5)'
+}</option>
+<explain><p>Every binding sends failures in the same safe shape, <code>{ code, message, statusCode, requestId, issues? }</code>. The message is hidden because the error is not exposed, and neither the cause nor the stack leaves the process. The request id lets a user quote the failure to support.</p></explain>
 </question>
 
 <question id="context-contents" type="choice">
@@ -384,21 +427,21 @@ undefined [ 'tasks.create', 'tasks.evil' ]</option>
 </question>
 
 <question id="refuse-unknown-early" type="choice">
-<q>You don't want unknown callers to learn anything about your input shapes from validation errors. What does the lesson suggest?</q>
-<option>Turn off the input schema</option>
-<option correct>Refuse unknown callers in the transport, before you call the executor</option>
-<option>Return 200 for every error</option>
-<option>Put the schema in the client</option>
-<explain><p>A transport that answers 401 to callers with no valid token before calling the executor gives them nothing, not even a validation message.</p></explain>
+<q>A caller with a guessed token posts an invalid title to the HTTP binding. Why does it get <code>401</code> and not the <code>422</code> with the validation issues?</q>
+<option>The binding checks tokens itself before it looks at any operation</option>
+<option correct>Interceptors run before the input is checked against the schema, so <code>requireUser</code> refuses the call first</option>
+<option>Invalid titles are always answered with 401</option>
+<option>The schema is turned off for unknown callers</option>
+<explain><p>Because the interceptors come first, an unknown caller never learns what a valid input looks like. Only a signed-in user's invalid call gets the 422 with its issues.</p></explain>
 </question>
 
 <question id="rpc-identity" type="choice">
-<q>In the RPC transport, where must the user id come from?</q>
+<q>In <code>registerApiRpcProcedures</code>, where must the <code>state</code> function take the user id from?</q>
 <option>From the frame's metadata</option>
-<option correct>From <code>call.auth</code>, the identity your RPC server verified</option>
+<option correct>From <code>call.auth</code>, the identity the RPC transport verified</option>
 <option>From the frame's id</option>
 <option>From the payload</option>
-<explain><p>Metadata and the frame's id are written by the caller. The frame id still goes through <code>normalizeRequestId</code>, and the user comes only from verified <code>auth</code>.</p></explain>
+<explain><p>Metadata, the frame's id and the payload are all written by the caller. Only <code>call.auth</code>, filled in by the transport's <code>auth</code> option after a check, says who the caller really is.</p></explain>
 </question>
 
 <question id="queue-attempts-one" type="choice">
@@ -411,42 +454,55 @@ undefined [ 'tasks.create', 'tasks.evil' ]</option>
 </question>
 
 <question id="queue-user-id" type="choice">
-<q>A background job has no HTTP request and no token. Why may the queue transport take the user id from <code>job.data.userId</code>?</q>
-<option>Queue data is always encrypted</option>
-<option correct>Only your own code adds jobs, after it has checked who the user is</option>
+<q>A background job has no HTTP request and no token. Why may the queue binding's <code>state</code> take the user id from <code>job.metadata.userId</code>?</q>
+<option>Queue metadata is always encrypted</option>
+<option correct>Only your own code adds jobs, after it has checked who the user is, so the id is as trusted as that check</option>
 <option>The queue verifies tokens itself</option>
-<option>User ids in jobs are never used</option>
-<explain><p>The trust comes from who writes the data. Jobs are added by your code after it verified the user, so the id in them is as trusted as that check.</p></explain>
+<option>Any client may set it, and that is fine for background work</option>
+<explain><p>The trust comes from who writes the metadata. Jobs are added by your code after it verified the user. Never let a client choose a job's metadata: whoever writes <code>userId</code> there acts as that user.</p></explain>
 </question>
 
 <question id="timeout-not-stop" type="choice">
-<q>An operation's timeout runs out. What does the lesson say about the handler?</q>
-<option>The executor kills the handler immediately</option>
-<option correct>The executor stops waiting, but the handler may keep working; give long handlers their own deadline signal</option>
-<option>The handler is restarted</option>
-<option>The timeout is ignored if the handler is async</option>
-<explain><p>JavaScript cannot stop a running function from outside. The lesson combines a deadline signal with the caller's signal using <code>AbortSignal.any</code>, so the handler stops by itself.</p></explain>
+<q>An operation's timeout runs out while its handler is still working. What does the executor do?</q>
+<option>It kills the handler immediately</option>
+<option correct>It answers the caller with <code>ERR_API_TIMEOUT</code> (504) and aborts the handler's <code>context.signal</code>, so a handler that passes the signal on or checks it stops</option>
+<option>It restarts the handler</option>
+<option>Nothing: the caller waits until the handler finishes</option>
+<explain><p>JavaScript cannot stop a running function from outside, so the executor aborts the signal with the same <code>APITimeoutError</code> the caller got. Pass <code>context.signal</code> to <code>fetch</code> or database calls, or check it in a loop.</p></explain>
 </question>
 
-<question id="abort-signal-any" type="output">
+<question id="timeout-aborts-signal" type="output">
 <q>What does this print?</q>
-<code file="any.js">
-const caller = new AbortController();
-const deadline = new AbortController();
-const both = AbortSignal.any([deadline.signal, caller.signal]);
-console.log(both.aborted);
-caller.abort();
-console.log(both.aborted, deadline.signal.aborted);
+<code file="timeout-signal.js" browser="no">
+import { APIExecutor, createAPIContext, defineOperation } from "@zudojs/api";
+
+const sleep = (ms, signal) => new Promise((resolve, reject) => {
+  const timer = setTimeout(resolve, ms);
+  signal.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+});
+const report = defineOperation({
+  name: "tasks.report",
+  timeout: 50,
+  handler: async (_input, context) => {
+    try {
+      await sleep(300, context.signal);
+    } catch (reason) {
+      console.log("[handler] stopped:", reason.name);
+      throw reason;
+    }
+    return "report.csv";
+  },
+});
+const result = await new APIExecutor().execute(report, {}, createAPIContext("req-1", {}));
+console.log("[caller]", result.ok, result.error.code, result.error.statusCode);
 </code>
-<option correct>false
-true false</option>
-<option>false
-true true</option>
-<option>false
-false false</option>
-<option>true
-true false</option>
-<explain><p><code>AbortSignal.any</code> makes a signal that aborts as soon as <em>any</em> of its signals aborts. The deadline itself did not abort. A handler that listens to <code>both</code> stops for either reason.</p></explain>
+<option correct>[handler] stopped: APITimeoutError
+[caller] false ERR_API_TIMEOUT 504</option>
+<option>[caller] false ERR_API_TIMEOUT 504</option>
+<option>[caller] true undefined undefined</option>
+<option>[handler] stopped: AbortError
+[caller] false ERR_OPERATION_CANCELLED 499</option>
+<explain><p>After 50 ms the executor aborted the handler's signal with the same <code>APITimeoutError</code> the caller got, so the sleep rejected at once and the handler stopped instead of working for 300 ms. No signal was passed to <code>createAPIContext</code>: every handler gets one anyway.</p></explain>
 </question>
 
 <question id="cancelled-code" type="choice">
@@ -520,38 +576,46 @@ console.log(safeDivide(1, 0)); // { ok: false, error: 'division by zero' }
 <explain><p>A result object makes failure a normal value. The caller checks <code>ok</code> instead of wrapping every call in <code>try/catch</code>, and cannot forget the failure case.</p></explain>
 </question>
 
-<question id="code-public-error" type="code" file="public-error.js">
-<q><p>Finish <code>publicError(error)</code>. Return an object with <code>code</code>; add <code>message</code> as the error's message when <code>expose</code> is true, or <code>"An internal error occurred."</code> otherwise; add <code>issues</code> only when the error has an <code>issues</code> array. Never copy <code>cause</code>. The program should print the two lines in the comments.</p></q>
+<question id="code-abortable-sleep" type="code" file="abortable-sleep.js">
+<q><p>A handler should stop waiting when its <code>context.signal</code> aborts. Finish <code>sleep(ms, signal)</code>: start a timer that resolves after <code>ms</code>, and when <code>signal</code> fires <code>"abort"</code>, clear the timer and reject with <code>signal.reason</code>. The program should print the line in the comment.</p></q>
 <starter>
-function publicError(error) {
+function sleep(ms, signal) {
   // your code here
 }
 
-const invalid = { code: "ERR_API_VALIDATION", message: "Invalid input.", expose: true, issues: ["title: invalid"] };
-const internal = { code: "ERR_API_INTERNAL", message: "Unexpected.", expose: false, cause: new Error("host 10.0.0.5") };
-console.log(JSON.stringify(publicError(invalid))); // {"code":"ERR_API_VALIDATION","message":"Invalid input.","issues":["title: invalid"]}
-console.log(JSON.stringify(publicError(internal))); // {"code":"ERR_API_INTERNAL","message":"An internal error occurred."}
+const controller = new AbortController();
+setTimeout(() => controller.abort(new Error("timed out")), 20);
+const started = Date.now();
+try {
+  await sleep(1000, controller.signal);
+  console.log("slept the full second");
+} catch (reason) {
+  console.log("stopped:", reason.message, Date.now() - started < 500); // stopped: timed out true
+}
 </starter>
 <solution>
-function publicError(error) {
-  const out = {
-    code: error.code,
-    message: error.expose ? error.message : "An internal error occurred.",
-  };
-  if (Array.isArray(error.issues)) out.issues = error.issues;
-  return out;
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    }, { once: true });
+  });
 }
 
-const invalid = { code: "ERR_API_VALIDATION", message: "Invalid input.", expose: true, issues: ["title: invalid"] };
-const internal = { code: "ERR_API_INTERNAL", message: "Unexpected.", expose: false, cause: new Error("host 10.0.0.5") };
-console.log(JSON.stringify(publicError(invalid))); // {"code":"ERR_API_VALIDATION","message":"Invalid input.","issues":["title: invalid"]}
-console.log(JSON.stringify(publicError(internal))); // {"code":"ERR_API_INTERNAL","message":"An internal error occurred."}
+const controller = new AbortController();
+setTimeout(() => controller.abort(new Error("timed out")), 20);
+const started = Date.now();
+try {
+  await sleep(1000, controller.signal);
+  console.log("slept the full second");
+} catch (reason) {
+  console.log("stopped:", reason.message, Date.now() - started < 500); // stopped: timed out true
+}
 </solution>
-<expected>
-{"code":"ERR_API_VALIDATION","message":"Invalid input.","issues":["title: invalid"]}
-{"code":"ERR_API_INTERNAL","message":"An internal error occurred."}
-</expected>
-<explain><p>Build a new object with only the safe fields. Sending the error itself would carry its <code>cause</code>, with the host inside, to the caller.</p></explain>
+<expected>stopped: timed out true</expected>
+<explain><p>The signal's <code>"abort"</code> event is the moment to stop. Clearing the timer frees it, and rejecting with <code>signal.reason</code> passes on why, the way the lesson's handler received the <code>APITimeoutError</code>.</p></explain>
 </question>
 
 <question id="code-exit-code" type="code" file="exit-code.js">
@@ -765,4 +829,40 @@ undefined</option>
 <option>null
 500</option>
 <explain><p><code>get(name)</code> returns <code>undefined</code> when the name is unknown, so the transport can answer 404 itself. <code>require(name)</code> throws an API error with status 404 instead.</p></explain>
+</question>
+
+<question id="queue-metadata-not-data" type="output">
+<q>The queue binding reads the user from the job's metadata. The second job puts <code>userId</code> in its data instead. What does this print?</q>
+<code file="queue-user.js" browser="no">
+import { APIAuthenticationError, APIExecutor, APIOperationRegistry, apiFailure, bindApiQueue, defineOperation } from "@zudojs/api";
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const requireUser = {
+  async intercept(call, next) {
+    if (typeof call.context.state.userId !== "string") return apiFailure(new APIAuthenticationError("Sign in first."));
+    return next();
+  },
+};
+const registry = new APIOperationRegistry();
+registry.register(defineOperation({ name: "tasks.create", handler: async (input) => input.title }));
+const queue = createInMemoryQueue(createQueueName("operations"));
+bindApiQueue(queue, registry, {
+  executor: new APIExecutor({ interceptors: [requireUser] }),
+  state: (job) => ({ userId: typeof job.metadata?.userId === "string" ? job.metadata.userId : undefined }),
+});
+queue.events?.on("job:completed", ({ result }) => console.log("completed", result));
+queue.events?.on("job:failed", ({ error }) => console.log("failed", error.message));
+await queue.add("tasks.create", { title: "Water plants" }, { attempts: 1, metadata: { userId: "ada" } });
+await queue.add("tasks.create", { title: "Walk the dog", userId: "ada" }, { attempts: 1 });
+await new Promise((resolve) => setTimeout(resolve, 200));
+await queue.close();
+</code>
+<option correct>completed Water plants
+failed Sign in first.</option>
+<option>completed Water plants
+completed Walk the dog</option>
+<option>failed Sign in first.
+failed Sign in first.</option>
+<option>completed Water plants</option>
+<explain><p>The job data is the operation's input, not an identity. Only the metadata that your own code wrote after checking the user counts, so the second job reaches <code>requireUser</code> without a user and fails.</p></explain>
 </question>

@@ -76,12 +76,12 @@ try {
 </question>
 
 <question id="no-type-error" type="choice">
-<q>A job's type says <code>{ remindAt: Date }</code>, but after the queue the processor receives a string. Why does TypeScript not warn you?</q>
+<q>A queue is created with <code>createJsonSerializer({ preserveTypes: false })</code>. A job's type says <code>{ remindAt: Date }</code>, but the processor receives a string. Why does TypeScript not warn you?</q>
 <option>The queue turns off type checking</option>
-<option correct>Types only exist when you compile; at runtime the data came from text, and nothing checked it</option>
+<option correct>Types only exist when you compile; at runtime the data came from plain JSON text, and nothing checked it</option>
 <option>TypeScript does warn, but only in strict mode</option>
 <option>Strings and dates are the same type in TypeScript</option>
-<explain><p>TypeScript trusts the type you wrote. JSON turned the date into a string at runtime, and the program runs until the first line that uses it as a <code>Date</code>, such as <code>remindAt.toISOString()</code>.</p></explain>
+<explain><p>TypeScript trusts the type you wrote. Plain JSON turned the date into a string at runtime, and the program runs until the first line that uses it as a <code>Date</code>, such as <code>remindAt.toISOString()</code>. The queue's default serializer keeps the <code>Date</code>, which is why this only happens when you switch to plain JSON.</p></explain>
 </question>
 
 <question id="install-own-dependency" type="choice">
@@ -336,12 +336,12 @@ InvalidSerializedDataError</option>
 </question>
 
 <question id="transformer-return-tag" type="choice">
-<q>In a custom transformer for a <code>Duration</code> class, what must <code>serialize</code> return?</q>
-<option>The bare value, for example <code>90</code></option>
-<option correct>The whole tagged object: <code>{ $type: "Duration", $value: value.minutes }</code></option>
-<option>A JSON string</option>
+<q>In a custom transformer for a <code>Duration</code> class, what does <code>serialize</code> need to return?</q>
+<option>A JSON string of the whole object</option>
+<option correct>The value to store, for example <code>value.minutes</code>; the serializer wraps it as <code>{ "$type": "Duration", "$value": 90 }</code> for you</option>
+<option>Always the whole tagged object, or the tag is lost</option>
 <option>A new <code>Duration</code></option>
-<explain><p>Without the <code>$type</code> tag, the reader cannot know the value was a <code>Duration</code>, and it comes back as a plain number.</p></explain>
+<explain><p>The serializer adds the <code>$type</code> tag from the transformer's <code>type</code>, so the reader knows what to rebuild. Returning the whole tagged object yourself also works, but it is not required.</p></explain>
 </question>
 
 <question id="transformer-check-input" type="choice">
@@ -454,12 +454,12 @@ try {
 </question>
 
 <question id="queue-serializer-fix" type="choice">
-<q>How does the lesson make the reminder queue keep its <code>Date</code>?</q>
-<option>Convert every date to a string by hand before <code>add</code></option>
-<option correct>Pass <code>serializer: createJsonSerializer({ preserveTypes: true })</code> to <code>createInMemoryQueue</code></option>
-<option>Use <code>JSON.stringify</code> with a replacer in the processor</option>
-<option>Store the dates in a global Map</option>
-<explain><p>The queue serializes every job's data. Giving it a serializer with <code>preserveTypes: true</code> tags the date on the way in and rebuilds a real <code>Date</code> for the processor.</p></explain>
+<q>A reminder job's data holds <code>remindAt: new Date(...)</code>. What does the processor receive with the queue's default serializer (since <code>@zudojs/queue</code> 1.4.0)?</q>
+<option>An ISO string, so you must convert it back by hand</option>
+<option correct>A real <code>Date</code>: the default serializer is built on <code>@zudojs/serialization</code> with <code>preserveTypes</code> on</option>
+<option>An empty object</option>
+<option>Nothing: the queue refuses dates</option>
+<explain><p>The queue tags the date on the way in and rebuilds it for the processor. Only <code>createJsonSerializer({ preserveTypes: false })</code> gives you plain JSON, where the date arrives as a string. Passing <code>createJsonSerializer()</code> explicitly documents the choice.</p></explain>
 </question>
 
 <question id="pretty-map-date" type="output">
@@ -611,7 +611,7 @@ rejected: InvalidSerializedDataError
 </question>
 
 <question id="code-duration-transformer" type="code" file="duration.js">
-<q><p>Finish the <code>serialize</code> and <code>deserialize</code> functions of <code>DurationTransformer</code>. <code>serialize</code> returns the tagged object with the minutes; <code>deserialize</code> reads <code>$value</code> and throws a <code>TypeError</code> unless it is a whole number of at least 0. The program should print the two lines in the comments.</p></q>
+<q><p>Finish the <code>serialize</code> and <code>deserialize</code> functions of <code>DurationTransformer</code>. <code>serialize</code> returns the value to store: the minutes. <code>deserialize</code> receives the whole tagged object, reads <code>$value</code> and throws a <code>TypeError</code> unless it is a whole number of at least 0. The program should print the two lines in the comments.</p></q>
 <starter>
 import { JSONSerializer } from "@zudojs/serialization";
 
@@ -651,7 +651,7 @@ class Duration {
 const DurationTransformer = {
   type: "Duration",
   canSerialize: (value) => value instanceof Duration,
-  serialize: (value) => ({ $type: "Duration", $value: value.minutes }),
+  serialize: (value) => value.minutes,
   deserialize: (value) => {
     const minutes = value.$value;
     if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes < 0) {
@@ -672,7 +672,7 @@ console.log(back.estimate instanceof Duration, back.estimate.minutes); // true 9
 {"estimate":{"$type":"Duration","$value":90}}
 true 90
 </expected>
-<explain><p><code>serialize</code> must return the whole <code>{ $type, $value }</code> object so the reader knows what it was. <code>deserialize</code> checks the outside data before it builds a <code>Duration</code>.</p></explain>
+<explain><p><code>serialize</code> returns the bare minutes, and the serializer wraps them with the <code>Duration</code> tag. <code>deserialize</code> gets the whole tagged object, which came from outside, so it checks <code>$value</code> before it builds a <code>Duration</code>.</p></explain>
 </question>
 
 <question id="code-upgrade-v3" type="code" file="upgrade-v3.js">
@@ -869,4 +869,65 @@ console.log(JSON.stringify(tag(task)));
 </solution>
 <expected>{"id":1,"due":{"$type":"Date","$value":"2026-10-05T09:00:00.000Z"},"tags":{"$type":"Set","$value":["home"]}}</expected>
 <explain><p>Check each value with <code>instanceof</code> and replace it with a tagged object that plain JSON can hold. The real serializer does the same at any depth, for more types, and also reads the tags back.</p></explain>
+</question>
+
+<question id="queue-default-vs-plain" type="output">
+<q>What does this print?</q>
+<code file="queue-dates.js">
+import { createInMemoryQueue, createJsonSerializer, createQueueName } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+for (const [label, options] of [["default", {}], ["plain JSON", { serializer: createJsonSerializer({ preserveTypes: false }) }]]) {
+  const reminders = createInMemoryQueue(createQueueName("reminders"), options);
+  reminders.process("send-reminder", async (job) => {
+    console.log(`${label}: ${job.data.remindAt.constructor.name}`);
+  });
+  await reminders.add("send-reminder", { taskId: 1, remindAt: new Date("2026-10-05T09:00:00Z") });
+  await wait(100);
+  await reminders.close();
+}
+</code>
+<option correct>default: Date
+plain JSON: String</option>
+<option>default: String
+plain JSON: String</option>
+<option>default: Date
+plain JSON: Date</option>
+<option>default: String
+plain JSON: Date</option>
+<explain><p>The queue serializes every job's data, as a queue in Redis would. Its default keeps the <code>Date</code>. With plain JSON, the type still promises a <code>Date</code>, but the processor gets a string, and the first <code>remindAt.getTime()</code> would crash.</p></explain>
+</question>
+
+<question id="registry-builtins-false" type="output">
+<q>What does this print?</q>
+<code file="builtins.js">
+import { createSerializer, TransformerRegistry } from "@zudojs/serialization";
+
+class Duration {
+  constructor(minutes) { this.minutes = minutes; }
+}
+const registry = new TransformerRegistry();
+registry.register({
+  type: "Duration",
+  canSerialize: (value) => value instanceof Duration,
+  serialize: (value) => value.minutes,
+  deserialize: (value) => new Duration(Number(value.$value)),
+});
+const onlyMine = createSerializer("json", { preserveTypes: true, transformers: registry, builtins: false });
+console.log(onlyMine.serialize({ estimate: new Duration(90), due: new Date("2026-10-05T09:00:00Z") }));
+try {
+  onlyMine.serialize({ tags: new Set(["home"]) });
+} catch (error) {
+  console.log(error.name);
+}
+</code>
+<option correct>{"estimate":{"$type":"Duration","$value":90},"due":"2026-10-05T09:00:00.000Z"}
+SerializeError</option>
+<option>{"estimate":{"$type":"Duration","$value":90},"due":{"$type":"Date","$value":"2026-10-05T09:00:00.000Z"}}
+SerializeError</option>
+<option>{"estimate":{"$type":"Duration","$value":90},"due":"2026-10-05T09:00:00.000Z"}
+{"tags":{}}</option>
+<option>{"estimate":{"minutes":90},"due":"2026-10-05T09:00:00.000Z"}
+SerializeError</option>
+<explain><p>With <code>builtins: false</code> only your registry is used. The date becomes a plain string again, and a <code>Set</code>, which JSON would write as an empty <code>{}</code>, is refused instead of losing its contents silently. Without that option, the built-ins would still tag the date.</p></explain>
 </question>

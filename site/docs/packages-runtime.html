@@ -123,7 +123,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.1</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/runtime</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Application runtime orchestrator for the Zudojs framework. Manages the complete lifecycle from creation through shutdown with deterministic dependency ordering, rollback, signal handling, readiness tracking, and health checks.
@@ -528,7 +528,7 @@ databaseConnected = <span class="kw">true</span>;
             <tr><th>Signal or event</th><th>What the runtime does</th></tr>
           </thead>
           <tbody>
-            <tr><td><span class="code-inline">SIGTERM</span></td><td>Graceful shutdown. A signal during startup waits for startup to settle, then stops. A second SIGTERM during shutdown exits immediately.</td></tr>
+            <tr><td><span class="code-inline">SIGTERM</span></td><td>Graceful shutdown. The process stays alive until every <code>onShutdown</code> has finished, then exits on its own: code 0 when the shutdown succeeded, code 1 when it failed. A signal during startup waits for startup to settle, then stops. A second SIGTERM during shutdown exits immediately.</td></tr>
             <tr><td><span class="code-inline">SIGINT</span></td><td>Same as SIGTERM. This is Ctrl-C.</td></tr>
             <tr><td><span class="code-inline">uncaughtException</span></td><td>Logs the error, shuts down, then exits with code 1.</td></tr>
             <tr><td><span class="code-inline">unhandledRejection</span></td><td>Same as an uncaught exception.</td></tr>
@@ -546,8 +546,26 @@ databaseConnected = <span class="kw">true</span>;
         <div class="callout callout-warning mt-4">
           <strong class="text-zudo-yellow">Watch out:</strong> do not add your own <code>process.on("SIGTERM", ...)</code> that also calls <code>stop()</code> while <code>handleSignals</code> is on. You get two shutdowns racing; the second signal is then read as "exit now".
         </div>
-        <div class="callout callout-warning mt-4">
-          <strong class="text-zudo-yellow">Watch out (v1.3.0): a failed signal-driven shutdown is only logged.</strong> The changelog says a failing shutdown triggered by <code>SIGTERM</code> or <code>SIGINT</code> now logs a <code>RuntimeSignalError</code>. With a runtime from <code>createRuntime</code> it does not: the runtime's own signal handler catches the <code>stop()</code> failure first and logs <code>Shutdown failed.</code> with just <code>errorMessage</code>, so <code>SignalHandler</code>'s <code>RuntimeSignalError</code> path is never reached. The state becomes <code>failed</code> and the signal handlers are removed, but nothing exits the process: with a module whose <code>onShutdown</code> hangs past <code>shutdownTimeout</code>, the process exits with code <code>0</code> once the event loop drains. If an orchestrator should see the failure, subscribe to <code>runtime.failed</code> (<code>phase: "stop"</code>) on your event bus and set <code>process.exitCode = 1</code> there.
+        <h3 class="text-lg font-bold mb-3 mt-6">How a signal-driven shutdown ends</h3>
+        <p class="mb-3">With <code class="bg-black/5 px-1">handleSignals</code> on, the signal handler holds the event loop open for the whole graceful shutdown, so <code class="bg-black/5 px-1">onShutdown</code> runs to the end even under plain <code class="bg-black/5 px-1">node</code>, after your server has closed and nothing else keeps the process alive. The runtime never calls <code class="bg-black/5 px-1">process.exit()</code> here. It sets <code class="bg-black/5 px-1">process.exitCode</code> and lets the process exit on its own:</p>
+        <table class="doc-table mb-4">
+          <thead>
+            <tr><th>What happened during shutdown</th><th>Final state</th><th>Exit code</th><th>Events and log</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Every hook finished</td><td><code>stopped</code></td><td>0 (left alone)</td><td><code>runtime.stopped</code></td></tr>
+            <tr><td>An <code>onShutdown</code> threw</td><td><code>stopped</code></td><td>1</td><td><code>runtime.module.failed</code>, then <code>runtime.stopped</code>; logs <code>Shutdown handler failed.</code> with a <code>RuntimeSignalError</code></td></tr>
+            <tr><td>The shutdown outlived <code>shutdownTimeout</code></td><td><code>failed</code></td><td>1</td><td><code>runtime.failed</code> (<code>phase: "stop"</code>) once; logs <code>Shutdown handler failed.</code> with a <code>RuntimeSignalError</code></td></tr>
+          </tbody>
+        </table>
+        <p class="mb-3">Tested under plain <code class="bg-black/5 px-1">node</code> with a module whose <code class="bg-black/5 px-1">onShutdown</code> clears the last interval and then waits on an unref'd 300&nbsp;ms timer, and <code class="bg-black/5 px-1">shutdownTimeout: 500</code>:</p>
+        <div class="code-block">clean shutdown        → database closed, runtime.stopped, exit code 0, state "stopped"
+onShutdown throws     → exit code 1, state "stopped", runtime.failed not published
+onShutdown never ends → runtime.failed stop (once), exit code 1, state "failed"</div>
+        <p class="mt-3 mb-3">An orchestrator such as Kubernetes or systemd sees the non-zero exit without any code of yours. You no longer need to set <code class="bg-black/5 px-1">process.exitCode</code> from a <code class="bg-black/5 px-1">runtime.failed</code> handler; subscribe to <code class="bg-black/5 px-1">runtime.failed</code> and <code class="bg-black/5 px-1">runtime.module.failed</code> only to report the failure.</p>
+
+        <div class="callout callout-note mt-4">
+          <strong class="text-zudo-blue">Changed in v1.3.1:</strong> in v1.3.0 a <code>SIGTERM</code>/<code>SIGINT</code> under plain <code>node</code> could end the process at once with code 0, with the runtime still <code>running</code> or <code>stopping</code> and <code>onShutdown</code> unfinished, whenever nothing else kept the event loop alive (<code>tsx</code> hid this by keeping the loop alive). A failed signal-driven shutdown was only logged, as <code>Shutdown failed.</code>, and the exit code stayed 0, so this page advised setting <code>process.exitCode = 1</code> in a <code>runtime.failed</code> handler; that workaround can go. A failed stop also published <code>runtime.failed</code> twice, and a module failure during startup did too; each now publishes it once.
         </div>
       </section>
 
@@ -572,7 +590,7 @@ eventBus.<span class="fn">on</span>(<span class="str">"runtime.health.changed"</
 
         <p class="mt-6 mb-3">Eighteen event types are emitted, in four families:</p>
         <ul class="space-y-2 mb-4">
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Runtime</strong> — <code>runtime.initializing</code>, <code>.initialized</code>, <code>.starting</code>, <code>.running</code>, <code>.stopping</code>, <code>.stopped</code>, <code>.failed</code>. <code>.initialized</code> and <code>.starting</code> are published since v1.3.0. There is no <code>runtime.created</code> event.</li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Runtime</strong> — <code>runtime.initializing</code>, <code>.initialized</code>, <code>.starting</code>, <code>.running</code>, <code>.stopping</code>, <code>.stopped</code>, <code>.failed</code>. <code>.initialized</code> and <code>.starting</code> are published since v1.3.0, and since v1.3.1 the <code>RuntimeEventType</code> union includes them too. There is no <code>runtime.created</code> event.</li>
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Module</strong> — <code>runtime.module.initializing</code>, <code>.initialized</code>, <code>.starting</code>, <code>.started</code>, <code>.stopping</code>, <code>.stopped</code>, <code>.failed</code></li>
           <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Shutdown</strong> — <code>runtime.shutdown.drain</code>, <code>runtime.shutdown.complete</code></li>
           <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>Derived state</strong> — <code>runtime.health.changed</code>, <code>runtime.readiness.changed</code></li>
@@ -828,7 +846,7 @@ registry.<span class="fn">register</span>(<span class="str">"worker"</span>, wor
             <tr><td><span class="code-inline">RuntimeState, RuntimeStatus, RuntimeHealth, RuntimeHealthState</span></td><td>State and health shapes.</td><td>Type-only.</td></tr>
             <tr><td><span class="code-inline">ReadinessCheckFn, ReadinessCheck, ReadinessTrackerState</span></td><td>Readiness shapes.</td><td>Type-only.</td></tr>
             <tr><td><span class="code-inline">LifecyclePhase, LifecycleResult, LifecycleFailure</span></td><td>Per-phase results from the lifecycle manager.</td><td>Type-only.</td></tr>
-            <tr><td><span class="code-inline">RuntimeEventType, RuntimeEventMap and payload types</span></td><td>Event names and payload shapes.</td><td>Type-only.</td></tr>
+            <tr><td><span class="code-inline">RuntimeEventType, RuntimeModuleEventType, RuntimeEventMap and payload types</span></td><td>Event names and payload shapes.</td><td>Type-only. Since v1.3.1 <code>RuntimeEventType</code> is <code>keyof RuntimeEventMap</code> (all 18 names, including <code>runtime.initialized</code> and <code>runtime.starting</code>), and <code>RuntimeModuleEventType</code> is its <code>runtime.module.*</code> subset.</td></tr>
           </tbody>
         </table>
       </section>

@@ -279,13 +279,27 @@ console.log(stopped);
 <explain><p>A failing cleanup does not stop the others: the database was still closed. At the end, <code>dispose()</code> reports every cleanup that failed, by name.</p></explain>
 </question>
 
-<question id="test-app-defaults" type="choice">
-<q>What should you pass to <code>createTestApplication</code>, according to the lesson?</q>
-<option>Nothing; its defaults are silent and fixed in time</option>
-<option correct>Your own spy logger and test clock, because by default it uses a real logger that prints and a clock set to the real time</option>
-<option>A real database connection</option>
-<option>The production config file</option>
-<explain><p>The defaults would print log lines in your test output and make time depend on when the test runs. Passing a spy logger and a test clock keeps tests quiet and repeatable.</p></explain>
+<question id="test-app-defaults" type="output">
+<q>No options are passed to <code>createTestApplication</code>. What does this print?</q>
+<code file="test-app.js" browser="no">
+import { createTestApplication } from "@zudojs/testing";
+
+const app = createTestApplication();
+app.logger.info("task created", { taskId: 1 });
+console.log(app.clock.now.toISOString());
+console.log(app.logger.calls.map((call) => `${call.method} ${call.message}`), app.cleanup.count);
+await app.dispose();
+</code>
+<option correct>2026-01-01T00:00:00.000Z
+[ 'info task created' ] 2</option>
+<option>task created
+2026-01-01T00:00:00.000Z
+[ 'info task created' ] 2</option>
+<option>(the real current time)
+[] 0</option>
+<option>2026-01-01T00:00:00.000Z
+[ 'info task created' ] 0</option>
+<explain><p>By default the test application is quiet and repeatable: its logger is a spy logger that prints nothing and records every line in <code>calls</code>, and its clock starts at 1 January 2026, 00:00 UTC, on every run. The container and logger cleanups are already registered, so the count is 2. Pass <code>clock</code> to start on another date.</p></explain>
 </question>
 
 <question id="deep-equal-sets" type="output">
@@ -413,12 +427,12 @@ try {
 </question>
 
 <question id="port-zero" type="choice">
-<q>Why does the integration test start the server on port 0?</q>
-<option>Port 0 is faster</option>
-<option correct>The operating system picks any free port, so tests never clash with another server</option>
-<option>Port 0 disables the network</option>
-<option>It is the only port Vitest allows</option>
-<explain><p>A fixed port like 3000 may already be used by your dev server or another test. Port 0 always works; the test reads the real port from <code>server.address</code>.</p></explain>
+<q><code>createHttpTestClient(router)</code> starts a real server the first time you send a request. Why does it use a free port that the operating system picks, not a fixed one like 3000?</q>
+<option>A free port is faster</option>
+<option correct>A fixed port may already be used by your dev server or another test; a free port never clashes</option>
+<option>A free port disables the network</option>
+<option>Vitest only allows free ports</option>
+<explain><p>Asking the system for any free port (port 0) always works, even when several test files run at once. Register the client with a cleanup manager, <code>{ cleanup }</code>, so <code>dispose()</code> stops the server it started.</p></explain>
 </question>
 
 <question id="http-status-assert" type="output">
@@ -743,4 +757,58 @@ did not reject
 wrong error
 </expected>
 <explain><p>Catch the error first, then decide <em>outside</em> the <code>try</code>. If you threw "did not reject" inside the <code>try</code>, your own <code>catch</code> would swallow it and the check would silently pass.</p></explain>
+</question>
+
+<question id="recording-bus" type="output">
+<q>The code under test publishes in three different ways. What does this print?</q>
+<code file="recording-bus.js" browser="no">
+import { createTestEventBus } from "@zudojs/testing";
+
+const events = createTestEventBus();
+await events.publish({ type: "task.created", payload: { taskId: 1 } });
+await events.bus.publish({ type: "task.completed", payload: { taskId: 1 } });
+await events.emit({ type: "task.deleted", payload: { taskId: 1 } });
+console.log(events.published.map((recorded) => recorded.event.type));
+events.dispose();
+</code>
+<option correct>[ 'task.created', 'task.completed', 'task.deleted' ]</option>
+<option>[ 'task.created' ]</option>
+<option>[ 'task.created', 'task.deleted' ]</option>
+<option>[]</option>
+<explain><p>The test event bus is a real event bus that records inside itself. Whether your code calls <code>publish</code>, <code>publishEvent</code> or <code>emit</code>, and whether it got the double or its <code>bus</code> property, every event lands in <code>published</code>.</p></explain>
+</question>
+
+<question id="http-test-client" type="output">
+<q>What does this print?</q>
+<code file="http-client.js" browser="no">
+import { createResponseContext, createRouter } from "@zudojs/http";
+import { createCleanupManager, createHttpTestClient } from "@zudojs/testing";
+
+const router = createRouter();
+router.get("/health", async () => createResponseContext().setStatus(200).json({ ok: true }));
+const cleanup = createCleanupManager();
+const client = createHttpTestClient(router, { cleanup });
+
+const health = await client.get("/health").expect(200).expectJson({ ok: true });
+console.log(health.status, health.body);
+try {
+  await client.get("/missing").expect(200);
+} catch (error) {
+  console.log(error.name, "-", error.message.split("\n")[0]);
+}
+await cleanup.dispose();
+console.log("closed:", client.closed);
+</code>
+<option correct>200 { ok: true }
+AssertionError - Expected status 200, got 404.
+closed: true</option>
+<option>200 { ok: true }
+closed: true</option>
+<option>200 { ok: true }
+AssertionError - Expected status 200, got 404.
+closed: false</option>
+<option>200 '{"ok":true}'
+AssertionError - Expected status 200, got 404.
+closed: true</option>
+<explain><p>The request is sent when you <code>await</code> the chain, and <code>.expect(status)</code> throws when the answer is different, naming both statuses. The body is parsed JSON. Because the client was registered with <code>{ cleanup }</code>, <code>dispose()</code> stopped the server it started.</p></explain>
 </question>

@@ -123,7 +123,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.1</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/observability</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Logs, metrics and traces for a Zudojs application, behind one small facade you can point at any backend.
@@ -549,12 +549,13 @@ span.<span class="fn">end</span>();
         <h3 class="text-lg font-bold mb-3 mt-6">Tuning the rules</h3>
         <p class="mb-4 leading-relaxed">Matching is case-insensitive and, by default, word-aware. <code class="bg-black/5 px-1">userPassword</code>, <code class="bg-black/5 px-1">x-api-key</code> and <code class="bg-black/5 px-1">accessToken</code> all match; <code class="bg-black/5 px-1">shippingAddress</code> and <code class="bg-black/5 px-1">authorId</code> do not, even though they contain the letters <code class="bg-black/5 px-1">pin</code> and <code class="bg-black/5 px-1">auth</code>. Pass <code class="bg-black/5 px-1">matchMode: "exact"</code> to match whole names only.</p>
 
-        <p class="mb-3 leading-relaxed">This adds two patterns and a custom rule on top of the defaults. <code class="bg-black/5 px-1">patterns</code> and <code class="bg-black/5 px-1">customRedactor</code> add to the default rules; <code class="bg-black/5 px-1">fields</code> replaces them (see the warning below).</p>
+        <p class="mb-3 leading-relaxed">This adds a field, a pattern and a custom rule on top of the defaults. <code class="bg-black/5 px-1">fields</code>, <code class="bg-black/5 px-1">patterns</code> and <code class="bg-black/5 px-1">customRedactor</code> all add to the default rules, so they can only redact more.</p>
         <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">redactObject</span>, <span class="kw">type</span> <span class="tp">RedactionConfig</span> } <span class="kw">from</span> <span class="str">"@zudojs/observability"</span>;
 
 <span class="kw">const</span> config: <span class="tp">RedactionConfig</span> = {
-  <span class="cmt">// patterns add to the defaults; fields would replace them</span>
-  <span class="prop">patterns</span>: [<span class="str">/^nationalId$/i</span>, <span class="str">/^x-.*-token$/i</span>],
+  <span class="cmt">// fields and patterns both add to the defaults</span>
+  <span class="prop">fields</span>: [<span class="str">"nationalId"</span>],
+  <span class="prop">patterns</span>: [<span class="str">/^x-.*-token$/i</span>],
   <span class="prop">replacement</span>: <span class="str">"***"</span>,
   <span class="prop">customRedactor</span>: (<span class="param">key</span>, <span class="param">value</span>) =&gt;
     key === <span class="str">"email"</span> &amp;&amp; <span class="kw">typeof</span> value === <span class="str">"string"</span>
@@ -574,9 +575,19 @@ console.<span class="fn">log</span>(<span class="fn">redactObject</span>({
 
         <p class="mb-4 leading-relaxed">Traversal stops at depth 8 by default (raise it with <code class="bg-black/5 px-1">maxDepth</code>) and is cycle-aware. Anything cut off is replaced with <code class="bg-black/5 px-1">MAX_DEPTH_MARKER</code> or <code class="bg-black/5 px-1">CIRCULAR_MARKER</code>, both exported so you can recognise them.</p>
 
+        <p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">DEFAULT_SENSITIVE_FIELDS</code> is the whole default list: <code class="bg-black/5 px-1">@zudojs/logger</code>'s <code class="bg-black/5 px-1">DEFAULT_LOGGER_SECRET_FIELDS</code> plus this package's extra spellings, frozen. You do not need to spread it into <code class="bg-black/5 px-1">fields</code>; <code class="bg-black/5 px-1">fields: ["nationalId"]</code> already redacts <code class="bg-black/5 px-1">nationalId</code> and every default name. To use your list <em>alone</em>, pass <code class="bg-black/5 px-1">replaceDefaults: true</code>:</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">redactObject</span> } <span class="kw">from</span> <span class="str">"@zudojs/observability"</span>;
+
+<span class="kw">const</span> input = { <span class="prop">ssn</span>: <span class="str">"078-05-1120"</span>, <span class="prop">password</span>: <span class="str">"hunter2"</span>, <span class="prop">jwt</span>: <span class="str">"eyJhbGciOi"</span> };
+
+console.<span class="fn">log</span>(<span class="fn">redactObject</span>(input, { <span class="prop">fields</span>: [<span class="str">"ssn"</span>] }));
+<span class="cmt">// { ssn: "[REDACTED]", password: "[REDACTED]", jwt: "[REDACTED]" }</span>
+console.<span class="fn">log</span>(<span class="fn">redactObject</span>(input, { <span class="prop">fields</span>: [<span class="str">"ssn"</span>], <span class="prop">replaceDefaults</span>: <span class="kw">true</span> }));
+<span class="cmt">// { ssn: "[REDACTED]", password: "hunter2", jwt: "eyJhbGciOi" }</span></div>
+
         <div class="callout callout-warning mb-4">
-          <p class="text-sm font-bold mb-1">WATCH OUT</p>
-          <p class="text-sm">Supplying <code>fields</code> <em>replaces</em> the default rules rather than adding to them &mdash; and <code>DEFAULT_SENSITIVE_FIELDS</code> is only part of the default. The logger's names (<code>jwt</code>, <code>sid</code>, <code>pwd</code>, <code>passphrase</code>, <code>bearer</code> and others) are added only while <code>fields</code> is unset. Tested: <code>fields: [...DEFAULT_SENSITIVE_FIELDS, "nationalId"]</code> left <code>jwt: "eyJhbGciOi"</code> in clear text. To add names, use <code>patterns</code> as above, or spread both lists: <code>fields: [...DEFAULT_SENSITIVE_FIELDS, ...DEFAULT_LOGGER_SECRET_FIELDS, "nationalId"]</code>, with <code>DEFAULT_LOGGER_SECRET_FIELDS</code> imported from <code>@zudojs/logger</code>.</p>
+          <p class="text-sm font-bold mb-1">CHANGED IN 1.2.1 (BEHAVIOUR CHANGE, SECURITY)</p>
+          <p class="text-sm">Up to 1.2.0, <code>fields</code> <em>replaced</em> the default rules, and <code>DEFAULT_SENSITIVE_FIELDS</code> lacked <code>jwt</code>, <code>sid</code>, <code>pwd</code>, <code>passphrase</code> and <code>bearer</code>, so the old advice to write <code>fields: [...DEFAULT_SENSITIVE_FIELDS, "nationalId"]</code> left <code>jwt</code> in clear text. <code>fields</code> now extends the defaults, and that spread (or spreading <code>DEFAULT_LOGGER_SECRET_FIELDS</code> too) is harmless but no longer needed. If you relied on <code>fields</code> to redact <em>less</em> than the default, add <code>replaceDefaults: true</code>, and only for data you are sure is safe to export.</p>
         </div>
       </section>
 
@@ -761,7 +772,7 @@ billing.<span class="prop">tracer</span>.<span class="fn">startSpan</span>(<span
           <table class="doc-table">
             <thead><tr><th>Name</th><th>What it is</th><th>Notes</th></tr></thead>
             <tbody>
-              <tr><td><code>DEFAULT_SENSITIVE_FIELDS</code></td><td>This package's own redaction field list.</td><td>Not the whole default: the logger's <code>DEFAULT_LOGGER_SECRET_FIELDS</code> are added while <code>fields</code> is unset. Spread both if you set <code>fields</code>.</td></tr>
+              <tr><td><code>DEFAULT_SENSITIVE_FIELDS</code></td><td>The effective default redaction field list.</td><td>The logger's <code>DEFAULT_LOGGER_SECRET_FIELDS</code> plus this package's extra spellings; frozen. <code>fields</code> adds to it unless <code>replaceDefaults: true</code>.</td></tr>
               <tr><td><code>DEFAULT_BUCKET_BOUNDARIES</code></td><td>Default histogram buckets, 1 to 10,000.</td><td>Tuned for millisecond latencies.</td></tr>
               <tr><td><code>CIRCULAR_MARKER</code>, <code>MAX_DEPTH_MARKER</code></td><td>Placeholders left by the redactor.</td><td><code>"[CIRCULAR]"</code> and <code>"[MAX_DEPTH]"</code>.</td></tr>
               <tr><td><code>INVALID_PROPAGATION_CONTEXT</code></td><td>All-zero context used by the noop manager.</td><td>Frozen.</td></tr>
@@ -781,7 +792,7 @@ billing.<span class="prop">tracer</span>.<span class="fn">startSpan</span>(<span
           <li class="border-l-4 border-zudo-red pl-4"><strong>Putting an ID in a metric label.</strong> <code>{ path: "/orders/9182" }</code> creates one series per order. You hit the 10,000-series cap, new series are refused, and your graphs go flat. Use the route template.</li>
           <li class="border-l-4 border-zudo-red pl-4"><strong>Deploying with the console exporters.</strong> <code>useConsoleExporters</code> defaults to <code>true</code>, so production writes JSON to stdout. Pass real exporters or set it to <code>false</code>.</li>
           <li class="border-l-4 border-zudo-red pl-4"><strong>Forgetting <code>span.end()</code> on the error path.</strong> The span is never exported and never released. End it in a <code>finally</code>.</li>
-          <li class="border-l-4 border-zudo-red pl-4"><strong>Replacing <code>fields</code> instead of extending the rules.</strong> <code>redaction: { fields: ["myToken"] }</code> discards the default rules, so <code>password</code> stops being redacted. Add names with <code>patterns</code>, or spread both <code>DEFAULT_SENSITIVE_FIELDS</code> and <code>@zudojs/logger</code>'s <code>DEFAULT_LOGGER_SECRET_FIELDS</code>.</li>
+          <li class="border-l-4 border-zudo-red pl-4"><strong>Reaching for <code>replaceDefaults: true</code> to add a name.</strong> Since 1.2.1, <code>redaction: { fields: ["myToken"] }</code> adds <code>myToken</code> to the defaults. <code>replaceDefaults: true</code> throws the defaults away, so <code>password</code> stops being redacted. Leave it off unless you mean to redact less.</li>
           <li class="border-l-4 border-zudo-red pl-4"><strong>Leaving <code>onError</code> unset.</strong> Dropped batches, failing exporters and cardinality warnings all go nowhere. Wire it to your own logger.</li>
         </ul>
       </section>
