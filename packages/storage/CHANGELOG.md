@@ -1,5 +1,12 @@
 # @zudojs/storage
 
+## 1.2.1
+
+### Patch Changes
+
+- Updated dependencies [`e546629`, [`8db6c3a`](https://github.com/oyinlola-tech/zudo/commit/8db6c3a64667fb3ee18f8a812a4a66057e674099)]:
+  - @zudojs/serialization@1.2.1
+
 ## 1.2.0
 
 ### Minor Changes

@@ -1,5 +1,19 @@
 # @zudojs/observability
 
+## 1.2.1
+
+### Patch Changes
+
+- Post-release fixes.
+
+  - **observability (security):** `redaction.fields` replaced the default names and @zudojs/logger's matcher, and `DEFAULT_SENSITIVE_FIELDS` lacked `jwt`, `sid`, `pwd`, `passphrase` and `bearer`. As a result the documented `fields: [...DEFAULT_SENSITIVE_FIELDS, "nationalId"]` redacted less than the default: `redactObject({ jwt: "x" }, { fields: [...DEFAULT_SENSITIVE_FIELDS] })` returned `{ jwt: "x" }`. `DEFAULT_SENSITIVE_FIELDS` is now the effective default list, built from the logger's `DEFAULT_LOGGER_SECRET_FIELDS` plus this package's extra spellings, and it is frozen. **Behaviour change:** `fields` now _extends_ the defaults, so it can only add redaction. `fields: ["ssn"]` now redacts `ssn` and every default name, where before it redacted only `ssn`. To get the old replace behaviour, pass the new `replaceDefaults: true`.
+  - **security (security):** `createCsrfProtection().verify` and `requiresCsrfProtection` let any method outside the protected list skip the check, so `""`, `" "`, `"POST "`, `"FOO"` and `"CONNECT"` returned `true` with no token. The rule now fails closed. Only GET, HEAD, OPTIONS and TRACE skip the check, matched exactly after upper-casing and without trimming. When `methods` is configured, a standard HTTP method that the list leaves out is also exempt, as before (`methods: ["DELETE"]` still exempts POST). Every other value is verified.
+  - **security:** cookie `Path` accepted non-ASCII such as `"/ä"`. It must now be printable ASCII (0x20–0x7E) with no `;` or `,`. That is RFC 6265's `path-value` plus the `,` this package already refused. Percent-encode anything else. Space stays allowed, because the RFC allows it and the existing rules accepted it on purpose. `generateCsrfCookie` and `createCsrfProtection` now apply the same `Path` check and throw `ValidationError`. Before, they wrote `path` into `Set-Cookie` unchecked.
+  - **permissions:** a policy with `effect: "grant"` (new in 1.4.0) denied when it returned `false`. An ownership policy therefore denied editors whose role grants the permission, and the workaround was `|| actorHasRole(...)`. A per-policy `effect: "grant"` now grants when it allows and abstains when it returns `false`, throws or times out. It can add access but can never take away what roles, permissions or rules grant. Throws and timeouts are still reported through `onError`. Denials still work as before: a constraining policy's `false` denies, and a grant never overrides a deny rule, `deniedPermissions` or another policy's denial. `defaultPolicyEffect: "grant"` keeps the pre-1.4 semantics unchanged for policies that set no `effect`: an allowing policy grants and a denying one denies.
+
+- Updated dependencies [[`8db6c3a`](https://github.com/oyinlola-tech/zudo/commit/8db6c3a64667fb3ee18f8a812a4a66057e674099)]:
+  - @zudojs/logger@1.4.1
+
 ## 1.2.0
 
 ### Minor Changes

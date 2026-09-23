@@ -1,5 +1,14 @@
 # @zudojs/http
 
+## 1.4.2
+
+### Patch Changes
+
+- Updated dependencies [`e546629`, [`8db6c3a`](https://github.com/oyinlola-tech/zudo/commit/8db6c3a64667fb3ee18f8a812a4a66057e674099)]:
+  - @zudojs/security@1.3.1
+  - @zudojs/logger@1.4.1
+  - @zudojs/openapi@1.5.0
+
 ## 1.4.1
 
 ### Patch Changes

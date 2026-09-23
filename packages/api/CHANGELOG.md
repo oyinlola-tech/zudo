@@ -1,5 +1,17 @@
 # @zudojs/api
 
+## 1.2.1
+
+### Patch Changes
+
+- Updated dependencies [`e546629`, `e546629`, [`8db6c3a`](https://github.com/oyinlola-tech/zudo/commit/8db6c3a64667fb3ee18f8a812a4a66057e674099), `e546629`, [`8db6c3a`](https://github.com/oyinlola-tech/zudo/commit/8db6c3a64667fb3ee18f8a812a4a66057e674099)]:
+  - @zudojs/queue@1.4.1
+  - @zudojs/serialization@1.2.1
+  - @zudojs/security@1.3.1
+  - @zudojs/rpc@1.4.1
+  - @zudojs/schema@1.2.1
+  - @zudojs/openapi@1.5.0
+
 ## 1.2.0
 
 ### Minor Changes

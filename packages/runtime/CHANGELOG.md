@@ -1,5 +1,32 @@
 # @zudojs/runtime
 
+## 1.3.1
+
+### Patch Changes
+
+- Post-release fixes.
+
+  - **database:** `new UserRepository(prisma.user)` with a real generated Prisma 7 client failed strict type-checking (TS2345). A generated delegate's methods are generic (`findFirst<T extends UserFindFirstArgs>(args?: SelectSubset<T, …>)`) and their argument types (`select?: UserSelect | null`) cannot be assigned from one hand-written argument shape. `RepositoryDelegate` now accepts any argument list, the same way `PrismaClientLike.$transaction` already did, and still checks return types, so a delegate whose rows do not match the entity is still rejected. A generated delegate is passed with no cast. `BaseRepository#delegate` is typed by the new `RepositoryDelegateOperations`, the arguments the repository passes, so a subclass that calls `this.delegate.findMany({ where })` compiles as before.
+  - **queue:** `QueueOptions.deadLetterStore` was typed `DeadLetterStore<never>`, so `createInMemoryDeadLetterStore()` (a `DeadLetterStore<unknown>`) and `createInMemoryDeadLetterStore<T>()` for a `Queue<T>` were both rejected with TS2322. It is now `DeadLetterStore<unknown>`, which accepts either with no annotation. A store already annotated `<never>` still compiles.
+  - **container:** `registerClass(TOKEN, Service)` (and `{ useClass }`, `classProvider`, `provideClass`) with no `inject` list built a class whose constructor needs arguments, passing `undefined` for each one. 1.2.0 fixed this only for auto-registration. Registering is still allowed, but resolving now throws `ProviderResolutionError` naming the class, the parameter count and the `inject: [...]` fix. Constructors with no parameters, or only defaulted ones, are unaffected.
+  - **runtime:** a failed stop published `runtime.failed` (`phase: "stop"`) twice, once from the shutdown sequence and once from the runtime. An `onShutdown` that outlives `shutdownTimeout` under `SIGTERM` now leaves the runtime `failed`, sets exit code 1 and publishes `runtime.failed` once. `RuntimeEventType` lacked `"runtime.initialized"` and `"runtime.starting"`, which `RuntimeEventMap` declares and the runtime publishes. It is now derived from the map (`keyof RuntimeEventMap`), and `RuntimeModuleEventType` from the `runtime.module.*` keys, so the two cannot drift again.
+  - **serialization:** the `SerializeError` for a value JSON would write as `{}` said "a Error" and "a ArrayBuffer", and told the caller to "keep the built-in transformers enabled" even when they were on. It now uses the right article ("an Error"). It suggests the built-ins only when they are disabled and one of them handles the type. Otherwise it suggests registering a transformer.
+
+  `@zudojs/runtime`: a module failure during startup publishes `runtime.failed` once (from startup, naming the failing module) instead of twice.
+
+- [`8db6c3a`](https://github.com/oyinlola-tech/zudo/commit/8db6c3a64667fb3ee18f8a812a4a66057e674099) Thanks [@oyinlola-tech](https://github.com/oyinlola-tech)! - Post-release fixes.
+
+  - **messaging:** aborting a dispatch in a browser threw `ReferenceError: setImmediate is not defined`. The abort rejection is now scheduled with `setTimeout(…, 0)`, which keeps the same ordering (a handler that aborts and returns still has its result recorded first) and works in every runtime.
+  - **runtime:** with `handleSignals: true`, a `SIGTERM`/`SIGINT` under plain `node` could exit the process at once with code 0 — the runtime still `running` or `stopping` and `onShutdown` never finished — whenever nothing else kept the event loop alive (tsx masked this by keeping the loop alive). The signal handler now holds the loop open for the whole graceful shutdown, gives a signal delivered just before the loop drained one turn to be dispatched, and sets `process.exitCode = 1` when the shutdown fails (`stop()` rejects or a module's shutdown hook fails). A clean shutdown leaves the exit code alone, and the process still exits on its own rather than through `process.exit()`. A failed signal-triggered shutdown is now logged as the documented `RuntimeSignalError` ("Shutdown handler failed.") instead of "Shutdown failed.".
+  - **rpc:** a non-exposed `RPCError` hid its message but sent its custom code: `new RPCError("secret", { code: "TASK_SECRET" })` went out as `{ code: "TASK_SECRET", … }`. It now goes out as `RPC_INTERNAL_ERROR`. A non-exposed error whose code is a standard wire code (a key of `RPC_HTTP_STATUS`, such as `RPC_UNAVAILABLE`) keeps that code with the generic message, and exposed errors keep their code and message as before.
+  - **plugins:** `dependencies: [{ name: "metrics", optional: true }]` made `start()` throw `PluginDependencyError` when "metrics" was not registered, because only `optionalDependencies` was honoured. `optional: true` inside `dependencies` is now equivalent: skipped when missing, ordered before the dependent (and version-checked) when present.
+  - **events:** documentation only. A namespace wildcard is multi-level — `"task.*"` matches `task`, `task.created` and `task.sub.created` — which the README and JSDoc now say, along with the fact that there is no single-level wildcard.
+
+- Updated dependencies [`e546629`, [`8db6c3a`](https://github.com/oyinlola-tech/zudo/commit/8db6c3a64667fb3ee18f8a812a4a66057e674099), [`8db6c3a`](https://github.com/oyinlola-tech/zudo/commit/8db6c3a64667fb3ee18f8a812a4a66057e674099)]:
+  - @zudojs/container@1.2.1
+  - @zudojs/events@1.3.1
+  - @zudojs/logger@1.4.1
+
 ## 1.3.0
 
 ### Minor Changes

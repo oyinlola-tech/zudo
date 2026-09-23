@@ -1,5 +1,13 @@
 # @zudojs/cache
 
+## 1.2.1
+
+### Patch Changes
+
+- [`397d66e`](https://github.com/oyinlola-tech/zudo/commit/397d66ed948ec06185b2eb392a1b364538a6b944) Thanks [@oyinlola-tech](https://github.com/oyinlola-tech)! - `ttl()` never reports `0` for a key that is still present. Rounding the remaining time down to whole milliseconds (new in 1.2.0) made a key in its last fraction of a millisecond read as `0`, which callers use to mean "expired"; it now reads as `1`.
+- Updated dependencies [`e546629`, [`8db6c3a`](https://github.com/oyinlola-tech/zudo/commit/8db6c3a64667fb3ee18f8a812a4a66057e674099)]:
+  - @zudojs/serialization@1.2.1
+
 ## 1.2.0
 
 ### Minor Changes

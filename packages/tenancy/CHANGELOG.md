@@ -1,5 +1,15 @@
 # @zudojs/tenancy
 
+## 1.3.1
+
+### Patch Changes
+
+- Post-release ergonomics. Both changes are additive, and existing code behaves as before.
+
+  - **permissions:** `authorize()`, `createRequirePermissionMiddleware` and `createRequirePermissionsMiddleware` take a new `onMissingResource` option: `"check"` (the default), `"forbid"` or `"notFound"`. It decides what the guard does when `extractResource` returns `undefined` or `null`. Under the default, the guard evaluates the permission with no resource, as it always has. A role grant then lets the request reach the handler, which still had to answer 404 itself. `"notFound"` answers **404** without evaluating. `"forbid"` answers **403** without evaluating. The optional `notFoundResponse` shapes the 404 body. The guard records the new `RESOURCE_NOT_FOUND_DECISION` (`reason: "resource_not_found"`) under `permissions:decision`. The option has no effect on a guard without `extractResource`. A request with no actor still gets 401 first. Also new: `createNotFoundResponse`, `refuseMissingResource`, and the `MissingResourceMode`, `MissingResourceOptions`, `MissingResourceRefusal` and `NotFoundResponseOptions` types. The README explains the trade-off. A 404 conceals whether a resource exists only when used consistently: a denial on an existing resource still answers 403, so on their own, 404 and 403 together confirm which ids exist.
+  - **tenancy:** `createResolveTenantMiddleware`'s `resolver` accepts a chain from `createResolverChain` as it is. Before, it needed `chain.asResolver()`. Passing the chain itself was a type error, and if cast through, every request was refused, because a chain's `resolve` returns `{ resolution, candidates, conflict }`, which carries no `trust`. A chain is now recognised by its `asResolver` method and adapted, and `.asResolver()` still works. The new `TenantResolverSource` type names the accepted union.
+  - **tenancy:** `getClaims` (on `createResolveTenantMiddleware` and `createHttpResolverContext`) is generic over the middleware context it reads, bounded by tenancy's structural mirror. A helper typed with `@zudojs/http`'s `HttpMiddlewareContext` is now accepted without a cast. Before, it was rejected because the mirror's request lacks the real request's members. A reader for anything that is not a middleware context is still a type error. The new `TenantClaimsReader` type names the option's function type.
+
 ## 1.3.0
 
 ### Minor Changes
