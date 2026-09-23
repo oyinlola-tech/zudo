@@ -6,6 +6,8 @@
 
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
 import { scaffoldWithFallback } from "../../scaffolders/scaffolder.helper.js";
+import { renderVanillaFallback, versionFromRange } from "./fallback/index.js";
+import { DEPENDENCY_VERSION_RANGES as V } from "../../resolvers/dependency/dependencyVersions.constant.js";
 import type {
   FrontendAdapter,
   FrontendGenerationContext,
@@ -25,11 +27,11 @@ export class VanillaAdapter implements FrontendAdapter {
   }
 
   async getLatestVersion(): Promise<string> {
-    return "1.0.0";
+    return versionFromRange(V.vite);
   }
 
   async scaffold(context: FrontendGenerationContext): Promise<void> {
-    const files = this.getBaseFiles(context);
+    const files = renderVanillaFallback(context);
     await scaffoldWithFallback({
       command: "npm",
       args: ["create", "vite@latest", ".", "--", "--template", "vanilla-ts"],
@@ -84,54 +86,6 @@ export class VanillaAdapter implements FrontendAdapter {
     }
 
     return { valid: errors.length === 0, errors, warnings };
-  }
-
-  private getBaseFiles(
-    context: FrontendGenerationContext,
-  ): Record<string, string> {
-    return {
-      "index.html": `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${context.project.name}</title>
-  <link rel="stylesheet" href="/src/styles/main.css">
-</head>
-<body>
-  <div id="app"></div>
-  <script type="module" src="/src/main.js"></script>
-</body>
-</html>
-`,
-      "src/main.js": `import { createApp } from "./app.js";
-
-const app = createApp();
-app.mount("#app");
-`,
-      "src/app.js": `export function createApp() {
-  return {
-    mount(selector) {
-      const root = document.querySelector(selector);
-      if (root) {
-        root.innerHTML = "<h1>Hello from Zudojs</h1>";
-      }
-    },
-  };
-}
-`,
-      "src/styles/main.css": `* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-body {
-  font-family: system-ui, -apple-system, sans-serif;
-  line-height: 1.6;
-}
-`,
-    };
   }
 
   private getStructure(

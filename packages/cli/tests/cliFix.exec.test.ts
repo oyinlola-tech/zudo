@@ -318,11 +318,11 @@ describe("CLI-EXEC-12 — Flutter gets a lower_snake_case project name", () => {
 
     const args = vi.mocked(execCommand).mock.calls[0]?.[1] ?? [];
     const value = args[args.indexOf("--project-name") + 1];
-    expect(value).toBe("myapp_client");
+    expect(value).toBe("my_app_client");
   });
 
   it("maps every accepted CLI name to a valid Dart package name", () => {
-    expect(FlutterAdapter.toFlutterProjectName("MyApp")).toBe("myapp");
+    expect(FlutterAdapter.toFlutterProjectName("MyApp")).toBe("my_app");
     expect(FlutterAdapter.toFlutterProjectName("my-cool-app")).toBe(
       "my_cool_app",
     );

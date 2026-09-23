@@ -6,6 +6,8 @@
 
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
 import { scaffoldWithFallback } from "../../scaffolders/scaffolder.helper.js";
+import { renderVueFallback, versionFromRange } from "./fallback/index.js";
+import { DEPENDENCY_VERSION_RANGES as V } from "../../resolvers/dependency/dependencyVersions.constant.js";
 import type {
   FrontendAdapter,
   FrontendGenerationContext,
@@ -25,11 +27,11 @@ export class VueAdapter implements FrontendAdapter {
   }
 
   async getLatestVersion(): Promise<string> {
-    return "3.5.0";
+    return versionFromRange(V.vue);
   }
 
   async scaffold(context: FrontendGenerationContext): Promise<void> {
-    const files = this.getBaseFiles(context);
+    const files = renderVueFallback(context);
     await scaffoldWithFallback({
       command: "npm",
       args: [
@@ -95,92 +97,6 @@ export class VueAdapter implements FrontendAdapter {
     }
 
     return { valid: errors.length === 0, errors, warnings };
-  }
-
-  private getBaseFiles(
-    context: FrontendGenerationContext,
-  ): Record<string, string> {
-    const useTypeScript = context.language === "typescript";
-
-    return {
-      "package.json": JSON.stringify(
-        {
-          name: context.project.name,
-          version: "0.1.0",
-          private: true,
-          type: "module",
-          scripts: {
-            dev: "vite",
-            build: "vite build",
-            preview: "vite preview",
-          },
-          dependencies: {
-            vue: "^3.5.0",
-          },
-          devDependencies: {
-            vite: "^6.0.0",
-            "@vitejs/plugin-vue": "^4.5.0",
-            ...(useTypeScript ? { typescript: "^5.0.0" } : {}),
-          },
-        },
-        null,
-        2,
-      ),
-      "vite.config.ts": `import { defineConfig } from "vite";
-import vue from "@vitejs/plugin-vue";
-
-export default defineConfig({
-  plugins: [vue()],
-});
-`,
-      "tsconfig.json": JSON.stringify(
-        {
-          compilerOptions: {
-            target: "ES2020",
-            useDefineForClassFields: true,
-            lib: ["ES2020", "DOM", "DOM.Iterable"],
-            module: "ESNext",
-            skipLibCheck: true,
-            moduleResolution: "bundler",
-            allowImportingTsExtensions: true,
-            resolveJsonModule: true,
-            strict: true,
-          },
-        },
-        null,
-        2,
-      ),
-      "index.html": `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>${context.project.name}</title>
-  </head>
-  <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
-  </body>
-</html>
-`,
-      "src/main.ts": `import { createApp } from "vue";
-import App from "./App.vue";
-
-createApp(App).mount("#app");
-`,
-      "src/App.vue": `<template>
-  <div>
-    <h1>Hello from Zudojs</h1>
-  </div>
-</template>
-
-<script setup lang="ts">
-</script>
-`,
-      ...(useTypeScript
-        ? { "src/vite-env.d.ts": `/// <reference types="vite/client" />\n` }
-        : {}),
-    };
   }
 
   private getStructure(

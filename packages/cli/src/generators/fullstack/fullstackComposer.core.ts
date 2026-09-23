@@ -16,6 +16,7 @@ import { DependencyResolver } from "../../resolvers/dependency/dependencyResolve
 import { runFrontendPipeline } from "../frontend/frontendPipeline.js";
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
 import { renderPnpmWorkspaceFile } from "../../templates/shared/pnpm.template.js";
+import { TYPESCRIPT_VERSION_RANGES } from "../../resolvers/dependency/dependencyVersions.constant.js";
 
 /**
  * Fullstack generation context.
@@ -130,7 +131,12 @@ export class FullstackComposer {
         typecheck: scriptFor("typecheck"),
       },
       devDependencies: {
-        typescript: "^5.0.0",
+        // The root compiler is hoisted over every workspace by npm, yarn
+        // and bun, so it must satisfy the frontend toolchain's TypeScript
+        // peer range; apps/api keeps its own TypeScript 7.
+        typescript: context.project.frontend
+          ? TYPESCRIPT_VERSION_RANGES.frontend
+          : TYPESCRIPT_VERSION_RANGES.backend,
       },
     };
 

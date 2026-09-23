@@ -10,6 +10,7 @@ import type { CLIContext } from "../cliType/cliType.type.js";
 import { CLI_VERSION } from "../constants/index.js";
 import { checkForNewerVersion } from "../cliVersion/cliVersion.update.js";
 import { resolveProjectLayout } from "../resolvers/layout/projectLayout.core.js";
+import { ConfigurationResolver } from "../resolvers/configuration/configurationResolver.core.js";
 
 export async function runInfoCommand(context: CLIContext): Promise<void> {
   context.logger.info("Zudojs CLI");
@@ -61,6 +62,14 @@ export async function runInfoCommand(context: CLIContext): Promise<void> {
   context.logger.info(`  Package manager: ${layout.packageManager}`);
   if (layout.services.length > 0) {
     context.logger.info(`  Services: ${layout.services.join(", ")}`);
+  }
+  // The manifest's list, which `create` and `add` keep equal to the
+  // backend apps' `zudojs.features`; `zudojs doctor` checks the two agree.
+  const capabilities = new ConfigurationResolver().resolve(layout.root)?.features ?? [];
+  if (layout.backendDirs.length > 0) {
+    context.logger.info(
+      `  Capabilities: ${capabilities.length > 0 ? capabilities.join(", ") : "(none)"}`,
+    );
   }
 
   context.logger.info("");

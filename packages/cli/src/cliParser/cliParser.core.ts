@@ -51,7 +51,9 @@ export class CLIParser {
     const tokens = Array.from(args);
     const commands: string[] = [];
     const positional: string[] = [];
-    const options: Record<string, unknown> = {};
+    // No prototype: an undeclared `--constructor` (allowUnknownOptions) must
+    // not read or shadow Object.prototype members.
+    const options: Record<string, unknown> = Object.create(null);
     const definitions = command?.options ?? [];
     const argumentsDefinitions = command?.arguments ?? [];
 

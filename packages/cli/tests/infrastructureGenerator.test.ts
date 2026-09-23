@@ -51,6 +51,13 @@ describe("InfrastructureGenerator", () => {
       ]),
     );
     expect(written["docker-compose.yml"]).toContain("postgres");
+    // No credential in the compose file: compose reads it from .env.
+    expect(written["docker-compose.yml"]).not.toContain("POSTGRES_PASSWORD=postgres");
+    expect(written["docker-compose.yml"]).not.toContain("postgres:postgres@");
+    expect(written["docker-compose.yml"]).toContain("${POSTGRES_PASSWORD:?");
+    expect(written["docker-compose.yml"]).toContain('"127.0.0.1:5432:5432"');
+    // The image runs as the unprivileged node user.
+    expect(written["Dockerfile"]).toContain("USER node");
     // A monolith has no per-service Dockerfiles.
     expect(
       Object.keys(written).some((f) => f.startsWith("apps/services/")),

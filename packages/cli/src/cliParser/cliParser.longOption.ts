@@ -13,6 +13,7 @@ import {
 import {
   isOption,
   isOptionValueToken,
+  isReservedOptionKey,
   parseBoolean,
   parseOptionValue,
 } from "./cliParser.helper.js";
@@ -49,7 +50,7 @@ export function parseLongOption(
 
   const definition = findOption(name, definitions);
 
-  if (!definition && !allowUnknownOptions) {
+  if (!definition && (!allowUnknownOptions || isReservedOptionKey(name))) {
     throw new InvalidOptionError(token);
   }
 

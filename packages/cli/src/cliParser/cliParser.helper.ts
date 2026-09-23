@@ -38,8 +38,10 @@ export function parseOptionValue(
       return parseBoolean(value, definition.name);
 
     case "number": {
-      const parsed = Number(value);
-      if (Number.isNaN(parsed)) {
+      // `Number("")` is 0 and `Number("Infinity")` is Infinity, so
+      // `--port=` used to start the server with PORT=0 instead of failing.
+      const parsed = value.trim() === "" ? Number.NaN : Number(value);
+      if (!Number.isFinite(parsed)) {
         throw new InvalidArgumentsError(
           `Option "${definition.name}" expects a number, received "${value}".`,
         );
@@ -68,6 +70,23 @@ export function parseBoolean(value: string, option = "option"): boolean {
 /* -------------------------------------------------------------------------- */
 /* Token Classification                                                       */
 /* -------------------------------------------------------------------------- */
+
+/** Keys that must never be written from the command line. */
+const RESERVED_OPTION_KEYS: ReadonlySet<string> = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
+
+/**
+ * Returns whether an option name would touch an object's prototype chain.
+ *
+ * Only reachable when `allowUnknownOptions` is on: undeclared names are then
+ * written to the values object as typed, so `--__proto__` must be refused.
+ */
+export function isReservedOptionKey(name: string): boolean {
+  return RESERVED_OPTION_KEYS.has(name);
+}
 
 /** Returns whether a token is any option (short or long). */
 export function isOption(token: string): boolean {

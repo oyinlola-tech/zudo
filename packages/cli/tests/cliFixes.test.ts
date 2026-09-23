@@ -18,7 +18,7 @@ import {
 } from "../src/utils/utils.name.js";
 import { mergeBarrelExport } from "../src/utils/utils.fileSystem.js";
 import { generateEvent } from "../src/generators/event/event.generator.js";
-import { generateRoute } from "../src/generators/route/route.generator.js";
+import { generateResource } from "../src/generators/resource/index.js";
 import type { CLICommand } from "../src/cliType/cliType.type.js";
 
 describe("CLIParser option defaults", () => {
@@ -74,11 +74,17 @@ describe("schematic generators use normalized names", () => {
   });
 
   it("writes nothing when dryRun is set", async () => {
-    const files = await generateRoute(
-      { name: "Health Check", basePath: "src", dryRun: true },
+    const { files } = await generateResource(
+      {
+        name: "Health Check",
+        schematic: "route",
+        layout: { base: "src", appSrc: "src", appRoot: "", prisma: false },
+        dryRun: true,
+      },
       "/nonexistent/path/that/cannot/be/written",
     );
-    expect(files).toEqual(["src/routes/health-check.route.ts"]);
+    expect(files).toContain("src/routes/health-check.routes.ts");
+    expect(files).toContain("src/controllers/health-check.controller.ts");
   });
 });
 

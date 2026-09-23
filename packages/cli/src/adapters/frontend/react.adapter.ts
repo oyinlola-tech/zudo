@@ -7,6 +7,8 @@
 import { execCommand } from "../../utils/utils.exec.js";
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
 import { scaffoldWithFallback } from "../../scaffolders/scaffolder.helper.js";
+import { renderReactFallback, versionFromRange } from "./fallback/index.js";
+import { DEPENDENCY_VERSION_RANGES as V } from "../../resolvers/dependency/dependencyVersions.constant.js";
 import type {
   FrontendAdapter,
   FrontendGenerationContext,
@@ -31,11 +33,11 @@ export class ReactAdapter implements FrontendAdapter {
   }
 
   async getLatestVersion(): Promise<string> {
-    return "19.0.0";
+    return versionFromRange(V.react);
   }
 
   async scaffold(context: FrontendGenerationContext): Promise<void> {
-    const files = this.getBaseFiles(context);
+    const files = renderReactFallback(context);
     await scaffoldWithFallback({
       command: "npm",
       args: [
@@ -67,6 +69,8 @@ export class ReactAdapter implements FrontendAdapter {
       deps.push(
         { name: "vitest", type: "devDependency" },
         { name: "@testing-library/react", type: "devDependency" },
+        // Peer dependency of @testing-library/react since v16.
+        { name: "@testing-library/dom", type: "devDependency" },
         { name: "@testing-library/jest-dom", type: "devDependency" },
         { name: "@testing-library/user-event", type: "devDependency" },
         { name: "jsdom", type: "devDependency" },
@@ -112,104 +116,6 @@ export class ReactAdapter implements FrontendAdapter {
     }
 
     return { valid: errors.length === 0, errors, warnings };
-  }
-
-  private getBaseFiles(
-    context: FrontendGenerationContext,
-  ): Record<string, string> {
-    const useTypeScript = context.language === "typescript";
-    const ext = useTypeScript ? "tsx" : "jsx";
-
-    return {
-      "package.json": JSON.stringify(
-        {
-          name: context.project.name,
-          version: "0.1.0",
-          private: true,
-          type: "module",
-          scripts: {
-            dev: "vite",
-            // Vite performs the build; tsc only typechecks (noEmit).
-            build: useTypeScript ? "tsc --noEmit && vite build" : "vite build",
-            preview: "vite preview",
-          },
-          dependencies: {
-            react: "^19.0.0",
-            "react-dom": "^19.0.0",
-          },
-          devDependencies: {
-            vite: "^6.0.0",
-            "@vitejs/plugin-react": "^4.3.0",
-            ...(useTypeScript ? { typescript: "^5.0.0" } : {}),
-          },
-        },
-        null,
-        2,
-      ),
-      "vite.config.ts": `import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-
-export default defineConfig({
-  plugins: [react()],
-});
-`,
-      ...(useTypeScript
-        ? {
-            "tsconfig.json": JSON.stringify(
-              {
-                compilerOptions: {
-                  target: "ES2020",
-                  useDefineForClassFields: true,
-                  lib: ["ES2020", "DOM", "DOM.Iterable"],
-                  module: "ESNext",
-                  skipLibCheck: true,
-                  moduleResolution: "bundler",
-                  allowImportingTsExtensions: true,
-                  resolveJsonModule: true,
-                  jsx: "react-jsx",
-                  noEmit: true,
-                },
-              },
-              null,
-              2,
-            ),
-          }
-        : {}),
-      "index.html": `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>${context.project.name}</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.${ext}"></script>
-  </body>
-</html>
-`,
-      [`src/main.${ext}`]: `import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
-import App from "./App";
-
-createRoot(document.getElementById("root")${useTypeScript ? "!" : ""}).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
-`,
-      [`src/App.${ext}`]: `export default function App() {
-  return (
-    <div>
-      <h1>Hello from Zudojs</h1>
-    </div>
-  );
-}
-`,
-      ...(useTypeScript
-        ? { "src/vite-env.d.ts": `/// <reference types="vite/client" />\n` }
-        : {}),
-    };
   }
 
   private getStructure(

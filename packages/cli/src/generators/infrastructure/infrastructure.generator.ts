@@ -28,6 +28,14 @@ export interface InfrastructureOptions {
 
 const SERVICE_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
+/**
+ * Database passwords are interpolated by compose from `.env`
+ * (see `.env.example`); compose refuses to start without them. The files
+ * used to carry `postgres`/`mysql` as literal passwords.
+ */
+const POSTGRES_PASSWORD = "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}";
+const MYSQL_PASSWORD = "${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}";
+
 interface DatabaseCompose {
   readonly image: string;
   readonly port: number;
@@ -101,11 +109,12 @@ export class InfrastructureGenerator {
       return {
         image: "mysql:8",
         port: 3306,
+        // Read from .env by compose: no credential is written here.
         environment: [
-          "MYSQL_ROOT_PASSWORD=mysql",
+          `MYSQL_ROOT_PASSWORD=${MYSQL_PASSWORD}`,
           `MYSQL_DATABASE=${options.projectName}`,
         ],
-        url: `mysql://root:mysql@db:3306/${options.projectName}`,
+        url: `mysql://root:${MYSQL_PASSWORD}@db:3306/${options.projectName}`,
         dataPath: "/var/lib/mysql",
       };
     }
@@ -120,10 +129,10 @@ export class InfrastructureGenerator {
       port: 5432,
       environment: [
         "POSTGRES_USER=postgres",
-        "POSTGRES_PASSWORD=postgres",
+        `POSTGRES_PASSWORD=${POSTGRES_PASSWORD}`,
         `POSTGRES_DB=${options.projectName}`,
       ],
-      url: `postgresql://postgres:postgres@db:5432/${options.projectName}`,
+      url: `postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/${options.projectName}`,
       dataPath: "/var/lib/postgresql/data",
     };
   }
@@ -137,7 +146,7 @@ export class InfrastructureGenerator {
     return `  db:
     image: ${db.image}
     ports:
-      - "${db.port}:${db.port}"
+      - "127.0.0.1:${db.port}:${db.port}"
     environment:
 ${db.environment.map((e) => `      - ${e}`).join("\n")}
     volumes:

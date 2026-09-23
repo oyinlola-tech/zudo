@@ -18,7 +18,6 @@ import type {
 import {
   CLI_DEFAULTS,
   CLI_EXIT_CODES,
-  CLI_MESSAGES,
   CLI_OPTION_PREFIXES,
 } from "../cliConstant/cliConstant.value.js";
 import { CLIExecutionError, normalizeCLIError } from "../cliError/index.js";
@@ -38,6 +37,13 @@ import {
   printHelp,
 } from "./cliApplication.builtins.js";
 import { printCommandHelp } from "./cliApplication.help.js";
+import {
+  escapeControlCharacters,
+  failureHints,
+  localizeCommandName,
+  locateCommand,
+  requireCommand,
+} from "./invocation/index.js";
 
 /* -------------------------------------------------------------------------- */
 /* Application                                                                */
@@ -67,8 +73,10 @@ export class ZudojsCLI implements CLIApplication {
     this.description = options.description ?? CLI_DEFAULTS.DESCRIPTION;
     this.cwd = options.cwd ?? process.cwd();
     this.env = options.env ?? (process.env as CLIEnvironment);
-    this.logger = options.logger ?? createCLILogger();
     this.commands = new CLICommandRegistry();
+    this.logger =
+      options.logger ??
+      createCLILogger({ transform: (line) => this.localize(line) });
     this.parser = new CLIParser();
     this.writer = createCLIWriter();
     this.hooks = {};
@@ -117,31 +125,35 @@ export class ZudojsCLI implements CLIApplication {
       }
 
       if (isVersionRequest(args)) {
+        // `zudojs -v extra` used to print the version and exit 0, silently
+        // discarding the rest of the line.
+        if (args.length > 1) {
+          throw new InvalidArgumentsError(
+            `Unexpected argument "${args[1]}" after "${args[0]}".`,
+          );
+        }
         printVersion(this.writer, this.version);
         return CLI_EXIT_CODES.SUCCESS;
       }
 
-      const command = this.findCommand(args);
-
-      if (!command) {
-        if (args.length === 0) {
-          this.printApplicationHelp();
-          return CLI_EXIT_CODES.SUCCESS;
-        }
-        const first = String(args[0]);
-        // `findCommand` skips flag-shaped tokens, so a lone `-vh` would
-        // otherwise be reported as a command named "-vh".
-        if (first.startsWith(CLI_OPTION_PREFIXES.SHORT)) {
-          throw new InvalidArgumentsError(CLI_MESSAGES.MISSING_COMMAND);
-        }
-        throw new CommandNotFoundError(first);
+      if (args.length === 0) {
+        this.printApplicationHelp();
+        return CLI_EXIT_CODES.SUCCESS;
       }
 
-      const commandArgs = this.getCommandArguments(args, command);
+      const { index, command } = requireCommand(
+        args,
+        this.commands.list(),
+        this.name,
+      );
+      const commandArgs = args.slice(index + 1);
 
       // Checked before parsing: `--help` is not a declared option, so the
       // parser would reject it as invalid and exit 2.
-      if (commandArgs.some(isHelpFlag)) {
+      // Tokens after `--` are opaque, so `create -- --help` is not a request.
+      const escape = commandArgs.indexOf("--");
+      const flags = escape < 0 ? commandArgs : commandArgs.slice(0, escape);
+      if (flags.some(isHelpFlag)) {
         printCommandHelp(this.writer, this.name, command);
         return CLI_EXIT_CODES.SUCCESS;
       }
@@ -167,10 +179,8 @@ export class ZudojsCLI implements CLIApplication {
         // error came from argument parsing, re-parsing would fail again.
         let fallbackContext: CLIContext;
         try {
-          const command = this.findCommand(args);
-          const commandArgs = command
-            ? this.getCommandArguments(args, command)
-            : args;
+          const { index, command } = locateCommand(args, this.commands.list());
+          const commandArgs = command ? args.slice(index + 1) : args;
           fallbackContext = this.createContext(commandArgs, command);
         } catch {
           fallbackContext = {
@@ -185,7 +195,13 @@ export class ZudojsCLI implements CLIApplication {
         await this.hooks.onError(normalized, fallbackContext);
       }
 
-      this.writer.errorLine(normalized.message);
+      const lines = [
+        this.localize(normalized.message),
+        ...this.hintsFor(args, normalized.exitCode),
+      ];
+      for (const line of lines) {
+        this.writer.errorLine(escapeControlCharacters(line));
+      }
       return normalized.exitCode;
     } finally {
       this.running = false;
@@ -222,24 +238,28 @@ export class ZudojsCLI implements CLIApplication {
     return command;
   }
 
-  private findCommand(args: CLIArguments): CLICommand | undefined {
-    for (const arg of args) {
-      if (arg.startsWith("-")) continue;
-      const command = resolveCommand(this.commands.list(), arg);
-      if (command) return command;
-    }
-    return undefined;
+  /** Rewrites `zudojs <command>` examples to the name the user typed. */
+  private localize(text: string): string {
+    const words = this.commands
+      .list()
+      .flatMap((command) => [command.name, ...(command.aliases ?? [])]);
+    return localizeCommandName(text, this.name, words);
   }
 
-  private getCommandArguments(
-    args: CLIArguments,
-    command: CLICommand,
-  ): CLIArguments {
-    const index = args.findIndex(
-      (arg) => arg === command.name || command.aliases?.includes(arg),
-    );
-    if (index < 0) return args;
-    return args.slice(index + 1);
+  /** The "did you mean" / "run --help" lines printed under a usage error. */
+  private hintsFor(args: CLIArguments, exitCode: number): readonly string[] {
+    const commands = this.commands.list();
+    const helpTarget = isHelpRequest(args) ? args.slice(1) : args;
+    const { index, command } = locateCommand(helpTarget, commands);
+    return failureHints({
+      name: this.name,
+      exitCode,
+      commands,
+      ...(command ? { command } : {}),
+      ...(index >= 0 && !command
+        ? { unknownCommand: helpTarget[index]! }
+        : {}),
+    });
   }
 
   private createContext(args: CLIArguments, command?: CLICommand): CLIContext {

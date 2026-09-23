@@ -514,7 +514,10 @@ describe("CLI-SURF-10: constants are wired and correct", () => {
   });
 
   it("lists every schematic `generate` accepts", () => {
-    expect(SCHEMATIC_NAMES).toHaveLength(13);
+    // 13 schematics plus `resource`, the wired DTO → repository → service
+    // → controller → routes chain.
+    expect(SCHEMATIC_NAMES).toHaveLength(14);
+    expect(SCHEMATIC_NAMES).toContain("resource");
     const help = runCLI("generate", "--help").stdout;
     for (const schematic of SCHEMATIC_NAMES) {
       expect(help).toContain(schematic);

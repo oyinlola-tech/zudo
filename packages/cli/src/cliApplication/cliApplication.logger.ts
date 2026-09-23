@@ -28,6 +28,11 @@ export interface CLILoggerOptions {
   /** Line writers, overridable for tests. */
   readonly stdout?: (line: string) => void;
   readonly stderr?: (line: string) => void;
+  /**
+   * Rewrites each rendered line, e.g. to repeat the executable name the
+   * user typed (`zudo create`) in command examples.
+   */
+  readonly transform?: (line: string) => string;
 }
 
 /** Renders one entry as the single line the user sees. */
@@ -57,6 +62,7 @@ export function createCLILogger(options: CLILoggerOptions = {}): Logger {
     options.stdout ?? ((line: string) => process.stdout.write(`${line}\n`));
   const stderr =
     options.stderr ?? ((line: string) => process.stderr.write(`${line}\n`));
+  const transform = options.transform ?? ((line: string) => line);
 
   return createLogger({
     name: CLI_NAME,
@@ -64,7 +70,7 @@ export function createCLILogger(options: CLILoggerOptions = {}): Logger {
     // Writes must complete before a command returns; `process.exit` follows
     // an error immediately.
     asynchronous: false,
-    formatter: (entry) => formatCLILogLine(entry),
+    formatter: (entry) => transform(formatCLILogLine(entry)),
     transports: [
       {
         name: "cli-stdio",

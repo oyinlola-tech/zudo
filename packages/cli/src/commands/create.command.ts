@@ -40,16 +40,20 @@ import {
 import { promptPackageManager } from "../prompts/workspace/index.js";
 import { promptCapabilities } from "../prompts/capabilities/index.js";
 import { CLIValidationError, CLIGenerationError } from "../errors/index.js";
+import { InvalidArgumentsError } from "../cliError/cliError.argument.js";
 import { execCommand, runStreaming } from "../utils/utils.exec.js";
 import { writeFileTree } from "../utils/utils.fileSystem.js";
 import { normalizeName } from "../utils/utils.name.js";
 import { resolveMicroserviceServices } from "../templates/microservice/index.js";
+import {
+  capabilityPackages,
+  resolveProjectCapabilities,
+} from "../templates/shared/index.js";
 import { ManifestManager } from "../manifest/manifestManager.core.js";
 import {
   CLI_VERSION,
-  FEATURE_PACKAGES,
   PACKAGE_MANAGERS,
-  ZUDOJS_PACKAGES_VERSION,
+  zudojsVersionRange,
 } from "../constants/index.js";
 import { registerCLIInterruptHandler } from "../cliApplication/cliApplication.writer.js";
 import { resolveProjectLayout } from "../resolvers/layout/projectLayout.core.js";
@@ -352,7 +356,6 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
   const isInteractive = process.stdin.isTTY;
 
   let answers: ScaffoldOptions;
-  let selectedCapabilities: readonly string[];
 
   if (isInteractive) {
     p.intro("Zudojs");
@@ -418,7 +421,6 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
     const capabilities = await promptCapabilities(
       capabilitiesExplicit ? requestedCapabilities : [],
     );
-    selectedCapabilities = capabilities;
     const flags = capabilityFlags(capabilities);
     const enableDocker = arch === "microservice";
 
@@ -446,6 +448,7 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
         "typescript") as ScaffoldOptions["language"],
       services: interactiveServices,
       ...flags,
+      capabilities,
       enableDocker,
       installDeps: !noInstall,
       initGit: !noGit,
@@ -453,7 +456,7 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
   } else {
     // Without --capabilities this is the set the branch has always
     // hard-coded; with it, the same project the prompts would produce.
-    selectedCapabilities = capabilitiesExplicit
+    const selectedCapabilities = capabilitiesExplicit
       ? requestedCapabilities
       : DEFAULT_CAPABILITIES;
 
@@ -472,6 +475,7 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
       language: languageValue,
       services,
       ...capabilityFlags(selectedCapabilities),
+      capabilities: selectedCapabilities,
       // Match the interactive branch, which enables Docker for microservices.
       enableDocker: architectureValue === "microservice",
       installDeps: !noInstall,
@@ -480,7 +484,11 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
   }
 
   if (!answers.projectName) {
-    throw new CLIValidationError("Project name is required.");
+    // A usage error (exit 2), like any other missing positional; `zudojs
+    // new` is the same command, so the example names the canonical form.
+    throw new InvalidArgumentsError(
+      'Missing required argument "project-name". Pass one (zudojs create my-api) or run in an interactive terminal to be prompted.',
+    );
   }
 
   // Backend templates only emit TypeScript. `--language javascript` used to
@@ -512,9 +520,15 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
     );
   }
 
+  if (capabilitiesExplicit && answers.projectType === "frontend") {
+    context.logger.warn(
+      "--capabilities applies to backend apps; a frontend project records none.",
+    );
+  }
+
   assertCompatibleOptions(answers, context);
 
-  await createProject(answers, context, selectedCapabilities);
+  await createProject(answers, context);
 }
 
 /**
@@ -560,9 +574,10 @@ function assertCompatibleOptions(
 async function createProject(
   options: ScaffoldOptions,
   context: CLIContext,
-  capabilities: readonly string[],
 ): Promise<void> {
   const { projectName, packageManager } = options;
+  // One list for the manifest and every backend package.json.
+  const capabilities = resolveProjectCapabilities(options);
   const targetPath = join(context.cwd, projectName);
 
   if (existsSync(targetPath)) {
@@ -742,12 +757,16 @@ function installCommandFor(packageManager: ScaffoldOptions["packageManager"]): s
 }
 
 /**
- * Adds the packages behind capabilities the templates do not wire
- * themselves.
+ * Makes every backend app declare `capabilities` in `zudojs.features` and
+ * depend on the packages behind them — the list the manifest records.
  *
  * The capability prompt offers `events` and `security`, but only six of its
  * eight options reached ScaffoldOptions, so ticking **Security** produced
- * no dependency, no manifest capability and no message.
+ * no dependency, no manifest capability and no message. Later this function
+ * returned early when no capability had an entry in FEATURE_PACKAGES, so
+ * `--capabilities events,cqrs` put `events` in the manifest but not in
+ * package.json; and it mapped packages differently from `zudojs doctor`, so
+ * a microservice gateway declared `cqrs` without `@zudojs/cqrs`.
  */
 async function applyCapabilityPackages(
   targetPath: string,
@@ -759,15 +778,7 @@ async function applyCapabilityPackages(
   const layout = resolveProjectLayout(targetPath);
   if (!layout || layout.backendDirs.length === 0) return;
 
-  const required = new Set<string>();
-  for (const capability of capabilities) {
-    for (const name of FEATURE_PACKAGES[capability] ?? []) {
-      required.add(name);
-    }
-  }
-
-  if (required.size === 0) return;
-
+  const required = capabilityPackages(capabilities);
   const added = new Set<string>();
 
   for (const pkgPath of selectAddTargets(layout, undefined)) {
@@ -783,7 +794,7 @@ async function applyCapabilityPackages(
 
     for (const name of required) {
       if (!(name in pkg.dependencies)) {
-        pkg.dependencies[name] = ZUDOJS_PACKAGES_VERSION;
+        pkg.dependencies[name] = zudojsVersionRange(name);
         added.add(name);
         changed = true;
       }
@@ -853,22 +864,8 @@ async function collectProjectProblems(
 async function writeProjectManifest(
   options: ScaffoldOptions,
   targetPath: string,
-  selected: readonly string[] = [],
+  capabilities: readonly string[],
 ): Promise<void> {
-  const capabilities: string[] = [];
-  if (options.enableCQRS) capabilities.push("cqrs");
-  if (options.enableMessaging) capabilities.push("messaging");
-  if (options.enableObservability) capabilities.push("observability");
-  if (options.enableOpenAPI) capabilities.push("openapi");
-  if (options.enableDatabase) capabilities.push("database");
-  if (options.enableQueue) capabilities.push("queue");
-
-  // Capabilities with no ScaffoldOptions flag of their own (events,
-  // security) were selected and then dropped on the floor.
-  for (const capability of selected) {
-    if (!capabilities.includes(capability)) capabilities.push(capability);
-  }
-
   // Record the services actually generated, not the raw request: the
   // microservice template drops reserved names (gateway) and duplicates, and
   // the modular-monolith template normalizes each name into a directory
@@ -909,7 +906,7 @@ async function writeProjectManifest(
       : {}),
     ...(options.database ? { database: { provider: options.database } } : {}),
     workspace: { packageManager: options.packageManager },
-    capabilities,
+    capabilities: [...capabilities],
     ...(services ? { services: [...services] } : {}),
   });
 }
@@ -941,7 +938,7 @@ async function generateFullstackProject(
       workspace: {
         packageManager: options.packageManager,
       },
-      features: options.services,
+      features: resolveProjectCapabilities(options),
     },
     projectPath,
     installDeps: options.installDeps,
@@ -986,7 +983,7 @@ async function generateFullstackProject(
       workspace: {
         packageManager: options.packageManager,
       },
-      features: options.services,
+      features: resolveProjectCapabilities(options),
     } as ProjectConfiguration,
     projectPath,
     backendPort: 3000,

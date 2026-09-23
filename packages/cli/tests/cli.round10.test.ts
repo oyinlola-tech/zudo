@@ -69,9 +69,14 @@ describe("tooling/CLI-01", () => {
     const server = generateMonolithFiles(options())["src/server.ts"] ?? "";
     expect(server).toContain("createHttpServer(");
     expect(server).toContain("createNodeHttpAdapter(");
-    expect(server).toContain('request.path === "/health"');
-    expect(server).toContain("new HealthController().check()");
+    // Routes are registered on a router, not hand-dispatched on the path.
+    expect(server).not.toContain('request.path === "/health"');
+    expect(server).toContain("const router = createRouter();");
+    expect(server).toContain("registerRoutes(");
     expect(server).toContain("await server.start();");
+    const files = generateMonolithFiles(options());
+    expect(files["src/routes/health.routes.ts"]).toContain('"/health"');
+    expect(files["src/routes/health.routes.ts"]).toContain("openapi: false");
   });
 });
 

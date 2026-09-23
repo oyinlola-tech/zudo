@@ -19,7 +19,11 @@ import {
   toPascalCase,
 } from "../src/utils/utils.name.js";
 import { generateModule } from "../src/generators/module/module.generator.js";
-import { generateController } from "../src/generators/controller/controller.generator.js";
+import { generateResource } from "../src/generators/resource/index.js";
+
+const SRC_LAYOUT = { base: "src", appSrc: "src", appRoot: "", prisma: false } as const;
+const generateController = (options: { name: string }, cwd: string) =>
+  generateResource({ name: options.name, schematic: "controller", layout: SRC_LAYOUT }, cwd);
 import { generateCommand } from "../src/generators/command/command.generator.js";
 import { generateQuery } from "../src/generators/query/query.generator.js";
 import { generateMonolithFiles } from "../src/templates/monolith/index.js";
@@ -119,7 +123,7 @@ describe("CLI-GEN-02 writes cannot escape through a symlinked directory", () => 
     symlinkSync(outside, join(project, "src", "controllers"), "dir");
 
     await expect(
-      generateController({ name: "escaped", basePath: "src" }, project),
+      generateController({ name: "escaped" }, project),
     ).rejects.toThrow();
 
     expect(existsSync(join(outside, "escaped.controller.ts"))).toBe(false);
@@ -130,7 +134,7 @@ describe("CLI-GEN-02 writes cannot escape through a symlinked directory", () => 
     const project = await scratch("symlink-ok");
     mkdirSync(join(project, "src"), { recursive: true });
 
-    await generateController({ name: "ok", basePath: "src" }, project);
+    await generateController({ name: "ok" }, project);
 
     expect(
       existsSync(join(project, "src", "controllers", "ok.controller.ts")),

@@ -6,6 +6,8 @@
 
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
 import { scaffoldWithFallback } from "../../scaffolders/scaffolder.helper.js";
+import { renderSvelteFallback, versionFromRange } from "./fallback/index.js";
+import { DEPENDENCY_VERSION_RANGES as V } from "../../resolvers/dependency/dependencyVersions.constant.js";
 import type {
   FrontendAdapter,
   FrontendGenerationContext,
@@ -25,11 +27,11 @@ export class SvelteAdapter implements FrontendAdapter {
   }
 
   async getLatestVersion(): Promise<string> {
-    return "5.0.0";
+    return versionFromRange(V.svelte);
   }
 
   async scaffold(context: FrontendGenerationContext): Promise<void> {
-    const files = this.getBaseFiles(context);
+    const files = renderSvelteFallback(context);
     await scaffoldWithFallback({
       command: "npm",
       args: [
@@ -98,102 +100,6 @@ export class SvelteAdapter implements FrontendAdapter {
     }
 
     return { valid: errors.length === 0, errors, warnings };
-  }
-
-  private getBaseFiles(
-    context: FrontendGenerationContext,
-  ): Record<string, string> {
-    const useTypeScript = context.language === "typescript";
-
-    return {
-      "package.json": JSON.stringify(
-        {
-          name: context.project.name,
-          version: "0.1.0",
-          private: true,
-          type: "module",
-          scripts: {
-            dev: "vite dev",
-            build: "vite build",
-            preview: "vite preview",
-          },
-          dependencies: {
-            svelte: "^5.0.0",
-          },
-          devDependencies: {
-            vite: "^6.0.0",
-            "@sveltejs/vite-plugin-svelte": "^4.0.0",
-            ...(useTypeScript ? { typescript: "^5.0.0" } : {}),
-          },
-        },
-        null,
-        2,
-      ),
-      "vite.config.ts": `import { defineConfig } from "vite";
-import { svelte } from "@sveltejs/vite-plugin-svelte";
-
-export default defineConfig({
-  plugins: [svelte()],
-});
-`,
-      "tsconfig.json": JSON.stringify(
-        {
-          compilerOptions: {
-            target: "ES2020",
-            lib: ["ES2020", "DOM", "DOM.Iterable"],
-            module: "ESNext",
-            skipLibCheck: true,
-            moduleResolution: "bundler",
-            allowImportingTsExtensions: true,
-            resolveJsonModule: true,
-            strict: true,
-          },
-        },
-        null,
-        2,
-      ),
-      "index.html": `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>${context.project.name}</title>
-  </head>
-  <body>
-    <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
-  </body>
-</html>
-`,
-      "src/main.ts": `import App from "./App.svelte";
-
-const app = new App({
-  target: document.getElementById("app")!,
-});
-
-export default app;
-`,
-      "src/App.svelte": `<script${useTypeScript ? ' lang="ts"' : ""}>
-</script>
-
-<template>
-  <div>
-    <h1>Hello from Zudojs</h1>
-  </div>
-</template>
-
-<style>
-  div {
-    font-family: system-ui, -apple-system, sans-serif;
-  }
-</style>
-`,
-      ...(useTypeScript
-        ? {
-            "src/vite-env.d.ts": `/// <reference types="svelte" />\n/// <reference types="vite/client" />\n`,
-          }
-        : {}),
-    };
   }
 
   private getStructure(

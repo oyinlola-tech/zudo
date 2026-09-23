@@ -6,6 +6,8 @@
 
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
 import { scaffoldWithFallback } from "../../scaffolders/scaffolder.helper.js";
+import { renderNuxtFallback, versionFromRange } from "./fallback/index.js";
+import { DEPENDENCY_VERSION_RANGES as V } from "../../resolvers/dependency/dependencyVersions.constant.js";
 import type {
   FrontendAdapter,
   FrontendGenerationContext,
@@ -14,7 +16,7 @@ import type {
 } from "./frontendAdapter.type.js";
 
 /**
- * Nuxt adapter with Nuxt 3 support.
+ * Nuxt adapter targeting Nuxt 4 (application code under app/).
  */
 export class NuxtAdapter implements FrontendAdapter {
   readonly name = "nuxt";
@@ -25,14 +27,30 @@ export class NuxtAdapter implements FrontendAdapter {
   }
 
   async getLatestVersion(): Promise<string> {
-    return "3.15.0";
+    return versionFromRange(V.nuxt);
   }
 
   async scaffold(context: FrontendGenerationContext): Promise<void> {
-    const files = this.getBaseFiles(context);
+    const files = renderNuxtFallback(context);
     await scaffoldWithFallback({
       command: "npx",
-      args: ["nuxi@latest", "init", "."],
+      // Without --template, --packageManager and --gitInit nuxi exits with
+      // "Missing required arguments" in a non-interactive shell, so every
+      // Nuxt project used to get the fallback. --force lets it write into
+      // the existing (empty or pnpm-workspace-only) directory without
+      // removing what is there.
+      args: [
+        "nuxi@latest",
+        "init",
+        ".",
+        "--template",
+        "minimal",
+        "--packageManager",
+        context.packageManager,
+        "--no-gitInit",
+        "--no-install",
+        "--force",
+      ],
       targetPath: context.projectPath,
       fallbackFiles: files,
     });
@@ -83,56 +101,20 @@ export class NuxtAdapter implements FrontendAdapter {
     return { valid: errors.length === 0, errors, warnings };
   }
 
-  private getBaseFiles(
-    context: FrontendGenerationContext,
-  ): Record<string, string> {
-    return {
-      "package.json": JSON.stringify(
-        {
-          name: context.project.name,
-          version: "0.1.0",
-          private: true,
-          scripts: {
-            dev: "nuxt dev",
-            build: "nuxt build",
-            preview: "nuxt preview",
-          },
-          dependencies: {
-            nuxt: "^3.15.0",
-          },
-          devDependencies: {
-            "@nuxt/devtools": "latest",
-          },
-        },
-        null,
-        2,
-      ),
-      "nuxt.config.ts": `export default defineNuxtConfig({
-  compatibilityDate: "2024-11-01",
-  devtools: { enabled: true },
-});
-`,
-      "app.vue": `<template>
-  <div>
-    <h1>Hello from Zudojs</h1>
-  </div>
-</template>
-`,
-    };
-  }
-
   private getStructure(
     context: FrontendGenerationContext,
   ): Record<string, string> {
+    // Nuxt 4 resolves application code from app/ (its srcDir); server/
+    // and shared/ stay at the project root.
     return {
-      "components/.gitkeep": "",
-      "composables/.gitkeep": "",
-      "layouts/.gitkeep": "",
-      "pages/.gitkeep": "",
+      "app/components/.gitkeep": "",
+      "app/composables/.gitkeep": "",
+      "app/layouts/.gitkeep": "",
+      "app/pages/.gitkeep": "",
+      "app/stores/.gitkeep": "",
+      "app/utils/.gitkeep": "",
       "server/.gitkeep": "",
-      "stores/.gitkeep": "",
-      "types/index.ts": "// Types\nexport {};\n",
-      "utils/.gitkeep": "",
+      "shared/types/index.ts": "// Types\nexport {};\n",
     };
   }
 
@@ -144,7 +126,7 @@ export class NuxtAdapter implements FrontendAdapter {
     if (context.project.type === "fullstack") {
       files[".env.example"] = `NUXT_PUBLIC_API_URL=http://localhost:3000\n`;
 
-      files["composables/useApi.ts"] = `/**
+      files["app/composables/useApi.ts"] = `/**
  * API Client for backend communication.
  */
 

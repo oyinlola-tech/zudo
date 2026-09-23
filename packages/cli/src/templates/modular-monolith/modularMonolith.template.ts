@@ -34,18 +34,26 @@
 
 import type { ScaffoldOptions } from "../../types/index.js";
 import { renderDatabaseEnv } from "../../adapters/databases/databaseAdapter.resolver.js";
-import { ZUDOJS_PACKAGES_VERSION } from "../../constants/index.js";
+import { zudojsDependencies } from "../../constants/index.js";
 import { normalizeName } from "../../utils/utils.name.js";
 import {
   RUNTIME_APP_DEPENDENCIES,
   capabilityPackages,
   moduleSpec,
-  renderAppFile,
   renderModuleFile,
-  renderServerFile,
   renderPnpmWorkspaceFile,
   resolveProjectCapabilities,
 } from "../shared/index.js";
+import {
+  APP_SOURCE_DEPENDENCIES,
+  APP_TEST_DEPENDENCIES,
+  applyDatabaseSetting,
+  backendDevDependencies,
+  backendTsconfig,
+  emptyBarrels,
+  renderBackendAppSource,
+  runCommand,
+} from "../backendApp/index.js";
 
 export function generateModularMonolithFiles(
   options: ScaffoldOptions,
@@ -71,22 +79,13 @@ export function generateModularMonolithFiles(
 
   const deps = [
     ...RUNTIME_APP_DEPENDENCIES,
-    "@zudojs/config",
-    "@zudojs/errors",
+    ...APP_SOURCE_DEPENDENCIES,
     "@zudojs/types",
     "@zudojs/validation",
     "@zudojs/cqrs",
     "@zudojs/messaging",
-    "@zudojs/http",
     ...capabilityPackages(capabilities),
   ];
-
-  const devDeps: Record<string, string> = {
-    tsx: "^4.7.0",
-    typescript: "^5.7.0",
-    "@types/node": "^24.0.0",
-    vitest: "^3.0.0",
-  };
 
   const files: Record<string, string> = {};
 
@@ -111,42 +110,21 @@ export function generateModularMonolithFiles(
           typecheck: "tsc --noEmit",
           test: "vitest run",
         },
-        dependencies: Object.fromEntries(
-          [...new Set(deps)].map((d) => [d, ZUDOJS_PACKAGES_VERSION]),
-        ),
-        devDependencies: devDeps,
+        dependencies: zudojsDependencies(deps),
+        devDependencies: {
+          ...backendDevDependencies(),
+          ...zudojsDependencies(APP_TEST_DEPENDENCIES),
+        },
       },
       null,
       2,
     ) + "\n";
 
-  files["tsconfig.json"] = `{
-  "compilerOptions": {
-    "target": "ES2024",
-    "module": "Node16",
-    "moduleResolution": "Node16",
-    "outDir": "dist",
-    "rootDir": "src",
-    "strict": true,
-    "skipLibCheck": true,
-    "esModuleInterop": true,
-    "resolveJsonModule": true,
-    "lib": ["ES2024"],
-    "types": ["node"]
-  },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts"]
-}
-`;
+  files["tsconfig.json"] = backendTsconfig();
 
   if (options.packageManager === "pnpm") {
     files["pnpm-workspace.yaml"] = renderPnpmWorkspaceFile();
   }
-
-  files[".env.example"] = `NODE_ENV=development
-PORT=3000
-${renderDatabaseEnv(options.database, nameSlug)}
-`;
 
   files[".gitignore"] = `node_modules/
 dist/
@@ -174,10 +152,18 @@ npx zudojs generate module <name>
 \`\`\``
 }
 
+Each module owns \`src/modules/<name>/routes/index.ts\`, registered from
+\`src/routes/index.ts\`. Add a resource to a module with:
+
+\`\`\`bash
+npx zudojs generate resource invoices --module <name>
+\`\`\`
+
 ## Getting Started
 
 \`\`\`bash
-${options.packageManager === "npm" ? "npm run dev" : options.packageManager === "yarn" ? "yarn dev" : options.packageManager === "bun" ? "bun run dev" : "pnpm run dev"}
+cp .env.example .env
+${runCommand(options.packageManager, "dev")}
 \`\`\`
 
 ## License
@@ -185,47 +171,25 @@ ${options.packageManager === "npm" ? "npm run dev" : options.packageManager === 
 MIT
 `;
 
-  // Shared source directories
-  files["src/index.ts"] = `export { createApp } from "./app.js";
-`;
-
   const moduleSpecs = modules.map((m) =>
     moduleSpec(m, `./modules/${m}/index.js`),
   );
 
-  files["src/app.ts"] = renderAppFile({
-    applicationName: nameSlug,
-    modules: moduleSpecs,
-  });
-
-  files["src/server.ts"] = renderServerFile();
-
-  const sharedDirs = [
-    "configs",
-    "constants",
-    "controllers",
-    "databases",
-    "dtos",
-    "enums",
-    "errors",
-    "events",
-    "interfaces",
-    "jobs",
-    "loaders",
-    "loggers",
-    "middlewares",
-    "models",
-    "repositories",
-    "routes",
-    "services",
-    "types",
-    "utils",
-    "validators",
-  ];
-
-  for (const dir of sharedDirs) {
-    files[`src/${dir}/index.ts`] = "";
-  }
+  Object.assign(
+    files,
+    emptyBarrels(),
+    applyDatabaseSetting(
+      renderBackendAppSource({
+        applicationName: nameSlug,
+        title: options.projectName,
+        defaultPort: 3000,
+        openapi: options.enableOpenAPI === true,
+        modules: moduleSpecs,
+        routedModules: modules,
+      }),
+      renderDatabaseEnv(options.database, nameSlug),
+    ),
+  );
 
   files["src/modules/index.ts"] =
     modules.map((m) => `export * from "./${m}/index.js";`).join("\n") + "\n";
@@ -243,17 +207,6 @@ MIT
     files[`src/modules/${spec.name}/commands/index.ts`] = ``;
     files[`src/modules/${spec.name}/queries/index.ts`] = ``;
   }
-
-  // The name must match vitest's default `include`
-  // (`**/*.{test,spec}.?(c|m)[jt]s?(x)`); `tests/index.ts` did not.
-  files["tests/app.test.ts"] = `import { describe, it, expect } from "vitest";
-
-describe("Application", () => {
-  it("should bootstrap correctly", () => {
-    expect(true).toBe(true);
-  });
-});
-`;
 
   return files;
 }

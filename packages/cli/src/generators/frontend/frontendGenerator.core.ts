@@ -11,7 +11,6 @@ import { PackageManagerRegistry } from "../../registries/adapter/packageManagerR
 import { DependencyResolver } from "../../resolvers/dependency/dependencyResolver.core.js";
 import { CLIGenerationError } from "../../errors/index.js";
 import { runFrontendPipeline } from "./frontendPipeline.js";
-import { writeFileTree } from "../../utils/utils.fileSystem.js";
 import { renderPnpmWorkspaceFile } from "../../templates/shared/pnpm.template.js";
 
 /**
@@ -86,20 +85,22 @@ export class FrontendGenerator {
     const errors: string[] = [];
 
     try {
-      // A frontend-only project is its own pnpm root. Vite depends on
-      // esbuild, whose install script pnpm 10+ refuses without this list,
-      // and the pipeline installs dependencies right after scaffolding.
-      if (context.packageManager === "pnpm") {
-        await writeFileTree(context.projectPath, {
-          "pnpm-workspace.yaml": renderPnpmWorkspaceFile(),
-        });
-      }
+      // A frontend-only project is its own pnpm root. Toolchains depend on
+      // packages with install scripts (esbuild, sharp, @parcel/watcher)
+      // that pnpm 10+ refuses without this list. It is written after the
+      // official scaffolder runs, which must see an empty directory, and
+      // before the pipeline installs dependencies.
+      const postScaffoldFiles: Record<string, string> =
+        context.packageManager === "pnpm"
+          ? { "pnpm-workspace.yaml": renderPnpmWorkspaceFile() }
+          : {};
 
       const outcome = await runFrontendPipeline(
         adapter,
         context,
         this.packageManagerRegistry,
         this.dependencyResolver,
+        postScaffoldFiles,
       );
       files.push(...outcome.files);
       errors.push(...outcome.errors);

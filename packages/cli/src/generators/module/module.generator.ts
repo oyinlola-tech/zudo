@@ -9,10 +9,17 @@
 import { basename, dirname } from "node:path";
 
 import { mergeBarrelExport, writeFileTree } from "../../utils/utils.fileSystem.js";
-import { CLIGenerationError } from "../../errors/index.js";
+import { CLIGenerationError, CLIValidationError } from "../../errors/index.js";
 import { assertGeneratableName, toPascalCase } from "../../utils/utils.name.js";
 import { moduleSpec, renderModuleFile } from "../../templates/shared/appRuntime.template.js";
 import { registerModuleInApp, type ModuleRegistration } from "./module.registration.js";
+import {
+  moduleRoutesWiring,
+  renderModuleRoutesIndex,
+} from "../../templates/backendApp/index.js";
+import { MARKERS, applyMarkerEdits, conflictingImport } from "../../wiring/index.js";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 export interface GenerateModuleOptions {
   readonly name: string;
@@ -57,8 +64,27 @@ export class ${namePascal}Feature {
 `;
   }
 
+  // A module gets its own routes index, registered with the app's
+  // src/routes/index.ts, when the app has one (every app `create` writes).
+  const appSrc = dirname(basePath);
+  const appRoutes = `${appSrc}/routes/index.ts`;
+  const routes = moduleRoutesWiring(name);
+  const hasAppRoutes = existsSync(join(cwd, appRoutes));
+  const clash = hasAppRoutes ? conflictingImport(cwd, appRoutes, routes.importLine) : undefined;
+  if (clash !== undefined) {
+    throw new CLIValidationError(
+      `${appRoutes} already imports ${routes.functionName} (${clash.trim()}), so module "${name}" cannot register its routes. Choose another name.`,
+    );
+  }
+  if (hasAppRoutes) {
+    files[`${basePath}/${name}/routes/index.ts`] = renderModuleRoutesIndex(
+      routes.functionName,
+      "../../../container.js",
+    );
+  }
+
   if (options.dryRun) {
-    return Object.keys(files);
+    return hasAppRoutes ? [...Object.keys(files), appRoutes] : Object.keys(files);
   }
 
   try {
@@ -67,6 +93,13 @@ export class ${namePascal}Feature {
     throw new CLIGenerationError(`Failed to generate module: ${name}`, error);
   }
 
+  const routeEdits = hasAppRoutes
+    ? await applyMarkerEdits(cwd, [
+        { file: appRoutes, marker: MARKERS.routeImports, line: routes.importLine },
+        { file: appRoutes, marker: MARKERS.routes, line: routes.entryLine },
+      ])
+    : undefined;
+
   const appPath = `${dirname(basePath)}/app.ts`;
   const registration = registerModuleInApp(
     cwd,
@@ -74,7 +107,18 @@ export class ${namePascal}Feature {
     spec.className,
     `./${basename(basePath)}/index.js`,
   );
-  options.onRegistered?.(registration);
+  options.onRegistered?.(
+    routeEdits && routeEdits.manualSteps.length > 0
+      ? {
+          registered: registration.registered,
+          manualSteps: [...registration.manualSteps, ...routeEdits.manualSteps],
+        }
+      : registration,
+  );
 
-  return registration.registered ? [...Object.keys(files), appPath] : Object.keys(files);
+  return [
+    ...Object.keys(files),
+    ...(registration.registered ? [appPath] : []),
+    ...(routeEdits?.edited ?? []),
+  ];
 }

@@ -14,7 +14,10 @@ import {
   FEATURE_NAMES,
   SCHEMATIC_NAMES,
 } from "../constants/index.js";
-import { CLI_NAME } from "../cliConstant/cliConstant.value.js";
+import {
+  escapeControlCharacters,
+  resolveInvokedName,
+} from "../cliApplication/invocation/index.js";
 import { runCreateCommand } from "../commands/create.command.js";
 import { runDevCommand } from "../commands/dev.command.js";
 import { runGenerateCommand } from "../commands/generate.command.js";
@@ -22,10 +25,16 @@ import { runAddCommand } from "../commands/add.command.js";
 import { runBuildCommand } from "../commands/build.command.js";
 import { runDoctorCommand } from "../commands/doctor.command.js";
 import { runInfoCommand } from "../commands/info.command.js";
+import { runBinary } from "./bin.runner.js";
+import { openMainMenu } from "./bin.menu.js";
+
+// `zudo` and `zudojs` are the same script; help, usage and errors repeat
+// whichever one was typed. Anything else falls back to `zudojs`.
+const invokedName = resolveInvokedName(process.argv[1]);
 
 const app = createCLI({
   // The name the help output tells people to type, so it must be the binary.
-  name: CLI_NAME,
+  name: invokedName,
   // Read from the CLI's own package.json, so `zudojs --version` cannot
   // drift from the published version.
   version: CLI_VERSION,
@@ -36,6 +45,7 @@ app.register(
   createCommand({
     name: "create",
     description: "Create a new Zudojs project",
+    aliases: ["new"],
     arguments: [
       {
         name: "project-name",
@@ -286,13 +296,22 @@ app.register(
 );
 
 try {
-  const exitCode = await app.run(process.argv.slice(2));
+  const exitCode = await runBinary(
+    app,
+    {
+      argv: process.argv.slice(2),
+      stdin: process.stdin,
+      stdout: process.stdout,
+      env: process.env,
+    },
+    () => openMainMenu(invokedName, process.cwd()),
+  );
 
   if (exitCode !== 0) {
     process.exit(exitCode);
   }
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
-  console.error(`Error: ${message}`);
+  console.error(`Error: ${escapeControlCharacters(message)}`);
   process.exit(1);
 }

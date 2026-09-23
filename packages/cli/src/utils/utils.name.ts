@@ -3,6 +3,12 @@ import { CLIValidationError } from "../errors/index.js";
 export function normalizeName(name: string): string {
   return name
     .trim()
+    // Split camelCase and acronym boundaries before lowercasing, so
+    // `createBook` becomes `create-book` (class `CreateBookCommand`) rather
+    // than `createbook` (`CreatebookCommand`), and `HTTPServer` becomes
+    // `http-server`.
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
     // Trim leading/trailing dashes without the quadratic `-+$` scan: the

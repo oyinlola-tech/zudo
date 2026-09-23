@@ -7,6 +7,11 @@
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
 import { normalizeName } from "../../utils/utils.name.js";
 import { scaffoldWithFallback } from "../../scaffolders/scaffolder.helper.js";
+import { renderAngularFallback, versionFromRange } from "./fallback/index.js";
+import {
+  ANGULAR_VITEST_VERSION_RANGE,
+  DEPENDENCY_VERSION_RANGES as V,
+} from "../../resolvers/dependency/dependencyVersions.constant.js";
 import type {
   FrontendAdapter,
   FrontendGenerationContext,
@@ -26,11 +31,10 @@ export class AngularAdapter implements FrontendAdapter {
   }
 
   async getLatestVersion(): Promise<string> {
-    return "19.0.0";
+    return versionFromRange(V["@angular/core"]);
   }
 
   async scaffold(context: FrontendGenerationContext): Promise<void> {
-    const files = this.getBaseFiles(context);
     // Angular CLI requires a valid project name; "." is not one. Pass the
     // real name and scaffold into the current directory via --directory.
     const projectName = normalizeName(context.project.name) || "zudojs-app";
@@ -47,10 +51,11 @@ export class AngularAdapter implements FrontendAdapter {
         "--routing",
         "--style",
         "css",
-        "--standalone",
+        "--package-manager",
+        context.packageManager,
       ],
       targetPath: context.projectPath,
-      fallbackFiles: files,
+      fallbackFiles: renderAngularFallback(context, projectName),
     });
   }
 
@@ -64,11 +69,16 @@ export class AngularAdapter implements FrontendAdapter {
     }
 
     if (context.features.testing) {
+      // Angular 22 runs unit tests through @angular/build:unit-test with
+      // Vitest, whose peer range is ^4 (not the ^5 other frameworks use).
+      // Jest via @angular-builders/jest fought the scaffolded builder.
       deps.push(
-        { name: "@angular/core", type: "dependency" },
-        { name: "@angular/common", type: "dependency" },
-        { name: "jest", type: "devDependency" },
-        { name: "@angular-builders/jest", type: "devDependency" },
+        {
+          name: "vitest",
+          version: ANGULAR_VITEST_VERSION_RANGE,
+          type: "devDependency",
+        },
+        { name: "jsdom", type: "devDependency" },
       );
     }
 
@@ -98,109 +108,6 @@ export class AngularAdapter implements FrontendAdapter {
     }
 
     return { valid: errors.length === 0, errors, warnings };
-  }
-
-  private getBaseFiles(
-    context: FrontendGenerationContext,
-  ): Record<string, string> {
-    return {
-      "package.json": JSON.stringify(
-        {
-          name: context.project.name,
-          version: "0.0.0",
-          private: true,
-          scripts: {
-            start: "ng serve",
-            build: "ng build",
-            test: "ng test",
-          },
-          dependencies: {
-            "@angular/animations": "^19.0.0",
-            "@angular/common": "^19.0.0",
-            "@angular/compiler": "^19.0.0",
-            "@angular/core": "^19.0.0",
-            "@angular/forms": "^19.0.0",
-            "@angular/platform-browser": "^19.0.0",
-            "@angular/platform-browser-dynamic": "^19.0.0",
-            "@angular/router": "^19.0.0",
-            rxjs: "~7.8.0",
-            tslib: "^2.3.0",
-            "zone.js": "~0.15.0",
-          },
-          devDependencies: {
-            "@angular-devkit/build-angular": "^19.0.0",
-            "@angular/cli": "^19.0.0",
-            "@angular/compiler-cli": "^19.0.0",
-            "@types/jasmine": "~5.1.0",
-            "jasmine-core": "~5.1.0",
-            karma: "~6.4.0",
-            typescript: "~5.6.0",
-          },
-        },
-        null,
-        2,
-      ),
-      "tsconfig.json": JSON.stringify(
-        {
-          compileOnSave: false,
-          compilerOptions: {
-            outDir: "./dist/out-tsc",
-            strict: true,
-            noImplicitOverride: true,
-            noPropertyAccessFromIndexSignature: true,
-            noImplicitReturns: true,
-            noFallthroughCasesInSwitch: true,
-            esModuleInterop: true,
-            sourceMap: true,
-            declaration: false,
-            downlevelIteration: true,
-            experimentalDecorators: true,
-            moduleResolution: "bundler",
-            importHelpers: true,
-            target: "ES2022",
-            module: "ES2022",
-            lib: ["ES2022", "dom"],
-            useDefineForClassFields: true,
-          },
-          angularCompilerOptions: {
-            enableI18nLegacyMessageIdFormat: false,
-            strictInjectionParameters: true,
-            strictInputAccessModifiers: true,
-            strictTemplates: true,
-          },
-        },
-        null,
-        2,
-      ),
-      "src/main.ts": `import { bootstrapApplication } from "@angular/platform-browser";
-import { AppComponent } from "./app/app.component";
-
-bootstrapApplication(AppComponent);
-`,
-      "src/index.html": `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>${context.project.name}</title>
-    <base href="/" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
-  </head>
-  <body>
-    <app-root></app-root>
-  </body>
-</html>
-`,
-      "src/app/app.component.ts": `import { Component } from "@angular/core";
-
-@Component({
-  selector: "app-root",
-  standalone: true,
-  template: "<h1>Hello from Zudojs</h1>",
-})
-export class AppComponent {}
-`,
-    };
   }
 
   private getStructure(

@@ -161,13 +161,21 @@ describe("zudojs generate — hostile option values", () => {
 
   it("rejects a resource name that normalizes to nothing", async () => {
     const context = createContext({
-      values: { schematic: "event", name: "..." },
+      values: { schematic: "event", name: "!!!" },
     });
 
     await expect(runGenerateCommand(context)).rejects.toThrow(
       /at least one letter or digit/i,
     );
   });
+
+  it.each(["../../x", "..", "a/b", "a\\b", "resource/../../../etc"])(
+    "rejects a name containing a path (%s) instead of normalizing it",
+    async (name) => {
+      const context = createContext({ values: { schematic: "resource", name } });
+      await expect(runGenerateCommand(context)).rejects.toThrow(/paths are not allowed/);
+    },
+  );
 
   it("normalizes a traversing resource name into a single safe segment", async () => {
     const files = await generateEvent(

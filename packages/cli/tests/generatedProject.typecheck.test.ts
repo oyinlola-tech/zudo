@@ -26,6 +26,9 @@ import { generateMonolithFiles } from "../src/templates/monolith/index.js";
 import { generateModularMonolithFiles } from "../src/templates/modular-monolith/index.js";
 import { generateMicroserviceFiles } from "../src/templates/microservice/index.js";
 import { writeFileTree } from "../src/utils/utils.fileSystem.js";
+import { generateResource } from "../src/generators/resource/index.js";
+import { generateModule } from "../src/generators/module/index.js";
+import { applyAppRecipe, FEATURE_RECIPES, type AppRecipe } from "../src/recipes/index.js";
 import type { ScaffoldOptions } from "../src/types/index.js";
 
 const execFileAsync = promisify(execFile);
@@ -88,6 +91,9 @@ async function buildPathMappings(): Promise<Record<string, string[]>> {
     ];
   }
 
+  // Generated tests import vitest, installed here for the CLI's own suite.
+  paths["vitest"] = [join(TEST_DIR, "..", "node_modules", "vitest", "dist", "index.d.ts")];
+
   return paths;
 }
 
@@ -143,7 +149,9 @@ async function typecheck(projectDir: string): Promise<string> {
           // zudojs.config.ts lives at the project root.
           join(projectDir, "*.ts"),
           join(projectDir, "src/**/*.ts"),
+          join(projectDir, "tests/**/*.ts"),
           join(projectDir, "apps/**/src/**/*.ts"),
+          join(projectDir, "apps/**/tests/**/*.ts"),
         ],
       },
       null,
@@ -226,6 +234,83 @@ describe.each(architectures)(
   },
 );
 
+/**
+ * Recipes whose code imports only `@zudojs/*` and Node built-ins, so they
+ * can be type-checked here without installing anything. The redis, ws,
+ * nodemailer and Prisma recipes are type-checked by the end-to-end run
+ * against an installed project.
+ */
+const OFFLINE_RECIPES = ["queue", "scheduler", "cache", "messaging", "observability", "storage", "openapi"];
+
+async function addOfflineRecipes(dir: string, appRoot: string): Promise<void> {
+  for (const feature of OFFLINE_RECIPES) {
+    const recipe = FEATURE_RECIPES[feature] as AppRecipe;
+    await applyAppRecipe(
+      recipe,
+      { projectSlug: "my-app", appName: "app", database: "postgresql", appRoot },
+      dir,
+    );
+  }
+}
+
+describe("generated projects after generate and add", () => {
+  it(
+    "monolith: generate resource users + every offline recipe type-checks",
+    async () => {
+      const dir = await scaffold("monolith-wired", generateMonolithFiles(scaffoldOptions()));
+      const layout = { base: "src", appSrc: "src", appRoot: "", prisma: false };
+      await generateResource({ name: "users", schematic: "resource", layout }, dir);
+      await generateResource({ name: "order-items", schematic: "route", layout }, dir);
+      await addOfflineRecipes(dir, "");
+      expect(generatedDiagnostics(await typecheck(dir))).toBe("");
+    },
+    300_000,
+  );
+
+  it(
+    "modular monolith: generate module + resource --module type-checks",
+    async () => {
+      const dir = await scaffold(
+        "modular-wired",
+        generateModularMonolithFiles(scaffoldOptions({ architecture: "modular-monolith", services: [] })),
+      );
+      await generateModule({ name: "billing", basePath: "src/modules" }, dir);
+      await generateResource(
+        {
+          name: "invoices",
+          schematic: "resource",
+          layout: { base: "src/modules/billing", appSrc: "src", appRoot: "", prisma: false },
+        },
+        dir,
+      );
+      expect(generatedDiagnostics(await typecheck(dir))).toBe("");
+    },
+    300_000,
+  );
+
+  it(
+    "microservice: generate resource in a service type-checks",
+    async () => {
+      const dir = await scaffold(
+        "micro-wired",
+        generateMicroserviceFiles(scaffoldOptions({ architecture: "microservice", services: ["identity"] })),
+      );
+      const appRoot = "apps/services/identity";
+      await generateResource(
+        {
+          name: "users",
+          schematic: "resource",
+          layout: { base: `${appRoot}/src`, appSrc: `${appRoot}/src`, appRoot, prisma: false },
+        },
+        dir,
+      );
+      await addOfflineRecipes(dir, appRoot);
+      expect(generatedDiagnostics(await typecheck(dir))).toBe("");
+    },
+    300_000,
+  );
+});
+
 describe("generated project imports", () => {
   it("only names packages that exist in this monorepo", async () => {
     const known = new Set(Object.keys(await buildPathMappings()));
@@ -267,8 +352,13 @@ describe("generated project imports", () => {
 
         const pkg = JSON.parse(owner?.[1] ?? "{}") as {
           dependencies?: Record<string, string>;
+          devDependencies?: Record<string, string>;
         };
-        const declared = Object.keys(pkg.dependencies ?? {});
+        // Tests may use dev dependencies (@zudojs/testing); src may not.
+        const declared = Object.keys({
+          ...pkg.dependencies,
+          ...(/(^|\/)tests\//.test(sourcePath) ? pkg.devDependencies : {}),
+        });
 
         for (const dep of imported) {
           expect(declared, `${sourcePath} imports ${dep}`).toContain(dep);

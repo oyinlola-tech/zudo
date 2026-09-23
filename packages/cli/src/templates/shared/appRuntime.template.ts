@@ -65,43 +65,59 @@ export function renderAppFile(options: {
     .map((m) => `import { ${m.className} } from ${literal(m.importPath)};`)
     .join("\n");
 
-  // An empty array literal would make the loop variable `never`, so the
-  // registration loop is only emitted when there is at least one module.
-  const registration =
-    options.modules.length > 0
-      ? `  for (const module of [
-${options.modules.map((m) => `    new ${m.className}(),`).join("\n")}
-  ]) {
+  // The list always exists, even when empty, so `zudojs generate module`
+  // can register into it; the cast keeps an empty literal from being
+  // typed `never[]`.
+  const registration = `  for (const module of [
+${options.modules.map((m) => `    new ${m.className}(),`).join("\n")}${options.modules.length > 0 ? "\n" : ""}  ] as Module[]) {
     modules.set(module.id, module);
   }
-`
-      : "";
+`;
 
   const metadata =
     options.port === undefined
       ? ""
       : `\n      metadata: { port: ${options.port} },`;
 
-  return `import { resolveEnvironment } from "@zudojs/constants";
+  return `import type { Server } from "node:http";
+
+import { resolveEnvironment } from "@zudojs/constants";
 import { createContainer } from "@zudojs/container";
 import type { Module } from "@zudojs/core";
 import { createEventBus } from "@zudojs/events";
 import { createLogger } from "@zudojs/logger";
 import { createRuntime, type Runtime } from "@zudojs/runtime";
+
+import type { AppConfig } from "./configs/index.js";
+import { IntegrationsModule, integrations } from "./integrations/index.js";
 ${imports}
+
+/** What {@link createApp} needs. */
+export interface AppOptions {
+  readonly config: AppConfig;
+  /** The Node HTTP server, for integrations that attach to it. */
+  readonly httpServer?: Server;
+}
 
 /**
  * Assembles the application runtime.
  *
  * \`createRuntime\` takes two arguments: the dependencies the runtime and its
- * modules share, and the options describing this application.
+ * modules share, and the options describing this application. Integrations
+ * (\`src/integrations\`) are registered first so they start before, and stop
+ * after, every other module.
  */
-export function createApp(): Runtime {
+export function createApp(options: AppOptions): Runtime {
   const logger = createLogger({ name: ${literal(options.applicationName)} });
   const container = createContainer();
   const eventBus = createEventBus();
 
   const modules = new Map<string, Module>();
+  const integrationsModule = new IntegrationsModule(integrations, {
+    config: options.config,
+    ...(options.httpServer === undefined ? {} : { httpServer: options.httpServer }),
+  });
+  modules.set(integrationsModule.id, integrationsModule);
 ${registration}
   const runtime = createRuntime(
     { modules, logger, container, eventBus },

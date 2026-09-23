@@ -4,7 +4,7 @@
  * @module generators/integration
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ProjectConfiguration } from "../../types/projectConfiguration.type.js";
 import {
@@ -57,6 +57,19 @@ export class IntegrationGenerator {
       `export { corsConfig } from "./cors.js";`,
     );
 
+    // The generated server enforces CORS_ORIGINS (empty: no browser
+    // origin allowed), so the frontend's dev origin must be listed there or
+    // every cross-origin call from it is refused.
+    const backendEnv = `${this.getBackendPath(context)}.env.example`;
+    const backendEnvPath = join(context.projectPath, backendEnv);
+    if (existsSync(backendEnvPath)) {
+      const origins = this.frontendOrigins(context).join(",");
+      const current = readFileSync(backendEnvPath, "utf-8");
+      if (/^CORS_ORIGINS=$/m.test(current)) {
+        files[backendEnv] = current.replace(/^CORS_ORIGINS=$/m, `CORS_ORIGINS=${origins}`);
+      }
+    }
+
     // Development proxy configuration (belongs to the frontend app). The
     // frontend adapter has already written a vite.config.ts carrying the
     // framework plugin and path aliases; overwriting it with this minimal
@@ -88,10 +101,22 @@ export class IntegrationGenerator {
       // written anywhere, so nothing downstream could agree with the CORS
       // origins generated from the same value.
       `FRONTEND_PORT=${frontendPort}`,
+      `CORS_ORIGINS=${this.frontendOrigins(context).join(",")}`,
       `VITE_API_URL=http://localhost:${backendPort}`,
       "",
       "# Database",
-      renderDatabaseEnv(context.project.backend?.database, "mydb"),
+      // The database docker-compose.yml creates (it was "mydb").
+      renderDatabaseEnv(context.project.backend?.database, context.project.name),
+      // Empty, never a placeholder such as "change-me": docker-compose.yml
+      // refuses to start until it is set. Hex keeps it valid in a URL.
+      ...(context.project.backend?.database === "sqlite"
+        ? []
+        : [
+            "# Password for the docker-compose.yml database; generate with: openssl rand -hex 32",
+            context.project.backend?.database === "mysql"
+              ? "MYSQL_ROOT_PASSWORD="
+              : "POSTGRES_PASSWORD=",
+          ]),
       "",
     ];
 
@@ -208,6 +233,12 @@ export const api = {
     }
 
     return "apps/web/src/services/api-client.ts";
+  }
+
+  /** Origins the frontend dev server is reached on. */
+  private frontendOrigins(context: IntegrationContext): readonly string[] {
+    const port = context.frontendPort ?? 5173;
+    return [`http://localhost:${port}`, `http://127.0.0.1:${port}`];
   }
 
   private generateCorsConfig(context: IntegrationContext): string {

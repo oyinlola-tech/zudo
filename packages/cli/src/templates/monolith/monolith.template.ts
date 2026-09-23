@@ -3,35 +3,20 @@
  *
  * Template file generators for monolith architecture projects.
  *
- * Generated structure:
+ * Generated structure (see `templates/backendApp` for the wired source):
  * ```
  * project/
  * ├── src/
- * │   ├── index.ts      # exports only
- * │   ├── app.ts        # application assembly
- * │   ├── server.ts     # entry point
- * │   ├── configs/
- * │   ├── constants/
- * │   ├── controllers/
- * │   ├── databases/
- * │   ├── dtos/
- * │   ├── enums/
- * │   ├── errors/
- * │   ├── events/
- * │   ├── interfaces/
- * │   ├── jobs/
- * │   ├── loaders/
- * │   ├── loggers/
- * │   ├── middlewares/
- * │   ├── models/
- * │   ├── modules/
- * │   ├── repositories/
- * │   ├── routes/
- * │   ├── services/
- * │   ├── types/
- * │   ├── utils/
- * │   └── validators/
- * ├── tests/
+ * │   ├── index.ts        # exports only
+ * │   ├── app.ts          # runtime assembly (modules + integrations)
+ * │   ├── server.ts       # config → router → registerRoutes → HTTP
+ * │   ├── container.ts    # composition root
+ * │   ├── configs/        # typed configuration from the environment
+ * │   ├── controllers/  dtos/  repositories/  services/  routes/
+ * │   ├── integrations/   # lifecycle-managed clients (zudojs add)
+ * │   ├── modules/        # runtime modules
+ * │   └── utils/          # HTTP helpers
+ * ├── tests/examples.test.ts
  * ├── package.json
  * ├── tsconfig.json
  * └── README.md
@@ -40,19 +25,27 @@
 
 import type { ScaffoldOptions } from "../../types/index.js";
 import { renderDatabaseEnv } from "../../adapters/databases/databaseAdapter.resolver.js";
-import { ZUDOJS_PACKAGES_VERSION } from "../../constants/index.js";
+import { zudojsDependencies } from "../../constants/index.js";
 import { normalizeName, toPascalCase } from "../../utils/utils.name.js";
 import {
   RUNTIME_APP_DEPENDENCIES,
   capabilityPackages,
   moduleSpec,
-  renderAppFile,
   renderModuleFile,
-  renderServerFile,
   renderServiceFile,
   renderPnpmWorkspaceFile,
   resolveProjectCapabilities,
 } from "../shared/index.js";
+import {
+  APP_SOURCE_DEPENDENCIES,
+  APP_TEST_DEPENDENCIES,
+  applyDatabaseSetting,
+  backendDevDependencies,
+  backendTsconfig,
+  emptyBarrels,
+  runCommand,
+  renderBackendAppSource,
+} from "../backendApp/index.js";
 
 export function generateMonolithFiles(
   options: ScaffoldOptions,
@@ -66,12 +59,9 @@ export function generateMonolithFiles(
 
   const deps = [
     ...RUNTIME_APP_DEPENDENCIES,
-    "@zudojs/config",
-    "@zudojs/errors",
+    ...APP_SOURCE_DEPENDENCIES,
     "@zudojs/types",
     "@zudojs/validation",
-    "@zudojs/schema",
-    "@zudojs/http",
     ...capabilityPackages(capabilities),
   ];
 
@@ -79,16 +69,8 @@ export function generateMonolithFiles(
     deps.push("@zudojs/events");
   }
 
-  const devDeps: Record<string, string> = {
-    tsx: "^4.7.0",
-    typescript: "^5.7.0",
-    "@types/node": "^24.0.0",
-    vitest: "^3.0.0",
-  };
-
   const files: Record<string, string> = {};
 
-  // Root files
   files["package.json"] =
     JSON.stringify(
       {
@@ -110,46 +92,21 @@ export function generateMonolithFiles(
           test: "vitest run",
           lint: "tsc --noEmit",
         },
-        dependencies: Object.fromEntries(
-          [...new Set(deps)].map((d) => [d, ZUDOJS_PACKAGES_VERSION]),
-        ),
-        devDependencies: devDeps,
+        dependencies: zudojsDependencies(deps),
+        devDependencies: {
+          ...backendDevDependencies(),
+          ...zudojsDependencies(APP_TEST_DEPENDENCIES),
+        },
       },
       null,
       2,
     ) + "\n";
 
-  // tsconfig
-  files["tsconfig.json"] = `{
-  "compilerOptions": {
-    "target": "ES2024",
-    "module": "Node16",
-    "moduleResolution": "Node16",
-    "outDir": "dist",
-    "rootDir": "src",
-    "strict": true,
-    "skipLibCheck": true,
-    "esModuleInterop": true,
-    "resolveJsonModule": true,
-    "lib": ["ES2024"],
-    "types": ["node"]
-  },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts"]
-}
-`;
+  files["tsconfig.json"] = backendTsconfig();
 
   if (options.packageManager === "pnpm") {
     files["pnpm-workspace.yaml"] = renderPnpmWorkspaceFile();
   }
-
-  // Environment
-  files[".env.example"] = `NODE_ENV=development
-PORT=3000
-
-${renderDatabaseEnv(options.database, nameSlug)}
-JWT_SECRET=change-this-in-production
-`;
 
   files[".gitignore"] = `node_modules/
 dist/
@@ -165,36 +122,36 @@ A Zudojs framework application.
 ## Getting Started
 
 \`\`\`bash
-${options.packageManager === "npm" ? "npm run dev" : options.packageManager === "yarn" ? "yarn dev" : options.packageManager === "bun" ? "bun run dev" : "pnpm run dev"}
+cp .env.example .env
+${runCommand(options.packageManager, "dev")}
+\`\`\`
+
+The server answers \`GET /health\` and the example resource at
+\`/api/v1/examples\`${options.enableOpenAPI ? "; the OpenAPI document is at `/openapi.json` and the docs page at `/docs`" : ""}.
+
+## Generate and add
+
+\`\`\`bash
+npx zudojs generate resource users   # DTO, repository, service, controller, routes, test — registered
+npx zudojs add redis                 # also: database, websockets, email, docker, queue, ...
 \`\`\`
 
 ## Structure
 
 \`\`\`
 src/
-├── server.ts        # Entry point
-├── app.ts           # Application assembly
-├── configs/         # Configuration
-├── constants/       # Shared constants
-├── controllers/     # HTTP controllers
-├── databases/       # Database connections
-├── dtos/            # Data transfer objects
-├── enums/           # Enumerations
-├── errors/          # Error types
-├── events/          # Domain events
-├── interfaces/      # Shared interfaces
-├── jobs/            # Background jobs
-├── loaders/         # Module loaders
-├── loggers/         # Logger configuration
-├── middlewares/     # HTTP middleware
-├── models/          # Data models
+├── server.ts        # Entry point: config, router, HTTP server
+├── app.ts           # Runtime assembly (modules + integrations)
+├── container.ts     # Composition root
+├── configs/         # Typed configuration (.env)
+├── controllers/     # HTTP handlers
+├── dtos/            # @zudojs/schema request/response schemas
+├── integrations/    # Redis, database, WebSockets, email (zudojs add)
 ├── modules/         # Runtime modules
-├── repositories/    # Data repositories
-├── routes/          # HTTP routes
-├── services/        # Application services
-├── types/           # Shared types
-├── utils/           # Utilities
-└── validators/      # Input validators
+├── repositories/    # Data access
+├── routes/          # registerRoutes and per-resource routes
+├── services/        # Use cases
+└── utils/           # HTTP helpers
 \`\`\`
 
 ## License
@@ -202,23 +159,25 @@ src/
 MIT
 `;
 
-  // src/ entry points
-  files["src/index.ts"] = `export { createApp } from "./app.js";
-`;
-
-  files["src/server.ts"] = renderServerFile("./app.js", {
-    healthControllerImport: "./controllers/index.js",
-  });
-
   // Normalized: the name becomes a file path segment and a class name.
   const moduleName = normalizeName(options.services[0] ?? "app") || "app";
   const serviceClassName = `${toPascalCase(moduleName)}Service`;
   const appModule = moduleSpec(moduleName, "./modules/index.js");
 
-  files["src/app.ts"] = renderAppFile({
-    applicationName: nameSlug,
-    modules: [appModule],
-  });
+  Object.assign(
+    files,
+    emptyBarrels(),
+    applyDatabaseSetting(
+      renderBackendAppSource({
+        applicationName: nameSlug,
+        title: name,
+        defaultPort: 3000,
+        openapi: options.enableOpenAPI === true,
+        modules: [appModule],
+      }),
+      renderDatabaseEnv(options.database, nameSlug),
+    ),
+  );
 
   files[`src/modules/${moduleName}.module.ts`] = renderModuleFile({
     module: appModule,
@@ -231,63 +190,10 @@ MIT
   files["src/modules/index.ts"] =
     `export { ${appModule.className} } from "./${moduleName}.module.js";\n`;
 
-  // Shared directories with empty index.ts
-  const sharedDirs = [
-    "configs",
-    "constants",
-    "controllers",
-    "databases",
-    "dtos",
-    "enums",
-    "errors",
-    "events",
-    "interfaces",
-    "jobs",
-    "loaders",
-    "loggers",
-    "middlewares",
-    "models",
-    "repositories",
-    "routes",
-    "types",
-    "utils",
-    "validators",
-  ];
-
-  for (const dir of sharedDirs) {
-    files[`src/${dir}/index.ts`] = "";
-  }
-
-  // Services
   files[`src/services/${moduleName}.service.ts`] = renderServiceFile(moduleName);
 
   files["src/services/index.ts"] =
     `export { ${serviceClassName} } from "./${moduleName}.service.js";\n`;
-
-  // Controllers
-  files["src/controllers/health.controller.ts"] =
-    `export class HealthController {
-  check() {
-    return { status: "ok", timestamp: new Date().toISOString() };
-  }
-}
-`;
-
-  files["src/controllers/index.ts"] =
-    `export { HealthController } from "./health.controller.js";
-`;
-
-  // Tests. The file name must match vitest's default `include`
-  // (`**/*.{test,spec}.?(c|m)[jt]s?(x)`); `tests/index.ts` did not, so the
-  // generated `test` script exited 1 with "No test files found".
-  files["tests/app.test.ts"] = `import { describe, it, expect } from "vitest";
-
-describe("Application", () => {
-  it("should be configured correctly", () => {
-    expect(true).toBe(true);
-  });
-});
-`;
 
   return files;
 }

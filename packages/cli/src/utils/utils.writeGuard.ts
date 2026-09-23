@@ -17,6 +17,25 @@ import { relative } from "node:path";
 
 const captured = new AsyncLocalStorage<Map<string, string>>();
 
+/**
+ * Files a capture is allowed to change in place: marker insertions into
+ * `routes/index.ts`, `container.ts` and friends. They are edits by design,
+ * not overwrites, so the conflict check does not report them.
+ */
+const intendedEdits = new WeakMap<Map<string, string>, Set<string>>();
+
+/**
+ * Records that `fullPath` is edited in place on purpose (see
+ * {@link intendedEdits}). A no-op outside `captureWrites`.
+ */
+export function recordIntendedEdit(fullPath: string): void {
+  const capture = captured.getStore();
+  if (!capture) return;
+  const edits = intendedEdits.get(capture) ?? new Set<string>();
+  edits.add(fullPath);
+  intendedEdits.set(capture, edits);
+}
+
 /** The capture map of the current `captureWrites` call, if any. */
 export function activeWriteCapture(): Map<string, string> | undefined {
   return captured.getStore();
@@ -43,7 +62,12 @@ export function findWriteConflicts(
   files: ReadonlyMap<string, string>,
 ): string[] {
   const conflicts: string[] = [];
+  const edits =
+    files instanceof Map
+      ? intendedEdits.get(files as Map<string, string>)
+      : undefined;
   for (const [path, content] of files) {
+    if (edits?.has(path)) continue;
     if (!existsSync(path)) continue;
     const existing = readFileSync(path, "utf-8");
     if (content === existing || content.startsWith(existing)) continue;

@@ -23,19 +23,30 @@
  */
 
 import type { ScaffoldOptions } from "../../types/index.js";
-import { ZUDOJS_PACKAGES_VERSION } from "../../constants/index.js";
+import { renderDatabaseEnv } from "../../adapters/databases/databaseAdapter.resolver.js";
+import { zudojsDependencies } from "../../constants/index.js";
 import { normalizeName } from "../../utils/utils.name.js";
 import {
   RUNTIME_APP_DEPENDENCIES,
   capabilityPackages,
   moduleSpec,
   renderAppPackageDockerfile,
-  renderAppFile,
   renderModuleFile,
-  renderServerFile,
   renderPnpmWorkspaceFile,
   resolveProjectCapabilities,
 } from "../shared/index.js";
+import {
+  DEPENDENCY_VERSION_RANGES,
+  TYPESCRIPT_VERSION_RANGES,
+} from "../../resolvers/dependency/dependencyVersions.constant.js";
+import {
+  APP_SOURCE_DEPENDENCIES,
+  APP_TEST_DEPENDENCIES,
+  applyDatabaseSetting,
+  backendDevDependencies,
+  emptyBarrels,
+  renderBackendAppSource,
+} from "../backendApp/index.js";
 
 /**
  * The gateway app is always generated at `apps/gateway`, so "gateway" is a
@@ -82,9 +93,9 @@ export function generateMicroserviceFiles(
     .toLowerCase();
   const services = resolveMicroserviceServices(options.services);
   // The workspace root records the capabilities for the project as a whole
-  // (`zudojs info` reads it when there is no manifest); the service apps
-  // record them next to the dependencies that back them, which is where
-  // `zudojs add` writes and `zudojs doctor` reads.
+  // alongside the manifest, and `zudojs add` keeps the two in step); the
+  // gateway and service apps record them next to the dependencies that back
+  // them, which is where `zudojs add` writes and `zudojs doctor` reads.
   const capabilities = resolveProjectCapabilities(options);
 
   const files: Record<string, string> = {};
@@ -115,6 +126,14 @@ export function generateMicroserviceFiles(
           : options.packageManager === "bun"
             ? "bun run --filter '*' typecheck"
             : "pnpm -r run typecheck",
+    test:
+      options.packageManager === "npm"
+        ? "npm run test --workspaces --if-present"
+        : options.packageManager === "yarn"
+          ? "yarn workspaces run test"
+          : options.packageManager === "bun"
+            ? "bun run --filter '*' test"
+            : "pnpm -r run test",
   };
 
   const workspaceGlobs = ["apps/gateway", "apps/services/*"];
@@ -137,8 +156,8 @@ export function generateMicroserviceFiles(
           : { workspaces: workspaceGlobs }),
         scripts: rootScripts,
         devDependencies: {
-          tsx: "^4.7.0",
-          typescript: "^5.7.0",
+          tsx: DEPENDENCY_VERSION_RANGES.tsx,
+          typescript: TYPESCRIPT_VERSION_RANGES.backend,
         },
       },
       null,
@@ -259,16 +278,52 @@ MIT
 `;
 
   const appDevDeps = {
-    tsx: "^4.7.0",
-    typescript: "^5.7.0",
-    "@types/node": "^24.0.0",
+    ...backendDevDependencies(),
+    ...zudojsDependencies(APP_TEST_DEPENDENCIES),
   };
 
-  // Gateway service
+  const appScripts = {
+    dev: "tsx watch src/server.ts",
+    start: "node dist/server.js",
+    build: "tsc",
+    typecheck: "tsc --noEmit",
+    test: "vitest run",
+  };
+
+  /** The wired source tree of one app, plus its folder barrels. */
+  const appSource = (appName: string, port: number): Record<string, string> => {
+    const spec = moduleSpec(appName, "./modules/index.js");
+    return {
+      ...emptyBarrels(),
+      ...applyDatabaseSetting(
+        renderBackendAppSource({
+          applicationName: `${nameSlug}-${appName}`,
+          title: `${options.projectName} ${appName}`,
+          defaultPort: port,
+          openapi: options.enableOpenAPI === true,
+          modules: [spec],
+          port,
+        }),
+        renderDatabaseEnv(options.database, `${nameSlug}-${appName}`),
+      ),
+      [`src/modules/${appName}.module.ts`]: renderModuleFile({ module: spec }),
+      "src/modules/index.ts": `export { ${spec.className} } from "./${appName}.module.js";\n`,
+    };
+  };
+
+  const prefixed = (prefix: string, tree: Record<string, string>): void => {
+    for (const [path, content] of Object.entries(tree)) {
+      files[`${prefix}/${path}`] = content;
+    }
+  };
+
+  // Gateway service. It is a backend app like every service: `create` and
+  // `zudojs add` write capabilities to it and `zudojs doctor` checks it, so
+  // it declares and installs the same capabilities.
   const gatewayDeps = [
     ...RUNTIME_APP_DEPENDENCIES,
-    "@zudojs/http",
-    "@zudojs/config",
+    ...APP_SOURCE_DEPENDENCIES,
+    ...capabilityPackages(capabilities),
   ];
 
   files["apps/gateway/package.json"] =
@@ -278,15 +333,9 @@ MIT
         version: "0.1.0",
         private: true,
         type: "module",
-        scripts: {
-          dev: "tsx watch src/server.ts",
-          start: "node dist/server.js",
-          build: "tsc",
-          typecheck: "tsc --noEmit",
-        },
-        dependencies: Object.fromEntries(
-          [...new Set(gatewayDeps)].map((d) => [d, ZUDOJS_PACKAGES_VERSION]),
-        ),
+        zudojs: { features: capabilities },
+        scripts: appScripts,
+        dependencies: zudojsDependencies(gatewayDeps),
         devDependencies: appDevDeps,
       },
       null,
@@ -301,33 +350,12 @@ MIT
     packageManager: options.packageManager,
   });
 
-  files["apps/gateway/src/index.ts"] =
-    `export { createApp } from "./app.js";
-`;
-
-  const gatewayModule = moduleSpec("gateway", "./modules/index.js");
-
-  files["apps/gateway/src/app.ts"] = renderAppFile({
-    applicationName: `${nameSlug}-gateway`,
-    modules: [gatewayModule],
-    port: 3000,
-  });
-
-  files["apps/gateway/src/modules/gateway.module.ts"] = renderModuleFile({
-    module: gatewayModule,
-  });
-
-  files["apps/gateway/src/modules/index.ts"] =
-    `export { ${gatewayModule.className} } from "./gateway.module.js";\n`;
-
-  files["apps/gateway/src/server.ts"] = renderServerFile();
+  prefixed("apps/gateway", appSource("gateway", 3000));
 
   // Generate each service
   const serviceDeps = [
     ...RUNTIME_APP_DEPENDENCIES,
-    "@zudojs/config",
-    "@zudojs/errors",
-    "@zudojs/http",
+    ...APP_SOURCE_DEPENDENCIES,
     ...capabilityPackages(capabilities),
   ];
 
@@ -344,15 +372,8 @@ MIT
           private: true,
           type: "module",
           zudojs: { features: capabilities },
-          scripts: {
-            dev: "tsx watch src/server.ts",
-            start: "node dist/server.js",
-            build: "tsc",
-            typecheck: "tsc --noEmit",
-          },
-          dependencies: Object.fromEntries(
-            [...new Set(serviceDeps)].map((d) => [d, ZUDOJS_PACKAGES_VERSION]),
-          ),
+          scripts: appScripts,
+          dependencies: zudojsDependencies(serviceDeps),
           devDependencies: appDevDeps,
         },
         null,
@@ -367,55 +388,7 @@ MIT
       packageManager: options.packageManager,
     });
 
-    // Service structure (modular monolith per service)
-    const svcDirs = [
-      "configs",
-      "constants",
-      "controllers",
-      "databases",
-      "dtos",
-      "enums",
-      "errors",
-      "events",
-      "interfaces",
-      "jobs",
-      "loaders",
-      "loggers",
-      "middlewares",
-      "models",
-      "repositories",
-      "routes",
-      "services",
-      "types",
-      "utils",
-      "validators",
-    ];
-
-    files[`apps/services/${svcName}/src/index.ts`] =
-      `export { createApp } from "./app.js";
-`;
-
-    const svcModule = moduleSpec(svcName, "./modules/index.js");
-
-    files[`apps/services/${svcName}/src/app.ts`] = renderAppFile({
-      applicationName: `${nameSlug}-${svcName}`,
-      modules: [svcModule],
-      port,
-    });
-
-    files[`apps/services/${svcName}/src/modules/${svcName}.module.ts`] =
-      renderModuleFile({ module: svcModule });
-
-    files[`apps/services/${svcName}/src/modules/index.ts`] =
-      `export { ${svcModule.className} } from "./${svcName}.module.js";\n`;
-
-    files[`apps/services/${svcName}/src/server.ts`] = renderServerFile("./app.js", {
-      defaultPort: port,
-    });
-
-    for (const dir of svcDirs) {
-      files[`apps/services/${svcName}/src/${dir}/index.ts`] = "";
-    }
+    prefixed(`apps/services/${svcName}`, appSource(svcName, port));
 
     files[`apps/services/${svcName}/src/commands/index.ts`] = "";
     files[`apps/services/${svcName}/src/queries/index.ts`] = "";

@@ -13,8 +13,13 @@ Command-line interface for scaffolding, generating, and managing Zudojs framewor
 ### First time
 
 ```bash
-npm install -g zudojs-cli
+npm install -g zudojs      # or: npm install -g zudojs-cli
 ```
+
+Both packages install the same CLI under two names, `zudojs` and the short
+alias `zudo`; use whichever you prefer. `zudojs` is a thin wrapper that runs
+`zudojs-cli`, so the two can never disagree. Help, usage lines and error
+messages repeat the name you typed (`zudo create …` or `zudojs create …`).
 
 ### Upgrading from an old version?
 
@@ -40,8 +45,8 @@ npm install -g zudojs-cli@latest
 ## Quick Start
 
 ```bash
-# Create a new backend project
-zudojs create my-api
+# Create a new backend project (`new` is an alias of `create`)
+zudo new my-api
 
 # Create a frontend project
 zudojs create my-web --type frontend --frontend react
@@ -64,6 +69,53 @@ zudojs build
 
 `zudojs build` and `zudojs doctor` exit with a non-zero status when they fail,
 so they can be used as CI gates.
+
+### Interactive menu
+
+Run `zudo` (or `zudojs`) with no arguments in a terminal to get a numbered
+menu:
+
+```text
+◆  What would you like to do?
+│  ● 1. Create a new project
+│  ○ 2. Start dev server
+│  ○ 3. Generate code
+│  ○ 4. Add a feature
+│  ○ 5. Build
+│  ○ 6. Doctor
+│  ○ 7. Info
+│  ○ 8. Help
+│  ○ 0. Exit
+└  ↑/↓ move · 0-8 pick · Enter select · Esc exit
+```
+
+Press a digit to pick an entry at once, or move with ↑/↓ and press Enter.
+The entry runs the ordinary command and asks for anything it needs:
+"Create" runs the usual `create` prompts, "Generate code" asks for the
+schematic and name, and "Add a feature" asks which feature. "Start dev
+server", "Generate code", "Add a feature" and "Build" need a Zudojs project;
+outside one, the menu says so and shows itself again. `0` exits with status 0;
+Esc or Ctrl+C prints "Operation cancelled." and exits with status 130, like
+every other prompt.
+
+The menu only opens when both stdin and stdout are terminals and `CI` is not
+set. Piped, redirected and CI runs (`zudo | cat`) print the help text and exit
+0, and `--help` / `--version` never open it.
+
+### Exit codes and usage errors
+
+| Status | Meaning |
+| ------ | ------- |
+| `0`    | Success (also `--help`, `--version`, and "Exit" from the menu) |
+| `1`    | The command ran and failed (build error, not in a project, …) |
+| `2`    | Usage error: missing argument, unknown or malformed option, option before the command |
+| `3`    | Unknown command (with a "Did you mean …?" suggestion when one is close) |
+| `130`  | Cancelled with Ctrl+C or Esc |
+
+Options go after the command name (`zudo dev --port 4000`); an option placed
+before it is reported instead of being dropped. Only the first word can be the
+command, so a typo such as `zudo creat my-api` is an error rather than a
+different command.
 
 ### Update check
 
@@ -148,11 +200,11 @@ add domain logic to an existing app with
 
 | Command    | Description                                                              |
 | ---------- | ------------------------------------------------------------------------ |
-| `create`   | Scaffold a new project (backend, frontend, or fullstack)                 |
-| `generate` | Generate files — see the schematics below                                |
+| `create` (`new`) | Scaffold a new project (backend, frontend, or fullstack)           |
+| `generate` (`g`) | Generate files — see the schematics below                                |
 | `add`      | Add feature packages (database, queue, messaging, etc.); `--service` targets one microservice app |
-| `dev`      | Start development servers through the project's package manager (`pnpm run dev`, …) |
-| `build`    | Build the project with its detected package manager                      |
+| `dev` (`d`) | Start development servers through the project's package manager (`pnpm run dev`, …) |
+| `build` (`b`) | Build the project with its detected package manager                      |
 | `doctor`   | Run project diagnostics                                                  |
 | `info`     | Show project information                                                 |
 

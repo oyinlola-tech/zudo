@@ -15,7 +15,13 @@
  * @module templates/shared/pnpm
  */
 
-/** Dependencies whose install scripts a generated project allows. */
+/**
+ * Dependencies whose install scripts a generated project allows.
+ *
+ * `lmdb` and `msgpackr-extract` come in through `@angular/build` (its
+ * persistent build cache); without them `pnpm install` in an Angular 22
+ * project fails with `ERR_PNPM_IGNORED_BUILDS`.
+ */
 export const PNPM_ALLOWED_BUILD_SCRIPTS = [
   "esbuild",
   "@swc/core",
@@ -23,6 +29,8 @@ export const PNPM_ALLOWED_BUILD_SCRIPTS = [
   "@parcel/watcher",
   "@tailwindcss/oxide",
   "unrs-resolver",
+  "lmdb",
+  "msgpackr-extract",
 ] as const;
 
 /**

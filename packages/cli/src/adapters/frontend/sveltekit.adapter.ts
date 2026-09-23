@@ -6,6 +6,8 @@
 
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
 import { scaffoldWithFallback } from "../../scaffolders/scaffolder.helper.js";
+import { renderSvelteKitFallback, versionFromRange } from "./fallback/index.js";
+import { DEPENDENCY_VERSION_RANGES as V } from "../../resolvers/dependency/dependencyVersions.constant.js";
 import type {
   FrontendAdapter,
   FrontendGenerationContext,
@@ -25,11 +27,11 @@ export class SvelteKitAdapter implements FrontendAdapter {
   }
 
   async getLatestVersion(): Promise<string> {
-    return "2.15.0";
+    return versionFromRange(V["@sveltejs/kit"]);
   }
 
   async scaffold(context: FrontendGenerationContext): Promise<void> {
-    const files = this.getBaseFiles(context);
+    const files = renderSvelteKitFallback(context);
     await scaffoldWithFallback({
       command: "npx",
       args: [
@@ -87,68 +89,6 @@ export class SvelteKitAdapter implements FrontendAdapter {
     }
 
     return { valid: errors.length === 0, errors, warnings };
-  }
-
-  private getBaseFiles(
-    context: FrontendGenerationContext,
-  ): Record<string, string> {
-    return {
-      "package.json": JSON.stringify(
-        {
-          name: context.project.name,
-          version: "0.1.0",
-          private: true,
-          type: "module",
-          scripts: {
-            dev: "vite dev",
-            build: "vite build",
-            preview: "vite preview",
-          },
-          dependencies: {
-            "@sveltejs/kit": "^2.15.0",
-            svelte: "^5.0.0",
-          },
-          devDependencies: {
-            "@sveltejs/vite-plugin-svelte": "^4.0.0",
-            vite: "^6.0.0",
-          },
-        },
-        null,
-        2,
-      ),
-      "svelte.config.js": `import adapter from "@sveltejs/adapter-auto";
-
-export default {
-  kit: {
-    adapter: adapter(),
-  },
-};
-`,
-      "vite.config.ts": `import { sveltekit } from "@sveltejs/kit/vite";
-import { defineConfig } from "vite";
-
-export default defineConfig({
-  plugins: [sveltekit()],
-});
-`,
-      "src/routes/+page.svelte": `<h1>Hello from Zudojs</h1>
-`,
-      "src/routes/+layout.svelte": `<slot />
-`,
-      "src/app.html": `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${context.project.name}</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    {% include 'src/app.html' %}
-  </body>
-</html>
-`,
-    };
   }
 
   private getStructure(

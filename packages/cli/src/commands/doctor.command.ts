@@ -9,6 +9,7 @@ import { join, relative } from "node:path";
 import type { CLIContext } from "../cliType/cliType.type.js";
 import { CLIValidationError } from "../errors/index.js";
 import { FEATURE_PACKAGES } from "../constants/index.js";
+import { parseManifest } from "../manifest/manifestFile.helper.js";
 import {
   resolveProjectLayout,
   type ProjectLayout,
@@ -50,6 +51,7 @@ export function runDoctorChecks(cwd: string): DoctorCheck[] {
     checkTypeScriptConfig(layout),
     checkDependencies(layout),
     checkFeatures(layout),
+    checkCapabilities(layout),
   );
 
   return checks;
@@ -355,5 +357,52 @@ function checkFeatures(layout: ProjectLayout): DoctorCheck {
       violations.length === 0
         ? "Every declared feature has its package"
         : violations.join("; "),
+  };
+}
+
+/** The `zudojs.features` an app's package.json declares. */
+function declaredFeatures(dir: string): readonly string[] {
+  const features = readPackageJson(dir)?.zudojs?.features;
+  return Array.isArray(features)
+    ? features.filter((f): f is string => typeof f === "string")
+    : [];
+}
+
+/**
+ * The manifest's `capabilities` and the backend apps' `zudojs.features`
+ * must name the same set. zudojs-cli 2.0.1 recorded `events` and
+ * `security` in the manifest only, so `info` and `add` (which read the
+ * manifest) and `doctor` (which reads package.json) disagreed.
+ */
+function checkCapabilities(layout: ProjectLayout): DoctorCheck {
+  const name = "Capabilities";
+  const manifestPath = join(layout.root, ".zudojs", "manifest.json");
+  const manifest = existsSync(manifestPath)
+    ? parseManifest(readFileSync(manifestPath, "utf-8")).manifest
+    : null;
+
+  if (manifest === null || layout.backendDirs.length === 0) {
+    return { name, severity: "warning", passed: true, message: "Nothing to compare" };
+  }
+
+  const declared = new Set(layout.backendDirs.flatMap(declaredFeatures));
+  const recorded = new Set(manifest.capabilities);
+  const problems = [
+    ...[...recorded]
+      .filter((c) => !declared.has(c))
+      .map((c) => `"${c}" is in .zudojs/manifest.json but in no app's zudojs.features`),
+    ...[...declared]
+      .filter((c) => !recorded.has(c))
+      .map((c) => `"${c}" is in zudojs.features but not in .zudojs/manifest.json`),
+  ];
+
+  return {
+    name,
+    severity: "warning",
+    passed: problems.length === 0,
+    message:
+      problems.length === 0
+        ? "The manifest and package.json record the same capabilities"
+        : problems.join("; "),
   };
 }

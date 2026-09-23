@@ -31,7 +31,7 @@ export class ReactNativeAdapter implements FrontendAdapter {
   }
 
   async getLatestVersion(): Promise<string> {
-    return "52";
+    return "57";
   }
 
   async scaffold(context: FrontendGenerationContext): Promise<void> {

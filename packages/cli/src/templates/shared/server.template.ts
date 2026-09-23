@@ -1,28 +1,29 @@
 /**
  * zudojs-cli — Generated `src/server.ts`
  *
- * The entry point used to call `runtime.start()` and nothing else. The
- * runtime creates no HTTP server, so `pnpm dev` logged "ready" and exited
- * with 0 even though `.env.example` set `PORT`, the Dockerfile exposed it
- * and the fullstack frontend called it.
+ * The entry point loads the configuration, builds a router with
+ * `createRouter()`, registers every route through `registerRoutes` (from
+ * the composition root in `container.ts`), mounts the OpenAPI document and
+ * `/docs` page when the `openapi` capability is on, and serves the router
+ * with `createHttpServer` + `createNodeHttpAdapter`.
  *
- * The emitted server starts the runtime, then serves HTTP with
- * `@zudojs/http` (`createHttpServer` + `createNodeHttpAdapter`) on `PORT`,
- * answers `GET /health`, and keeps the process alive until SIGINT/SIGTERM,
- * when it stops the HTTP server and then the runtime. `tests/
- * generatedProject.typecheck.test.ts` type-checks this output against the
- * current `@zudojs/*` sources.
+ * Every response passes through the @zudojs/security default headers, a
+ * CORS policy that allows only `CORS_ORIGINS` (none by default) and a
+ * per-client rate limit (`RATE_LIMIT_MAX` per `RATE_LIMIT_WINDOW_MS`). Exposed
+ * 4xx errors are answered with their status; anything else is a generic
+ * 500. On SIGINT/SIGTERM integrations drain, HTTP stops, then the runtime
+ * stops. `tests/generatedProject.typecheck.test.ts` type-checks the output
+ * against the current `@zudojs/*` sources.
  */
+
+import { MARKERS, renderMarkerBlock } from "../../wiring/index.js";
 
 /** Options for {@link renderServerFile}. */
 export interface ServerFileOptions {
-  /** Port used when `PORT` is unset. Defaults to 3000. */
-  readonly defaultPort?: number;
-  /**
-   * Import path of a `HealthController` whose `check()` answers `/health`,
-   * relative to server.ts. When omitted, `/health` is answered inline.
-   */
-  readonly healthControllerImport?: string;
+  /** Title of the OpenAPI document. */
+  readonly title: string;
+  /** Whether `/openapi.json` and `/docs` are mounted. */
+  readonly openapi: boolean;
 }
 
 /** Emits a string as a TypeScript string literal that cannot break out. */
@@ -30,74 +31,98 @@ function literal(value: string): string {
   return JSON.stringify(value);
 }
 
-/**
- * Renders `src/server.ts`: starts the runtime, serves HTTP on `PORT` with a
- * `/health` route, and shuts both down cleanly on SIGINT/SIGTERM.
- */
-export function renderServerFile(
-  appImportPath = "./app.js",
-  options: ServerFileOptions = {},
-): string {
-  const defaultPort = options.defaultPort ?? 3000;
-  const controller = options.healthControllerImport;
-  const controllerImport = controller
-    ? `import { HealthController } from ${literal(controller)};\n`
-    : "";
-  const healthBody = controller
-    ? "new HealthController().check()"
-    : `{ status: "ok", timestamp: new Date().toISOString() }`;
-
-  return `import {
-  createHttpServer,
-  createNodeHttpAdapter,
-  createResponseContext,
-  type HttpRequestContext,
-} from "@zudojs/http";
-
-import { createApp } from ${literal(appImportPath)};
-${controllerImport}
-const DEFAULT_PORT = ${defaultPort};
-
-/** Reads PORT, refusing values that are not a TCP port. */
-function resolvePort(): number {
-  const raw = process.env["PORT"];
-  if (raw === undefined || raw.trim() === "") return DEFAULT_PORT;
-  const port = Number(raw);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) {
-    throw new Error(\`PORT must be an integer between 0 and 65535, got "\${raw}".\`);
-  }
-  return port;
+/** The lines `zudojs add openapi` (or `create`) puts in server.ts. */
+export function openApiServerLines(title: string): {
+  readonly importLine: string;
+  readonly mountLine: string;
+} {
+  return {
+    importLine: `import { mountOpenAPI } from "@zudojs/http";`,
+    mountLine: `mountOpenAPI(router, { info: { title: ${literal(title)}, version: "0.1.0" } });`,
+  };
 }
 
-const runtime = createApp();
+/** Renders `src/server.ts`. */
+export function renderServerFile(options: ServerFileOptions): string {
+  const openapi = openApiServerLines(options.title);
+
+  return `import { createServer } from "node:http";
+
+import {
+  HttpMiddlewarePipeline,
+  createCorsMiddleware,
+  createHttpServer,
+  createNodeHttpAdapter,
+  createRateLimitMiddleware,
+  createResponseContext,
+  createRouter,
+  type HttpMiddleware,
+  type HttpRequestContext,
+} from "@zudojs/http";
+${renderMarkerBlock(MARKERS.serverImports, options.openapi ? [openapi.importLine] : [])}
+
+import { createApp } from "./app.js";
+import { loadConfig } from "./configs/index.js";
+import { createDependencies } from "./container.js";
+import { checkIntegrations, drainIntegrations, integrations } from "./integrations/index.js";
+import { registerRoutes } from "./routes/index.js";
+import { errorResponse, securityHeaders } from "./utils/http.js";
+
+const config = await loadConfig();
+const httpServer = createServer();
+const runtime = createApp({ config, httpServer });
+
+const router = createRouter();
+registerRoutes(
+  router,
+  createDependencies({
+    health: async () => {
+      const checks = await checkIntegrations(integrations);
+      const ready =
+        runtime.state === "running" && Object.values(checks).every((check) => check === "up");
+      return { ready, checks };
+    },
+  }),
+);
+${renderMarkerBlock(MARKERS.serverMounts, options.openapi ? [openapi.mountLine] : [])}
+
+const dispatch: HttpMiddleware = async (context) => {
+  try {
+    return (await router.dispatch(context.request, { signal: context.signal })).response;
+  } catch (error) {
+    const response = errorResponse(error);
+    if (response === undefined) throw error;
+    return response;
+  }
+};
+
+const pipeline = new HttpMiddlewarePipeline({
+  middlewares: [
+    securityHeaders(),
+    createCorsMiddleware({ allowOrigin: config.corsOrigins }),
+    createRateLimitMiddleware({ windowMs: config.rateLimit.windowMs, max: config.rateLimit.max }),
+${renderMarkerBlock(MARKERS.serverMiddleware, [], "    ")}
+    dispatch,
+  ],
+});
+
 await runtime.start();
 
 const server = createHttpServer({
-  adapter: createNodeHttpAdapter({
-    host: process.env["HOST"] ?? "0.0.0.0",
-    port: resolvePort(),
-  }),
-  handler: (request: HttpRequestContext) => {
-    if (request.path === "/health") {
-      if (runtime.state !== "running") {
-        return createResponseContext({ status: 503 }).json({ status: "unavailable" });
-      }
-      return ${healthBody};
-    }
-    return createResponseContext({ status: 404 }).json({ error: "Not Found" });
-  },
+  adapter: createNodeHttpAdapter({ server: httpServer, host: config.host, port: config.port }),
+  handler: (request: HttpRequestContext) => pipeline.execute(request, createResponseContext()),
 });
 
 await server.start();
-console.log(\`Listening on port \${server.address?.port ?? resolvePort()}\`);
+console.log(\`Listening on http://\${config.host}:\${server.address?.port ?? config.port}\`);
 
 let stopping = false;
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
     if (stopping) return;
     stopping = true;
-    void server
-      .stop()
+    void drainIntegrations(integrations)
+      .then(() => server.stop())
       .then(() => runtime.stop())
       .then(() => {
         process.exit(0);

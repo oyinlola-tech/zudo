@@ -6,6 +6,8 @@
 
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
 import { scaffoldWithFallback } from "../../scaffolders/scaffolder.helper.js";
+import { renderAstroFallback, versionFromRange } from "./fallback/index.js";
+import { DEPENDENCY_VERSION_RANGES as V } from "../../resolvers/dependency/dependencyVersions.constant.js";
 import type {
   FrontendAdapter,
   FrontendGenerationContext,
@@ -25,11 +27,11 @@ export class AstroAdapter implements FrontendAdapter {
   }
 
   async getLatestVersion(): Promise<string> {
-    return "5.0.0";
+    return versionFromRange(V.astro);
   }
 
   async scaffold(context: FrontendGenerationContext): Promise<void> {
-    const files = this.getBaseFiles(context);
+    const files = renderAstroFallback(context);
     await scaffoldWithFallback({
       command: "npm",
       args: [
@@ -86,79 +88,6 @@ export class AstroAdapter implements FrontendAdapter {
     }
 
     return { valid: errors.length === 0, errors, warnings };
-  }
-
-  private getBaseFiles(
-    context: FrontendGenerationContext,
-  ): Record<string, string> {
-    return {
-      "package.json": JSON.stringify(
-        {
-          name: context.project.name,
-          version: "0.1.0",
-          private: true,
-          type: "module",
-          scripts: {
-            dev: "astro dev",
-            build: "astro build",
-            preview: "astro preview",
-          },
-          dependencies: {
-            astro: "^5.0.0",
-          },
-          devDependencies: {
-            "@astrojs/check": "^0.9.0",
-            typescript: "^5.0.0",
-          },
-        },
-        null,
-        2,
-      ),
-      "astro.config.mjs": `import { defineConfig } from "astro/config";
-
-export default defineConfig({
-  output: "static",
-});
-`,
-      "tsconfig.json": JSON.stringify(
-        {
-          extends: "astro/tsconfigs/strict",
-          compilerOptions: {
-            strict: true,
-          },
-        },
-        null,
-        2,
-      ),
-      "src/layouts/Layout.astro": `---
-interface Props {
-  title: string;
-}
-
-const { title } = Astro.props;
----
-
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>\${title}</title>
-  </head>
-  <body>
-    <slot />
-  </body>
-</html>
-`,
-      "src/pages/index.astro": `---
-import Layout from "../layouts/Layout.astro";
----
-
-<Layout title="${context.project.name}">
-  <h1>Hello from Zudojs</h1>
-</Layout>
-`,
-    };
   }
 
   private getStructure(

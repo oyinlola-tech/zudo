@@ -11,7 +11,14 @@ import { generateModularMonolithFiles } from "../src/templates/modular-monolith/
 import { generateMicroserviceFiles } from "../src/templates/microservice/index.js";
 import { InfrastructureGenerator } from "../src/generators/infrastructure/infrastructure.generator.js";
 import { writeFileTree } from "../src/utils/utils.fileSystem.js";
-import { ZUDOJS_PACKAGES_VERSION } from "../src/constants/index.js";
+import {
+  ZUDOJS_PACKAGES_VERSION,
+  zudojsVersionRange,
+} from "../src/constants/index.js";
+import {
+  DEPENDENCY_VERSION_RANGES,
+  TYPESCRIPT_VERSION_RANGES,
+} from "../src/resolvers/dependency/index.js";
 import type { ScaffoldOptions } from "../src/types/index.js";
 
 vi.mock("../src/utils/utils.fileSystem.js", () => ({
@@ -86,13 +93,14 @@ describe.each(allTemplates)("%s template", (_name, generate) => {
       };
       const deps = pkg.dependencies ?? {};
       if (Object.keys(deps).length === 0) continue;
-      // Compared against the constant the templates stamp in, so the pin
-      // tracks the published framework version instead of a literal that
-      // silently goes stale at the next release.
-      expect(deps["@zudojs/runtime"], path).toBe(ZUDOJS_PACKAGES_VERSION);
+      // Each package is pinned to `^<the version this CLI build targets>`
+      // (the generated version map), so a project never resolves a
+      // framework release older than the APIs its templates call.
+      expect(deps["@zudojs/runtime"], path).toBe(zudojsVersionRange("@zudojs/runtime"));
       for (const [dep, version] of Object.entries(deps)) {
         if (dep.startsWith("@zudojs/")) {
-          expect(version, `${path} → ${dep}`).toBe(ZUDOJS_PACKAGES_VERSION);
+          expect(version, `${path} → ${dep}`).toBe(zudojsVersionRange(dep));
+          expect(version, `${path} → ${dep}`).not.toBe(ZUDOJS_PACKAGES_VERSION);
         }
       }
     }
@@ -107,11 +115,26 @@ describe("monolith template", () => {
         devDependencies: Record<string, string>;
       };
       expect(pkg.devDependencies).toMatchObject({
-        tsx: "^4.7.0",
-        typescript: "^5.7.0",
-        "@types/node": "^24.0.0",
-        vitest: "^3.0.0",
+        tsx: DEPENDENCY_VERSION_RANGES.tsx,
+        typescript: TYPESCRIPT_VERSION_RANGES.backend,
+        "@types/node": DEPENDENCY_VERSION_RANGES["@types/node"],
+        vitest: DEPENDENCY_VERSION_RANGES.vitest,
       });
+    }
+  });
+
+  it("uses current majors: TypeScript 7 on the backend, 6.0 for frontends", () => {
+    expect(TYPESCRIPT_VERSION_RANGES.backend).toMatch(/^\^7\./);
+    expect(TYPESCRIPT_VERSION_RANGES.frontend).toMatch(/^~6\.0\./);
+    const files = generateMicroserviceFiles(scaffoldOptions());
+    for (const [path, content] of Object.entries(files)) {
+      if (!path.endsWith("package.json")) continue;
+      const pkg = JSON.parse(content) as {
+        devDependencies?: Record<string, string>;
+      };
+      expect(pkg.devDependencies?.["typescript"], path).toBe(
+        TYPESCRIPT_VERSION_RANGES.backend,
+      );
     }
   });
 

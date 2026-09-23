@@ -6,7 +6,14 @@
  * resolved dependencies now go into package.json instead.
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -69,6 +76,28 @@ function context(
 }
 
 describe("runFrontendPipeline", () => {
+  it("writes post-scaffold files only after the scaffolder ran", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "zudojs-fe-post-"));
+    dirs.push(dir);
+    let seen: string[] = ["not called"];
+    const adapter: FrontendAdapter = {
+      ...fakeAdapter(),
+      scaffold: async (ctx) => {
+        seen = readdirSync(ctx.projectPath);
+      },
+    };
+    await runFrontendPipeline(
+      adapter,
+      context(dir, true),
+      fakeRegistry(vi.fn(), vi.fn()),
+      new DependencyResolver(),
+      { "pnpm-workspace.yaml": "allowBuilds: {}\n" },
+    );
+    // create-vite cancels (exit 0) in a non-empty directory.
+    expect(seen).toEqual([]);
+    expect(existsSync(join(dir, "pnpm-workspace.yaml"))).toBe(true);
+  });
+
   it("installs through the package manager by default", async () => {
     const dir = mkdtempSync(join(tmpdir(), "zudojs-fe-"));
     dirs.push(dir);

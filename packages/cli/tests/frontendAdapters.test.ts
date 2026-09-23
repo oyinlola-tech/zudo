@@ -4,7 +4,10 @@
  * Tests for frontend adapters.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, describe, it, expect, vi } from "vitest";
 import { ReactAdapter } from "../src/adapters/frontend/react.adapter.js";
 import { NextAdapter } from "../src/adapters/frontend/next.adapter.js";
 import { VueAdapter } from "../src/adapters/frontend/vue.adapter.js";
@@ -22,6 +25,11 @@ vi.mock("../src/utils/utils.exec.js", () => ({
   execCommand: vi.fn(async () => ({ stdout: "test", stderr: "" })),
 }));
 
+// The mocked scaffolder writes nothing, so every adapter now falls back to
+// its built-in template; keep those writes in a throwaway directory.
+const projectPath = mkdtempSync(join(tmpdir(), "zudojs-adapters-"));
+afterAll(() => rmSync(projectPath, { recursive: true, force: true }));
+
 const mockContext = (
   overrides?: Partial<FrontendGenerationContext>,
 ): FrontendGenerationContext => ({
@@ -29,7 +37,7 @@ const mockContext = (
     name: "test-app",
     type: "fullstack",
   },
-  projectPath: "/tmp/test-app",
+  projectPath,
   framework: "react",
   packageManager: "pnpm",
   language: "typescript",

@@ -14,14 +14,14 @@ import { generateModule } from "../generators/module/module.generator.js";
 import type { ModuleRegistration } from "../generators/module/module.registration.js";
 import { generateCommand } from "../generators/command/command.generator.js";
 import { generateQuery } from "../generators/query/query.generator.js";
-import { generateController } from "../generators/controller/controller.generator.js";
-import { generateRepository } from "../generators/repository/repository.generator.js";
 import { generateMiddleware } from "../generators/middleware/middleware.generator.js";
 import { generateEvent } from "../generators/event/event.generator.js";
 import { generateJob } from "../generators/job/job.generator.js";
-import { generateRoute } from "../generators/route/route.generator.js";
 import { generateModel } from "../generators/model/model.generator.js";
-import { generateDto } from "../generators/dto/dto.generator.js";
+import {
+  isResourceSchematic,
+  runResourceSchematic,
+} from "../generators/resource/index.js";
 import { generateValidator } from "../generators/validator/validator.generator.js";
 import {
   CLIGenerationError,
@@ -37,6 +37,11 @@ import { resolveProjectLayout } from "../resolvers/layout/projectLayout.core.js"
 import { findProjectRoot } from "../resolvers/project.resolver.js";
 import { describeError } from "./commandError.helper.js";
 import { captureWrites, findWriteConflicts } from "../utils/utils.writeGuard.js";
+import {
+  describeAddedDependencies,
+  ensureZudojsDependencies,
+  fileCount,
+} from "../wiring/index.js";
 
 
 interface GenerateOptions {
@@ -166,6 +171,15 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
     throw new CLIValidationError("Resource name is required.");
   }
 
+  // A name with a path in it used to be normalized silently
+  // (`generate resource ../../x` wrote `x`), hiding a typo or a hostile
+  // argument in a script. Names are plain names.
+  if (/[\\/]|\.\./.test(name)) {
+    throw new CLIValidationError(
+      `Invalid resource name: "${name}". Use a plain name such as "users"; paths are not allowed.`,
+    );
+  }
+
   // Reject names that normalize to nothing (`zudojs generate event "..."`
   // wrote src/events/.event.ts with an anonymous export), and reject option
   // values that are interpolated verbatim into a generated path. `--service ..`
@@ -244,6 +258,21 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
     );
   }
 
+  if (isResourceSchematic(effectiveSchematic)) {
+    await runResourceSchematic(context, {
+      schematic: effectiveSchematic,
+      name,
+      cwd,
+      backendRoot: backendPrefix(cwd).replace(/\/$/, ""),
+      architecture: architecture ?? undefined,
+      service,
+      moduleName,
+      dryRun,
+      force,
+    });
+    return;
+  }
+
   const schematicOptions: GenerateOptions = {
     service,
     module: moduleName,
@@ -271,9 +300,9 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
     {
       ...schematicOptions,
       onModuleRegistered: (registration) => {
-        if (registration.registered) return;
+        if (registration.manualSteps.length === 0) return;
         context.logger.warn(
-          `Could not register the module in app.ts automatically. Add:\n${registration.manualSteps
+          `Could not register the module automatically. Add:\n${registration.manualSteps
             .map((step) => `  ${step}`)
             .join("\n")}`,
         );
@@ -284,13 +313,18 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
 
   if (dryRun) {
     context.logger.info(
-      `Dry run: ${result.length} files would be generated (nothing written):`,
+      `Dry run: ${fileCount(result.length)} would be generated (nothing written):`,
     );
   } else {
-    context.logger.info(`Generated ${result.length} files:`);
+    context.logger.info(`Generated ${fileCount(result.length)}:`);
   }
   for (const file of result) {
     context.logger.info(`  - ${file}`);
+  }
+  if (!dryRun) {
+    for (const line of describeAddedDependencies(ensureZudojsDependencies(cwd, result))) {
+      context.logger.warn(line);
+    }
   }
 }
 
@@ -346,12 +380,6 @@ async function runSchematic(
           cwd,
         );
 
-      case "controller":
-        return await generateController({ name, basePath, dryRun }, cwd);
-
-      case "repository":
-        return await generateRepository({ name, basePath, dryRun }, cwd);
-
       case "middleware":
         return await generateMiddleware({ name, basePath, dryRun }, cwd);
 
@@ -361,14 +389,8 @@ async function runSchematic(
       case "job":
         return await generateJob({ name, basePath, dryRun }, cwd);
 
-      case "route":
-        return await generateRoute({ name, basePath, dryRun }, cwd);
-
       case "model":
         return await generateModel({ name, basePath, dryRun }, cwd);
-
-      case "dto":
-        return await generateDto({ name, basePath, dryRun }, cwd);
 
       case "validator":
         return await generateValidator({ name, basePath, dryRun }, cwd);

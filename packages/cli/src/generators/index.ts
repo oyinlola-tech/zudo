@@ -12,5 +12,9 @@ export { generateModule } from "./module/module.generator.js";
 export { generateService } from "./service/service.generator.js";
 export { generateCommand } from "./command/command.generator.js";
 export { generateQuery } from "./query/query.generator.js";
-export { generateController } from "./controller/controller.generator.js";
-export { generateRepository } from "./repository/repository.generator.js";
+export {
+  generateResource,
+  resolveResourceLayout,
+  planResource,
+  RESOURCE_SCHEMATICS,
+} from "./resource/index.js";

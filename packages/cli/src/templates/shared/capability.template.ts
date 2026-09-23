@@ -8,9 +8,11 @@
  * every project the CLI created, and `zudojs add` was the only thing that
  * could ever put a value there.
  *
- * The list produced here is the same one `zudojs create` records as
- * `capabilities` in `.zudojs/manifest.json`, and {@link capabilityPackages}
- * gives the packages that back it, so a declared feature is always installed.
+ * {@link resolveProjectCapabilities} is the single source of truth for what
+ * a new project was created with: `zudojs create` records exactly this list
+ * as `capabilities` in `.zudojs/manifest.json` and as `zudojs.features` in
+ * every backend app's package.json, and {@link capabilityPackages} gives the
+ * packages that back it, so a declared feature is always installed.
  */
 
 import { FEATURE_PACKAGES } from "../../constants/index.js";
@@ -29,14 +31,29 @@ const CAPABILITY_FLAGS: ReadonlyArray<
 ];
 
 /**
- * The capability ids a scaffolded project was created with.
+ * The capability ids a scaffolded project was created with: the `enable*`
+ * flags in manifest order, then the selected capabilities that have no flag
+ * (`events`, `security`) in the order they were chosen.
+ *
+ * Those two used to reach the manifest but not package.json, so
+ * `--capabilities events,cqrs` recorded `["cqrs","events"]` in one and
+ * `["cqrs"]` in the other. A frontend-only project has no backend app to
+ * carry a capability and records none.
  */
 export function resolveProjectCapabilities(
   options: ScaffoldOptions,
 ): readonly string[] {
-  return CAPABILITY_FLAGS.filter(([, flag]) => options[flag] === true).map(
-    ([capability]) => capability,
-  );
+  if (options.projectType === "frontend") return [];
+
+  const capabilities = CAPABILITY_FLAGS.filter(
+    ([, flag]) => options[flag] === true,
+  ).map(([capability]) => capability);
+
+  for (const capability of options.capabilities ?? []) {
+    if (!capabilities.includes(capability)) capabilities.push(capability);
+  }
+
+  return capabilities;
 }
 
 /**

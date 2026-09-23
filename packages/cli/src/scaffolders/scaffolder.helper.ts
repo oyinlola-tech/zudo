@@ -4,6 +4,8 @@
  * Utilities for invoking official framework scaffolders.
  */
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { execCommand } from "../utils/utils.exec.js";
 import { writeFileTree } from "../utils/utils.fileSystem.js";
 
@@ -56,7 +58,6 @@ export async function scaffoldWithFallback(
         timeout: SCAFFOLD_TIMEOUT_MS,
       },
     );
-    return true;
   } catch (error) {
     console.warn(
       `Warning: official scaffolder "${options.command} ${options.args.join(" ")}" ${describeFailure(error)}. Using built-in fallback template.`,
@@ -64,4 +65,20 @@ export async function scaffoldWithFallback(
     await writeFileTree(options.targetPath, options.fallbackFiles);
     return false;
   }
+
+  // Some scaffolders exit 0 without writing anything: `create-vite` prints
+  // "Operation cancelled" when the directory is not empty. Treat a missing
+  // package.json as a failure whenever the fallback would have written one.
+  if (
+    options.fallbackFiles["package.json"] !== undefined &&
+    !existsSync(join(options.targetPath, "package.json"))
+  ) {
+    console.warn(
+      `Warning: official scaffolder "${options.command} ${options.args.join(" ")}" exited without creating package.json. Using built-in fallback template.`,
+    );
+    await writeFileTree(options.targetPath, options.fallbackFiles);
+    return false;
+  }
+
+  return true;
 }

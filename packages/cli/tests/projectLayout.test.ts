@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ZUDOJS_PACKAGES_VERSION,
+  zudojsVersionRange,
   FEATURE_PACKAGES,
 } from "../src/constants/index.js";
 import { generateMonolithFiles } from "../src/templates/monolith/index.js";
@@ -210,7 +211,7 @@ describe("generated @zudojs dependency versions", () => {
         };
         for (const [name, version] of Object.entries(pkg.dependencies ?? {})) {
           if (name.startsWith("@zudojs/")) {
-            expect(version, `${path} → ${name}`).toBe(ZUDOJS_PACKAGES_VERSION);
+            expect(version, `${path} → ${name}`).toBe(zudojsVersionRange(name));
           }
         }
       }
@@ -476,8 +477,10 @@ describe("zudojs add", () => {
   it("never writes workspace:* into a user project", () => {
     expect(
       versionForNewDependency({ dependencies: { "@zudojs/core": "^1.0.0" } }),
-    ).toBe(ZUDOJS_PACKAGES_VERSION);
-    expect(versionForNewDependency({})).toBe(ZUDOJS_PACKAGES_VERSION);
+    ).toBe(zudojsVersionRange("@zudojs/core"));
+    expect(versionForNewDependency({}, "@zudojs/cache")).toBe(
+      zudojsVersionRange("@zudojs/cache"),
+    );
     // Inside the framework monorepo the siblings are linked.
     expect(
       versionForNewDependency({
@@ -520,7 +523,14 @@ describe("zudojs add", () => {
       dependencies: Record<string, string>;
       zudojs: { features: string[] };
     };
-    expect(api.dependencies["@zudojs/cache"]).toBe(ZUDOJS_PACKAGES_VERSION);
+    expect(api.dependencies["@zudojs/cache"]).toBe(zudojsVersionRange("@zudojs/cache"));
+    // The recipe wrote and registered working code, not just the dependency.
+    expect(
+      readFileSync(join(root, "apps", "api", "src", "integrations", "cache.ts"), "utf-8"),
+    ).toContain("createCacheService");
+    expect(
+      readFileSync(join(root, "apps", "api", "src", "integrations", "index.ts"), "utf-8"),
+    ).toContain("cacheIntegration,");
     expect(api.zudojs.features).toContain("cache");
 
     const rootPkg = JSON.parse(

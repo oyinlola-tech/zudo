@@ -50,12 +50,18 @@ function assertSafePackageNames(names: readonly string[]): void {
 /**
  * Runs the full adapter sequence: availability check, scaffold, structure,
  * integration, dependency resolution, dependency installation, validation.
+ *
+ * @param postScaffoldFiles - Files written right after the scaffold step
+ *   (e.g. a standalone project's `pnpm-workspace.yaml`). They must not exist
+ *   earlier: `create-vite` cancels in a non-empty directory yet exits 0, so
+ *   a pre-written file left the project with no Vite app at all.
  */
 export async function runFrontendPipeline(
   adapter: FrontendAdapter,
   context: FrontendGenerationContext,
   packageManagerRegistry: PackageManagerRegistry,
   dependencyResolver: DependencyResolver,
+  postScaffoldFiles: Readonly<Record<string, string>> = {},
 ): Promise<FrontendPipelineResult> {
   const files: string[] = [];
   const errors: string[] = [];
@@ -78,6 +84,9 @@ export async function runFrontendPipeline(
   //    templates where one exists).
   await adapter.scaffold(context);
   files.push("scaffold");
+  if (Object.keys(postScaffoldFiles).length > 0) {
+    await writeFileTree(context.projectPath, { ...postScaffoldFiles });
+  }
 
   // 2. Apply the Zudojs structure over the scaffolded project.
   await adapter.applyZudojsStructure(context);

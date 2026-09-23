@@ -12,6 +12,7 @@ import type {
   ApiStyle,
   ProjectConfiguration,
 } from "./projectConfiguration.type.js";
+import { resolveProjectCapabilities } from "../templates/shared/capability.template.js";
 
 /**
  * Backend architecture.
@@ -49,6 +50,12 @@ export interface ScaffoldOptions {
   readonly enableOpenAPI: boolean;
   readonly enableDatabase: boolean;
   readonly enableQueue: boolean;
+  /**
+   * Every capability id that was selected, including those without an
+   * `enable*` flag of their own (`events`, `security`). Read through
+   * `resolveProjectCapabilities`, never directly.
+   */
+  readonly capabilities?: readonly string[];
   readonly enableDocker: boolean;
   readonly installDeps: boolean;
   readonly initGit: boolean;
@@ -104,6 +111,6 @@ export function toProjectConfiguration(
     workspace: {
       packageManager: options.packageManager,
     },
-    features: options.services,
+    features: resolveProjectCapabilities(options),
   };
 }
