@@ -9,7 +9,10 @@ import {
   CircularReferenceError,
   SerializationDepthError,
 } from "@zudojs/errors";
-import { MAX_MEASURABLE_DEPTH } from "./validationConstraints.depth.js";
+import {
+  MAX_MEASURABLE_DEPTH,
+  UNTRUSTED_DEPTH_ERROR,
+} from "./validationConstraints.depth.js";
 import {
   TraversalLimitError,
   traverse,
@@ -28,7 +31,8 @@ import {
  * @param maxDepth - Depth ceiling, so a deep graph cannot exhaust the stack
  *   before a cycle is reported.
  * @throws {CircularReferenceError} on the first cycle found.
- * @throws {SerializationDepthError} when the graph is deeper than `maxDepth`.
+ * @throws {SerializationDepthError} when the graph is deeper than `maxDepth`
+ *   (a 400 with `expose: true`, like `assertDepthWithinLimit`).
  *   Running out of depth is not evidence of a cycle, and reporting it as one
  *   told callers a payload referenced itself when it merely nested too far.
  */
@@ -44,7 +48,11 @@ export function assertNoCircularReference(
       throw new CircularReferenceError(error.path);
     }
     if (error instanceof TraversalLimitError && error.halt === "depth") {
-      throw new SerializationDepthError(error.observed, maxDepth);
+      throw new SerializationDepthError(
+        error.observed,
+        maxDepth,
+        UNTRUSTED_DEPTH_ERROR,
+      );
     }
     throw error;
   }

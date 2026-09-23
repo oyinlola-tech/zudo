@@ -46,6 +46,14 @@ assertSizeWithinLimit(body, 1_000_000);
 assertNoCircularReference(body);
 ```
 
+A too-deep payload throws `SerializationDepthError` with `statusCode` 400
+and `expose: true` from both `assertDepthWithinLimit` and
+`assertNoCircularReference`: untrusted input that nests too far is a client
+error, and the message names only the observed depth and the limit
+(`Maximum serialization depth exceeded: 40 > 32`), never the payload.
+Constructed directly, `SerializationDepthError` still defaults to an
+unexposed 500, which is right for data your own server built.
+
 ## Safety Notes
 
 - Constraint failures do **not** carry the rejected value. `ValidationError` is

@@ -20,6 +20,20 @@ import {
 export const MAX_MEASURABLE_DEPTH = 512;
 
 /**
+ * Error options for depth failures found by these guards.
+ *
+ * The guards exist to check UNTRUSTED input, so input that nests too deep is
+ * a client error: a 400 that may be exposed. `SerializationDepthError` alone
+ * defaults to an unexposed 500, which turned a too-deep request body into an
+ * opaque server error. The message carries only the observed depth and the
+ * limit, never the payload.
+ */
+export const UNTRUSTED_DEPTH_ERROR = Object.freeze({
+  statusCode: 400,
+  expose: true,
+});
+
+/**
  * Compute the maximum nesting depth of a value.
  *
  * Primitives return 0. Arrays and objects return 1 + the maximum
@@ -50,14 +64,19 @@ export function getSerializationDepth(
  *
  * @param value - The value to check.
  * @param maxDepth - Maximum permitted nesting depth.
- * @throws {SerializationDepthError} when depth exceeds the limit.
+ * @throws {SerializationDepthError} when depth exceeds the limit, with
+ *   `statusCode` 400 and `expose: true` (see {@link UNTRUSTED_DEPTH_ERROR}).
  */
 export function assertDepthWithinLimit(value: unknown, maxDepth: number): void {
   try {
     traverse(value, { maxDepth });
   } catch (error) {
     if (error instanceof TraversalLimitError && error.halt === "depth") {
-      throw new SerializationDepthError(error.observed, maxDepth);
+      throw new SerializationDepthError(
+        error.observed,
+        maxDepth,
+        UNTRUSTED_DEPTH_ERROR,
+      );
     }
     throw error;
   }

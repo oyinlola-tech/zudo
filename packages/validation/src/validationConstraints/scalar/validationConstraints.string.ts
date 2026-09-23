@@ -1,4 +1,5 @@
 import { ValidationLength, ValidationPattern } from "@zudojs/constants";
+import { formatCount } from "@zudojs/types";
 
 import type { ValidationConstraint } from "../validationConstraints.base.js";
 
@@ -35,7 +36,7 @@ export function minLength(minimum: number): ValidationConstraint<string> {
   return createConstraint((value) => characterLength(value) >= minimum, {
     name: `min_length_${minimum}`,
     code: "min_length",
-    message: `Value must contain at least ${minimum} characters.`,
+    message: `Value must contain at least ${formatCount(minimum, "character")}.`,
     guard: (value): value is string => typeof value === "string",
   });
 }
@@ -49,7 +50,7 @@ export function maxLength(maximum: number): ValidationConstraint<string> {
   return createConstraint((value) => characterLength(value) <= maximum, {
     name: `max_length_${maximum}`,
     code: "max_length",
-    message: `Value must contain at most ${maximum} characters.`,
+    message: `Value must contain at most ${formatCount(maximum, "character")}.`,
     guard: (value): value is string => typeof value === "string",
   });
 }

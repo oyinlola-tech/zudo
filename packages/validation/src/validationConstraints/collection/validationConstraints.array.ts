@@ -1,3 +1,5 @@
+import { formatCount } from "@zudojs/types";
+
 import type { ValidationConstraint } from "../validationConstraints.base.js";
 
 import {
@@ -50,7 +52,7 @@ export function minItems<T>(
   return createConstraint((value) => value.length >= minimum, {
     name: `min_items_${minimum}`,
     code: "min_items",
-    message: `Value must contain at least ${minimum} items.`,
+    message: `Value must contain at least ${formatCount(minimum, "item")}.`,
     guard: isArrayOf,
   });
 }
@@ -66,7 +68,7 @@ export function maxItems<T>(
   return createConstraint((value) => value.length <= maximum, {
     name: `max_items_${maximum}`,
     code: "max_items",
-    message: `Value must contain at most ${maximum} items.`,
+    message: `Value must contain at most ${formatCount(maximum, "item")}.`,
     guard: isArrayOf,
   });
 }
@@ -82,7 +84,7 @@ export function exactItems<T>(
   return createConstraint((value) => value.length === length, {
     name: `exact_items_${length}`,
     code: "exact_items",
-    message: `Value must contain exactly ${length} items.`,
+    message: `Value must contain exactly ${formatCount(length, "item")}.`,
     guard: isArrayOf,
   });
 }
