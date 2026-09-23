@@ -28,6 +28,11 @@ export class WaitQueue {
   /**
    * Park the caller until a connection is released or the timeout elapses.
    *
+   * On timeout it rejects with a `StorageError`
+   * `STORAGE_CONNECTION_ACQUIRE_TIMEOUT` / 503: pool exhaustion is local,
+   * retryable contention (service unavailable), not an upstream gateway
+   * timeout (504).
+   *
    * @param timeoutMs - How long to wait before rejecting.
    * @returns A promise for the connection handed over by `release()`.
    */
@@ -44,7 +49,7 @@ export class WaitQueue {
           reject(
             new StorageError(
               `Acquire timeout: no connection available within ${timeoutMs}ms`,
-              { code: "STORAGE_CONNECTION_ACQUIRE_TIMEOUT", statusCode: 504 },
+              { code: "STORAGE_CONNECTION_ACQUIRE_TIMEOUT", statusCode: 503 },
             ),
           );
         }, timeoutMs),

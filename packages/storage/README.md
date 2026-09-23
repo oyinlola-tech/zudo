@@ -76,6 +76,24 @@ const user = await users.findById("u_1");
 const page = await users.findAll({ orderBy: "email", limit: 20, offset: 0 });
 ```
 
+`columns` governs writes, filters and sorting together. To allow different
+sets, add `writableColumns` (`create`/`update`), `filterableColumns`
+(`count`) and `sortableColumns` (`findAll`'s `orderBy`); each one you leave
+out falls back to `columns`:
+
+```typescript
+const posts = new BaseRepository(database, {
+  tableName: "posts",
+  columns: ["title", "body", "status"],
+  sortableColumns: ["createdAt", "title"], // sort by createdAt, never write it
+});
+```
+
+`create` and `update` treat a property set to `undefined` as **not provided**:
+it is left out of the SQL, so an optional field a partial DTO did not send can
+never wipe a column. Only an explicit `null` writes `NULL`. An `update` with
+nothing provided returns the current row unchanged.
+
 ## Features
 
 - Unified storage abstraction with driver-independent interfaces
@@ -113,6 +131,16 @@ const page = await users.findAll({ orderBy: "email", limit: 20, offset: 0 });
   twice rather than handing it to two callers.
 - A lock can expire while its holder is still working. Pass `Lock.fence` to the
   protected resource and reject writes carrying a stale one.
+- Contention is not a gateway timeout. `acquire()` on a lock that stays held
+  past `timeout` throws `STORAGE_LOCK_ACQUIRE_TIMEOUT` with status **409**
+  (conflict, as `lockTimeoutError` in `@zudojs/errors` does); a pool with no
+  free connection within `acquireTimeout` (`STORAGE_CONNECTION_ACQUIRE_TIMEOUT`),
+  or a factory that does not produce one in time (`STORAGE_CONNECTION_TIMEOUT`),
+  throws **503** (service unavailable, retryable, as `@zudojs/database` maps
+  Prisma's pool timeout). 504 is reserved for an upstream gateway timing out.
+- `StorageLifecycleManager` drains and shuts components down one at a time in
+  **reverse** registration order, so a component stops before the ones it was
+  registered after (and usually depends on). A failure does not stop the rest.
 
 ## Use Cases
 

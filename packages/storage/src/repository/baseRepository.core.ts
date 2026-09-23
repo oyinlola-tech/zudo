@@ -11,6 +11,7 @@ import type {
   QueryParameter,
   Repository,
 } from "../types/storage.type.js";
+import { providedKeys } from "./baseRepository.columns.js";
 import type { FindAllOptions, TableRef } from "./baseRepository.query.js";
 import {
   buildCount,
@@ -33,13 +34,20 @@ export interface BaseRepositoryOptions {
   /** The primary key column name (default: "id"). */
   readonly primaryKey?: string;
   /**
-   * Optional allowlist of writable and filterable columns.
+   * Optional allowlist of writable, filterable and sortable columns.
    *
    * When supplied, any column name reaching `create`, `update`, `count` or
-   * `findAll`'s `orderBy` must be a member. Strongly recommended for
-   * repositories whose inputs derive from request data.
+   * `findAll`'s `orderBy` must be a member, unless the specific list below
+   * for that use is supplied. Strongly recommended for repositories whose
+   * inputs derive from request data.
    */
   readonly columns?: readonly string[];
+  /** Columns `create` and `update` may write. Defaults to `columns`. */
+  readonly writableColumns?: readonly string[];
+  /** Columns `count` may filter on. Defaults to `columns`. */
+  readonly filterableColumns?: readonly string[];
+  /** Columns `findAll` may sort by (`orderBy`). Defaults to `columns`. */
+  readonly sortableColumns?: readonly string[];
 }
 
 /**
@@ -61,6 +69,11 @@ export class BaseRepository<
       options.tableName,
       options.primaryKey ?? "id",
       options.columns,
+      {
+        ...(options.writableColumns ? { writableColumns: options.writableColumns } : {}),
+        ...(options.filterableColumns ? { filterableColumns: options.filterableColumns } : {}),
+        ...(options.sortableColumns ? { sortableColumns: options.sortableColumns } : {}),
+      },
     );
   }
 
@@ -98,6 +111,9 @@ export class BaseRepository<
 
   /**
    * Create a new entity.
+   *
+   * Properties set to `undefined` are treated as not provided and omitted
+   * from the INSERT; `null` inserts `NULL`.
    */
   async create(entity: Entity): Promise<Entity> {
     const result = await this.database.query<Entity>(
@@ -108,9 +124,14 @@ export class BaseRepository<
 
   /**
    * Update an entity by primary key.
+   *
+   * Properties set to `undefined` are treated as not provided: they are
+   * left out of the UPDATE, so a partial DTO cannot wipe columns it did
+   * not send. Only an explicit `null` writes `NULL`. When nothing is
+   * provided the current row is returned unchanged.
    */
   async update(id: ID, changes: Partial<Entity>): Promise<Entity> {
-    if (Object.keys(changes).length === 0) {
+    if (providedKeys(changes).length === 0) {
       const existing = await this.findById(id);
       if (!existing) {
         throw new NotFoundError(`Entity not found: ${String(id)}`, {

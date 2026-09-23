@@ -239,7 +239,7 @@ export class ConnectionPool {
                 `Connection timeout: the pool factory did not produce a connection within ${limit}ms`,
                 {
                   code: "STORAGE_CONNECTION_TIMEOUT",
-                  statusCode: 504,
+                  statusCode: 503,
                 },
               ),
             );

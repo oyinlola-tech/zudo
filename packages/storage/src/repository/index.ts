@@ -12,3 +12,11 @@ export {
 } from "./identifier.helper.js";
 export type { SortDirection } from "./identifier.helper.js";
 export type { FindAllOptions, TableRef } from "./baseRepository.query.js";
+export {
+  resolveColumnPolicy,
+  providedKeys,
+} from "./baseRepository.columns.js";
+export type {
+  ColumnPolicy,
+  ColumnPolicyOptions,
+} from "./baseRepository.columns.js";

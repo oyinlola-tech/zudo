@@ -12,16 +12,27 @@ import type {
   StorageLifecyclePhase,
 } from "../types/storage.type.js";
 
-/** Runs an operation across components, collecting rather than short-circuiting. */
-async function forEachComponent(
+/**
+ * Runs an operation across components one at a time in reverse
+ * registration order, collecting failures rather than short-circuiting.
+ *
+ * Reverse order is what teardown needs: a component registered after
+ * another usually depends on it (a repository on its connection pool), so
+ * it must finish draining before what it depends on stops.
+ */
+async function forEachComponentReversed(
   components: readonly StorageLifecycle[],
   operation: string,
   run: (component: StorageLifecycle) => Promise<void>,
 ): Promise<void> {
-  const results = await Promise.allSettled(components.map(run));
-  const failures = results.filter(
-    (result): result is PromiseRejectedResult => result.status === "rejected",
-  );
+  const failures: unknown[] = [];
+  for (const component of [...components].reverse()) {
+    try {
+      await run(component);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
 
   if (failures.length === 0) return;
 
@@ -30,10 +41,7 @@ async function forEachComponent(
     {
       code: "STORAGE_LIFECYCLE_OPERATION_FAILED",
       statusCode: 500,
-      cause: new AggregateError(
-        failures.map((failure) => failure.reason),
-        `Component ${operation} failures`,
-      ),
+      cause: new AggregateError(failures, `Component ${operation} failures`),
     },
   );
 }
@@ -110,18 +118,25 @@ export class StorageLifecycleManager implements StorageLifecycle {
     };
   }
 
+  /** Drains components one at a time in reverse registration order. */
   async drain(): Promise<void> {
     this.phase = "draining";
     try {
-      await forEachComponent(this.components, "drain", (c) => c.drain());
+      await forEachComponentReversed(this.components, "drain", (c) => c.drain());
     } finally {
       this.phase = "drained";
     }
   }
 
+  /**
+   * Shuts every component down, one at a time in reverse registration
+   * order. A failing component does not stop the others.
+   */
   async shutdown(): Promise<void> {
     try {
-      await forEachComponent(this.components, "shutdown", (c) => c.shutdown());
+      await forEachComponentReversed(this.components, "shutdown", (c) =>
+        c.shutdown(),
+      );
     } finally {
       this.phase = "shutdown";
     }

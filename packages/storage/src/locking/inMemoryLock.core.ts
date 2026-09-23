@@ -48,6 +48,10 @@ export class InMemoryLockManager implements LockManager {
    *
    * Waiters are parked in FIFO order and woken by `release()`, so a released
    * lock is handed over immediately rather than after a polling interval.
+   *
+   * On timeout it rejects with a `StorageError` `STORAGE_LOCK_ACQUIRE_TIMEOUT`
+   * / 409: another holder owns the resource, which is a conflict (the
+   * status `lockTimeoutError` in `@zudojs/errors` uses), not a 504.
    */
   async acquire(resource: string, options?: LockOptions): Promise<Lock> {
     const opts = withDefaults(options);
@@ -68,7 +72,7 @@ export class InMemoryLockManager implements LockManager {
 
     throw new StorageError(
       `Failed to acquire lock on "${resource}" within ${opts.timeout}ms`,
-      { code: "STORAGE_LOCK_ACQUIRE_TIMEOUT", statusCode: 504 },
+      { code: "STORAGE_LOCK_ACQUIRE_TIMEOUT", statusCode: 409 },
     );
   }
 

@@ -8,18 +8,29 @@
 
 import type { Query, QueryParameter } from "../types/storage.type.js";
 import {
+  type ColumnPolicy,
+  type ColumnPolicyOptions,
+  filterableColumnsOf,
+  providedKeys,
+  resolveColumnPolicy,
+  sortableColumnsOf,
+  writableColumnsOf,
+} from "./baseRepository.columns.js";
+import {
   assertIdentifier,
   assertIdentifiers,
   assertRowBound,
   assertSortDirection,
 } from "./identifier.helper.js";
 
-/** Table and primary key names for a repository, validated once at construction. */
-export interface TableRef {
+/**
+ * Table and primary key names for a repository, validated once at
+ * construction, plus its column allow-lists. `writableColumns`,
+ * `filterableColumns` and `sortableColumns` each fall back to `columns`.
+ */
+export interface TableRef extends ColumnPolicy {
   readonly tableName: string;
   readonly primaryKey: string;
-  /** When set, every column touched by a write or filter must be a member. */
-  readonly columns?: ReadonlySet<string>;
 }
 
 /** Options accepted by {@link buildFindAll}. */
@@ -50,17 +61,21 @@ export function buildFindByIds(
   };
 }
 
-/** Builds an insert query from an entity's own enumerable properties. */
+/**
+ * Builds an insert query from an entity's own enumerable properties.
+ * Properties whose value is `undefined` are omitted (the column keeps its
+ * default); `null` inserts `NULL`.
+ */
 export function buildCreate(
   table: TableRef,
   entity: Record<string, unknown>,
 ): Query {
-  const keys = Object.keys(entity);
+  const keys = providedKeys(entity);
   if (keys.length === 0) {
     throw new TypeError("Cannot create an entity with no properties.");
   }
 
-  const columns = assertIdentifiers(keys, "column name", table.columns);
+  const columns = assertIdentifiers(keys, "column name", writableColumnsOf(table));
   const placeholders = columns.map((_, index) => `$${index + 1}`).join(", ");
 
   return {
@@ -69,14 +84,21 @@ export function buildCreate(
   };
 }
 
-/** Builds an update-by-primary-key query. */
+/**
+ * Builds an update-by-primary-key query. Properties whose value is
+ * `undefined` are omitted (the column is left unchanged); `null` sets
+ * `NULL`. Callers must handle a payload with no provided properties.
+ */
 export function buildUpdate(
   table: TableRef,
   id: QueryParameter,
   changes: Record<string, unknown>,
 ): Query {
-  const keys = Object.keys(changes);
-  const columns = assertIdentifiers(keys, "column name", table.columns);
+  const keys = providedKeys(changes);
+  if (keys.length === 0) {
+    throw new TypeError("Cannot update an entity with no provided properties.");
+  }
+  const columns = assertIdentifiers(keys, "column name", writableColumnsOf(table));
   const setClauses = columns
     .map((column, index) => `${column} = $${index + 1}`)
     .join(", ");
@@ -111,7 +133,7 @@ export function buildFindAll(table: TableRef, options?: FindAllOptions): Query {
     const column = assertIdentifiers(
       [options.orderBy],
       "sort column",
-      table.columns,
+      sortableColumnsOf(table),
     )[0]!;
     text += ` ORDER BY ${column} ${assertSortDirection(options.order)}`;
   }
@@ -142,7 +164,11 @@ export function buildCount(
   if (where) {
     const keys = Object.keys(where);
     if (keys.length > 0) {
-      const columns = assertIdentifiers(keys, "column name", table.columns);
+      const columns = assertIdentifiers(
+        keys,
+        "column name",
+        filterableColumnsOf(table),
+      );
       text += ` WHERE ${columns
         .map((column, index) => `${column} = $${index + 1}`)
         .join(" AND ")}`;
@@ -153,17 +179,19 @@ export function buildCount(
   return { text, parameters };
 }
 
-/** Validates and freezes the table reference a repository was configured with. */
+/**
+ * Validates and freezes the table reference a repository was configured
+ * with. `policy` adds the specific allow-lists; each defaults to `columns`.
+ */
 export function createTableRef(
   tableName: string,
   primaryKey: string,
   columns?: readonly string[],
+  policy: Omit<ColumnPolicyOptions, "columns"> = {},
 ): TableRef {
   return Object.freeze({
     tableName: assertIdentifier(tableName, "table name"),
     primaryKey: assertIdentifier(primaryKey, "primary key column"),
-    ...(columns
-      ? { columns: new Set(assertIdentifiers(columns, "column name")) }
-      : {}),
+    ...resolveColumnPolicy({ ...policy, ...(columns ? { columns } : {}) }),
   });
 }
