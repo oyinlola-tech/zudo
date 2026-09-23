@@ -210,7 +210,7 @@ console.log(config.get("database_url"), config.string("database_url", "none"));<
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx sources.ts</code> and of the browser terminal</div><pre class="lx-no-copy">8080 127.0.0.1 300
 undefined none</pre></div>
 </figure>
-<p>The override's <code>port</code> beat the default, and every key the override did not mention kept its default. <strong>Typed accessors</strong> such as <code>number()</code>, <code>string()</code> and <code>boolean()</code> read a key as that type. <code>get()</code> gives <code>undefined</code> for a missing key, and the second argument of an accessor is a fallback. The accessors are typed as possibly <code>undefined</code> even when you give a fallback, so TypeScript may ask you to handle that case; <code>required()</code> throws instead when a key is missing.</p>
+<p>The override's <code>port</code> beat the default, and every key the override did not mention kept its default. <strong>Typed accessors</strong> such as <code>number()</code>, <code>string()</code> and <code>boolean()</code> read a key as that type. <code>get()</code> gives <code>undefined</code> for a missing key. The second argument of <code>get()</code> or an accessor is a fallback, and with a fallback TypeScript knows the result is never <code>undefined</code>: <code>config.string("database_url", "none")</code> is a <code>string</code>. When a setting must exist, use <code>requiredString()</code>, <code>requiredNumber()</code>, <code>requiredBoolean()</code> or <code>requiredDate()</code>: they convert the value and throw when it is missing or has the wrong type.</p>
 <p>In real projects the layers are nearly always the same, from lowest to highest priority:</p>
 <ol>
 <li><strong>Defaults</strong> in the code: safe values that work on a developer's computer.</li>
@@ -244,6 +244,7 @@ undefined none</pre></div>
 
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>config<span class="t-pn">.</span><span class="t-fn">toObject</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>config<span class="t-pn">.</span><span class="t-ty">number</span><span class="t-pn">(</span><span class="t-str">"port"</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-kw">typeof</span> config<span class="t-pn">.</span><span class="t-ty">number</span><span class="t-pn">(</span><span class="t-str">"port"</span><span class="t-pn">)</span><span class="t-pn">,</span> config<span class="t-pn">.</span><span class="t-ty">boolean</span><span class="t-pn">(</span><span class="t-str">"debug"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>config<span class="t-pn">.</span><span class="t-fn">scoped</span><span class="t-pn">(</span><span class="t-str">"db"</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">requiredString</span><span class="t-pn">(</span><span class="t-str">"host"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { createConfigManager, createDefaultsConfigSource, createEnvironmentConfigSource } from "@zudojs/config";
 
@@ -264,19 +265,22 @@ const config = createConfigManager({
 await config.load();
 
 console.log(config.toObject());
-console.log(config.number("port"), typeof config.number("port"), config.boolean("debug"));</script>
+console.log(config.number("port"), typeof config.number("port"), config.boolean("debug"));
+console.log(config.scoped("db").requiredString("host"));</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx env-source.ts</code> and of the browser terminal</div><pre class="lx-no-copy">{
   port: '8080',
   rate_limit_max: '50',
   debug: 'false',
   'db.host': 'db.internal'
 }
-8080 number false</pre></div>
+8080 number false
+db.internal</pre></div>
 </figure>
 <p>Notice:</p>
 <ul>
 <li><code>HOME</code> was ignored: it does not start with <code>TASKS_</code>.</li>
 <li>Every value from the environment is a <strong>string</strong>: <code>'8080'</code>, <code>'false'</code>. The environment has no other type. The typed accessors convert: <code>number("port")</code> gave the number 8080, and <code>boolean("debug")</code> turned <code>"false"</code> into <code>false</code>. A plain <code>if ("false")</code> would have been true.</li>
+<li><code>TASKS_DB__HOST</code> became the key <code>db.host</code>. <code>config.scoped("db")</code> gives a view of the keys under <code>db</code>, so a database module can read <code>host</code> without knowing the full name.</li>
 </ul>
 <p>With the real environment, leave out <code>env</code>. This example prints the port from <code>process.env</code>, or the default when the variable is not set:</p>
 <figure class="lx-example" data-index="2" data-file="env-real.ts">
@@ -436,8 +440,7 @@ export type AppConfig = Infer<typeof ConfigSchema>;</script>
 <p><code>cors_origins</code> arrives as one comma-separated string, and the <code>transform</code> turns it into a list. <code>jwt_secret</code> is the key the <a href="/learn/zudo-auth">authentication lesson</a> will use to sign tokens. If it is given, it must be at least 32 characters. Now check some bad settings:</p>
 <figure class="lx-example" data-index="6" data-file="validate.ts" data-project="cfg">
 <figcaption class="lx-bar"><span class="lx-file">validate.ts</span><button type="button" class="lx-edit" data-index="6" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="6"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
-<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">SchemaIssue</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">SchemaError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> isSchemaValidationError <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ConfigSchema</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./config.schema.js"</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> good <span class="t-op">=</span> <span class="t-ty">ConfigSchema</span><span class="t-pn">.</span><span class="t-fn">parse</span><span class="t-pn">(</span><span class="t-pn">{</span> port<span class="t-op">:</span> <span class="t-str">"8080"</span><span class="t-pn">,</span> host<span class="t-op">:</span> <span class="t-str">"0.0.0.0"</span><span class="t-pn">,</span> cors_origins<span class="t-op">:</span> <span class="t-str">"https://a.example, https://b.example"</span><span class="t-pn">,</span> rate_limit_max<span class="t-op">:</span> <span class="t-num">300</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -446,15 +449,14 @@ console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn
 <span class="t-kw">try</span> <span class="t-pn">{</span>
   <span class="t-ty">ConfigSchema</span><span class="t-pn">.</span><span class="t-fn">parse</span><span class="t-pn">(</span><span class="t-pn">{</span> port<span class="t-op">:</span> <span class="t-str">"80x"</span><span class="t-pn">,</span> host<span class="t-op">:</span> <span class="t-str">""</span><span class="t-pn">,</span> cors_origins<span class="t-op">:</span> <span class="t-str">""</span><span class="t-pn">,</span> rate_limit_max<span class="t-op">:</span> <span class="t-str">"0"</span><span class="t-pn">,</span> jwt_secret<span class="t-op">:</span> <span class="t-str">"secret"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-pn">}</span> <span class="t-kw">catch</span> <span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-pn">{</span>
-  <span class="t-kw">if</span> <span class="t-pn">(</span>error <span class="t-kw">instanceof</span> <span class="t-ty">SchemaError</span><span class="t-pn">)</span> <span class="t-pn">{</span>
-    <span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> issue <span class="t-kw">of</span> error<span class="t-pn">.</span><span class="t-prop">issues</span> <span class="t-kw">as</span> <span class="t-kw">readonly</span> <span class="t-ty">SchemaIssue</span><span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+  <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-fn">isSchemaValidationError</span><span class="t-pn">(</span>error<span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+    <span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> issue <span class="t-kw">of</span> error<span class="t-pn">.</span><span class="t-prop">issues</span><span class="t-pn">)</span> <span class="t-pn">{</span>
       console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`<span class="t-op">${</span><span class="t-prop">issue.path.join(".")</span><span class="t-op">}</span>: <span class="t-op">${</span><span class="t-prop">issue.message</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-pn">}</span>
   <span class="t-pn">}</span>
 <span class="t-pn">}</span>
 </code></pre>
-<script type="text/plain" class="lx-src">import type { SchemaIssue } from "@zudojs/schema";
-import { SchemaError } from "@zudojs/errors";
+<script type="text/plain" class="lx-src">import { isSchemaValidationError } from "@zudojs/schema";
 import { ConfigSchema } from "./config.schema.js";
 
 const good = ConfigSchema.parse({ port: "8080", host: "0.0.0.0", cors_origins: "https://a.example, https://b.example", rate_limit_max: 300 });
@@ -463,8 +465,8 @@ console.log(good);
 try {
   ConfigSchema.parse({ port: "80x", host: "", cors_origins: "", rate_limit_max: "0", jwt_secret: "secret" });
 } catch (error) {
-  if (error instanceof SchemaError) {
-    for (const issue of error.issues as readonly SchemaIssue[]) {
+  if (isSchemaValidationError(error)) {
+    for (const issue of error.issues) {
       console.log(`${issue.path.join(".")}: ${issue.message}`);
     }
   }
@@ -473,16 +475,56 @@ try {
   port: 8080,
   host: '0.0.0.0',
   cors_origins: [ 'https://a.example', 'https://b.example' ],
-  rate_limit_max: 300,
-  jwt_secret: undefined
+  rate_limit_max: 300
 }
 port: Cannot coerce string to number
-host: String must be at least 1 characters
+host: String must be at least 1 character
 rate_limit_max: Expected &gt;= 1, received 0
 jwt_secret: String must be at least 32 characters</pre></div>
 </figure>
-<p>All the problems are reported at once, each with the setting's name. <code>error.issues as readonly SchemaIssue[]</code> is the same type assertion you used in <a href="/learn/zudo-first-code#service">Your first Zudo code</a>, for the same reason: in the published <code>@zudojs/errors</code>, <code>issues</code> is typed <code>unknown[]</code>.</p>
-<div class="callout callout-note"><p class="lx-callout-label">NOTE</p><code>@zudojs/config</code> has its own <code>manager.validate()</code>, but in version 1.2.0 its <code>number</code> and <code>boolean</code> types refuse the strings that environment variables always are, even with a <code>transform</code>. Validating with <code>@zudojs/schema</code>'s <code>coerce</code>, as above, avoids that.</div>
+<p>All the problems are reported at once, each with the setting's name. <code>isSchemaValidationError</code> is the type guard you used in <a href="/learn/zudo-first-code#service">Your first Zudo code</a>. The optional <code>jwt_secret</code> was not given, so the result has no <code>jwt_secret</code> key at all.</p>
+<p><code>@zudojs/config</code> can also check values itself, with <code>manager.validate()</code> and its own small schemas. It converts environment strings for <code>NUMBER</code> and <code>BOOLEAN</code> settings, so <code>"8080"</code> becomes <code>8080</code> and <code>"no"</code> becomes <code>false</code>:</p>
+<figure class="lx-example" data-index="7" data-file="config-validate.ts">
+<figcaption class="lx-bar"><span class="lx-file">config-validate.ts</span><button type="button" class="lx-edit" data-index="7" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="7"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ConfigValueType</span><span class="t-pn">,</span> createConfigManager<span class="t-pn">,</span> createEnvironmentConfigSource <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/config"</span><span class="t-pn">;</span>
+
+<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> env <span class="t-kw">of</span> <span class="t-pn">[</span><span class="t-pn">{</span> <span class="t-cn">TASKS_PORT</span><span class="t-op">:</span> <span class="t-str">"8080"</span><span class="t-pn">,</span> <span class="t-cn">TASKS_DEBUG</span><span class="t-op">:</span> <span class="t-str">"no"</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-pn">{</span> <span class="t-cn">TASKS_PORT</span><span class="t-op">:</span> <span class="t-str">"80x"</span><span class="t-pn">,</span> <span class="t-cn">TASKS_DEBUG</span><span class="t-op">:</span> <span class="t-str">"maybe"</span> <span class="t-pn">}</span><span class="t-pn">]</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+  <span class="t-kw">const</span> config <span class="t-op">=</span> <span class="t-fn">createConfigManager</span><span class="t-pn">(</span><span class="t-pn">{</span> sources<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-fn">createEnvironmentConfigSource</span><span class="t-pn">(</span><span class="t-pn">{</span> prefix<span class="t-op">:</span> <span class="t-str">"TASKS_"</span><span class="t-pn">,</span> env <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">await</span> config<span class="t-pn">.</span><span class="t-fn">load</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">try</span> <span class="t-pn">{</span>
+    <span class="t-kw">const</span> settings <span class="t-op">=</span> config<span class="t-pn">.</span><span class="t-prop">validate</span><span class="t-op">&lt;</span><span class="t-pn">{</span> port<span class="t-op">:</span> <span class="t-ty">number</span><span class="t-pn">;</span> debug<span class="t-op">:</span> <span class="t-ty">boolean</span> <span class="t-pn">}</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-pn">{</span>
+      properties<span class="t-op">:</span> <span class="t-pn">{</span>
+        port<span class="t-op">:</span> <span class="t-pn">{</span> <span class="t-kw">type</span><span class="t-op">:</span> <span class="t-ty">ConfigValueType</span><span class="t-pn">.</span><span class="t-cn">NUMBER</span><span class="t-pn">,</span> min<span class="t-op">:</span> <span class="t-num">0</span><span class="t-pn">,</span> max<span class="t-op">:</span> <span class="t-num">65535</span><span class="t-pn">,</span> required<span class="t-op">:</span> <span class="t-cn">true</span> <span class="t-pn">}</span><span class="t-pn">,</span>
+        debug<span class="t-op">:</span> <span class="t-pn">{</span> <span class="t-kw">type</span><span class="t-op">:</span> <span class="t-ty">ConfigValueType</span><span class="t-pn">.</span><span class="t-cn">BOOLEAN</span> <span class="t-pn">}</span><span class="t-pn">,</span>
+      <span class="t-pn">}</span><span class="t-pn">,</span>
+    <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>settings<span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span> <span class="t-kw">catch</span> <span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-pn">{</span>
+    console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-pn">(</span>error <span class="t-kw">as</span> <span class="t-ty">Error</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">name</span> <span class="t-op">+</span> <span class="t-str">":"</span><span class="t-pn">,</span> <span class="t-pn">(</span>error <span class="t-kw">as</span> <span class="t-ty">Error</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">message</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span>
+<span class="t-pn">}</span>
+</code></pre>
+<script type="text/plain" class="lx-src">import { ConfigValueType, createConfigManager, createEnvironmentConfigSource } from "@zudojs/config";
+
+for (const env of [{ TASKS_PORT: "8080", TASKS_DEBUG: "no" }, { TASKS_PORT: "80x", TASKS_DEBUG: "maybe" }]) {
+  const config = createConfigManager({ sources: [createEnvironmentConfigSource({ prefix: "TASKS_", env })] });
+  await config.load();
+  try {
+    const settings = config.validate<{ port: number; debug: boolean }>({
+      properties: {
+        port: { type: ConfigValueType.NUMBER, min: 0, max: 65535, required: true },
+        debug: { type: ConfigValueType.BOOLEAN },
+      },
+    });
+    console.log(settings);
+  } catch (error) {
+    console.log((error as Error).name + ":", (error as Error).message);
+  }
+}</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx config-validate.ts</code> and of the browser terminal</div><pre class="lx-no-copy">{ port: 8080, debug: false }
+ConfigManagerValidationError: Configuration validation failed with 2 issues.</pre></div>
+</figure>
+<p>Both tools work. This course keeps <code>@zudojs/schema</code> for configuration: you already know it from request bodies, it turns the origin list into an array with <code>transform</code>, and its issues name each bad setting in a readable message.</p>
 </section>
 
 <section>
@@ -494,8 +536,8 @@ jwt_secret: String must be at least 32 characters</pre></div>
 <li>Secrets never appear in logs or error messages. Logs are copied to many places and read by many people.</li>
 </ol>
 <p><code>@zudojs/config</code> helps with rule 3. It marks keys whose names look secret (containing <code>secret</code>, <code>password</code>, <code>token</code>, <code>api_key</code>, <code>database_url</code> and similar) as <strong>sensitive</strong>. <code>toSafeObject()</code> is the copy for logs; <code>toObject()</code> and the accessors still give your code the real values:</p>
-<figure class="lx-example" data-index="7" data-file="redact.ts">
-<figcaption class="lx-bar"><span class="lx-file">redact.ts</span><button type="button" class="lx-edit" data-index="7" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="7"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<figure class="lx-example" data-index="8" data-file="redact.ts">
+<figcaption class="lx-bar"><span class="lx-file">redact.ts</span><button type="button" class="lx-edit" data-index="8" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="8"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createConfigManager<span class="t-pn">,</span> createEnvironmentConfigSource <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/config"</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> config <span class="t-op">=</span> <span class="t-fn">createConfigManager</span><span class="t-pn">(</span><span class="t-pn">{</span>
@@ -513,7 +555,7 @@ jwt_secret: String must be at least 32 characters</pre></div>
 <span class="t-kw">await</span> config<span class="t-pn">.</span><span class="t-fn">load</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"for the logs:"</span><span class="t-pn">,</span> config<span class="t-pn">.</span><span class="t-fn">toSafeObject</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"secret length for the code:"</span><span class="t-pn">,</span> config<span class="t-pn">.</span><span class="t-prop">required</span><span class="t-op">&lt;</span><span class="t-ty">string</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-str">"jwt_secret"</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">length</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"secret length for the code:"</span><span class="t-pn">,</span> config<span class="t-pn">.</span><span class="t-fn">requiredString</span><span class="t-pn">(</span><span class="t-str">"jwt_secret"</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">length</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { createConfigManager, createEnvironmentConfigSource } from "@zudojs/config";
 
@@ -532,13 +574,13 @@ const config = createConfigManager({
 await config.load();
 
 console.log("for the logs:", config.toSafeObject());
-console.log("secret length for the code:", config.required<string>("jwt_secret").length);</script>
+console.log("secret length for the code:", config.requiredString("jwt_secret").length);</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx redact.ts</code> and of the browser terminal</div><pre class="lx-no-copy">for the logs: { port: '8080', jwt_secret: '[REDACTED]', database_url: '[REDACTED]' }
 secret length for the code: 32</pre></div>
 </figure>
 <p>The database URL was redacted too: it contains a password, and <code>database_url</code> is on the list of sensitive names. The logger from <code>@zudojs/logger</code> applies the same kind of redaction to anything you log, as a second safety net:</p>
-<figure class="lx-example" data-index="8" data-file="redact-log.ts">
-<figcaption class="lx-bar"><span class="lx-file">redact-log.ts</span><button type="button" class="lx-edit" data-index="8" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="8"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<figure class="lx-example" data-index="9" data-file="redact-log.ts">
+<figcaption class="lx-bar"><span class="lx-file">redact-log.ts</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="9"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createLogger <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/logger"</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> logger <span class="t-op">=</span> <span class="t-fn">createLogger</span><span class="t-pn">(</span><span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"task-api"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -548,13 +590,7 @@ logger<span class="t-pn">.</span><span class="t-fn">info</span><span class="t-pn
 
 const logger = createLogger({ name: "task-api" });
 logger.info("configuration loaded", { port: 8080, jwtSecret: "n8VqT2xLm4pR7sKd9wYb3cFh6jZa1eUo" });</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx redact-log.ts</code> and of the browser terminal</div><pre class="lx-no-copy">{
-  timestamp: '2026-09-23T14:19:02.590Z',
-  level: 'info',
-  message: '2026-09-23T14:19:02.590Z [INFO] [task-api] configuration loaded port=8080 jwtSecret=[REDACTED]',
-  logger: 'task-api',
-  metadata: { port: 8080, jwtSecret: '[REDACTED]' }
-}</pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx redact-log.ts</code> and of the browser terminal</div><pre class="lx-no-copy">2026-09-23T14:19:02.590Z [INFO] [task-api] configuration loaded port=8080 jwtSecret=[REDACTED]</pre></div>
 </figure>
 <div class="callout callout-warning"><p class="lx-callout-label">REDACTION WORKS ON NAMES</p>Both tools recognise a secret by its <em>key name</em>. A secret stored under an innocent name such as <code>note</code> is logged in full. Give secrets obvious names, and never log a whole <code>process.env</code>.</div>
 </section>
@@ -572,8 +608,8 @@ logger.info("configuration loaded", { port: 8080, jwtSecret: "n8VqT2xLm4pR7sKd9w
 </tbody>
 </table></div>
 <p>For development, typing variables in front of every command gets old. Put them in a file called <code>.env</code> and let Node.js load it with <code>--env-file</code>. The generated <code>.gitignore</code> already lists <code>.env</code>, so it is never committed. The committed <code>.env.example</code> shows which variables exist, with no real values:</p>
-<figure class="lx-example" data-index="9" data-file=".env" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">.env</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
+<figure class="lx-example" data-index="10" data-file=".env" data-project="task-api">
+<figcaption class="lx-bar"><span class="lx-file">.env</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-cn">NODE_ENV</span><span class="t-op">=</span>development
 <span class="t-cn">TASKS_PORT</span><span class="t-op">=</span><span class="t-num">3000</span>
 <span class="t-cn">TASKS_CORS_ORIGINS</span><span class="t-op">=</span>http<span class="t-op">://</span>localhost<span class="t-op">:</span><span class="t-num">5173</span>
@@ -588,8 +624,8 @@ TASKS_CORS_ORIGINS=http://localhost:5173</script>
 <section>
 <h2 id="task-api">Put it in the Task API</h2>
 <p>The generated project has an empty <code>src/configs/index.ts</code>. Fill it with one function, <code>loadConfig</code>, that does everything from this lesson: the three sources, validation, and the production rules. It takes the environment as a parameter (the real <code>process.env</code> by default), which makes it easy to test:</p>
-<figure class="lx-example" data-index="10" data-file="src/configs/index.ts" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">src/configs/index.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="11" data-file="src/configs/index.ts" data-project="task-api">
+<figcaption class="lx-bar"><span class="lx-file">src/configs/index.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> readFile <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"node:fs/promises"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span>
   <span class="t-ty">ConfigSourceType</span><span class="t-pn">,</span>
@@ -715,8 +751,8 @@ export async function loadConfig(env: Env = process.env, file = "config.json"): 
 }</script>
 </figure>
 <p>Two details. <code>safeParse</code> is used here, so the issues are typed properly and need no type assertion. And the error message lists setting <em>names</em> only, never values, so even a wrong secret cannot leak into the log through it. This script tries the function with four different environments:</p>
-<figure class="lx-example" data-index="11" data-file="src/check-config.ts" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">src/check-config.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="12" data-file="src/check-config.ts" data-project="task-api">
+<figcaption class="lx-bar"><span class="lx-file">src/check-config.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> loadConfig <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./configs/index.js"</span><span class="t-pn">;</span>
 
 <span class="t-kw">async</span> <span class="t-kw">function</span> <span class="t-fn">attempt</span><span class="t-pn">(</span>label<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">,</span> env<span class="t-op">:</span> <span class="t-ty">Record</span><span class="t-op">&lt;</span><span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-ty">string</span><span class="t-op">&gt;</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Promise</span><span class="t-op">&lt;</span><span class="t-kw">void</span><span class="t-op">&gt;</span> <span class="t-pn">{</span>
@@ -763,8 +799,8 @@ production  -&gt; 3000 [ 'https://tasks.example.com' ] true</pre></div>
 </figure>
 <p>Development starts with its convenient defaults. A wrong port and a production start without its secret both stop with a <code>ConfigurationError</code> that says exactly what to fix. The last one has everything and starts.</p>
 <p>In <code>src/server.ts</code>, load the configuration first, before anything else starts, and use it everywhere the code had fixed values. If it is invalid, print the message and exit with code 1, without a stack trace: the message already says what to fix. The <code>DEFAULT_PORT</code> constant and the <code>resolvePort</code> function are no longer needed:</p>
-<figure class="lx-example" data-index="12" data-file="src/server.ts (part)" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">src/server.ts (part)</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="13" data-file="src/server.ts (part)" data-project="task-api">
+<figcaption class="lx-bar"><span class="lx-file">src/server.ts (part)</span><button type="button" class="lx-edit" data-index="13" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> loadConfig<span class="t-pn">,</span> <span class="t-kw">type</span> <span class="t-ty">AppConfig</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./configs/index.js"</span><span class="t-pn">;</span>
 
 <span class="t-kw">let</span> config<span class="t-op">:</span> <span class="t-ty">AppConfig</span><span class="t-pn">;</span>
@@ -781,7 +817,7 @@ production  -&gt; 3000 [ 'https://tasks.example.com' ] true</pre></div>
 
 <span class="t-kw">const</span> server <span class="t-op">=</span> <span class="t-fn">createHttpServer</span><span class="t-pn">(</span><span class="t-pn">{</span>
   adapter<span class="t-op">:</span> <span class="t-fn">createNodeHttpAdapter</span><span class="t-pn">(</span><span class="t-pn">{</span> host<span class="t-op">:</span> config<span class="t-pn">.</span><span class="t-prop">host</span><span class="t-pn">,</span> port<span class="t-op">:</span> config<span class="t-pn">.</span><span class="t-prop">port</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
-  handler<span class="t-op">:</span> <span class="t-pn">(</span>request<span class="t-op">:</span> <span class="t-ty">HttpRequestContext</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> pipeline<span class="t-pn">.</span><span class="t-fn">execute</span><span class="t-pn">(</span>request<span class="t-pn">,</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">,</span>
+  handler<span class="t-op">:</span> <span class="t-pn">(</span>request<span class="t-pn">)</span> <span class="t-op">=&gt;</span> pipeline<span class="t-pn">.</span><span class="t-fn">execute</span><span class="t-pn">(</span>request<span class="t-pn">,</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">,</span>
   gracefulShutdownTimeout<span class="t-op">:</span> <span class="t-num">20_000</span><span class="t-pn">,</span>
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
@@ -804,7 +840,7 @@ const pipeline = buildPipeline(router, { corsOrigins: config.cors_origins, produ
 
 const server = createHttpServer({
   adapter: createNodeHttpAdapter({ host: config.host, port: config.port }),
-  handler: (request: HttpRequestContext) => pipeline.execute(request, createResponseContext()),
+  handler: (request) => pipeline.execute(request, createResponseContext()),
   gracefulShutdownTimeout: 20_000,
 });
 
@@ -834,8 +870,8 @@ NODE_ENV=production npx tsx src/server.ts"><span class="lx-cmd"><span class="lx-
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A request timeout setting</h3><p>Add a <code>request_timeout_ms</code> setting to the <a href="#validate">config schema</a>, with a default of 30000 in the defaults source. It must be a whole number from 1000 to 120000. Check it with <code>TASKS_REQUEST_TIMEOUT_MS=500</code> and with <code>5000</code>.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="13" data-file="timeout-setting.ts">
-<figcaption class="lx-bar"><span class="lx-file">timeout-setting.ts</span><button type="button" class="lx-edit" data-index="13" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="13"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A request timeout setting</h3><p>Add a <code>request_timeout_ms</code> setting to the <a href="#validate">config schema</a>, with a default of 30000 in the defaults source. It must be a whole number from 1000 to 120000. Check it with <code>TASKS_REQUEST_TIMEOUT_MS=500</code> and with <code>5000</code>.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="14" data-file="timeout-setting.ts">
+<figcaption class="lx-bar"><span class="lx-file">timeout-setting.ts</span><button type="button" class="lx-edit" data-index="14" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="14"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createConfigManager<span class="t-pn">,</span> createDefaultsConfigSource<span class="t-pn">,</span> createEnvironmentConfigSource <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/config"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
 

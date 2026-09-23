@@ -68,14 +68,19 @@ console.log(orders);
 <h2 id="generate">Generate a modular monolith</h2>
 <p>The ZudoJS CLI you met in <a href="/learn/zudo-create-project">Create the Task API project</a> has a template for this. Create ShopFlow with it, with the <code>events</code> and <code>cqrs</code> capabilities:</p>
 <shell>
-$ npx zudojs-cli@latest create shopflow --architecture modular-monolith --package-manager npm --capabilities "events,cqrs"
+$ zudojs create shopflow --architecture modular-monolith --package-manager npm --capabilities "events,cqrs"
+│
 ◇  Project structure created
-◇  Backend project generated (30 files)
+│
+◇  Backend project generated (40 files)
+Capabilities build on: messaging, events
 
-added 72 packages, and audited 73 packages in 15s
+added 67 packages, and audited 68 packages in 36s
 …
 ◆  Dependencies installed
+│
 ◇  Project validated
+│
 ◇  Git repository initialized
 │
 ◇  Next steps ──╮
@@ -88,20 +93,20 @@ added 72 packages, and audited 73 packages in 15s
 └  Project created successfully.
 $ cd shopflow
 </shell>
-<p>A new modular monolith has no modules yet. Add two with <code>zudojs generate module</code>:</p>
+<p><code>Capabilities build on: messaging, events</code> means CQRS needs two other packages, so the CLI added them too. A new modular monolith has no modules yet. Add two with <code>zudojs generate module</code>:</p>
 <shell>
-$ npx zudojs-cli generate module catalog
+$ zudojs generate module catalog
 Detected architecture: modular-monolith
-Warning: Could not register the module in app.ts automatically. Add:
-  import { CatalogModule } from "./modules/index.js";
-  new CatalogModule() in the modules passed to createRuntime
-Generated 5 files:
+Generated 8 files:
   - src/modules/catalog/catalog.module.ts
   - src/modules/catalog/index.ts
   - src/modules/index.ts
   - src/modules/catalog/features/catalog.feature.ts
   - src/modules/catalog/features/index.ts
-$ npx zudojs-cli generate module orders
+  - src/modules/catalog/routes/index.ts
+  - src/app.ts
+  - src/routes/index.ts
+$ zudojs generate module orders
 …
 $ tree src/modules
 src/modules
@@ -110,64 +115,63 @@ src/modules
 │   ├── features
 │   │   ├── catalog.feature.ts
 │   │   └── index.ts
-│   └── index.ts
+│   ├── index.ts
+│   └── routes
+│       └── index.ts
 ├── index.ts
 └── orders
     ├── features
     │   ├── index.ts
     │   └── orders.feature.ts
     ├── index.ts
-    └── orders.module.ts
+    ├── orders.module.ts
+    └── routes
+        └── index.ts
 
-5 directories, 9 files
+7 directories, 11 files
 </shell>
 <p>Each module is a folder with the same shape:</p>
 <ul>
 <li><code>catalog.module.ts</code> is the module class. The runtime calls its <code>onInitialize</code> when the app starts and <code>onShutdown</code> when it stops, as you saw in <a href="/learn/zudo-runtime">the runtime lesson</a>.</li>
 <li><code>features/</code> holds the module's code: services, repositories, handlers. It is private to the module.</li>
+<li><code>routes/index.ts</code> registers the module's HTTP routes. It is empty for now.</li>
 <li><code>index.ts</code> is the module's <strong>public API</strong>. Whatever it exports is what other modules may use. Right now it exports only the module class.</li>
 <li><code>src/modules/index.ts</code> collects the modules for <code>app.ts</code>.</li>
 </ul>
-<p>The warning is real: in CLI 2.0.1, the <code>app.ts</code> of a fresh modular monolith has no module list yet, so the generator cannot add the module for you. Do it by hand. Open <code>src/app.ts</code> and add the import and the loop:</p>
+<p>The last two files in the list were <em>updated</em>, not created: the CLI registered the module for you. It added the module to the list the runtime starts in <code>src/app.ts</code>, and its routes to <code>registerRoutes</code> in <code>src/routes/index.ts</code>. After both commands, <code>src/app.ts</code> contains:</p>
 <example file="app.ts (part)" browser="no">
-import { CatalogModule, OrdersModule } from "./modules/index.js";
+import { CatalogModule } from "./modules/index.js";
+import { OrdersModule } from "./modules/index.js";
 
 // inside createApp():
-const modules = new Map<string, Module>();
-for (const module of [new CatalogModule(), new OrdersModule()]) {
+for (const module of [
+  new OrdersModule(),
+  new CatalogModule(),
+] as Module[]) {
   modules.set(module.id, module);
 }
 </example>
-<p>Orders will need the catalog, so tell the runtime. In <code>src/modules/orders/orders.module.ts</code>, add a <code>dependencies</code> list to the constructor:</p>
+<p>The list order does not decide the start order. Orders will need the catalog, so tell the runtime. In <code>src/modules/orders/orders.module.ts</code>, add a <code>dependencies</code> list to the constructor:</p>
 <example file="orders.module.ts (part)" browser="no">
 public constructor() {
   super({ version: "0.1.0", dependencies: ["catalog"] });
 }
 </example>
-<p>Start the app. The runtime starts the catalog first because orders depends on it:</p>
+<p>Start the app. The runtime starts the catalog first because orders depends on it, even though orders comes first in the list:</p>
 <shell>
 $ npm run dev
 
 > shopflow@0.1.0 dev
 > tsx watch src/server.ts
 
-{
-  timestamp: '2026-09-23T13:25:18.309Z',
-  level: 'info',
-  message: '2026-09-23T13:25:18.309Z [INFO] [shopflow] catalog module initialized',
-  logger: 'shopflow',
-  metadata: {}
-}
-{
-  timestamp: '2026-09-23T13:25:18.314Z',
-  level: 'info',
-  message: '2026-09-23T13:25:18.314Z [INFO] [shopflow] orders module initialized',
-  logger: 'shopflow',
-  metadata: {}
-}
-…
-Listening on port 3000
+2026-09-23T17:35:22.035Z [INFO] [shopflow] catalog module initialized
+2026-09-23T17:35:22.037Z [INFO] [shopflow] orders module initialized
+2026-09-23T17:35:22.038Z [INFO] [shopflow] All modules initialized. modules=["integrations","catalog","orders"] durationMs=7
+2026-09-23T17:35:22.040Z [INFO] [shopflow] All modules started. modules=["integrations","catalog","orders"] durationMs=1
+2026-09-23T17:35:22.041Z [INFO] [shopflow] Runtime is ready. runtimeId=rt_82876e3fec4a4169b7a13157658af51d environment=development
+Listening on http://0.0.0.0:3000
 </shell>
+<p>Press <kbd>Ctrl</kbd> + <kbd>C</kbd> and the order reverses: <code>orders module stopped</code>, then <code>catalog module stopped</code>. A module never loses something it depends on while it is still running.</p>
 </section>
 
 <section>
@@ -557,7 +561,7 @@ loyalty: ada@example.com has 5 points
 <ul>
 <li>A monolith is one deployable program. It is a fine start; it only becomes a problem when every part can reach into every other part.</li>
 <li>A modular monolith keeps one deployment but splits the code into modules along business areas. Each module has a small public API and owns its data.</li>
-<li><code>zudojs create --architecture modular-monolith</code> and <code>zudojs generate module</code> give you the folders. Register each module in <code>app.ts</code> and declare its <code>dependencies</code>.</li>
+<li><code>zudojs create --architecture modular-monolith</code> and <code>zudojs generate module</code> give you the folders and register each module in <code>app.ts</code> and its routes in <code>registerRoutes</code>. You declare each module's <code>dependencies</code>.</li>
 <li>Modules talk through public interfaces (answers now), events (something happened) and commands or queries (work by name). Logger, config, event bus and database server are shared; tables are not.</li>
 </ul>
 <p>Next, you take one of these modules out of the process and into its own service, and meet everything that the network makes harder.</p>

@@ -63,7 +63,7 @@ Globex
 <tbody>
 <tr><td><code>createJwtResolver</code></td><td>The <code>tenant_id</code> claim of the user's verified token or session</td><td><code>trusted</code></td></tr>
 <tr><td><code>createSubdomainResolver</code>, <code>createDomainResolver</code></td><td>The host name, like <code>acme.tasks.test</code></td><td><code>verified</code></td></tr>
-<tr><td><code>createHeaderResolver</code>, <code>createPathResolver</code></td><td>An <code>x-tenant-id</code> header, or a path like <code>/t/acme/tasks</code></td><td><code>untrusted</code></td></tr>
+<tr><td><code>createHeaderResolver</code>, <code>createPathResolver</code></td><td>An <code>x-tenant-id</code> header, or the first part of a path like <code>/acme/tasks</code> (for <code>/t/acme/tasks</code>, pass <code>{ prefix: "/t" }</code>)</td><td><code>untrusted</code></td></tr>
 </tbody>
 </table></div>
 <p>The <strong>trust level</strong> says how much you can believe the answer. A header is <code>untrusted</code> because the client writes it: anybody can send <code>x-tenant-id: globex</code> with <code>curl</code>. If your app believed it, every Acme user could read Globex's tasks by adding one line to their request. The session, on the other hand, was created by your server when the user logged in (as in <a href="/learn/zudo-auth">the auth lesson</a>), so the tenant stored in it is <code>trusted</code>.</p>
@@ -88,10 +88,9 @@ export function fakeRequest(request: FakeRequest): HttpResolverContext {
 </example>
 <example file="resolve.ts" project="tenancy" browser="no">
 import { createHeaderResolver, createJwtResolver, createResolverChain, createSubdomainResolver } from "@zudojs/tenancy";
-import type { HttpResolverContext } from "@zudojs/tenancy";
 import { fakeRequest } from "./fake-request.js";
 
-const chain = createResolverChain<HttpResolverContext>([
+const chain = createResolverChain([
   createJwtResolver(),
   createSubdomainResolver({ baseDomain: "tasks.test" }),
   createHeaderResolver(),
@@ -125,12 +124,12 @@ nothing          no tenant
 <p>Resolving is not enough: you must also check that the answer is trustworthy and that the tenant may use the app. <code>assertTrustLevel</code> refuses anything below the level you require, and <code>createTenantManager</code> loads the tenant and refuses tenants that are not active:</p>
 <example file="enforce.ts" project="tenancy" browser="no">
 import { assertTrustLevel, createResolverChain, createHeaderResolver, createJwtResolver, createTenantContextStorage, createTenantManager, TenantError } from "@zudojs/tenancy";
-import type { HttpResolverContext, Tenant } from "@zudojs/tenancy";
+import type { Tenant } from "@zudojs/tenancy";
 import { fakeRequest } from "./fake-request.js";
 import type { FakeRequest } from "./fake-request.js";
 import { tenants } from "./tenants.js";
 
-const chain = createResolverChain<HttpResolverContext>([createJwtResolver(), createHeaderResolver()]);
+const chain = createResolverChain([createJwtResolver(), createHeaderResolver()]);
 const manager = createTenantManager({ repository: tenants, storage: createTenantContextStorage() });
 
 async function tenantFor(request: FakeRequest): Promise<Tenant> {
@@ -287,15 +286,20 @@ globex sees: [ { id: 2, title: 'Globex: secret merger plan' } ]
 
 <section>
 <h2 id="task-api">Put it together: a multi-tenant Task API</h2>
-<p>Now the real server. When a user logs in, the server stores their user id <em>and their tenant</em> in the session. On every request the handler: finds the session (no session means 401), resolves the tenant from the session's claims, checks trust and status, and runs the route inside the tenant context. The repository from the last section does the rest:</p>
+<p>Now the real server. When a user logs in, the server stores their user id <em>and their tenant</em> in the session. Two middleware guard every task route, in this order:</p>
+<ol>
+<li><code>requireLogin</code> finds the session. No session means <code>401</code>.</li>
+<li><code>createResolveTenantMiddleware</code> does everything from the last three sections at once. It asks the resolver chain (the JWT resolver reads the session's claims through <code>getClaims</code>), requires <code>verified</code> trust by default, loads the tenant, refuses one that is unknown or not active, and runs the route inside the tenant context.</li>
+</ol>
+<p>The route handlers only call the repository from the last section:</p>
 <example file="server.ts" project="tenancy" browser="no">
 import { randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
-import { createHttpServer, createNodeHttpAdapter, createResponseContext, notFound, unauthorized } from "@zudojs/http";
-import type { HttpRequestContext } from "@zudojs/http";
-import { assertTrustLevel, createHeaderResolver, createJwtResolver, createResolverChain, createTenantManager, TenantError } from "@zudojs/tenancy";
-import type { HttpResolverContext, TenantClaims } from "@zudojs/tenancy";
-import { tenantContext, tenantStorage } from "./context.js";
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter, notFound, unauthorized } from "@zudojs/http";
+import type { HttpMiddleware, HttpRequestContext } from "@zudojs/http";
+import { createHeaderResolver, createJwtResolver, createResolverChain, createResolveTenantMiddleware } from "@zudojs/tenancy";
+import type { TenantClaims } from "@zudojs/tenancy";
+import { tenantStorage } from "./context.js";
 import { TaskRepository } from "./task.repository.js";
 import { tenants } from "./tenants.js";
 
@@ -310,42 +314,32 @@ function login(userId: string, tenantId: string): string {
   sessions.set(token, { sub: userId, tenant_id: tenantId });
   return token;
 }
+const sessionFor = (authorization: string | undefined) => sessions.get(authorization?.replace(/^Bearer /, "") ?? "");
 
-const chain = createResolverChain<HttpResolverContext>([createJwtResolver(), createHeaderResolver()]);
-const manager = createTenantManager({ repository: tenants, storage: tenantStorage });
+const requireLogin: HttpMiddleware = async (ctx, next) => {
+  if (!sessionFor(ctx.request.getHeader("authorization"))) throw unauthorized("Log in first");
+  return next();
+};
+const resolveTenant = createResolveTenantMiddleware({
+  resolver: createResolverChain([createJwtResolver(), createHeaderResolver()]).asResolver(),
+  repository: tenants,
+  storage: tenantStorage,
+  getClaims: (ctx) => sessionFor(ctx.request.getHeader?.("authorization")),
+});
+const middleware = [requireLogin, resolveTenant];
 
-async function handle(request: HttpRequestContext) {
-  const claims = sessions.get(request.getHeader("authorization")?.replace(/^Bearer /, "") ?? "");
-  if (!claims) throw unauthorized("Log in first");
-  const found = await chain.resolveTenant({
-    getClaims: () => claims,
-    getHeader: (name) => request.getHeader(name),
-    getHost: () => request.getHeader("host"),
-    getPath: () => request.path,
-  });
-  if (!found) throw notFound("Not found");
-  assertTrustLevel(found.trust, "verified", found.source);
-  const tenant = await manager.requireActive(found.tenantId);
-
-  return tenantContext.run(tenant, async () => {
-    if (request.path === "/tasks") return createResponseContext().json(await repo.list());
-    const id = Number(request.path.split("/")[2]);
-    const task = Number.isSafeInteger(id) ? await repo.get(id) : undefined;
-    if (!task) throw notFound("Task not found");
-    return createResponseContext().json(task);
-  });
-}
+const router = createRouter();
+router.get("/tasks", async () => createResponseContext().json(await repo.list()), { middleware });
+router.get("/tasks/:id", async (ctx) => {
+  const id = Number(ctx.params.id);
+  const task = Number.isSafeInteger(id) ? await repo.get(id) : undefined;
+  if (!task) throw notFound("Task not found");
+  return createResponseContext().json(task);
+}, { middleware });
 
 const server = createHttpServer({
   adapter: createNodeHttpAdapter({ port: 0 }),
-  handler: async (request: HttpRequestContext) => {
-    try {
-      return await handle(request);
-    } catch (error) {
-      if (error instanceof TenantError) return createResponseContext({ status: 403 }).json({ error: "Forbidden" });
-      throw error;
-    }
-  },
+  handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
 });
 await server.start();
 const base = `http://localhost:${server.address?.port}`;
@@ -371,7 +365,7 @@ ada lists tasks        200 [{"id":1,"title":"Acme: ship order 1001"}]
 ada guesses id 2       404 {"error":"Task not found","code":"NOT_FOUND"}
 ada sends x-tenant-id  200 [{"id":1,"title":"Acme: ship order 1001"}]
 header, no session     401 {"error":"Log in first","code":"UNAUTHORIZED"}
-suspended tenant       403 {"error":"Forbidden"}
+suspended tenant       404 {"error":"Tenant not found"}
 </output>
 <p>Read the five answers:</p>
 <ul>
@@ -379,9 +373,9 @@ suspended tenant       403 {"error":"Forbidden"}
 <li>Guessing Globex's id gives a 404, exactly like an id that does not exist.</li>
 <li>Her <code>x-tenant-id: globex</code> header changed nothing: the trusted session answered first.</li>
 <li>A header without a session is not even looked at: the request is not logged in.</li>
-<li>Initech's user logged in before the tenant was suspended, and now gets a plain 403 without the reason.</li>
+<li>Initech's user logged in before the tenant was suspended. The middleware answers <code>404 Tenant not found</code>, the same as for a tenant that does not exist, so a caller cannot learn which tenants exist or which are suspended. If only a header had named a tenant, the answer would be <code>403</code>: an <code>untrusted</code> source is refused.</li>
 </ul>
-<note>@zudojs/tenancy also has ready-made middleware: <code>createResolveTenantMiddleware</code> and <code>createRequireTenantMiddleware</code>. In the versions current when this lesson was written (@zudojs/tenancy 1.2.1 with @zudojs/http 1.3.0), they block the request correctly, but inside the @zudojs/http middleware pipeline their refusals are sent with status <code>200</code>, the 403 or 404 only appears inside the JSON body. Until that is fixed, resolve the tenant in the handler as shown here. It is a few lines, and you can see every check.</note>
+<p><code>.asResolver()</code> turns the chain into the single resolver the middleware takes. The guard refusals are real HTTP answers with their own status codes (since @zudojs/tenancy 1.3.0 with @zudojs/http 1.4.0), and the middleware fits the route's <code>middleware</code> list without a cast.</p>
 </section>
 
 <section>
@@ -440,7 +434,7 @@ rename Globex's task: false
 <li>A tenant is one customer of a shared application. Tenant isolation, no request ever touching another tenant's data, is the rule above all others.</li>
 <li>Tenant ids are normalized and validated, so they are safe in keys and paths.</li>
 <li>Resolvers find the tenant. Sessions and tokens are trusted, host names verified, headers and paths untrusted, because the client writes them.</li>
-<li>A resolver chain asks by priority. Require <code>verified</code> trust, and refuse tenants that are not active, with a plain 403.</li>
+<li>A resolver chain asks by priority. Require <code>verified</code> trust, and refuse tenants that are not active without saying why. <code>createResolveTenantMiddleware</code> does all of it for a route, and answers an unknown and a suspended tenant with the same 404.</li>
 <li>The tenant context lives in AsyncLocalStorage: <code>run</code> sets it, <code>requireCurrentTenant</code> reads it, and code outside a tenant fails loudly.</li>
 <li>Every query filters on <code>tenant_id</code>, taken from the context and passed as a parameter. Another tenant's row is a 404.</li>
 </ul>

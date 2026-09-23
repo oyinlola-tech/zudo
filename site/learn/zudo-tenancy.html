@@ -235,7 +235,7 @@ Globex</pre></div>
 <tbody>
 <tr><td><code>createJwtResolver</code></td><td>The <code>tenant_id</code> claim of the user's verified token or session</td><td><code>trusted</code></td></tr>
 <tr><td><code>createSubdomainResolver</code>, <code>createDomainResolver</code></td><td>The host name, like <code>acme.tasks.test</code></td><td><code>verified</code></td></tr>
-<tr><td><code>createHeaderResolver</code>, <code>createPathResolver</code></td><td>An <code>x-tenant-id</code> header, or a path like <code>/t/acme/tasks</code></td><td><code>untrusted</code></td></tr>
+<tr><td><code>createHeaderResolver</code>, <code>createPathResolver</code></td><td>An <code>x-tenant-id</code> header, or the first part of a path like <code>/acme/tasks</code> (for <code>/t/acme/tasks</code>, pass <code>{ prefix: "/t" }</code>)</td><td><code>untrusted</code></td></tr>
 </tbody>
 </table></div>
 <p>The <strong>trust level</strong> says how much you can believe the answer. A header is <code>untrusted</code> because the client writes it: anybody can send <code>x-tenant-id: globex</code> with <code>curl</code>. If your app believed it, every Acme user could read Globex's tasks by adding one line to their request. The session, on the other hand, was created by your server when the user logged in (as in <a href="/learn/zudo-auth">the auth lesson</a>), so the tenant stored in it is <code>trusted</code>.</p>
@@ -279,10 +279,9 @@ export function fakeRequest(request: FakeRequest): HttpResolverContext {
 <figure class="lx-example" data-index="3" data-file="resolve.ts" data-project="tenancy">
 <figcaption class="lx-bar"><span class="lx-file">resolve.ts</span><button type="button" class="lx-edit" data-index="3" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createHeaderResolver<span class="t-pn">,</span> createJwtResolver<span class="t-pn">,</span> createResolverChain<span class="t-pn">,</span> createSubdomainResolver <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/tenancy"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpResolverContext</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/tenancy"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> fakeRequest <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./fake-request.js"</span><span class="t-pn">;</span>
 
-<span class="t-kw">const</span> chain <span class="t-op">=</span> createResolverChain<span class="t-op">&lt;</span><span class="t-ty">HttpResolverContext</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-pn">[</span>
+<span class="t-kw">const</span> chain <span class="t-op">=</span> <span class="t-fn">createResolverChain</span><span class="t-pn">(</span><span class="t-pn">[</span>
   <span class="t-fn">createJwtResolver</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span>
   <span class="t-fn">createSubdomainResolver</span><span class="t-pn">(</span><span class="t-pn">{</span> baseDomain<span class="t-op">:</span> <span class="t-str">"tasks.test"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
   <span class="t-fn">createHeaderResolver</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span>
@@ -301,10 +300,9 @@ export function fakeRequest(request: FakeRequest): HttpResolverContext {
 <span class="t-pn">}</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { createHeaderResolver, createJwtResolver, createResolverChain, createSubdomainResolver } from "@zudojs/tenancy";
-import type { HttpResolverContext } from "@zudojs/tenancy";
 import { fakeRequest } from "./fake-request.js";
 
-const chain = createResolverChain<HttpResolverContext>([
+const chain = createResolverChain([
   createJwtResolver(),
   createSubdomainResolver({ baseDomain: "tasks.test" }),
   createHeaderResolver(),
@@ -337,12 +335,12 @@ nothing          no tenant</pre></div>
 <figure class="lx-example" data-index="4" data-file="enforce.ts" data-project="tenancy">
 <figcaption class="lx-bar"><span class="lx-file">enforce.ts</span><button type="button" class="lx-edit" data-index="4" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> assertTrustLevel<span class="t-pn">,</span> createResolverChain<span class="t-pn">,</span> createHeaderResolver<span class="t-pn">,</span> createJwtResolver<span class="t-pn">,</span> createTenantContextStorage<span class="t-pn">,</span> createTenantManager<span class="t-pn">,</span> <span class="t-ty">TenantError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/tenancy"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpResolverContext</span><span class="t-pn">,</span> <span class="t-ty">Tenant</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/tenancy"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Tenant</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/tenancy"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> fakeRequest <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./fake-request.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">FakeRequest</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./fake-request.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> tenants <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./tenants.js"</span><span class="t-pn">;</span>
 
-<span class="t-kw">const</span> chain <span class="t-op">=</span> createResolverChain<span class="t-op">&lt;</span><span class="t-ty">HttpResolverContext</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-pn">[</span><span class="t-fn">createJwtResolver</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-fn">createHeaderResolver</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> chain <span class="t-op">=</span> <span class="t-fn">createResolverChain</span><span class="t-pn">(</span><span class="t-pn">[</span><span class="t-fn">createJwtResolver</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-fn">createHeaderResolver</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> manager <span class="t-op">=</span> <span class="t-fn">createTenantManager</span><span class="t-pn">(</span><span class="t-pn">{</span> repository<span class="t-op">:</span> tenants<span class="t-pn">,</span> storage<span class="t-op">:</span> <span class="t-fn">createTenantContextStorage</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
 <span class="t-kw">async</span> <span class="t-kw">function</span> <span class="t-fn">tenantFor</span><span class="t-pn">(</span>request<span class="t-op">:</span> <span class="t-ty">FakeRequest</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Promise</span><span class="t-op">&lt;</span><span class="t-ty">Tenant</span><span class="t-op">&gt;</span> <span class="t-pn">{</span>
@@ -366,12 +364,12 @@ nothing          no tenant</pre></div>
 <span class="t-pn">}</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { assertTrustLevel, createResolverChain, createHeaderResolver, createJwtResolver, createTenantContextStorage, createTenantManager, TenantError } from "@zudojs/tenancy";
-import type { HttpResolverContext, Tenant } from "@zudojs/tenancy";
+import type { Tenant } from "@zudojs/tenancy";
 import { fakeRequest } from "./fake-request.js";
 import type { FakeRequest } from "./fake-request.js";
 import { tenants } from "./tenants.js";
 
-const chain = createResolverChain<HttpResolverContext>([createJwtResolver(), createHeaderResolver()]);
+const chain = createResolverChain([createJwtResolver(), createHeaderResolver()]);
 const manager = createTenantManager({ repository: tenants, storage: createTenantContextStorage() });
 
 async function tenantFor(request: FakeRequest): Promise<Tenant> {
@@ -620,16 +618,21 @@ globex sees: [ { id: 2, title: 'Globex: secret merger plan' } ]</pre></div>
 
 <section>
 <h2 id="task-api">Put it together: a multi-tenant Task API</h2>
-<p>Now the real server. When a user logs in, the server stores their user id <em>and their tenant</em> in the session. On every request the handler: finds the session (no session means 401), resolves the tenant from the session's claims, checks trust and status, and runs the route inside the tenant context. The repository from the last section does the rest:</p>
+<p>Now the real server. When a user logs in, the server stores their user id <em>and their tenant</em> in the session. Two middleware guard every task route, in this order:</p>
+<ol>
+<li><code>requireLogin</code> finds the session. No session means <code>401</code>.</li>
+<li><code>createResolveTenantMiddleware</code> does everything from the last three sections at once. It asks the resolver chain (the JWT resolver reads the session's claims through <code>getClaims</code>), requires <code>verified</code> trust by default, loads the tenant, refuses one that is unknown or not active, and runs the route inside the tenant context.</li>
+</ol>
+<p>The route handlers only call the repository from the last section:</p>
 <figure class="lx-example" data-index="9" data-file="server.ts" data-project="tenancy">
 <figcaption class="lx-bar"><span class="lx-file">server.ts</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> randomUUID <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"node:crypto"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">PGlite</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@electric-sql/pglite"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> createHttpServer<span class="t-pn">,</span> createNodeHttpAdapter<span class="t-pn">,</span> createResponseContext<span class="t-pn">,</span> notFound<span class="t-pn">,</span> unauthorized <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpRequestContext</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> assertTrustLevel<span class="t-pn">,</span> createHeaderResolver<span class="t-pn">,</span> createJwtResolver<span class="t-pn">,</span> createResolverChain<span class="t-pn">,</span> createTenantManager<span class="t-pn">,</span> <span class="t-ty">TenantError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/tenancy"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpResolverContext</span><span class="t-pn">,</span> <span class="t-ty">TenantClaims</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/tenancy"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> tenantContext<span class="t-pn">,</span> tenantStorage <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./context.js"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> createHttpServer<span class="t-pn">,</span> createNodeHttpAdapter<span class="t-pn">,</span> createResponseContext<span class="t-pn">,</span> createRouter<span class="t-pn">,</span> notFound<span class="t-pn">,</span> unauthorized <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddleware</span><span class="t-pn">,</span> <span class="t-ty">HttpRequestContext</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> createHeaderResolver<span class="t-pn">,</span> createJwtResolver<span class="t-pn">,</span> createResolverChain<span class="t-pn">,</span> createResolveTenantMiddleware <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/tenancy"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">TenantClaims</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/tenancy"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> tenantStorage <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./context.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">TaskRepository</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./task.repository.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> tenants <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./tenants.js"</span><span class="t-pn">;</span>
 
@@ -644,42 +647,32 @@ globex sees: [ { id: 2, title: 'Globex: secret merger plan' } ]</pre></div>
   sessions<span class="t-pn">.</span><span class="t-kw">set</span><span class="t-pn">(</span>token<span class="t-pn">,</span> <span class="t-pn">{</span> sub<span class="t-op">:</span> userId<span class="t-pn">,</span> tenant_id<span class="t-op">:</span> tenantId <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-kw">return</span> token<span class="t-pn">;</span>
 <span class="t-pn">}</span>
+<span class="t-kw">const</span> sessionFor <span class="t-op">=</span> <span class="t-pn">(</span>authorization<span class="t-op">:</span> <span class="t-ty">string</span> <span class="t-op">|</span> <span class="t-cn">undefined</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> sessions<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span>authorization<span class="t-op">?</span><span class="t-pn">.</span><span class="t-fn">replace</span><span class="t-pn">(</span><span class="t-op">/^</span><span class="t-ty">Bearer</span> <span class="t-op">/</span><span class="t-pn">,</span> <span class="t-str">""</span><span class="t-pn">)</span> <span class="t-op">??</span> <span class="t-str">""</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
-<span class="t-kw">const</span> chain <span class="t-op">=</span> createResolverChain<span class="t-op">&lt;</span><span class="t-ty">HttpResolverContext</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-pn">[</span><span class="t-fn">createJwtResolver</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-fn">createHeaderResolver</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">const</span> manager <span class="t-op">=</span> <span class="t-fn">createTenantManager</span><span class="t-pn">(</span><span class="t-pn">{</span> repository<span class="t-op">:</span> tenants<span class="t-pn">,</span> storage<span class="t-op">:</span> tenantStorage <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> requireLogin<span class="t-op">:</span> <span class="t-ty">HttpMiddleware</span> <span class="t-op">=</span> <span class="t-kw">async</span> <span class="t-pn">(</span>ctx<span class="t-pn">,</span> next<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
+  <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span><span class="t-fn">sessionFor</span><span class="t-pn">(</span>ctx<span class="t-pn">.</span><span class="t-prop">request</span><span class="t-pn">.</span><span class="t-fn">getHeader</span><span class="t-pn">(</span><span class="t-str">"authorization"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-kw">throw</span> <span class="t-fn">unauthorized</span><span class="t-pn">(</span><span class="t-str">"Log in first"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">return</span> <span class="t-fn">next</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-pn">}</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> resolveTenant <span class="t-op">=</span> <span class="t-fn">createResolveTenantMiddleware</span><span class="t-pn">(</span><span class="t-pn">{</span>
+  resolver<span class="t-op">:</span> <span class="t-fn">createResolverChain</span><span class="t-pn">(</span><span class="t-pn">[</span><span class="t-fn">createJwtResolver</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-fn">createHeaderResolver</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">asResolver</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span>
+  repository<span class="t-op">:</span> tenants<span class="t-pn">,</span>
+  storage<span class="t-op">:</span> tenantStorage<span class="t-pn">,</span>
+  getClaims<span class="t-op">:</span> <span class="t-pn">(</span>ctx<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-fn">sessionFor</span><span class="t-pn">(</span>ctx<span class="t-pn">.</span><span class="t-prop">request</span><span class="t-pn">.</span><span class="t-prop">getHeader</span><span class="t-op">?</span><span class="t-pn">.</span><span class="t-pn">(</span><span class="t-str">"authorization"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">,</span>
+<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> middleware <span class="t-op">=</span> <span class="t-pn">[</span>requireLogin<span class="t-pn">,</span> resolveTenant<span class="t-pn">]</span><span class="t-pn">;</span>
 
-<span class="t-kw">async</span> <span class="t-kw">function</span> <span class="t-fn">handle</span><span class="t-pn">(</span>request<span class="t-op">:</span> <span class="t-ty">HttpRequestContext</span><span class="t-pn">)</span> <span class="t-pn">{</span>
-  <span class="t-kw">const</span> claims <span class="t-op">=</span> sessions<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span>request<span class="t-pn">.</span><span class="t-fn">getHeader</span><span class="t-pn">(</span><span class="t-str">"authorization"</span><span class="t-pn">)</span><span class="t-op">?</span><span class="t-pn">.</span><span class="t-fn">replace</span><span class="t-pn">(</span><span class="t-op">/^</span><span class="t-ty">Bearer</span> <span class="t-op">/</span><span class="t-pn">,</span> <span class="t-str">""</span><span class="t-pn">)</span> <span class="t-op">??</span> <span class="t-str">""</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span>claims<span class="t-pn">)</span> <span class="t-kw">throw</span> <span class="t-fn">unauthorized</span><span class="t-pn">(</span><span class="t-str">"Log in first"</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">const</span> found <span class="t-op">=</span> <span class="t-kw">await</span> chain<span class="t-pn">.</span><span class="t-fn">resolveTenant</span><span class="t-pn">(</span><span class="t-pn">{</span>
-    getClaims<span class="t-op">:</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> claims<span class="t-pn">,</span>
-    getHeader<span class="t-op">:</span> <span class="t-pn">(</span>name<span class="t-pn">)</span> <span class="t-op">=&gt;</span> request<span class="t-pn">.</span><span class="t-fn">getHeader</span><span class="t-pn">(</span>name<span class="t-pn">)</span><span class="t-pn">,</span>
-    getHost<span class="t-op">:</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> request<span class="t-pn">.</span><span class="t-fn">getHeader</span><span class="t-pn">(</span><span class="t-str">"host"</span><span class="t-pn">)</span><span class="t-pn">,</span>
-    getPath<span class="t-op">:</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> request<span class="t-pn">.</span><span class="t-prop">path</span><span class="t-pn">,</span>
-  <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span>found<span class="t-pn">)</span> <span class="t-kw">throw</span> <span class="t-fn">notFound</span><span class="t-pn">(</span><span class="t-str">"Not found"</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-fn">assertTrustLevel</span><span class="t-pn">(</span>found<span class="t-pn">.</span><span class="t-prop">trust</span><span class="t-pn">,</span> <span class="t-str">"verified"</span><span class="t-pn">,</span> found<span class="t-pn">.</span><span class="t-prop">source</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">const</span> tenant <span class="t-op">=</span> <span class="t-kw">await</span> manager<span class="t-pn">.</span><span class="t-fn">requireActive</span><span class="t-pn">(</span>found<span class="t-pn">.</span><span class="t-prop">tenantId</span><span class="t-pn">)</span><span class="t-pn">;</span>
-
-  <span class="t-kw">return</span> tenantContext<span class="t-pn">.</span><span class="t-fn">run</span><span class="t-pn">(</span>tenant<span class="t-pn">,</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
-    <span class="t-kw">if</span> <span class="t-pn">(</span>request<span class="t-pn">.</span><span class="t-prop">path</span> <span class="t-op">===</span> <span class="t-str">"/tasks"</span><span class="t-pn">)</span> <span class="t-kw">return</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-kw">await</span> repo<span class="t-pn">.</span><span class="t-fn">list</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">const</span> id <span class="t-op">=</span> <span class="t-ty">Number</span><span class="t-pn">(</span>request<span class="t-pn">.</span><span class="t-prop">path</span><span class="t-pn">.</span><span class="t-fn">split</span><span class="t-pn">(</span><span class="t-str">"/"</span><span class="t-pn">)</span><span class="t-pn">[</span><span class="t-num">2</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">const</span> task <span class="t-op">=</span> <span class="t-ty">Number</span><span class="t-pn">.</span><span class="t-fn">isSafeInteger</span><span class="t-pn">(</span>id<span class="t-pn">)</span> <span class="t-op">?</span> <span class="t-kw">await</span> repo<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span>id<span class="t-pn">)</span> <span class="t-op">:</span> <span class="t-cn">undefined</span><span class="t-pn">;</span>
-    <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span>task<span class="t-pn">)</span> <span class="t-kw">throw</span> <span class="t-fn">notFound</span><span class="t-pn">(</span><span class="t-str">"Task not found"</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">return</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span>task<span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
+<span class="t-kw">const</span> router <span class="t-op">=</span> <span class="t-fn">createRouter</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+router<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"/tasks"</span><span class="t-pn">,</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-kw">await</span> repo<span class="t-pn">.</span><span class="t-fn">list</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-pn">{</span> middleware <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+router<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"/tasks/:id"</span><span class="t-pn">,</span> <span class="t-kw">async</span> <span class="t-pn">(</span>ctx<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
+  <span class="t-kw">const</span> id <span class="t-op">=</span> <span class="t-ty">Number</span><span class="t-pn">(</span>ctx<span class="t-pn">.</span><span class="t-prop">params</span><span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">const</span> task <span class="t-op">=</span> <span class="t-ty">Number</span><span class="t-pn">.</span><span class="t-fn">isSafeInteger</span><span class="t-pn">(</span>id<span class="t-pn">)</span> <span class="t-op">?</span> <span class="t-kw">await</span> repo<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span>id<span class="t-pn">)</span> <span class="t-op">:</span> <span class="t-cn">undefined</span><span class="t-pn">;</span>
+  <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span>task<span class="t-pn">)</span> <span class="t-kw">throw</span> <span class="t-fn">notFound</span><span class="t-pn">(</span><span class="t-str">"Task not found"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">return</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span>task<span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-pn">{</span> middleware <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> server <span class="t-op">=</span> <span class="t-fn">createHttpServer</span><span class="t-pn">(</span><span class="t-pn">{</span>
   adapter<span class="t-op">:</span> <span class="t-fn">createNodeHttpAdapter</span><span class="t-pn">(</span><span class="t-pn">{</span> port<span class="t-op">:</span> <span class="t-num">0</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
-  handler<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span>request<span class="t-op">:</span> <span class="t-ty">HttpRequestContext</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
-    <span class="t-kw">try</span> <span class="t-pn">{</span>
-      <span class="t-kw">return</span> <span class="t-kw">await</span> <span class="t-fn">handle</span><span class="t-pn">(</span>request<span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-pn">}</span> <span class="t-kw">catch</span> <span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-pn">{</span>
-      <span class="t-kw">if</span> <span class="t-pn">(</span>error <span class="t-kw">instanceof</span> <span class="t-ty">TenantError</span><span class="t-pn">)</span> <span class="t-kw">return</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">{</span> status<span class="t-op">:</span> <span class="t-num">403</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">{</span> error<span class="t-op">:</span> <span class="t-str">"Forbidden"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-      <span class="t-kw">throw</span> error<span class="t-pn">;</span>
-    <span class="t-pn">}</span>
-  <span class="t-pn">}</span><span class="t-pn">,</span>
+  handler<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span>request<span class="t-op">:</span> <span class="t-ty">HttpRequestContext</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-kw">await</span> router<span class="t-pn">.</span><span class="t-fn">dispatch</span><span class="t-pn">(</span>request<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">response</span><span class="t-pn">,</span>
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">await</span> server<span class="t-pn">.</span><span class="t-fn">start</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> base <span class="t-op">=</span> <span class="t-tpl">`http://localhost:<span class="t-op">${</span><span class="t-prop">server.address?.port</span><span class="t-op">}</span>`</span><span class="t-pn">;</span>
@@ -702,11 +695,11 @@ globex sees: [ { id: 2, title: 'Globex: secret merger plan' } ]</pre></div>
 </code></pre>
 <script type="text/plain" class="lx-src">import { randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
-import { createHttpServer, createNodeHttpAdapter, createResponseContext, notFound, unauthorized } from "@zudojs/http";
-import type { HttpRequestContext } from "@zudojs/http";
-import { assertTrustLevel, createHeaderResolver, createJwtResolver, createResolverChain, createTenantManager, TenantError } from "@zudojs/tenancy";
-import type { HttpResolverContext, TenantClaims } from "@zudojs/tenancy";
-import { tenantContext, tenantStorage } from "./context.js";
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter, notFound, unauthorized } from "@zudojs/http";
+import type { HttpMiddleware, HttpRequestContext } from "@zudojs/http";
+import { createHeaderResolver, createJwtResolver, createResolverChain, createResolveTenantMiddleware } from "@zudojs/tenancy";
+import type { TenantClaims } from "@zudojs/tenancy";
+import { tenantStorage } from "./context.js";
 import { TaskRepository } from "./task.repository.js";
 import { tenants } from "./tenants.js";
 
@@ -721,42 +714,32 @@ function login(userId: string, tenantId: string): string {
   sessions.set(token, { sub: userId, tenant_id: tenantId });
   return token;
 }
+const sessionFor = (authorization: string | undefined) => sessions.get(authorization?.replace(/^Bearer /, "") ?? "");
 
-const chain = createResolverChain<HttpResolverContext>([createJwtResolver(), createHeaderResolver()]);
-const manager = createTenantManager({ repository: tenants, storage: tenantStorage });
+const requireLogin: HttpMiddleware = async (ctx, next) => {
+  if (!sessionFor(ctx.request.getHeader("authorization"))) throw unauthorized("Log in first");
+  return next();
+};
+const resolveTenant = createResolveTenantMiddleware({
+  resolver: createResolverChain([createJwtResolver(), createHeaderResolver()]).asResolver(),
+  repository: tenants,
+  storage: tenantStorage,
+  getClaims: (ctx) => sessionFor(ctx.request.getHeader?.("authorization")),
+});
+const middleware = [requireLogin, resolveTenant];
 
-async function handle(request: HttpRequestContext) {
-  const claims = sessions.get(request.getHeader("authorization")?.replace(/^Bearer /, "") ?? "");
-  if (!claims) throw unauthorized("Log in first");
-  const found = await chain.resolveTenant({
-    getClaims: () => claims,
-    getHeader: (name) => request.getHeader(name),
-    getHost: () => request.getHeader("host"),
-    getPath: () => request.path,
-  });
-  if (!found) throw notFound("Not found");
-  assertTrustLevel(found.trust, "verified", found.source);
-  const tenant = await manager.requireActive(found.tenantId);
-
-  return tenantContext.run(tenant, async () => {
-    if (request.path === "/tasks") return createResponseContext().json(await repo.list());
-    const id = Number(request.path.split("/")[2]);
-    const task = Number.isSafeInteger(id) ? await repo.get(id) : undefined;
-    if (!task) throw notFound("Task not found");
-    return createResponseContext().json(task);
-  });
-}
+const router = createRouter();
+router.get("/tasks", async () => createResponseContext().json(await repo.list()), { middleware });
+router.get("/tasks/:id", async (ctx) => {
+  const id = Number(ctx.params.id);
+  const task = Number.isSafeInteger(id) ? await repo.get(id) : undefined;
+  if (!task) throw notFound("Task not found");
+  return createResponseContext().json(task);
+}, { middleware });
 
 const server = createHttpServer({
   adapter: createNodeHttpAdapter({ port: 0 }),
-  handler: async (request: HttpRequestContext) => {
-    try {
-      return await handle(request);
-    } catch (error) {
-      if (error instanceof TenantError) return createResponseContext({ status: 403 }).json({ error: "Forbidden" });
-      throw error;
-    }
-  },
+  handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
 });
 await server.start();
 const base = `http://localhost:${server.address?.port}`;
@@ -780,7 +763,7 @@ await db.close();</script>
 ada guesses id 2       404 {"error":"Task not found","code":"NOT_FOUND"}
 ada sends x-tenant-id  200 [{"id":1,"title":"Acme: ship order 1001"}]
 header, no session     401 {"error":"Log in first","code":"UNAUTHORIZED"}
-suspended tenant       403 {"error":"Forbidden"}</pre></div>
+suspended tenant       404 {"error":"Tenant not found"}</pre></div>
 </figure>
 <p>Read the five answers:</p>
 <ul>
@@ -788,9 +771,9 @@ suspended tenant       403 {"error":"Forbidden"}</pre></div>
 <li>Guessing Globex's id gives a 404, exactly like an id that does not exist.</li>
 <li>Her <code>x-tenant-id: globex</code> header changed nothing: the trusted session answered first.</li>
 <li>A header without a session is not even looked at: the request is not logged in.</li>
-<li>Initech's user logged in before the tenant was suspended, and now gets a plain 403 without the reason.</li>
+<li>Initech's user logged in before the tenant was suspended. The middleware answers <code>404 Tenant not found</code>, the same as for a tenant that does not exist, so a caller cannot learn which tenants exist or which are suspended. If only a header had named a tenant, the answer would be <code>403</code>: an <code>untrusted</code> source is refused.</li>
 </ul>
-<div class="callout callout-note"><p class="lx-callout-label">NOTE</p>@zudojs/tenancy also has ready-made middleware: <code>createResolveTenantMiddleware</code> and <code>createRequireTenantMiddleware</code>. In the versions current when this lesson was written (@zudojs/tenancy 1.2.1 with @zudojs/http 1.3.0), they block the request correctly, but inside the @zudojs/http middleware pipeline their refusals are sent with status <code>200</code>, the 403 or 404 only appears inside the JSON body. Until that is fixed, resolve the tenant in the handler as shown here. It is a few lines, and you can see every check.</div>
+<p><code>.asResolver()</code> turns the chain into the single resolver the middleware takes. The guard refusals are real HTTP answers with their own status codes (since @zudojs/tenancy 1.3.0 with @zudojs/http 1.4.0), and the middleware fits the route's <code>middleware</code> list without a cast.</p>
 </section>
 
 <section>
@@ -863,7 +846,7 @@ rename Globex's task: false
 <li>A tenant is one customer of a shared application. Tenant isolation, no request ever touching another tenant's data, is the rule above all others.</li>
 <li>Tenant ids are normalized and validated, so they are safe in keys and paths.</li>
 <li>Resolvers find the tenant. Sessions and tokens are trusted, host names verified, headers and paths untrusted, because the client writes them.</li>
-<li>A resolver chain asks by priority. Require <code>verified</code> trust, and refuse tenants that are not active, with a plain 403.</li>
+<li>A resolver chain asks by priority. Require <code>verified</code> trust, and refuse tenants that are not active without saying why. <code>createResolveTenantMiddleware</code> does all of it for a route, and answers an unknown and a suspended tenant with the same 404.</li>
 <li>The tenant context lives in AsyncLocalStorage: <code>run</code> sets it, <code>requireCurrentTenant</code> reads it, and code outside a tenant fails loudly.</li>
 <li>Every query filters on <code>tenant_id</code>, taken from the context and passed as a parameter. Another tenant's row is a 404.</li>
 </ul>
