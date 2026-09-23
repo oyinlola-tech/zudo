@@ -1,0 +1,792 @@
+<question id="bug-or-expected" type="choice">
+<q>Which of these is a <strong>bug</strong> (a programmer error), not an expected failure?</q>
+<option>A client asks for task 9, which does not exist</option>
+<option>A client sends a title with only 2 characters</option>
+<option correct>Your code reads <code>task.title</code> while <code>task</code> is <code>undefined</code>, and throws a <code>TypeError</code></option>
+<option>A client tries to create a task whose title already exists</option>
+<explain><p>The other three are operational errors: the client did something wrong and deserves a clear 4xx. A <code>TypeError</code> in your own code was never planned: it is a bug, a 500 for the client and full details in your logs.</p></explain>
+</question>
+
+<question id="one-base-class" type="choice">
+<q>Framework errors (<code>SchemaError</code>, <code>HttpError</code>, <code>CircularDependencyError</code>) and application errors (<code>NotFoundError</code>, your own classes) all extend <code>BaseError</code>. Why does that help?</q>
+<option>It makes errors faster to throw</option>
+<option correct>One piece of code can handle them all: every error has the same fields, such as <code>statusCode</code>, <code>code</code> and <code>expose</code></option>
+<option>It stops errors from being caught by mistake</option>
+<option>It is required for <code>try</code>/<code>catch</code> to work</option>
+<explain><p>An error handler does not need to know every class. It reads the same fields from any <code>BaseError</code> and builds the right response.</p></explain>
+</question>
+
+<question id="check-code" type="choice">
+<q>A client wants to react when a task title is taken. What should it check?</q>
+<option>That <code>message</code> contains "already exists"</option>
+<option correct>That <code>code</code> is <code>"ERR_CONFLICT"</code> (or your own stable code)</option>
+<option>That the stack trace mentions <code>assertUniqueTitle</code></option>
+<option>That the response took longer than usual</option>
+<explain><p>The <code>code</code> is a stable, machine-readable name. Messages are for people and may be reworded at any time; code that checks messages breaks when you do.</p></explain>
+</question>
+
+<question id="expose-default" type="choice">
+<q>By default, <code>expose</code> is <code>true</code> for 4xx errors and <code>false</code> for 5xx errors. Why?</q>
+<option>Because 5xx errors have no message</option>
+<option correct>A client error's message is meant for the client; a server error's message often describes your internals</option>
+<option>Because 4xx errors are always logged</option>
+<option>Browsers cannot display 5xx messages</option>
+<explain><p>"Task 9 not found" is safe to show. "relation tasks does not exist" or a file path tells an attacker how your system is built, so 5xx messages are hidden.</p></explain>
+</question>
+
+<question id="is-operational" type="choice">
+<q>What does <code>error.isOperational</code> tell you?</q>
+<option>Whether the error has been logged</option>
+<option correct>Whether it is an expected failure (<code>true</code>) or a bug (<code>false</code>)</option>
+<option>Whether the server is still running</option>
+<option>Whether the error has a stack trace</option>
+<explain><p>Operational errors are part of normal life (a missing task). Non-operational ones are bugs, the kind you want an alert for.</p></explain>
+</question>
+
+<question id="normalize-why" type="choice">
+<q>Why does an error handler start with <code>normalizeToBaseError(thrown)</code>?</q>
+<option>To make the error message shorter</option>
+<option correct>In JavaScript any value can be thrown, so <code>catch</code> gets <code>unknown</code>; normalizing turns it into a <code>BaseError</code> with the usual fields</option>
+<option>To send the error to the client</option>
+<option>To remove the stack trace</option>
+<explain><p>A <code>BaseError</code> passes through unchanged. Anything else (a <code>TypeError</code>, a thrown string) becomes a hidden, non-operational 500 with code <code>ERR_INTERNAL_ERROR</code>: treated as a bug.</p></explain>
+</question>
+
+<question id="custom-constructor" type="choice">
+<q>Why does <code>TaskAlreadyDoneError</code> set its <code>code</code>, <code>category</code> and <code>statusCode</code> inside its constructor?</q>
+<option>Because <code>BaseError</code> cannot be given options any other way</option>
+<option correct>So every place that throws it gets the same code and status; callers only pass the task id</option>
+<option>So the error is faster to create</option>
+<option>So the status can change on every throw</option>
+<explain><p>With the options fixed in one place, <code>throw new TaskAlreadyDoneError(3)</code> always means 409 and <code>ERR_TASK_ALREADY_DONE</code>. Nobody can get it half right.</p></explain>
+</question>
+
+<question id="code-naming" type="choice">
+<q>Which is the best <code>code</code> for your own "task already done" error?</q>
+<option><code>"Task is already done!"</code></option>
+<option correct><code>"ERR_TASK_ALREADY_DONE"</code>, and keep it the same forever</option>
+<option><code>"409"</code></option>
+<option>A new random code in each release</option>
+<explain><p>Prefix it with <code>ERR_</code> and keep it stable: clients will write <code>if (body.error.code === "ERR_TASK_ALREADY_DONE")</code>. The status already has its own field.</p></explain>
+</question>
+
+<question id="metadata-contents" type="choice">
+<q>What may you put in an error's <code>metadata</code>?</q>
+<option>The user's password, so you can debug login problems</option>
+<option>The whole request, including the <code>Authorization</code> header</option>
+<option correct>Facts about the failure that a client may see or the log needs, such as <code>{ taskId: 3 }</code></option>
+<option>Nothing: metadata is only for framework errors</option>
+<explain><p>Metadata can end up in responses and logs. Never put a password or a token in it. The serializers redact secret-looking names as a safety net, but do not rely on that.</p></explain>
+</question>
+
+<question id="already-done-status" type="choice">
+<q>A client tries to complete a task that is already done. Which status fits <code>TaskAlreadyDoneError</code>?</q>
+<option>400 Bad Request</option>
+<option>404 Not Found</option>
+<option correct>409 Conflict</option>
+<option>500 Internal Server Error</option>
+<explain><p>The request itself is well-formed and the task exists, but it clashes with the task's current state. That is a conflict.</p></explain>
+</question>
+
+<question id="throw-in-service" type="choice">
+<q>Where should the rule "a done task cannot be completed again" and its error live?</q>
+<option>In the route, which knows the HTTP status</option>
+<option correct>In the service; the error carries its own status, so the service does not need to know about HTTP</option>
+<option>In the error handler</option>
+<option>In the schema, with a refinement</option>
+<explain><p>The service only says "this task is already done". The status travels with the error, and the same service works from a queue worker or a command-line tool, where HTTP means nothing.</p></explain>
+</question>
+
+<question id="schema-vs-validation-error" type="choice">
+<q>What is the difference between <code>SchemaError</code> and <code>ValidationError</code>?</q>
+<option><code>SchemaError</code> is 400 and <code>ValidationError</code> is 500</option>
+<option correct><code>SchemaError</code> is thrown by a schema's <code>parse</code>; <code>ValidationError</code> is for checks you write yourself, with issues you build</option>
+<option><code>ValidationError</code> is only for HTTP headers</option>
+<option>They are the same class with two names</option>
+<explain><p>Both mean bad input and carry status 400. For your own checks, build the issues with helpers such as <code>requiredFieldIssue</code> and <code>invalidFieldIssue</code>.</p></explain>
+</question>
+
+<question id="http-error-where" type="choice">
+<q>Which code should throw <code>HttpError</code> (for example <code>badRequest()</code> or a 415)?</q>
+<option>The <code>TaskService</code>, for a missing task</option>
+<option correct>The HTTP layer (routes, <code>readJson</code>, middleware), for problems that only exist in HTTP, such as a wrong <code>Content-Type</code></option>
+<option>The container, when a registration is missing</option>
+<option>Every layer, for every error</option>
+<explain><p>Services throw <code>@zudojs/errors</code> classes that describe the problem in your application's terms (<code>NotFoundError</code>). A wrong content type or unreadable JSON only means something in HTTP.</p></explain>
+</question>
+
+<question id="two-audiences" type="choice">
+<q>Which pairing is right?</q>
+<option><code>toJSON()</code> for clients, <code>serializePublicError</code> for logs</option>
+<option correct><code>serializePublicError</code> for clients, <code>toJSON()</code> for logs</option>
+<option><code>toJSON()</code> for both</option>
+<option><code>String(error)</code> for both</option>
+<explain><p>The client needs a code and a safe message. Your logs need everything: the stack, the cause, the metadata. <code>toJSON()</code> gives the full picture, so it must never reach a client.</p></explain>
+</question>
+
+<question id="never-tojson" type="choice">
+<q>A route answers errors with <code>createResponseContext({ status: 500 }).json(error)</code>. What is the problem?</q>
+<option>Nothing, the error is safe to send</option>
+<option correct>The error is serialized with its <code>toJSON()</code>, which includes the stack trace, the cause chain and the metadata</option>
+<option>The client receives an empty body</option>
+<option>The status should be 200</option>
+<explain><p>A stack trace shows your file layout, libraries and failing lines: a map for an attacker. Build client bodies from <code>serializePublicError</code> or from chosen fields only.</p></explain>
+</question>
+
+<question id="error-handler-steps" type="choice">
+<q>What does <code>ErrorHandler.handlePublic(error, context)</code> do?</q>
+<option>Only logs the error</option>
+<option correct>Normalizes what was thrown, reports it to your reporter, and returns the public body</option>
+<option>Sends the error to the client over HTTP</option>
+<option>Retries the operation that failed</option>
+<explain><p>It packs the usual steps into one call: normalize, report (to a logger or an error-tracking service), and build a body that is safe for the client.</p></explain>
+</question>
+
+<question id="report-only-bugs" type="choice">
+<q>Why does the Task API's <code>toErrorResponse</code> report only errors that are not operational or have status 500 or more?</q>
+<option>Because 4xx errors cannot be logged</option>
+<option correct>A 404 is not something to fix; logging every one would bury the real problems</option>
+<option>To make the response faster</option>
+<option>Because clients report 4xx errors themselves</option>
+<explain><p>Reports are for things you must act on. Bugs and server failures need attention; a client asking for a missing task is normal life.</p></explain>
+</question>
+
+<question id="request-id-why" type="choice">
+<q>Why does every error body in the Task API include the <code>requestId</code>?</q>
+<option>So the client can retry with the same id</option>
+<option correct>A user can send you the id, and you can find the exact log line for that request</option>
+<option>Because HTTP requires it</option>
+<option>So the error is cached</option>
+<explain><p>The client sees only a safe message. The request id connects it to the full details in your logs, without exposing anything.</p></explain>
+</question>
+
+<question id="leaky-handler" type="choice">
+<q>A handler answers every error with <code>{ message: error.message, stack: error.stack }</code> and status 500. Which list of problems is complete?</q>
+<option>Only the status is wrong</option>
+<option>Only the stack is a problem</option>
+<option correct>The message of a bug can contain SQL or file paths, the stack maps your code, and a client mistake such as a missing task wrongly gets 500</option>
+<option>Nothing is wrong if the API uses HTTPS</option>
+<explain><p>Use <code>normalizeToBaseError</code> for the status, <code>serializePublicError</code> for the message, and send full details only to the logs. HTTPS protects the connection, not what you choose to send.</p></explain>
+</question>
+
+<question id="out-error-fields" type="output">
+<q>What does this print?</q>
+<code file="fields.js">
+import { ConflictError, NotFoundError } from "@zudojs/errors";
+
+for (const error of [new NotFoundError("Task 9 not found"), new ConflictError("Title taken")]) {
+  console.log(error.name, error.code, error.statusCode, error.expose);
+}
+</code>
+<option correct>NotFoundError ERR_RESOURCE_NOT_FOUND 404 true
+ConflictError ERR_CONFLICT 409 true</option>
+<option>NotFoundError ERR_NOT_FOUND 404 false
+ConflictError ERR_CONFLICT 409 false</option>
+<option>Error ERR_RESOURCE_NOT_FOUND 404 true
+Error ERR_CONFLICT 409 true</option>
+<option>NotFoundError ERR_RESOURCE_NOT_FOUND 400 true
+ConflictError ERR_CONFLICT 400 true</option>
+<explain><p>Each class brings its own stable code and status. Both are 4xx client errors, so their messages are safe to show: <code>expose</code> is <code>true</code>.</p></explain>
+</question>
+
+<question id="out-domain-error" type="output">
+<q>What does this print?</q>
+<code file="domain.js">
+import { DomainError, ValidationError } from "@zudojs/errors";
+
+const rule = new DomainError("A finished task cannot be reopened");
+const input = new ValidationError("The due date is in the past");
+console.log(rule.statusCode, rule.category, input.statusCode, input.code);
+</code>
+<option correct>422 business 400 ERR_VALIDATION_FAILED</option>
+<option>400 business 400 ERR_VALIDATION_FAILED</option>
+<option>422 validation 422 ERR_VALIDATION</option>
+<option>500 system 400 ERR_VALIDATION_FAILED</option>
+<explain><p><code>DomainError</code> is for a broken business rule (422, category <code>business</code>). <code>ValidationError</code> is for bad input (400).</p></explain>
+</question>
+
+<question id="out-normalize-bug" type="output">
+<q>What does this print?</q>
+<code file="normalize-bug.js">
+import { normalizeToBaseError } from "@zudojs/errors";
+
+const error = normalizeToBaseError(new TypeError("Cannot read properties of undefined (reading 'title')"));
+console.log(error.name, error.code, error.statusCode, error.expose, error.isOperational);
+</code>
+<option correct>BaseError ERR_INTERNAL_ERROR 500 false false</option>
+<option>TypeError ERR_INTERNAL_ERROR 500 false false</option>
+<option>BaseError ERR_TYPE_ERROR 400 true true</option>
+<option>TypeError undefined undefined undefined undefined</option>
+<explain><p>Anything that is not a <code>BaseError</code> is treated as a bug: a hidden (<code>expose: false</code>), non-operational 500 with code <code>ERR_INTERNAL_ERROR</code>.</p></explain>
+</question>
+
+<question id="out-normalize-passthrough" type="output">
+<q>What does this print?</q>
+<code file="passthrough.js">
+import { normalizeToBaseError, NotFoundError } from "@zudojs/errors";
+
+const original = new NotFoundError("Task 9 not found");
+const normalized = normalizeToBaseError(original);
+console.log(normalized === original, normalized.statusCode);
+</code>
+<option correct>true 404</option>
+<option>false 404</option>
+<option>false 500</option>
+<option>true 500</option>
+<explain><p>A <code>BaseError</code> passes through unchanged, so your 404 stays a 404. Only foreign values are turned into a 500.</p></explain>
+</question>
+
+<question id="out-normalize-string" type="output">
+<q>Someone wrote <code>throw "database down"</code>. What does this print?</q>
+<code file="throw-string.js">
+import { normalizeToBaseError } from "@zudojs/errors";
+
+try {
+  throw "database down";
+} catch (thrown) {
+  const error = normalizeToBaseError(thrown);
+  console.log(typeof thrown, error instanceof Error, error.statusCode, error.isOperational);
+}
+</code>
+<option correct>string true 500 false</option>
+<option>string false 500 false</option>
+<option>object true 500 true</option>
+<option>string true 400 true</option>
+<explain><p>JavaScript lets you throw any value, so <code>catch</code> gets <code>unknown</code>. Normalizing turns even a string into a real error object: an unplanned 500.</p></explain>
+</question>
+
+<question id="out-normalize-cause" type="output">
+<q>What does this print?</q>
+<code file="cause.js">
+import { normalizeToBaseError } from "@zudojs/errors";
+
+const error = normalizeToBaseError(new TypeError("boom"));
+console.log(error.cause instanceof TypeError, error.cause.message);
+</code>
+<option correct>true boom</option>
+<option>false undefined</option>
+<option>true An unexpected error occurred.</option>
+<option>false boom</option>
+<explain><p>The original error is kept in <code>cause</code>. The client never sees it, but your logs can, so you still know what really went wrong.</p></explain>
+</question>
+
+<question id="out-custom-string" type="output">
+<q>What does this print?</q>
+<code file="custom.js">
+import { BaseError, ErrorCategory } from "@zudojs/errors";
+
+class TaskAlreadyDoneError extends BaseError {
+  constructor(taskId) {
+    super(`Task ${taskId} is already done`, {
+      code: "ERR_TASK_ALREADY_DONE",
+      category: ErrorCategory.BUSINESS,
+      statusCode: 409,
+      metadata: { taskId },
+    });
+  }
+}
+
+const error = new TaskAlreadyDoneError(3);
+console.log(String(error));
+console.log(error.name, error instanceof BaseError, error.expose);
+</code>
+<option correct>TaskAlreadyDoneError [ERR_TASK_ALREADY_DONE]: Task 3 is already done
+TaskAlreadyDoneError true true</option>
+<option>Error: Task 3 is already done
+BaseError true true</option>
+<option>TaskAlreadyDoneError [ERR_TASK_ALREADY_DONE]: Task 3 is already done
+BaseError true false</option>
+<option>TaskAlreadyDoneError: Task 3 is already done
+TaskAlreadyDoneError false true</option>
+<explain><p><code>name</code> is set to the class name for you. The class extends <code>BaseError</code>, and a 409 is a client error, so its message is exposed.</p></explain>
+</question>
+
+<question id="out-metadata-frozen" type="output">
+<q>What does this print?</q>
+<code file="metadata.js">
+import { NotFoundError } from "@zudojs/errors";
+
+const details = { taskId: 9 };
+const error = new NotFoundError("Task 9 not found", { metadata: details });
+details.taskId = 10;
+console.log(error.getMetadata("taskId"), Object.isFrozen(error.metadata));
+</code>
+<option correct>9 true</option>
+<option>10 true</option>
+<option>10 false</option>
+<option>9 false</option>
+<explain><p>Metadata is copied and frozen when the error is created, so changing the original object later, or the metadata itself, cannot rewrite what happened.</p></explain>
+</question>
+
+<question id="out-public-custom" type="output">
+<q>What does this print?</q>
+<code file="public-custom.js">
+import { NotFoundError, serializePublicError } from "@zudojs/errors";
+
+const error = new NotFoundError("Task 9 not found", { metadata: { taskId: 9 } });
+console.log(serializePublicError(error));
+</code>
+<option correct>{
+  code: 'ERR_RESOURCE_NOT_FOUND',
+  message: 'Task 9 not found',
+  category: 'resource',
+  statusCode: 404,
+  metadata: { taskId: 9 }
+}</option>
+<option>{
+  code: 'ERR_RESOURCE_NOT_FOUND',
+  message: 'An unexpected error occurred.',
+  category: 'resource',
+  statusCode: 404
+}</option>
+<option>{
+  name: 'NotFoundError',
+  message: 'Task 9 not found',
+  stack: 'NotFoundError: Task 9 not found'
+}</option>
+<option>{ code: 'ERR_RESOURCE_NOT_FOUND', statusCode: 404 }</option>
+<explain><p>A 404 is exposed, so the public copy keeps the real message and the metadata. It never includes a stack trace.</p></explain>
+</question>
+
+<question id="out-public-database" type="output">
+<q>What does this print?</q>
+<code file="public-database.js">
+import { databaseQueryError, serializePublicError } from "@zudojs/errors";
+
+const error = databaseQueryError('relation "tasks" does not exist', {
+  metadata: { sql: "SELECT * FROM tasks WHERE id = $1" },
+});
+const body = serializePublicError(error);
+console.log(body.statusCode, body.message, "metadata" in body);
+</code>
+<option correct>500 An unexpected error occurred. false</option>
+<option>500 relation "tasks" does not exist true</option>
+<option>500 relation "tasks" does not exist false</option>
+<option>400 An unexpected error occurred. false</option>
+<explain><p>A database error is a 500, so <code>expose</code> is <code>false</code>: the client gets a generic message and no metadata at all. The table name and SQL stay on the server.</p></explain>
+</question>
+
+<question id="out-tojson-logs" type="output">
+<q>What does this print?</q>
+<code file="tojson.js">
+import { databaseQueryError } from "@zudojs/errors";
+
+const error = databaseQueryError('relation "tasks" does not exist', {
+  metadata: { sql: "SELECT 1", password: "pa55word" },
+});
+const forLogs = error.toJSON();
+console.log(forLogs.message);
+console.log(forLogs.metadata.sql, forLogs.metadata.password, typeof forLogs.stack);
+</code>
+<option correct>relation "tasks" does not exist
+SELECT 1 [REDACTED] string</option>
+<option>An unexpected error occurred.
+SELECT 1 [REDACTED] undefined</option>
+<option>relation "tasks" does not exist
+SELECT 1 pa55word string</option>
+<option>relation "tasks" does not exist
+[REDACTED] [REDACTED] string</option>
+<explain><p>The log copy keeps the real message, the SQL and the stack, so you can find the bug. It still replaces the password: keys whose names look secret are redacted.</p></explain>
+</question>
+
+<question id="out-public-redact" type="output">
+<q>What does this print?</q>
+<code file="public-redact.js">
+import { NotFoundError, serializePublicError } from "@zudojs/errors";
+
+const error = new NotFoundError("Task 9 not found", { metadata: { taskId: 9, token: "abc123" } });
+console.log(serializePublicError(error).metadata);
+</code>
+<option correct>{ taskId: 9, token: '[REDACTED]' }</option>
+<option>{ taskId: 9, token: 'abc123' }</option>
+<option>{ taskId: 9 }</option>
+<option>undefined</option>
+<explain><p>Both serializers redact keys whose names look secret, as a safety net. The real fix is not to put a token in metadata at all.</p></explain>
+</question>
+
+<question id="out-validation-error" type="output">
+<q>What does this print?</q>
+<code file="validation-error.js">
+import { invalidFieldIssue, requiredFieldIssue, ValidationError } from "@zudojs/errors";
+
+const error = new ValidationError("The import file has problems", {
+  issues: [requiredFieldIssue("title"), invalidFieldIssue("priority", "Priority must be low, normal or high")],
+});
+console.log(error.statusCode, error.issueCount);
+console.log(error.issues.map((issue) => issue.field));
+</code>
+<option correct>400 2
+[ 'title', 'priority' ]</option>
+<option>422 2
+[ 'title', 'priority' ]</option>
+<option>400 1
+[ 'title' ]</option>
+<option>400 2
+[ 'title.required', 'priority.invalid' ]</option>
+<explain><p>A <code>ValidationError</code> is a 400 that carries the issues you built. Each issue has a <code>field</code> and a <code>message</code>.</p></explain>
+</question>
+
+<question id="out-schema-error" type="output">
+<q>What does this print?</q>
+<code file="schema-error.js">
+import { isBaseError, SchemaError } from "@zudojs/errors";
+import { schema } from "@zudojs/schema";
+
+try {
+  schema.object({ title: schema.string().min(3) }).parse({ title: "no" });
+} catch (error) {
+  console.log(error instanceof SchemaError, isBaseError(error), error.code, error.statusCode);
+}
+</code>
+<option correct>true true ERR_SCHEMA_VALIDATION 400</option>
+<option>true false ERR_SCHEMA_VALIDATION 400</option>
+<option>false true ERR_VALIDATION_FAILED 400</option>
+<option>true true ERR_SCHEMA_VALIDATION 422</option>
+<explain><p>A schema's <code>parse</code> throws a <code>SchemaError</code>, a framework error that extends <code>BaseError</code> with status 400. <code>isBaseError</code> checks that for any value.</p></explain>
+</question>
+
+<question id="out-handler-404" type="output">
+<q>What does this print?</q>
+<code file="handler-404.js">
+import { ErrorHandler, NotFoundError } from "@zudojs/errors";
+
+const reported = [];
+const handler = new ErrorHandler({ reporter: (error) => reported.push(error.code) });
+
+const body = await handler.handlePublic(new NotFoundError("Task 9 not found"), { requestId: "req-1" });
+console.log(body.statusCode, body.message, body.requestId);
+console.log(reported);
+</code>
+<option correct>404 Task 9 not found req-1
+[ 'ERR_RESOURCE_NOT_FOUND' ]</option>
+<option>404 An unexpected error occurred. req-1
+[ 'ERR_RESOURCE_NOT_FOUND' ]</option>
+<option>404 Task 9 not found undefined
+[]</option>
+<option>500 Task 9 not found req-1
+[ 'ERR_INTERNAL_ERROR' ]</option>
+<explain><p><code>handlePublic</code> reports the error and returns a public body with the real message (a 404 is exposed) and the request id you passed in the context.</p></explain>
+</question>
+
+<question id="out-handler-bug" type="output">
+<q>What does this print?</q>
+<code file="handler-bug.js">
+import { ErrorHandler } from "@zudojs/errors";
+
+const handler = new ErrorHandler({
+  reporter: (error) => console.log(`[report] ${error.code} operational=${error.isOperational}`),
+});
+
+const body = await handler.handlePublic(new Error("connect ECONNREFUSED 10.0.0.5:5432"), { requestId: "req-2" });
+console.log(body.statusCode, body.message);
+</code>
+<option correct>[report] ERR_INTERNAL_ERROR operational=false
+500 An unexpected error occurred.</option>
+<option>[report] ERR_INTERNAL_ERROR operational=false
+500 connect ECONNREFUSED 10.0.0.5:5432</option>
+<option>500 An unexpected error occurred.</option>
+<option>[report] ERR_UNKNOWN operational=true
+500 An unexpected error occurred.</option>
+<explain><p>The plain <code>Error</code> is normalized into a non-operational 500, exactly the kind you want an alert for. The internal address stays out of the client body.</p></explain>
+</question>
+
+<question id="code-custom-class" type="code" file="task-already-done.ts">
+<q><p>Write the class <code>TaskAlreadyDoneError</code>: it extends <code>BaseError</code>, takes a <code>taskId: number</code>, and calls <code>super</code> with the message <code>Task 3 is already done</code> (built from the id), code <code>ERR_TASK_ALREADY_DONE</code>, category <code>ErrorCategory.BUSINESS</code>, status 409 and <code>metadata: { taskId }</code>. The program should print <code>409 ERR_TASK_ALREADY_DONE Task 3 is already done</code>.</p></q>
+<starter>
+import { BaseError, ErrorCategory } from "@zudojs/errors";
+
+class TaskAlreadyDoneError extends BaseError {
+  constructor(taskId: number) {
+    // your code here
+    super("");
+  }
+}
+
+const error = new TaskAlreadyDoneError(3);
+console.log(error.statusCode, error.code, error.message);
+</starter>
+<solution>
+import { BaseError, ErrorCategory } from "@zudojs/errors";
+
+class TaskAlreadyDoneError extends BaseError {
+  constructor(taskId: number) {
+    super(`Task ${taskId} is already done`, {
+      code: "ERR_TASK_ALREADY_DONE",
+      category: ErrorCategory.BUSINESS,
+      statusCode: 409,
+      metadata: { taskId },
+    });
+  }
+}
+
+const error = new TaskAlreadyDoneError(3);
+console.log(error.statusCode, error.code, error.message);
+</solution>
+<expected>409 ERR_TASK_ALREADY_DONE Task 3 is already done</expected>
+<explain><p>Setting everything in the constructor means every <code>throw new TaskAlreadyDoneError(id)</code> gets the same code and status. The caller only passes the id.</p></explain>
+</question>
+
+<question id="code-complete" type="code" file="complete.js">
+<q><p>Finish <code>complete(id)</code>: throw a <code>NotFoundError</code> (<code>Task 5 not found</code>) when the task does not exist, a <code>ConflictError</code> (<code>Task 1 is already done</code>) when it is already done, and otherwise mark it done and return it. The program should print <code>200</code>, <code>409 ERR_CONFLICT</code> and <code>404 ERR_RESOURCE_NOT_FOUND</code>.</p></q>
+<starter>
+import { ConflictError, normalizeToBaseError, NotFoundError } from "@zudojs/errors";
+
+const tasks = new Map([[1, { id: 1, title: "Buy milk", done: false }]]);
+
+function complete(id) {
+  // your code here
+}
+
+for (const id of [1, 1, 5]) {
+  try {
+    complete(id);
+    console.log(200);
+  } catch (thrown) {
+    const error = normalizeToBaseError(thrown);
+    console.log(error.statusCode, error.code);
+  }
+}
+</starter>
+<solution>
+import { ConflictError, normalizeToBaseError, NotFoundError } from "@zudojs/errors";
+
+const tasks = new Map([[1, { id: 1, title: "Buy milk", done: false }]]);
+
+function complete(id) {
+  const task = tasks.get(id);
+  if (!task) throw new NotFoundError(`Task ${id} not found`);
+  if (task.done) throw new ConflictError(`Task ${id} is already done`);
+  const updated = { ...task, done: true };
+  tasks.set(id, updated);
+  return updated;
+}
+
+for (const id of [1, 1, 5]) {
+  try {
+    complete(id);
+    console.log(200);
+  } catch (thrown) {
+    const error = normalizeToBaseError(thrown);
+    console.log(error.statusCode, error.code);
+  }
+}
+</solution>
+<expected>
+200
+409 ERR_CONFLICT
+404 ERR_RESOURCE_NOT_FOUND
+</expected>
+<explain><p>The service throws errors that describe the problem; the status travels with them. The caller never has to decide which status a missing task deserves.</p></explain>
+</question>
+
+<question id="code-client-body" type="code" file="client-body.js">
+<q><p>Finish <code>clientBody(thrown)</code>: normalize the thrown value, then return only <code>code</code> and <code>message</code> from <code>serializePublicError</code>. The program should print <code>{"code":"ERR_RESOURCE_NOT_FOUND","message":"Task 9 not found"}</code> and <code>{"code":"ERR_INTERNAL_ERROR","message":"An unexpected error occurred."}</code>.</p></q>
+<starter>
+import { normalizeToBaseError, NotFoundError, serializePublicError } from "@zudojs/errors";
+
+function clientBody(thrown) {
+  // your code here
+}
+
+console.log(JSON.stringify(clientBody(new NotFoundError("Task 9 not found"))));
+console.log(JSON.stringify(clientBody(new Error("Cannot open /var/data/tasks.db"))));
+</starter>
+<solution>
+import { normalizeToBaseError, NotFoundError, serializePublicError } from "@zudojs/errors";
+
+function clientBody(thrown) {
+  const { code, message } = serializePublicError(normalizeToBaseError(thrown));
+  return { code, message };
+}
+
+console.log(JSON.stringify(clientBody(new NotFoundError("Task 9 not found"))));
+console.log(JSON.stringify(clientBody(new Error("Cannot open /var/data/tasks.db"))));
+</solution>
+<expected>
+{"code":"ERR_RESOURCE_NOT_FOUND","message":"Task 9 not found"}
+{"code":"ERR_INTERNAL_ERROR","message":"An unexpected error occurred."}
+</expected>
+<explain><p>The 404 keeps its real message; the plain <code>Error</code> becomes a hidden 500, so the file path never reaches the client.</p></explain>
+</question>
+
+<question id="code-should-report" type="code" file="should-report.js">
+<q><p>Finish <code>shouldReport(thrown)</code>: normalize it, and return <code>true</code> when the error is not operational or its status is 500 or more. The program should print <code>false false true true</code>.</p></q>
+<starter>
+import { ConflictError, databaseQueryError, normalizeToBaseError, NotFoundError } from "@zudojs/errors";
+
+function shouldReport(thrown) {
+  // your code here
+}
+
+console.log(
+  shouldReport(new NotFoundError("Task 9 not found")),
+  shouldReport(new ConflictError("Title taken")),
+  shouldReport(new TypeError("x is undefined")),
+  shouldReport(databaseQueryError("connection lost")),
+);
+</starter>
+<solution>
+import { ConflictError, databaseQueryError, normalizeToBaseError, NotFoundError } from "@zudojs/errors";
+
+function shouldReport(thrown) {
+  const error = normalizeToBaseError(thrown);
+  return !error.isOperational || error.statusCode >= 500;
+}
+
+console.log(
+  shouldReport(new NotFoundError("Task 9 not found")),
+  shouldReport(new ConflictError("Title taken")),
+  shouldReport(new TypeError("x is undefined")),
+  shouldReport(databaseQueryError("connection lost")),
+);
+</solution>
+<expected>false false true true</expected>
+<explain><p>404s and 409s are normal life. A bug and a server failure are things to fix, so only those are reported.</p></explain>
+</question>
+
+<question id="code-import-issues" type="code" file="import-issues.js">
+<q><p>Finish <code>checkRow</code> for an import file. Collect issues: <code>requiredFieldIssue("title")</code> when <code>row.title</code> is missing, and <code>invalidFieldIssue("priority", "Priority must be low, normal or high")</code> when the priority is not one of those three. If there are issues, throw a <code>ValidationError("The import file has problems", { issues })</code>; otherwise return <code>"ok"</code>. The program should print <code>ok</code> and then <code>400 2 title,priority</code>.</p></q>
+<starter>
+import { invalidFieldIssue, requiredFieldIssue, ValidationError } from "@zudojs/errors";
+
+function checkRow(row) {
+  // your code here
+}
+
+console.log(checkRow({ title: "Buy milk", priority: "low" }));
+try {
+  checkRow({ priority: "urgent" });
+} catch (error) {
+  console.log(error.statusCode, error.issueCount, error.issues?.map((i) => i.field).join(","));
+}
+</starter>
+<solution>
+import { invalidFieldIssue, requiredFieldIssue, ValidationError } from "@zudojs/errors";
+
+function checkRow(row) {
+  const issues = [];
+  if (row.title === undefined) issues.push(requiredFieldIssue("title"));
+  if (!["low", "normal", "high"].includes(row.priority)) {
+    issues.push(invalidFieldIssue("priority", "Priority must be low, normal or high"));
+  }
+  if (issues.length > 0) {
+    throw new ValidationError("The import file has problems", { issues });
+  }
+  return "ok";
+}
+
+console.log(checkRow({ title: "Buy milk", priority: "low" }));
+try {
+  checkRow({ priority: "urgent" });
+} catch (error) {
+  console.log(error.statusCode, error.issueCount, error.issues?.map((i) => i.field).join(","));
+}
+</solution>
+<expected>
+ok
+400 2 title,priority
+</expected>
+<explain><p><code>ValidationError</code> is for checks you write yourself. Collect every problem first, then throw once, so the client can fix them all in one go.</p></explain>
+</question>
+
+<question id="code-error-body" type="code" file="error-body.js">
+<q><p>Finish <code>toErrorBody(thrown, requestId)</code>. Return <code>{ status, body }</code>: <code>status</code> is the normalized error's <code>statusCode</code>, and <code>body</code> is <code>{ error: { code, message, requestId } }</code> with <code>code</code> and <code>message</code> from <code>serializePublicError</code>. The program should print <code>409 {"error":{"code":"ERR_CONFLICT","message":"Title taken","requestId":"req-7"}}</code> and <code>500 {"error":{"code":"ERR_INTERNAL_ERROR","message":"An unexpected error occurred.","requestId":"req-8"}}</code>.</p></q>
+<starter>
+import { ConflictError, normalizeToBaseError, serializePublicError } from "@zudojs/errors";
+
+function toErrorBody(thrown, requestId) {
+  // your code here
+}
+
+for (const [thrown, id] of [[new ConflictError("Title taken"), "req-7"], [new RangeError("bad index 99"), "req-8"]]) {
+  const result = toErrorBody(thrown, id);
+  console.log(result?.status, JSON.stringify(result?.body));
+}
+</starter>
+<solution>
+import { ConflictError, normalizeToBaseError, serializePublicError } from "@zudojs/errors";
+
+function toErrorBody(thrown, requestId) {
+  const error = normalizeToBaseError(thrown);
+  const { code, message } = serializePublicError(error);
+  return { status: error.statusCode, body: { error: { code, message, requestId } } };
+}
+
+for (const [thrown, id] of [[new ConflictError("Title taken"), "req-7"], [new RangeError("bad index 99"), "req-8"]]) {
+  const result = toErrorBody(thrown, id);
+  console.log(result?.status, JSON.stringify(result?.body));
+}
+</solution>
+<expected>
+409 {"error":{"code":"ERR_CONFLICT","message":"Title taken","requestId":"req-7"}}
+500 {"error":{"code":"ERR_INTERNAL_ERROR","message":"An unexpected error occurred.","requestId":"req-8"}}
+</expected>
+<explain><p>This is the heart of the Task API's <code>toErrorResponse</code>: one body shape for every error, the right status, a safe message, and the request id so a user can report it.</p></explain>
+</question>
+
+<question id="code-fix-leak" type="code" file="fix-leak.js">
+<q><p>This handler leaks the stack and the raw message. Rewrite <code>safeHandler</code> so it returns <code>{ status, body: { code, message } }</code> using <code>normalizeToBaseError</code> and <code>serializePublicError</code>. The program should print <code>500 {"code":"ERR_INTERNAL_ERROR","message":"An unexpected error occurred."}</code>.</p></q>
+<starter>
+import { normalizeToBaseError, serializePublicError } from "@zudojs/errors";
+
+function safeHandler(error) {
+  // fix this: it sends internal details to the client
+  return { status: 500, body: { message: error.message, stack: error.stack } };
+}
+
+const result = safeHandler(new Error('relation "tasks" does not exist'));
+console.log(result.status, JSON.stringify(result.body).slice(0, 120));
+</starter>
+<solution>
+import { normalizeToBaseError, serializePublicError } from "@zudojs/errors";
+
+function safeHandler(thrown) {
+  const error = normalizeToBaseError(thrown);
+  const { code, message } = serializePublicError(error);
+  return { status: error.statusCode, body: { code, message } };
+}
+
+const result = safeHandler(new Error('relation "tasks" does not exist'));
+console.log(result.status, JSON.stringify(result.body).slice(0, 120));
+</solution>
+<expected>500 {"code":"ERR_INTERNAL_ERROR","message":"An unexpected error occurred."}</expected>
+<explain><p>The client gets only a code and a safe message. The table name and the stack stay on the server, where your logs can use <code>toJSON()</code>.</p></explain>
+</question>
+
+<question id="code-status-of" type="code" file="status-of.js">
+<q><p>Finish <code>statusOf(thrown)</code> so it returns the HTTP status for any thrown value, using <code>normalizeToBaseError</code>. The program should print <code>404 409 400 500 500</code>.</p></q>
+<starter>
+import { ConflictError, normalizeToBaseError, NotFoundError, ValidationError } from "@zudojs/errors";
+
+function statusOf(thrown) {
+  // your code here
+}
+
+const thrownValues = [
+  new NotFoundError("Task 9 not found"),
+  new ConflictError("Title taken"),
+  new ValidationError("Bad due date"),
+  new TypeError("x is undefined"),
+  "oops",
+];
+console.log(thrownValues.map(statusOf).join(" "));
+</starter>
+<solution>
+import { ConflictError, normalizeToBaseError, NotFoundError, ValidationError } from "@zudojs/errors";
+
+function statusOf(thrown) {
+  return normalizeToBaseError(thrown).statusCode;
+}
+
+const thrownValues = [
+  new NotFoundError("Task 9 not found"),
+  new ConflictError("Title taken"),
+  new ValidationError("Bad due date"),
+  new TypeError("x is undefined"),
+  "oops",
+];
+console.log(thrownValues.map(statusOf).join(" "));
+</solution>
+<expected>404 409 400 500 500</expected>
+<explain><p>ZudoJS errors carry their status; anything else, even a thrown string, is treated as a bug and becomes 500.</p></explain>
+</question>

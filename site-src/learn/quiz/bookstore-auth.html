@@ -1,0 +1,1011 @@
+<question id="auth-three-parts" type="choice">
+<q>In the BookStore, what does <code>POST /sessions</code> do?</q>
+<option>It stores a new user's e-mail and password hash</option>
+<option correct>It checks the e-mail and password and returns a signed token</option>
+<option>It returns the list of logged-in users</option>
+<option>It checks the token on every protected request</option>
+<explain><p>Register is <code>POST /users</code>. Log in is <code>POST /sessions</code>, which answers with a token. After that, every protected request proves who it is by sending the token in the <code>Authorization</code> header.</p></explain>
+</question>
+
+<question id="secret-where" type="choice">
+<q>Where does the token-signing secret come from?</q>
+<option>A constant in <code>src/auth/token.ts</code>, so every server uses the same one</option>
+<option>A <code>secret.txt</code> file committed next to the code</option>
+<option correct>The <code>TOKEN_SECRET</code> environment variable, and the server refuses to start without a good one</option>
+<option>It is generated from the user's password</option>
+<explain><p>Anyone who has the secret can make tokens for any user, so it never goes into the code or into git. <code>loadConfig</code> reads it from the environment and fails fast if it is missing or too short.</p></explain>
+</question>
+
+<question id="secret-short" type="choice">
+<q>Why does <code>loadConfig</code> refuse <code>TOKEN_SECRET=secret</code>?</q>
+<option>Because secrets must be written in hex</option>
+<option correct>Because a short, guessable secret lets an attacker guess it and forge tokens; it must be a random value of at least 32 characters</option>
+<option>Because a secret must contain digits and symbols</option>
+<option>It does not; any non-empty value is accepted</option>
+<explain><p>A secret is only safe if nobody can guess it. <code>randomBytes(32).toString("hex")</code> gives 64 random characters. A missing secret and a short one are both refused.</p></explain>
+</question>
+
+<question id="secret-reuse" type="choice">
+<q>Which is the right way to handle token secrets?</q>
+<option>Copy the secret from the tutorial so everyone's examples match</option>
+<option>Use one secret for development, testing and production, so tokens work everywhere</option>
+<option correct>Make a fresh random secret for each environment, and replace it if it ever leaks</option>
+<option>Share it in the team chat so nobody gets locked out</option>
+<explain><p>A secret that has been seen elsewhere is not a secret. If it leaks, replacing it makes every token signed with the old one stop working, which is exactly what you want.</p></explain>
+</question>
+
+<question id="store-hash" type="choice">
+<q>Why does the <code>users</code> table store a password <strong>hash</strong> and not the password?</q>
+<option>Because hashes are shorter</option>
+<option correct>If the database leaks, the attacker must not learn the passwords; a hash cannot be turned back into the password</option>
+<option>Because PostgreSQL cannot store passwords</option>
+<option>So the server can e-mail users their password</option>
+<explain><p>A hash is the output of a one-way function. You can check a password against it, but not recover the password from it. Nobody, not even you, should be able to read users' passwords.</p></explain>
+</question>
+
+<question id="not-sha256" type="choice">
+<q>Why is a fast hash like SHA-256 the wrong tool for passwords?</q>
+<option>Because it produces hashes that are too long</option>
+<option correct>Because an attacker with a leaked hash can try billions of guesses per second; password hashes like scrypt are slow on purpose</option>
+<option>Because SHA-256 is not built into Node.js</option>
+<option>Because SHA-256 can be reversed</option>
+<explain><p>Speed helps the attacker, who tries guess after guess against the stolen hashes. scrypt makes each guess expensive, while one check at log-in is still quick enough for a real user.</p></explain>
+</question>
+
+<question id="salt-why" type="choice">
+<q>What does the random salt in <code>hashPassword</code> achieve?</q>
+<option>It makes the password longer, so it is harder to guess</option>
+<option correct>Two users with the same password get different hashes, so one cracked hash does not reveal the others</option>
+<option>It encrypts the password so the server can read it back</option>
+<option>It replaces the need for a slow hash</option>
+<explain><p>Each password gets its own salt, and the salt is stored next to the key: <code>scrypt$salt$key</code>. The same password hashed twice gives different strings, yet both verify correctly.</p></explain>
+</question>
+
+<question id="timing-safe" type="choice">
+<q>Why does <code>verifyPassword</code> compare with <code>timingSafeEqual</code> instead of <code>===</code>?</q>
+<option>Because <code>===</code> cannot compare buffers of the same length</option>
+<option correct>A normal comparison stops at the first different byte, and an attacker can measure that time to guess a value piece by piece</option>
+<option>Because <code>timingSafeEqual</code> is faster</option>
+<option>Because <code>===</code> would ignore upper and lower case</option>
+<explain><p><code>timingSafeEqual</code> always takes the same time, wherever the values differ. It throws when the lengths differ, which is why the code checks <code>actual.length === expected.length</code> first.</p></explain>
+</question>
+
+<question id="hmac-what" type="choice">
+<q>What does the HMAC signature on a BookStore token protect against?</q>
+<option>Anyone reading the token's content</option>
+<option correct>Anyone changing the content or making a new valid token without the secret</option>
+<option>The token being sent over plain HTTP</option>
+<option>The user forgetting to log out</option>
+<explain><p>The signature is a hash of the content mixed with the secret. Change one character and it no longer matches; without the secret, nobody can make a new one. It does not hide the content.</p></explain>
+</question>
+
+<question id="token-readable" type="choice">
+<q>A token's payload part decodes to <code>{"sub":7,"exp":1790168400}</code>. What follows from this?</q>
+<option>The token is broken: payloads should be encrypted</option>
+<option correct>Anyone can read a token, so never put a password or other private data in it</option>
+<option>Only the server can decode it, because of the signature</option>
+<option>The user id should be removed, since it is visible</option>
+<explain><p>base64url is just a way to write bytes as text; it is not encryption. The signature stops changes, not reading. Keep only what is needed, like the user id and the expiry.</p></explain>
+</question>
+
+<question id="sub-exp" type="choice">
+<q>In the token payload, what are <code>sub</code> and <code>exp</code>?</q>
+<option><code>sub</code> is the session id; <code>exp</code> is the time the token was created</option>
+<option correct><code>sub</code> is the subject (the user id); <code>exp</code> is when it expires, in seconds since 1970</option>
+<option><code>sub</code> is the signature; <code>exp</code> is the secret's expiry</option>
+<option><code>sub</code> is the e-mail; <code>exp</code> is the time the user logged in</option>
+<explain><p>The payload says who and until when. A BookStore token lives one hour; <code>readToken</code> refuses it once <code>exp * 1000 &lt;= now</code>.</p></explain>
+</question>
+
+<question id="now-param" type="choice">
+<q>Why do <code>createToken</code> and <code>readToken</code> take <code>now = Date.now()</code> as a parameter?</q>
+<option>Because <code>Date.now()</code> is not allowed inside a module</option>
+<option correct>So a test can pass any time it likes: "two hours later" does not mean waiting two hours</option>
+<option>So the client can choose when its token expires</option>
+<option>To make tokens from different servers match</option>
+<explain><p>Time is an outside dependency, like the fake clock in Classes in TypeScript. The default uses the real time, while tests pass fixed times and get the same result on every run.</p></explain>
+</question>
+
+<question id="same-login-message" type="choice">
+<q>Why does log-in answer <code>Wrong e-mail or password</code> both when the e-mail is unknown and when the password is wrong?</q>
+<option>Because the server cannot tell the two cases apart</option>
+<option correct>So the answer does not tell a stranger which e-mails have accounts</option>
+<option>Because 401 only allows one message</option>
+<option>To save one database query</option>
+<explain><p>Different messages would let anyone test a list of e-mail addresses and learn who uses the shop. One message for both cases gives them nothing.</p></explain>
+</question>
+
+<question id="user-id-source" type="choice">
+<q>A logged-in client sends <code>{"bookId": 1, "quantity": 1, "userId": 2}</code> to <code>POST /orders</code>. Where must the order's user id come from?</q>
+<option>From <code>body.userId</code>, because the client knows who it is</option>
+<option>From <code>body.userId</code>, but only if it matches an existing user</option>
+<option correct>Only from the verified token, through <code>requireUserId</code>; <code>parseNewOrder</code> has no <code>userId</code> field at all</option>
+<option>From a <code>userId</code> query string</option>
+<explain><p>If the client could name the user, any logged-in user could order in someone else's name or read their orders by changing a number. Only the signed token proves who is calling.</p></explain>
+</question>
+
+<question id="status-401" type="choice">
+<q>A client calls <code>GET /orders</code> with no <code>Authorization</code> header. What does <code>requireUserId</code> do?</q>
+<option>Returns user id 0, a guest</option>
+<option>Returns every order, since no user is given</option>
+<option correct>Throws an <code>HttpError</code> 401 Unauthorized, telling the client to log in and send a Bearer token</option>
+<option>Throws a 404, because there are no orders for nobody</option>
+<explain><p>No token, a bad signature and an expired token all mean "we do not know who you are": 401. The route never runs, so nobody's orders are shown.</p></explain>
+</question>
+
+<question id="email-password-rules" type="choice">
+<q>Which rule does <code>parseCredentials</code> follow?</q>
+<option>It trims and lower-cases both the e-mail and the password</option>
+<option correct>It lower-cases the e-mail, but does not trim the password, because spaces are allowed in a password</option>
+<option>It lower-cases the password so users can type it in any case</option>
+<option>It accepts any password length, because the hash has a fixed length</option>
+<explain><p><code>Ada@Example.com</code> and <code>ada@example.com</code> are one account. A password is used exactly as typed, but its length is checked (10 to 200 characters).</p></explain>
+</question>
+
+<question id="create-no-hash" type="choice">
+<q><code>UserRepository.create</code> runs <code>INSERT … RETURNING id, email</code> and returns a <code>User</code> with no hash. Why?</q>
+<option>Because the hash is not stored</option>
+<option correct>The result goes straight into the 201 response, and a hash must never leave the server; only <code>findByEmail</code> returns it, for the log-in check</option>
+<option>Because <code>RETURNING</code> cannot return text columns</option>
+<option>To make the query faster</option>
+<explain><p>Build what you send from chosen fields. The hash is only read in one place, where it is needed, and never sent to a client.</p></explain>
+</question>
+
+<question id="rate-limit" type="choice">
+<q>What is still missing to protect <code>POST /sessions</code> from a script trying a million passwords?</q>
+<option>A longer token lifetime</option>
+<option>Returning a different message for unknown e-mails</option>
+<option correct>A rate limit: only a few log-in attempts per minute per client</option>
+<option>Hashing the password twice</option>
+<explain><p>A public log-in route needs a rate limit. The lesson lists it among the missing security layers; you add one with <code>@zudojs/security</code> later in the course.</p></explain>
+</question>
+
+<question id="test-secret" type="choice">
+<q>The token tests start with <code>const secret = randomBytes(32).toString("hex")</code>. Why not paste the real <code>TOKEN_SECRET</code> into the test file?</q>
+<option>Because tests run faster with a random secret</option>
+<option correct>A test file is committed to git, so a real secret there would leak; each run makes its own throwaway secret</option>
+<option>Because <code>readToken</code> only accepts hex secrets</option>
+<option>Because the real secret changes every hour</option>
+<explain><p>No real secret ever appears in a test file. The tests only need <em>a</em> secret, and a fresh random one checks the same rules.</p></explain>
+</question>
+
+<question id="review-no-middleware" type="choice">
+<q>The honest review says the router has no middleware. What is the risk that follows?</q>
+<option>Routes cannot be async</option>
+<option correct>"Require a user" is a line you must remember in every protected handler; forget it once and that route is open to everyone</option>
+<option>The router cannot tell 404 from 405</option>
+<option>Tokens cannot be read without middleware</option>
+<explain><p>Security that depends on remembering a line in each handler fails the first time someone forgets. A framework can attach the check to a whole group of routes in one place.</p></explain>
+</question>
+
+<question id="review-no-revoke" type="choice">
+<q>Why does the review say the BookStore has no real log-out?</q>
+<option>Because there is no <code>DELETE /sessions</code> route yet, and adding one fixes it</option>
+<option correct>A signed token stays valid until it expires; the server keeps no list, so it cannot revoke a token early</option>
+<option>Because the client deletes its token automatically</option>
+<option>Because tokens never expire</option>
+<explain><p>The server checks only the signature and the expiry. A stolen token keeps working for up to an hour. Revoking tokens needs extra state on the server, one of the security layers still missing.</p></explain>
+</question>
+
+<question id="config-secret-output" type="output">
+<q>What does this print?</q>
+<code file="config-secret.ts">
+type Env = Readonly<Record<string, string | undefined>>;
+
+function loadSecret(env: Env): string {
+  const tokenSecret = env["TOKEN_SECRET"];
+  if (tokenSecret === undefined || tokenSecret.length < 32) {
+    throw new Error("TOKEN_SECRET must be set to a random value of at least 32 characters");
+  }
+  return tokenSecret;
+}
+
+for (const env of [{}, { TOKEN_SECRET: "secret" }, { TOKEN_SECRET: "a".repeat(32) }]) {
+  try {
+    console.log("started, secret length", loadSecret(env).length);
+  } catch (error) {
+    console.log("refused");
+  }
+}
+</code>
+<option correct>refused
+refused
+started, secret length 32</option>
+<option>started, secret length 0
+refused
+started, secret length 32</option>
+<option>refused
+started, secret length 6
+started, secret length 32</option>
+<option>refused
+refused
+refused</option>
+<explain><p>Missing and short secrets are both refused. (<code>"a".repeat(32)</code> passes the length check here, but a real secret must also be random: use <code>randomBytes(32).toString("hex")</code>.)</p></explain>
+</question>
+
+<question id="hash-output" type="output">
+<q>What does this print?</q>
+<code file="password.ts" browser="no">
+import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
+
+function derive(password: string, salt: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scrypt(password, salt, 64, (error, key) => (error ? reject(error) : resolve(key)));
+  });
+}
+async function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(16);
+  const key = await derive(password, salt);
+  return `scrypt$${salt.toString("base64url")}$${key.toString("base64url")}`;
+}
+async function verifyPassword(password: string, stored: string): Promise<boolean> {
+  const [scheme, salt, key] = stored.split("$");
+  if (scheme !== "scrypt" || salt === undefined || key === undefined) return false;
+  const expected = Buffer.from(key, "base64url");
+  const actual = await derive(password, Buffer.from(salt, "base64url"));
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+const first = await hashPassword("correct horse battery");
+const second = await hashPassword("correct horse battery");
+console.log(first === second, first.startsWith("scrypt$"));
+console.log(await verifyPassword("correct horse battery", second), await verifyPassword("Correct horse battery", first));
+console.log(await verifyPassword("correct horse battery", "plain-text-password"));
+</code>
+<option correct>false true
+true false
+false</option>
+<option>true true
+true false
+false</option>
+<option>false true
+true true
+false</option>
+<option>false true
+true false
+true</option>
+<explain><p>A random salt makes the two hashes differ, yet each verifies the right password. One changed letter fails. A stored value in the wrong format means "wrong password", not a crash.</p></explain>
+</question>
+
+<question id="hmac-output" type="output">
+<q>What does this print?</q>
+<code file="hmac.ts" browser="no">
+import { createHmac } from "node:crypto";
+
+function sign(data: string, secret: string): string {
+  return createHmac("sha256", secret).update(data).digest("base64url");
+}
+
+const secret = "k".repeat(64);
+const a = sign('{"sub":7}', secret);
+console.log(a === sign('{"sub":7}', secret));
+console.log(a === sign('{"sub":1}', secret));
+console.log(a === sign('{"sub":7}', "x".repeat(64)));
+console.log(a.length);
+</code>
+<option correct>true
+false
+false
+43</option>
+<option>false
+false
+false
+43</option>
+<option>true
+false
+true
+43</option>
+<option>true
+false
+false
+64</option>
+<explain><p>The same content and secret always give the same signature, so the server can check it. Changing the content or the secret gives a different one. A SHA-256 HMAC is 32 bytes, written as 43 base64url characters.</p></explain>
+</question>
+
+<question id="payload-decode-output" type="output">
+<q>What does this print?</q>
+<code file="payload.ts" browser="no">
+const now = Date.UTC(2026, 8, 23, 12, 0, 0);
+const payload = { sub: 7, exp: Math.floor(now / 1000) + 3600 };
+const data = Buffer.from(JSON.stringify(payload)).toString("base64url");
+console.log(data);
+console.log(Buffer.from(data, "base64url").toString("utf8"));
+</code>
+<option correct>eyJzdWIiOjcsImV4cCI6MTc5MDE2ODQwMH0
+{"sub":7,"exp":1790168400}</option>
+<option>eyJzdWIiOjcsImV4cCI6MTc5MDE2ODQwMH0
+[encrypted]</option>
+<option>eyJzdWIiOjcsImV4cCI6MTc5MDE2ODQwMH0=
+{"sub":7,"exp":1790168400}</option>
+<option>eyJzdWIiOjcsImV4cCI6MTc5MDE2ODQwMH0
+{"sub":7,"exp":1790164800}</option>
+<explain><p>base64url is not encryption: anyone can decode the payload. The expiry is one hour (3600 seconds) after <code>now</code>. base64url also drops the <code>=</code> padding, so the text is safe in a header or URL.</p></explain>
+</question>
+
+<question id="read-token-output" type="output">
+<q>What does this print?</q>
+<code file="token.ts" browser="no">
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+interface TokenPayload {
+  readonly sub: number;
+  readonly exp: number;
+}
+function sign(data: string, secret: string): string {
+  return createHmac("sha256", secret).update(data).digest("base64url");
+}
+function createToken(userId: number, secret: string, now: number, ttlSeconds = 3600): string {
+  const payload: TokenPayload = { sub: userId, exp: Math.floor(now / 1000) + ttlSeconds };
+  const data = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `${data}.${sign(data, secret)}`;
+}
+function readToken(token: string, secret: string, now: number): TokenPayload | undefined {
+  const [data, signature, extra] = token.split(".");
+  if (data === undefined || signature === undefined || extra !== undefined) return undefined;
+  const expected = Buffer.from(sign(data, secret));
+  const given = Buffer.from(signature);
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return undefined;
+  const payload = JSON.parse(Buffer.from(data, "base64url").toString("utf8")) as TokenPayload;
+  if (payload.exp * 1000 <= now) return undefined;
+  return payload;
+}
+
+const secret = "s".repeat(64);
+const now = Date.UTC(2026, 8, 23, 12, 0, 0);
+const token = createToken(7, secret, now);
+const forged = Buffer.from(JSON.stringify({ sub: 1, exp: 1790170000 })).toString("base64url");
+
+console.log(readToken(token, secret, now)?.sub);
+console.log(readToken(`${forged}.${token.split(".")[1]}`, secret, now));
+console.log(readToken(token, "t".repeat(64), now));
+console.log(readToken(token, secret, now + 2 * 3600 * 1000));
+</code>
+<option correct>7
+undefined
+undefined
+undefined</option>
+<option>7
+{ sub: 1, exp: 1790170000 }
+undefined
+undefined</option>
+<option>7
+undefined
+undefined
+{ sub: 7, exp: 1790168400 }</option>
+<option>7
+undefined
+7
+undefined</option>
+<explain><p>Only the real token read with the right secret, in time, is valid. The forged payload does not match the old signature, another secret gives another signature, and two hours later the one-hour token has expired.</p></explain>
+</question>
+
+<question id="timing-length-output" type="output">
+<q>What does this print?</q>
+<code file="timing-length.ts" browser="no">
+import { timingSafeEqual } from "node:crypto";
+
+console.log(timingSafeEqual(Buffer.from("abc"), Buffer.from("abc")));
+console.log(timingSafeEqual(Buffer.from("abc"), Buffer.from("abd")));
+try {
+  timingSafeEqual(Buffer.from("abc"), Buffer.from("abcd"));
+} catch (error) {
+  console.log((error as { code?: string }).code);
+}
+</code>
+<option correct>true
+false
+ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH</option>
+<option>true
+false
+false</option>
+<option>true
+true
+ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH</option>
+<option>true
+false
+undefined</option>
+<explain><p><code>timingSafeEqual</code> throws when the buffers have different lengths. That is why <code>verifyPassword</code> and <code>readToken</code> compare the lengths first: a wrong-length signature must mean "invalid", not a crash that becomes a 500.</p></explain>
+</question>
+
+<question id="random-secret-output" type="output">
+<q>What does this print?</q>
+<code file="random-secret.ts" browser="no">
+import { randomBytes } from "node:crypto";
+
+const a = randomBytes(32).toString("hex");
+const b = randomBytes(32).toString("hex");
+console.log(a.length, a === b, /^[0-9a-f]+$/.test(a));
+</code>
+<option correct>64 false true</option>
+<option>32 false true</option>
+<option>64 true true</option>
+<option>32 false false</option>
+<explain><p>32 random bytes written in hex take 2 characters each: 64 characters, which passes the "at least 32" rule. Every call gives a new value, so each environment gets its own secret.</p></explain>
+</question>
+
+<question id="token-parts-output" type="output">
+<q><code>readToken</code> starts with <code>const [data, signature, extra] = token.split(".")</code>. What does this print?</q>
+<code file="token-parts.ts">
+function shape(token: string): string {
+  const [data, signature, extra] = token.split(".");
+  if (data === undefined || signature === undefined || extra !== undefined) return "rejected";
+  return "two parts";
+}
+console.log(shape("abc.def"), shape("abc"), shape("a.b.c"), shape(""));
+</code>
+<option correct>two parts rejected rejected rejected</option>
+<option>two parts rejected two parts rejected</option>
+<option>two parts two parts rejected rejected</option>
+<option>two parts rejected rejected two parts</option>
+<explain><p>A BookStore token is exactly <code>data.signature</code>. With no dot, <code>signature</code> is <code>undefined</code>; with a third part, <code>extra</code> exists. Anything that is not exactly two parts is refused before any other work.</p></explain>
+</question>
+
+<question id="bearer-output" type="output">
+<q>What does this print?</q>
+<code file="bearer.ts">
+function bearerToken(header: unknown): string | undefined {
+  return typeof header === "string" && header.startsWith("Bearer ") ? header.slice(7) : undefined;
+}
+console.log(bearerToken("Bearer abc.def"), bearerToken("abc.def"), bearerToken(undefined), bearerToken("Basic YWRh"));
+</code>
+<option correct>abc.def undefined undefined undefined</option>
+<option>abc.def abc.def undefined undefined</option>
+<option>Bearer abc.def undefined undefined undefined</option>
+<option>abc.def undefined undefined YWRh</option>
+<explain><p>Only a header of the form <code>Bearer &lt;token&gt;</code> gives a token; <code>slice(7)</code> drops the 7 characters of <code>"Bearer "</code>. A missing header or another scheme gives <code>undefined</code>, which becomes a 401.</p></explain>
+</question>
+
+<question id="expiry-output" type="output">
+<q><code>readToken</code> refuses a token when <code>payload.exp * 1000 &lt;= now</code>. What does this print?</q>
+<code file="expiry.ts">
+const issued = Date.UTC(2026, 8, 23, 12, 0, 0);
+const exp = Math.floor(issued / 1000) + 5 * 60;
+const minute = 60 * 1000;
+
+function valid(now: number): boolean {
+  return exp * 1000 > now;
+}
+console.log(valid(issued + 4 * minute), valid(issued + 5 * minute), valid(issued + 6 * minute));
+</code>
+<option correct>true false false</option>
+<option>true true false</option>
+<option>false false false</option>
+<option>true true true</option>
+<explain><p><code>exp</code> is in seconds and <code>now</code> in milliseconds, hence the <code>* 1000</code>. At exactly 5 minutes the token is already expired, because the check uses <code>&lt;=</code>. A 5-minute token is fine after 4 minutes and refused after 6.</p></explain>
+</question>
+
+<question id="credentials-output" type="output">
+<q>What does this print?</q>
+<code file="credentials.ts">
+function credentials(body: { email: string; password: string }) {
+  const email = body.email.trim().toLowerCase();
+  const password = body.password;
+  const issues: string[] = [];
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) issues.push("email");
+  if (password.length < 10 || password.length > 200) issues.push("password");
+  return { email, password, issues };
+}
+console.log(JSON.stringify(credentials({ email: " Ada@Example.COM ", password: " spaces ok here " })));
+console.log(JSON.stringify(credentials({ email: "ada.example.com", password: "short" }).issues));
+</code>
+<option correct>{"email":"ada@example.com","password":" spaces ok here ","issues":[]}
+["email","password"]</option>
+<option>{"email":"ada@example.com","password":"spaces ok here","issues":[]}
+["email","password"]</option>
+<option>{"email":"Ada@Example.COM","password":" spaces ok here ","issues":[]}
+["email","password"]</option>
+<option>{"email":"ada@example.com","password":" spaces ok here ","issues":[]}
+["password"]</option>
+<explain><p>E-mails are compared in lower case, so they are stored that way. The password is kept exactly as typed, spaces included. <code>ada.example.com</code> has no <code>@</code>, and <code>short</code> is under 10 characters.</p></explain>
+</question>
+
+<question id="list-for-output" type="output">
+<q>What does this print?</q>
+<code file="list-for.ts">
+interface Order {
+  id: number;
+  userId: number;
+  bookId: number;
+}
+const orders: Order[] = [
+  { id: 1, userId: 1, bookId: 1 },
+  { id: 2, userId: 2, bookId: 1 },
+  { id: 3, userId: 1, bookId: 2 },
+];
+function listFor(userId: number): number[] {
+  return orders.filter((order) => order.userId === userId).map((order) => order.id);
+}
+const tokenUserId = 1;
+const bodyUserId = 2;
+console.log(listFor(tokenUserId), listFor(3));
+</code>
+<option correct>[ 1, 3 ] []</option>
+<option>[ 1, 2, 3 ] []</option>
+<option>[ 2 ] []</option>
+<option>[ 1, 3 ] [ 1, 2, 3 ]</option>
+<explain><p>Each user sees only their own orders, filtered by the id from the verified token. The <code>bodyUserId</code> is simply never used. A user with no orders gets an empty list, not everybody's orders.</p></explain>
+</question>
+
+<question id="code-load-secret" type="code" file="load-config.ts">
+<q><p>Extend <code>loadConfig(env)</code> so it also reads <code>TOKEN_SECRET</code>. If the secret is missing or shorter than 32 characters, throw an <code>Error</code> with the message <code>TOKEN_SECRET must be set to a random value of at least 32 characters</code>. The program should print:</p><pre>TOKEN_SECRET must be set to a random value of at least 32 characters
+TOKEN_SECRET must be set to a random value of at least 32 characters
+3000 40</pre></q>
+<starter>
+interface Config {
+  readonly port: number;
+  readonly tokenSecret: string;
+}
+type Env = Readonly<Record<string, string | undefined>>;
+
+function loadConfig(env: Env): Config {
+  const port = Number(env["PORT"] ?? "3000");
+  // your code here
+}
+
+for (const env of [{}, { TOKEN_SECRET: "secret" }]) {
+  try {
+    loadConfig(env);
+  } catch (error) {
+    console.log(error instanceof Error ? error.message : error);
+  }
+}
+const config = loadConfig({ TOKEN_SECRET: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b" });
+console.log(config.port, config.tokenSecret.length);
+</starter>
+<solution>
+interface Config {
+  readonly port: number;
+  readonly tokenSecret: string;
+}
+type Env = Readonly<Record<string, string | undefined>>;
+
+function loadConfig(env: Env): Config {
+  const port = Number(env["PORT"] ?? "3000");
+  const tokenSecret = env["TOKEN_SECRET"];
+  if (tokenSecret === undefined || tokenSecret.length < 32) {
+    throw new Error("TOKEN_SECRET must be set to a random value of at least 32 characters");
+  }
+  return { port, tokenSecret };
+}
+
+for (const env of [{}, { TOKEN_SECRET: "secret" }]) {
+  try {
+    loadConfig(env);
+  } catch (error) {
+    console.log(error instanceof Error ? error.message : error);
+  }
+}
+const config = loadConfig({ TOKEN_SECRET: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b" });
+console.log(config.port, config.tokenSecret.length);
+</solution>
+<expected>
+TOKEN_SECRET must be set to a random value of at least 32 characters
+TOKEN_SECRET must be set to a random value of at least 32 characters
+3000 40
+</expected>
+<explain><p>The server must refuse to start without a good secret, before it opens a port. The error names the setting but never prints the secret's value.</p></explain>
+</question>
+
+<question id="code-bearer" type="code" file="bearer.ts">
+<q><p>Write <code>bearerToken(header)</code>. <code>header</code> is <code>unknown</code> (it comes from the request). Return the token when the header is a string starting with <code>Bearer </code> (with the space) and something follows it; otherwise return <code>undefined</code>. The program should print <code>[ 'abc.def', undefined, undefined, undefined ]</code>.</p></q>
+<starter>
+function bearerToken(header: unknown): string | undefined {
+  // your code here
+}
+
+console.log(["Bearer abc.def", "Bearer ", "Basic YWRhOnB3", 42].map(bearerToken));
+</starter>
+<solution>
+function bearerToken(header: unknown): string | undefined {
+  if (typeof header !== "string" || !header.startsWith("Bearer ")) return undefined;
+  const token = header.slice("Bearer ".length);
+  return token === "" ? undefined : token;
+}
+
+console.log(["Bearer abc.def", "Bearer ", "Basic YWRhOnB3", 42].map(bearerToken));
+</solution>
+<expected>[ 'abc.def', undefined, undefined, undefined ]</expected>
+<explain><p>Headers are outside input, so check the type first. Only the <code>Bearer</code> scheme is accepted; anything else gives no token, and the guard answers 401.</p></explain>
+</question>
+
+<question id="code-is-payload" type="code" file="is-payload.ts">
+<q><p>Write the type guard <code>isPayload(value)</code>: true only for an object with whole-number <code>sub</code> and <code>exp</code> fields. The program should print <code>[ true, false, false, false ]</code>.</p></q>
+<starter>
+interface TokenPayload {
+  readonly sub: number;
+  readonly exp: number;
+}
+
+function isPayload(value: unknown): value is TokenPayload {
+  // your code here
+}
+
+const values: unknown[] = [{ sub: 7, exp: 1790168400 }, { sub: "7", exp: 1790168400 }, { sub: 7 }, null];
+console.log(values.map(isPayload));
+</starter>
+<solution>
+interface TokenPayload {
+  readonly sub: number;
+  readonly exp: number;
+}
+
+function isPayload(value: unknown): value is TokenPayload {
+  return typeof value === "object" && value !== null && "sub" in value && "exp" in value
+    && Number.isInteger(value.sub) && Number.isInteger(value.exp);
+}
+
+const values: unknown[] = [{ sub: 7, exp: 1790168400 }, { sub: "7", exp: 1790168400 }, { sub: 7 }, null];
+console.log(values.map(isPayload));
+</solution>
+<expected>[ true, false, false, false ]</expected>
+<explain><p>Even a correctly signed token's content is checked before use. <code>Number.isInteger</code> is false for strings like <code>"7"</code>, and <code>in</code> makes sure both fields exist.</p></explain>
+</question>
+
+<question id="code-check-expiry" type="code" file="expiry.ts">
+<q><p>Write <code>isExpired(payload, now)</code>. <code>payload.exp</code> is in <strong>seconds</strong>; <code>now</code> is in <strong>milliseconds</strong>. A token is expired when <code>exp</code> (in milliseconds) is less than or equal to <code>now</code>. The program should print <code>false true true</code>.</p></q>
+<starter>
+interface TokenPayload {
+  readonly sub: number;
+  readonly exp: number;
+}
+
+function isExpired(payload: TokenPayload, now: number): boolean {
+  // your code here
+}
+
+const issued = Date.UTC(2026, 8, 23, 12, 0, 0);
+const payload: TokenPayload = { sub: 7, exp: Math.floor(issued / 1000) + 300 };
+const minute = 60 * 1000;
+console.log(isExpired(payload, issued + 4 * minute), isExpired(payload, issued + 5 * minute), isExpired(payload, issued + 6 * minute));
+</starter>
+<solution>
+interface TokenPayload {
+  readonly sub: number;
+  readonly exp: number;
+}
+
+function isExpired(payload: TokenPayload, now: number): boolean {
+  return payload.exp * 1000 <= now;
+}
+
+const issued = Date.UTC(2026, 8, 23, 12, 0, 0);
+const payload: TokenPayload = { sub: 7, exp: Math.floor(issued / 1000) + 300 };
+const minute = 60 * 1000;
+console.log(isExpired(payload, issued + 4 * minute), isExpired(payload, issued + 5 * minute), isExpired(payload, issued + 6 * minute));
+</solution>
+<expected>false true true</expected>
+<explain><p>Mixing seconds and milliseconds is a classic bug: without <code>* 1000</code>, every token would look expired since 1970. Passing <code>now</code> in makes the check easy to test at exact times.</p></explain>
+</question>
+
+<question id="code-parse-credentials" type="code" file="credentials.ts">
+<q><p>Write <code>parseCredentials(input)</code>. Lower-case and trim the e-mail; push <code>email is not an e-mail address</code> when it does not match <code>/^[^@\s]+@[^@\s]+\.[^@\s]+$/</code>. Keep the password exactly as sent (a string, not trimmed); push <code>password must be 10 to 200 characters</code> when its length is outside that range. Return <code>{ email, password, issues }</code>. The program should print:</p><pre>{"email":"ada@example.com","password":" a long passphrase ","issues":[]}
+["email is not an e-mail address","password must be 10 to 200 characters"]</pre></q>
+<starter>
+function parseCredentials(input: Record<string, unknown>): { email: string; password: string; issues: string[] } {
+  // your code here
+}
+
+console.log(JSON.stringify(parseCredentials({ email: " Ada@Example.com", password: " a long passphrase " })));
+console.log(JSON.stringify(parseCredentials({ email: "ada", password: 12345 }).issues));
+</starter>
+<solution>
+function parseCredentials(input: Record<string, unknown>): { email: string; password: string; issues: string[] } {
+  const issues: string[] = [];
+  const email = typeof input["email"] === "string" ? input["email"].trim().toLowerCase() : "";
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) issues.push("email is not an e-mail address");
+  const password = typeof input["password"] === "string" ? input["password"] : "";
+  if (password.length < 10 || password.length > 200) issues.push("password must be 10 to 200 characters");
+  return { email, password, issues };
+}
+
+console.log(JSON.stringify(parseCredentials({ email: " Ada@Example.com", password: " a long passphrase " })));
+console.log(JSON.stringify(parseCredentials({ email: "ada", password: 12345 }).issues));
+</solution>
+<expected>
+{"email":"ada@example.com","password":" a long passphrase ","issues":[]}
+["email is not an e-mail address","password must be 10 to 200 characters"]
+</expected>
+<explain><p>One account per e-mail means comparing e-mails in lower case. The password is never changed, only checked; a number is not a password, so it counts as empty and fails the length rule.</p></explain>
+</question>
+
+<question id="code-require-user" type="code" file="require-user.ts">
+<q><p>Write <code>requireUserId(headers, readToken)</code>. Take the token from <code>headers["authorization"]</code> (format <code>Bearer &lt;token&gt;</code>) and pass it to <code>readToken</code>. If there is no token or <code>readToken</code> returns <code>undefined</code>, throw <code>new HttpError(401, "unauthorized")</code>. Otherwise return the payload's <code>sub</code>. The program should print:</p><pre>7
+401 unauthorized
+401 unauthorized</pre></q>
+<starter>
+class HttpError extends Error {
+  constructor(readonly status: number, readonly code: string) {
+    super(code);
+  }
+}
+type ReadToken = (token: string) => { sub: number; exp: number } | undefined;
+
+function requireUserId(headers: Record<string, string | undefined>, readToken: ReadToken): number {
+  // your code here
+}
+
+const fakeRead: ReadToken = (token) => (token === "good.sig" ? { sub: 7, exp: 1790168400 } : undefined);
+for (const headers of [{ authorization: "Bearer good.sig" }, { authorization: "Bearer forged.sig" }, {}]) {
+  try {
+    console.log(requireUserId(headers, fakeRead));
+  } catch (error) {
+    if (error instanceof HttpError) console.log(error.status, error.code);
+  }
+}
+</starter>
+<solution>
+class HttpError extends Error {
+  constructor(readonly status: number, readonly code: string) {
+    super(code);
+  }
+}
+type ReadToken = (token: string) => { sub: number; exp: number } | undefined;
+
+function requireUserId(headers: Record<string, string | undefined>, readToken: ReadToken): number {
+  const header = headers["authorization"];
+  const token = typeof header === "string" && header.startsWith("Bearer ") ? header.slice(7) : undefined;
+  const payload = token === undefined ? undefined : readToken(token);
+  if (payload === undefined) throw new HttpError(401, "unauthorized");
+  return payload.sub;
+}
+
+const fakeRead: ReadToken = (token) => (token === "good.sig" ? { sub: 7, exp: 1790168400 } : undefined);
+for (const headers of [{ authorization: "Bearer good.sig" }, { authorization: "Bearer forged.sig" }, {}]) {
+  try {
+    console.log(requireUserId(headers, fakeRead));
+  } catch (error) {
+    if (error instanceof HttpError) console.log(error.status, error.code);
+  }
+}
+</solution>
+<expected>
+7
+401 unauthorized
+401 unauthorized
+</expected>
+<explain><p>The user id comes only from a token that <code>readToken</code> accepted. A forged token and a missing header both end as 401, before the route does anything. Passing <code>readToken</code> in lets a test use a fake.</p></explain>
+</question>
+
+<question id="code-login" type="code" file="login.ts">
+<q><p>Write <code>logIn(email, password)</code>. Look the user up with <code>findByEmail</code>. If there is no user, or <code>verify(password, user.passwordHash)</code> is false, throw <code>new HttpError(401, "Wrong e-mail or password")</code>: the <strong>same</strong> error for both cases. Otherwise return <code>token-for-&lt;id&gt;</code>. The program should print:</p><pre>token-for-1
+401 Wrong e-mail or password
+401 Wrong e-mail or password</pre></q>
+<starter>
+class HttpError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+interface UserRow {
+  readonly id: number;
+  readonly email: string;
+  readonly passwordHash: string;
+}
+const users: UserRow[] = [{ id: 1, email: "ada@example.com", passwordHash: "hash:a long passphrase" }];
+async function findByEmail(email: string): Promise<UserRow | undefined> {
+  return users.find((user) => user.email === email);
+}
+async function verify(password: string, stored: string): Promise<boolean> {
+  return stored === `hash:${password}`;
+}
+
+async function logIn(email: string, password: string): Promise<string> {
+  // your code here
+}
+
+for (const [email, password] of [["ada@example.com", "a long passphrase"], ["ada@example.com", "wrong one"], ["bob@example.com", "a long passphrase"]]) {
+  try {
+    console.log(await logIn(email!, password!));
+  } catch (error) {
+    if (error instanceof HttpError) console.log(error.status, error.message);
+  }
+}
+</starter>
+<solution>
+class HttpError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
+}
+interface UserRow {
+  readonly id: number;
+  readonly email: string;
+  readonly passwordHash: string;
+}
+const users: UserRow[] = [{ id: 1, email: "ada@example.com", passwordHash: "hash:a long passphrase" }];
+async function findByEmail(email: string): Promise<UserRow | undefined> {
+  return users.find((user) => user.email === email);
+}
+async function verify(password: string, stored: string): Promise<boolean> {
+  return stored === `hash:${password}`;
+}
+
+async function logIn(email: string, password: string): Promise<string> {
+  const user = await findByEmail(email);
+  if (user === undefined || !(await verify(password, user.passwordHash))) {
+    throw new HttpError(401, "Wrong e-mail or password");
+  }
+  return `token-for-${user.id}`;
+}
+
+for (const [email, password] of [["ada@example.com", "a long passphrase"], ["ada@example.com", "wrong one"], ["bob@example.com", "a long passphrase"]]) {
+  try {
+    console.log(await logIn(email!, password!));
+  } catch (error) {
+    if (error instanceof HttpError) console.log(error.status, error.message);
+  }
+}
+</solution>
+<expected>
+token-for-1
+401 Wrong e-mail or password
+401 Wrong e-mail or password
+</expected>
+<explain><p>An unknown e-mail and a wrong password get the same answer, so a stranger cannot learn which e-mails have accounts. (The fake <code>verify</code> here stands in for scrypt; never store passwords like this for real.)</p></explain>
+</question>
+
+<question id="code-place-own-order" type="code" file="own-order.ts">
+<q><p>Write <code>placeOrder(userId, body)</code>. <code>userId</code> comes from the verified token. Copy only <code>bookId</code> and <code>quantity</code> from the body, and set the order's <code>userId</code> from the parameter, never from the body. The program should print <code>{"userId":1,"bookId":3,"quantity":1}</code>.</p></q>
+<starter>
+interface Order {
+  readonly userId: number;
+  readonly bookId: number;
+  readonly quantity: number;
+}
+
+function placeOrder(userId: number, body: { bookId: number; quantity: number; [key: string]: unknown }): Order {
+  // your code here
+}
+
+const tokenUserId = 1;
+const body = { bookId: 3, quantity: 1, userId: 2 };
+console.log(JSON.stringify(placeOrder(tokenUserId, body)));
+</starter>
+<solution>
+interface Order {
+  readonly userId: number;
+  readonly bookId: number;
+  readonly quantity: number;
+}
+
+function placeOrder(userId: number, body: { bookId: number; quantity: number; [key: string]: unknown }): Order {
+  return { userId, bookId: body.bookId, quantity: body.quantity };
+}
+
+const tokenUserId = 1;
+const body = { bookId: 3, quantity: 1, userId: 2 };
+console.log(JSON.stringify(placeOrder(tokenUserId, body)));
+</solution>
+<expected>{"userId":1,"bookId":3,"quantity":1}</expected>
+<explain><p>The client tried to order as user 2. Because the order is built from the token's user id and two named fields, that attempt has no effect. Spreading the body would copy whatever else the client sent; listing the fields is the safe habit.</p></explain>
+</question>
+
+<question id="code-parse-stored" type="code" file="stored.ts">
+<q><p>Write <code>parseStored(stored)</code> for values like <code>scrypt$&lt;salt&gt;$&lt;key&gt;</code>. Return <code>{ salt, key }</code> only when there are exactly three parts, the first is <code>scrypt</code>, and salt and key are not empty. Otherwise return <code>undefined</code>, never throw. The program should print:</p><pre>{"salt":"cr-RTX","key":"KW9aww"}
+undefined
+undefined
+undefined</pre></q>
+<starter>
+function parseStored(stored: string): { salt: string; key: string } | undefined {
+  // your code here
+}
+
+for (const stored of ["scrypt$cr-RTX$KW9aww", "plain-text-password", "md5$abc$def", "scrypt$$KW9aww"]) {
+  console.log(JSON.stringify(parseStored(stored)));
+}
+</starter>
+<solution>
+function parseStored(stored: string): { salt: string; key: string } | undefined {
+  const parts = stored.split("$");
+  if (parts.length !== 3) return undefined;
+  const [scheme, salt, key] = parts;
+  if (scheme !== "scrypt" || !salt || !key) return undefined;
+  return { salt, key };
+}
+
+for (const stored of ["scrypt$cr-RTX$KW9aww", "plain-text-password", "md5$abc$def", "scrypt$$KW9aww"]) {
+  console.log(JSON.stringify(parseStored(stored)));
+}
+</solution>
+<expected>
+{"salt":"cr-RTX","key":"KW9aww"}
+undefined
+undefined
+undefined
+</expected>
+<explain><p>A damaged or old-format value in the database must mean "wrong password", not a crash. Checking the shape first lets <code>verifyPassword</code> return <code>false</code> safely.</p></explain>
+</question>
+
+<question id="code-public-user" type="code" file="public-user.ts">
+<q><p>Write <code>toPublicUser(row)</code>, which returns only <code>id</code> and <code>email</code> from a user row, never the password hash. The program should print <code>{"id":1,"email":"ada@example.com"}</code>.</p></q>
+<starter>
+interface UserRow {
+  readonly id: number;
+  readonly email: string;
+  readonly passwordHash: string;
+}
+interface User {
+  readonly id: number;
+  readonly email: string;
+}
+
+function toPublicUser(row: UserRow): User {
+  // your code here
+}
+
+const row: UserRow = { id: 1, email: "ada@example.com", passwordHash: "scrypt$cr-RTX$KW9aww" };
+console.log(JSON.stringify(toPublicUser(row)));
+</starter>
+<solution>
+interface UserRow {
+  readonly id: number;
+  readonly email: string;
+  readonly passwordHash: string;
+}
+interface User {
+  readonly id: number;
+  readonly email: string;
+}
+
+function toPublicUser(row: UserRow): User {
+  return { id: row.id, email: row.email };
+}
+
+const row: UserRow = { id: 1, email: "ada@example.com", passwordHash: "scrypt$cr-RTX$KW9aww" };
+console.log(JSON.stringify(toPublicUser(row)));
+</solution>
+<expected>{"id":1,"email":"ada@example.com"}</expected>
+<explain><p>Returning <code>row</code> itself would type-check (a <code>UserRow</code> has every <code>User</code> field) and leak the hash. Building a new object from chosen fields is the only safe way.</p></explain>
+</question>
+
+<question id="code-list-for" type="code" file="list-for.ts">
+<q><p>Write <code>listFor(orders, userId)</code>. Return only the orders whose <code>userId</code> matches, without the <code>userId</code> field: <code>{ id, bookId, quantity }</code>. The program should print:</p><pre>[{"id":1,"bookId":1,"quantity":2},{"id":3,"bookId":2,"quantity":1}]
+[]</pre></q>
+<starter>
+interface OrderRow {
+  readonly id: number;
+  readonly userId: number;
+  readonly bookId: number;
+  readonly quantity: number;
+}
+
+function listFor(orders: readonly OrderRow[], userId: number): { id: number; bookId: number; quantity: number }[] {
+  // your code here
+}
+
+const orders: OrderRow[] = [
+  { id: 1, userId: 1, bookId: 1, quantity: 2 },
+  { id: 2, userId: 2, bookId: 1, quantity: 5 },
+  { id: 3, userId: 1, bookId: 2, quantity: 1 },
+];
+console.log(JSON.stringify(listFor(orders, 1)));
+console.log(JSON.stringify(listFor(orders, 9)));
+</starter>
+<solution>
+interface OrderRow {
+  readonly id: number;
+  readonly userId: number;
+  readonly bookId: number;
+  readonly quantity: number;
+}
+
+function listFor(orders: readonly OrderRow[], userId: number): { id: number; bookId: number; quantity: number }[] {
+  return orders
+    .filter((order) => order.userId === userId)
+    .map((order) => ({ id: order.id, bookId: order.bookId, quantity: order.quantity }));
+}
+
+const orders: OrderRow[] = [
+  { id: 1, userId: 1, bookId: 1, quantity: 2 },
+  { id: 2, userId: 2, bookId: 1, quantity: 5 },
+  { id: 3, userId: 1, bookId: 2, quantity: 1 },
+];
+console.log(JSON.stringify(listFor(orders, 1)));
+console.log(JSON.stringify(listFor(orders, 9)));
+</solution>
+<expected>
+[{"id":1,"bookId":1,"quantity":2},{"id":3,"bookId":2,"quantity":1}]
+[]
+</expected>
+<explain><p>This is <code>WHERE user_id = $1</code> in memory. The <code>userId</code> passed in comes from the token, so each user sees only their own orders, and someone with no orders gets an empty list.</p></explain>
+</question>

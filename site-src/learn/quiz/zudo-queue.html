@@ -1,0 +1,1126 @@
+<question id="why-jobs" type="choice">
+<q>The Task API sends a reminder email while the user waits. Which set of problems does a job queue fix?</q>
+<option>The email looks ugly, uses too much memory, and has no subject</option>
+<option correct>The request is slow, it fails when the mail server is down, and a crash can lose the email without anyone knowing</option>
+<option>The user cannot log in, the database is locked, and the cache is stale</option>
+<option>Emails cannot be sent from Node.js at all</option>
+<explain><p>The request only writes down a job and answers at once. A worker does the work later, retries failures, and parks jobs that never succeed where a person can see them.</p></explain>
+</question>
+
+<question id="status-202" type="choice">
+<q>A route adds a reminder job and answers straight away. Which status code fits best?</q>
+<option><code>200 OK</code> with the sent email</option>
+<option><code>201 Created</code></option>
+<option correct><code>202 Accepted</code></option>
+<option><code>204 No Content</code></option>
+<explain><p><code>202 Accepted</code> means "I have your request and will do it", not "it is done". The work happens after the response.</p></explain>
+</question>
+
+<question id="which-tool" type="choice">
+<q>Which of these should <strong>not</strong> become a background job?</q>
+<option>Generating a 200-page PDF export</option>
+<option>Calling a partner's webhook that is often slow</option>
+<option correct>Checking a password at login</option>
+<option>Resizing an uploaded image</option>
+<explain><p>The user needs the login answer right now, and it is fast, so it is a direct call. Slow or unreliable work that the user does not wait for belongs on a queue.</p></explain>
+</question>
+
+<question id="job-data" type="choice">
+<q>What should a reminder job's data contain?</q>
+<option>The whole task object and the SMTP password, so the processor has everything</option>
+<option correct>Small, plain data like the task id; the processor loads fresh data by id and reads secrets from its own configuration</option>
+<option>The user's session cookie, so the processor can act as the user</option>
+<option>Nothing at all; jobs cannot carry data</option>
+<explain><p>Queues are stored, logged and shown in dashboards, so never put secrets in a job. Whole objects may have changed by the time the job runs, so pass ids and load fresh data.</p></explain>
+</question>
+
+<question id="concurrency-size" type="choice">
+<q>Why not set a queue's <code>concurrency</code> to 1,000?</q>
+<option>Because JavaScript can only run one job at a time</option>
+<option correct>Every running job uses memory and connections, and the service at the other end has limits too</option>
+<option>Because higher concurrency makes each job slower to start</option>
+<option>Because concurrency must always be 1</option>
+<explain><p>Pick a number that the slowest thing your jobs touch can handle, for example the 10 connections a mail provider allows or a database pool of 20.</p></explain>
+</question>
+
+<question id="why-backoff" type="choice">
+<q>Why use <strong>exponential backoff</strong> instead of retrying at once?</q>
+<option>It makes every retry faster</option>
+<option correct>A server that is down now is probably still down 1 ms later; doubling the wait gives a struggling service more and more room to recover</option>
+<option>It stops retries completely after the first failure</option>
+<option>It guarantees the job runs exactly once</option>
+<explain><p>The waits double after each failure (1 s, 2 s, 4 s...) up to <code>maxDelay</code>. Retrying at once mostly hits the same outage again.</p></explain>
+</question>
+
+<question id="why-jitter" type="choice">
+<q>5,000 jobs failed at the same moment. Why does <strong>jitter</strong> matter for their retries?</q>
+<option>It makes the retries run in the order they were added</option>
+<option correct>Without it, all 5,000 retry at the same moment too and knock the server over again; jitter spreads them out</option>
+<option>It removes the backoff delay</option>
+<option>It only matters in tests</option>
+<explain><p>Jitter adds randomness to each wait. The default <code>"full"</code> picks a random wait between 0 and the computed one. Leave it on in production; turn it off only for predictable examples.</p></explain>
+</question>
+
+<question id="at-least-once" type="choice">
+<q>A processor sent the email and then failed while writing "sent" to the database. The job is retried. What happens, and what is the fix?</q>
+<option>Nothing, the queue knows the email was already sent</option>
+<option correct>The email is sent again; queues run jobs at least once, so make the processor idempotent (check whether the work was already done)</option>
+<option>The job goes straight to the dead-letter queue</option>
+<option>The queue undoes the email</option>
+<explain><p>A retry runs the whole processor again. An idempotent processor is safe to run twice: it checks, for example, <code>task.reminded</code> before sending.</p></explain>
+</question>
+
+<question id="attempt-counter" type="choice">
+<q>A job runs for the first time. What is <code>job.attempt</code>?</q>
+<option><code>1</code></option>
+<option correct><code>0</code></option>
+<option><code>undefined</code></option>
+<option>The number of attempts allowed</option>
+<explain><p><code>job.attempt</code> counts the tries that came <em>before</em> this one, so it starts at 0. Add 1 if you want to print "try 1".</p></explain>
+</question>
+
+<question id="default-attempts" type="choice">
+<q>You add a job without an <code>attempts</code> option, and the processor throws. What happens?</q>
+<option>It is retried forever</option>
+<option>It is retried 3 times</option>
+<option correct>The default is 1 attempt, which means no retry: the job goes to the dead-letter queue</option>
+<option>The error is ignored and the job counts as completed</option>
+<explain><p><code>attempts</code> is the total number of tries, and the default is 1. Set it (and a backoff) for work that can fail temporarily, or set <code>defaultJobOptions</code> on the queue so no route forgets it.</p></explain>
+</question>
+
+<question id="repeating-work" type="choice">
+<q>You need a report built every night at 2:00. What does the lesson say?</q>
+<option>Add one job with <code>delay: 24 * 60 * 60 * 1000</code> and it repeats</option>
+<option correct>A queue runs each job once; repeating work belongs to a scheduler, which adds a job at the right times</option>
+<option>Use <code>priority: CRITICAL</code> so it runs every night</option>
+<option>Use a <code>while (true)</code> loop inside the processor</option>
+<explain><p><code>delay</code> and <code>scheduledAt</code> postpone one job. Repeating work is the scheduler's job, covered in the next lesson.</p></explain>
+</question>
+
+<question id="dead-letter-watch" type="choice">
+<q>Jobs are piling up in the dead-letter queue. What is the most important thing to have in place?</q>
+<option>A job that deletes dead letters every night</option>
+<option correct>An alert when the count grows: a dead-letter queue nobody looks at is just a slower way to lose data</option>
+<option>A higher concurrency</option>
+<option>Nothing, dead letters fix themselves</option>
+<explain><p>Watch the count, find the cause, fix it, and replay the jobs with <code>queue.add(dead.job.name, dead.job.data)</code> when a bug caused the failures.</p></explain>
+</question>
+
+<question id="permanent-errors" type="choice">
+<q>The error is "mailbox does not exist". What is the best way to handle it in the processor?</q>
+<option>Throw it, so the queue retries 5 times with backoff</option>
+<option correct>Give up at once: record the failure (for example in the database) and return normally, because retrying cannot help</option>
+<option>Wait in a loop until the mailbox exists</option>
+<option>Delete the user</option>
+<explain><p>Retries are for temporary failures. A permanent error only wastes retries. Record it so the user can fix their address, and keep throwing for errors that a retry can fix.</p></explain>
+</question>
+
+<question id="job-timeout" type="choice">
+<q>A job's <code>timeout</code> runs out. What must the processor do?</q>
+<option>Nothing, the queue kills the function at once</option>
+<option correct>Watch <code>context.signal</code> (for example with <code>throwIfAborted()</code>) and stop itself</option>
+<option>Call <code>queue.close()</code></option>
+<option>Increase the timeout from inside the job</option>
+<explain><p>The queue aborts the signal and counts the attempt as failed, but it cannot stop a running function by force. A processor that ignores the signal keeps running in the background and wastes a slot.</p></explain>
+</question>
+
+<question id="graceful-shutdown" type="choice">
+<q>What does a <strong>graceful shutdown</strong> of a worker do?</q>
+<option>Exits at once, so the new version starts faster</option>
+<option correct>Stops taking new jobs, lets the running ones finish, and only then exits</option>
+<option>Runs every waiting job before exiting</option>
+<option>Moves all waiting jobs to the dead-letter queue</option>
+<explain><p>Jobs that are simply cut off die halfway. <code>worker.stop()</code> waits for the running jobs; waiting jobs stay in the queue for the next worker.</p></explain>
+</question>
+
+<question id="drain-timeout" type="choice">
+<q>Your platform kills a stopping process after 20 seconds. How should you set the worker's <code>drainTimeout</code>?</q>
+<option>Longer than 20 seconds, so jobs always finish</option>
+<option correct>Shorter than 20 seconds, so <code>stop()</code> can abort the remaining jobs through their signal before the kill</option>
+<option>Exactly 0, so nothing waits</option>
+<option>It does not matter</option>
+<explain><p><code>stop()</code> waits at most <code>drainTimeout</code> (30 seconds by default) and then aborts the jobs still running. If the platform kills first, those jobs die without a clean stop.</p></explain>
+</question>
+
+<question id="in-memory-production" type="choice">
+<q>What is the main limit of <code>createInMemoryQueue</code> in production?</q>
+<option>It cannot retry jobs</option>
+<option correct>Jobs live in the process's memory: a restart loses every waiting job, and two copies of the API have two separate queues</option>
+<option>It only runs in the browser</option>
+<option>It cannot run jobs concurrently</option>
+<explain><p>Production needs a queue backed by a shared store that survives restarts, such as Redis or PostgreSQL, behind the same <code>Queue</code> interface, so your processors do not change.</p></explain>
+</question>
+
+<question id="dedup-key" type="choice">
+<q>A user double-clicks "remind me". The second <code>add</code> throws <code>JobDuplicateError</code> because of the <code>deduplicationKey</code>. What should the route answer?</q>
+<option><code>500</code>, because an error was thrown</option>
+<option><code>409 Conflict</code> with the error details</option>
+<option correct><code>202</code> anyway: the reminder <em>is</em> queued</option>
+<option>It should add the job again without the key</option>
+<explain><p>The duplicate key stopped a second copy of the same job. From the user's point of view, the reminder is queued, so catch <code>JobDuplicateError</code> and answer 202.</p></explain>
+</question>
+
+<question id="auto-process-false" type="choice">
+<q>Why create the queue with <code>autoProcess: false</code> when you use a separate worker?</q>
+<option>So jobs are never processed</option>
+<option correct>So the queue does not start running jobs itself before the worker exists</option>
+<option>So jobs are processed twice, once by each</option>
+<option>So the queue ignores <code>concurrency</code></option>
+<explain><p>The worker gives you control: its own concurrency, <code>start()</code> and <code>stop()</code>. <code>autoProcess: false</code> leaves all processing to it.</p></explain>
+</question>
+
+<question id="out-first-job" type="output">
+<q>What does this print?</q>
+<code file="first.js">
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const queue = createInMemoryQueue(createQueueName("reminders"));
+
+queue.process("send-reminder", async (job) => {
+  console.log("processor: task", job.data.taskId);
+});
+
+const job = await queue.add("send-reminder", { taskId: 1 });
+console.log("added:", job.state);
+await until(async () => (await queue.getStats()).succeeded === 1);
+console.log("later:", (await queue.getJob(job.id))?.state);
+await queue.close();
+</code>
+<option correct>added: waiting
+processor: task 1
+later: completed</option>
+<option>processor: task 1
+added: completed
+later: completed</option>
+<option>added: active
+processor: task 1
+later: completed</option>
+<option>added: waiting
+processor: task 1
+later: waiting</option>
+<explain><p><code>add</code> stores the job and returns at once, while it is still <code>waiting</code>. The processor runs a moment later, and the job ends up <code>completed</code>.</p></explain>
+</question>
+
+<question id="out-attempts" type="output">
+<q>What does this print?</q>
+<code file="attempts.js">
+import { createInMemoryQueue, createQueueName, createFixedBackoff } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const queue = createInMemoryQueue(createQueueName("reminders"));
+
+queue.process("send-reminder", async (job) => {
+  console.log("attempt", job.attempt);
+  if (job.attempt < 2) throw new Error("mail server timed out");
+});
+
+await queue.add("send-reminder", { taskId: 1 }, { attempts: 5, backoff: createFixedBackoff(5) });
+await until(async () => (await queue.getStats()).succeeded === 1);
+const stats = await queue.getStats();
+console.log("succeeded:", stats.succeeded, "retried:", stats.retried);
+await queue.close();
+</code>
+<option correct>attempt 0
+attempt 1
+attempt 2
+succeeded: 1 retried: 2</option>
+<option>attempt 1
+attempt 2
+attempt 3
+succeeded: 1 retried: 2</option>
+<option>attempt 0
+attempt 1
+attempt 2
+succeeded: 1 retried: 3</option>
+<option>attempt 0
+attempt 1
+attempt 2
+attempt 3
+attempt 4
+succeeded: 1 retried: 4</option>
+<explain><p><code>job.attempt</code> starts at 0. Two failures led to two retries, and the third try worked. The job was allowed 5 attempts and used 3.</p></explain>
+</question>
+
+<question id="out-default-attempts" type="output">
+<q>No <code>attempts</code> option is given. What does this print?</q>
+<code file="default.js">
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const queue = createInMemoryQueue(createQueueName("reminders"));
+let tries = 0;
+
+queue.process("send-reminder", async () => {
+  tries += 1;
+  throw new Error("mail server timed out");
+});
+
+const job = await queue.add("send-reminder", { taskId: 1 });
+await until(async () => (await queue.getStats()).deadLettered === 1);
+console.log("tries:", tries, "state:", (await queue.getJob(job.id))?.state);
+await queue.close();
+</code>
+<option>tries: 3 state: dead_letter</option>
+<option correct>tries: 1 state: dead_letter</option>
+<option>tries: 1 state: retrying</option>
+<option>tries: 0 state: waiting</option>
+<explain><p>The default is 1 attempt, which means no retry. After the only try fails, the job goes to the dead-letter queue.</p></explain>
+</question>
+
+<question id="out-dead-letter" type="output">
+<q>What does this print?</q>
+<code file="dead.js">
+import { createInMemoryQueue, createQueueName, createFixedBackoff } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const queue = createInMemoryQueue(createQueueName("reminders"));
+
+queue.process("send-reminder", async (job) => {
+  throw new Error(`mailbox ${job.data.email} does not exist`);
+});
+
+await queue.add("send-reminder", { email: "nobody@example.invalid" }, { attempts: 3, backoff: createFixedBackoff(5) });
+await until(async () => (await queue.getStats()).deadLettered === 1);
+const [dead] = await queue.getDeadLetterJobs();
+console.log(dead.job.name, dead.attempts);
+console.log(dead.reason);
+await queue.close();
+</code>
+<option correct>send-reminder 3
+mailbox nobody@example.invalid does not exist</option>
+<option>send-reminder 1
+mailbox nobody@example.invalid does not exist</option>
+<option>send-reminder 3
+undefined</option>
+<option>send-reminder 2
+mailbox nobody@example.invalid does not exist</option>
+<explain><p>After the last of its 3 attempts, the job was moved to the dead-letter queue. Each entry keeps the job, the error and the number of attempts, so nothing is silently thrown away.</p></explain>
+</question>
+
+<question id="out-exponential" type="output">
+<q>What does this print?</q>
+<code file="backoff.js">
+import { calculateRetryDelay, createExponentialBackoff } from "@zudojs/queue";
+
+const backoff = createExponentialBackoff(100, { maxDelay: 500, jitter: "none" });
+const delays = [1, 2, 3, 4, 5].map((attempt) => calculateRetryDelay(attempt, backoff));
+console.log(delays);
+</code>
+<option>[ 100, 200, 300, 400, 500 ]</option>
+<option correct>[ 100, 200, 400, 500, 500 ]</option>
+<option>[ 100, 200, 400, 800, 1600 ]</option>
+<option>[ 100, 100, 100, 100, 100 ]</option>
+<explain><p>Exponential backoff doubles the wait after each failure: 100, 200, 400. It stops growing at <code>maxDelay</code>, here 500.</p></explain>
+</question>
+
+<question id="out-fixed" type="output">
+<q>What does this print?</q>
+<code file="fixed.js">
+import { calculateRetryDelay, createFixedBackoff } from "@zudojs/queue";
+
+const backoff = createFixedBackoff(1000, { jitter: "none" });
+console.log(calculateRetryDelay(1, backoff), calculateRetryDelay(4, backoff));
+</code>
+<option correct>1000 1000</option>
+<option>1000 4000</option>
+<option>1000 8000</option>
+<option>0 1000</option>
+<explain><p>A fixed backoff waits the same time before every retry. Only the exponential one grows.</p></explain>
+</question>
+
+<question id="out-priority" type="output">
+<q>All jobs are added before the processor is registered. What does this print?</q>
+<code file="priority.js">
+import { createInMemoryQueue, createQueueName, JobPriorityLevels } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const queue = createInMemoryQueue(createQueueName("reminders"));
+
+await queue.add("remind", { label: "normal" });
+await queue.add("remind", { label: "low" }, { priority: JobPriorityLevels.LOW });
+await queue.add("remind", { label: "urgent" }, { priority: JobPriorityLevels.HIGH });
+await queue.add("remind", { label: "normal 2" });
+
+queue.process("remind", async (job) => console.log(job.data.label));
+await until(async () => (await queue.getStats()).succeeded === 4);
+await queue.close();
+</code>
+<option>normal
+low
+urgent
+normal 2</option>
+<option correct>urgent
+normal
+normal 2
+low</option>
+<option>low
+normal
+normal 2
+urgent</option>
+<option>urgent
+normal 2
+normal
+low</option>
+<explain><p>Higher priority runs first: HIGH (100), then the two NORMAL (50) jobs in the order they were added, then LOW (10).</p></explain>
+</question>
+
+<question id="out-delay" type="output">
+<q>What does this print?</q>
+<code file="delay.js">
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const queue = createInMemoryQueue(createQueueName("reminders"));
+queue.process("remind", async (job) => console.log("ran:", job.data.label));
+
+const later = await queue.add("remind", { label: "in 40 ms" }, { delay: 40 });
+const now = await queue.add("remind", { label: "now" });
+console.log(later.state, now.state);
+await until(async () => (await queue.getStats()).succeeded === 2);
+await queue.close();
+</code>
+<option>waiting waiting
+ran: in 40 ms
+ran: now</option>
+<option correct>scheduled waiting
+ran: now
+ran: in 40 ms</option>
+<option>scheduled scheduled
+ran: now
+ran: in 40 ms</option>
+<option>scheduled waiting
+ran: in 40 ms
+ran: now</option>
+<explain><p>A delayed job starts as <code>scheduled</code> and only becomes <code>waiting</code> when its time comes, so the job added later but ready now runs first.</p></explain>
+</question>
+
+<question id="out-concurrency" type="output">
+<q>What does this print?</q>
+<code file="concurrency.js">
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const queue = createInMemoryQueue(createQueueName("emails"), { concurrency: 2 });
+let running = 0;
+let mostAtOnce = 0;
+
+queue.process("send", async () => {
+  running += 1;
+  mostAtOnce = Math.max(mostAtOnce, running);
+  await wait(20);
+  running -= 1;
+});
+
+for (let n = 1; n <= 5; n++) await queue.add("send", { n });
+await until(async () => (await queue.getStats()).succeeded === 5);
+console.log("at most at once:", mostAtOnce);
+await queue.close();
+</code>
+<option>at most at once: 1</option>
+<option correct>at most at once: 2</option>
+<option>at most at once: 5</option>
+<option>at most at once: 0</option>
+<explain><p><code>concurrency: 2</code> lets two jobs run side by side, never more. The default is 1: one job after another.</p></explain>
+</question>
+
+<question id="out-duplicate" type="output">
+<q>A user double-clicks. What does this print?</q>
+<code file="dedup.js">
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const queue = createInMemoryQueue(createQueueName("reminders"), { autoProcess: false });
+queue.process("send-reminder", async () => {});
+
+await queue.add("send-reminder", { taskId: 1 }, { deduplicationKey: "reminder.task-1" });
+try {
+  await queue.add("send-reminder", { taskId: 1 }, { deduplicationKey: "reminder.task-1" });
+} catch (error) {
+  console.log("second click:", error.name);
+}
+console.log("waiting:", (await queue.getStats()).waiting);
+await queue.close();
+</code>
+<option>waiting: 2</option>
+<option correct>second click: JobDuplicateError
+waiting: 1</option>
+<option>second click: JobDuplicateError
+waiting: 2</option>
+<option>second click: QueueDisposedError
+waiting: 1</option>
+<explain><p>The <code>deduplicationKey</code> refuses a second job with the same key while the first one exists, so only one reminder is queued.</p></explain>
+</question>
+
+<question id="out-job-timeout" type="output">
+<q>Each page takes 40 ms, and the job has a 60 ms timeout. What does this print?</q>
+<code file="timeout.js">
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const queue = createInMemoryQueue(createQueueName("reports"));
+let pages = 0;
+
+queue.process("build-report", async (job, context) => {
+  for (let page = 1; page <= 10; page++) {
+    context.signal.throwIfAborted();
+    await wait(40);
+    pages += 1;
+  }
+});
+
+const job = await queue.add("build-report", {}, { timeout: 60 });
+await until(async () => (await queue.getStats()).deadLettered === 1);
+await wait(40);
+console.log("pages:", pages, "state:", (await queue.getJob(job.id))?.state);
+await queue.close();
+</code>
+<option>pages: 10 state: completed</option>
+<option>pages: 1 state: dead_letter</option>
+<option correct>pages: 2 state: dead_letter</option>
+<option>pages: 2 state: retrying</option>
+<explain><p>The signal was aborted at 60 ms, in the middle of page 2. The processor finished that page, saw the signal before page 3, and stopped. With one attempt allowed, the job went to the dead-letter queue.</p></explain>
+</question>
+
+<question id="out-worker-stop" type="output">
+<q>What does this print?</q>
+<code file="worker.js">
+import { createInMemoryQueue, createQueueName, createWorker } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const queue = createInMemoryQueue(createQueueName("reminders"), { autoProcess: false });
+queue.process("send-reminder", async (job) => {
+  await wait(80);
+  console.log("job", job.data.n, "finished");
+});
+for (let n = 1; n <= 4; n++) await queue.add("send-reminder", { n });
+
+const worker = createWorker("worker-1", queue, { concurrency: 2, pollInterval: 5 });
+await worker.start();
+await wait(30);
+await worker.stop();
+console.log(worker.state, "waiting:", (await queue.getStats()).waiting);
+await queue.close();
+</code>
+<option>stopped waiting: 4</option>
+<option correct>job 1 finished
+job 2 finished
+stopped waiting: 2</option>
+<option>job 1 finished
+job 2 finished
+job 3 finished
+job 4 finished
+stopped waiting: 0</option>
+<option>stopped waiting: 2</option>
+<explain><p>The worker started jobs 1 and 2. <code>stop()</code> did not cut them off: it waited for both to finish. Jobs 3 and 4 were never started and are still waiting for the next worker.</p></explain>
+</question>
+
+<question id="out-middleware" type="output">
+<q>What does this print?</q>
+<code file="middleware.js">
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const log = async (ctx) => {
+  console.log("start", ctx.job.name);
+  try {
+    return await ctx.next();
+  } finally {
+    console.log("end", ctx.job.name);
+  }
+};
+const queue = createInMemoryQueue(createQueueName("reminders"), { middleware: [log] });
+queue.process("send-reminder", async (job) => console.log("  sending for task", job.data.taskId));
+
+await queue.add("send-reminder", { taskId: 1 });
+await until(async () => (await queue.getStats()).succeeded === 1);
+await queue.close();
+</code>
+<option correct>start send-reminder
+  sending for task 1
+end send-reminder</option>
+<option>  sending for task 1
+start send-reminder
+end send-reminder</option>
+<option>start send-reminder
+end send-reminder
+  sending for task 1</option>
+<option>start send-reminder
+  sending for task 1</option>
+<explain><p>Queue middleware wraps every job: its code before <code>ctx.next()</code> runs first, the processor runs inside, and <code>finally</code> runs afterwards, even when the job fails.</p></explain>
+</question>
+
+<question id="out-idempotent" type="output">
+<q>The same reminder job is added twice. What does this print?</q>
+<code file="idempotent.js">
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const tasks = new Map([[1, { email: "ada@example.com", reminded: false }]]);
+const queue = createInMemoryQueue(createQueueName("reminders"));
+
+queue.process("send-reminder", async (job) => {
+  const task = tasks.get(job.data.taskId);
+  if (!task || task.reminded) {
+    console.log("nothing to do");
+    return;
+  }
+  console.log("mail to", task.email);
+  task.reminded = true;
+});
+
+await queue.add("send-reminder", { taskId: 1 });
+await queue.add("send-reminder", { taskId: 1 });
+await until(async () => (await queue.getStats()).succeeded === 2);
+await queue.close();
+</code>
+<option>mail to ada@example.com
+mail to ada@example.com</option>
+<option correct>mail to ada@example.com
+nothing to do</option>
+<option>nothing to do
+nothing to do</option>
+<option>mail to ada@example.com</option>
+<explain><p>The processor is idempotent: it checks <code>reminded</code> before sending, so running the job a second time does no harm.</p></explain>
+</question>
+
+<question id="code-first-queue" type="code" file="first.js">
+<q><p>Register a processor for <code>send-reminder</code> jobs that prints <code>reminder for task &lt;taskId&gt; to &lt;email&gt;</code>, then add one job for task 1 and <code>ada@example.com</code>. The rest waits for the job and closes the queue.</p></q>
+<starter>
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const queue = createInMemoryQueue(createQueueName("reminders"));
+
+// your code here
+
+await until(async () => (await queue.getStats()).succeeded === 1);
+console.log("done");
+await queue.close();
+</starter>
+<solution>
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const queue = createInMemoryQueue(createQueueName("reminders"));
+
+queue.process("send-reminder", async (job) => {
+  console.log(`reminder for task ${job.data.taskId} to ${job.data.email}`);
+});
+await queue.add("send-reminder", { taskId: 1, email: "ada@example.com" });
+
+await until(async () => (await queue.getStats()).succeeded === 1);
+console.log("done");
+await queue.close();
+</solution>
+<expected>
+reminder for task 1 to ada@example.com
+done
+</expected>
+<explain><p><code>queue.process(name, processor)</code> registers the function for that job name, and <code>queue.add(name, data)</code> stores a job. Always <code>close()</code> the queue when the program stops.</p></explain>
+</question>
+
+<question id="code-add-retries" type="code" file="retries.js">
+<q><p>The mail server fails twice before it works. Change the <code>add</code> call so the job gets 4 attempts with a fixed backoff of 5 ms (<code>createFixedBackoff(5)</code>).</p></q>
+<starter>
+import { createInMemoryQueue, createQueueName, createFixedBackoff } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const queue = createInMemoryQueue(createQueueName("reminders"));
+let failuresLeft = 2;
+
+queue.process("send-reminder", async () => {
+  if (failuresLeft > 0) {
+    failuresLeft -= 1;
+    throw new Error("mail server timed out");
+  }
+});
+
+await queue.add("send-reminder", { taskId: 1 }); // change this line
+await until(async () => {
+  const stats = await queue.getStats();
+  return stats.succeeded + stats.deadLettered === 1;
+});
+const stats = await queue.getStats();
+console.log("succeeded:", stats.succeeded, "retried:", stats.retried, "dead:", stats.deadLettered);
+await queue.close();
+</starter>
+<solution>
+import { createInMemoryQueue, createQueueName, createFixedBackoff } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const queue = createInMemoryQueue(createQueueName("reminders"));
+let failuresLeft = 2;
+
+queue.process("send-reminder", async () => {
+  if (failuresLeft > 0) {
+    failuresLeft -= 1;
+    throw new Error("mail server timed out");
+  }
+});
+
+await queue.add("send-reminder", { taskId: 1 }, { attempts: 4, backoff: createFixedBackoff(5) });
+await until(async () => {
+  const stats = await queue.getStats();
+  return stats.succeeded + stats.deadLettered === 1;
+});
+const stats = await queue.getStats();
+console.log("succeeded:", stats.succeeded, "retried:", stats.retried, "dead:", stats.deadLettered);
+await queue.close();
+</solution>
+<expected>succeeded: 1 retried: 2 dead: 0</expected>
+<explain><p>With the default of 1 attempt, the first failure sends the job to the dead-letter queue. <code>attempts</code> is the total number of tries, and <code>backoff</code> sets the wait before each retry.</p></explain>
+</question>
+
+<question id="code-idempotent" type="code" file="idempotent.js">
+<q><p>Make the processor idempotent. Load the task by <code>job.data.taskId</code>. If it is missing or already <code>reminded</code>, print <code>task &lt;id&gt;: nothing to do</code> and return. Otherwise print <code>mail to &lt;email&gt;</code> and set <code>reminded</code> to <code>true</code>.</p></q>
+<starter>
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const tasks = new Map([[1, { email: "ada@example.com", reminded: false }]]);
+const queue = createInMemoryQueue(createQueueName("reminders"));
+
+queue.process("send-reminder", async (job) => {
+  // your code here
+});
+
+for (const taskId of [1, 1, 7]) await queue.add("send-reminder", { taskId });
+await until(async () => (await queue.getStats()).succeeded === 3);
+await queue.close();
+</starter>
+<solution>
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const tasks = new Map([[1, { email: "ada@example.com", reminded: false }]]);
+const queue = createInMemoryQueue(createQueueName("reminders"));
+
+queue.process("send-reminder", async (job) => {
+  const task = tasks.get(job.data.taskId);
+  if (!task || task.reminded) {
+    console.log(`task ${job.data.taskId}: nothing to do`);
+    return;
+  }
+  console.log(`mail to ${task.email}`);
+  task.reminded = true;
+});
+
+for (const taskId of [1, 1, 7]) await queue.add("send-reminder", { taskId });
+await until(async () => (await queue.getStats()).succeeded === 3);
+await queue.close();
+</solution>
+<expected>
+mail to ada@example.com
+task 1: nothing to do
+task 7: nothing to do
+</expected>
+<explain><p>Queues run jobs at least once, so a processor must be safe to run twice. It loads fresh data by id and checks whether the work was already done.</p></explain>
+</question>
+
+<question id="code-permanent-error" type="code" file="permanent.js">
+<q><p>Addresses ending in <code>@example.invalid</code> can never work. In the processor, push such an address to <code>failedAddresses</code> and return normally, so no retries are wasted. Other addresses are "sent" (just count them in <code>sent</code>).</p></q>
+<starter>
+import { createInMemoryQueue, createQueueName, createFixedBackoff } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const queue = createInMemoryQueue(createQueueName("reminders"));
+const failedAddresses = [];
+let sent = 0;
+let tries = 0;
+
+queue.process("send-reminder", async (job) => {
+  tries += 1;
+  if (job.data.email.endsWith("@example.invalid")) {
+    throw new Error(`mailbox ${job.data.email} does not exist`); // change this
+  }
+  sent += 1;
+});
+
+for (const email of ["ada@example.com", "nobody@example.invalid"]) {
+  await queue.add("send-reminder", { email }, { attempts: 3, backoff: createFixedBackoff(5) });
+}
+await until(async () => {
+  const stats = await queue.getStats();
+  return stats.succeeded + stats.deadLettered === 2;
+});
+console.log("tries:", tries, "sent:", sent, "failed:", failedAddresses);
+console.log("dead-lettered:", (await queue.getStats()).deadLettered);
+await queue.close();
+</starter>
+<solution>
+import { createInMemoryQueue, createQueueName, createFixedBackoff } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const queue = createInMemoryQueue(createQueueName("reminders"));
+const failedAddresses = [];
+let sent = 0;
+let tries = 0;
+
+queue.process("send-reminder", async (job) => {
+  tries += 1;
+  if (job.data.email.endsWith("@example.invalid")) {
+    failedAddresses.push(job.data.email);
+    return;
+  }
+  sent += 1;
+});
+
+for (const email of ["ada@example.com", "nobody@example.invalid"]) {
+  await queue.add("send-reminder", { email }, { attempts: 3, backoff: createFixedBackoff(5) });
+}
+await until(async () => {
+  const stats = await queue.getStats();
+  return stats.succeeded + stats.deadLettered === 2;
+});
+console.log("tries:", tries, "sent:", sent, "failed:", failedAddresses);
+console.log("dead-lettered:", (await queue.getStats()).deadLettered);
+await queue.close();
+</solution>
+<expected>
+tries: 2 sent: 1 failed: [ 'nobody@example.invalid' ]
+dead-lettered: 0
+</expected>
+<explain><p>Retrying a permanent error cannot help. Record it (in a real app, in the database so the user sees it) and return. Keep throwing for temporary errors so the queue retries them.</p></explain>
+</question>
+
+<question id="code-backoff-by-hand" type="code" file="backoff.js">
+<q><p>Write <code>exponentialDelay(retry, base, maxDelay)</code> by hand, without jitter: <code>base</code> for retry 1, doubled for each later retry, but never more than <code>maxDelay</code>.</p></q>
+<starter>
+function exponentialDelay(retry, base, maxDelay) {
+  // your code here
+}
+
+console.log([1, 2, 3, 4, 5, 6, 7].map((retry) => exponentialDelay(retry, 1000, 30_000)).join(" "));
+</starter>
+<solution>
+function exponentialDelay(retry, base, maxDelay) {
+  return Math.min(base * 2 ** (retry - 1), maxDelay);
+}
+
+console.log([1, 2, 3, 4, 5, 6, 7].map((retry) => exponentialDelay(retry, 1000, 30_000)).join(" "));
+</solution>
+<expected>1000 2000 4000 8000 16000 30000 30000</expected>
+<explain><p><code>2 ** (retry - 1)</code> doubles the wait each time, and <code>Math.min</code> caps it. In production the queue also adds jitter so many failed jobs do not retry at the same moment.</p></explain>
+</question>
+
+<question id="code-next-job" type="code" file="next-job.js">
+<q><p>Write <code>pickNext(jobs)</code>, which returns the label of the job that runs next: the highest <code>priority</code> first, and among equal priorities the one with the smallest <code>added</code> number. Do not change the <code>jobs</code> array.</p></q>
+<starter>
+function pickNext(jobs) {
+  // your code here
+}
+
+const jobs = [
+  { label: "normal", priority: 50, added: 1 },
+  { label: "low", priority: 10, added: 2 },
+  { label: "urgent", priority: 100, added: 3 },
+  { label: "urgent 2", priority: 100, added: 4 },
+];
+console.log(pickNext(jobs));
+console.log(pickNext(jobs.filter((job) => job.priority < 100)));
+console.log(jobs.length);
+</starter>
+<solution>
+function pickNext(jobs) {
+  let best = jobs[0];
+  for (const job of jobs) {
+    if (job.priority > best.priority || (job.priority === best.priority && job.added < best.added)) {
+      best = job;
+    }
+  }
+  return best.label;
+}
+
+const jobs = [
+  { label: "normal", priority: 50, added: 1 },
+  { label: "low", priority: 10, added: 2 },
+  { label: "urgent", priority: 100, added: 3 },
+  { label: "urgent 2", priority: 100, added: 4 },
+];
+console.log(pickNext(jobs));
+console.log(pickNext(jobs.filter((job) => job.priority < 100)));
+console.log(jobs.length);
+</solution>
+<expected>
+urgent
+normal
+4
+</expected>
+<explain><p>That is the queue's rule: higher priority first, and first come, first served among equals. Looping over the array (or sorting a copy) leaves the original untouched.</p></explain>
+</question>
+
+<question id="code-queue-middleware" type="code" file="middleware.js">
+<q><p>Write a queue middleware <code>log</code> that prints <code>start &lt;job name&gt;</code> before <code>ctx.next()</code> and <code>end &lt;job name&gt;</code> after it, even when the job throws. Pass it in the queue's <code>middleware</code> option.</p></q>
+<starter>
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+
+const log = async (ctx) => {
+  // your code here
+};
+
+const queue = createInMemoryQueue(createQueueName("reminders")); // change this line
+queue.process("send-reminder", async () => console.log("  sending"));
+queue.process("broken", async () => { throw new Error("boom"); });
+
+await queue.add("send-reminder", {});
+await until(async () => (await queue.getStats()).succeeded === 1);
+await queue.add("broken", {});
+await until(async () => (await queue.getStats()).deadLettered === 1);
+await queue.close();
+</starter>
+<solution>
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+
+const log = async (ctx) => {
+  console.log("start", ctx.job.name);
+  try {
+    return await ctx.next();
+  } finally {
+    console.log("end", ctx.job.name);
+  }
+};
+
+const queue = createInMemoryQueue(createQueueName("reminders"), { middleware: [log] });
+queue.process("send-reminder", async () => console.log("  sending"));
+queue.process("broken", async () => { throw new Error("boom"); });
+
+await queue.add("send-reminder", {});
+await until(async () => (await queue.getStats()).succeeded === 1);
+await queue.add("broken", {});
+await until(async () => (await queue.getStats()).deadLettered === 1);
+await queue.close();
+</solution>
+<expected>
+start send-reminder
+  sending
+end send-reminder
+start broken
+end broken
+</expected>
+<explain><p><code>finally</code> runs whether the job worked or threw. Return the result of <code>ctx.next()</code>, and do not swallow the error, so the queue can still retry or dead-letter the job.</p></explain>
+</question>
+
+<question id="code-honour-signal" type="code" file="signal.js">
+<q><p>The job has a 60 ms timeout and each page takes 40 ms. Make the processor stop soon after the timeout by calling <code>context.signal.throwIfAborted()</code> before each page.</p></q>
+<starter>
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const queue = createInMemoryQueue(createQueueName("reports"));
+let pages = 0;
+
+queue.process("build-report", async (job, context) => {
+  for (let page = 1; page <= 10; page++) {
+    // your code here
+    await wait(40);
+    pages += 1;
+  }
+});
+
+await queue.add("build-report", {}, { timeout: 60 });
+await until(async () => (await queue.getStats()).deadLettered === 1);
+await wait(40);
+console.log("pages built:", pages);
+await queue.close();
+</starter>
+<solution>
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const queue = createInMemoryQueue(createQueueName("reports"));
+let pages = 0;
+
+queue.process("build-report", async (job, context) => {
+  for (let page = 1; page <= 10; page++) {
+    context.signal.throwIfAborted();
+    await wait(40);
+    pages += 1;
+  }
+});
+
+await queue.add("build-report", {}, { timeout: 60 });
+await until(async () => (await queue.getStats()).deadLettered === 1);
+await wait(40);
+console.log("pages built:", pages);
+await queue.close();
+</solution>
+<expected>pages built: 2</expected>
+<explain><p>The queue aborts the signal when the timeout runs out, but it cannot stop the function by force. The check before each page lets the processor stop itself instead of building pages nobody will use.</p></explain>
+</question>
+
+<question id="code-worker" type="code" file="worker.js">
+<q><p>Create a worker named <code>worker-1</code> for the queue with <code>concurrency: 2</code> and <code>pollInterval: 5</code>, start it, and after the 30 ms wait stop it gracefully.</p></q>
+<starter>
+import { createInMemoryQueue, createQueueName, createWorker } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const queue = createInMemoryQueue(createQueueName("reminders"), { autoProcess: false });
+queue.process("send-reminder", async (job) => {
+  await wait(80);
+  console.log("job", job.data.n, "finished");
+});
+for (let n = 1; n <= 3; n++) await queue.add("send-reminder", { n });
+
+// your code here: create and start the worker
+
+await wait(30);
+
+// your code here: stop it
+
+console.log("waiting:", (await queue.getStats()).waiting);
+await queue.close();
+</starter>
+<solution>
+import { createInMemoryQueue, createQueueName, createWorker } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const queue = createInMemoryQueue(createQueueName("reminders"), { autoProcess: false });
+queue.process("send-reminder", async (job) => {
+  await wait(80);
+  console.log("job", job.data.n, "finished");
+});
+for (let n = 1; n <= 3; n++) await queue.add("send-reminder", { n });
+
+const worker = createWorker("worker-1", queue, { concurrency: 2, pollInterval: 5 });
+await worker.start();
+
+await wait(30);
+
+await worker.stop();
+
+console.log("waiting:", (await queue.getStats()).waiting);
+await queue.close();
+</solution>
+<expected>
+job 1 finished
+job 2 finished
+waiting: 1
+</expected>
+<explain><p><code>worker.stop()</code> stops taking new jobs and waits for the running ones to finish. Job 3 was never started, so it is still waiting for the next worker.</p></explain>
+</question>
+
+<question id="code-duplicate-route" type="code" file="route.js">
+<q><p>Finish <code>postReminder(taskId)</code>. Add the job with <code>deduplicationKey: "reminder.task-&lt;id&gt;"</code>. If <code>add</code> throws an error whose <code>name</code> is <code>JobDuplicateError</code>, still answer <code>{ status: 202, body: { queued: true } }</code>; re-throw any other error.</p></q>
+<starter>
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const queue = createInMemoryQueue(createQueueName("reminders"), { autoProcess: false });
+queue.process("send-reminder", async () => {});
+
+async function postReminder(taskId) {
+  // your code here
+}
+
+console.log(await postReminder(1));
+console.log(await postReminder(1));
+console.log("jobs waiting:", (await queue.getStats()).waiting);
+await queue.close();
+</starter>
+<solution>
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const queue = createInMemoryQueue(createQueueName("reminders"), { autoProcess: false });
+queue.process("send-reminder", async () => {});
+
+async function postReminder(taskId) {
+  try {
+    await queue.add("send-reminder", { taskId }, { deduplicationKey: `reminder.task-${taskId}` });
+  } catch (error) {
+    if (!(error instanceof Error && error.name === "JobDuplicateError")) throw error;
+  }
+  return { status: 202, body: { queued: true } };
+}
+
+console.log(await postReminder(1));
+console.log(await postReminder(1));
+console.log("jobs waiting:", (await queue.getStats()).waiting);
+await queue.close();
+</solution>
+<expected>
+{ status: 202, body: { queued: true } }
+{ status: 202, body: { queued: true } }
+jobs waiting: 1
+</expected>
+<explain><p>The second click finds the job already queued, so the honest answer is still 202. Only one job exists. Any other error is a real problem and must not be hidden.</p></explain>
+</question>
+
+<question id="code-replay-dead" type="code" file="replay.js">
+<q><p>A bug made every job fail, and the jobs are now dead letters. The bug is fixed (<code>bugFixed = true</code>). Replay them: for each entry of <code>queue.getDeadLetterJobs()</code>, add the job again with <code>queue.add(dead.job.name, dead.job.data)</code>.</p></q>
+<starter>
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const queue = createInMemoryQueue(createQueueName("reminders"));
+let bugFixed = false;
+
+queue.process("send-reminder", async (job) => {
+  if (!bugFixed) throw new Error("template not found");
+  console.log("sent reminder for task", job.data.taskId);
+});
+
+for (const taskId of [1, 2]) await queue.add("send-reminder", { taskId });
+await until(async () => (await queue.getStats()).deadLettered === 2);
+bugFixed = true;
+
+// your code here
+
+await until(async () => (await queue.getStats()).succeeded === 2);
+await queue.close();
+</starter>
+<solution>
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await wait(5); };
+const queue = createInMemoryQueue(createQueueName("reminders"));
+let bugFixed = false;
+
+queue.process("send-reminder", async (job) => {
+  if (!bugFixed) throw new Error("template not found");
+  console.log("sent reminder for task", job.data.taskId);
+});
+
+for (const taskId of [1, 2]) await queue.add("send-reminder", { taskId });
+await until(async () => (await queue.getStats()).deadLettered === 2);
+bugFixed = true;
+
+for (const dead of await queue.getDeadLetterJobs()) {
+  await queue.add(dead.job.name, dead.job.data);
+}
+
+await until(async () => (await queue.getStats()).succeeded === 2);
+await queue.close();
+</solution>
+<expected>
+sent reminder for task 1
+sent reminder for task 2
+</expected>
+<explain><p>Each dead letter keeps the job's name and data, so nothing was lost. Fix the cause first, then replay; replaying before the fix only fills the dead-letter queue again.</p></explain>
+</question>

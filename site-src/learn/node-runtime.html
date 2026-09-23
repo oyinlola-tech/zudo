@@ -105,11 +105,23 @@ readFile(import.meta.filename, () => {
 <p><code>import.meta.filename</code> is the full path of the current file, so the program simply reads itself. Here is the order, and why:</p>
 <ol>
 <li><strong>Synchronous code</strong> always finishes first. Nothing can interrupt it.</li>
-<li><strong><code>process.nextTick</code></strong> callbacks run as soon as the current code finishes, before anything else.</li>
+<li><strong><code>process.nextTick</code></strong> callbacks run as soon as the current callback finishes, before anything else.</li>
 <li><strong>Promise callbacks</strong> (<code>.then</code>, and the code after an <code>await</code>) run next. Together with <code>nextTick</code>, these are called <strong>microtasks</strong>: small jobs that run before the event loop moves on.</li>
 <li><strong><code>setImmediate</code></strong> runs right after the event loop finishes handling I/O (input and output, such as the file read).</li>
 <li><strong><code>setTimeout</code></strong> runs when the loop comes back round to check its timers, even with a delay of 0.</li>
 </ol>
+<p>That order holds inside a callback, like the file read above. There is one exception at the very top of an ES module file (and every file in this course is one): Node is still finishing a promise of its own while it loads the module, so promise callbacks run <em>before</em> <code>nextTick</code> there:</p>
+<example file="top-level.js" browser="no">
+Promise.resolve().then(() => console.log("promise"));
+process.nextTick(() => console.log("nextTick"));
+console.log("sync");
+</example>
+<output>
+sync
+promise
+nextTick
+</output>
+<p>You rarely need to care which microtask runs first. What matters is the big picture: synchronous code, then microtasks, then the event loop's I/O, <code>setImmediate</code> and timers.</p>
 <p>At the top level of a file, outside any I/O callback, the order of <code>setTimeout(…, 0)</code> and <code>setImmediate</code> is not fixed. It depends on how fast your computer started the program. Here is a two-line file, <code>order.js</code>, run four times:</p>
 <shell>
 $ node order.js
@@ -379,7 +391,7 @@ PORT must be a whole number between 1 and 65535, got "abc"
 <h2 id="recap">Recap</h2>
 <ul>
 <li>Node.js is a JavaScript runtime: V8 runs the code, libuv does the waiting, and built-in modules such as <code>node:fs</code> and <code>node:http</code> reach the computer.</li>
-<li>One thread runs your code. The event loop runs callbacks in order: sync code, <code>nextTick</code>, promises, then I/O, <code>setImmediate</code> and timers. Long synchronous work blocks everyone.</li>
+<li>One thread runs your code. The event loop runs callbacks in order: sync code, microtasks (<code>nextTick</code> and promises; at the top of an ES module, promises come first), then I/O, <code>setImmediate</code> and timers. Long synchronous work blocks everyone.</li>
 <li><code>process.argv</code> holds the command-line arguments, <code>process.exitCode</code> reports success (0) or failure, and <code>process.cwd()</code> is where the program was started.</li>
 <li>Settings and secrets come from <code>process.env</code>. Load a <code>.env</code> file with <code>node --env-file=.env</code>, fail loudly when a secret is missing, and never commit <code>.env</code>.</li>
 </ul>

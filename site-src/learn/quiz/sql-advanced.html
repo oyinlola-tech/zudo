@@ -16,30 +16,6 @@
 <explain><p>The left table is the one after <code>from</code>. Use a left join whenever "nothing on the right" is an answer you still want to see.</p></explain>
 </question>
 
-<question id="inner-join-count" type="output">
-<q>What does this print?</q>
-<code file="inner.js" browser="no">
-import { PGlite } from "@electric-sql/pglite";
-
-const db = new PGlite();
-await db.exec(`
-  create table users (id integer primary key, name text not null);
-  create table tasks (id integer primary key, user_id integer not null references users (id), title text not null);
-  insert into users values (1, 'Ada'), (2, 'Alan'), (3, 'Grace');
-  insert into tasks values (1, 1, 'Buy milk'), (2, 1, 'Write report'), (3, 2, 'Fix bike');
-`);
-const inner = await db.query("select u.name from users u join tasks t on t.user_id = u.id");
-const left = await db.query("select u.name from users u left join tasks t on t.user_id = u.id");
-console.log(inner.rows.length, left.rows.length);
-await db.close();
-</code>
-<option correct>3 4</option>
-<option>3 3</option>
-<option>2 3</option>
-<option>4 4</option>
-<explain><p>The inner join gives one row per matching pair: Ada twice, Alan once. The left join adds Grace, who has no task, with <code>null</code> on the task side.</p></explain>
-</question>
-
 <question id="left-join-null" type="output">
 <q>What does this print?</q>
 <code file="left.js" browser="no">
@@ -128,24 +104,6 @@ await db.close();
 <option>{ by_id: 1, star: 1 }</option>
 <option>{ by_id: null, star: 1 }</option>
 <explain><p>The left join gives Grace one row with <code>t.id</code> as <code>null</code>. <code>count(t.id)</code> counts only non-null values (0); <code>count(*)</code> counts rows (1).</p></explain>
-</question>
-
-<question id="sum-coalesce" type="output">
-<q>What does this print?</q>
-<code file="sum.js" browser="no">
-import { PGlite } from "@electric-sql/pglite";
-
-const db = new PGlite();
-await db.exec("create table tasks (user_id integer not null, estimate integer not null)");
-const { rows } = await db.query("select sum(estimate) as plain, coalesce(sum(estimate), 0) as safe from tasks");
-console.log(rows[0]);
-await db.close();
-</code>
-<option correct>{ plain: null, safe: 0 }</option>
-<option>{ plain: 0, safe: 0 }</option>
-<option>{ plain: undefined, safe: 0 }</option>
-<option>{ plain: null, safe: null }</option>
-<explain><p>The sum of no rows is <code>null</code>, not 0. <code>coalesce(a, b)</code> returns the first value that is not null, so it turns "nothing" into 0.</p></explain>
 </question>
 
 <question id="avg-string" type="output">
@@ -390,7 +348,7 @@ import { PGlite } from "@electric-sql/pglite";
 const db = new PGlite();
 await db.exec(`
   create table tasks (id integer primary key, user_id integer not null, done boolean not null);
-  insert into tasks select n, n % 2000, n % 3 = 0 from generate_series(1, 100000) as n;
+  insert into tasks select n, n % 2000, n % 3 = 0 from generate_series(1, 20000) as n;
   create index tasks_user_done_idx on tasks (user_id, done);
   analyze tasks;
 `);
@@ -400,7 +358,7 @@ await db.close();
 </code>
 <option correct>true</option>
 <option>false</option>
-<explain><p>With an index on <code>(user_id, done)</code> the planner finds the few matching rows through the index instead of a <code>Seq Scan</code> over 100,000 rows.</p></explain>
+<explain><p>With an index on <code>(user_id, done)</code> the planner finds the few matching rows through the index instead of a <code>Seq Scan</code> over 20,000 rows.</p></explain>
 </question>
 
 <question id="pool-why" type="choice">
@@ -428,6 +386,33 @@ await db.close();
 <option>Because <code>pg</code> returns every column as a string</option>
 <option>Because <code>as n</code> turns the value into text</option>
 <explain><p>Write <code>count(*)::int</code> when you know the number is small, or convert with <code>Number(...)</code>. PGlite converts counts for you, which is why the PGlite examples print plain numbers.</p></explain>
+</question>
+
+<question id="coalesce-js" type="output">
+<q>SQL's <code>coalesce</code> is like JavaScript's <code>??</code>. What does this print?</q>
+<code file="nullish.js">
+const minutes = [null, 0, 150];
+console.log(minutes.map((m) => m ?? 0), minutes.map((m) => m || "none"));
+</code>
+<option correct>[ 0, 0, 150 ] [ 'none', 'none', 150 ]</option>
+<option>[ 0, 0, 150 ] [ 'none', 0, 150 ]</option>
+<option>[ null, 0, 150 ] [ 'none', 'none', 150 ]</option>
+<option>[ 0, 'none', 150 ] [ 'none', 'none', 150 ]</option>
+<explain><p><code>??</code> and <code>coalesce</code> replace only a missing value (<code>null</code>). <code>||</code> also replaces <code>0</code>, which is a real answer: a user with 0 minutes of work is not "none".</p></explain>
+</question>
+
+<question id="empty-average-js" type="output">
+<q>A group with no rows has no average. What does this JavaScript print?</q>
+<code file="empty-avg.js">
+const estimates = [];
+const sum = estimates.reduce((a, b) => a + b, 0);
+console.log(sum, sum / estimates.length);
+</code>
+<option correct>0 NaN</option>
+<option>0 0</option>
+<option>null null</option>
+<option>0 Infinity</option>
+<explain><p>Dividing 0 by 0 gives <code>NaN</code>. SQL is more honest here: <code>sum</code> and <code>avg</code> of no rows are <code>null</code>, which you then handle on purpose, for example with <code>coalesce</code>.</p></explain>
 </question>
 
 <question id="string-count-bug" type="output">

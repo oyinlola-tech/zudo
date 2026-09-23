@@ -1,0 +1,746 @@
+<question id="what-testing-adds" type="choice">
+<q>What does <code>@zudojs/testing</code> add to Vitest?</q>
+<option>It replaces Vitest and runs the tests itself</option>
+<option correct>Controllable stand-ins (test doubles) for the clock, logger, event bus, queue, container and HTTP, plus assertions that compare by content</option>
+<option>A browser to run tests in</option>
+<option>A coverage report</option>
+<explain><p>It does not run tests; Vitest still does that. It gives you a test double for each moving part of a ZudoJS app, and structural assertions.</p></explain>
+</question>
+
+<question id="dev-dependency" type="choice">
+<q>Why install <code>vitest</code> and <code>@zudojs/testing</code> with <code>-D</code>?</q>
+<option>So they are installed globally</option>
+<option correct>Your tests need them, but your running app does not, so they are development dependencies</option>
+<option>So they load faster</option>
+<option>Because they are not on npm</option>
+<explain><p><code>-D</code> saves them under <code>devDependencies</code>. A production install can leave them out, which keeps the deployed app smaller.</p></explain>
+</question>
+
+<question id="testable-service" type="choice">
+<q>Why does the task service receive <code>now</code>, <code>logger</code>, <code>events</code> and <code>mailer</code> instead of creating them itself?</q>
+<option>It makes the service faster</option>
+<option correct>So a test can pass doubles it controls, such as a fixed clock and a mailer that sends nothing</option>
+<option>Because <code>new Date()</code> does not work in services</option>
+<option>So the service can be used without TypeScript</option>
+<explain><p>This is dependency injection. In production you pass <code>() =&gt; new Date()</code> and a real mailer; in a test, a test clock and a mock. The service code does not change.</p></explain>
+</question>
+
+<question id="real-clock-problem" type="choice">
+<q>Why is a test that reads the real clock a problem for "remind me about overdue tasks"?</q>
+<option>The real clock is too slow</option>
+<option correct>It gives different results on different days, and waiting two real days to test "overdue" is useless</option>
+<option>Tests cannot read dates</option>
+<option>The real clock is always in UTC</option>
+<explain><p>A test must give the same result every time. A test clock only moves when you tell it to, so "two days later" takes no time at all.</p></explain>
+</question>
+
+<question id="clock-advance-add" type="output">
+<q>What does this print?</q>
+<code file="clock.js" browser="no">
+import { createTestClock } from "@zudojs/testing";
+
+const clock = createTestClock("2026-10-01T09:00:00Z");
+clock.advance(90_000);
+console.log(clock.now.toISOString());
+clock.add({ days: 2, hours: 3 });
+console.log(clock.now.toISOString());
+</code>
+<option correct>2026-10-01T09:01:30.000Z
+2026-10-03T12:01:30.000Z</option>
+<option>2026-10-01T09:00:00.000Z
+2026-10-03T12:00:00.000Z</option>
+<option>2026-10-02T09:00:00.000Z
+2026-10-04T12:00:00.000Z</option>
+<option>2026-10-01T09:01:30.000Z
+2026-10-03T09:01:30.000Z</option>
+<explain><p><code>advance(ms)</code> moves forward by milliseconds: 90&nbsp;000 ms is 1 minute 30 seconds. <code>add</code> takes days, hours, minutes or seconds, so 2 days and 3 hours later is 12:01:30 on 3 October.</p></explain>
+</question>
+
+<question id="clock-set" type="output">
+<q>What does this print?</q>
+<code file="clock-set.js" browser="no">
+import { createTestClock } from "@zudojs/testing";
+
+const start = new Date("2026-10-01T09:00:00Z");
+const clock = createTestClock(start);
+clock.add({ days: 5 });
+clock.set(start);
+clock.add({ minutes: 30, seconds: 15 });
+console.log(clock.now.toISOString());
+</code>
+<option correct>2026-10-01T09:30:15.000Z</option>
+<option>2026-10-06T09:30:15.000Z</option>
+<option>2026-10-01T09:00:00.000Z</option>
+<option>2026-10-06T09:00:00.000Z</option>
+<explain><p><code>set(date)</code> jumps to any time, here back to the start. Then 30 minutes and 15 seconds are added.</p></explain>
+</question>
+
+<question id="clock-reset-trap" type="choice">
+<q>Your test clock started at 1 October 2026. After some <code>add</code> calls you want to go back to the start. What should you call?</q>
+<option><code>clock.reset()</code></option>
+<option correct><code>clock.set(start)</code></option>
+<option><code>clock.advance(0)</code></option>
+<option><code>clock.add({ days: -1 })</code></option>
+<explain><p>Watch out: <code>clock.reset()</code> jumps to the real current time, not back to your start. <code>set(start)</code> goes exactly where you want.</p></explain>
+</question>
+
+<question id="mock-fn-calls" type="output">
+<q>What does this print?</q>
+<code file="mock.js" browser="no">
+import { createMockFn } from "@zudojs/testing";
+
+const send = createMockFn();
+send.mockReturnValue("queued");
+console.log(send("ada@example.com", "Overdue: Buy milk"));
+send("bo@example.com", "Overdue: File taxes");
+console.log(send.callCount, send.calls[1][0]);
+</code>
+<option correct>queued
+2 bo@example.com</option>
+<option>undefined
+2 bo@example.com</option>
+<option>queued
+1 ada@example.com</option>
+<option>queued
+2 ada@example.com</option>
+<explain><p>A mock function records every call. <code>calls</code> is a list of argument lists, so <code>calls[1][0]</code> is the first argument of the second call. <code>mockReturnValue</code> sets what it returns.</p></explain>
+</question>
+
+<question id="mock-default-return" type="output">
+<q>What does this print?</q>
+<code file="mock-default.js" browser="no">
+import { createMockFn } from "@zudojs/testing";
+
+const send = createMockFn();
+console.log(send("ada@example.com"), send.callCount);
+</code>
+<option correct>undefined 1</option>
+<option>null 1</option>
+<option>undefined 0</option>
+<option>ada@example.com 1</option>
+<explain><p>Without <code>mockReturnValue</code> or <code>mockResolvedValue</code>, a mock returns <code>undefined</code>. It still records the call.</p></explain>
+</question>
+
+<question id="mock-resolved" type="choice">
+<q>The mailer's <code>send</code> is async. How do you make its mock return a promise of <code>undefined</code>?</q>
+<option><code>send.mockReturnValue(undefined)</code></option>
+<option correct><code>send.mockResolvedValue(undefined)</code></option>
+<option><code>send.mockRejectedValue(undefined)</code></option>
+<option><code>await send()</code> once before the test</option>
+<explain><p><code>mockResolvedValue(v)</code> makes the mock return a promise that resolves to <code>v</code>, like a real async function. <code>mockRejectedValue(error)</code> makes it fail.</p></explain>
+</question>
+
+<question id="mock-rejected" type="output">
+<q>The mail server is down. What does this print?</q>
+<code file="mock-rejected.js" browser="no">
+import { createMockFn } from "@zudojs/testing";
+
+const send = createMockFn();
+send.mockRejectedValue(new Error("SMTP server unreachable"));
+try {
+  await send("ada@example.com", "Overdue: Buy milk");
+} catch (error) {
+  console.log(error.message, send.callCount);
+}
+</code>
+<option correct>SMTP server unreachable 1</option>
+<option>SMTP server unreachable 0</option>
+<option>undefined 1</option>
+<explain><p><code>mockRejectedValue</code> makes every call fail with that error, so you can test what your code does when the mail server is down. The failed call is still recorded.</p></explain>
+</question>
+
+<question id="spy-logger" type="output">
+<q>What does this print?</q>
+<code file="spy-logger.js" browser="no">
+import { createSpyLogger } from "@zudojs/testing";
+
+const logger = createSpyLogger("tasks");
+logger.info("task created", { taskId: 1 });
+logger.warn("mailer slow");
+console.log(logger.calls.map((call) => `${call.method} ${call.message}`));
+</code>
+<option correct>[ 'info task created', 'warn mailer slow' ]</option>
+<option>[ 'task created', 'mailer slow' ]</option>
+<option>[]</option>
+<option>[ 'info task created' ]</option>
+<explain><p>A spy logger is a complete logger that prints nothing and remembers every line in <code>calls</code>, with its method, message and metadata. A test can check what was logged without reading the terminal.</p></explain>
+</question>
+
+<question id="stub-vs-spy" type="choice">
+<q>You want to record the calls of a <strong>real</strong> object's method and later put the original back. Which helper fits?</q>
+<option><code>createStub(overrides)</code></option>
+<option correct><code>createSpyMethod(object, "name")</code>, then <code>restore()</code></option>
+<option><code>createTestClock()</code></option>
+<option><code>createMockFn()</code> assigned over the method, with no way back</option>
+<explain><p><code>createSpyMethod</code> wraps the real method and records its calls until you call <code>restore()</code>. <code>createStub</code> makes a new object whose methods do nothing unless you write them.</p></explain>
+</question>
+
+<question id="spy-method" type="output">
+<q>What does this print?</q>
+<code file="spy-method.js" browser="no">
+import { createSpyMethod } from "@zudojs/testing";
+
+const greeter = { greet(name) { return `hi ${name}`; } };
+const spy = createSpyMethod(greeter, "greet");
+console.log(greeter.greet("ada"), spy.calls.length);
+spy.restore();
+console.log(greeter.greet("bo"));
+</code>
+<option correct>hi ada 1
+hi bo</option>
+<option>undefined 1
+undefined</option>
+<option>hi ada 0
+hi bo</option>
+<option>undefined 1
+hi bo</option>
+<explain><p>A spy calls the real method, so it still returns <code>hi ada</code>, and it records the call. After <code>restore()</code> the original method is back and works as before.</p></explain>
+</question>
+
+<question id="test-container-why" type="choice">
+<q>Why does the lesson test through the app's real <code>registerTasks</code> wiring with <code>createTestContainer</code>, instead of building the service by hand?</q>
+<option>It is faster than building by hand</option>
+<option correct>If someone breaks the wiring, for example reading the wrong config key, the test notices; a hand-built service would not</option>
+<option>Services cannot be built by hand</option>
+<option>The container prints nicer errors</option>
+<explain><p>The test swaps only the outside world (clock, logger, events, mailer, config) and uses the real wiring. So the wiring itself is tested too.</p></explain>
+</question>
+
+<question id="container-overrides" type="choice">
+<q>What does <code>createTestContainer({ overrides: [...] })</code> give you?</q>
+<option>A container with no services at all</option>
+<option correct>A started container with your fakes already registered for the listed tokens</option>
+<option>A copy of the production container with real services</option>
+<option>A container that only works in the browser</option>
+<explain><p>Each override is a token plus the value to use, such as <code>{ token: CLOCK, useValue: () =&gt; clock.now }</code>. Then you call the app's real registration code on it.</p></explain>
+</question>
+
+<question id="test-config" type="choice">
+<q>A test needs <code>tasks.maxOpenTasks</code> to be 1. What does the lesson use?</q>
+<option>Set <code>process.env.MAX_OPEN_TASKS</code> in the test</option>
+<option correct><code>createTestConfigManager({ "tasks.maxOpenTasks": 1 })</code>, a real ConfigManager filled with test values</option>
+<option>Edit the production config file</option>
+<option>Hardcode 1 in the service</option>
+<explain><p>A test config manager is a real <code>ConfigManager</code>, so the wiring reads it exactly as in production. Changing environment variables or files would leak into other tests.</p></explain>
+</question>
+
+<question id="cleanup-why" type="choice">
+<q>A test starts an HTTP server and forgets to stop it. What can happen?</q>
+<option>Nothing; Vitest stops it</option>
+<option correct>The next test fails for no clear reason, or Vitest never exits</option>
+<option>The server is stopped when the variable goes out of scope</option>
+<option>The test is marked as skipped</option>
+<explain><p>Open servers, queues and timers keep running after a test. A cleanup manager holds an "undo" function for each, and <code>dispose()</code> runs them all.</p></explain>
+</question>
+
+<question id="cleanup-order" type="output">
+<q>What does this print?</q>
+<code file="cleanup.js" browser="no">
+import { createCleanupManager } from "@zudojs/testing";
+
+const cleanup = createCleanupManager();
+const stopped = [];
+cleanup.register(() => stopped.push("database"), "database");
+cleanup.register(() => stopped.push("queue"), "queue");
+cleanup.register(() => stopped.push("server"), "server");
+await cleanup.dispose();
+console.log(stopped, cleanup.disposed);
+</code>
+<option correct>[ 'server', 'queue', 'database' ] true</option>
+<option>[ 'database', 'queue', 'server' ] true</option>
+<option>[ 'server', 'queue', 'database' ] false</option>
+<option>[] true</option>
+<explain><p><code>dispose()</code> runs the cleanups in reverse order: last started, first stopped. A server must stop before the queue and database it uses are closed.</p></explain>
+</question>
+
+<question id="cleanup-failure" type="output">
+<q>One cleanup fails. What does this print?</q>
+<code file="cleanup-failure.js" browser="no">
+import { createCleanupManager } from "@zudojs/testing";
+
+const cleanup = createCleanupManager();
+const stopped = [];
+cleanup.register(() => stopped.push("database"), "database");
+cleanup.register(() => { throw new Error("queue stuck"); }, "queue");
+try {
+  await cleanup.dispose();
+} catch (error) {
+  console.log("reported:", error.message);
+}
+console.log(stopped);
+</code>
+<option correct>reported: 1 of 2 cleanup functions failed: queue
+[ 'database' ]</option>
+<option>reported: queue stuck
+[]</option>
+<option>[ 'database' ]</option>
+<option>reported: 1 of 2 cleanup functions failed: queue
+[]</option>
+<explain><p>A failing cleanup does not stop the others: the database was still closed. At the end, <code>dispose()</code> reports every cleanup that failed, by name.</p></explain>
+</question>
+
+<question id="test-app-defaults" type="choice">
+<q>What should you pass to <code>createTestApplication</code>, according to the lesson?</q>
+<option>Nothing; its defaults are silent and fixed in time</option>
+<option correct>Your own spy logger and test clock, because by default it uses a real logger that prints and a clock set to the real time</option>
+<option>A real database connection</option>
+<option>The production config file</option>
+<explain><p>The defaults would print log lines in your test output and make time depend on when the test runs. Passing a spy logger and a test clock keeps tests quiet and repeatable.</p></explain>
+</question>
+
+<question id="deep-equal-sets" type="output">
+<q>What does this print?</q>
+<code file="deep-equal.js" browser="no">
+import { deepEqual } from "@zudojs/testing";
+
+const a = { tags: new Set(["home"]) };
+const b = { tags: new Set(["work"]) };
+console.log(JSON.stringify(a) === JSON.stringify(b), deepEqual(a, b));
+</code>
+<option correct>true false</option>
+<option>false false</option>
+<option>true true</option>
+<option>false true</option>
+<explain><p>This is the trap: <code>JSON.stringify</code> turns every Set into <code>{}</code>, so two different sets look equal. <code>deepEqual</code> compares their members and sees the difference.</p></explain>
+</question>
+
+<question id="deep-equal-order" type="output">
+<q>What does this print?</q>
+<code file="deep-equal-order.js" browser="no">
+import { deepEqual } from "@zudojs/testing";
+
+console.log(
+  deepEqual({ due: new Date(0), id: 1 }, { id: 1, due: new Date(0) }),
+  deepEqual([1, 2], [2, 1]),
+  deepEqual(new Date(0), new Date(1)),
+);
+</code>
+<option correct>true false false</option>
+<option>false false false</option>
+<option>true true false</option>
+<option>true false true</option>
+<explain><p>Object keys may come in any order. Array items must be in the same order. Dates are compared by the time they hold, and 0 ms and 1 ms are different.</p></explain>
+</question>
+
+<question id="find-difference" type="output">
+<q>What does this print?</q>
+<code file="find-difference.js" browser="no">
+import { findDifference } from "@zudojs/testing";
+
+const difference = findDifference({ task: { tags: ["home", "urgent"] } }, { task: { tags: ["home", "later"] } });
+console.log(difference.path);
+</code>
+<option correct>value.task.tags[1]</option>
+<option>value.task.tags[0]</option>
+<option>task.tags</option>
+<option>value</option>
+<explain><p><code>findDifference</code> names the path of the first difference, so you see exactly where it broke: the second tag (index 1) of the task.</p></explain>
+</question>
+
+<question id="response-body-mismatch" type="output">
+<q>What does this print?</q>
+<code file="response-body.js" browser="no">
+import { assertResponseBody, createHTTPResponse } from "@zudojs/testing";
+
+const response = createHTTPResponse(201, { id: 1, title: "Buy milk", done: false });
+try {
+  assertResponseBody(response, { id: 1, title: "Buy milk", done: true });
+  console.log("matched");
+} catch (error) {
+  console.log(error.message);
+}
+</code>
+<option correct>Response body mismatch at body.done: expected true, received false.</option>
+<option>matched</option>
+<option>Response body mismatch: expected true, received false.</option>
+<option>Expected status 200, got 201.</option>
+<explain><p>An assertion throws when a value is wrong, and names the path of the difference: <code>body.done</code>. The id and title matched; only <code>done</code> did not.</p></explain>
+</question>
+
+<question id="assert-rejects-returns" type="output">
+<q>What does this print?</q>
+<code file="assert-rejects.js" browser="no">
+import { ConflictError } from "@zudojs/errors";
+import { assertErrorCode, assertRejects } from "@zudojs/testing";
+
+const error = await assertRejects(async () => {
+  throw new ConflictError("You already have 3 open tasks.");
+}, "open tasks");
+assertErrorCode(error, "ERR_CONFLICT");
+console.log("rejected with", error.name);
+</code>
+<option correct>rejected with ConflictError</option>
+<option>rejected with Error</option>
+<option>Expected error code "ERR_CONFLICT", got "ERR_CONFLICT".</option>
+<option>rejected with AssertionError</option>
+<explain><p><code>assertRejects(fn, text)</code> checks that the async function fails with a message containing <code>text</code>, and returns the error so you can check more, such as its code.</p></explain>
+</question>
+
+<question id="assert-rejects-no-reject" type="output">
+<q>The function does not fail. What does this print?</q>
+<code file="no-reject.js" browser="no">
+import { assertRejects } from "@zudojs/testing";
+
+try {
+  await assertRejects(async () => "created", "open tasks");
+  console.log("passed");
+} catch (error) {
+  console.log(error.message);
+}
+</code>
+<option correct>Expected function to reject, but it did not.</option>
+<option>passed</option>
+<option>Expected error message to contain "open tasks", got "created".</option>
+<explain><p>A test that expects a failure must fail itself when no error comes. Otherwise a bug that removes the limit would still pass the test.</p></explain>
+</question>
+
+<question id="assert-throws-sync" type="choice">
+<q>Which assertion checks that a <strong>synchronous</strong> function throws?</q>
+<option><code>assertRejects</code></option>
+<option correct><code>assertThrows</code></option>
+<option><code>assertErrorCode</code></option>
+<option><code>deepEqual</code></option>
+<explain><p><code>assertRejects</code> is for async functions (a rejected promise). For code that throws right away, use <code>assertThrows</code>.</p></explain>
+</question>
+
+<question id="unit-vs-integration" type="choice">
+<q>What does an integration test check that a unit test with fakes does not?</q>
+<option>That one function returns the right value</option>
+<option correct>That the real pieces work together: router, JSON parsing, error mapping and service</option>
+<option>That the code is formatted</option>
+<option>That the mock was called</option>
+<explain><p>The 409 in the lesson comes from a <code>ConflictError</code> thrown deep in the service and mapped to a status by the route. Only a test that runs the whole chain checks that mapping.</p></explain>
+</question>
+
+<question id="port-zero" type="choice">
+<q>Why does the integration test start the server on port 0?</q>
+<option>Port 0 is faster</option>
+<option correct>The operating system picks any free port, so tests never clash with another server</option>
+<option>Port 0 disables the network</option>
+<option>It is the only port Vitest allows</option>
+<explain><p>A fixed port like 3000 may already be used by your dev server or another test. Port 0 always works; the test reads the real port from <code>server.address</code>.</p></explain>
+</question>
+
+<question id="http-status-assert" type="output">
+<q>What does this print?</q>
+<code file="status.js" browser="no">
+import { assertCreated, assertResponseBodyContains, assertResponseStatus, createHTTPResponse } from "@zudojs/testing";
+
+const created = createHTTPResponse(201, { id: 1, title: "Buy milk", done: false });
+assertCreated(created);
+assertResponseBodyContains(created, { id: 1, title: "Buy milk" });
+try {
+  assertResponseStatus(created, 200);
+} catch (error) {
+  console.log(error.message);
+}
+</code>
+<option correct>Expected status 200, got 201.</option>
+<option>Expected status 201, got 200.</option>
+<option>Response body mismatch at body.done: expected undefined, received false.</option>
+<option>nothing is printed</option>
+<explain><p><code>assertCreated</code> checks for 201, and <code>assertResponseBodyContains</code> only checks the fields you list, so both pass. <code>assertResponseStatus(created, 200)</code> fails, because a create answers 201.</p></explain>
+</question>
+
+<question id="fresh-before-each" type="choice">
+<q>Why does the Vitest suite create fresh doubles in <code>beforeEach</code>?</q>
+<option>Vitest requires it</option>
+<option correct>So no test can see another test's tasks or clock; each test starts from the same clean state</option>
+<option>To make the suite run in parallel</option>
+<option>To save memory</option>
+<explain><p>Shared state between tests makes the result depend on the order they run in. New doubles for every test keep them independent.</p></explain>
+</question>
+
+<question id="after-each-dispose" type="choice">
+<q>Why is <code>cleanup.dispose()</code> in <code>afterEach</code>, not at the end of each test?</q>
+<option>It is shorter to write</option>
+<option correct><code>afterEach</code> runs even when a test fails in the middle, so every server and bus is still closed</option>
+<option>Tests cannot call <code>dispose()</code></option>
+<option>It runs the cleanups twice</option>
+<explain><p>A failing assertion throws and skips the rest of the test. Cleanup at the end of the test body would never run, and the open server would break the next test.</p></explain>
+</question>
+
+<question id="test-can-fail" type="choice">
+<q>After the suite passes, the lesson changes <code>clock.add({ days: 2 })</code> to <code>clock.add({ hours: 12 })</code>. Why?</q>
+<option>To make the test faster</option>
+<option correct>To check that the test can fail: if it still passed, it would not be testing the time at all</option>
+<option>Because 2 days is too long for a test</option>
+<option>To fix a bug in the service</option>
+<explain><p>A test that can never fail proves nothing. After 12 hours nothing is overdue, the reminder count is 0, and the test fails. The clock really drives the result.</p></explain>
+</question>
+
+<question id="not-sent-check" type="choice">
+<q>Why does the lesson also check that <strong>no</strong> <code>sms.send</code> message was dispatched?</q>
+<option>To make the test longer</option>
+<option correct>A bug that sends an SMS to every user is worse than one that sends nothing, so "not sent" checks matter too</option>
+<option>SMS messages cannot be tested</option>
+<option>It is required by the message bus</option>
+<explain><p>Tests usually check that something happened. Checking that something harmful did <em>not</em> happen catches a different, often more dangerous, class of bugs.</p></explain>
+</question>
+
+<question id="code-test-clock" type="code" file="test-clock.js">
+<q><p>Write a tiny test clock. Finish <code>createClock(start)</code>: return an object with <code>now()</code> (a new <code>Date</code> of the current time) and <code>add({ days = 0, hours = 0 })</code> that moves the time forward. The program should print the two lines in the comments.</p></q>
+<starter>
+function createClock(start) {
+  // your code here
+}
+
+const clock = createClock("2026-10-01T09:00:00Z");
+console.log(clock.now().toISOString()); // 2026-10-01T09:00:00.000Z
+clock.add({ days: 2, hours: 3 });
+console.log(clock.now().toISOString()); // 2026-10-03T12:00:00.000Z
+</starter>
+<solution>
+function createClock(start) {
+  let ms = new Date(start).getTime();
+  return {
+    now: () => new Date(ms),
+    add({ days = 0, hours = 0 }) {
+      ms += days * 86_400_000 + hours * 3_600_000;
+    },
+  };
+}
+
+const clock = createClock("2026-10-01T09:00:00Z");
+console.log(clock.now().toISOString()); // 2026-10-01T09:00:00.000Z
+clock.add({ days: 2, hours: 3 });
+console.log(clock.now().toISOString()); // 2026-10-03T12:00:00.000Z
+</solution>
+<expected>
+2026-10-01T09:00:00.000Z
+2026-10-03T12:00:00.000Z
+</expected>
+<explain><p>Keep the time as milliseconds in a closure, and only change it in <code>add</code>. Returning a <em>new</em> <code>Date</code> from <code>now()</code> stops callers from changing the clock by accident.</p></explain>
+</question>
+
+<question id="code-mock-fn" type="code" file="mock-fn.js">
+<q><p>Write a recording mock. Finish <code>createMock(returnValue)</code>: return a function that records its arguments in <code>fn.calls</code> (an array of argument arrays) and returns <code>returnValue</code>. The program should print the two lines in the comments.</p></q>
+<starter>
+function createMock(returnValue) {
+  // your code here
+}
+
+const send = createMock("queued");
+console.log(send("ada@example.com", "Overdue: Buy milk")); // queued
+console.log(send.calls); // [ [ 'ada@example.com', 'Overdue: Buy milk' ] ]
+</starter>
+<solution>
+function createMock(returnValue) {
+  const fn = (...args) => {
+    fn.calls.push(args);
+    return returnValue;
+  };
+  fn.calls = [];
+  return fn;
+}
+
+const send = createMock("queued");
+console.log(send("ada@example.com", "Overdue: Buy milk")); // queued
+console.log(send.calls); // [ [ 'ada@example.com', 'Overdue: Buy milk' ] ]
+</solution>
+<expected>
+queued
+[ [ 'ada@example.com', 'Overdue: Buy milk' ] ]
+</expected>
+<explain><p>Rest parameters (<code>...args</code>) collect all arguments into an array, which the mock stores. Functions are objects, so a <code>calls</code> property can live on the function itself.</p></explain>
+</question>
+
+<question id="code-overdue" type="code" file="overdue.js">
+<q><p>Make this service testable. Finish <code>createTasks(now)</code>: <code>add(title, dueInDays)</code> stores a task due <code>dueInDays</code> after <code>now()</code>, and <code>overdue()</code> returns the titles of tasks whose due date is before <code>now()</code>. Never call <code>new Date()</code> without an argument. The program should print <code>[ 'Buy milk' ]</code>.</p></q>
+<starter>
+function createTasks(now) {
+  // your code here
+}
+
+let current = new Date("2026-10-01T09:00:00Z");
+const tasks = createTasks(() => current);
+tasks.add("Buy milk", 1);
+tasks.add("File taxes", 7);
+current = new Date("2026-10-03T09:00:00Z");
+console.log(tasks.overdue());
+</starter>
+<solution>
+function createTasks(now) {
+  const list = [];
+  return {
+    add(title, dueInDays) {
+      list.push({ title, dueAt: new Date(now().getTime() + dueInDays * 86_400_000) });
+    },
+    overdue() {
+      return list.filter((task) => task.dueAt < now()).map((task) => task.title);
+    },
+  };
+}
+
+let current = new Date("2026-10-01T09:00:00Z");
+const tasks = createTasks(() => current);
+tasks.add("Buy milk", 1);
+tasks.add("File taxes", 7);
+current = new Date("2026-10-03T09:00:00Z");
+console.log(tasks.overdue());
+</solution>
+<expected>[ 'Buy milk' ]</expected>
+<explain><p>The service asks <code>now()</code> each time, so the test controls time by changing <code>current</code>. Two days later only the task due after one day is overdue.</p></explain>
+</question>
+
+<question id="code-cleanup" type="code" file="cleanup.js">
+<q><p>Write a small cleanup manager. <code>register(fn)</code> stores a cleanup; <code>dispose()</code> runs them all in reverse order, keeps going when one throws, and returns the number that failed. The program should print <code>[ 'server', 'database' ]</code> and then <code>1</code>.</p></q>
+<starter>
+function createCleanup() {
+  // your code here
+}
+
+const stopped = [];
+const cleanup = createCleanup();
+cleanup.register(() => stopped.push("database"));
+cleanup.register(() => { throw new Error("queue stuck"); });
+cleanup.register(() => stopped.push("server"));
+const failed = await cleanup.dispose();
+console.log(stopped);
+console.log(failed);
+</starter>
+<solution>
+function createCleanup() {
+  const fns = [];
+  return {
+    register(fn) {
+      fns.push(fn);
+    },
+    async dispose() {
+      let failed = 0;
+      for (const fn of [...fns].reverse()) {
+        try {
+          await fn();
+        } catch {
+          failed += 1;
+        }
+      }
+      return failed;
+    },
+  };
+}
+
+const stopped = [];
+const cleanup = createCleanup();
+cleanup.register(() => stopped.push("database"));
+cleanup.register(() => { throw new Error("queue stuck"); });
+cleanup.register(() => stopped.push("server"));
+const failed = await cleanup.dispose();
+console.log(stopped);
+console.log(failed);
+</solution>
+<expected>
+[ 'server', 'database' ]
+1
+</expected>
+<explain><p>Last started, first stopped: loop over a reversed copy. A <code>try/catch</code> around each cleanup means one failure does not leave the rest running.</p></explain>
+</question>
+
+<question id="code-set-equal" type="code" file="set-equal.js">
+<q><p><code>JSON.stringify</code> says two different sets are equal. Finish <code>sameSet(a, b)</code> so it compares the members: same size, and every member of <code>a</code> is in <code>b</code>. The program should print <code>true false false</code>.</p></q>
+<starter>
+function sameSet(a, b) {
+  // your code here
+}
+
+console.log(
+  sameSet(new Set(["home", "work"]), new Set(["work", "home"])),
+  sameSet(new Set(["home"]), new Set(["work"])),
+  sameSet(new Set(["home"]), new Set(["home", "work"])),
+);
+</starter>
+<solution>
+function sameSet(a, b) {
+  if (a.size !== b.size) return false;
+  for (const item of a) {
+    if (!b.has(item)) return false;
+  }
+  return true;
+}
+
+console.log(
+  sameSet(new Set(["home", "work"]), new Set(["work", "home"])),
+  sameSet(new Set(["home"]), new Set(["work"])),
+  sameSet(new Set(["home"]), new Set(["home", "work"])),
+);
+</solution>
+<expected>true false false</expected>
+<explain><p>Sets have no order, so compare membership, not position. Checking the size first catches the case where <code>b</code> has extra members.</p></explain>
+</question>
+
+<question id="code-first-difference" type="code" file="first-difference.js">
+<q><p>Finish <code>firstDifference(a, b)</code> for two arrays of strings: return a text like <code>[1]: expected "later", received "urgent"</code> for the first index where they differ (<code>a</code> is received, <code>b</code> is expected), or <code>null</code> if they are equal. The program should print the two lines in the comments.</p></q>
+<starter>
+function firstDifference(a, b) {
+  // your code here
+}
+
+console.log(firstDifference(["home", "urgent"], ["home", "later"])); // [1]: expected "later", received "urgent"
+console.log(firstDifference(["home"], ["home"])); // null
+</starter>
+<solution>
+function firstDifference(a, b) {
+  const length = Math.max(a.length, b.length);
+  for (let i = 0; i < length; i++) {
+    if (a[i] !== b[i]) return `[${i}]: expected "${b[i]}", received "${a[i]}"`;
+  }
+  return null;
+}
+
+console.log(firstDifference(["home", "urgent"], ["home", "later"])); // [1]: expected "later", received "urgent"
+console.log(firstDifference(["home"], ["home"])); // null
+</solution>
+<expected>
+[1]: expected "later", received "urgent"
+null
+</expected>
+<explain><p>Loop to the longer length so a missing item also counts as a difference. Naming the index is what makes a failing test quick to fix, like <code>findDifference</code> does.</p></explain>
+</question>
+
+<question id="code-assert-rejects" type="code" file="assert-rejects.js">
+<q><p>Write your own <code>assertRejects(fn, text)</code>: await <code>fn()</code>. If it does not throw, throw an <code>Error</code> with the message <code>did not reject</code>. If it throws but the message does not contain <code>text</code>, throw <code>wrong error</code>. Otherwise return the error. The program should print the three lines in the comments.</p></q>
+<starter>
+async function assertRejects(fn, text) {
+  // your code here
+}
+
+const error = await assertRejects(async () => { throw new Error("You already have 3 open tasks."); }, "open tasks");
+console.log(error.message); // You already have 3 open tasks.
+for (const fn of [async () => "created", async () => { throw new Error("disk full"); }]) {
+  try {
+    await assertRejects(fn, "open tasks");
+  } catch (failure) {
+    console.log(failure.message); // did not reject, then: wrong error
+  }
+}
+</starter>
+<solution>
+async function assertRejects(fn, text) {
+  let caught;
+  try {
+    await fn();
+  } catch (error) {
+    caught = error;
+  }
+  if (caught === undefined) throw new Error("did not reject");
+  if (!String(caught.message).includes(text)) throw new Error("wrong error");
+  return caught;
+}
+
+const error = await assertRejects(async () => { throw new Error("You already have 3 open tasks."); }, "open tasks");
+console.log(error.message); // You already have 3 open tasks.
+for (const fn of [async () => "created", async () => { throw new Error("disk full"); }]) {
+  try {
+    await assertRejects(fn, "open tasks");
+  } catch (failure) {
+    console.log(failure.message); // did not reject, then: wrong error
+  }
+}
+</solution>
+<expected>
+You already have 3 open tasks.
+did not reject
+wrong error
+</expected>
+<explain><p>Catch the error first, then decide <em>outside</em> the <code>try</code>. If you threw "did not reject" inside the <code>try</code>, your own <code>catch</code> would swallow it and the check would silently pass.</p></explain>
+</question>

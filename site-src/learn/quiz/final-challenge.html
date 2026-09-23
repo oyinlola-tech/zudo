@@ -1,0 +1,738 @@
+<question id="demo-vs-production" type="choice">
+<q>The gift-card feature worked in the demo. Why was that not enough?</q>
+<option>Demos always run on slower computers</option>
+<option correct>The demo only tried the happy path; the internet will send wrong, hostile and parallel requests, so you must attack your own endpoints the same way</option>
+<option>Demos do not use a database</option>
+<option>Because the code had no comments</option>
+<explain><p>Ada redeeming her own card worked. Five things any curious user could try all caused real incidents: injection, acting as someone else, creating money, losing money and reading other people's balances.</p></explain>
+</question>
+
+<question id="injection-cause" type="choice">
+<q>What made the SQL injection in <code>GET /giftcards?code=…</code> possible?</q>
+<option>The database had no password</option>
+<option correct>The code was glued into the SQL text with a template string, so a quote in the input could end the string and add <code>OR '1'='1'</code></option>
+<option>The route used GET instead of POST</option>
+<option>The gift card table had no primary key</option>
+<explain><p>When input becomes part of the SQL text, the input can change the query. With a <code>$1</code> placeholder the value travels separately and is only ever compared as data.</p></explain>
+</question>
+
+<question id="injection-output" type="output">
+<q>This is how the broken server built its query. What does it print?</q>
+<code file="injection.js">
+const code = "x' OR '1'='1";
+const sql = `SELECT * FROM gift_cards WHERE code = '${code}'`;
+console.log(sql);
+</code>
+<option correct>SELECT * FROM gift_cards WHERE code = 'x' OR '1'='1'</option>
+<option>SELECT * FROM gift_cards WHERE code = 'x\' OR \'1\'=\'1'</option>
+<option>SELECT * FROM gift_cards WHERE code = '${code}'</option>
+<option>SELECT * FROM gift_cards WHERE code = "x' OR '1'='1"</option>
+<explain><p>The quote in the input closes the SQL string, and <code>OR '1'='1'</code> is true for every row. The lookup for one card became "every card", and Ada learned Linus's unused code.</p></explain>
+</question>
+
+<question id="params-output" type="output">
+<q>The fixed code keeps the SQL text and the values apart. What does this print?</q>
+<code file="params.js">
+function findCard(code) {
+  return { text: "SELECT amount_cents FROM gift_cards WHERE code = $1", values: [code] };
+}
+
+const query = findCard("x' OR '1'='1");
+console.log(query.text);
+console.log(query.values);
+</code>
+<option correct>SELECT amount_cents FROM gift_cards WHERE code = $1
+[ "x' OR '1'='1" ]</option>
+<option>SELECT amount_cents FROM gift_cards WHERE code = 'x' OR '1'='1'
+[]</option>
+<option>SELECT amount_cents FROM gift_cards WHERE code = $1
+[ 'x' OR '1'='1' ]</option>
+<option>SELECT amount_cents FROM gift_cards WHERE code = x' OR '1'='1
+[ "x' OR '1'='1" ]</option>
+<explain><p>The SQL text never changes, whatever the input is. The database looks for a card literally named <code>x' OR '1'='1</code> and finds none. Node prints a string with single quotes inside using double quotes.</p></explain>
+</question>
+
+<question id="two-walls" type="choice">
+<q>The fixed code checks every gift code against a regular expression. Does it still need the <code>$1</code> placeholder?</q>
+<option>No, validation alone makes SQL safe</option>
+<option correct>Yes: validation is one wall and parameters are the second; if a future change loosens the schema, the query is still safe</option>
+<option>No, placeholders are only needed for numbers</option>
+<option>Only when the database is PostgreSQL</option>
+<explain><p>Defence in depth. Even without the schema, the parameterized query would have answered 404 for the injection string instead of listing every card.</p></explain>
+</question>
+
+<question id="code-regex-output" type="output">
+<q>The fixed module accepts a gift code only if it matches this pattern. What does this print?</q>
+<code file="code-regex.js">
+const CODE = /^GIFT-[A-Z0-9-]{4,40}$/;
+const inputs = ["GIFT-ADA-5000", "x' OR '1'='1", "gift-ada-5000", "GIFT-AB"];
+console.log(inputs.map((code) => CODE.test(code)));
+</code>
+<option correct>[ true, false, false, false ]</option>
+<option>[ true, false, true, false ]</option>
+<option>[ true, false, true, true ]</option>
+<option>[ true, true, false, false ]</option>
+<explain><p>Codes are upper case, start with <code>GIFT-</code>, and have 4 to 40 more characters. <code>GIFT-AB</code> has only 2. The injection string contains quotes and spaces, so it never reaches SQL.</p></explain>
+</question>
+
+<question id="identity-from-body" type="choice">
+<q>The broken <code>/giftcards/redeem</code> read <code>userId</code> from the request body. What is the fix?</q>
+<option>Check that <code>userId</code> is a positive number</option>
+<option>Hide the field in the browser's form</option>
+<option correct>Take the user only from the session token: hash the bearer token and look up the hash; ignore any user id in the body</option>
+<option>Encrypt the <code>userId</code> before sending it</option>
+<explain><p>Anything in the request can be chosen by the caller. With identity from the body, anyone could act as anyone, with no login at all. The fixed server has no route that accepts a user id for "who am I".</p></explain>
+</question>
+
+<question id="idor-meaning" type="choice">
+<q><code>GET /wallets/:userId</code> let anyone read anyone's balance. What is this kind of bug called?</q>
+<option>Cross-site scripting (XSS)</option>
+<option correct>An IDOR, an insecure direct object reference: nothing checks that the object belongs to the caller</option>
+<option>A race condition</option>
+<option>A denial of service</option>
+<explain><p>Changing a number in the URL was enough to see another user's data. The fix is <code>/wallets/me</code>: the wallet is found from the caller's session, never from the URL.</p></explain>
+</question>
+
+<question id="negative-amount" type="choice">
+<q>Ada "sent" Linus <code>-3000</code> cents. The first UPDATE added 30.00 to Ada, the second failed on the CHECK and answered 500. Which two missing things caused the damage?</q>
+<option>A rate limit and a cache</option>
+<option correct>Input validation (amounts must be 1 to 100000 cents) and a transaction around the two writes</option>
+<option>HTTPS and a stronger password</option>
+<option>A bigger connection pool and a timeout</option>
+<explain><p>Validation would have refused the negative amount with 400. A transaction would have rolled back the first write when the second failed. With neither, money was created.</p></explain>
+</question>
+
+<question id="negative-output" type="output">
+<q>This copies the broken transfer: two separate writes, no validation, no transaction. What does it print?</q>
+<code file="negative.js">
+const wallets = { 1: 1000, 2: 1000 };
+
+function write(userId, delta) {
+  if (wallets[userId] + delta < 0) throw new Error("violates check constraint");
+  wallets[userId] += delta;
+}
+
+function brokenTransfer(from, to, amount) {
+  try {
+    write(from, -amount);
+    write(to, amount);
+    return 200;
+  } catch {
+    return 500;
+  }
+}
+
+console.log(brokenTransfer(1, 2, -3000), wallets);
+</code>
+<option correct>500 { '1': 4000, '2': 1000 }</option>
+<option>500 { '1': 1000, '2': 1000 }</option>
+<option>200 { '1': 4000, '2': -2000 }</option>
+<option>400 { '1': 1000, '2': 1000 }</option>
+<explain><p>Taking <code>-3000</code> from Ada adds 3000. The second write would make Linus negative, so the CHECK fails and the answer is 500, but the first write already happened. Ada gained 30.00 out of nothing.</p></explain>
+</question>
+
+<question id="missing-receiver" type="choice">
+<q>Linus sent 1000 cents to user 99, who does not exist, and got 200. What check was missing?</q>
+<option>A check of Linus's password</option>
+<option correct>A check of the write's result: the credit UPDATE matched 0 rows, and nobody looked at <code>affectedRows</code></option>
+<option>A check that 1000 is an even number</option>
+<option>A check of the <code>Content-Type</code> header</option>
+<explain><p>An UPDATE that matches no row is not an error for the database. The fix checks <code>affectedRows</code> after each UPDATE and throws when it is 0, which rolls back the whole transaction.</p></explain>
+</question>
+
+<question id="transfer-rollback-output" type="output">
+<q>This transfer runs inside a fake transaction that throws away the changes on error. What does it print?</q>
+<code file="transfer-tx.js">
+const wallets = { 1: 1000, 2: 1000 };
+
+function transaction(work) {
+  const draft = { ...wallets };
+  work(draft);
+  Object.assign(wallets, draft);
+}
+
+function transfer(from, to, amount) {
+  try {
+    transaction((tx) => {
+      if (!(from in tx) || tx[from] < amount) throw new Error("409");
+      tx[from] -= amount;
+      if (!(to in tx)) throw new Error("404");
+      tx[to] += amount;
+    });
+    return 200;
+  } catch (error) {
+    return Number(error.message);
+  }
+}
+
+console.log(transfer(2, 99, 1000), wallets);
+</code>
+<option correct>404 { '1': 1000, '2': 1000 }</option>
+<option>404 { '1': 1000, '2': 0 }</option>
+<option>200 { '1': 1000, '2': 0 }</option>
+<option>409 { '1': 1000, '2': 1000 }</option>
+<explain><p>The debit happened only on the draft. The missing receiver threw, the draft was thrown away, and Linus still has 10.00. That is what <code>db.transaction</code> does with <code>ROLLBACK</code>.</p></explain>
+</question>
+
+<question id="check-then-act" type="choice">
+<q>Two redemptions of the same card arrive at the same moment. Why did the broken code pay twice?</q>
+<option>Because the card code was too short</option>
+<option correct>Both requests ran the SELECT, both saw "not redeemed", and both credited the wallet before either marked the card: a check-then-act race</option>
+<option>Because PostgreSQL runs every query twice</option>
+<option>Because the HTTP server retried the request</option>
+<explain><p>Between reading and writing there is a gap, and another request can run in it. The fix removes the gap.</p></explain>
+</question>
+
+<question id="claim-in-one-step" type="choice">
+<q>Which statement claims a gift card safely, even under parallel requests?</q>
+<option><code>SELECT * FROM gift_cards WHERE code = $1</code>, then <code>UPDATE gift_cards SET redeemed_by = $2 WHERE code = $1</code></option>
+<option correct><code>UPDATE gift_cards SET redeemed_by = $1 WHERE code = $2 AND redeemed_by IS NULL RETURNING amount_cents</code></option>
+<option><code>UPDATE gift_cards SET redeemed_by = $1 WHERE code = $2</code></option>
+<option><code>DELETE FROM gift_cards WHERE code = $1</code> after crediting the wallet</option>
+<explain><p>One statement checks and claims the card. The second request finds <code>redeemed_by</code> already set, matches no row and gets 404. It is the same idea as ShopFlow's conditional stock UPDATE.</p></explain>
+</question>
+
+<question id="race-output" type="output">
+<q>This copies the broken "SELECT, then UPDATE" redemption. Two requests run at the same time. What does it print?</q>
+<code file="redeem-race.js">
+const card = { amount: 5000, redeemedBy: null };
+let balance = 1000;
+const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+async function brokenRedeem(userId) {
+  const unused = card.redeemedBy === null;
+  await pause();
+  if (!unused) return 404;
+  balance += card.amount;
+  card.redeemedBy = userId;
+  return 200;
+}
+
+console.log(await Promise.all([brokenRedeem(1), brokenRedeem(1)]), balance);
+</code>
+<option correct>[ 200, 200 ] 11000</option>
+<option>[ 200, 404 ] 6000</option>
+<option>[ 404, 404 ] 1000</option>
+<option>[ 200, 200 ] 6000</option>
+<explain><p>Both requests read "unused" before either wrote. Both credited 50.00, so a 50.00 card paid 100.00. Awaiting anything between the check and the write opens this gap.</p></explain>
+</question>
+
+<question id="claim-output" type="output">
+<q>Now the check and the claim happen in one step, like <code>UPDATE … AND redeemed_by IS NULL</code>. What does this print?</q>
+<code file="redeem-claim.js">
+const card = { amount: 5000, redeemedBy: null };
+let balance = 1000;
+const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+function claim(userId) {
+  if (card.redeemedBy !== null) return null;
+  card.redeemedBy = userId;
+  return card.amount;
+}
+
+async function redeem(userId) {
+  await pause();
+  const amount = claim(userId);
+  if (amount === null) return 404;
+  balance += amount;
+  return 200;
+}
+
+console.log(await Promise.all([redeem(1), redeem(1)]), balance);
+</code>
+<option correct>[ 200, 404 ] 6000</option>
+<option>[ 200, 200 ] 11000</option>
+<option>[ 404, 200 ] 11000</option>
+<option>[ 200, 200 ] 6000</option>
+<explain><p>The first request claims the card. The second finds it already claimed and gets 404. The card pays once: 10.00 + 50.00 = 60.00, like the lesson's test with <code>Promise.allSettled</code>.</p></explain>
+</question>
+
+<question id="transfer-schema-output" type="output">
+<q>The fixed module parses transfers with this schema. What does it print?</q>
+<code file="transfer-schema.js">
+import { schema } from "@zudojs/schema";
+
+const Transfer = schema.object({
+  to: schema.number().int().positive(),
+  amountCents: schema.number().int().min(1).max(100_000),
+});
+
+const amounts = [-3000, 0, 12.5, 500, 100_001];
+console.log(amounts.map((amountCents) => Transfer.safeParse({ to: 2, amountCents }).success));
+</code>
+<option correct>[ false, false, false, true, false ]</option>
+<option>[ false, true, true, true, false ]</option>
+<option>[ false, false, true, true, true ]</option>
+<option>[ true, false, false, true, false ]</option>
+<explain><p>Amounts are whole cents from 1 to 100000. Negative, zero, fractional and huge amounts are refused with 400 before any SQL runs.</p></explain>
+</question>
+
+<question id="self-transfer" type="choice">
+<q>Why does the fixed <code>transfer</code> throw a <code>ValidationError</code> when <code>to</code> equals the caller's own id?</q>
+<option>Because the database cannot update the same row twice</option>
+<option correct>Sending money to yourself has no business meaning, so the rule refuses it instead of producing confusing ledger entries</option>
+<option>Because it would always create money</option>
+<option>Because the schema cannot compare two fields</option>
+<explain><p>Business rules live in the module, next to the schema. A clear 400 is better than an operation that does nothing useful and still shows up in the audit trail.</p></explain>
+</question>
+
+<question id="select-star" type="choice">
+<q>What is wrong with returning <code>SELECT *</code> results to the client?</q>
+<option>It is slower than naming columns</option>
+<option correct>It sends internal columns, such as <code>redeemed_by</code> user ids, to anyone who asks, and any new column leaks automatically</option>
+<option>It returns the rows in random order</option>
+<option>PostgreSQL does not allow it</option>
+<explain><p>Name the columns you want to show. The fixed <code>card</code> returns only <code>amountCents</code> and a <code>redeemed</code> flag.</p></explain>
+</question>
+
+<question id="safe-card-output" type="output">
+<q>The fixed lookup shows a card without internal columns. What does this print?</q>
+<code file="safe-card.js">
+const row = { code: "GIFT-LINUS-2000", amount_cents: 2000, redeemed_by: 2 };
+
+function publicCard(row) {
+  return { amountCents: row.amount_cents, redeemed: row.redeemed_by !== null };
+}
+
+console.log(publicCard(row));
+</code>
+<option correct>{ amountCents: 2000, redeemed: true }</option>
+<option>{ code: 'GIFT-LINUS-2000', amount_cents: 2000, redeemed_by: 2 }</option>
+<option>{ amountCents: 2000, redeemed: 2 }</option>
+<option>{ amountCents: 2000, redeemed: false }</option>
+<explain><p>The client learns what it needs, the amount and whether the card is used, but not who used it. That is the SQL version <code>redeemed_by IS NOT NULL AS redeemed</code> in JavaScript.</p></explain>
+</question>
+
+<question id="rules-in-module" type="choice">
+<q>Why does the fix move the rules into a <code>wallets.ts</code> module with no HTTP in it?</q>
+<option>Because HTTP handlers cannot use SQL</option>
+<option correct>Rules mixed into route handlers cannot be tested or reused without HTTP; a module can be tested directly and the HTTP layer stays thin</option>
+<option>Because modules run faster than route handlers</option>
+<option>So the module can read the user id from the body</option>
+<explain><p>The HTTP layer only reads, authenticates and delegates. The tests call <code>wallets.redeem</code> and <code>wallets.transfer</code> directly, with a fresh database each time.</p></explain>
+</question>
+
+<question id="auth-output" type="output">
+<q>The fixed server finds the user from the bearer token only. What does this print?</q>
+<code file="authenticate.js">
+const sessions = new Map([["hash:tok-ada", 1], ["hash:tok-linus", 2]]);
+const hashToken = (token) => `hash:${token}`;
+
+function authenticate(authorization) {
+  const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : undefined;
+  const userId = token ? sessions.get(hashToken(token)) : undefined;
+  if (!userId) return "401 Log in first";
+  return `user ${userId}`;
+}
+
+const request = { headers: { authorization: "Bearer tok-linus" }, body: { userId: 1 } };
+console.log(authenticate(request.headers.authorization));
+console.log(authenticate(undefined));
+</code>
+<option correct>user 2
+401 Log in first</option>
+<option>user 1
+401 Log in first</option>
+<option>user 2
+user 1</option>
+<option>401 Log in first
+401 Log in first</option>
+<explain><p>The body says <code>userId: 1</code>, but the token belongs to Linus, so the caller is user 2. The body's user id is simply ignored. No token means 401.</p></explain>
+</question>
+
+<question id="error-map-output" type="output">
+<q>The fixed module throws errors from <code>@zudojs/errors</code>. What status does each one become?</q>
+<code file="error-map.js">
+import { AuthenticationError, ConflictError, NotFoundError, ValidationError } from "@zudojs/errors";
+
+const errors = [
+  new ValidationError("You cannot send money to yourself"),
+  new AuthenticationError("Log in first"),
+  new NotFoundError("No unused gift card with that code"),
+  new ConflictError("Not enough money in your wallet"),
+];
+console.log(errors.map((error) => error.statusCode).join(" "));
+</code>
+<option correct>400 401 404 409</option>
+<option>400 403 404 409</option>
+<option>422 401 404 400</option>
+<option>500 500 500 500</option>
+<explain><p>Each error carries its own status, and <code>@zudojs/http</code> turns it into a JSON answer. A bad request gets 400, never 500.</p></explain>
+</question>
+
+<question id="money-adds-up-output" type="output">
+<q>After the fixed server survived the attacks, the lesson checks that "the money adds up". What does this print?</q>
+<code file="adds-up.js">
+const walletsStart = [1000, 1000];
+const cardsTotal = 5000 + 2000;
+const walletsEnd = [6000, 1000];
+const unusedCards = [2000];
+
+const before = walletsStart.reduce((a, b) => a + b, 0) + cardsTotal;
+const after = walletsEnd.reduce((a, b) => a + b, 0) + unusedCards.reduce((a, b) => a + b, 0);
+console.log(before, after, before === after ? "adds up" : "money created or lost");
+</code>
+<option correct>9000 9000 adds up</option>
+<option>9000 7000 money created or lost</option>
+<option>2000 7000 money created or lost</option>
+<option>9000 11000 money created or lost</option>
+<explain><p>Wallets plus unused cards must stay the same: Ada's card moved 50.00 into her wallet, and Linus's card is still unused. With the broken code the same check would show money created.</p></explain>
+</question>
+
+<question id="brute-force" type="choice">
+<q>Why must gift-code lookups and redemptions be rate-limited?</q>
+<option>To save database space</option>
+<option correct>Without a limit, an attacker can guess codes by brute force; ten wrong codes in a row should lock redemption for 15 minutes</option>
+<option>Because gift codes expire after 15 minutes</option>
+<option>So that the cache has time to fill</option>
+<explain><p>Codes are secrets that are worth money. Limit per user and per IP, and count failed redemptions per user.</p></explain>
+</question>
+
+<question id="no-cache-balance" type="choice">
+<q>Should wallet balances be cached?</q>
+<option>Yes, for 60 seconds, to make the page faster</option>
+<option correct>No: they must always be exact, and the query is a primary-key lookup that is already fast</option>
+<option>Yes, but only for admins</option>
+<option>Yes, forever, and clear the cache on every deploy</option>
+<explain><p>A cached balance could be out of date and let someone spend money twice or see the wrong amount. Caching card lookups would mostly help attackers guessing codes.</p></explain>
+</question>
+
+<question id="no-codes-in-logs" type="choice">
+<q>What should the request logs of the wallet service contain?</q>
+<option>The full request body, so you can replay any request</option>
+<option correct>The request id, route, status, duration and user id, but never tokens or gift codes</option>
+<option>The bearer token, so you can tell users apart</option>
+<option>Nothing: money services should not log</option>
+<explain><p>A gift code in a log is money anyone with log access can spend. The logger's redaction does not know that <code>code</code> is secret here, so leave it out yourself.</p></explain>
+</question>
+
+<question id="ledger" type="choice">
+<q>Where must the ledger row for a money movement be written?</q>
+<option>In a log file after the response is sent</option>
+<option correct>Inside the same transaction as the balance change, so the ledger can never disagree with the balances</option>
+<option>In a queue job that runs later</option>
+<option>In the browser's local storage</option>
+<explain><p>A ledger that can disagree with the balances is worse than none. Same transaction means both are saved, or neither.</p></explain>
+</question>
+
+<question id="events-after-commit" type="choice">
+<q>Where does the <code>wallet.credited</code> event get published, and what does the e-mail job carry?</q>
+<option>Inside the transaction; the job carries the gift code</option>
+<option correct>After <code>db.transaction</code> returns; the job carries ids and amounts only, never the gift code</option>
+<option>Before the transaction starts; the job carries the bearer token</option>
+<option>Nowhere: e-mails are sent inside the route handler</option>
+<explain><p>Exactly like <code>order.placed</code> in the capstone. For no lost events, write an outbox row inside the transaction instead. Jobs are stored and logged, so keep secrets out of them.</p></explain>
+</question>
+
+<question id="metric-labels" type="choice">
+<q>You count failures with a <code>wallet.failed</code> metric. What should its label be?</q>
+<option>The user id, to see who fails most</option>
+<option>The gift code that was tried</option>
+<option correct>The error code, such as <code>ERR_CONFLICT</code></option>
+<option>The full error message with the request body</option>
+<explain><p>Labels should have few possible values and no personal or secret data. An error code tells you what is going wrong; user ids and codes belong nowhere near a metric.</p></explain>
+</question>
+
+<question id="tests-must-fail" type="choice">
+<q>How do you check that your new tests really protect you?</q>
+<option>Run them twice and check they pass both times</option>
+<option correct>Point them at the old logic for a moment: the race test and the transfer test must fail</option>
+<option>Delete the database and run them again</option>
+<option>Count the number of <code>expect</code> calls</option>
+<explain><p>A test that passes on broken code proves nothing. Every incident needs a test that failed on the old code and passes now.</p></explain>
+</question>
+
+<question id="real-postgres-ci" type="choice">
+<q>The race test passes with PGlite. Why should it also run against real PostgreSQL in CI?</q>
+<option>PGlite does not support <code>RETURNING</code></option>
+<option correct>PGlite runs one transaction at a time, so it is gentler than production; with several real connections, transactions really run at the same time</option>
+<option>Real PostgreSQL is needed for <code>Promise.allSettled</code></option>
+<option>Vitest cannot measure PGlite tests</option>
+<explain><p>A race needs real concurrency. The fixed code is safe either way, but only a real server proves it.</p></explain>
+</question>
+
+<question id="code-valid-code" type="code" file="valid-code.js">
+<q><p>Finish <code>isGiftCode(input)</code>. Trim the input, then return <code>true</code> only when it is a string that matches: <code>GIFT-</code> followed by 4 to 40 characters that are upper-case letters, digits or <code>-</code>. The program should print <code>[ true, true, false, false, false ]</code>.</p></q>
+<starter>
+function isGiftCode(input) {
+  // your code here
+}
+
+console.log(["GIFT-ADA-5000", "  GIFT-LINUS-2000 ", "x' OR '1'='1", "GIFT-AB", 42].map(isGiftCode));
+</starter>
+<solution>
+function isGiftCode(input) {
+  return typeof input === "string" && /^GIFT-[A-Z0-9-]{4,40}$/.test(input.trim());
+}
+
+console.log(["GIFT-ADA-5000", "  GIFT-LINUS-2000 ", "x' OR '1'='1", "GIFT-AB", 42].map(isGiftCode));
+</solution>
+<expected>[ true, true, false, false, false ]</expected>
+<explain><p>Check the type first: a number has no <code>trim</code>. The anchors <code>^</code> and <code>$</code> make the whole value match, so nothing can be appended. The query still uses <code>$1</code> as the second wall.</p></explain>
+</question>
+
+<question id="code-param-query" type="code" file="param-query.js">
+<q><p>Finish <code>walletQuery(userId)</code>. Return <code>{ text, values }</code> where <code>text</code> is exactly <code>SELECT balance_cents FROM wallets WHERE user_id = $1</code> and <code>values</code> holds the user id. Never put the id in the text. The program should print the text and then <code>[ '1; DROP TABLE wallets' ]</code>.</p></q>
+<starter>
+function walletQuery(userId) {
+  // your code here
+}
+
+const query = walletQuery("1; DROP TABLE wallets");
+console.log(query.text);
+console.log(query.values);
+</starter>
+<solution>
+function walletQuery(userId) {
+  return { text: "SELECT balance_cents FROM wallets WHERE user_id = $1", values: [userId] };
+}
+
+const query = walletQuery("1; DROP TABLE wallets");
+console.log(query.text);
+console.log(query.values);
+</solution>
+<expected>
+SELECT balance_cents FROM wallets WHERE user_id = $1
+[ '1; DROP TABLE wallets' ]
+</expected>
+<explain><p>The hostile value sits in <code>values</code>, where the database treats it as data only. The SQL text is the same for every call.</p></explain>
+</question>
+
+<question id="code-claim-card" type="code" file="claim-card.js">
+<q><p>Finish <code>redeem(cards, wallets, userId, code)</code>. Claim the card in one step: if it exists and <code>redeemedBy</code> is <code>null</code>, set <code>redeemedBy</code> to <code>userId</code>, add its <code>amount</code> to the user's wallet, and return <code>200</code>. Otherwise change nothing and return <code>404</code>. The program should print <code>200 404 404</code> and <code>{ '1': 6000, '2': 1000 }</code>.</p></q>
+<starter>
+const cards = { "GIFT-ADA-5000": { amount: 5000, redeemedBy: null } };
+const wallets = { 1: 1000, 2: 1000 };
+
+function redeem(cards, wallets, userId, code) {
+  // your code here
+}
+
+console.log(redeem(cards, wallets, 1, "GIFT-ADA-5000"), redeem(cards, wallets, 2, "GIFT-ADA-5000"), redeem(cards, wallets, 1, "GIFT-NONE-0000"));
+console.log(wallets);
+</starter>
+<solution>
+const cards = { "GIFT-ADA-5000": { amount: 5000, redeemedBy: null } };
+const wallets = { 1: 1000, 2: 1000 };
+
+function redeem(cards, wallets, userId, code) {
+  const card = cards[code];
+  if (!card || card.redeemedBy !== null) return 404;
+  card.redeemedBy = userId;
+  wallets[userId] += card.amount;
+  return 200;
+}
+
+console.log(redeem(cards, wallets, 1, "GIFT-ADA-5000"), redeem(cards, wallets, 2, "GIFT-ADA-5000"), redeem(cards, wallets, 1, "GIFT-NONE-0000"));
+console.log(wallets);
+</solution>
+<expected>
+200 404 404
+{ '1': 6000, '2': 1000 }
+</expected>
+<explain><p>A used card and a missing card both give 404, so nobody learns which codes exist. Checking and claiming together is the JavaScript version of <code>UPDATE … AND redeemed_by IS NULL RETURNING</code>.</p></explain>
+</question>
+
+<question id="code-safe-transfer" type="code" file="safe-transfer.js">
+<q><p>Finish <code>transfer(wallets, from, to, amount)</code> so it is all or nothing. Return <code>400</code> unless <code>amount</code> is a whole number from 1 to 100000 and <code>to !== from</code>; <code>409</code> if the sender has less than <code>amount</code>; <code>404</code> if the receiver has no wallet. Only when all checks pass, move the money and return <code>200</code>. The program should print <code>400 404 409 200</code> and <code>{ '1': 500, '2': 1500 }</code>.</p></q>
+<starter>
+const wallets = { 1: 1000, 2: 1000 };
+
+function transfer(wallets, from, to, amount) {
+  // your code here
+}
+
+console.log(transfer(wallets, 1, 2, -3000), transfer(wallets, 2, 99, 1000), transfer(wallets, 1, 2, 5000), transfer(wallets, 1, 2, 500));
+console.log(wallets);
+</starter>
+<solution>
+const wallets = { 1: 1000, 2: 1000 };
+
+function transfer(wallets, from, to, amount) {
+  if (!Number.isInteger(amount) || amount < 1 || amount > 100_000 || to === from) return 400;
+  if ((wallets[from] ?? 0) < amount) return 409;
+  if (!(to in wallets)) return 404;
+  wallets[from] -= amount;
+  wallets[to] += amount;
+  return 200;
+}
+
+console.log(transfer(wallets, 1, 2, -3000), transfer(wallets, 2, 99, 1000), transfer(wallets, 1, 2, 5000), transfer(wallets, 1, 2, 500));
+console.log(wallets);
+</solution>
+<expected>
+400 404 409 200
+{ '1': 500, '2': 1500 }
+</expected>
+<explain><p>Validate first, then check every condition before changing anything. In the real module a database transaction gives the same guarantee, and a conditional UPDATE does the balance check.</p></explain>
+</question>
+
+<question id="code-me-route" type="code" file="me-route.js">
+<q><p>Finish <code>getMyWallet(request)</code>. Find the user only from the <code>Bearer</code> token in <code>request.headers.authorization</code> (look it up in <code>sessions</code>), and return <code>{ status: 200, balanceCents }</code> for that user. Ignore <code>request.params.userId</code>. Without a valid token return <code>{ status: 401 }</code>. The program should print <code>200 1000</code> and <code>401 undefined</code>.</p></q>
+<starter>
+const sessions = new Map([["tok-linus", 2]]);
+const wallets = { 1: 11000, 2: 1000 };
+
+function getMyWallet(request) {
+  // your code here
+}
+
+const a = getMyWallet({ headers: { authorization: "Bearer tok-linus" }, params: { userId: "1" } });
+const b = getMyWallet({ headers: {}, params: { userId: "1" } });
+console.log(a.status, a.balanceCents);
+console.log(b.status, b.balanceCents);
+</starter>
+<solution>
+const sessions = new Map([["tok-linus", 2]]);
+const wallets = { 1: 11000, 2: 1000 };
+
+function getMyWallet(request) {
+  const header = request.headers.authorization;
+  const token = header?.startsWith("Bearer ") ? header.slice(7) : undefined;
+  const userId = token ? sessions.get(token) : undefined;
+  if (!userId) return { status: 401 };
+  return { status: 200, balanceCents: wallets[userId] };
+}
+
+const a = getMyWallet({ headers: { authorization: "Bearer tok-linus" }, params: { userId: "1" } });
+const b = getMyWallet({ headers: {}, params: { userId: "1" } });
+console.log(a.status, a.balanceCents);
+console.log(b.status, b.balanceCents);
+</solution>
+<expected>
+200 1000
+401 undefined
+</expected>
+<explain><p>Linus asked for user 1's wallet in the URL, but he only ever gets his own. This is the <code>/wallets/me</code> fix for the IDOR. (The real server looks up a <em>hash</em> of the token.)</p></explain>
+</question>
+
+<question id="code-support-role" type="code" file="support-role.js">
+<q><p>Finish <code>can(user, action, ownerId)</code>. A <code>customer</code> may <code>"read"</code> and <code>"move"</code> only their own wallet (<code>user.id === ownerId</code>). <code>support</code> may <code>"read"</code> any wallet but may never <code>"move"</code> money. Return <code>true</code> or <code>false</code>. The program should print <code>[ true, false, true, false, true ]</code>.</p></q>
+<starter>
+function can(user, action, ownerId) {
+  // your code here
+}
+
+const ada = { id: 1, role: "customer" };
+const sam = { id: 7, role: "support" };
+console.log([can(ada, "read", 1), can(ada, "read", 2), can(sam, "read", 2), can(sam, "move", 2), can(ada, "move", 1)]);
+</starter>
+<solution>
+function can(user, action, ownerId) {
+  if (user.role === "support") return action === "read";
+  if (user.role === "customer") return user.id === ownerId && (action === "read" || action === "move");
+  return false;
+}
+
+const ada = { id: 1, role: "customer" };
+const sam = { id: 7, role: "support" };
+console.log([can(ada, "read", 1), can(ada, "read", 2), can(sam, "read", 2), can(sam, "move", 2), can(ada, "move", 1)]);
+</solution>
+<expected>[ true, false, true, false, true ]</expected>
+<explain><p>Deny by default: an unknown role gets <code>false</code>. Support staff help customers by reading, but moving money stays with the owner.</p></explain>
+</question>
+
+<question id="code-lockout" type="code" file="lockout.js">
+<q><p>Finish <code>recordFailure(userId, now)</code> and <code>isLocked(userId, now)</code>. After 10 failed redemptions in a row, a user is locked for 15 minutes (<code>LOCK_MS</code>) from the 10th failure. Keep the count and the lock time per user in <code>state</code>. The program should print <code>false true true false</code>.</p></q>
+<starter>
+const LOCK_MS = 15 * 60_000;
+const state = new Map();
+
+function recordFailure(userId, now) {
+  // your code here
+}
+
+function isLocked(userId, now) {
+  // your code here
+}
+
+for (let i = 0; i < 9; i++) recordFailure(1, 1000);
+const afterNine = isLocked(1, 1000);
+recordFailure(1, 2000);
+console.log(afterNine, isLocked(1, 2000), isLocked(1, 2000 + LOCK_MS - 1), isLocked(1, 2000 + LOCK_MS));
+</starter>
+<solution>
+const LOCK_MS = 15 * 60_000;
+const state = new Map();
+
+function recordFailure(userId, now) {
+  const entry = state.get(userId) ?? { failures: 0, lockedUntil: 0 };
+  entry.failures += 1;
+  if (entry.failures >= 10) {
+    entry.lockedUntil = now + LOCK_MS;
+    entry.failures = 0;
+  }
+  state.set(userId, entry);
+}
+
+function isLocked(userId, now) {
+  const entry = state.get(userId);
+  return entry !== undefined && now < entry.lockedUntil;
+}
+
+for (let i = 0; i < 9; i++) recordFailure(1, 1000);
+const afterNine = isLocked(1, 1000);
+recordFailure(1, 2000);
+console.log(afterNine, isLocked(1, 2000), isLocked(1, 2000 + LOCK_MS - 1), isLocked(1, 2000 + LOCK_MS));
+</solution>
+<expected>false true true false</expected>
+<explain><p>The time is passed in, so the result is the same on every run. After the lock ends, the user can try again; together with a per-IP limit this makes guessing codes hopeless.</p></explain>
+</question>
+
+<question id="code-ledger" type="code" file="ledger.js">
+<q><p>Finish <code>transfer(from, to, amount)</code>. Work on a copy of <code>db</code> (both <code>wallets</code> and <code>ledger</code>): take the money from <code>from</code>, give it to <code>to</code>, and push one ledger entry <code>{ from, to, amount }</code>. Throw <code>new Error("No wallet")</code> if <code>to</code> has no wallet. Only if nothing threw, replace <code>db</code> with the copy. The program should print <code>ledger: 1 wallets: 500 1500</code>.</p></q>
+<starter>
+let db = { wallets: { 1: 1000, 2: 1000 }, ledger: [] };
+
+function transfer(from, to, amount) {
+  // your code here
+}
+
+transfer(1, 2, 500);
+try {
+  transfer(1, 99, 100);
+} catch {}
+console.log("ledger:", db.ledger.length, "wallets:", db.wallets[1], db.wallets[2]);
+</starter>
+<solution>
+let db = { wallets: { 1: 1000, 2: 1000 }, ledger: [] };
+
+function transfer(from, to, amount) {
+  const tx = { wallets: { ...db.wallets }, ledger: [...db.ledger] };
+  tx.wallets[from] -= amount;
+  if (!(to in tx.wallets)) throw new Error("No wallet");
+  tx.wallets[to] += amount;
+  tx.ledger.push({ from, to, amount });
+  db = tx;
+}
+
+transfer(1, 2, 500);
+try {
+  transfer(1, 99, 100);
+} catch {}
+console.log("ledger:", db.ledger.length, "wallets:", db.wallets[1], db.wallets[2]);
+</solution>
+<expected>ledger: 1 wallets: 500 1500</expected>
+<explain><p>The failed transfer changed only the copy, so neither the balances nor the ledger moved. Writing the ledger row in the same transaction is what keeps the two from ever disagreeing.</p></explain>
+</question>
+
+<question id="code-safe-log" type="code" file="safe-log.js">
+<q><p>Finish <code>logLine(entry)</code>. Return a JSON string with only <code>requestId</code>, <code>route</code>, <code>status</code> and <code>userId</code> from <code>entry</code>, in that order. Everything else, such as the gift code and the token, must be left out. The program should print <code>{"requestId":"req-9","route":"POST /giftcards/redeem","status":200,"userId":1}</code>.</p></q>
+<starter>
+function logLine(entry) {
+  // your code here
+}
+
+console.log(logLine({ requestId: "req-9", route: "POST /giftcards/redeem", status: 200, userId: 1, code: "GIFT-ADA-5000", token: "tok-ada" }));
+</starter>
+<solution>
+function logLine(entry) {
+  const { requestId, route, status, userId } = entry;
+  return JSON.stringify({ requestId, route, status, userId });
+}
+
+console.log(logLine({ requestId: "req-9", route: "POST /giftcards/redeem", status: 200, userId: 1, code: "GIFT-ADA-5000", token: "tok-ada" }));
+</solution>
+<expected>{"requestId":"req-9","route":"POST /giftcards/redeem","status":200,"userId":1}</expected>
+<explain><p>An allow-list is safer than a block-list: new secret fields added later are left out automatically. A gift code in a log is money anyone with log access can spend.</p></explain>
+</question>

@@ -1,0 +1,949 @@
+<question id="plugin-meaning" type="choice">
+<q>What is a <strong>plugin</strong>?</q>
+<option>A required part of the application that is always loaded</option>
+<option correct>Code that adds an optional feature to an application through a fixed interface, without changing the application</option>
+<option>A copy of the application for one customer</option>
+<option>A test helper that replaces real services</option>
+<explain><p>A plugin extends the host through an interface the host defines. The host does not need to change when a new plugin, like a Slack or audit-log plugin, is added.</p></explain>
+</question>
+
+<question id="plugin-vs-module" type="choice">
+<q>What is the difference between a runtime <strong>module</strong> and a <strong>plugin</strong>?</q>
+<option>Modules are written in TypeScript, plugins in JavaScript</option>
+<option correct>A module is always part of your app; a plugin is optional, may come from another team or npm, and each installation decides whether to load it</option>
+<option>Plugins cannot have dependencies, modules can</option>
+<option>There is no difference; the words mean the same thing</option>
+<explain><p>The difference is who writes the code and who decides to load it. Your modules are always there. Plugins are chosen per installation, so customers only run code for the features they use.</p></explain>
+</question>
+
+<question id="host-meaning" type="choice">
+<q>In the plugin system, what is the <strong>host</strong>?</q>
+<option>The server machine that runs Node.js</option>
+<option>The npm registry that stores plugins</option>
+<option correct>The application that loads the plugins, here the Task API</option>
+<option>The first plugin that was registered</option>
+<explain><p><code>createPluginContext({ name: "task-api", ... })</code> describes the host and the services it offers to plugins: a logger, config, a container and events.</p></explain>
+</question>
+
+<question id="hooks-order" type="output">
+<q>What does this print?</q>
+<code file="hooks.js" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+
+const auditLog = {
+  metadata: { name: "audit-log", version: "1.0.0" },
+  install: () => console.log("install"),
+  initialize: () => console.log("initialize"),
+  start: () => console.log("start"),
+  stop: () => console.log("stop"),
+  dispose: () => console.log("dispose"),
+};
+
+const manager = new PluginManager();
+manager.register(auditLog);
+const context = createPluginContext({ name: "task-api" });
+await manager.start(context);
+console.log("running");
+await manager.stop(context);
+</code>
+<option correct>install
+initialize
+start
+running
+stop
+dispose</option>
+<option>start
+running
+stop</option>
+<option>initialize
+install
+start
+running
+dispose
+stop</option>
+<option>install
+start
+initialize
+running
+stop
+dispose</option>
+<explain><p><code>manager.start</code> runs <code>install</code>, <code>initialize</code> and <code>start</code>. <code>manager.stop</code> runs <code>stop</code> and <code>dispose</code>. All five hooks are optional.</p></explain>
+</question>
+
+<question id="phases-all-plugins" type="output">
+<q>Two plugins, no dependencies. What does this print?</q>
+<code file="phases.js" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+
+const plugin = (name) => ({
+  metadata: { name, version: "1.0.0" },
+  install: () => console.log("install", name),
+  start: () => console.log("start", name),
+});
+
+const manager = new PluginManager();
+manager.register(plugin("a"));
+manager.register(plugin("b"));
+await manager.start(createPluginContext({ name: "task-api" }));
+</code>
+<option correct>install a
+install b
+start a
+start b</option>
+<option>install a
+start a
+install b
+start b</option>
+<option>start a
+start b</option>
+<option>install b
+install a
+start b
+start a</option>
+<explain><p>Each phase finishes for <strong>all</strong> plugins before the next phase begins. So every plugin is installed before any plugin starts.</p></explain>
+</question>
+
+<question id="context-plugin-name" type="output">
+<q>What does this print?</q>
+<code file="context-plugin.js" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+
+const manager = new PluginManager();
+manager.register({
+  metadata: { name: "reminders", version: "2.1.0" },
+  start: (context) => console.log("started as", context.plugin.name, context.plugin.version),
+});
+await manager.start(createPluginContext({ name: "task-api", version: "0.1.0" }));
+</code>
+<option correct>started as reminders 2.1.0</option>
+<option>started as task-api 0.1.0</option>
+<option>started as reminders 0.1.0</option>
+<option>started as undefined undefined</option>
+<explain><p>The context describes the host, but inside a hook, <code>context.plugin</code> is the plugin's own metadata.</p></explain>
+</question>
+
+<question id="caret-range" type="choice">
+<q>A plugin declares <code>{ name: "notifications", version: "^1.2.0" }</code>. Which registered version satisfies it?</q>
+<option><code>1.1.9</code></option>
+<option correct><code>1.4.0</code></option>
+<option><code>2.0.0</code></option>
+<option><code>0.9.0</code></option>
+<explain><p><code>^1.2.0</code> means "1.2.0 or any later 1.x". A new major version like 2.0.0 may have changed its interface, so it is refused.</p></explain>
+</question>
+
+<question id="dependency-order" type="output">
+<q>slack is registered first, but it depends on notifications. What does this print?</q>
+<code file="deps.js" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+
+const plugin = (name, dependencies = []) => ({
+  metadata: { name, version: "1.4.0" },
+  dependencies,
+  start: () => console.log("start", name),
+  stop: () => console.log("stop", name),
+});
+
+const manager = new PluginManager();
+manager.register(plugin("slack", [{ name: "notifications", version: "^1.2.0" }]));
+manager.register(plugin("notifications"));
+const context = createPluginContext({ name: "task-api" });
+await manager.start(context);
+await manager.stop(context);
+</code>
+<option correct>start notifications
+start slack
+stop slack
+stop notifications</option>
+<option>start slack
+start notifications
+stop notifications
+stop slack</option>
+<option>start notifications
+start slack
+stop notifications
+stop slack</option>
+<option>start slack
+start notifications
+stop slack
+stop notifications</option>
+<explain><p>The manager starts dependencies first and stops them last. Slack needs notifications to be running during its whole life, so the stop order is the reverse of the start order.</p></explain>
+</question>
+
+<question id="three-plugin-order" type="output">
+<q>api depends on db and cache, and cache depends on db. They are registered as api, cache, db. What does this print?</q>
+<code file="three.js" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+
+const order = [];
+const plugin = (name, needs = []) => ({
+  metadata: { name, version: "1.0.0" },
+  dependencies: needs.map((n) => ({ name: n })),
+  start: () => order.push(name),
+});
+
+const manager = new PluginManager();
+manager.register(plugin("api", ["db", "cache"]));
+manager.register(plugin("cache", ["db"]));
+manager.register(plugin("db"));
+await manager.start(createPluginContext({ name: "task-api" }));
+console.log(order);
+</code>
+<option correct>[ 'db', 'cache', 'api' ]</option>
+<option>[ 'api', 'cache', 'db' ]</option>
+<option>[ 'cache', 'db', 'api' ]</option>
+<option>[ 'db', 'api', 'cache' ]</option>
+<explain><p>Every plugin starts after everything it depends on. db needs nothing, cache needs db, and api needs both, so the only valid order is db, cache, api.</p></explain>
+</question>
+
+<question id="missing-dependency" type="output">
+<q>What does this print?</q>
+<code file="missing.js" browser="no">
+import { createPluginContext, PluginDependencyError, PluginManager } from "@zudojs/plugins";
+
+const manager = new PluginManager();
+manager.register({
+  metadata: { name: "slack", version: "1.0.0" },
+  dependencies: [{ name: "notifications", version: "^1.2.0" }],
+  start: () => console.log("start slack"),
+});
+try {
+  await manager.start(createPluginContext({ name: "task-api" }));
+} catch (error) {
+  if (error instanceof PluginDependencyError) console.log(error.message);
+}
+</code>
+<option correct>Plugin "slack" depends on "notifications" which is not registered.</option>
+<option>start slack
+Plugin "slack" depends on "notifications" which is not registered.</option>
+<option>start slack</option>
+<option>Plugin "notifications" is not installed.</option>
+<explain><p>Dependencies are checked before any hook runs, so <code>start slack</code> is never printed. Nothing starts half-way.</p></explain>
+</question>
+
+<question id="wrong-major" type="output">
+<q>What does this print?</q>
+<code file="wrong-major.js" browser="no">
+import { createPluginContext, PluginDependencyVersionError, PluginManager } from "@zudojs/plugins";
+
+const manager = new PluginManager();
+manager.register({
+  metadata: { name: "slack", version: "1.0.0" },
+  dependencies: [{ name: "notifications", version: "^1.2.0" }],
+});
+manager.register({ metadata: { name: "notifications", version: "2.0.0" } });
+try {
+  await manager.start(createPluginContext({ name: "task-api" }));
+  console.log("started");
+} catch (error) {
+  if (error instanceof PluginDependencyVersionError) console.log(error.name);
+}
+</code>
+<option correct>PluginDependencyVersionError</option>
+<option>started</option>
+<option>PluginDependencyError</option>
+<option>PluginStartError</option>
+<explain><p>notifications 2.0.0 is registered, but it does not satisfy <code>^1.2.0</code>: a new major version may have changed its interface. The version check runs before any hook.</p></explain>
+</question>
+
+<question id="cycle" type="output">
+<q>api depends on db, and db depends on api. What does this print?</q>
+<code file="cycle.js" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+
+const manager = new PluginManager();
+manager.register({ metadata: { name: "api", version: "1.0.0" }, dependencies: [{ name: "db" }], start: () => console.log("start api") });
+manager.register({ metadata: { name: "db", version: "1.0.0" }, dependencies: [{ name: "api" }], start: () => console.log("start db") });
+try {
+  await manager.start(createPluginContext({ name: "task-api" }));
+} catch (error) {
+  console.log(error.name);
+}
+</code>
+<option correct>PluginDependencyCycleError</option>
+<option>start db
+start api</option>
+<option>start api
+start db</option>
+<option>PluginDependencyError</option>
+<explain><p>api → db → api is a cycle: no order can start each plugin after its dependency. The manager throws a <code>PluginDependencyCycleError</code> that names the cycle, before any hook runs.</p></explain>
+</question>
+
+<question id="register-twice" type="output">
+<q>What does this print?</q>
+<code file="register-twice.js" browser="no">
+import { PluginManager } from "@zudojs/plugins";
+
+const manager = new PluginManager();
+manager.register({ metadata: { name: "audit-log", version: "1.0.0" } });
+try {
+  manager.register({ metadata: { name: "audit-log", version: "1.1.0" } });
+  console.log("registered twice");
+} catch (error) {
+  console.log(error.name);
+}
+console.log(manager.has("audit-log"));
+</code>
+<option correct>PluginAlreadyRegisteredError
+true</option>
+<option>registered twice
+true</option>
+<option>PluginAlreadyRegisteredError
+false</option>
+<option>registered twice
+false</option>
+<explain><p>A name identifies one plugin in a manager. Registering the same name again throws, and the first plugin stays registered.</p></explain>
+</question>
+
+<question id="on-dispose-order" type="output">
+<q>What does this print?</q>
+<code file="dispose-order.js" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+
+const manager = new PluginManager();
+manager.register({
+  metadata: { name: "reminders", version: "1.0.0" },
+  start(context) {
+    context.onDispose(() => console.log("close file"));
+    context.onDispose(() => console.log("clear timer"));
+  },
+});
+const context = createPluginContext({ name: "task-api" });
+await manager.start(context);
+await manager.stop(context);
+</code>
+<option correct>clear timer
+close file</option>
+<option>close file
+clear timer</option>
+<option>clear timer</option>
+<option>close file</option>
+<explain><p>Each plugin has its own cleanup list, which runs when the plugin is disposed, newest first. Things created last are cleaned up first, like closing nested resources.</p></explain>
+</question>
+
+<question id="why-cleanup" type="choice">
+<q>A plugin starts a <code>setInterval</code> but never clears it. What goes wrong?</q>
+<option>Nothing: <code>manager.stop</code> clears all timers automatically</option>
+<option correct>The interval keeps the process alive forever and keeps running after the plugin was "stopped"</option>
+<option>The interval runs only once</option>
+<option>The plugin cannot be registered</option>
+<explain><p>The manager cannot know about your timers. Register the cleanup with <code>context.onDispose(() =&gt; clearInterval(timer))</code>, so disposing the plugin really stops its work.</p></explain>
+</question>
+
+<question id="signal-purpose" type="choice">
+<q>What is <code>context.signal</code> for?</q>
+<option>It sends a Unix signal to the process</option>
+<option correct>It is an <code>AbortSignal</code> that fires when the plugin system shuts down, to cancel slow work such as a fetch</option>
+<option>It tells the plugin which version of the host is running</option>
+<option>It sends events to other plugins</option>
+<explain><p>Pass the signal to slow operations like <code>fetch(url, { signal })</code>. When the host shuts down, they are cancelled instead of holding up the stop.</p></explain>
+</question>
+
+<question id="signal-output" type="output">
+<q>What does this print?</q>
+<code file="signal.js" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+
+let signal;
+const manager = new PluginManager();
+manager.register({
+  metadata: { name: "sync", version: "1.0.0" },
+  start(context) {
+    signal = context.signal;
+  },
+});
+const context = createPluginContext({ name: "task-api" });
+await manager.start(context);
+console.log("while running:", signal.aborted);
+await manager.stop(context);
+console.log("after stop:", signal.aborted);
+</code>
+<option correct>while running: false
+after stop: true</option>
+<option>while running: true
+after stop: true</option>
+<option>while running: false
+after stop: false</option>
+<option>while running: undefined
+after stop: undefined</option>
+<explain><p>The signal is not aborted while the plugin runs. When the plugin system shuts down, it fires, so any work that listens to it can stop.</p></explain>
+</question>
+
+<question id="register-options" type="output">
+<q>What does this print?</q>
+<code file="options.js" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+
+const manager = new PluginManager();
+manager.register({
+  metadata: { name: "reminders", version: "1.0.0" },
+  install(context, options) {
+    console.log("every", options.everyMs, "ms");
+  },
+}, { everyMs: 40 });
+await manager.start(createPluginContext({ name: "task-api" }));
+</code>
+<option correct>every 40 ms</option>
+<option>every undefined ms</option>
+<option>every 0 ms</option>
+<option>every [object Object] ms</option>
+<explain><p><code>register(plugin, options)</code> hands the options to <code>install(context, options)</code>. That is how each installation configures a plugin.</p></explain>
+</question>
+
+<question id="validate-options" type="choice">
+<q>Why does the reminder plugin check <code>options.everyMs</code> in <code>install</code> and throw when it is wrong?</q>
+<option>TypeScript cannot check options</option>
+<option correct>Settings from outside are input like any other; a wrong value should stop the start-up, not cause strange behaviour later</option>
+<option>Throwing in install makes the plugin faster</option>
+<option>So the plugin is skipped silently</option>
+<explain><p>An interval of 0 ms or <code>"40"</code> as text would misbehave quietly for a long time. Failing at start-up shows the mistake at once.</p></explain>
+</question>
+
+<question id="rollback-why" type="choice">
+<q>Why does <code>manager.start</code> roll back when one plugin's hook throws?</q>
+<option>To try the failing plugin again</option>
+<option correct>Half-started plugins are dangerous: some timers run and connections are open, and nothing would ever stop them</option>
+<option>To delete the plugin from npm</option>
+<option>Rollback is only for database plugins</option>
+<explain><p>On a failed start, the manager stops and disposes every plugin it had already brought up, then throws the error to you. Nothing is left running.</p></explain>
+</question>
+
+<question id="rollback-output" type="output">
+<q>slack depends on audit-log and fails to start. What does this print?</q>
+<code file="rollback.js" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+
+const manager = new PluginManager({ hookTimeout: 1000 });
+manager.register({
+  metadata: { name: "audit-log", version: "1.0.0" },
+  start: (context) => context.onDispose(() => console.log("audit-log: file closed")),
+  stop: () => console.log("audit-log: stopped"),
+});
+manager.register({
+  metadata: { name: "slack", version: "1.0.0" },
+  dependencies: [{ name: "audit-log" }],
+  start: () => {
+    throw new Error("cannot reach slack.com");
+  },
+});
+try {
+  await manager.start(createPluginContext({ name: "task-api" }));
+} catch (error) {
+  console.log("start failed:", error.message);
+}
+</code>
+<option correct>audit-log: stopped
+audit-log: file closed
+start failed: cannot reach slack.com</option>
+<option>start failed: cannot reach slack.com</option>
+<option>start failed: cannot reach slack.com
+audit-log: stopped
+audit-log: file closed</option>
+<option>audit-log: file closed
+audit-log: stopped
+start failed: cannot reach slack.com</option>
+<explain><p>audit-log had already started, so the rollback stops it and runs its cleanup list <em>before</em> <code>manager.start</code> throws the error to you.</p></explain>
+</question>
+
+<question id="diagnostics-output" type="output">
+<q>What does this print?</q>
+<code file="diagnostics.js" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+
+const manager = new PluginManager();
+manager.register({ metadata: { name: "audit-log", version: "1.0.0" } });
+manager.register({
+  metadata: { name: "slack", version: "1.0.0" },
+  start: () => {
+    throw new Error("cannot reach slack.com");
+  },
+});
+await manager.start(createPluginContext({ name: "task-api" })).catch(() => {});
+const report = manager.diagnostics();
+console.log(report.total, report.failed);
+const slack = report.plugins.find((entry) => entry.plugin.name === "slack");
+console.log(slack.health.status, slack.health.details);
+</code>
+<option correct>2 1
+unhealthy cannot reach slack.com</option>
+<option>2 2
+unhealthy cannot reach slack.com</option>
+<option>1 1
+unhealthy undefined</option>
+<option>2 1
+healthy cannot reach slack.com</option>
+<explain><p><code>diagnostics()</code> reports every plugin's state and health. The failed plugin keeps its error message in <code>health.details</code>, so a health endpoint or a log line can say why.</p></explain>
+</question>
+
+<question id="hook-timeout" type="output">
+<q>What does this print?</q>
+<code file="timeout.js" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+
+const manager = new PluginManager({ hookTimeout: 20 });
+manager.register({
+  metadata: { name: "slow", version: "1.0.0" },
+  start: () => new Promise((resolve) => setTimeout(resolve, 80)),
+});
+try {
+  await manager.start(createPluginContext({ name: "task-api" }));
+  console.log("started");
+} catch (error) {
+  console.log(error.name);
+}
+</code>
+<option correct>PluginTimeoutError</option>
+<option>started</option>
+<option>PluginStartError</option>
+<option>TimeoutError</option>
+<explain><p><code>hookTimeout</code> fails a hook that takes longer than the limit, so one hanging plugin cannot freeze the start-up of the whole Task API.</p></explain>
+</question>
+
+<question id="restart-disposed" type="choice">
+<q>A start failed and the manager rolled back. How do you retry?</q>
+<option>Call <code>manager.start(context)</code> again</option>
+<option>Call <code>manager.stop(context)</code>, then <code>manager.start(context)</code></option>
+<option correct>Create a new manager with fresh plugin objects</option>
+<option>Register the same plugin objects a second time</option>
+<explain><p>A disposed plugin cannot be started again: calling <code>manager.start</code> a second time throws a <code>PluginStateError</code>. Factory functions like <code>createAuditLogPlugin()</code> make fresh objects easy.</p></explain>
+</question>
+
+<question id="restart-output" type="output">
+<q>What does this print?</q>
+<code file="restart.js" browser="no">
+import { createPluginContext, PluginManager, PluginStateError } from "@zudojs/plugins";
+
+const manager = new PluginManager();
+manager.register({ metadata: { name: "audit-log", version: "1.0.0" }, start: () => console.log("start") });
+const context = createPluginContext({ name: "task-api" });
+await manager.start(context);
+await manager.stop(context);
+try {
+  await manager.start(context);
+} catch (error) {
+  console.log(error instanceof PluginStateError);
+}
+</code>
+<option correct>start
+true</option>
+<option>start
+start</option>
+<option>start
+false</option>
+<option>true</option>
+<explain><p>After <code>stop</code>, the plugin is disposed, and a disposed plugin cannot move back to installing. The second start throws a <code>PluginStateError</code>.</p></explain>
+</question>
+
+<question id="hub-catches" type="choice">
+<q>Why does the Task API's event hub wrap each handler call in <code>try/catch</code>?</q>
+<option>To make handlers run faster</option>
+<option correct>So a broken plugin handler cannot break the request that emitted the event</option>
+<option>So errors are sent to the client</option>
+<option>Because <code>emit</code> must return a value</option>
+<explain><p>The request that completes a task should not fail because a plugin's audit or Slack handler threw. The hub catches the error and reports it to <code>onError</code>, where the host logs it.</p></explain>
+</question>
+
+<question id="audit-plugin-output" type="output">
+<q>The host offers events and a logger to its plugins. What does this print?</q>
+<code file="audit.js" browser="no">
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
+
+const handlers = new Map();
+const events = {
+  on: (name, handler) => handlers.set(name, [...(handlers.get(name) ?? []), handler]),
+  off: (name, handler) => handlers.set(name, (handlers.get(name) ?? []).filter((h) => h !== handler)),
+  emit: (name, payload) => (handlers.get(name) ?? []).forEach((h) => h(payload)),
+};
+const logger = { info: (message, meta) => console.log(message, meta), warn() {}, error() {} };
+
+const manager = new PluginManager();
+manager.register({
+  metadata: { name: "audit-log", version: "1.0.0" },
+  start(context) {
+    const onCompleted = (event) => context.logger.info("audit: task completed", { taskId: event.taskId });
+    context.events.on("task.completed", onCompleted);
+    context.onDispose(() => context.events.off("task.completed", onCompleted));
+  },
+});
+const context = createPluginContext({ name: "task-api" }, { logger, events });
+await manager.start(context);
+events.emit("task.completed", { taskId: 7 });
+await manager.stop(context);
+events.emit("task.completed", { taskId: 8 });
+console.log("done");
+</code>
+<option correct>audit: task completed { taskId: 7 }
+done</option>
+<option>audit: task completed { taskId: 7 }
+audit: task completed { taskId: 8 }
+done</option>
+<option>done</option>
+<option>audit: task completed { taskId: 8 }
+done</option>
+<explain><p>The plugin subscribes when it starts and unsubscribes in its cleanup list. After <code>stop</code>, nobody listens, so task 8 is not logged.</p></explain>
+</question>
+
+<question id="only-context" type="choice">
+<q>The audit-log plugin only uses <code>context.events</code> and <code>context.logger</code>. What is the benefit?</q>
+<option>It runs faster than a plugin that imports the Task API</option>
+<option correct>It works in any host that offers events and a logger, and the host only needs to know the plugin interface</option>
+<option>It can read every environment variable safely</option>
+<option>It does not need a name</option>
+<explain><p>The plugin and the host only share the plugin interface. You can add Slack, statistics or reminder plugins without touching the host, except for one <code>register</code> line.</p></explain>
+</question>
+
+<question id="slack-secret" type="choice">
+<q>The Slack plugin needs a secret webhook address. What does the Task API do?</q>
+<option>Write the address in the plugin's source code</option>
+<option>Put the address in the plugin's <code>metadata</code></option>
+<option correct>Read it from an environment variable; when it is missing, log a warning and start without the Slack plugin</option>
+<option>Ask the client to send it in a header</option>
+<explain><p>Secrets never go into code or metadata. The host reads <code>SLACK_WEBHOOK_URL</code> and simply does not register the plugin when it is missing, instead of failing or leaking a secret.</p></explain>
+</question>
+
+<question id="capabilities-output" type="output">
+<q>What does this print?</q>
+<code file="capabilities.js" browser="no">
+import { PluginManager } from "@zudojs/plugins";
+
+const manager = new PluginManager({ allowedCapabilities: ["events"] });
+for (const capabilities of [["events"], ["events", "fs"]]) {
+  try {
+    manager.register({ metadata: { name: `plugin-${capabilities.length}`, version: "1.0.0", capabilities } });
+    console.log(capabilities.join("+"), "registered");
+  } catch (error) {
+    console.log(capabilities.join("+"), error.name);
+  }
+}
+</code>
+<option correct>events registered
+events+fs PluginRegistrationError</option>
+<option>events registered
+events+fs registered</option>
+<option>events PluginRegistrationError
+events+fs PluginRegistrationError</option>
+<option>events registered
+events+fs PluginStateError</option>
+<explain><p><code>allowedCapabilities</code> refuses to register a plugin that asks for more than the host grants. The second plugin asks for <code>fs</code>, which is not in the list.</p></explain>
+</question>
+
+<question id="capabilities-not-sandbox" type="choice">
+<q>A host sets <code>allowedCapabilities: ["events"]</code>. Can a hostile plugin still read <code>process.env</code> and send your data anywhere?</q>
+<option>No: the manager blocks every capability that is not granted</option>
+<option correct>Yes: capabilities are a declaration that catches mistakes, not a sandbox; plugins are ordinary code in your process</option>
+<option>No, because plugins run in a separate process</option>
+<option>Only if the plugin is written in TypeScript</option>
+<explain><p>Plugins run in your process with all its rights. Only install plugins you trust, pin their versions and review what they do, exactly as with any other npm dependency.</p></explain>
+</question>
+
+<question id="factory-export" type="choice">
+<q>Why should a plugin package export a factory like <code>createAuditLogPlugin()</code> instead of a ready-made plugin object?</q>
+<option>npm refuses to publish plain objects</option>
+<option correct>Every host, and every test, gets a fresh plugin with fresh state</option>
+<option>Factories are required by TypeScript</option>
+<option>So the plugin can never be disposed</option>
+<explain><p>A shared object would share its state, like a counter or a timer, between hosts and tests. A disposed object also cannot be started again; a factory simply makes a new one.</p></explain>
+</question>
+
+<question id="peer-dependency" type="choice">
+<q>Why does a published plugin list <code>@zudojs/plugins</code> in <code>peerDependencies</code> instead of <code>dependencies</code>?</q>
+<option>Peer dependencies install faster</option>
+<option correct>The host must provide it; with a copy per plugin, classes like <code>PluginDependencyError</code> from one copy fail <code>instanceof</code> against another</option>
+<option>Peer dependencies are never downloaded</option>
+<option>So users cannot see which version the plugin needs</option>
+<explain><p>A peer dependency says "the host must provide this". One shared copy keeps <code>instanceof</code> checks working. List it in <code>devDependencies</code> too, so you can build and test.</p></explain>
+</question>
+
+<question id="import-type" type="choice">
+<q>Why does the plugin use <code>import type { Plugin } from "@zudojs/plugins"</code> where it can?</q>
+<option>Type imports make the package larger</option>
+<option correct>Type imports disappear from the compiled code, so the plugin works with whatever copy of the package the host has</option>
+<option>Normal imports are not allowed in plugins</option>
+<option>So TypeScript skips checking the plugin</option>
+<explain><p>A type-only import is removed when TypeScript compiles. The plugin then does not load its own copy of <code>@zudojs/plugins</code> at runtime.</p></explain>
+</question>
+
+<question id="files-dist" type="choice">
+<q>The package.json has <code>"files": ["dist"]</code>. What does <code>npm pack --dry-run</code> show will be uploaded?</q>
+<option>Everything in the folder, including <code>src</code>, <code>node_modules</code> and <code>.env</code></option>
+<option correct>The compiled <code>dist</code> files plus <code>package.json</code> and the README, which npm always adds</option>
+<option>Only <code>package.json</code></option>
+<option>Only the TypeScript source files</option>
+<explain><p><code>files</code> lists what to ship. Your source, <code>node_modules</code> and any <code>.env</code> file stay at home. Always check with <code>npm pack --dry-run</code> before <code>npm publish</code>.</p></explain>
+</question>
+
+<question id="find-plugin" type="choice">
+<q>What helps other people find your plugin on npm?</q>
+<option>Putting the word "plugin" in every file name</option>
+<option correct>The keyword <code>zudojs-plugin</code> in package.json</option>
+<option>Publishing it under the <code>@zudojs</code> scope</option>
+<option>A very high version number</option>
+<explain><p>Keywords in package.json are searchable on npm. You can only publish under a scope you own, like <code>@acme</code>, not <code>@zudojs</code>.</p></explain>
+</question>
+
+<question id="code-start-order" type="code" file="start-order.js">
+<q><p>Finish <code>startOrder(plugins)</code>: return the plugin names so that every plugin comes after all of its <code>deps</code>. Visit the plugins in the given order, and add each dependency before the plugin itself. The program should print <code>[ 'db', 'cache', 'api' ]</code>.</p></q>
+<starter>
+const plugins = [
+  { name: "api", deps: ["db", "cache"] },
+  { name: "cache", deps: ["db"] },
+  { name: "db", deps: [] },
+];
+
+function startOrder(plugins) {
+  const byName = new Map(plugins.map((p) => [p.name, p]));
+  const order = [];
+  // your code here
+  return order;
+}
+
+console.log(startOrder(plugins));
+</starter>
+<solution>
+const plugins = [
+  { name: "api", deps: ["db", "cache"] },
+  { name: "cache", deps: ["db"] },
+  { name: "db", deps: [] },
+];
+
+function startOrder(plugins) {
+  const byName = new Map(plugins.map((p) => [p.name, p]));
+  const order = [];
+  function visit(name) {
+    if (order.includes(name)) return;
+    for (const dep of byName.get(name).deps) visit(dep);
+    order.push(name);
+  }
+  for (const plugin of plugins) visit(plugin.name);
+  return order;
+}
+
+console.log(startOrder(plugins));
+</solution>
+<expected>[ 'db', 'cache', 'api' ]</expected>
+<explain><p>Visit the dependencies first, then add the plugin. Skipping names already added stops db from appearing twice. Stopping uses the reverse of this order.</p></explain>
+</question>
+
+<question id="code-caret" type="code" file="caret.js">
+<q><p>Finish <code>satisfiesCaret(version, minimum)</code> for a range <code>^minimum</code>: the major numbers must be equal, and <code>version</code> must be at least <code>minimum</code>. Versions look like <code>"1.4.0"</code>. The program should print <code>true false false true</code>.</p></q>
+<starter>
+function satisfiesCaret(version, minimum) {
+  // your code here
+}
+
+console.log(
+  satisfiesCaret("1.4.0", "1.2.0"),
+  satisfiesCaret("2.0.0", "1.2.0"),
+  satisfiesCaret("1.1.9", "1.2.0"),
+  satisfiesCaret("1.2.0", "1.2.0"),
+);
+</starter>
+<solution>
+function satisfiesCaret(version, minimum) {
+  const [major, minor, patch] = version.split(".").map(Number);
+  const [minMajor, minMinor, minPatch] = minimum.split(".").map(Number);
+  if (major !== minMajor) return false;
+  if (minor !== minMinor) return minor > minMinor;
+  return patch >= minPatch;
+}
+
+console.log(
+  satisfiesCaret("1.4.0", "1.2.0"),
+  satisfiesCaret("2.0.0", "1.2.0"),
+  satisfiesCaret("1.1.9", "1.2.0"),
+  satisfiesCaret("1.2.0", "1.2.0"),
+);
+</solution>
+<expected>true false false true</expected>
+<explain><p>Compare the numbers, not the strings: <code>"1.10.0" &lt; "1.9.0"</code> as text. A different major version is refused, because it may have changed the interface.</p></explain>
+</question>
+
+<question id="code-event-hub" type="code" file="event-hub.js">
+<q><p>Finish <code>emit</code> in the event hub: call every handler for <code>name</code> with the payload, and when a handler throws, call <code>onError(error, name)</code> and go on with the next handler. The program should print:</p>
+<pre>handler failed: task.completed - boom
+audit: task 7</pre></q>
+<starter>
+function createEventHub(onError) {
+  const handlers = new Map();
+  return {
+    on(name, handler) {
+      handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+    },
+    emit(name, payload) {
+      // your code here
+    },
+  };
+}
+
+const hub = createEventHub((error, name) => console.log("handler failed:", name, "-", error.message));
+hub.on("task.completed", () => { throw new Error("boom"); });
+hub.on("task.completed", (event) => console.log("audit: task", event.taskId));
+hub.emit("task.completed", { taskId: 7 });
+</starter>
+<solution>
+function createEventHub(onError) {
+  const handlers = new Map();
+  return {
+    on(name, handler) {
+      handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+    },
+    emit(name, payload) {
+      for (const handler of handlers.get(name) ?? []) {
+        try {
+          handler(payload);
+        } catch (error) {
+          onError(error, name);
+        }
+      }
+    },
+  };
+}
+
+const hub = createEventHub((error, name) => console.log("handler failed:", name, "-", error.message));
+hub.on("task.completed", () => { throw new Error("boom"); });
+hub.on("task.completed", (event) => console.log("audit: task", event.taskId));
+hub.emit("task.completed", { taskId: 7 });
+</solution>
+<expected>
+handler failed: task.completed - boom
+audit: task 7
+</expected>
+<explain><p>The <code>try/catch</code> goes around each handler call, inside the loop. One broken plugin handler is reported and the others still run, and the code that emitted the event is not broken.</p></explain>
+</question>
+
+<question id="code-cleanup-list" type="code" file="cleanup-list.js">
+<q><p>Finish <code>createCleanupList()</code>: <code>add(fn)</code> stores a cleanup function, and <code>runAll()</code> calls them <strong>newest first</strong>. The program should print:</p>
+<pre>clear timer
+close file</pre></q>
+<starter>
+function createCleanupList() {
+  const fns = [];
+  return {
+    add(fn) {
+      // your code here
+    },
+    runAll() {
+      // your code here
+    },
+  };
+}
+
+const cleanup = createCleanupList();
+cleanup.add(() => console.log("close file"));
+cleanup.add(() => console.log("clear timer"));
+cleanup.runAll();
+</starter>
+<solution>
+function createCleanupList() {
+  const fns = [];
+  return {
+    add(fn) {
+      fns.push(fn);
+    },
+    runAll() {
+      for (const fn of [...fns].reverse()) fn();
+    },
+  };
+}
+
+const cleanup = createCleanupList();
+cleanup.add(() => console.log("close file"));
+cleanup.add(() => console.log("clear timer"));
+cleanup.runAll();
+</solution>
+<expected>
+clear timer
+close file
+</expected>
+<explain><p>This is how <code>context.onDispose</code> works: things created last are cleaned up first, because they may depend on things created before them.</p></explain>
+</question>
+
+<question id="code-check-options" type="code" file="check-options.js">
+<q><p>Finish <code>checkOptions(options)</code> for the reminder plugin: throw an <code>Error</code> with the message <code>everyMs must be an integer &gt;= 10</code> unless <code>options.everyMs</code> is an integer of at least 10. The program should print:</p>
+<pre>ok
+everyMs must be an integer >= 10
+everyMs must be an integer >= 10</pre></q>
+<starter>
+function checkOptions(options) {
+  // your code here
+}
+
+for (const options of [{ everyMs: 40 }, { everyMs: 0 }, { everyMs: "40" }]) {
+  try {
+    checkOptions(options);
+    console.log("ok");
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</starter>
+<solution>
+function checkOptions(options) {
+  if (!Number.isInteger(options.everyMs) || options.everyMs < 10) {
+    throw new Error("everyMs must be an integer >= 10");
+  }
+}
+
+for (const options of [{ everyMs: 40 }, { everyMs: 0 }, { everyMs: "40" }]) {
+  try {
+    checkOptions(options);
+    console.log("ok");
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</solution>
+<expected>
+ok
+everyMs must be an integer >= 10
+everyMs must be an integer >= 10
+</expected>
+<explain><p><code>Number.isInteger("40")</code> is <code>false</code>, so text is refused too. Options come from outside, so check them in <code>install</code> and stop the start-up when they are wrong.</p></explain>
+</question>
+
+<question id="code-capabilities" type="code" file="capabilities-check.js">
+<q><p>Finish <code>notGranted(requested, allowed)</code>: return the requested capabilities that are not in the allow-list. The program should print <code>[] [ 'fs', 'net' ]</code>.</p></q>
+<starter>
+function notGranted(requested, allowed) {
+  // your code here
+}
+
+const allowed = ["events", "logger"];
+console.log(notGranted(["events"], allowed), notGranted(["events", "fs", "net"], allowed));
+</starter>
+<solution>
+function notGranted(requested, allowed) {
+  return requested.filter((capability) => !allowed.includes(capability));
+}
+
+const allowed = ["events", "logger"];
+console.log(notGranted(["events"], allowed), notGranted(["events", "fs", "net"], allowed));
+</solution>
+<expected>[] [ 'fs', 'net' ]</expected>
+<explain><p>This is the check behind <code>allowedCapabilities</code>. It catches a plugin that asks for more than you meant to grant, but it is a declaration, not a sandbox.</p></explain>
+</question>
+
+<question id="code-stats-per-user" type="code" file="stats.js">
+<q><p>Finish the stats handler: count <code>task.completed</code> events per <code>userId</code> in the <code>perUser</code> Map. The program should print <code>{ ada: 2, linus: 1 }</code>.</p></q>
+<starter>
+const perUser = new Map();
+
+function onCompleted(event) {
+  // your code here
+}
+
+for (const userId of ["ada", "linus", "ada"]) onCompleted({ taskId: 1, userId });
+console.log(Object.fromEntries(perUser));
+</starter>
+<solution>
+const perUser = new Map();
+
+function onCompleted(event) {
+  perUser.set(event.userId, (perUser.get(event.userId) ?? 0) + 1);
+}
+
+for (const userId of ["ada", "linus", "ada"]) onCompleted({ taskId: 1, userId });
+console.log(Object.fromEntries(perUser));
+</solution>
+<expected>{ ada: 2, linus: 1 }</expected>
+<explain><p>This is the heart of the stats plugin from the practice. In the real plugin, the handler is subscribed in <code>start</code> and unsubscribed in the cleanup list.</p></explain>
+</question>

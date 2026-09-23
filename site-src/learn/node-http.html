@@ -327,15 +327,20 @@ function sendJson(res, status, body) {
 }
 
 async function readJson(req, limit = 10_000) {
-  let text = "";
-  for await (const chunk of req.setEncoding("utf8")) {
-    text += chunk;
-    if (text.length > limit) return { error: "Body too large" };
+  if (!req.headers["content-type"]?.startsWith("application/json")) {
+    return { status: 415, error: "Send JSON with Content-Type: application/json" };
+  }
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > limit) return { status: 413, error: `Body larger than ${limit} bytes` };
+    chunks.push(chunk);
   }
   try {
-    return { body: JSON.parse(text) };
+    return { body: JSON.parse(Buffer.concat(chunks).toString("utf8")) };
   } catch {
-    return { error: "Body is not valid JSON" };
+    return { status: 400, error: "Body is not valid JSON" };
   }
 }
 
@@ -349,8 +354,8 @@ async function handle(req, res) {
     return sendJson(res, 200, list);
   }
   if (url.pathname === "/tasks" && req.method === "POST") {
-    const { body, error } = await readJson(req);
-    if (error) return sendJson(res, 400, { error });
+    const { body, status, error } = await readJson(req);
+    if (error) return sendJson(res, status, { error });
     if (typeof body?.title !== "string" || body.title.trim() === "" || body.title.length > 200) {
       return sendJson(res, 400, { error: "title must be a non-empty string of at most 200 characters" });
     }

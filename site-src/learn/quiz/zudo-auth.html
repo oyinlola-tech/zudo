@@ -1,0 +1,883 @@
+<question id="au-authn-authz" type="choice">
+<q>Ada is logged in and tries to delete Linus's task. Which question decides whether she may do it?</q>
+<option>Authentication: who is this?</option>
+<option correct>Authorization: may this person do this?</option>
+<option>Serialization: how is the task stored?</option>
+<option>Validation: is the body well-formed?</option>
+<explain><p>Authentication proves <em>who</em> is calling: Ada is already proven. Whether she may delete someone else's task is <strong>authorization</strong>, the topic of the Permissions lesson.</p></explain>
+</question>
+
+<question id="au-token-session" type="choice">
+<q>The lesson ties every token to a server-side session. What does that give you that a plain JWT alone cannot?</q>
+<option>Tokens that the client cannot read</option>
+<option correct>A logout that works at once: deleting the session kills its tokens, even before they expire</option>
+<option>No need for a signing secret</option>
+<option>No lookups on the server</option>
+<explain><p>A plain JWT lives until it expires; the server cannot take it back. With a session, the server looks it up per request, so deleting the session ends the login immediately.</p></explain>
+</question>
+
+<question id="au-never-store" type="choice">
+<q>How should the <code>users</code> table store passwords?</q>
+<option>A <code>password</code> column with the plain text, so users can get it back</option>
+<option>The password encrypted with a key from the environment</option>
+<option correct>Only a <code>password_hash</code> column holding the output of <code>hashPassword</code></option>
+<option>The password in base64</option>
+<explain><p>A hash is one-way: it cannot be turned back into the password, so a leaked table does not leak passwords. Encryption and base64 can both be reversed. There is never a <code>password</code> column.</p></explain>
+</question>
+
+<question id="au-scrypt-slow" type="choice">
+<q>Why does <code>@zudojs/auth</code> hash passwords with <strong>scrypt</strong>, which is slow on purpose?</q>
+<option>To make logins feel more secure to users</option>
+<option correct>An attacker who steals the hashes can then try only a few guesses per second, instead of billions</option>
+<option>Because fast hashes cannot be stored in PostgreSQL</option>
+<option>So that the hash is shorter</option>
+<explain><p>scrypt is slow and needs a lot of memory. One login barely notices, but an attacker trying millions of guesses against stolen hashes is slowed down enormously.</p></explain>
+</question>
+
+<question id="au-verify-password" type="output">
+<q>What does this print?</q>
+<code file="verify.js" browser="no">
+import { hashPassword, verifyPassword } from "@zudojs/auth";
+
+const stored = await hashPassword("correct horse battery staple");
+console.log(await verifyPassword("correct horse battery staple", stored));
+console.log(await verifyPassword("Correct horse battery staple", stored));
+console.log(await verifyPassword("anything", "not-a-hash"));
+</code>
+<option correct>true
+false
+false</option>
+<option>true
+true
+false</option>
+<option>true
+false
+Error: invalid hash</option>
+<option>false
+false
+false</option>
+<explain><p>One capital letter is a different password. <code>verifyPassword</code> never throws: bad input, such as a broken hash, is simply "no match".</p></explain>
+</question>
+
+<question id="au-hash-format" type="output">
+<q>What does this print?</q>
+<code file="hash-format.js" browser="no">
+import { hashPassword, needsRehash } from "@zudojs/auth";
+
+const first = await hashPassword("correct horse battery staple");
+const second = await hashPassword("correct horse battery staple");
+console.log(first.slice(0, 19), first === second, needsRehash(first));
+</code>
+<option correct>v1$scrypt$16384$8$5 false false</option>
+<option>v1$scrypt$16384$8$5 true false</option>
+<option>v1$scrypt$16384$8$5 false true</option>
+<option>$2b$10$abcdefghijklmnopq true false</option>
+<explain><p>The string describes itself: format <code>v1</code>, algorithm <code>scrypt</code> and its cost settings. The same password gives a different string each time, because the <strong>salt</strong> is new and random. A fresh hash uses current settings, so <code>needsRehash</code> is <code>false</code>.</p></explain>
+</question>
+
+<question id="au-rehash-when" type="choice">
+<q><code>needsRehash(stored)</code> says <code>true</code>. When can you upgrade the hash?</q>
+<option>Any time: run a nightly job that rehashes every stored hash</option>
+<option correct>At the user's next successful login, while you have the plain password they just typed</option>
+<option>Never: old hashes must stay as they are</option>
+<option>By calling <code>hashPassword(stored)</code> on the old hash</option>
+<explain><p>A hash cannot be turned back into the password, so you can only make a new one when you have the plain password: right after <code>verifyPassword</code> succeeds at login.</p></explain>
+</question>
+
+<question id="au-secret-env" type="choice">
+<q>Why must the JWT signing secret never be written in your code or committed to git?</q>
+<option>It makes the code longer</option>
+<option correct>Anyone who knows it can create a token that says "I am Ada", or "I am an admin"</option>
+<option>git cannot store long strings</option>
+<option>The secret changes every day</option>
+<explain><p>The secret is what makes a signature trustworthy. It comes from an environment variable (a <code>.env</code> file that git ignores, or your hosting platform), and the app refuses to start without it.</p></explain>
+</question>
+
+<question id="code-au-require-secret" type="code" file="require-secret.js">
+<q><p>Finish <code>requireSecret(env, name)</code>. Throw <code>new Error(`${name} must be set to at least 32 characters`)</code> when the value is missing, empty or shorter than 32 characters. Otherwise return it. Never put the value in the message.</p></q>
+<starter>
+function requireSecret(env, name) {
+  // your code here
+}
+
+const env = { JWT_ACCESS_SECRET: "x".repeat(43), JWT_REFRESH_SECRET: "secret" };
+for (const name of ["JWT_ACCESS_SECRET", "JWT_REFRESH_SECRET", "JWT_OTHER_SECRET"]) {
+  try {
+    console.log(name, "ok,", requireSecret(env, name).length, "characters");
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</starter>
+<solution>
+function requireSecret(env, name) {
+  const value = env[name];
+  if (!value || value.length < 32) {
+    throw new Error(`${name} must be set to at least 32 characters`);
+  }
+  return value;
+}
+
+const env = { JWT_ACCESS_SECRET: "x".repeat(43), JWT_REFRESH_SECRET: "secret" };
+for (const name of ["JWT_ACCESS_SECRET", "JWT_REFRESH_SECRET", "JWT_OTHER_SECRET"]) {
+  try {
+    console.log(name, "ok,", requireSecret(env, name).length, "characters");
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</solution>
+<expected>
+JWT_ACCESS_SECRET ok, 43 characters
+JWT_REFRESH_SECRET must be set to at least 32 characters
+JWT_OTHER_SECRET must be set to at least 32 characters
+</expected>
+<explain><p><code>!value</code> catches both a missing variable (<code>undefined</code>) and an empty one (<code>""</code>). The message names the variable, never its value.</p></explain>
+</question>
+
+<question id="au-empty-secret" type="output">
+<q>Three token configs: empty secrets, one secret used twice, and two different 32-character secrets. What does this print?</q>
+<code file="empty-secret.js" browser="no">
+import { createTokenPair, toUserId } from "@zudojs/auth";
+
+const configs = [
+  { accessSecret: "", refreshSecret: "" },
+  { accessSecret: "s".repeat(32), refreshSecret: "s".repeat(32) },
+  { accessSecret: "a".repeat(32), refreshSecret: "r".repeat(32) },
+];
+for (const config of configs) {
+  try {
+    createTokenPair(toUserId("u-ada"), config);
+    console.log("tokens created");
+  } catch (error) {
+    console.log(error.name);
+  }
+}
+</code>
+<option correct>AuthConfigurationError
+AuthConfigurationError
+tokens created</option>
+<option>tokens created
+tokens created
+tokens created</option>
+<option>AuthConfigurationError
+tokens created
+tokens created</option>
+<option>TypeError
+AuthConfigurationError
+tokens created</option>
+<explain><p>The package refuses empty secrets, secrets shorter than 32 bytes, and the same secret used for both kinds of token. Stopping is right: a server with a weak key would hand out tokens anyone can forge.</p></explain>
+</question>
+
+<question id="au-jwt-parts" type="output">
+<q>What does this print?</q>
+<code file="jwt-parts.js" browser="no">
+import { createTokenPair, toUserId } from "@zudojs/auth";
+
+const config = { accessSecret: "a".repeat(32), refreshSecret: "r".repeat(32), accessTtl: 15 * 60 };
+const tokens = createTokenPair(toUserId("u-ada"), config, { roles: ["user"] });
+const [header, payload] = tokens.accessToken.split(".");
+console.log(tokens.tokenType, tokens.expiresIn, tokens.accessToken.split(".").length);
+console.log(Buffer.from(header, "base64url").toString());
+const claims = JSON.parse(Buffer.from(payload, "base64url").toString());
+console.log(claims.sub, claims.typ, claims.roles);
+</code>
+<option correct>Bearer 900 3
+{"alg":"HS256","typ":"JWT"}
+u-ada access [ 'user' ]</option>
+<option>Bearer 15 3
+{"alg":"HS256","typ":"JWT"}
+u-ada access [ 'user' ]</option>
+<option>Bearer 900 2
+{"alg":"HS256","typ":"JWT"}
+u-ada access [ 'user' ]</option>
+<option>Bearer 900 3
+{"alg":"HS256","typ":"JWT"}
+The payload is encrypted</option>
+<explain><p>A JWT is three base64url parts: header, payload, signature. <code>accessTtl</code> is in seconds, so 15 minutes is 900. Anyone can decode the payload: a JWT is <strong>signed, not encrypted</strong>.</p></explain>
+</question>
+
+<question id="au-jwt-private" type="choice">
+<q>Which of these may you put in a JWT's payload?</q>
+<option>The user's password hash, so the server can check it quickly</option>
+<option>The user's home address, so the app can show it</option>
+<option correct>The user id and roles, which are not secret</option>
+<option>The signing secret, so another service can verify it</option>
+<explain><p>Anyone who holds the token can read the payload with one line of code. Put only non-secret facts there, never passwords, secrets or private data.</p></explain>
+</question>
+
+<question id="code-au-read-claims" type="code" file="read-claims.js">
+<q><p>A JWT's payload is base64url text. Finish <code>readClaims(token)</code>: take the middle part, turn base64url into normal base64 (<code>-</code> becomes <code>+</code>, <code>_</code> becomes <code>/</code>), decode it with <code>atob</code> and parse the JSON. This shows anyone can read a token.</p></q>
+<starter>
+function readClaims(token) {
+  // your code here
+}
+
+const token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1LWFkYSIsInJvbGVzIjpbInVzZXIiXSwiaXNzIjoidGFzay1hcGkifQ.c2lnbmF0dXJl";
+const claims = readClaims(token);
+console.log(claims.sub, claims.roles, claims.iss);
+</starter>
+<solution>
+function readClaims(token) {
+  const payload = token.split(".")[1];
+  const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+  return JSON.parse(atob(base64));
+}
+
+const token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1LWFkYSIsInJvbGVzIjpbInVzZXIiXSwiaXNzIjoidGFzay1hcGkifQ.c2lnbmF0dXJl";
+const claims = readClaims(token);
+console.log(claims.sub, claims.roles, claims.iss);
+</solution>
+<expected>
+u-ada [ 'user' ] task-api
+</expected>
+<explain><p>No secret was needed to read the claims. The signature only proves the token was not changed; it hides nothing. Reading claims like this is fine for display, but only a verified token may be trusted.</p></explain>
+</question>
+
+<question id="au-forged" type="output">
+<q>An attacker tries to turn Ada into an admin. What does this print?</q>
+<code file="forged.js" browser="no">
+import { createTokenPair, toUserId, verifyAccessToken } from "@zudojs/auth";
+
+const config = { accessSecret: "a".repeat(32), refreshSecret: "r".repeat(32) };
+const real = createTokenPair(toUserId("u-ada"), config, { roles: ["user"] });
+const [header, payload, signature] = real.accessToken.split(".");
+const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+const claims = JSON.parse(Buffer.from(payload, "base64url").toString());
+const admin = encode({ ...claims, roles: ["admin"] });
+
+const attempts = [
+  `${header}.${admin}.${signature}`,
+  `${encode({ alg: "none", typ: "JWT" })}.${admin}.${signature}`,
+  real.refreshToken,
+];
+for (const token of attempts) {
+  const result = verifyAccessToken(token, config);
+  console.log(result.valid, result.error);
+}
+</code>
+<option correct>false Invalid signature
+false Unsupported algorithm
+false Invalid signature</option>
+<option>true undefined
+false Unsupported algorithm
+false Invalid signature</option>
+<option>false Invalid signature
+true undefined
+false Invalid signature</option>
+<option>false Invalid signature
+false Unsupported algorithm
+true undefined</option>
+<explain><p>Changing the payload breaks the signature. <code>"alg": "none"</code> is refused because the package only accepts HS256, whatever the header says. The refresh token was signed with the other secret, so it fails as an access token.</p></explain>
+</question>
+
+<question id="au-alg-pinned" type="choice">
+<q>Old JWT libraries were broken by tokens with <code>"alg": "none"</code> in the header. Why is <code>@zudojs/auth</code> safe?</q>
+<option>It removes the header before checking</option>
+<option correct>It pins the algorithm: it only accepts HS256, whatever the token's header claims</option>
+<option>It checks the algorithm against a list the client sends</option>
+<option>It asks the user to confirm the token</option>
+<explain><p>The header is written by whoever made the token, including an attacker. A verifier must never let the token choose how it is checked. Even a correct HS512 signature is refused.</p></explain>
+</question>
+
+<question id="au-audience" type="output">
+<q>Two services share a secret. What does this print?</q>
+<code file="audience.js" browser="no">
+import { createTokenPair, toUserId, verifyAccessToken } from "@zudojs/auth";
+
+const tasks = { accessSecret: "a".repeat(32), refreshSecret: "r".repeat(32), issuer: "task-api", audience: "task-api" };
+const billing = { ...tasks, audience: "billing-api" };
+const token = createTokenPair(toUserId("u-ada"), tasks).accessToken;
+console.log(verifyAccessToken(token, tasks).valid);
+console.log(verifyAccessToken(token, billing));
+</code>
+<option correct>true
+{ valid: false, error: 'Invalid audience' }</option>
+<option>true
+{ valid: true }</option>
+<option>true
+Error: Invalid audience</option>
+<option>false
+{ valid: false, error: 'Invalid audience' }</option>
+<explain><p>A token made for the Task API is not accepted by a service that expects its own audience. Note that <code>verifyAccessToken</code> never throws for a bad token: it returns <code>{ valid: false, error }</code>, so you must check <code>valid</code>.</p></explain>
+</question>
+
+<question id="au-check-valid" type="choice">
+<q>Which use of <code>verifyAccessToken</code> is correct?</q>
+<option><code>verifyAccessToken(token, config); return next();</code> — it throws on a bad token</option>
+<option correct><code>const r = verifyAccessToken(token, config); if (!r.valid) return 401; use r.payload</code></option>
+<option><code>try { verifyAccessToken(token, config) } catch { return 401 }</code></option>
+<option><code>if (verifyAccessToken(token, config)) return next();</code></option>
+<explain><p>It returns <code>{ valid: false, error }</code> instead of throwing, and the result object is always truthy. You must check <code>valid</code>, or every forged token gets through.</p></explain>
+</question>
+
+<question id="au-two-tokens" type="choice">
+<q>Why does the lesson use a short-lived access token (15 minutes) and a long-lived refresh token (7 days)?</q>
+<option>To make tokens smaller</option>
+<option correct>The access token goes with every request; if it is stolen, it is useless a few minutes later. The refresh token is only used to get a new pair</option>
+<option>Because browsers delete tokens after 15 minutes</option>
+<option>So users must type their password every 15 minutes</option>
+<explain><p>The token that travels most is the one that expires fastest. Each kind has its own secret, so one cannot be used as the other.</p></explain>
+</question>
+
+<question id="code-au-register" type="code" file="register.js">
+<q><p>Finish <code>newUser(id, body)</code>. Return <code>{ id, email, roles }</code> where <code>email</code> is trimmed and lower-cased, and <code>roles</code> is always <code>["user"]</code>, whatever the body contains.</p></q>
+<starter>
+function newUser(id, body) {
+  // your code here
+}
+
+console.log(newUser("u-ada", { email: " Ada@Example.com ", password: "correct horse battery staple" }));
+console.log(newUser("u-mal", { email: "mallory@example.com", password: "a long passphrase", roles: ["admin"] }));
+</starter>
+<solution>
+function newUser(id, body) {
+  return {
+    id,
+    email: body.email.trim().toLowerCase(),
+    roles: ["user"],
+  };
+}
+
+console.log(newUser("u-ada", { email: " Ada@Example.com ", password: "correct horse battery staple" }));
+console.log(newUser("u-mal", { email: "mallory@example.com", password: "a long passphrase", roles: ["admin"] }));
+</solution>
+<expected>
+{ id: 'u-ada', email: 'ada@example.com', roles: [ 'user' ] }
+{ id: 'u-mal', email: 'mallory@example.com', roles: [ 'user' ] }
+</expected>
+<explain><p>Pick the fields you accept instead of copying the body. Normalizing the email means <code>" Ada@Example.com"</code> finds the same account later. The password never goes into the user object; only its hash is stored.</p></explain>
+</question>
+
+<question id="au-same-error" type="output">
+<q>The service's <code>verifyPassword</code> here is a plain comparison, to keep the example fast. What does this print?</q>
+<code file="same-error.js" browser="no">
+import { createAuthService, createMemorySessionStore, toUserId } from "@zudojs/auth";
+
+const ada = { id: toUserId("u-ada"), email: "ada@example.com", roles: ["user"], active: true, createdAt: new Date(0) };
+const auth = createAuthService({
+  token: { accessSecret: "a".repeat(32), refreshSecret: "r".repeat(32) },
+  sessionStore: createMemorySessionStore(),
+  findUser: async (email) => (email.trim().toLowerCase() === ada.email ? ada : null),
+  findUserById: async (id) => (id === ada.id ? ada : null),
+  verifyPassword: async (_id, password) => password === "correct horse battery staple",
+});
+for (const [identifier, password] of [["ada@example.com", "wrong"], ["nobody@example.com", "whatever"]]) {
+  try {
+    await auth.login({ identifier, password });
+  } catch (error) {
+    console.log(identifier, "->", error.statusCode, error.message);
+  }
+}
+</code>
+<option correct>ada@example.com -> 401 Invalid credentials
+nobody@example.com -> 401 Invalid credentials</option>
+<option>ada@example.com -> 401 Wrong password
+nobody@example.com -> 404 User not found</option>
+<option>ada@example.com -> 401 Invalid credentials
+nobody@example.com -> 404 Invalid credentials</option>
+<option>ada@example.com -> 403 Invalid credentials
+nobody@example.com -> 401 Invalid credentials</option>
+<explain><p>A wrong password and an unknown email get the same answer. If they differed, an attacker could find out which emails have accounts. The service even does the same slow hashing work for an unknown user, so the timing does not tell either.</p></explain>
+</question>
+
+<question id="code-au-login-message" type="code" file="login-message.js">
+<q><p>Finish <code>loginResult(user, passwordOk)</code> for your own login code. <code>user</code> is <code>null</code> when the email is unknown. Return <code>{ status: 200, userId }</code> only when the user exists and the password is right. In every other case return exactly <code>{ status: 401, error: "Invalid credentials" }</code>, so the answer never tells which part was wrong.</p></q>
+<starter>
+function loginResult(user, passwordOk) {
+  // your code here
+}
+
+console.log(loginResult({ id: "u-ada" }, true));
+console.log(loginResult({ id: "u-ada" }, false));
+console.log(loginResult(null, false));
+</starter>
+<solution>
+function loginResult(user, passwordOk) {
+  if (user === null || !passwordOk) {
+    return { status: 401, error: "Invalid credentials" };
+  }
+  return { status: 200, userId: user.id };
+}
+
+console.log(loginResult({ id: "u-ada" }, true));
+console.log(loginResult({ id: "u-ada" }, false));
+console.log(loginResult(null, false));
+</solution>
+<expected>
+{ status: 200, userId: 'u-ada' }
+{ status: 401, error: 'Invalid credentials' }
+{ status: 401, error: 'Invalid credentials' }
+</expected>
+<explain><p>Unknown email and wrong password share one answer. Messages like "no such user" let an attacker test which emails are registered.</p></explain>
+</question>
+
+<question id="au-session-sid" type="output">
+<q>What does this print?</q>
+<code file="login-sid.js" browser="no">
+import { createAuthService, createMemorySessionStore, toUserId } from "@zudojs/auth";
+
+const ada = { id: toUserId("u-ada"), email: "ada@example.com", roles: ["user"], active: true, createdAt: new Date(0) };
+const auth = createAuthService({
+  token: { accessSecret: "a".repeat(32), refreshSecret: "r".repeat(32), accessTtl: 900 },
+  sessionStore: createMemorySessionStore(),
+  findUser: async (email) => (email.trim().toLowerCase() === ada.email ? ada : null),
+  findUserById: async (id) => (id === ada.id ? ada : null),
+  verifyPassword: async (_id, password) => password === "correct horse battery staple",
+});
+const { user, tokens, sessionId } = await auth.login({
+  identifier: " Ada@Example.com",
+  password: "correct horse battery staple",
+});
+const payload = await auth.verifyToken(tokens.accessToken);
+console.log(user.email, tokens.expiresIn, payload.sub, payload.sid === sessionId);
+</code>
+<option correct>ada@example.com 900 u-ada true</option>
+<option> Ada@Example.com 900 u-ada true</option>
+<option>ada@example.com 900 u-ada false</option>
+<option>ada@example.com 15 ada@example.com true</option>
+<explain><p>The lesson's <code>findUser</code> trims and lower-cases the email, so <code>" Ada@Example.com"</code> finds Ada. The access token carries the session id in its <code>sid</code> claim, which is how <code>verifyToken</code> checks that the session is still alive.</p></explain>
+</question>
+
+<question id="au-logout" type="output">
+<q>Ada is logged in on a laptop and a phone. What does this print?</q>
+<code file="logout.js" browser="no">
+import { createAuthService, createMemorySessionStore, toUserId } from "@zudojs/auth";
+
+const ada = { id: toUserId("u-ada"), email: "ada@example.com", roles: ["user"], active: true, createdAt: new Date(0) };
+const auth = createAuthService({
+  token: { accessSecret: "a".repeat(32), refreshSecret: "r".repeat(32) },
+  sessionStore: createMemorySessionStore(),
+  findUser: async (email) => (email === ada.email ? ada : null),
+  findUserById: async (id) => (id === ada.id ? ada : null),
+  verifyPassword: async (_id, password) => password === "correct horse battery staple",
+});
+const credentials = { identifier: "ada@example.com", password: "correct horse battery staple" };
+async function check(label, token) {
+  try {
+    console.log(label, "valid for", (await auth.verifyToken(token)).sub);
+  } catch (error) {
+    console.log(label, error.message);
+  }
+}
+const laptop = await auth.login(credentials);
+const phone = await auth.login(credentials);
+await auth.logout(laptop.sessionId);
+await check("laptop:", laptop.tokens.accessToken);
+await check("phone:", phone.tokens.accessToken);
+await auth.logoutAll(ada.id);
+await check("phone:", phone.tokens.accessToken);
+</code>
+<option correct>laptop: Session is no longer active
+phone: valid for u-ada
+phone: Session is no longer active</option>
+<option>laptop: valid for u-ada
+phone: valid for u-ada
+phone: valid for u-ada</option>
+<option>laptop: Session is no longer active
+phone: Session is no longer active
+phone: Session is no longer active</option>
+<option>laptop: Token expired
+phone: valid for u-ada
+phone: Token expired</option>
+<explain><p><code>logout</code> ends one session (one device); its access token stops working at once, long before it expires. <code>logoutAll</code> ends every session of the user: the "sign out everywhere" button.</p></explain>
+</question>
+
+<question id="au-absolute-limit" type="choice">
+<q>A session has an idle timeout of 30 minutes, but no absolute limit. What is the risk?</q>
+<option>Users are logged out too often</option>
+<option correct>A session used once every half hour lives forever, and so does a stolen one</option>
+<option>The session store fills up in 30 minutes</option>
+<option>There is no risk</option>
+<explain><p>The idle timeout moves forward every time the session is used; the absolute limit never moves. Always set <code>absoluteSessionTtlSeconds</code>, for example 7 days.</p></explain>
+</question>
+
+<question id="au-refresh-replay" type="output">
+<q>The service has a <code>revocationStore</code>. An old refresh token is used a second time. What does this print?</q>
+<code file="refresh.js" browser="no">
+import { createAuthService, createMemorySessionStore, createMemoryTokenRevocationStore, toUserId } from "@zudojs/auth";
+
+const ada = { id: toUserId("u-ada"), email: "ada@example.com", roles: ["user"], active: true, createdAt: new Date(0) };
+const auth = createAuthService({
+  token: { accessSecret: "a".repeat(32), refreshSecret: "r".repeat(32) },
+  sessionStore: createMemorySessionStore(),
+  revocationStore: createMemoryTokenRevocationStore(),
+  findUser: async (email) => (email === ada.email ? ada : null),
+  findUserById: async (id) => (id === ada.id ? ada : null),
+  verifyPassword: async (_id, password) => password === "correct horse battery staple",
+});
+const { tokens } = await auth.login({ identifier: "ada@example.com", password: "correct horse battery staple" });
+const next = await auth.refresh(tokens.refreshToken);
+console.log("new pair:", next.refreshToken !== tokens.refreshToken);
+try {
+  await auth.refresh(tokens.refreshToken);
+} catch (error) {
+  console.log("replay:", error.message);
+}
+try {
+  await auth.verifyToken(next.accessToken);
+  console.log("new token still works");
+} catch (error) {
+  console.log("new token:", error.message);
+}
+</code>
+<option correct>new pair: true
+replay: Refresh token has already been used
+new token: Session is no longer active</option>
+<option>new pair: true
+replay: Refresh token has already been used
+new token still works</option>
+<option>new pair: false
+new token still works</option>
+<option>new pair: true
+new token still works</option>
+<explain><p>Each refresh token works once. When an old one comes back, someone copied it, and the server cannot tell whether the thief or the user refreshed first. So it ends every session of that user, even the honest new token, and the real user logs in again.</p></explain>
+</question>
+
+<question id="au-refresh-standalone" type="choice">
+<q>The package also exports a standalone <code>refreshAccessToken</code>. Why should you use <code>auth.refresh</code> for users instead?</q>
+<option><code>refreshAccessToken</code> is slower</option>
+<option correct><code>refreshAccessToken</code> only checks signature and expiry: no rotation, no session, no revocation, so a stolen refresh token works for its whole life</option>
+<option><code>refreshAccessToken</code> needs the password</option>
+<option>They do exactly the same thing</option>
+<explain><p><code>auth.refresh</code> rotates the refresh token, checks the session and detects replays. Without that, a stolen 7-day refresh token keeps minting access tokens.</p></explain>
+</question>
+
+<question id="au-bearer" type="output">
+<q>What does this print?</q>
+<code file="bearer.js" browser="no">
+import { parseBearerToken } from "@zudojs/auth";
+
+console.log(parseBearerToken("Bearer abc.def.ghi"));
+console.log(parseBearerToken(undefined));
+console.log(parseBearerToken("Basic dXNlcjpwYXNz"));
+</code>
+<option correct>abc.def.ghi
+null
+null</option>
+<option>Bearer abc.def.ghi
+null
+null</option>
+<option>abc.def.ghi
+undefined
+dXNlcjpwYXNz</option>
+<option>abc.def.ghi
+TypeError: header is undefined</option>
+<explain><p><code>parseBearerToken</code> reads the <code>Authorization</code> header safely: it returns the token, or <code>null</code> for a missing or malformed header, and never throws.</p></explain>
+</question>
+
+<question id="code-au-bearer" type="code" file="bearer-code.js">
+<q><p>Finish <code>bearerToken(header)</code>. Return the token when the header is a string of the form <code>Bearer &lt;token&gt;</code> (the word <code>Bearer</code>, one space, a non-empty token without spaces). Return <code>null</code> for anything else, including <code>undefined</code>. Never throw.</p></q>
+<starter>
+function bearerToken(header) {
+  // your code here
+}
+
+console.log(bearerToken("Bearer abc.def.ghi"));
+console.log(bearerToken(undefined), bearerToken("Basic dXNlcg=="), bearerToken("Bearer "), bearerToken("Bearer a b"));
+</starter>
+<solution>
+function bearerToken(header) {
+  if (typeof header !== "string") return null;
+  const match = /^Bearer ([^\s]+)$/.exec(header);
+  return match ? match[1] : null;
+}
+
+console.log(bearerToken("Bearer abc.def.ghi"));
+console.log(bearerToken(undefined), bearerToken("Basic dXNlcg=="), bearerToken("Bearer "), bearerToken("Bearer a b"));
+</solution>
+<expected>
+abc.def.ghi
+null null null null
+</expected>
+<explain><p>Check the type first, then match the whole header with <code>^</code> and <code>$</code>. Returning <code>null</code> lets the middleware answer 401 without a try/catch.</p></explain>
+</question>
+
+<question id="au-middleware-401" type="choice">
+<q>In <code>requireUser</code>, a token can be missing, malformed, expired, or from a logged-out session. What should the client get in each case?</q>
+<option>A different message for each case, to help the developer</option>
+<option correct>The same short answer, <code>401 Login required</code></option>
+<option>403 for expired tokens and 401 for the rest</option>
+<option>500, so the attacker learns nothing</option>
+<explain><p>Every failure gets the same answer, so the client learns nothing about why. The details can go to your logs.</p></explain>
+</question>
+
+<question id="au-state" type="choice">
+<q>After <code>requireUser</code> verifies the token, where does the payload go, and why?</q>
+<option>Into a global variable <code>currentUser</code>, shared by all requests</option>
+<option correct>Into <code>context.state</code>, the per-request storage; from then on "who is calling" is a fact the server checked</option>
+<option>Back into the request body, so the handler can read it</option>
+<option>Into a cookie</option>
+<explain><p><code>context.state</code> belongs to one request, so two requests never see each other's user. A global would mix users up under load.</p></explain>
+</question>
+
+<question id="au-owner-from-token" type="choice">
+<q>Ada sends <code>POST /tasks</code> with <code>{ "title": "Buy milk", "ownerId": "u-linus" }</code>. Who should own the new task?</q>
+<option>Linus, because the body says so</option>
+<option correct>Ada: <code>ownerId</code> comes from the verified token (<code>currentUser(ctx).sub</code>), never from the body</option>
+<option>Nobody: the request should fail with 500</option>
+<option>Both of them</option>
+<explain><p>Anything the client says about who they are is ignored. The schema only keeps <code>title</code>, and the owner is taken from the token the server verified.</p></explain>
+</question>
+
+<question id="au-logout-sid" type="choice">
+<q>Where does the logout route get the session id to end?</q>
+<option>From the request body: <code>{ "sessionId": "…" }</code></option>
+<option>From a query parameter</option>
+<option correct>From the verified token: <code>currentUser(ctx).sid</code></option>
+<option>From the first session in the store</option>
+<explain><p>If the session id came from the body, a caller could end someone else's session. The verified token says which session belongs to this caller.</p></explain>
+</question>
+
+<question id="au-login-max-length" type="choice">
+<q>The login schema limits <code>password</code> to 1024 characters. Why have a maximum at all?</q>
+<option>Long passwords are less secure</option>
+<option correct>Hashing is slow on purpose, so a 10 MB "password" would make the server burn CPU; it is rejected before any hashing</option>
+<option>PostgreSQL cannot store long passwords</option>
+<option>To make brute-force attacks faster</option>
+<explain><p>An attacker can send huge bodies to make each login expensive. Checking the length first stops that cheaply.</p></explain>
+</question>
+
+<question id="au-cookie-flags" type="choice">
+<q>A cookie is set with <code>HttpOnly; Secure; SameSite=Lax</code>. What does <code>HttpOnly</code> do?</q>
+<option>The cookie is only sent over HTTP, not HTTPS</option>
+<option correct>JavaScript in the page cannot read the cookie, so an injected script cannot steal the token</option>
+<option>The cookie is deleted when the tab closes</option>
+<option>Other sites cannot send it with their forms</option>
+<explain><p><code>HttpOnly</code> hides the cookie from page JavaScript. <code>Secure</code> sends it only over HTTPS, and <code>SameSite=Lax</code> stops other sites' form posts from carrying it.</p></explain>
+</question>
+
+<question id="au-cookie-serialize" type="output">
+<q>What does this print?</q>
+<code file="cookie.js" browser="no">
+import { serializeCookie } from "@zudojs/http";
+
+console.log(serializeCookie("access_token", "abc", { maxAge: 15 * 60 }));
+console.log(serializeCookie("access_token", "", { maxAge: 0 }));
+</code>
+<option correct>access_token=abc; Max-Age=900; Path=/; HttpOnly; Secure; SameSite=Lax
+access_token=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax</option>
+<option>access_token=abc; Max-Age=900
+access_token=; Max-Age=0</option>
+<option>access_token=abc; Max-Age=15; Path=/; HttpOnly; Secure; SameSite=Lax
+access_token=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax</option>
+<option>access_token=abc; Max-Age=900; Path=/; SameSite=None
+access_token=; Max-Age=0; Path=/; SameSite=None</option>
+<explain><p><code>@zudojs/http</code> writes cookies with safe settings unless you change them. <code>maxAge</code> is in seconds, and <code>Max-Age=0</code> is how you delete a cookie at logout.</p></explain>
+</question>
+
+<question id="au-parse-cookies" type="output">
+<q>What does this print?</q>
+<code file="parse-cookies.js" browser="no">
+import { parseCookies } from "@zudojs/auth";
+
+const jar = parseCookies("access_token=abc; theme=dark");
+console.log(jar.access_token, jar.theme, jar.constructor, Object.getPrototypeOf(jar));
+</code>
+<option correct>abc dark undefined null</option>
+<option>abc dark [Function: Object] [Object: null prototype] {}</option>
+<option>abc dark undefined {}</option>
+<option>access_token=abc theme=dark undefined null</option>
+<explain><p><code>parseCookies</code> returns an object with no prototype, so a cookie named <code>constructor</code> or <code>__proto__</code> cannot confuse your code: there is nothing inherited to collide with.</p></explain>
+</question>
+
+<question id="au-lockout" type="output">
+<q>The service locks an account after 3 wrong passwords. What does this print?</q>
+<code file="lockout.js" browser="no">
+import { createAuthService, createMemoryLoginAttemptStore, createMemorySessionStore, toUserId } from "@zudojs/auth";
+
+const ada = { id: toUserId("u-ada"), email: "ada@example.com", roles: ["user"], active: true, createdAt: new Date(0) };
+const auth = createAuthService({
+  token: { accessSecret: "a".repeat(32), refreshSecret: "r".repeat(32) },
+  sessionStore: createMemorySessionStore(),
+  findUser: async (email) => (email.trim().toLowerCase() === ada.email ? ada : null),
+  findUserById: async (id) => (id === ada.id ? ada : null),
+  verifyPassword: async (_id, password) => password === "correct horse battery staple",
+  loginThrottle: {
+    store: createMemoryLoginAttemptStore({ windowSeconds: 60 }),
+    maxFailedAttempts: 3,
+    lockoutSeconds: 900,
+    maxAttemptsPerWindow: 20,
+  },
+});
+const tries = ["123456", "password", "qwerty", "letmein", "correct horse battery staple"];
+for (const password of tries) {
+  try {
+    await auth.login({ identifier: "ADA@example.com", password });
+    console.log("logged in");
+  } catch (error) {
+    console.log(error.statusCode, error.metadata.retryAfterSeconds ?? "-");
+  }
+}
+</code>
+<option correct>401 -
+401 -
+401 -
+423 900
+423 900</option>
+<option>401 -
+401 -
+401 -
+423 900
+logged in</option>
+<option>401 -
+401 -
+423 900
+423 900
+423 900</option>
+<option>401 -
+401 -
+401 -
+401 -
+logged in</option>
+<option>401 -
+401 -
+401 -
+429 900
+429 900</option>
+<explain><p>After 3 failures the account is locked: <strong>423 Locked</strong>, with a wait of 900 seconds. Even the right password is refused during the lockout, or the attacker would simply keep guessing. <code>ADA@example.com</code> is counted as the same identifier.</p></explain>
+</question>
+
+<question id="au-rate-limit" type="choice">
+<q>Account lockout is on. Why do you also need a rate limit per IP address on <code>/auth/login</code>?</q>
+<option>You don't: the lockout already stops all guessing</option>
+<option correct>A lockout does not stop an attacker who tries one password against thousands of different emails</option>
+<option>Rate limits make logins faster</option>
+<option>The lockout only works over HTTPS</option>
+<explain><p>Lockout counts per account; a rate limit counts per client. Trying <code>123456</code> against every email never locks one account, but the rate limit answers 429 after a few requests.</p></explain>
+</question>
+
+<question id="au-shared-counters" type="choice">
+<q>You run two copies of the server, each with memory stores for lockouts and rate limits. What is the problem?</q>
+<option>None, the copies share memory</option>
+<option correct>Each copy has its own counters, so an attacker gets twice the guesses; real deployments keep them in a shared store such as Redis</option>
+<option>Users are locked out twice as fast</option>
+<option>Logins stop working</option>
+<explain><p>Memory stores live inside one process. With several servers, implement the same small store interfaces on a database or Redis that all copies share.</p></explain>
+</question>
+
+<question id="code-au-lockout" type="code" file="lockout-code.js">
+<q><p>Build a tiny lockout. Finish <code>createLockout(max)</code>. It returns <code>attempt(email, passwordOk)</code>, which answers <code>"ok"</code>, <code>"invalid"</code> or <code>"locked"</code>. Emails are counted after trimming and lower-casing. After <code>max</code> failures in a row, every attempt is <code>"locked"</code>, even with the right password. A success before that resets the count.</p></q>
+<starter>
+function createLockout(max) {
+  // your code here
+}
+
+const attempt = createLockout(3);
+console.log(attempt("ada@example.com", false), attempt("ada@example.com", true));
+console.log(attempt("ada@example.com", false), attempt(" ADA@example.com", false), attempt("ada@example.com", false));
+console.log(attempt("ada@example.com", true), attempt("linus@example.com", true));
+</starter>
+<solution>
+function createLockout(max) {
+  const failures = new Map();
+  return function attempt(email, passwordOk) {
+    const key = email.trim().toLowerCase();
+    const count = failures.get(key) ?? 0;
+    if (count >= max) return "locked";
+    if (passwordOk) {
+      failures.delete(key);
+      return "ok";
+    }
+    failures.set(key, count + 1);
+    return "invalid";
+  };
+}
+
+const attempt = createLockout(3);
+console.log(attempt("ada@example.com", false), attempt("ada@example.com", true));
+console.log(attempt("ada@example.com", false), attempt(" ADA@example.com", false), attempt("ada@example.com", false));
+console.log(attempt("ada@example.com", true), attempt("linus@example.com", true));
+</solution>
+<expected>
+invalid ok
+invalid invalid invalid
+locked ok
+</expected>
+<explain><p>Check the lock <em>before</em> looking at the password, so the right password does not help during a lockout. Normalizing the email stops <code>" ADA@…"</code> from getting a fresh budget.</p></explain>
+</question>
+
+<question id="au-password-change" type="choice">
+<q>In a <code>POST /auth/password</code> route, which step order is right?</q>
+<option>Take the user id from the body, store the new hash, done</option>
+<option correct><code>requireUser</code> → validate the body → <code>verifyPassword</code> on the current password → store <code>hashPassword(newPassword)</code> → <code>auth.logoutAll(userId)</code></option>
+<option>Store the new hash first, then check the current password</option>
+<option><code>logoutAll</code> first, then change the password without checking the current one</option>
+<explain><p>The user id comes from the verified token, never the body. Check the current password (same generic 401 if wrong), store the new hash, then end every session so anyone with the old password is thrown out.</p></explain>
+</question>
+
+<question id="au-verify-token-throws" type="output">
+<q>What does this print?</q>
+<code file="two-checks.js" browser="no">
+import { createAuthService, createMemorySessionStore, toUserId, verifyAccessToken } from "@zudojs/auth";
+
+const config = { accessSecret: "a".repeat(32), refreshSecret: "r".repeat(32) };
+const auth = createAuthService({
+  token: config,
+  sessionStore: createMemorySessionStore(),
+  findUser: async () => null,
+  findUserById: async () => null,
+  verifyPassword: async () => false,
+});
+console.log(verifyAccessToken("not-a-token", config).valid);
+try {
+  await auth.verifyToken("not-a-token");
+  console.log("accepted");
+} catch (error) {
+  console.log("threw", error.statusCode);
+}
+</code>
+<option correct>false
+threw 401</option>
+<option>false
+accepted</option>
+<option>threw 401
+threw 401</option>
+<option>false
+threw 500</option>
+<explain><p><code>verifyAccessToken</code> returns <code>{ valid: false }</code>; the service's <code>auth.verifyToken</code> throws an error with status 401, and also checks that the session is alive. Know which one you call.</p></explain>
+</question>
+
+<question id="code-au-own-tasks" type="code" file="own-tasks.js">
+<q><p>Finish the two task handlers. <code>listTasks(user)</code> returns only the tasks whose <code>ownerId</code> is <code>user.sub</code>. <code>createTask(user, body)</code> adds a task with the next id, the trimmed <code>body.title</code>, and <code>ownerId</code> taken from <code>user.sub</code>, ignoring any <code>ownerId</code> in the body. <code>user</code> is the verified token payload.</p></q>
+<starter>
+const tasks = [{ id: 1, ownerId: "u-linus", title: "Fix the bike" }];
+
+function listTasks(user) {
+  // your code here
+}
+
+function createTask(user, body) {
+  // your code here
+}
+
+const ada = { sub: "u-ada", roles: ["user"] };
+console.log(createTask(ada, { title: " Buy milk ", ownerId: "u-linus" }));
+console.log(listTasks(ada));
+console.log(listTasks({ sub: "u-linus", roles: ["user"] }).length);
+</starter>
+<solution>
+const tasks = [{ id: 1, ownerId: "u-linus", title: "Fix the bike" }];
+
+function listTasks(user) {
+  return tasks.filter((task) => task.ownerId === user.sub);
+}
+
+function createTask(user, body) {
+  const task = { id: tasks.length + 1, ownerId: user.sub, title: body.title.trim() };
+  tasks.push(task);
+  return task;
+}
+
+const ada = { sub: "u-ada", roles: ["user"] };
+console.log(createTask(ada, { title: " Buy milk ", ownerId: "u-linus" }));
+console.log(listTasks(ada));
+console.log(listTasks({ sub: "u-linus", roles: ["user"] }).length);
+</solution>
+<expected>
+{ id: 2, ownerId: 'u-ada', title: 'Buy milk' }
+[ { id: 2, ownerId: 'u-ada', title: 'Buy milk' } ]
+1
+</expected>
+<explain><p>Ownership comes from the verified token (<code>user.sub</code>), never from the body. Filtering by owner means each user sees only their own tasks, and Ada's attempt to give her task to Linus is ignored.</p></explain>
+</question>

@@ -1,0 +1,891 @@
+<question id="oa-why" type="choice">
+<q>With "Sign in with Google", what does your server learn about the user's Google password?</q>
+<option>It receives the password once and hashes it</option>
+<option>It receives an encrypted copy of the password</option>
+<option correct>Nothing: Google checks the password on its own page and only tells your server who the user is</option>
+<option>It receives the password hash from Google</option>
+<explain><p>The whole point of OAuth sign-in is that someone else checks the password. Your server never sees it.</p></explain>
+</question>
+
+<question id="oa-server-to-server" type="choice">
+<q>In the authorization code flow, which part travels through the user's browser?</q>
+<option>The client secret</option>
+<option>The access token</option>
+<option correct>The short-lived code, in the callback URL's query string</option>
+<option>The user's profile</option>
+<explain><p>Only the code comes back through the browser (step 4). Your server then trades it, with its client secret, directly with Google (steps 5 and 6), so the token and the secret never pass through the browser.</p></explain>
+</question>
+
+<question id="oa-flow-order" type="choice">
+<q>Which order of steps is right?</q>
+<option>Exchange the code → redirect to Google → fetch the profile → user approves</option>
+<option correct>Redirect to Google → user signs in and approves → Google redirects back with a code → exchange the code for a token → fetch the profile and start your own session</option>
+<option>Fetch the profile → redirect to Google → exchange the code → user approves</option>
+<option>User approves → fetch the profile → redirect to Google → exchange the code</option>
+<explain><p>Your server starts by redirecting to Google, gets a code back after the user approves, trades it for a token server to server, then reads the profile and creates its own session.</p></explain>
+</question>
+
+<question id="oa-client-id-secret" type="choice">
+<q>Your app gets a <strong>client id</strong> and a <strong>client secret</strong> from Google. Which is which?</q>
+<option>Both are secret and live in <code>.env</code> only</option>
+<option correct>The client id is public (it is in the step 1 URL); the client secret proves requests come from your server and lives in <code>.env</code> only</option>
+<option>The client id is secret; the client secret goes in the URL</option>
+<option>Both are public</option>
+<explain><p>The client id appears in the browser's address bar, so it cannot be secret. The client secret is like the JWT secrets: environment only, never in code or git.</p></explain>
+</question>
+
+<question id="oa-presets" type="output">
+<q>What does this print?</q>
+<code file="presets.js" browser="no">
+import { PROVIDER_PRESETS } from "@zudojs/auth-oauth";
+
+console.log(PROVIDER_PRESETS.google.defaultScopes.join(" "));
+console.log(PROVIDER_PRESETS.github.supportsRefresh, PROVIDER_PRESETS.discord.clientAuth, PROVIDER_PRESETS.apple.userInfoUrl);
+</code>
+<option correct>openid email profile
+false basic undefined</option>
+<option>openid email profile
+true body https://appleid.apple.com/userinfo</option>
+<option>email
+false body undefined</option>
+<option>openid email profile
+false basic https://appleid.apple.com/auth/userinfo</option>
+<explain><p>Google's default scopes ask for who you are, your email and your name. GitHub gives no refresh tokens, Discord wants the client secret in an HTTP Basic header, and Apple has no profile endpoint at all.</p></explain>
+</question>
+
+<question id="oa-scopes" type="choice">
+<q>How many scopes should your app ask for?</q>
+<option>All the provider offers, in case you need them later</option>
+<option correct>As few as you need</option>
+<option>Exactly three</option>
+<option>None: scopes are optional and ignored</option>
+<explain><p>Scopes are what you ask the user to allow. Asking for less means users trust you more, and a leaked token can do less.</p></explain>
+</question>
+
+<question id="oa-secret-in-url" type="choice">
+<q>How must the client secret travel in step 5?</q>
+<option>In the query string of the token URL</option>
+<option correct>As a form field in the request body, or in an HTTP Basic <code>Authorization</code> header, never in a URL</option>
+<option>In the authorization URL of step 1</option>
+<option>In a cookie set on the user's browser</option>
+<explain><p>URLs end up in logs and browser history. The preset's <code>clientAuth</code> says whether the secret goes in the body or a Basic header.</p></explain>
+</question>
+
+<question id="oa-empty-client-id" type="output">
+<q>The environment variables are not set, so the config has empty strings. What does this print?</q>
+<code file="empty-config.js" browser="no">
+import { createAuthorizationUrl, generateState } from "@zudojs/auth-oauth";
+
+const CALLBACK_URL = "http://localhost:3000/auth/google/callback";
+try {
+  createAuthorizationUrl(
+    { provider: "google", clientId: "", clientSecret: "", allowedRedirectUris: [CALLBACK_URL] },
+    { state: generateState(), redirectUri: CALLBACK_URL },
+  );
+  console.log("url created");
+} catch (error) {
+  console.log(error.name, error.statusCode);
+}
+</code>
+<option correct>OAuthConfigurationError 500</option>
+<option>url created</option>
+<option>OAuthConfigurationError 400</option>
+<option>TypeError undefined</option>
+<explain><p>The package refuses an empty client id or secret, even for step 1. It is a server configuration error, so the status is 500 and the message is hidden from clients.</p></explain>
+</question>
+
+<question id="code-oa-require-env" type="code" file="require-env.js">
+<q><p>Finish <code>googleConfig(env)</code>. Read <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> from <code>env</code>. If one is missing or empty, throw <code>new Error(`${name} is not set. Add it to your .env file.`)</code> for the first missing one. Otherwise return <code>{ provider: "google", clientId, clientSecret, allowedRedirectUris: [CALLBACK_URL] }</code>.</p></q>
+<starter>
+const CALLBACK_URL = "http://localhost:3000/auth/google/callback";
+
+function googleConfig(env) {
+  // your code here
+}
+
+try {
+  googleConfig({ GOOGLE_CLIENT_ID: "task-api.apps.googleusercontent.com", GOOGLE_CLIENT_SECRET: "" });
+} catch (error) {
+  console.log(error.message);
+}
+const config = googleConfig({ GOOGLE_CLIENT_ID: "task-api.apps.googleusercontent.com", GOOGLE_CLIENT_SECRET: "s3cr3t-from-env" });
+console.log(config.provider, config.clientId, config.allowedRedirectUris);
+</starter>
+<solution>
+const CALLBACK_URL = "http://localhost:3000/auth/google/callback";
+
+function googleConfig(env) {
+  const need = (name) => {
+    const value = env[name];
+    if (!value) throw new Error(`${name} is not set. Add it to your .env file.`);
+    return value;
+  };
+  return {
+    provider: "google",
+    clientId: need("GOOGLE_CLIENT_ID"),
+    clientSecret: need("GOOGLE_CLIENT_SECRET"),
+    allowedRedirectUris: [CALLBACK_URL],
+  };
+}
+
+try {
+  googleConfig({ GOOGLE_CLIENT_ID: "task-api.apps.googleusercontent.com", GOOGLE_CLIENT_SECRET: "" });
+} catch (error) {
+  console.log(error.message);
+}
+const config = googleConfig({ GOOGLE_CLIENT_ID: "task-api.apps.googleusercontent.com", GOOGLE_CLIENT_SECRET: "s3cr3t-from-env" });
+console.log(config.provider, config.clientId, config.allowedRedirectUris);
+</solution>
+<expected>
+GOOGLE_CLIENT_SECRET is not set. Add it to your .env file.
+google task-api.apps.googleusercontent.com [ 'http://localhost:3000/auth/google/callback' ]
+</expected>
+<explain><p>Build the config in one place and fail loudly at start-up when a value is missing. The message names the variable, never a value. Note the program never prints the secret.</p></explain>
+</question>
+
+<question id="oa-redirect-allow" type="output">
+<q>What does this print?</q>
+<code file="redirect-allow.js" browser="no">
+import { createAuthorizationUrl, generateState } from "@zudojs/auth-oauth";
+
+const CALLBACK_URL = "http://localhost:3000/auth/google/callback";
+const config = {
+  provider: "google",
+  clientId: "task-api-demo",
+  clientSecret: "a-secret-from-the-environment",
+  allowedRedirectUris: [CALLBACK_URL],
+};
+for (const redirectUri of [CALLBACK_URL, "https://evil.example/steal", CALLBACK_URL + "/"]) {
+  try {
+    createAuthorizationUrl(config, { state: generateState(), redirectUri });
+    console.log("allowed");
+  } catch (error) {
+    console.log(error.statusCode, error.code);
+  }
+}
+</code>
+<option correct>allowed
+400 OAUTH_REDIRECT_URI_NOT_ALLOWED
+400 OAUTH_REDIRECT_URI_NOT_ALLOWED</option>
+<option>allowed
+400 OAUTH_REDIRECT_URI_NOT_ALLOWED
+allowed</option>
+<option>allowed
+allowed
+allowed</option>
+<option>allowed
+500 OAUTH_REDIRECT_URI_NOT_ALLOWED
+allowed</option>
+<explain><p><code>allowedRedirectUris</code> is an exact allow-list. Even an extra <code>/</code> is refused. Otherwise an attacker could make your server send users, and their codes, somewhere else.</p></explain>
+</question>
+
+<question id="code-oa-redirect" type="code" file="redirect-check.js">
+<q><p>Finish <code>checkRedirect(allowed, redirectUri)</code>. Return <code>redirectUri</code> only if it is <strong>exactly</strong> one of the <code>allowed</code> strings. Otherwise throw <code>new Error("redirectUri is not allowed")</code>. No prefix matching.</p></q>
+<starter>
+const ALLOWED = ["http://localhost:3000/auth/google/callback"];
+
+function checkRedirect(allowed, redirectUri) {
+  // your code here
+}
+
+for (const uri of [
+  "http://localhost:3000/auth/google/callback",
+  "http://localhost:3000/auth/google/callback.evil.example",
+  "http://localhost:3000/auth/google/callback?next=https://evil.example",
+]) {
+  try {
+    console.log("ok", checkRedirect(ALLOWED, uri));
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</starter>
+<solution>
+const ALLOWED = ["http://localhost:3000/auth/google/callback"];
+
+function checkRedirect(allowed, redirectUri) {
+  if (!allowed.includes(redirectUri)) {
+    throw new Error("redirectUri is not allowed");
+  }
+  return redirectUri;
+}
+
+for (const uri of [
+  "http://localhost:3000/auth/google/callback",
+  "http://localhost:3000/auth/google/callback.evil.example",
+  "http://localhost:3000/auth/google/callback?next=https://evil.example",
+]) {
+  try {
+    console.log("ok", checkRedirect(ALLOWED, uri));
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</solution>
+<expected>
+ok http://localhost:3000/auth/google/callback
+redirectUri is not allowed
+redirectUri is not allowed
+</expected>
+<explain><p>A check like <code>startsWith</code> would let the other two through. Exact matching with <code>includes</code> on the list is simple and safe.</p></explain>
+</question>
+
+<question id="oa-auth-url" type="output">
+<q>What does this print?</q>
+<code file="auth-url.js" browser="no">
+import { createAuthorizationUrl, generateState } from "@zudojs/auth-oauth";
+
+const CALLBACK_URL = "http://localhost:3000/auth/google/callback";
+const secret = "a-secret-from-the-environment";
+const config = { provider: "google", clientId: "task-api-demo", clientSecret: secret, allowedRedirectUris: [CALLBACK_URL] };
+const start = createAuthorizationUrl(config, { state: generateState(), redirectUri: CALLBACK_URL });
+const params = new URL(start.url).searchParams;
+console.log(new URL(start.url).host, params.get("response_type"), params.get("code_challenge_method"));
+console.log(start.url.includes(secret), start.url.includes(start.codeVerifier), start.url.includes(start.state));
+</code>
+<option correct>accounts.google.com code S256
+false false true</option>
+<option>accounts.google.com code S256
+false true true</option>
+<option>accounts.google.com token plain
+false false true</option>
+<option>accounts.google.com code S256
+true false true</option>
+<explain><p>The browser sees this URL, so everything in it is public. It carries the <code>state</code> and the PKCE <strong>challenge</strong>, but never the client secret or the code <strong>verifier</strong>, which you keep on the server until step 5.</p></explain>
+</question>
+
+<question id="code-oa-build-url" type="code" file="build-url.js">
+<q><p>Finish <code>authorizationUrl(base, clientId, redirectUri, state, challenge)</code>. Use <code>URL</code> and <code>searchParams.set</code> to add <code>response_type=code</code>, <code>client_id</code>, <code>redirect_uri</code>, <code>scope=openid email</code>, <code>state</code>, <code>code_challenge</code> and <code>code_challenge_method=S256</code>, in that order. Return the URL as a string. No secret goes into it.</p></q>
+<starter>
+function authorizationUrl(base, clientId, redirectUri, state, challenge) {
+  // your code here
+}
+
+console.log(authorizationUrl(
+  "https://accounts.google.com/o/oauth2/v2/auth",
+  "task-api",
+  "http://localhost:3000/cb",
+  "st4te",
+  "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+));
+</starter>
+<solution>
+function authorizationUrl(base, clientId, redirectUri, state, challenge) {
+  const url = new URL(base);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("client_id", clientId);
+  url.searchParams.set("redirect_uri", redirectUri);
+  url.searchParams.set("scope", "openid email");
+  url.searchParams.set("state", state);
+  url.searchParams.set("code_challenge", challenge);
+  url.searchParams.set("code_challenge_method", "S256");
+  return url.toString();
+}
+
+console.log(authorizationUrl(
+  "https://accounts.google.com/o/oauth2/v2/auth",
+  "task-api",
+  "http://localhost:3000/cb",
+  "st4te",
+  "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+));
+</solution>
+<expected>
+https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=task-api&redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Fcb&scope=openid+email&state=st4te&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256
+</expected>
+<explain><p><code>searchParams.set</code> encodes each value for you (<code>:</code> and <code>/</code> become <code>%3A</code> and <code>%2F</code>, a space becomes <code>+</code>). Never glue URLs together by hand.</p></explain>
+</question>
+
+<question id="oa-login-csrf" type="choice">
+<q>What attack does the <code>state</code> value stop?</q>
+<option>Stealing the client secret</option>
+<option correct>Login CSRF: an attacker sends you a callback link with <em>their</em> code, and you end up logged in to the attacker's account</option>
+<option>Guessing the user's Google password</option>
+<option>Reading the JWT payload</option>
+<explain><p>Your callback URL is public. Without state, anything you then save (tasks, files) would go into the attacker's account, where they can read it. State proves the callback belongs to a login this browser started.</p></explain>
+</question>
+
+<question id="oa-state-where" type="choice">
+<q>Where should the server keep the <code>state</code> until the callback?</q>
+<option>In a plain cookie with the state value, compared with <code>===</code> to the query string</option>
+<option correct>On the server, under a random login id; the browser gets only that id, in an <code>HttpOnly</code> cookie</option>
+<option>In the URL of the callback</option>
+<option>Nowhere: Google checks it</option>
+<explain><p>If both the cookie and the query string come from the browser, an attacker controls both. Keeping the state on the server, and giving the browser only a random id, means the attacker cannot supply a matching pair.</p></explain>
+</question>
+
+<question id="oa-verify-state" type="output">
+<q>What does this print?</q>
+<code file="verify-state.js" browser="no">
+import { verifyState } from "@zudojs/auth-oauth";
+
+const saved = "GN0lrhektq-3AHYlpviVIs4koaN7HFrelwr9ewQNlRE";
+console.log(verifyState(saved, saved));
+console.log(verifyState(saved, "GN0lrhektq-3AHYlpviVIs4koaN7HFrelwr9ewQNlRF"));
+console.log(verifyState("", ""), verifyState(saved, undefined));
+</code>
+<option correct>true
+false
+false false</option>
+<option>true
+false
+true false</option>
+<option>true
+true
+false false</option>
+<option>true
+OAuthStateMismatchError
+false false</option>
+<explain><p><code>verifyState</code> returns <code>false</code> for any difference, and also for an empty or missing value, so two empty strings never "match". It does not throw: you throw <code>OAuthStateMismatchError</code> yourself.</p></explain>
+</question>
+
+<question id="oa-constant-time" type="choice">
+<q>Why does <code>verifyState</code> compare in <strong>constant time</strong> instead of using <code>===</code>?</q>
+<option>It is faster than <code>===</code></option>
+<option correct>So an attacker cannot guess the state one character at a time by measuring how long the comparison takes</option>
+<option>Because <code>===</code> does not work on long strings</option>
+<option>To support Unicode</option>
+<explain><p><code>===</code> can stop at the first different character, so a closer guess takes a tiny bit longer. A constant-time comparison always does the same work.</p></explain>
+</question>
+
+<question id="code-oa-safe-equal" type="code" file="safe-equal.js">
+<q><p>Finish <code>safeEqual(a, b)</code>, a constant-time string comparison. Return <code>false</code> if either is not a non-empty string, or if the lengths differ. Otherwise go through <strong>every</strong> character, combine the differences with <code>diff |= a.charCodeAt(i) ^ b.charCodeAt(i)</code>, and return <code>diff === 0</code>. Do not stop early.</p></q>
+<starter>
+function safeEqual(a, b) {
+  // your code here
+}
+
+console.log(safeEqual("abc123", "abc123"), safeEqual("abc123", "abc124"));
+console.log(safeEqual("", ""), safeEqual("abc", undefined), safeEqual("abc", "abcd"));
+</starter>
+<solution>
+function safeEqual(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || a === "" || b === "") return false;
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+console.log(safeEqual("abc123", "abc123"), safeEqual("abc123", "abc124"));
+console.log(safeEqual("", ""), safeEqual("abc", undefined), safeEqual("abc", "abcd"));
+</solution>
+<expected>
+true false
+false false false
+</expected>
+<explain><p><code>^</code> (XOR) is 0 only for equal characters; <code>|=</code> keeps any difference. Because the loop never stops early, the time does not depend on where the first difference is. Empty values never match.</p></explain>
+</question>
+
+<question id="code-oa-take-login" type="code" file="take-login.js">
+<q><p>Finish <code>takeVerifiedLogin(loginId, receivedState, now)</code>. Look up the pending login, and <strong>delete it before checking</strong>, so a callback can never be used twice. Throw <code>new Error("OAuth state verification failed.")</code> if there is no login, it has expired (<code>expiresAt &lt; now</code>), or the state does not match. Otherwise return its <code>codeVerifier</code>. (A real app compares with <code>verifyState</code>; <code>===</code> keeps this exercise short.)</p></q>
+<starter>
+const pending = new Map([
+  ["login-1", { state: "s-1111", codeVerifier: "verifier-1", expiresAt: 1000 }],
+  ["login-2", { state: "s-2222", codeVerifier: "verifier-2", expiresAt: 1000 }],
+  ["login-3", { state: "s-3333", codeVerifier: "verifier-3", expiresAt: 500 }],
+]);
+
+function takeVerifiedLogin(loginId, receivedState, now) {
+  // your code here
+}
+
+const tries = [
+  ["login-1", "s-1111"], ["login-1", "s-1111"], ["login-2", "forged"],
+  ["login-2", "s-2222"], ["login-3", "s-3333"], [undefined, "s-1111"],
+];
+for (const [loginId, state] of tries) {
+  try {
+    console.log("ok", takeVerifiedLogin(loginId, state, 800));
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</starter>
+<solution>
+const pending = new Map([
+  ["login-1", { state: "s-1111", codeVerifier: "verifier-1", expiresAt: 1000 }],
+  ["login-2", { state: "s-2222", codeVerifier: "verifier-2", expiresAt: 1000 }],
+  ["login-3", { state: "s-3333", codeVerifier: "verifier-3", expiresAt: 500 }],
+]);
+
+function takeVerifiedLogin(loginId, receivedState, now) {
+  const login = loginId === undefined ? undefined : pending.get(loginId);
+  if (loginId !== undefined) pending.delete(loginId);
+  if (login === undefined || login.expiresAt < now || login.state !== receivedState) {
+    throw new Error("OAuth state verification failed.");
+  }
+  return login.codeVerifier;
+}
+
+const tries = [
+  ["login-1", "s-1111"], ["login-1", "s-1111"], ["login-2", "forged"],
+  ["login-2", "s-2222"], ["login-3", "s-3333"], [undefined, "s-1111"],
+];
+for (const [loginId, state] of tries) {
+  try {
+    console.log("ok", takeVerifiedLogin(loginId, state, 800));
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</solution>
+<expected>
+ok verifier-1
+OAuth state verification failed.
+OAuth state verification failed.
+OAuth state verification failed.
+OAuth state verification failed.
+OAuth state verification failed.
+</expected>
+<explain><p>Deleting first means a replayed callback finds nothing, and so does a second try after a forged state (login-2). Every failure gives the same message, so an attacker learns nothing about which check failed.</p></explain>
+</question>
+
+<question id="oa-pkce-why" type="choice">
+<q>What does PKCE protect against?</q>
+<option>A stolen client secret</option>
+<option correct>A stolen code: the code travels through the browser and can leak (history, proxy logs, extensions), but without the verifier it is useless</option>
+<option>A weak user password</option>
+<option>An expired access token</option>
+<explain><p>The server keeps a random <strong>verifier</strong> and sends only its hash, the <strong>challenge</strong>. In step 5 it sends the verifier; a thief with only the code cannot.</p></explain>
+</question>
+
+<question id="oa-pkce-rfc" type="output">
+<q>RFC 7636 gives an example verifier. What does this print?</q>
+<code file="pkce.js" browser="no">
+import { createHash } from "node:crypto";
+import { deriveCodeChallenge, generateCodeVerifier } from "@zudojs/auth-oauth";
+
+const verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+console.log(deriveCodeChallenge(verifier) === createHash("sha256").update(verifier).digest("base64url"));
+console.log(deriveCodeChallenge(verifier));
+console.log(generateCodeVerifier().length, deriveCodeChallenge(generateCodeVerifier()) === deriveCodeChallenge(generateCodeVerifier()));
+</code>
+<option correct>true
+E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
+64 false</option>
+<option>true
+dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+64 false</option>
+<option>false
+E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
+64 true</option>
+<option>true
+E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
+43 true</option>
+<explain><p>The challenge is <code>base64url(SHA-256(verifier))</code>, matching the RFC's example. A generated verifier is 64 random characters, and two verifiers never give the same challenge.</p></explain>
+</question>
+
+<question id="code-oa-challenge" type="code" file="challenge.js">
+<q><p>Compute a PKCE challenge in the browser. Finish <code>challenge(verifier)</code>: hash the verifier with <code>crypto.subtle.digest("SHA-256", …)</code>, turn the bytes into base64 with <code>btoa</code>, then make it base64url (<code>+</code> → <code>-</code>, <code>/</code> → <code>_</code>, remove <code>=</code>). The RFC 7636 example must print <code>E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM</code>.</p></q>
+<starter>
+async function challenge(verifier) {
+  // your code here
+}
+
+console.log(await challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"));
+</starter>
+<solution>
+async function challenge(verifier) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  const binary = String.fromCharCode(...new Uint8Array(digest));
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+console.log(await challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"));
+</solution>
+<expected>
+E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM
+</expected>
+<explain><p><code>crypto.subtle.digest</code> returns bytes; <code>String.fromCharCode</code> and <code>btoa</code> turn them into base64, and three replaces make it URL-safe. Only this hash goes into the URL, never the verifier.</p></explain>
+</question>
+
+<question id="oa-plain-method" type="choice">
+<q>PKCE has an older <code>plain</code> method. Why does the package only implement <code>S256</code>?</q>
+<option>Because <code>plain</code> is slower</option>
+<option correct><code>plain</code> sends the verifier itself in the URL, so a thief who sees the URL has it; that protects nothing</option>
+<option>Because Google does not support PKCE</option>
+<option><code>plain</code> needs the client secret in the URL</option>
+<explain><p>With <code>S256</code> the URL only carries a hash of the verifier, which cannot be turned back into the verifier.</p></explain>
+</question>
+
+<question id="oa-verifier-short" type="output">
+<q>What does this print?</q>
+<code file="verifier-check.js" browser="no">
+import { assertValidCodeVerifier, OAuthError } from "@zudojs/auth-oauth";
+
+for (const verifier of ["too-short", "a".repeat(43)]) {
+  try {
+    assertValidCodeVerifier(verifier);
+    console.log("valid");
+  } catch (error) {
+    if (error instanceof OAuthError) console.log(error.code);
+  }
+}
+</code>
+<option correct>OAUTH_PKCE_INVALID
+valid</option>
+<option>valid
+valid</option>
+<option>OAUTH_PKCE_INVALID
+OAUTH_PKCE_INVALID</option>
+<option>OAUTH_STATE_MISMATCH
+valid</option>
+<explain><p>A verifier must be 43 to 128 characters from the unreserved alphabet (letters, digits, <code>-</code>, <code>.</code>, <code>_</code>, <code>~</code>). <code>"too-short"</code> is 9 characters.</p></explain>
+</question>
+
+<question id="oa-exchange-error" type="output">
+<q>A fake token endpoint refuses the code. What does this print?</q>
+<code file="exchange-error.js" browser="no">
+import { createAuthorizationUrl, exchangeCodeForToken, generateState, OAuthProviderError } from "@zudojs/auth-oauth";
+
+const CALLBACK_URL = "http://localhost:3000/auth/google/callback";
+const secret = "a-secret-from-the-environment";
+const fakeGoogle = async () =>
+  Response.json({ error: "invalid_grant", error_description: `wrong code, secret was ${secret}` }, { status: 400 });
+const config = { provider: "google", clientId: "task-api-demo", clientSecret: secret, allowedRedirectUris: [CALLBACK_URL], fetch: fakeGoogle };
+const start = createAuthorizationUrl(config, { state: generateState(), redirectUri: CALLBACK_URL });
+try {
+  await exchangeCodeForToken(config, { code: "stolen-code", codeVerifier: start.codeVerifier, redirectUri: CALLBACK_URL });
+} catch (error) {
+  if (error instanceof OAuthProviderError) {
+    console.log(error.statusCode, error.providerError, error.message.includes(secret));
+  }
+}
+</code>
+<option correct>502 invalid_grant false</option>
+<option>400 invalid_grant false</option>
+<option>502 invalid_grant true</option>
+<option>401 wrong code false</option>
+<explain><p>Provider errors are <code>OAuthProviderError</code> with status <strong>502</strong> (Bad Gateway: a service behind you failed). The message keeps only the short OAuth error code, never the provider's free text, which here even contained the secret.</p></explain>
+</question>
+
+<question id="oa-exchange-ok" type="output">
+<q>A fake provider answers the token and profile requests. What does this print?</q>
+<code file="exchange-ok.js" browser="no">
+import { createAuthorizationUrl, exchangeCodeForToken, fetchUserInfo, generateState } from "@zudojs/auth-oauth";
+
+const CALLBACK_URL = "http://localhost:3000/auth/google/callback";
+const fakeGoogle = async (url) =>
+  url.includes("token")
+    ? Response.json({ access_token: "google-token", token_type: "Bearer", expires_in: 3599 })
+    : Response.json({ sub: "1076915", email: "ada@example.com", email_verified: true, name: "Ada Lovelace" });
+const config = { provider: "google", clientId: "task-api-demo", clientSecret: "a-secret-from-the-environment", allowedRedirectUris: [CALLBACK_URL], fetch: fakeGoogle };
+const start = createAuthorizationUrl(config, { state: generateState(), redirectUri: CALLBACK_URL });
+const tokens = await exchangeCodeForToken(config, { code: "the-code", codeVerifier: start.codeVerifier, redirectUri: CALLBACK_URL });
+const profile = await fetchUserInfo(config, tokens.accessToken);
+console.log(tokens.tokenType, tokens.expiresIn);
+console.log(profile.providerId, profile.email, profile.emailVerified, profile.name);
+</code>
+<option correct>Bearer 3599
+1076915 ada@example.com true Ada Lovelace</option>
+<option>Bearer 3599
+undefined ada@example.com true Ada Lovelace</option>
+<option>bearer 3599
+1076915 ada@example.com undefined Ada Lovelace</option>
+<option>Bearer 3599
+1076915 ada@example.com true undefined</option>
+<explain><p><code>fetchUserInfo</code> turns each provider's own profile format into one shape: <code>providerId</code> (Google's <code>sub</code>), <code>email</code>, <code>emailVerified</code>, <code>name</code> and <code>avatarUrl</code>.</p></explain>
+</question>
+
+<question id="oa-account-key" type="choice">
+<q>After step 6, how should you find the user's local account?</q>
+<option>By email, because emails are unique</option>
+<option correct>By <code>provider:providerId</code>, such as <code>google:1076915</code></option>
+<option>By name</option>
+<option>By the Google access token</option>
+<explain><p>Emails change, and an unverified email proves nothing. The provider's id for the user never changes and is unique within that provider.</p></explain>
+</question>
+
+<question id="code-oa-find-or-create" type="code" file="find-or-create.js">
+<q><p>Finish <code>findOrCreateAccount(provider, profile)</code>. Key accounts by <code>`${provider}:${profile.providerId}`</code>. Return the existing account if there is one. Otherwise create <code>{ id: `u-${accounts.size + 1}`, email, roles: ["user"] }</code>, where <code>email</code> is the profile's email only when <code>emailVerified === true</code>, else <code>""</code>. Store and return it.</p></q>
+<starter>
+const accounts = new Map();
+
+function findOrCreateAccount(provider, profile) {
+  // your code here
+}
+
+console.log(findOrCreateAccount("google", { providerId: "1076", email: "ada@example.com", emailVerified: true }));
+console.log(findOrCreateAccount("github", { providerId: "1076", email: "ada@example.com", emailVerified: false }));
+console.log(findOrCreateAccount("google", { providerId: "1076", email: "new@example.com", emailVerified: true }).id);
+</starter>
+<solution>
+const accounts = new Map();
+
+function findOrCreateAccount(provider, profile) {
+  const key = `${provider}:${profile.providerId}`;
+  const existing = accounts.get(key);
+  if (existing !== undefined) return existing;
+  const account = {
+    id: `u-${accounts.size + 1}`,
+    email: profile.emailVerified === true && profile.email !== undefined ? profile.email : "",
+    roles: ["user"],
+  };
+  accounts.set(key, account);
+  return account;
+}
+
+console.log(findOrCreateAccount("google", { providerId: "1076", email: "ada@example.com", emailVerified: true }));
+console.log(findOrCreateAccount("github", { providerId: "1076", email: "ada@example.com", emailVerified: false }));
+console.log(findOrCreateAccount("google", { providerId: "1076", email: "new@example.com", emailVerified: true }).id);
+</solution>
+<expected>
+{ id: 'u-1', email: 'ada@example.com', roles: [ 'user' ] }
+{ id: 'u-2', email: '', roles: [ 'user' ] }
+u-1
+</expected>
+<explain><p>The same id at another provider is another person, so the key includes the provider. An unverified email is not stored as the account's email, and the role is always chosen by the server.</p></explain>
+</question>
+
+<question id="oa-link-by-email" type="choice">
+<q>A GitHub login arrives with the email <code>ada@example.com</code>, and Ada already has a password account with that email. What should happen?</q>
+<option>Log the GitHub user in to Ada's account, since the emails match</option>
+<option correct>Do not link them automatically; linking needs a verified email <em>and</em> proof the user owns the existing account, for example by logging in to it first</option>
+<option>Delete Ada's password account and keep the GitHub one</option>
+<option>Answer 500</option>
+<explain><p>Anyone can create a provider account with Ada's address. Linking on a matching email alone would let them log in as Ada: an <strong>account takeover</strong>.</p></explain>
+</question>
+
+<question id="oa-own-session" type="choice">
+<q>The callback has the Google access token. What should it send the client?</q>
+<option>The Google access token, so the client can call your API with it</option>
+<option correct>Your own token from your own session (for example with <code>createTokenPair</code> bound to a new session); the Google token is used once and thrown away</option>
+<option>The Google refresh token</option>
+<option>The client secret, so the client can log in again later</option>
+<explain><p>Google's token is for Google's API. Your API trusts only tokens it issued, tied to its own session, so logout and expiry work exactly like password logins.</p></explain>
+</question>
+
+<question id="oa-cancel" type="choice">
+<q>The user pressed "Cancel" at Google, so the callback has a state but no <code>code</code>. What does the lesson's callback answer?</q>
+<option>500 Internal Server Error</option>
+<option correct>400, "Sign-in was cancelled", after the state check</option>
+<option>200 with an empty user</option>
+<option>A redirect back to Google</option>
+<explain><p>The callback checks the state first, then answers 400 when there is no code. A missing code is a normal user choice, not a server failure.</p></explain>
+</question>
+
+<question id="code-oa-callback-params" type="code" file="callback-params.js">
+<q><p>Finish <code>readCallback(query)</code>. <code>query</code> holds the callback's query values, which may be missing or not strings. Return <code>{ status: 400, error: "Sign-in was cancelled" }</code> when <code>code</code> is not a non-empty string. Otherwise return <code>{ status: 200, code, state }</code>, with <code>state</code> as <code>""</code> when it is not a string.</p></q>
+<starter>
+function readCallback(query) {
+  // your code here
+}
+
+console.log(readCallback({ code: "abc123", state: "s-1" }));
+console.log(readCallback({ state: "s-1", error: "access_denied" }));
+console.log(readCallback({ code: ["a", "b"], state: "s-1" }));
+console.log(readCallback({ code: "abc123" }));
+</starter>
+<solution>
+function readCallback(query) {
+  const code = query.code;
+  if (typeof code !== "string" || code === "") {
+    return { status: 400, error: "Sign-in was cancelled" };
+  }
+  const state = typeof query.state === "string" ? query.state : "";
+  return { status: 200, code, state };
+}
+
+console.log(readCallback({ code: "abc123", state: "s-1" }));
+console.log(readCallback({ state: "s-1", error: "access_denied" }));
+console.log(readCallback({ code: ["a", "b"], state: "s-1" }));
+console.log(readCallback({ code: "abc123" }));
+</solution>
+<expected>
+{ status: 200, code: 'abc123', state: 's-1' }
+{ status: 400, error: 'Sign-in was cancelled' }
+{ status: 400, error: 'Sign-in was cancelled' }
+{ status: 200, code: 'abc123', state: '' }
+</expected>
+<explain><p>A query value can be missing or repeated (an array), so check the type before using it. An empty state then simply fails the state check, which runs before anything reaches Google.</p></explain>
+</question>
+
+<question id="oa-cookie-lax" type="choice">
+<q>The <code>oauth_login</code> cookie is <code>SameSite=Lax</code>. Is it sent when Google redirects the browser back to your callback?</q>
+<option>No, because the request comes from another site</option>
+<option correct>Yes: a redirect back is a normal top-level GET navigation, which Lax cookies follow</option>
+<option>Only if the user clicks a button</option>
+<option>Only over HTTP</option>
+<explain><p><code>SameSite=Lax</code> blocks cross-site form posts but allows top-level GET navigations. That is why Apple's POST-form callback (<code>form_post</code>) does not carry it.</p></explain>
+</question>
+
+<question id="oa-https" type="output">
+<q>What does this print?</q>
+<code file="https-only.js" browser="no">
+import { createAuthorizationUrl, generateState } from "@zudojs/auth-oauth";
+
+for (const callback of ["http://localhost:3000/cb", "http://tasks.example.com/cb", "https://tasks.example.com/cb"]) {
+  const config = { provider: "google", clientId: "task-api", clientSecret: "a-secret-from-the-environment", allowedRedirectUris: [callback] };
+  try {
+    createAuthorizationUrl(config, { state: generateState(), redirectUri: callback });
+    console.log("ok");
+  } catch (error) {
+    console.log(error.name);
+  }
+}
+</code>
+<option correct>ok
+OAuthEndpointNotAllowedError
+ok</option>
+<option>ok
+ok
+ok</option>
+<option>OAuthEndpointNotAllowedError
+OAuthEndpointNotAllowedError
+ok</option>
+<option>ok
+OAuthRedirectUriError
+OAuthRedirectUriError</option>
+<explain><p>The package allows <code>http</code> only for <code>localhost</code>, <code>127.0.0.1</code> and <code>[::1]</code>. A real callback must use <code>https://</code>, or the code could be read on the network.</p></explain>
+</question>
+
+<question id="oa-shared-store" type="choice">
+<q>You run three servers behind a load balancer and keep pending logins in a <code>Map</code>. What goes wrong?</q>
+<option>Nothing</option>
+<option correct>The callback may reach a different server than the start, which has no record of the login, so it fails the state check</option>
+<option>Users are logged in three times</option>
+<option>The Map is shared automatically</option>
+<explain><p>A <code>Map</code> lives in one process. Keep pending logins in a shared store, such as your database or Redis.</p></explain>
+</question>
+
+<question id="oa-providers-differ" type="output">
+<q>What does this print?</q>
+<code file="providers-differ.js" browser="no">
+import { fetchUserInfo, OAuthError, refreshAccessToken } from "@zudojs/auth-oauth";
+
+const base = { clientId: "task-api", clientSecret: "a-secret-from-the-environment", allowedRedirectUris: ["http://localhost:3000/cb"] };
+const attempts = [
+  () => refreshAccessToken({ ...base, provider: "github" }, "stored-refresh-token"),
+  () => fetchUserInfo({ ...base, provider: "apple" }, "access-token"),
+  () => refreshAccessToken({ ...base, provider: "google", tokenUrl: "https://169.254.169.254/latest/meta-data" }, "stored-refresh-token"),
+];
+for (const attempt of attempts) {
+  try {
+    await attempt();
+  } catch (error) {
+    if (error instanceof OAuthError) console.log(error.name);
+  }
+}
+</code>
+<option correct>OAuthConfigurationError
+OAuthConfigurationError
+OAuthEndpointNotAllowedError</option>
+<option>OAuthProviderError
+OAuthProviderError
+OAuthNetworkError</option>
+<option>OAuthConfigurationError
+OAuthProviderError
+OAuthEndpointNotAllowedError</option>
+<option>OAuthConfigurationError
+OAuthConfigurationError
+OAuthProviderError</option>
+<explain><p>These fail before any request is made. GitHub issues no refresh tokens, Apple has no profile endpoint, and a token URL pointing at a private or cloud-metadata address is refused.</p></explain>
+</question>
+
+<question id="oa-ssrf" type="choice">
+<q>Why does the package refuse a <code>tokenUrl</code> such as <code>https://169.254.169.254/latest/meta-data</code>?</q>
+<option>Because the address is too long</option>
+<option correct>Your server fetches that URL itself; a private or cloud-metadata address could make it read internal secrets (SSRF)</option>
+<option>Because Google uses a different address</option>
+<option>Because IP addresses are never allowed in URLs</option>
+<explain><p>Server-side request forgery (SSRF) tricks a server into calling addresses only it can reach. <code>169.254.169.254</code> is where cloud machines keep their credentials.</p></explain>
+</question>
+
+<question id="oa-github-profile" type="output">
+<q>A GitHub profile has no public email. What does this print?</q>
+<code file="github-profile.js" browser="no">
+import { normalizeUserInfo } from "@zudojs/auth-oauth";
+
+const profile = normalizeUserInfo("github", { id: 583231, login: "octocat" });
+console.log(profile.providerId, typeof profile.providerId, profile.name, profile.email);
+</code>
+<option correct>583231 string octocat undefined</option>
+<option>583231 number octocat undefined</option>
+<option>583231 string octocat octocat@users.noreply.github.com</option>
+<option>583231 string undefined undefined</option>
+<explain><p>The id becomes a string, and GitHub's <code>login</code> is used as the name. The package never makes up an email, so your code must handle an account without one.</p></explain>
+</question>
+
+<question id="oa-apple-id-token" type="choice">
+<q>Apple has no profile endpoint; the profile is inside the <code>idToken</code> from the token exchange. What must you do before trusting it?</q>
+<option>Nothing: it came from Apple, so it is safe</option>
+<option correct>Verify the token's signature yourself, because this package does not check it</option>
+<option>Base64-decode it; that proves it is real</option>
+<option>Send it to the browser to check</option>
+<explain><p>Decoding a token is not verifying it: anyone can make a token with any payload. Only a checked signature proves Apple issued it.</p></explain>
+</question>
+
+<question id="oa-practice-bugs" type="choice">
+<q>A callback handler takes <code>codeVerifier</code> from <code>ctx.query.verifier</code>. What is wrong with that?</q>
+<option>Nothing, as long as it is a string</option>
+<option correct>The verifier travelled through the browser next to the code, so a thief who has one has both; the verifier must stay on the server</option>
+<option>The verifier should be in the request body instead</option>
+<option>The verifier must be hashed first</option>
+<explain><p>PKCE only helps if the verifier never leaves your server. Store it with the pending login, next to the state, and read it back in the callback.</p></explain>
+</question>
+
+<question id="oa-github-scope" type="output">
+<q>Like the practice's <code>githubConfig()</code>, this asks only for <code>read:user</code>. What does this print?</q>
+<code file="github-config.js" browser="no">
+import { createAuthorizationUrl, generateState } from "@zudojs/auth-oauth";
+
+const GITHUB_CALLBACK = "http://localhost:3000/auth/github/callback";
+const config = {
+  provider: "github",
+  clientId: "demo-github-client-id",
+  clientSecret: "a-secret-from-the-environment",
+  allowedRedirectUris: [GITHUB_CALLBACK],
+  scopes: ["read:user"],
+};
+const { url } = createAuthorizationUrl(config, { state: generateState(), redirectUri: GITHUB_CALLBACK });
+const params = new URL(url).searchParams;
+console.log(new URL(url).host, params.get("scope"), params.get("redirect_uri"));
+</code>
+<option correct>github.com read:user http://localhost:3000/auth/github/callback</option>
+<option>github.com read:user user:email http://localhost:3000/auth/github/callback</option>
+<option>github.com read:user http%3A%2F%2Flocalhost%3A3000%2Fauth%2Fgithub%2Fcallback</option>
+<option>api.github.com read:user http://localhost:3000/auth/github/callback</option>
+<explain><p>Your <code>scopes</code> replace the preset's defaults. <code>searchParams.get</code> returns decoded values, so the redirect URI prints normally. Without <code>user:email</code>, GitHub profiles will usually have no email.</p></explain>
+</question>
+
+<question id="oa-google-extras" type="output">
+<q>What does this print?</q>
+<code file="google-extras.js" browser="no">
+import { createAuthorizationUrl, generateState } from "@zudojs/auth-oauth";
+
+const CALLBACK_URL = "http://localhost:3000/auth/google/callback";
+const config = { provider: "google", clientId: "task-api-demo", clientSecret: "a-secret-from-the-environment", allowedRedirectUris: [CALLBACK_URL] };
+const { url } = createAuthorizationUrl(config, { state: generateState(), redirectUri: CALLBACK_URL });
+const params = new URL(url).searchParams;
+console.log(params.get("access_type"), params.get("prompt"), params.get("scope"));
+console.log(params.has("client_secret"), params.has("code_verifier"));
+</code>
+<option correct>offline consent openid email profile
+false false</option>
+<option>online none openid
+false false</option>
+<option>offline consent openid email profile
+true false</option>
+<option>null null openid email profile
+false true</option>
+<explain><p><code>access_type=offline</code> and <code>prompt=consent</code> come from the Google preset and make Google issue a refresh token. The URL never has a <code>client_secret</code> or a <code>code_verifier</code>.</p></explain>
+</question>
+
+<question id="oa-google-unverified" type="output">
+<q>Google sends a profile whose email is not verified. What does this print?</q>
+<code file="google-unverified.js" browser="no">
+import { normalizeUserInfo } from "@zudojs/auth-oauth";
+
+const profile = normalizeUserInfo("google", { sub: "1076915", email: "ada@example.com", email_verified: false, name: "Ada" });
+const email = profile.emailVerified === true ? profile.email : "";
+console.log(profile.providerId, profile.emailVerified, JSON.stringify(email));
+</code>
+<option correct>1076915 false ""</option>
+<option>1076915 true "ada@example.com"</option>
+<option>1076915 false "ada@example.com"</option>
+<option>undefined false ""</option>
+<explain><p>The package passes on what the provider says: <code>emailVerified</code> is <code>false</code>. Your code then stores no email for this account, because an unverified email proves nothing about who the user is.</p></explain>
+</question>
