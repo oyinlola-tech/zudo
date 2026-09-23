@@ -140,7 +140,7 @@ const START = createToken<string>("StartTime");
 
 const container = createContainer();
 container.registerValue(START, "2026-09-23T09:00:00Z");
-container.registerFactory(CLOCK, (start) => ({ now: () => new Date(String(start)) }), [START]);
+container.registerFactory(CLOCK, (start) => ({ now: () => new Date(start) }), [START]);
 container.registerClass(TaskStore, TaskStore);
 container.registerClass(TaskService, TaskService, { inject: [TaskStore, CLOCK] });
 
@@ -151,7 +151,72 @@ console.log(service.create("Buy milk"));
 #1 Buy milk at 2026-09-23T09:00:00.000Z
 </output>
 <p>To build <code>TaskService</code>, the container first resolved <code>TaskStore</code> (a class with no dependencies) and <code>CLOCK</code> (a factory, which needed <code>START</code>), then called <code>new TaskService(store, clock)</code>. You never wrote that call.</p>
-<warn title="THE INJECT LIST IS NOT TYPE-CHECKED">In version 1.1.2, TypeScript does not compare <code>inject: [TaskStore, CLOCK]</code> with the constructor, and factory arguments arrive typed as <code>unknown</code>. That is why the factory above wraps <code>start</code> in <code>String(...)</code>. If you swap the two tokens, the code still compiles and fails when it runs. Keep the <code>inject</code> list next to the constructor and in the same order, and let a test resolve every service once, so a mistake shows up in the test run.</warn>
+<p>What if you <code>resolve</code> a class you never registered? The container builds it for you, as a transient, but only when its constructor takes no parameters. Otherwise it cannot know what to pass, and it tells you how to register the class:</p>
+<example file="auto.ts">
+import { createContainer } from "@zudojs/container";
+
+class TaskStore {
+  readonly titles: string[] = [];
+}
+class TaskService {
+  constructor(readonly store: TaskStore) {}
+}
+
+const container = createContainer();
+console.log(container.resolve(TaskStore).titles);
+try {
+  container.resolve(TaskService);
+} catch (error) {
+  console.log((error as Error).name);
+  console.log((error as Error).message);
+}
+</example>
+<output>
+[]
+RegistrationNotFoundError
+Cannot auto-register class "TaskService": its constructor declares 1 parameter and no inject list is registered, so it would be built with undefined dependencies. Register it with container.registerClass(TaskService, TaskService, { inject: [/* one token per parameter */] }) or container.registerFactory(TaskService, (...deps) => new TaskService(...deps), [/* tokens */]).
+</output>
+<p>Registering every service explicitly is still the clearer choice: the composition root then lists everything the app is made of.</p>
+<p>The factory's parameter <code>start</code> has no type annotation, yet TypeScript knows it is a <code>string</code>: a factory's parameters are typed from its <code>inject</code> list, in order (since <code>@zudojs/container</code> 1.2.0). So a factory whose parameters do not match its tokens does not compile. Here the two parameters are in the wrong order:</p>
+<example file="factory-check.ts" check="tsc-error">
+import { createContainer, createToken } from "@zudojs/container";
+
+interface Clock {
+  now(): Date;
+}
+
+class TaskStore {
+  readonly titles: string[] = [];
+}
+
+class TaskService {
+  constructor(readonly store: TaskStore, readonly clock: Clock) {}
+}
+
+const CLOCK = createToken<Clock>("Clock");
+
+const container = createContainer();
+container.registerFactory(
+  TaskService,
+  (clock, store) => new TaskService(store, clock),
+  [TaskStore, CLOCK],
+);
+</example>
+<output kind="tsc">
+factory-check.ts:20:37 - error TS2741: Property 'titles' is missing in type 'Clock' but required in type 'TaskStore'.
+
+20   (clock, store) => new TaskService(store, clock),
+                                       ~~~~~
+
+  factory-check.ts:8:12 - 'titles' is declared here.
+    8   readonly titles: string[] = [];
+                 ~~~~~~
+
+
+Found 1 error in factory-check.ts:20
+</output>
+<p>The second token is <code>CLOCK</code>, so the second parameter is a <code>Clock</code>, even though it is called <code>store</code>. The constructor wants a <code>TaskStore</code> there, and a <code>Clock</code> has no <code>titles</code>. The names of the parameters do not matter; their order does.</p>
+<warn title="THE CLASS INJECT LIST IS NOT TYPE-CHECKED">For <code>registerClass</code>, TypeScript still does not compare <code>inject: [TaskStore, CLOCK]</code> with the constructor. If you swap the two tokens there, the code compiles and fails when it runs. Keep the <code>inject</code> list next to the constructor and in the same order, and let a test resolve every service once, so a mistake shows up in the test run. When you want the compiler to check the wiring, register the class with a factory instead: <code>registerFactory(TaskService, (store, clock) =&gt; new TaskService(store, clock), [TaskStore, CLOCK])</code>.</warn>
 </section>
 
 <section>
@@ -233,7 +298,7 @@ Captive dependency: singleton "TaskService" depends on scoped "RequestInfo". A l
 <li>A scoped dependency belongs to a request, so asking for it with no scope is a <code>ScopedResolutionError</code>.</li>
 <li>A singleton lives forever. If it kept a reference to one request's <code>RequestInfo</code>, every later request would see the first request's data: a real data leak between users. The container refuses with a <code>CaptiveDependencyError</code>. The rule: a dependency must live at least as long as the thing that uses it.</li>
 </ul>
-<note>Error messages name a class token by its class name. A token made with <code>createToken("Mailer")</code> appears as <code>Symbol(Mailer)</code>, because that is how it is stored inside the container.</note>
+<note>Error messages name a class token by its class name, and a token made with <code>createToken("Mailer")</code> by its name, <code>Mailer</code>.</note>
 </section>
 
 <section>
@@ -306,7 +371,7 @@ pool closed
 disposed: true
 </output>
 <p>Disposing a scope only disposes that scope's objects. Transient objects are never tracked, so whoever resolved them must clean them up. Values you gave with <code>registerValue</code> are never disposed either: the container did not create them, so it does not own them.</p>
-<p>The runtime does not dispose the container for you. In the Task API, dispose it at the very end of shutdown, after <code>runtime.stop()</code>.</p>
+<p>By default, the runtime does not dispose the container for you: you created it, so you own it. Either dispose it yourself at the very end of shutdown, after <code>runtime.stop()</code>, or pass the runtime option <code>disposeContainerOnStop: true</code> (from <a href="/learn/zudo-runtime#options">the runtime lesson</a>), and <code>runtime.stop()</code> disposes it after every module has stopped.</p>
 </section>
 
 <section>

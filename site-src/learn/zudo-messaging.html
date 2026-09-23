@@ -32,7 +32,7 @@ $ npm install @zudojs/messaging
 added 1 package, and audited 75 packages in 3s
 …
 </shell>
-<p>Only one package was added, because the packages it builds on, <code>@zudojs/errors</code> and <code>@zudojs/constants</code>, are already in your project. Every example on this page runs in the browser terminal, and on your computer with <code>npx tsx src/&lt;file&gt;.ts</code>.</p>
+<p>Only one package was added, because the packages it builds on, <code>@zudojs/errors</code>, <code>@zudojs/constants</code> and <code>@zudojs/middleware</code>, are already in your project. Every example on this page runs in the browser terminal, and on your computer with <code>npx tsx src/&lt;file&gt;.ts</code>.</p>
 </section>
 
 <section>
@@ -246,7 +246,7 @@ console.log("result:", result.value);
 result: queued
 </output>
 <p>Both handlers logged the same correlation id, <code>req-7f3a</code>. The first message had no parent: its causation id defaults to its own id, which was not in the map yet, so it printed <code>undefined</code>. The second one names <code>reminder.send</code> as its cause. <code>bus.dispatch(message)</code> sends a message you already built.</p>
-<warn title="PUT THE CORRELATION ID ON THE MESSAGE">You can also pass <code>{ context: { correlationId } }</code> as the second argument of <code>send</code>. Handlers then see it in <code>context.correlationId</code>, but the message itself does not carry it, so <code>createDerivedMessage</code> cannot copy it and the follow-up message starts a new chain. Set <code>correlationId</code> on the message, as above, and the chain stays intact.</warn>
+<p>You can also pass the id as the second argument of <code>send</code>: <code>bus.send(input, { context: { correlationId } })</code>. The bus copies it onto the message it builds (unless the input already has its own), so <code>createDerivedMessage</code> keeps the chain intact either way. The Task API code at the end of this page uses that form.</p>
 <p>In the Task API, use the HTTP request id as the correlation id. The observability lesson puts the same id on every log line and trace, so one search finds the whole story.</p>
 </section>
 
@@ -292,7 +292,7 @@ handler: gave up before attempt 3
 
 <section>
 <h2 id="cancellation">Cancellation with AbortController</h2>
-<p>Sometimes the caller decides to stop, for example because the user closed the page. An <strong>AbortController</strong> is the object that owns a signal: you pass <code>controller.signal</code> to the work, and call <code>controller.abort()</code> to cancel it. The shortest way for a handler to respect it is <code>signal.throwIfAborted()</code>, which throws if the signal was aborted and does nothing otherwise:</p>
+<p>Sometimes the caller decides to stop, for example because the user closed the page. An <strong>AbortController</strong> is the object that owns a signal: you pass <code>controller.signal</code> to the work, and call <code>controller.abort()</code> to cancel it. The bus links that signal to the handler's <code>context.signal</code>:</p>
 <example file="cancel.ts">
 import { createMessageBus, MessageDispatchAbortedError } from "@zudojs/messaging";
 
@@ -301,7 +301,10 @@ const bus = createMessageBus();
 
 bus.on("report.build", async (message, context) => {
   for (let page = 1; page <= 5; page++) {
-    context.signal.throwIfAborted();
+    if (context.signal.aborted) {
+      console.log(`handler: stopped before page ${page}`);
+      return "cancelled";
+    }
     await wait(30);
     console.log(`built page ${page}`);
   }
@@ -312,7 +315,7 @@ const controller = new AbortController();
 setTimeout(() => controller.abort(new Error("the user closed the page")), 45);
 const result = await bus.send({ type: "report.build", payload: null }, { signal: controller.signal });
 console.log("success:", result.success);
-console.log(result.error?.message);
+console.log(result.error?.message, result.error instanceof MessageDispatchAbortedError);
 
 try {
   await bus.send({ type: "report.build", payload: null }, { signal: controller.signal });
@@ -322,13 +325,19 @@ try {
 </example>
 <output>
 built page 1
-built page 2
 success: false
-Handler "build-report" failed: the user closed the page
+Message dispatch was aborted. true
 already aborted: true
+built page 2
+handler: stopped before page 3
 </output>
-<p>Each page takes 30 ms. The controller aborted after 45 ms, while page 2 was being built. The handler finished that page, noticed the abort before page 3, and threw. The error you pass to <code>abort()</code> becomes the signal's <code>reason</code>, and <code>throwIfAborted()</code> throws it, so the dispatch failed with your message. The second <code>send</code> used a signal that was already aborted, so it never started: that is one of the few cases where <code>send</code> throws instead of returning a result.</p>
-<warn title="WHY THE HANDLER MUST THROW">If a handler sees the abort and simply <code>return</code>s, and it is the only handler, the dispatch reports <code>success: true</code> with whatever the handler returned. The caller then believes the work was done. Use <code>throwIfAborted()</code>, or throw <code>context.signal.reason</code>, so a cancelled job is reported as cancelled.</warn>
+<p>Each page takes 30 ms. The controller aborted after 45 ms, while page 2 was being built. Follow the lines:</p>
+<ul>
+<li><code>send</code> returned at once, at 45 ms, with <code>success: false</code> and a <code>MessageDispatchAbortedError</code>. The caller does not wait for the handler. The reason you gave to <code>abort()</code> stays on <code>controller.signal.reason</code> if you want to log it.</li>
+<li>The second <code>send</code> used a signal that was already aborted, so it never started: that is one of the few cases where <code>send</code> throws instead of returning a result.</li>
+<li>The handler, still running in the background, finished page 2, saw the aborted signal and stopped before page 3.</li>
+</ul>
+<p>The dispatch is reported as aborted even though the handler returned normally with <code>"cancelled"</code>, so the caller can never mistake cancelled work for finished work (since <code>@zudojs/messaging</code> 1.2.0). A handler that ignores the signal does no harm to the result, but it wastes work: it would build all five pages for nobody. A shorter way to stop is <code>context.signal.throwIfAborted()</code>, which throws if the signal was aborted and does nothing otherwise.</p>
 </section>
 
 <section>
@@ -465,6 +474,6 @@ success: false steps done: 2
 <li>A message nobody handles is still a success. Use <code>allowMultipleHandlers: false</code> and <code>hasHandlers</code> for requests that need exactly one answer.</li>
 <li>Middleware wraps every dispatch. It runs in ascending priority order. Validate payloads there.</li>
 <li>The correlation id ties one operation together, and the causation id points to the direct parent. <code>createDerivedMessage</code> keeps both right.</li>
-<li><code>timeout</code> and an <code>AbortController</code> cancel through <code>context.signal</code>. Handlers must check it and throw, because nothing stops them by force.</li>
+<li><code>timeout</code> and an <code>AbortController</code> cancel through <code>context.signal</code>. The send returns at once with a failure, but handlers must check the signal and stop themselves, because nothing stops them by force.</li>
 </ul>
 </section>

@@ -249,11 +249,6 @@ const TaskChanges = schema.object({
   done: schema.boolean(),
 }).partial().strict();
 
-/* Drop keys whose value is undefined, so they are left alone instead of set to NULL. */
-function definedOnly<T extends object>(data: T): Partial<T> {
-  return Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined)) as Partial<T>;
-}
-
 const db = await setup();
 const tasks = new BaseRepository<TaskRow, number>(db, {
   tableName: "tasks",
@@ -268,23 +263,48 @@ if (!bad.success) {
 
 const good = TaskChanges.parse({ done: true });
 console.log("parsed:", good);
-try {
-  await tasks.update(1, good);
-} catch (error) {
-  console.log("without definedOnly:", (error as Error).message);
-}
-console.log("saved:", await tasks.update(1, definedOnly(good)));
+console.log("saved:", await tasks.update(1, good));
+console.log("undefined is skipped:", await tasks.update(1, { title: undefined, done: false }));
 await db.disconnect();
 </example>
 <output>
 400: [ 'Unknown key: owner_id' ]
-parsed: { title: undefined, done: true }
-without definedOnly: null value in column "title" of relation "tasks" violates not-null constraint
+parsed: { done: true }
 saved: { id: 1, title: 'Buy milk', done: true, owner_id: 'ada' }
+undefined is skipped: { id: 1, title: 'Buy milk', done: false, owner_id: 'ada' }
 </output>
 <p><code>.partial()</code> makes every field optional, since a client may change just one. <code>.strict()</code> makes the schema reject any key it does not know, so the request that tries to change the owner is answered with 400 before it gets near the database.</p>
-<p>The output also shows a trap. The client sent only <code>done</code>, but the parsed object has a <code>title</code> key whose value is <code>undefined</code>. <code>BaseRepository</code> writes every key it gets, so it tried to set <code>title</code> to <code>NULL</code>. Here the <code>NOT NULL</code> rule on the column stopped it; on a column that allows <code>NULL</code>, the title would have been silently wiped. <code>definedOnly</code> removes those keys first. Use a helper like it whenever you pass parsed data to <code>update</code>.</p>
-<note>The allow-list is used for writes, filters and sorting alike. To let clients sort by <code>id</code>, you would have to add <code>id</code> to <code>columns</code>, and then <code>update</code> would accept a new <code>id</code> too. With a schema at the edge that is harmless. Without one, it is one more field a client could change.</note>
+<p>The update changed only <code>done</code>. A key whose value is <code>undefined</code> counts as "not sent": <code>BaseRepository</code> leaves it out of the SQL, so the title was not touched. To really empty a column that allows it, pass <code>null</code>, which writes <code>NULL</code>.</p>
+<h3>Separate lists for writing, filtering and sorting</h3>
+<p>So far <code>columns</code> was used for writes, filters and sorting alike. That is why the sort by <code>id</code> above was refused: to allow it, you would have to add <code>id</code> to <code>columns</code>, and then <code>update</code> would accept a new <code>id</code> too. When the three uses should differ, give each its own list: <code>writableColumns</code> for <code>create</code> and <code>update</code>, <code>filterableColumns</code> for <code>count</code>, and <code>sortableColumns</code> for <code>findAll</code>. Each one falls back to <code>columns</code>:</p>
+<example file="column-lists.ts" project="st" browser="no">
+import { BaseRepository } from "@zudojs/storage";
+import { setup } from "./setup.js";
+import type { TaskRow } from "./setup.js";
+
+const db = await setup();
+const tasks = new BaseRepository<TaskRow, number>(db, {
+  tableName: "tasks",
+  columns: ["title", "done", "owner_id"],
+  sortableColumns: ["id", "title"],
+});
+await tasks.create({ title: "Buy milk", owner_id: "ada" } as TaskRow);
+await tasks.create({ title: "Answer mail", owner_id: "ada" } as TaskRow);
+
+const newestFirst = await tasks.findAll({ orderBy: "id", order: "DESC" });
+console.log(newestFirst.map((t) => `${t.id} ${t.title}`));
+try {
+  await tasks.update(1, { id: 99 });
+} catch (error) {
+  console.log("refused:", (error as Error).message);
+}
+await db.disconnect();
+</example>
+<output>
+[ '2 Answer mail', '1 Buy milk' ]
+refused: Invalid column name: "id" is not allowed
+</output>
+<p>Clients may now sort by <code>id</code>, but they still cannot write it.</p>
 </section>
 
 <section>
@@ -432,8 +452,9 @@ locks.clear();
 first holds task:1 with fence 1
 try again: null
 second got it after release, fence 2
-504 STORAGE_LOCK_ACQUIRE_TIMEOUT - Failed to acquire lock on "task:2" within 100ms
+409 STORAGE_LOCK_ACQUIRE_TIMEOUT - Failed to acquire lock on "task:2" within 100ms
 </output>
+<p>The last <code>acquire</code> gave up after its 100 ms <code>timeout</code> with <strong>409 Conflict</strong>: someone else is working on that task right now. Your route can send the 409 as it is, and the client can try again.</p>
 <p>Every lock has a <code>ttl</code> (time to live). If its holder crashes, the lock expires and others can go on. But a holder that is only slow can lose its lock without noticing, keep working, and overwrite the next holder's work. The <strong>fence</strong> number solves this. Every new lock gets a bigger fence, so the thing you protect can refuse any write that carries an older one:</p>
 <example file="fencing.ts" project="st" browser="no">
 import { InMemoryLockManager } from "@zudojs/storage";
@@ -536,14 +557,14 @@ await db.disconnect();
 start: { total: 1, idle: 1, active: 0, waiting: 0 }
 busy: { total: 2, idle: 0, active: 2, waiting: 1 }
 the waiting request got conn-1
-504 Acquire timeout: no connection available within 200ms
+503 Acquire timeout: no connection available within 200ms
 use() returned [ { n: 0 } ] and gave the connection back: { total: 2, idle: 2, active: 0, waiting: 0 }
 after drain: { total: 0, idle: 0, active: 0, waiting: 0 }
 </output>
 <ul>
 <li><code>min: 1</code> opened one connection at start-up. The second was opened when it was needed, and no more than <code>max: 2</code> ever exist.</li>
 <li>With both lent out, the third <code>acquire</code> <strong>waited</strong>. As soon as <code>conn-1</code> came back, it went to the waiting request.</li>
-<li>A request that waits longer than <code>acquireTimeout</code> fails with a 504. Under heavy load, failing fast is better than letting requests pile up.</li>
+<li>A request that waits longer than <code>acquireTimeout</code> fails with <strong>503 Service Unavailable</strong>, which tells the client to try again a little later. Under heavy load, failing fast is better than letting requests pile up.</li>
 <li><code>use(fn)</code> acquires, runs your function and always releases, even when the function throws. Prefer it: a connection you forget to release is lost to the pool for good.</li>
 <li><code>drain()</code> waits for connections in use, then closes them all. Call it on shutdown.</li>
 </ul>
@@ -603,12 +624,12 @@ phase: ready
 healthy: false
  files: FAILING (disk full)
  database: ok (connected)
-database shut down
 files shut down
+database shut down
 phase: shutdown
 </output>
 <p>The report is unhealthy as a whole because one component is, and it names which. That is what your <code>/health</code> route should turn into a 503, as in the last lesson, while your logs get the details.</p>
-<p>Notice that shutdown ran in the same order as start-up: database first, then files. If one component uses another, register them so that this order is safe, or give each its own shutdown step in <a href="/learn/zudo-runtime">the runtime</a>, which stops modules in reverse dependency order.</p>
+<p>Notice that shutdown ran in the <strong>reverse</strong> order of start-up: files first, then the database. <code>drain</code> and <code>shutdown</code> visit components one at a time, last registered first. So register a component after the ones it uses: it starts after them and stops before them, while they still work. A component that fails to stop does not keep the others from stopping.</p>
 </section>
 
 <section>
@@ -689,11 +710,11 @@ B ends
 <h2 id="recap">Recap</h2>
 <ul>
 <li><code>@zudojs/storage</code> defines contracts (<code>Database</code>, <code>ObjectStorage</code>, <code>Serializer</code>, <code>LockManager</code>, <code>StorageLifecycle</code>) so your code does not depend on one driver.</li>
-<li>Its <code>BaseRepository</code> builds parameterized SQL and checks every column against <code>columns</code>. That stops SQL tricks, not mass assignment: validate bodies with a strict schema and set owners on the server.</li>
+<li>Its <code>BaseRepository</code> builds parameterized SQL and checks every column against <code>columns</code> (or the separate <code>writableColumns</code>, <code>filterableColumns</code> and <code>sortableColumns</code>). That stops SQL tricks, not mass assignment: validate bodies with a strict schema and set owners on the server. An <code>undefined</code> value is never written; <code>null</code> is.</li>
 <li><code>LocalObjectStorage</code> stores files by key, refuses path traversal and oversized files, and lists by prefix. Generate keys yourself.</li>
 <li><code>JsonSerializer</code> keeps <code>Date</code>, <code>Map</code>, <code>Set</code> and <code>BigInt</code> through a round trip to bytes.</li>
-<li>Locks need a TTL and a fence check. <code>InMemoryLockManager</code> only works inside one process.</li>
-<li><code>ConnectionPool</code> lends a bounded number of connections; <code>use()</code> always gives them back. <code>StorageLifecycleManager</code> and <code>HealthChecker</code> start, check and stop everything.</li>
+<li>Locks need a TTL and a fence check; waiting too long for one is a 409. <code>InMemoryLockManager</code> only works inside one process.</li>
+<li><code>ConnectionPool</code> lends a bounded number of connections; <code>use()</code> always gives them back, and a request that waits too long gets a 503. <code>StorageLifecycleManager</code> and <code>HealthChecker</code> start, check and stop everything, stopping in reverse order.</li>
 </ul>
 <p>Next: <a href="/learn/zudo-transactions">transactions</a> that span many functions, with savepoints, hooks and retries.</p>
 </section>

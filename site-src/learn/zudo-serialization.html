@@ -54,32 +54,33 @@ TypeError - Do not know how to serialize a BigInt
 </section>
 
 <section>
-<h2 id="queue-bug">The same bug in your queue</h2>
-<p>This is not only a textbook problem. The queue from <a href="/learn/zudo-queue">the background jobs lesson</a> serializes every job's data, exactly as a queue in Redis would. Watch a <code>Date</code> go in and a string come out:</p>
+<h2 id="queue-bug">The same problem in a queue</h2>
+<p>This is not only a textbook problem. The queue from <a href="/learn/zudo-queue">the background jobs lesson</a> serializes every job's data, exactly as a queue in Redis would. Its default serializer is built on the package of this lesson, so a <code>Date</code> arrives as a <code>Date</code>. Switch that off with a plain JSON serializer and watch what the processor receives:</p>
 <example file="queue-date.ts">
-import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+import { createInMemoryQueue, createJsonSerializer, createQueueName } from "@zudojs/queue";
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const reminders = createInMemoryQueue<{ taskId: number; remindAt: Date }>(createQueueName("reminders"));
 
-reminders.process("send-reminder", async (job) => {
-  console.log("remindAt is a", typeof job.data.remindAt);
-  try {
-    console.log(job.data.remindAt.toISOString());
-  } catch (error) {
-    if (error instanceof Error) console.log("crash:", error.message);
-  }
-});
+async function send(label: string, preserveTypes: boolean): Promise<void> {
+  const reminders = createInMemoryQueue<{ taskId: number; remindAt: Date }>(createQueueName("reminders"), {
+    serializer: createJsonSerializer({ preserveTypes }),
+  });
+  reminders.process("send-reminder", async (job) => {
+    console.log(`${label}: remindAt is a ${job.data.remindAt.constructor.name}`);
+  });
+  await reminders.add("send-reminder", { taskId: 1, remindAt: new Date("2026-10-05T09:00:00Z") });
+  await wait(100);
+  await reminders.close();
+}
 
-await reminders.add("send-reminder", { taskId: 1, remindAt: new Date("2026-10-05T09:00:00Z") });
-await wait(200);
-await reminders.close();
+await send("default", true);
+await send("plain JSON", false);
 </example>
 <output>
-remindAt is a string
-crash: job.data.remindAt.toISOString is not a function
+default: remindAt is a Date
+plain JSON: remindAt is a String
 </output>
-<p>The type <code>{ remindAt: Date }</code> promised a <code>Date</code>, and the processor received a string. By the end of this lesson you will fix it with one option.</p>
+<p>With plain JSON, the type <code>{ remindAt: Date }</code> promised a <code>Date</code>, and the processor received a string. The first call to <code>remindAt.getTime()</code> would crash. The queue avoids that by default (since <code>@zudojs/queue</code> 1.4.0), and the rest of this lesson shows how: tagged values, which you can also use for your cache, your files and your own types.</p>
 </section>
 
 <section>
@@ -233,7 +234,7 @@ class Duration {
 const DurationTransformer: TypeTransformer<Duration> = {
   type: "Duration",
   canSerialize: (value): value is Duration => value instanceof Duration,
-  serialize: (value) => ({ $type: "Duration", $value: value.minutes }),
+  serialize: (value) => value.minutes,
   deserialize: (value) => {
     const minutes = (value as { $value?: unknown }).$value;
     if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes < 0) {
@@ -264,11 +265,46 @@ true 1h30m true
 TransformerError - Transformer error (Duration): A Duration needs a whole number of minutes
 </output>
 <ul>
-<li><code>serialize</code> must return the whole tagged object, <code>{ $type, $value }</code>. If it returns a bare value, there is no tag, and the reader cannot know it was a <code>Duration</code>.</li>
-<li><code>deserialize</code> receives data from outside. Check it, as here, before you build an object from it.</li>
+<li><code>serialize</code> returns the value to store, here the number of minutes. The serializer wraps it as <code>{ "$type": "Duration", "$value": 90 }</code> for you, so the reader knows what to rebuild. (Returning the whole tagged object yourself also works.)</li>
+<li><code>deserialize</code> always receives the whole tagged object, and that data comes from outside. Check it, as here, before you build an object from it.</li>
 <li><code>new JSONSerializer(...)</code> plus <code>registerTransformer</code> <em>adds</em> your type next to the built-in ones, which is why the date still works.</li>
 </ul>
-<warn title="WATCH OUT">You can also pass a <code>TransformerRegistry</code> in the <code>transformers</code> option. That registry <em>replaces</em> the built-in transformers: with only <code>Duration</code> in it, dates silently come back as strings again. Prefer <code>registerTransformer</code>.</warn>
+<p>You can also collect your transformers in a <code>TransformerRegistry</code> and pass it as the <code>transformers</code> option. Your registry is asked first, and the built-in transformers still handle everything else. Pass <code>builtins: false</code> only if you want your registry alone:</p>
+<example file="registry.ts">
+import { createSerializer, TransformerRegistry } from "@zudojs/serialization";
+import type { TypeTransformer } from "@zudojs/serialization";
+
+class Duration {
+  constructor(readonly minutes: number) {}
+}
+
+const registry = new TransformerRegistry();
+registry.register({
+  type: "Duration",
+  canSerialize: (value): value is Duration => value instanceof Duration,
+  serialize: (value) => value.minutes,
+  deserialize: (value) => new Duration(Number((value as { $value?: unknown }).$value)),
+} satisfies TypeTransformer<Duration>);
+
+const task = { estimate: new Duration(90), due: new Date("2026-10-05T09:00:00Z") };
+
+const mine = createSerializer("json", { preserveTypes: true, transformers: registry });
+console.log(mine.serialize(task));
+
+const onlyMine = createSerializer("json", { preserveTypes: true, transformers: registry, builtins: false });
+console.log(onlyMine.serialize(task));
+try {
+  onlyMine.serialize({ tags: new Set(["home"]) });
+} catch (error) {
+  if (error instanceof Error) console.log(error.name);
+}
+</example>
+<output>
+{"estimate":{"$type":"Duration","$value":90},"due":{"$type":"Date","$value":"2026-10-05T09:00:00.000Z"}}
+{"estimate":{"$type":"Duration","$value":90},"due":"2026-10-05T09:00:00.000Z"}
+SerializeError
+</output>
+<p>With the built-ins, the date is tagged. With <code>builtins: false</code>, the date becomes a plain string again, and a <code>Set</code>, which JSON would write as an empty <code>{}</code>, is refused with a <code>SerializeError</code> instead of losing its contents silently. Keep the built-ins unless you have a reason not to.</p>
 </section>
 
 <section>
@@ -357,8 +393,8 @@ for (const text of stored) {
 </section>
 
 <section>
-<h2 id="task-api">Put it together: fix the reminder queue</h2>
-<p>The queue accepts a serializer. <code>createJsonSerializer({ preserveTypes: true })</code> from <code>@zudojs/queue</code> uses this package underneath. With it, the reminder job from the start of the lesson keeps its <code>Date</code>, and a versioned payload keeps old jobs readable:</p>
+<h2 id="task-api">Put it together: the reminder queue</h2>
+<p>The queue's default serializer, <code>createJsonSerializer()</code> from <code>@zudojs/queue</code>, uses this package underneath with <code>preserveTypes</code> on. Passing it explicitly documents the choice, so nobody switches it to plain JSON by accident. The reminder job keeps its <code>Date</code>, and a versioned payload keeps old jobs readable:</p>
 <example file="reminders.ts">
 import { createInMemoryQueue, createJsonSerializer, createQueueName } from "@zudojs/queue";
 
@@ -371,7 +407,7 @@ interface ReminderJob {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const reminders = createInMemoryQueue<ReminderJob>(createQueueName("reminders"), {
-  serializer: createJsonSerializer({ preserveTypes: true }),
+  serializer: createJsonSerializer(),
 });
 
 reminders.process("send-reminder", async (job) => {
@@ -489,8 +525,8 @@ console.log(upgrade({ v: 3, taskId: 3, userId: "user-ada", channel: "push" }));
 <li><code>createSerializer("json", { preserveTypes: true })</code> tags those values with <code>$type</code> and rebuilds them on the way back.</li>
 <li>Stack traces are left out by default. Circular data, invalid dates and oversized input are refused. Set <code>maxSize</code> and <code>maxDepth</code> for outside input.</li>
 <li>Deserializing drops <code>__proto__</code> keys and never turns your data into a tag. Use <code>strict: true</code> to reject broken tags, and still validate the result.</li>
-<li>A transformer adds your own types: <code>serialize</code> returns <code>{ $type, $value }</code>, <code>deserialize</code> checks its input. Register it with <code>registerTransformer</code>.</li>
+<li>A transformer adds your own types: <code>serialize</code> returns the value to store, <code>deserialize</code> checks its input. Register it with <code>registerTransformer</code> or a <code>TransformerRegistry</code>. The built-in types keep working unless you pass <code>builtins: false</code>.</li>
 <li>Envelopes carry the format and version, and refuse what they cannot read. Version your own payloads with a <code>v</code> field and upgrade old ones on read.</li>
-<li>Give the queue <code>createJsonSerializer({ preserveTypes: true })</code> so job data keeps its types.</li>
+<li>The queue's default serializer keeps job data types. Plain JSON (<code>preserveTypes: false</code>) turns a <code>Date</code> into a string.</li>
 </ul>
 </section>

@@ -66,10 +66,10 @@ logger.info("task created", { taskId: 7, userId: "ada", title: "Buy milk" });
 logger.warn("slow query", { durationMs: 840 });
 </example>
 <output mask="iso">
-2026-09-23T13:52:16.059Z [INFO] [task-api] task created taskId=7 userId=ada title="Buy milk"
-2026-09-23T13:52:16.064Z [WARN] [task-api] slow query durationMs=840
+2026-09-23T17:20:16.059Z [INFO] [task-api] task created taskId=7 userId=ada title="Buy milk" | raw: task created
+2026-09-23T17:20:16.064Z [WARN] [task-api] slow query durationMs=840 | raw: slow query
 </output>
-<p>One line per entry: time, level, logger name, message, then the metadata as <code>key=value</code> pairs. A value with a space gets quotes, so <code>title="Buy milk"</code> stays one field. The raw <code>message</code> is still just <code>task created</code>: a transport that sends entries to a log service can send the fields, not the finished line. To keep the rest of this page free of changing timestamps, the next examples pass <code>createTextLoggerFormatter({ includeTimestamp: false })</code>. Always keep the time in a real application.</p>
+<p>One line per entry: time, level, logger name, message, then the metadata as <code>key=value</code> pairs. A value with a space gets quotes, so <code>title="Buy milk"</code> stays one field. After the <code>|</code>, the raw <code>message</code> is still just <code>task created</code>: a transport that sends entries to a log service can send the fields, not the finished line. To keep the rest of this page free of changing timestamps, the next examples pass <code>createTextLoggerFormatter({ includeTimestamp: false })</code>. Always keep the time in a real application.</p>
 </section>
 
 <section>
@@ -260,7 +260,7 @@ logFailure(logger, new Error("connect ECONNREFUSED 127.0.0.1:5432"), "POST /task
 </example>
 <output>
 [WARN] [task-api] request rejected route="GET /tasks/9" status=404 reason="Task 9 not found"
-[ERROR] [task-api] request failed route="POST /tasks" status=500
+[ERROR] [task-api] request failed route="POST /tasks" status=500 error={"name":"Error","message":"connect ECONNREFUSED 127.0.0.1:5432"}
 </output>
 <p>The error entry ends with the error's name and message. <code>includeStackTrace: false</code> left out the stack trace to keep this page short. Save the example on your computer, remove that option, and run it. Now the error entry continues with the stack trace, one call per line:</p>
 <shell title="Terminal on your computer">
@@ -333,7 +333,7 @@ logger.info("task created", { title: "Buy milk\n[ERROR] [task-api] fake entry" }
 
 <section>
 <h2 id="task-api">Put it together: the Task API logger</h2>
-<p>Put the choice in one place. The generated project has an empty <code>src/loggers</code> folder for exactly this:</p>
+<p>Put the choice in one place. The generated project has a <code>src/loggers</code> folder for exactly this (its <code>index.ts</code> is empty). Create a file there:</p>
 <example file="src/loggers/app.logger.ts" project="task-api" browser="no">
 import {
   createJsonLoggerFormatter,
@@ -387,7 +387,7 @@ try {
 InvalidLoggerLevelError - Invalid logger level: loud.
 </output>
 <p>The production entry has a unique <code>id</code>, the level as a number and as a name, the message, the metadata as a real JSON object, and the time twice: as text and as milliseconds. Redaction runs in both formats. An error entry adds an <code>error</code> object with <code>name</code>, <code>message</code> and <code>stack</code>.</p>
-<p>An unknown <code>LOG_LEVEL</code> throws at start-up, where you notice it at once, instead of silently logging nothing for weeks. The function takes the environment as a parameter, with <code>process.env</code> as the default. That makes it easy to test, as you did in <a href="/learn/zudo-testing">the testing lesson</a>: pass a plain object instead of changing real environment variables.</p>
+<p><code>LOG_LEVEL=debug</code> and <code>LOG_LEVEL=DEBUG</code> both work. An unknown <code>LOG_LEVEL</code> throws at start-up, where you notice it at once, instead of silently logging nothing for weeks. The function takes the environment as a parameter, with <code>process.env</code> as the default. That makes it easy to test, as you did in <a href="/learn/zudo-testing">the testing lesson</a>: pass a plain object instead of changing real environment variables.</p>
 <p>Now use it in <code>src/app.ts</code>. Replace the <code>createLogger</code> line and its import:</p>
 <example file="src/app.ts (part)" browser="no" check="skip">
 import { createAppLogger } from "./loggers/app.logger.js";
@@ -398,27 +398,19 @@ const logger = createAppLogger();
 <p>Start the server in development mode, then in production mode. <code>NODE_ENV=production</code> before a command sets that variable for that one command. Stop each one with <kbd>Ctrl</kbd> + <kbd>C</kbd>:</p>
 <shell title="Terminal on your computer">
 $ npx tsx src/server.ts
-{
-  timestamp: '2026-09-23T13:53:53.488Z',
-  level: 'info',
-  message: '2026-09-23T13:53:53.488Z [INFO] [app-service] app service initialized',
+2026-09-23T17:16:40.911Z [INFO] [app-service] app service initialized
+2026-09-23T17:16:40.914Z [INFO] [task-api] app module initialized
+2026-09-23T17:16:40.915Z [INFO] [task-api] All modules initialized. modules=["integrations","app"] durationMs=8
 …
-}
-2026-09-23T13:53:53.492Z [INFO] [task-api] app module initialized
-2026-09-23T13:53:53.494Z [INFO] [task-api] All modules initialized. modules=["app"] durationMs=9
-…
-Listening on port 3000
+Listening on http://0.0.0.0:3000
 $ NODE_ENV=production npx tsx src/server.ts
-{
-  timestamp: '2026-09-23T13:54:17.828Z',
+2026-09-23T17:16:47.697Z [INFO] [app-service] app service initialized
+{"id":"log:d72407b9-5e45-4bbd-984a-a78218b169d8","level":3,"levelName":"info","message":"app module initialized","metadata":{},"logger":"task-api","timestamp":"2026-09-23T17:16:47.700Z","timestampMs":1790183807700,"environment":"production"}
+{"id":"log:3f534287-f870-4458-9b91-8589266dd795","level":3,"levelName":"info","message":"All modules initialized.","metadata":{"modules":["integrations","app"],"durationMs":13},"logger":"task-api","timestamp":"2026-09-23T17:16:47.710Z","timestampMs":1790183807710,"environment":"production"}
 …
-}
-{"id":"log:78705ae6-2050-435a-b345-5548de5a43c5","level":3,"levelName":"info","message":"app module initialized","metadata":{},"logger":"task-api","timestamp":"2026-09-23T13:54:17.834Z","timestampMs":1790171657834,"environment":"production"}
-{"id":"log:aaafeda9-b457-4712-96b3-ac0aeaf388c2","level":3,"levelName":"info","message":"All modules initialized.","metadata":{"modules":["app"],"durationMs":26},"logger":"task-api","timestamp":"2026-09-23T13:54:17.838Z","timestampMs":1790171657838,"environment":"production"}
-…
-Listening on port 3000
+Listening on http://0.0.0.0:3000
 </shell>
-<p>The runtime's own lines now use your format: readable text in development, one JSON object per line in production. One block still looks the old way. It comes from the generated <code>AppService</code>, which creates its own logger with <code>createLogger</code>. Fix it the way the child logger section showed: give the service a child of the app logger instead.</p>
+<p>The runtime's own lines now use your format: readable text in development, one JSON object per line in production. One line is still plain text in production: <code>[app-service] app service initialized</code>. It comes from the generated <code>AppService</code>, which creates its own logger with <code>createLogger</code>. Fix it the way the child logger section showed: give the service a child of the app logger instead.</p>
 <tip>On Windows PowerShell, set the variable first: <code>$env:NODE_ENV="production"; npx tsx src/server.ts</code>.</tip>
 </section>
 
