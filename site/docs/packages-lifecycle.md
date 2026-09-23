@@ -1,6 +1,6 @@
 ---
 title: "@zudojs/lifecycle — Lifecycle Orchestration Documentation"
-description: "Complete documentation for @zudojs/lifecycle — state machine, component lifecycle hooks, dependency ordering, graceful shutdown, signal handling, and rollback for the Zudojs framework."
+description: "@zudojs/lifecycle docs: state machine, component hooks, dependency ordering, graceful shutdown, signal handling and rollback for ZudoJS apps."
 source: https://zudojs.oyinlola.site/docs/packages-lifecycle
 ---
 

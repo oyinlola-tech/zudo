@@ -1,6 +1,6 @@
 ---
 title: "@zudojs/api — Transport-agnostic API layer"
-description: "Complete reference for @zudojs/api v1.1.0. Define transport-agnostic operations, interceptors, result types, and execution contexts for the Zudo TypeScript framework."
+description: "@zudojs/api reference: transport-agnostic operations, interceptors, result types and execution contexts for ZudoJS apps."
 source: https://zudojs.oyinlola.site/docs/packages-api
 ---
 

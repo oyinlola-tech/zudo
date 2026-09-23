@@ -1,6 +1,6 @@
 ---
 title: "@zudojs/container — Token-Based Dependency Injection Container"
-description: "Complete documentation for @zudojs/container — a token-based dependency injection container with scoping, lifecycle management, circular dependency detection, and auto-disposal for the Zudo framework."
+description: "@zudojs/container docs: token-based dependency injection for TypeScript with scopes, lifecycle management, circular dependency detection and auto-disposal."
 source: https://zudojs.oyinlola.site/docs/packages-container
 ---
 

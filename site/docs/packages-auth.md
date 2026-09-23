@@ -1,6 +1,6 @@
 ---
 title: "@zudojs/auth — JWT, Sessions, RBAC, Password Hashing"
-description: "Complete reference for @zudojs/auth v1.2.0. JWT token management (access + refresh), password hashing (scrypt), session management, RBAC, brute-force lockout, and auth utilities for the Zudo TypeScript framework."
+description: "@zudojs/auth reference: JWT access and refresh tokens, scrypt password hashing, sessions, RBAC and brute-force lockout for ZudoJS apps."
 source: https://zudojs.oyinlola.site/docs/packages-auth
 ---
 

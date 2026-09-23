@@ -1,6 +1,6 @@
 ---
-title: "@zudojs/http — HTTP Primitives, Routing, Middleware & Server Documentation"
-description: "Complete documentation for @zudojs/http — HTTP server, request/response handling, routing, middleware pipeline, client, headers, CORS, CSP, security headers, caching, streaming, validation, content negotiation, multipart, cookies, proxy, compression, HSTS, and more."
+title: "@zudojs/http — HTTP Server, Routing & Middleware"
+description: "@zudojs/http docs: HTTP server, routing, middleware, client, CORS, CSP and security headers, streaming, multipart, cookies and compression for ZudoJS."
 source: https://zudojs.oyinlola.site/docs/packages-http
 ---
 

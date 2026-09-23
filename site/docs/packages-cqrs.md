@@ -1,6 +1,6 @@
 ---
 title: "@zudojs/cqrs — Command Query Responsibility Segregation"
-description: "Complete documentation for @zudojs/cqrs — CQRS primitives for separating read and write operations with commands, queries, handlers, middleware, and event extensions for the Zudo framework."
+description: "@zudojs/cqrs docs: CQRS for TypeScript. Command and query buses, typed handlers, middleware and event extensions for separating reads from writes in ZudoJS."
 source: https://zudojs.oyinlola.site/docs/packages-cqrs
 ---
 

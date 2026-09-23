@@ -1,6 +1,6 @@
 ---
 title: "@zudojs/crypto — Cryptographic Primitives Documentation"
-description: "Complete documentation for @zudojs/crypto — hashing, encryption, password hashing, tokens, signatures, key derivation, and secure random generation for the Zudojs framework."
+description: "@zudojs/crypto docs: hashing, encryption, password hashing, tokens, signatures, key derivation and secure random generation for ZudoJS apps."
 source: https://zudojs.oyinlola.site/docs/packages-crypto
 ---
 

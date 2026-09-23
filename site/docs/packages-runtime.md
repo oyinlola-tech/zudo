@@ -1,6 +1,6 @@
 ---
 title: "@zudojs/runtime — Runtime Orchestration Documentation"
-description: "Complete documentation for @zudojs/runtime — application lifecycle orchestration, dependency-ordered startup/shutdown, rollback, signal handling, and readiness tracking."
+description: "@zudojs/runtime docs: application lifecycle orchestration, dependency-ordered startup and shutdown, rollback, signal handling and readiness."
 source: https://zudojs.oyinlola.site/docs/packages-runtime
 ---
 

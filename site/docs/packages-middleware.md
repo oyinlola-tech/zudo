@@ -1,6 +1,6 @@
 ---
 title: "@zudojs/middleware — Composable Middleware Pipeline Documentation"
-description: "Complete documentation for @zudojs/middleware — composable middleware pipeline, composition, timing, error handling, and built-in middleware for the Zudojs framework."
+description: "@zudojs/middleware docs: composable middleware pipelines with composition, timing, error handling and built-in middleware for ZudoJS apps."
 source: https://zudojs.oyinlola.site/docs/packages-middleware
 ---
 

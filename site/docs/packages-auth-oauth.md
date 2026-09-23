@@ -1,6 +1,6 @@
 ---
 title: "@zudojs/auth-oauth"
-description: "OAuth 2.0 sign-in for Zudo applications: authorization URLs with PKCE, timing-safe state checks, code exchange, user info, and presets for Google, GitHub, Microsoft, Apple and Discord."
+description: "@zudojs/auth-oauth: OAuth 2.0 sign-in with PKCE, timing-safe state checks, code exchange and presets for Google, GitHub, Microsoft, Apple and Discord."
 source: https://zudojs.oyinlola.site/docs/packages-auth-oauth
 ---
 

@@ -1,6 +1,6 @@
 ---
 title: "@zudojs/types — Type Guards, Utility Types & Converters"
-description: "Documentation for @zudojs/types — shared type guards (isPlainObject, isDate, isEmail), utility types (Maybe, DeepReadonly, Prettify) and type converters for the ZudoJS framework."
+description: "@zudojs/types docs: type guards (isPlainObject, isDate, isEmail), utility types (Maybe, DeepReadonly, Prettify) and converters for ZudoJS."
 source: https://zudojs.oyinlola.site/docs/packages-types
 ---
 

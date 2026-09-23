@@ -1,6 +1,6 @@
 ---
 title: "@zudojs/constants — Shared Constants, Enums & Type-Safe Literals"
-description: "Complete documentation for @zudojs/constants — branded types, HTTP constants, lifecycle states, validation patterns, cache strategies, serialization limits, and runtime utilities for the Zudo framework."
+description: "@zudojs/constants docs: branded ID types, HTTP constants, lifecycle states, validation patterns, cache strategies and serialization limits for ZudoJS."
 source: https://zudojs.oyinlola.site/docs/packages-constants
 ---
 

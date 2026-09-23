@@ -1,6 +1,6 @@
 ---
-title: "@zudojs/cache — Caching Primitives, Adapters & Invalidation"
-description: "Complete reference for @zudojs/cache v1.1.0. CacheService, MemoryCacheAdapter, tag-based invalidation, distributed locking, metrics, serialization, and middleware pipelines for the Zudo TypeScript framework."
+title: "@zudojs/cache — Caching, Adapters & Invalidation"
+description: "@zudojs/cache reference: CacheService, memory adapter, tag-based invalidation, distributed locking, metrics and middleware for ZudoJS apps."
 source: https://zudojs.oyinlola.site/docs/packages-cache
 ---
 

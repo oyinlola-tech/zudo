@@ -1,6 +1,6 @@
 ---
 title: "Runtime"
-description: "The application runtime that orchestrates startup, shutdown, and lifecycle management in the Zudo TypeScript framework. Graceful shutdown, signal handling, and state machine."
+description: "The ZudoJS runtime orchestrates startup and shutdown: lifecycle state machine, dependency ordering, signal handling and graceful shutdown."
 source: https://zudojs.oyinlola.site/docs/architecture-runtime
 ---
 

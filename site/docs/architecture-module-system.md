@@ -1,6 +1,6 @@
 ---
 title: "Module System"
-description: "Composable, dependency-aware modules for organized application architecture in the Zudo TypeScript framework. Module definition, registration, lifecycle hooks, and best practices."
+description: "How ZudoJS modules work: defining composable, dependency-aware modules, registering them, lifecycle hooks, and best practices for structuring an app."
 source: https://zudojs.oyinlola.site/docs/architecture-module-system
 ---
 

@@ -1,6 +1,6 @@
 ---
 title: "@zudojs/config — Layered Configuration System"
-description: "Complete reference for @zudojs/config v1.2.0. Layered configuration with sources, stores, resolvers, schema validation, and lifecycle management for the Zudo TypeScript framework."
+description: "@zudojs/config reference: layered configuration with sources, stores, resolvers, schema validation and lifecycle management for ZudoJS apps."
 source: https://zudojs.oyinlola.site/docs/packages-config
 ---
 

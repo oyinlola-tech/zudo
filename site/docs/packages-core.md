@@ -1,6 +1,6 @@
 ---
 title: "@zudojs/core — Application Lifecycle, Context & Runtime"
-description: "Complete documentation for @zudojs/core — application lifecycle management, execution context propagation, module system, configuration, logging, and runtime orchestration for the Zudo framework."
+description: "@zudojs/core docs: application lifecycle, execution context propagation, modules, configuration, logging and runtime orchestration for ZudoJS apps."
 source: https://zudojs.oyinlola.site/docs/packages-core
 ---
 

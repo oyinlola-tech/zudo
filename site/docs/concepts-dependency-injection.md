@@ -1,6 +1,6 @@
 ---
 title: "Dependency Injection"
-description: "Token-based dependency injection container for loosely coupled architecture. Singleton, transient, and scoped resolution strategies with circular dependency detection."
+description: "Dependency injection in ZudoJS: a token-based container with singleton, transient and scoped lifetimes and circular dependency detection."
 source: https://zudojs.oyinlola.site/docs/concepts-dependency-injection
 ---
 

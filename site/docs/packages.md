@@ -1,6 +1,6 @@
 ---
 title: "Packages — @zudojs/*"
-description: "Browse all 39 @zudojs packages. Filter by category, search by name, and select versions. Foundation, runtime, application, transport, security, and platform packages."
+description: "Browse all 39 @zudojs packages by category: foundation, runtime, application, transport, security and platform. Search by name and pick a version."
 source: https://zudojs.oyinlola.site/docs/packages
 ---
 

@@ -1,6 +1,6 @@
 ---
 title: "Dependency Direction"
-description: "Strict dependency rules that prevent circular imports and maintain clean architecture in the Zudo TypeScript framework. Package dependency graph, allowed and forbidden patterns."
+description: "Dependency rules that keep ZudoJS packages free of circular imports: the package graph, allowed and forbidden import patterns, and how they are enforced."
 source: https://zudojs.oyinlola.site/docs/architecture-dependency-direction
 ---
 

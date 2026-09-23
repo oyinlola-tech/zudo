@@ -1,6 +1,6 @@
 ---
 title: "@zudojs/transactions — Transaction Lifecycle Documentation"
-description: "Complete documentation for @zudojs/transactions — transaction lifecycle management, async context propagation, adapter abstraction, savepoints, hooks, and rollback for the Zudojs framework."
+description: "@zudojs/transactions docs: transaction lifecycle, async context propagation, adapter abstraction, savepoints, hooks and rollback for ZudoJS."
 source: https://zudojs.oyinlola.site/docs/packages-transactions
 ---
 
