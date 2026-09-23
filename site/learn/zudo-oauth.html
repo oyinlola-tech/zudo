@@ -478,7 +478,7 @@ verifier in the URL? false</pre></div>
 <ul>
 <li><code>response_type=code</code> asks for the authorization code flow. <code>client_id</code>, <code>redirect_uri</code> and <code>scope</code> say who is asking, where to come back to, and for what.</li>
 <li><code>access_type=offline</code> and <code>prompt=consent</code> come from the Google preset. They make Google issue a refresh token.</li>
-<li><code>state</code> and <code>code_challenge</code> are the two protections, explained next. They are random, so yours will differ.</li>
+<li><code>state</code> and <code>code_challenge</code> are the two protections, explained next. They are random, so yours will differ. <code>generateState()</code> makes 43 random characters; <code>createAuthorizationUrl</code> refuses a state shorter than 16, because a short one could be guessed.</li>
 <li>The client secret and the <code>codeVerifier</code> are <strong>not</strong> in the URL. The function returns the verifier to you, and you keep it on the server until step 5.</li>
 </ul>
 </section>
@@ -862,62 +862,49 @@ export async function findAccountById(id: UserId): Promise<AuthUser | null> {
   return [...byProviderId.values()].find((user) => user.id === id) ?? null;
 }</script>
 </figure>
-<p>Second, start a session. <code>@zudojs/auth</code>'s <code>login()</code> needs a password, which an OAuth user does not have. So you create the session in the session store yourself and bind a token pair to it with <code>sessionId</code>. The auth service then checks these tokens, and logs them out, exactly like password logins:</p>
+<p>Second, start a session. <code>@zudojs/auth</code>'s <code>login()</code> needs a password, which an OAuth user does not have. <code>auth.createSessionForUser(userId, { method })</code> creates the session and its tokens for a user your code has already authenticated in another way. The auth service then checks these tokens, and logs them out, exactly like password logins:</p>
 <figure class="lx-example" data-index="12" data-file="sessions.ts" data-project="oauth">
 <figcaption class="lx-bar"><span class="lx-file">sessions.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
-<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createAuthService<span class="t-pn">,</span> createMemorySessionStore<span class="t-pn">,</span> createTokenPair <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/auth"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">AuthUser</span><span class="t-pn">,</span> <span class="t-ty">TokenConfig</span><span class="t-pn">,</span> <span class="t-ty">TokenPair</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/auth"</span><span class="t-pn">;</span>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createAuthService<span class="t-pn">,</span> createMemorySessionStore <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/auth"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> findAccountById <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./accounts.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> requireEnv <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./env.js"</span><span class="t-pn">;</span>
 
-<span class="t-kw">const</span> tokenConfig<span class="t-op">:</span> <span class="t-ty">TokenConfig</span> <span class="t-op">=</span> <span class="t-pn">{</span>
-  accessSecret<span class="t-op">:</span> <span class="t-fn">requireEnv</span><span class="t-pn">(</span><span class="t-str">"JWT_ACCESS_SECRET"</span><span class="t-pn">)</span><span class="t-pn">,</span>
-  refreshSecret<span class="t-op">:</span> <span class="t-fn">requireEnv</span><span class="t-pn">(</span><span class="t-str">"JWT_REFRESH_SECRET"</span><span class="t-pn">)</span><span class="t-pn">,</span>
-<span class="t-pn">}</span><span class="t-pn">;</span>
-<span class="t-kw">const</span> sessionStore <span class="t-op">=</span> <span class="t-fn">createMemorySessionStore</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-
 <span class="t-kw">export</span> <span class="t-kw">const</span> auth <span class="t-op">=</span> <span class="t-fn">createAuthService</span><span class="t-pn">(</span><span class="t-pn">{</span>
-  token<span class="t-op">:</span> tokenConfig<span class="t-pn">,</span>
-  sessionStore<span class="t-pn">,</span>
+  token<span class="t-op">:</span> <span class="t-pn">{</span>
+    accessSecret<span class="t-op">:</span> <span class="t-fn">requireEnv</span><span class="t-pn">(</span><span class="t-str">"JWT_ACCESS_SECRET"</span><span class="t-pn">)</span><span class="t-pn">,</span>
+    refreshSecret<span class="t-op">:</span> <span class="t-fn">requireEnv</span><span class="t-pn">(</span><span class="t-str">"JWT_REFRESH_SECRET"</span><span class="t-pn">)</span><span class="t-pn">,</span>
+  <span class="t-pn">}</span><span class="t-pn">,</span>
+  sessionStore<span class="t-op">:</span> <span class="t-fn">createMemorySessionStore</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span>
   sessionTtlSeconds<span class="t-op">:</span> <span class="t-num">30</span> <span class="t-op">*</span> <span class="t-num">60</span><span class="t-pn">,</span>
   absoluteSessionTtlSeconds<span class="t-op">:</span> <span class="t-num">7</span> <span class="t-op">*</span> <span class="t-num">24</span> <span class="t-op">*</span> <span class="t-num">60</span> <span class="t-op">*</span> <span class="t-num">60</span><span class="t-pn">,</span>
   findUser<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-cn">null</span><span class="t-pn">,</span>
   findUserById<span class="t-op">:</span> findAccountById<span class="t-pn">,</span>
   verifyPassword<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-cn">false</span><span class="t-pn">,</span>
+  externalSessionMethods<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-str">"oauth"</span><span class="t-pn">]</span><span class="t-pn">,</span>
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-
-<span class="t-kw">export</span> <span class="t-kw">async</span> <span class="t-kw">function</span> <span class="t-fn">startSession</span><span class="t-pn">(</span>user<span class="t-op">:</span> <span class="t-ty">AuthUser</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Promise</span><span class="t-op">&lt;</span><span class="t-ty">TokenPair</span><span class="t-op">&gt;</span> <span class="t-pn">{</span>
-  <span class="t-kw">const</span> session <span class="t-op">=</span> <span class="t-kw">await</span> sessionStore<span class="t-pn">.</span><span class="t-fn">create</span><span class="t-pn">(</span><span class="t-pn">{</span> userId<span class="t-op">:</span> user<span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">,</span> ttlSeconds<span class="t-op">:</span> <span class="t-num">30</span> <span class="t-op">*</span> <span class="t-num">60</span><span class="t-pn">,</span> absoluteTtlSeconds<span class="t-op">:</span> <span class="t-num">7</span> <span class="t-op">*</span> <span class="t-num">24</span> <span class="t-op">*</span> <span class="t-num">60</span> <span class="t-op">*</span> <span class="t-num">60</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">return</span> <span class="t-fn">createTokenPair</span><span class="t-pn">(</span>user<span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">,</span> tokenConfig<span class="t-pn">,</span> <span class="t-pn">{</span> roles<span class="t-op">:</span> user<span class="t-pn">.</span><span class="t-prop">roles</span><span class="t-pn">,</span> sessionId<span class="t-op">:</span> session<span class="t-pn">.</span><span class="t-prop">id</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
 </code></pre>
-<script type="text/plain" class="lx-src">import { createAuthService, createMemorySessionStore, createTokenPair } from "@zudojs/auth";
-import type { AuthUser, TokenConfig, TokenPair } from "@zudojs/auth";
+<script type="text/plain" class="lx-src">import { createAuthService, createMemorySessionStore } from "@zudojs/auth";
 import { findAccountById } from "./accounts.js";
 import { requireEnv } from "./env.js";
 
-const tokenConfig: TokenConfig = {
-  accessSecret: requireEnv("JWT_ACCESS_SECRET"),
-  refreshSecret: requireEnv("JWT_REFRESH_SECRET"),
-};
-const sessionStore = createMemorySessionStore();
-
 export const auth = createAuthService({
-  token: tokenConfig,
-  sessionStore,
+  token: {
+    accessSecret: requireEnv("JWT_ACCESS_SECRET"),
+    refreshSecret: requireEnv("JWT_REFRESH_SECRET"),
+  },
+  sessionStore: createMemorySessionStore(),
   sessionTtlSeconds: 30 * 60,
   absoluteSessionTtlSeconds: 7 * 24 * 60 * 60,
   findUser: async () => null,
   findUserById: findAccountById,
   verifyPassword: async () => false,
-});
-
-export async function startSession(user: AuthUser): Promise<TokenPair> {
-  const session = await sessionStore.create({ userId: user.id, ttlSeconds: 30 * 60, absoluteTtlSeconds: 7 * 24 * 60 * 60 });
-  return createTokenPair(user.id, tokenConfig, { roles: user.roles, sessionId: session.id });
-}</script>
+  externalSessionMethods: ["oauth"],
+});</script>
 </figure>
-<p><code>findUser</code> returns <code>null</code> and <code>verifyPassword</code> returns <code>false</code>, so password login is switched off for this service. In an app with both kinds of login, you pass your real functions and share one session store.</p>
+<ul>
+<li><code>findUser</code> returns <code>null</code> and <code>verifyPassword</code> returns <code>false</code>, so password login is switched off for this service. In an app with both kinds of login, you pass your real functions.</li>
+<li><code>createSessionForUser</code> checks no password: it trusts your code. So it is switched off until you list the method in <code>externalSessionMethods</code>. It still loads the user with <code>findUserById</code> and refuses an unknown or deactivated one. Call it only after the callback has checked the state and exchanged the code, and never with a user id taken from the request.</li>
+</ul>
 <p>Third, the two routes:</p>
 <figure class="lx-example" data-index="13" data-file="server.ts" data-project="oauth">
 <figcaption class="lx-bar"><span class="lx-file">server.ts</span><button type="button" class="lx-edit" data-index="13" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
@@ -928,7 +915,7 @@ export async function startSession(user: AuthUser): Promise<TokenPair> {
 <span class="t-kw">import</span> <span class="t-pn">{</span> findOrCreateAccount <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./accounts.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-cn">CALLBACK_URL</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./google.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> savePendingLogin<span class="t-pn">,</span> takeVerifiedLogin <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./pending.js"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> startSession <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./sessions.js"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> auth <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./sessions.js"</span><span class="t-pn">;</span>
 
 <span class="t-kw">export</span> <span class="t-kw">async</span> <span class="t-kw">function</span> <span class="t-fn">startServer</span><span class="t-pn">(</span>google<span class="t-op">:</span> <span class="t-ty">OAuthConfig</span><span class="t-pn">,</span> port <span class="t-op">=</span> <span class="t-num">0</span><span class="t-pn">)</span> <span class="t-pn">{</span>
   <span class="t-kw">const</span> router <span class="t-op">=</span> <span class="t-fn">createRouter</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -951,10 +938,10 @@ export async function startSession(user: AuthUser): Promise<TokenPair> {
 
     <span class="t-kw">const</span> tokens <span class="t-op">=</span> <span class="t-kw">await</span> <span class="t-fn">exchangeCodeForToken</span><span class="t-pn">(</span>google<span class="t-pn">,</span> <span class="t-pn">{</span> code<span class="t-pn">,</span> codeVerifier<span class="t-pn">,</span> redirectUri<span class="t-op">:</span> <span class="t-cn">CALLBACK_URL</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-kw">const</span> user <span class="t-op">=</span> <span class="t-fn">findOrCreateAccount</span><span class="t-pn">(</span><span class="t-str">"google"</span><span class="t-pn">,</span> <span class="t-kw">await</span> <span class="t-fn">fetchUserInfo</span><span class="t-pn">(</span>google<span class="t-pn">,</span> tokens<span class="t-pn">.</span><span class="t-prop">accessToken</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">const</span> session <span class="t-op">=</span> <span class="t-kw">await</span> <span class="t-fn">startSession</span><span class="t-pn">(</span>user<span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">const</span> session <span class="t-op">=</span> <span class="t-kw">await</span> auth<span class="t-pn">.</span><span class="t-fn">createSessionForUser</span><span class="t-pn">(</span>user<span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">,</span> <span class="t-pn">{</span> method<span class="t-op">:</span> <span class="t-str">"oauth"</span><span class="t-pn">,</span> metadata<span class="t-op">:</span> <span class="t-pn">{</span> provider<span class="t-op">:</span> <span class="t-str">"google"</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-kw">return</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span>
       <span class="t-pn">.</span><span class="t-fn">cookie</span><span class="t-pn">(</span><span class="t-str">"oauth_login"</span><span class="t-pn">,</span> <span class="t-str">""</span><span class="t-pn">,</span> <span class="t-pn">{</span> maxAge<span class="t-op">:</span> <span class="t-num">0</span><span class="t-pn">,</span> path<span class="t-op">:</span> <span class="t-str">"/auth/google"</span> <span class="t-pn">}</span><span class="t-pn">)</span>
-      <span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">{</span> userId<span class="t-op">:</span> user<span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">,</span> accessToken<span class="t-op">:</span> session<span class="t-pn">.</span><span class="t-prop">accessToken</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+      <span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">{</span> userId<span class="t-op">:</span> user<span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">,</span> accessToken<span class="t-op">:</span> session<span class="t-pn">.</span><span class="t-prop">tokens</span><span class="t-pn">.</span><span class="t-prop">accessToken</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
   <span class="t-kw">const</span> adapter <span class="t-op">=</span> <span class="t-fn">createNodeHttpAdapter</span><span class="t-pn">(</span><span class="t-pn">{</span>
@@ -973,7 +960,7 @@ import { badRequest, createNodeHttpAdapter, createResponseContext, createRouter 
 import { findOrCreateAccount } from "./accounts.js";
 import { CALLBACK_URL } from "./google.js";
 import { savePendingLogin, takeVerifiedLogin } from "./pending.js";
-import { startSession } from "./sessions.js";
+import { auth } from "./sessions.js";
 
 export async function startServer(google: OAuthConfig, port = 0) {
   const router = createRouter();
@@ -996,10 +983,10 @@ export async function startServer(google: OAuthConfig, port = 0) {
 
     const tokens = await exchangeCodeForToken(google, { code, codeVerifier, redirectUri: CALLBACK_URL });
     const user = findOrCreateAccount("google", await fetchUserInfo(google, tokens.accessToken));
-    const session = await startSession(user);
+    const session = await auth.createSessionForUser(user.id, { method: "oauth", metadata: { provider: "google" } });
     return createResponseContext()
       .cookie("oauth_login", "", { maxAge: 0, path: "/auth/google" })
-      .json({ userId: user.id, accessToken: session.accessToken });
+      .json({ userId: user.id, accessToken: session.tokens.accessToken });
   });
 
   const adapter = createNodeHttpAdapter({
