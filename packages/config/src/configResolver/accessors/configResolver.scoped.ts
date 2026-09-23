@@ -1,6 +1,6 @@
 import type { ConfigValue } from "../../configValue/configValue.core.js";
 
-import type { ConfigSchema } from "../../configSchema/index.js";
+import type { TypedConfigSchema } from "../../configSchema/index.js";
 
 import type { ConfigResolver } from "../core/configResolver.core.js";
 
@@ -36,8 +36,41 @@ export class ScopedConfigResolver {
     return this.resolver.get<T>(this.key(key), fallback as T);
   }
 
+  /**
+   * Returns a required value WITHOUT converting it: `T` is an unchecked
+   * cast. An environment variable is always a string, so
+   * `required<number>("port")` returns `"5432"`, not `5432`. Use
+   * `requiredNumber`, `requiredBoolean`, `requiredString` or
+   * `requiredDate`, which parse and check the value.
+   */
   required<T extends ConfigValue = ConfigValue>(key: string): T {
     return this.resolver.required<T>(this.key(key));
+  }
+
+  /** Returns a required string; throws when missing or not a string. */
+  requiredString(key: string): string {
+    return this.resolver.requiredString(this.key(key));
+  }
+
+  /**
+   * Returns a required number, parsing decimal strings (`"5432"`); throws
+   * when missing or not a number.
+   */
+  requiredNumber(key: string): number {
+    return this.resolver.requiredNumber(this.key(key));
+  }
+
+  /**
+   * Returns a required boolean, parsing `true/false`, `1/0`, `yes/no`,
+   * `y/n` and `on/off`; throws when missing or not a boolean.
+   */
+  requiredBoolean(key: string): boolean {
+    return this.resolver.requiredBoolean(this.key(key));
+  }
+
+  /** Returns a required Date, parsing ISO strings; throws when missing. */
+  requiredDate(key: string): Date {
+    return this.resolver.requiredDate(this.key(key));
   }
 
   string(key: string): string | undefined;
@@ -88,7 +121,9 @@ export class ScopedConfigResolver {
     return this.resolver.object<T>(this.key(key), fallback);
   }
 
-  array<T extends ConfigValue = ConfigValue>(key: string): readonly T[] | undefined;
+  array<T extends ConfigValue = ConfigValue>(
+    key: string,
+  ): readonly T[] | undefined;
   array<T extends ConfigValue = ConfigValue>(
     key: string,
     fallback: readonly T[],
@@ -106,7 +141,7 @@ export class ScopedConfigResolver {
 
   resolve<T extends ConfigValue>(
     key: string,
-    schema: ConfigSchema<T>,
+    schema: TypedConfigSchema<T>,
   ): T | undefined {
     return this.resolver.resolve(this.key(key), schema);
   }

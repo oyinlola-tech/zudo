@@ -3,8 +3,8 @@ import type { ConfigValue } from "../configValue/configValue.core.js";
 import { cloneConfigValue } from "../configValue/configValue.core.js";
 
 import type {
-  ConfigSchema,
   AnyConfigSchema,
+  TypedConfigSchema,
 } from "../configSchema/index.js";
 
 import {
@@ -347,7 +347,11 @@ export class ConfigManager {
   }
 
   /**
-   * Gets a required configuration value.
+   * Returns a required value WITHOUT converting it: `T` is an unchecked
+   * cast. An environment variable is always a string, so
+   * `required<number>("port")` returns `"5432"`, not `5432`. Use
+   * `requiredNumber`, `requiredBoolean`, `requiredString` or
+   * `requiredDate`, which parse and check the value.
    */
   required<T extends ConfigValue = ConfigValue>(key: string): T {
     this.assertActive();
@@ -355,12 +359,46 @@ export class ConfigManager {
     return this.resolver.required<T>(key);
   }
 
+  /** Gets a required string; throws when missing or not a string. */
+  requiredString(key: string): string {
+    this.assertActive();
+
+    return this.resolver.requiredString(key);
+  }
+
+  /**
+   * Gets a required number, parsing decimal strings (`"5432"`); throws
+   * when missing or not a number.
+   */
+  requiredNumber(key: string): number {
+    this.assertActive();
+
+    return this.resolver.requiredNumber(key);
+  }
+
+  /**
+   * Gets a required boolean, parsing `true/false`, `1/0`, `yes/no`, `y/n`
+   * and `on/off`; throws when missing or not a boolean.
+   */
+  requiredBoolean(key: string): boolean {
+    this.assertActive();
+
+    return this.resolver.requiredBoolean(key);
+  }
+
+  /** Gets a required Date, parsing ISO strings; throws when missing. */
+  requiredDate(key: string): Date {
+    this.assertActive();
+
+    return this.resolver.requiredDate(key);
+  }
+
   /**
    * Gets a configuration value with schema validation.
    */
   resolve<T extends ConfigValue>(
     key: string,
-    schema: ConfigSchema<T>,
+    schema: TypedConfigSchema<T>,
   ): T | undefined {
     this.assertActive();
 
@@ -448,7 +486,9 @@ export class ConfigManager {
   /**
    * Gets an array value.
    */
-  array<T extends ConfigValue = ConfigValue>(key: string): readonly T[] | undefined;
+  array<T extends ConfigValue = ConfigValue>(
+    key: string,
+  ): readonly T[] | undefined;
   array<T extends ConfigValue = ConfigValue>(
     key: string,
     fallback: readonly T[],

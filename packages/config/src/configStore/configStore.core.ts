@@ -42,6 +42,21 @@ export function normalizeKey(key: string): string {
 }
 
 /**
+ * Normalizes a key prefix: trims it and drops trailing dots, so `"db."`
+ * and `"db"` select the same entries. A prefix that is only dots is
+ * rejected like an empty key.
+ */
+function normalizePrefix(prefix: string): string {
+  const normalized = normalizeKey(prefix).replace(/\.+$/, "");
+
+  if (normalized.length === 0) {
+    throw new TypeError("Configuration prefix cannot be empty.");
+  }
+
+  return normalized;
+}
+
+/**
  * Central in-memory configuration store.
  *
  * The store keeps resolved values and their metadata together so
@@ -364,12 +379,13 @@ export class ConfigStore {
   }
 
   /**
-   * Returns entries matching a prefix.
+   * Returns entries matching a prefix. A trailing dot is optional:
+   * `"db"` and `"db."` both match `db` and `db.*` (but not `dbx`).
    */
   getByPrefix(prefix: string): readonly ConfigEntry[] {
     this.assertActive();
 
-    const normalizedPrefix = normalizeKey(prefix);
+    const normalizedPrefix = normalizePrefix(prefix);
 
     return Array.from(this.entries.values()).filter(
       (entry) =>
@@ -379,12 +395,13 @@ export class ConfigStore {
   }
 
   /**
-   * Returns configuration values matching a prefix.
+   * Returns configuration values matching a prefix, keyed by the rest of
+   * the key. A trailing dot is optional, as for {@link getByPrefix}.
    */
   getObjectByPrefix(prefix: string): Readonly<Record<string, ConfigValue>> {
     const entries = this.getByPrefix(prefix);
 
-    const normalizedPrefix = normalizeKey(prefix);
+    const normalizedPrefix = normalizePrefix(prefix);
 
     const result: Record<string, ConfigValue> = {};
 

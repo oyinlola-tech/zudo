@@ -8,7 +8,10 @@ import {
   parseConfigNumber,
 } from "../../configValue/configValue.core.js";
 
-import type { ConfigSchema } from "../../configSchema/index.js";
+import type {
+  ConfigSchema,
+  TypedConfigSchema,
+} from "../../configSchema/index.js";
 
 import { validateConfigValue } from "../../configSchema/index.js";
 
@@ -55,8 +58,7 @@ export class ConfigResolver {
     const value = this.store.get<T>(key);
 
     return this.prepareValue(value === undefined ? fallback : value) as
-      | T
-      | undefined;
+      T | undefined;
   }
 
   /**
@@ -64,7 +66,7 @@ export class ConfigResolver {
    */
   resolve<T extends ConfigValue>(
     key: string,
-    schema: ConfigSchema<T>,
+    schema: TypedConfigSchema<T>,
   ): T | undefined {
     const value = this.store.get(key);
 
@@ -114,7 +116,7 @@ export class ConfigResolver {
    */
   resolveResult<T extends ConfigValue>(
     key: string,
-    schema: ConfigSchema<T>,
+    schema: TypedConfigSchema<T>,
   ): ConfigResolutionResult<T> {
     const value = this.store.get(key);
 
@@ -137,7 +139,11 @@ export class ConfigResolver {
   }
 
   /**
-   * Returns a required configuration value.
+   * Returns a required value WITHOUT converting it: `T` is an unchecked
+   * cast. An environment variable is always a string, so
+   * `required<number>("port")` returns `"5432"`, not `5432`. Use
+   * `requiredNumber`, `requiredBoolean`, `requiredString` or
+   * `requiredDate`, which parse and check the value.
    */
   required<T extends ConfigValue = ConfigValue>(key: string): T {
     const value = this.store.get<T>(key);
@@ -409,7 +415,9 @@ export class ConfigResolver {
   /**
    * Returns an array configuration value.
    */
-  array<T extends ConfigValue = ConfigValue>(key: string): readonly T[] | undefined;
+  array<T extends ConfigValue = ConfigValue>(
+    key: string,
+  ): readonly T[] | undefined;
   array<T extends ConfigValue = ConfigValue>(
     key: string,
     fallback: readonly T[],

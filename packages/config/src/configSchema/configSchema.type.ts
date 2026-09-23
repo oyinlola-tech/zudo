@@ -85,11 +85,23 @@ export interface ConfigSchema<T extends ConfigValue = ConfigValue> {
    * value. Set `false` to require a real number or boolean.
    */
   readonly coerce?: boolean;
+  /**
+   * Custom check on the FINAL value, after coercion and `transform`.
+   * Returning `false`, a message or issues fails validation.
+   */
   readonly validate?: (
     value: T,
     context: ConfigValidationContext,
   ) =>
     boolean | string | ConfigValidationIssue | readonly ConfigValidationIssue[];
+  /**
+   * Converts the value. A value that already has the schema's `type` is
+   * transformed after its constraints pass. A STRING that does not have
+   * the type is passed to `transform` as a parser, and the output must
+   * then have the type and satisfy the constraints (so `{ type: ARRAY,
+   * transform: (s) => String(s).split(",") }` accepts `"a,b"`). A
+   * non-string of the wrong type is rejected without calling it.
+   */
   readonly transform?: (
     value: ConfigValue,
     context: ConfigValidationContext,
@@ -162,26 +174,87 @@ export interface ConfigArraySchema<
   readonly maxItems?: number;
 }
 
-/**
- * String configuration schema.
- */
-export interface ConfigStringSchema extends ConfigSchema<string> {
-  readonly type: ConfigValueType.STRING;
+/** Constraints enforced on a string value. */
+export interface ConfigStringConstraints {
   readonly minLength?: number;
   readonly maxLength?: number;
   readonly pattern?: string | RegExp;
   readonly enum?: readonly string[];
 }
 
-/**
- * Number configuration schema.
- */
-export interface ConfigNumberSchema extends ConfigSchema<number> {
-  readonly type: ConfigValueType.NUMBER;
+/** Constraints enforced on a number value. */
+export interface ConfigNumberConstraints {
   readonly min?: number;
   readonly max?: number;
   readonly integer?: boolean;
   readonly positive?: boolean;
+}
+
+/**
+ * String configuration schema.
+ */
+export interface ConfigStringSchema
+  extends ConfigSchema<string>, ConfigStringConstraints {
+  readonly type: ConfigValueType.STRING;
+}
+
+/**
+ * Number configuration schema.
+ */
+export interface ConfigNumberSchema
+  extends ConfigSchema<number>, ConfigNumberConstraints {
+  readonly type: ConfigValueType.NUMBER;
+}
+
+/**
+ * A schema accepted by `resolve()` / `resolveResult()`: a union keyed on
+ * `type`, so each value type carries exactly the constraints the
+ * validator enforces for it. `{ type: NUMBER, min: 1 }` and
+ * `{ type: STRING, minLength: 1 }` type-check; `{ type: NUMBER,
+ * minLength: 1 }` does not. `T` is the resolved (post-`transform`) type.
+ */
+export type TypedConfigSchema<T extends ConfigValue = ConfigValue> =
+  | (ConfigSchemaBase<T> &
+      ConfigStringConstraints & { readonly type: ConfigValueType.STRING })
+  | (ConfigSchemaBase<T> &
+      ConfigNumberConstraints & { readonly type: ConfigValueType.NUMBER })
+  | (ConfigSchemaBase<T> &
+      ConfigArrayConstraints & { readonly type: ConfigValueType.ARRAY })
+  | (ConfigSchemaBase<T> &
+      ConfigObjectConstraints & { readonly type: ConfigValueType.OBJECT })
+  | (ConfigSchemaBase<T> & {
+      readonly type:
+        | ConfigValueType.BOOLEAN
+        | ConfigValueType.BIGINT
+        | ConfigValueType.DATE
+        | ConfigValueType.NULL
+        | ConfigValueType.ANY;
+    })
+  // A union of types: each constraint applies when the runtime value has
+  // the matching type, so every constraint is accepted.
+  | (ConfigSchemaBase<T> &
+      ConfigStringConstraints &
+      ConfigNumberConstraints &
+      ConfigArrayConstraints &
+      ConfigObjectConstraints & { readonly type: readonly ConfigValueType[] });
+
+/**
+ * {@link ConfigSchema} without `type`, so each {@link TypedConfigSchema}
+ * member can declare a single `type` that TypeScript discriminates on.
+ */
+type ConfigSchemaBase<T extends ConfigValue> = Omit<ConfigSchema<T>, "type">;
+
+/** Constraints enforced on an array value. */
+export interface ConfigArrayConstraints {
+  readonly items?: AnyConfigSchema;
+  readonly minItems?: number;
+  readonly maxItems?: number;
+}
+
+/** Nested property schemas enforced on an object value. */
+export interface ConfigObjectConstraints {
+  readonly properties?: Readonly<Record<string, AnyConfigSchema>>;
+  readonly additionalProperties?: boolean | AnyConfigSchema;
 }
 
 /**

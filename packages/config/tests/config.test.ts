@@ -745,11 +745,46 @@ describe("Finding 14: validation failures never yield invalid values", () => {
     ).toBeUndefined();
   });
 
-  it("does not run transform on invalid values", () => {
-    let transformCalls = 0;
-
+  it("never returns an invalid value a transform produced", () => {
+    // Batch 7: a string that fails the type check is handed to `transform`
+    // as a parser, so the transform may run; its output must then have
+    // the schema's type, or the value is rejected.
     const result = validateConfigValue("nope", {
       type: ConfigValueType.NUMBER,
+      transform: (value) => value,
+    });
+
+    expect(result.valid).toBe(false);
+    expect(result.value).toBeUndefined();
+    expect(result.issues.some((issue) => issue.code === "TYPE_MISMATCH")).toBe(
+      true,
+    );
+  });
+
+  it("does not run transform on a non-string of the wrong type", () => {
+    let transformCalls = 0;
+
+    const result = validateConfigValue(
+      { not: "a number" },
+      {
+        type: ConfigValueType.NUMBER,
+        transform: (value) => {
+          transformCalls += 1;
+          return value;
+        },
+      },
+    );
+
+    expect(result.valid).toBe(false);
+    expect(transformCalls).toBe(0);
+  });
+
+  it("does not run transform when a constraint fails", () => {
+    let transformCalls = 0;
+
+    const result = validateConfigValue(5, {
+      type: ConfigValueType.NUMBER,
+      max: 1,
       transform: (value) => {
         transformCalls += 1;
         return value;
@@ -757,7 +792,6 @@ describe("Finding 14: validation failures never yield invalid values", () => {
     });
 
     expect(result.valid).toBe(false);
-    expect(result.value).toBeUndefined();
     expect(transformCalls).toBe(0);
   });
 

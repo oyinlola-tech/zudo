@@ -118,6 +118,28 @@ const db = manager.scoped("db");
 db.string("host", "localhost");
 ```
 
+`required<T>(key)` does NOT convert: `T` is an unchecked cast, so with
+`DB__PORT=5432`, `scoped("db").required<number>("port")` returns the
+string `"5432"`. Use the typed variants, which parse and check the value
+and throw when it is missing or does not parse: `requiredString()`,
+`requiredNumber()`, `requiredBoolean()` and `requiredDate()` (on the
+manager, the resolver and scoped resolvers).
+
+```typescript
+const db = manager.scoped("db");
+db.requiredNumber("port"); // 5432 (a number)
+```
+
+`store.getByPrefix(prefix)` and `store.getObjectByPrefix(prefix)` accept
+the prefix with or without a trailing dot: `"db"` and `"db."` both select
+`db.host` and `db.port` (and not `dbx`).
+
+Passing a fallback narrows the return type: `manager.number("app.port")`
+is `number | undefined`, while `manager.number("app.port", 3000)` is
+`number`. The same holds for every typed getter and for `get(key,
+fallback)`, whose literal fallback is widened (`get("mode", "dev")` is
+`string`, not `"dev"`).
+
 `number()` accepts decimal notation only: `"0x1F90"`, `"0b11"` and `"0o17"`
 are rejected rather than silently becoming 8080, 3 and 15.
 
@@ -137,6 +159,46 @@ const config = manager.validate({
   additionalProperties: true,
 });
 ```
+
+Environment variables are always strings, so string input is coerced
+before the type check when a schema's type is `NUMBER` or `BOOLEAN` (and
+does not also accept `STRING`). Parsing is strict: `"8080"` becomes
+`8080`, while `"80a"`, `"0x1F90"` and `""` are still rejected as
+`TYPE_MISMATCH`. Booleans follow the `boolean()` convention: `true` /
+`false`, `1` / `0`, `yes` / `no`, `y` / `n`, `on` / `off`. `validate` and
+`transform` receive the coerced value. Set `coerce: false` on a schema to
+require a real number or boolean.
+
+```typescript
+// PORT=8080 DEBUG=true
+const { port, debug } = manager.validate<{ port: number; debug: boolean }>({
+  properties: {
+    port: { type: ConfigValueType.NUMBER, min: 1, max: 65535 },
+    debug: { type: ConfigValueType.BOOLEAN },
+  },
+});
+```
+
+`resolve(key, schema)` types its schema per value type
+(`TypedConfigSchema`), so the constraints the validator enforces are
+accepted: `{ type: NUMBER, min: 1 }`, `{ type: STRING, minLength: 1 }`,
+`{ type: ARRAY, minItems: 1 }`. A constraint that belongs to another type
+(`{ type: NUMBER, minLength: 1 }`) is a compile error.
+
+Validation runs in this order: coerce, type check, constraints,
+`transform`, then `validate` on the final (transformed) value. A string
+that does not have the schema's type is handed to `transform` as a
+parser, and its output must then have the type and pass the constraints:
+
+```typescript
+manager.resolve("hosts", {
+  type: ConfigValueType.ARRAY,
+  minItems: 1,
+  transform: (value) => String(value).split(",").map((s) => s.trim()),
+}); // HOSTS="a, b" -> ["a", "b"]
+```
+
+A non-string of the wrong type is rejected without calling `transform`.
 
 Object schemas nest: a property schema of type `OBJECT` that declares
 its own `properties` / `additionalProperties` is validated recursively,

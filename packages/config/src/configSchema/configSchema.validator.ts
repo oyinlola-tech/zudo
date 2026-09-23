@@ -467,41 +467,130 @@ export function validateConfigValue(
     };
   }
 
-  if (!matchesConfigType(value, schema.type)) {
-    issues.push(
-      createConfigValidationIssue(
-        path,
-        `Expected ${formatExpectedType(schema.type)} but received ${getConfigValueType(value)}.`,
-        "TYPE_MISMATCH",
-        {
-          expected: schema.type,
-          received: getConfigValueType(value),
-        },
-      ),
-    );
+  const hasErrors = (): boolean =>
+    issues.some((issue) => issue.severity === ConfigValidationSeverity.ERROR);
 
-    return {
-      valid: false,
-      issues,
-    };
+  // Order: coerce -> (transform) -> type check -> constraints -> validate.
+  // A value that already has the schema's type is constrained first and
+  // transformed afterwards (so a type-changing transform such as
+  // `STRING -> Number(v)` keeps working). A string that does NOT have the
+  // type is handed to `transform` as a parser, and its OUTPUT must have
+  // the type and satisfy the constraints. Either way `validate` receives
+  // the final value, matching its `(value: T)` signature.
+  let base: ConfigValue;
+
+  let transformed = false;
+
+  if (matchesConfigType(value, schema.type)) {
+    base = checkConstraints(value, schema, validationContext, issues);
+  } else {
+    const parsed = parseWithTransform(value, schema, validationContext);
+
+    if (parsed === NOT_PARSED || !matchesConfigType(parsed, schema.type)) {
+      issues.push(
+        createConfigValidationIssue(
+          path,
+          `Expected ${formatExpectedType(schema.type)} but received ${getConfigValueType(value)}.`,
+          "TYPE_MISMATCH",
+          {
+            expected: schema.type,
+            received: getConfigValueType(value),
+          },
+        ),
+      );
+
+      return {
+        valid: false,
+        issues,
+      };
+    }
+
+    transformed = true;
+
+    base = checkConstraints(parsed, schema, validationContext, issues);
   }
 
-  const rewritten = validateBuiltInRules(
-    value,
-    schema,
-    validationContext,
+  let final: ConfigValue = base;
+
+  // Transforms only run on values that passed their constraints; running
+  // them on invalid input would surface invalid values to callers.
+  if (!transformed && schema.transform && !hasErrors()) {
+    try {
+      final = schema.transform(base, validationContext);
+      transformed = true;
+    } catch (error) {
+      issues.push(
+        createConfigValidationIssue(
+          path,
+          error instanceof Error ? error.message : String(error),
+          "TRANSFORM_FAILED",
+        ),
+      );
+    }
+  }
+
+  // `validate` sees the final value. It is skipped only when a transform
+  // should have produced that value but did not run.
+  if (schema.validate && (transformed || schema.transform === undefined)) {
+    const result = schema.validate(final, validationContext);
+
+    appendCustomValidationResult(result, path, issues);
+  }
+
+  const valid = !hasErrors();
+
+  return {
+    valid,
+    // Invalid values are never returned; callers fall back to the
+    // schema default or undefined instead.
+    value: valid ? final : undefined,
     issues,
-  );
+  };
+}
 
-  // An object schema carries `properties` / `additionalProperties`.
-  // Those were declared on ConfigObjectSchema but read nowhere in this
-  // function, so every nested object schema — including the ones used
-  // by ConfigResolver.resolve() and ConfigManager.resolve() — passed
-  // validation unconditionally. Delegate to validateConfigObject so
-  // nested constraints are actually enforced.
+/** Marks a transform that threw, or a schema without one. */
+const NOT_PARSED: unique symbol = Symbol("NOT_PARSED");
+
+/**
+ * Runs `schema.transform` as a parser on a STRING that failed the type
+ * check (environment variables, `.env` files and CLI flags only produce
+ * strings). Returns {@link NOT_PARSED} for any other value, when there is
+ * no transform, or when it threw; the caller then reports the original
+ * type mismatch. A non-string of the wrong type is a real type error and
+ * is never handed to `transform`.
+ */
+function parseWithTransform(
+  value: unknown,
+  schema: AnyConfigSchema,
+  context: ConfigValidationContext,
+): ConfigValue | typeof NOT_PARSED {
+  if (schema.transform === undefined || typeof value !== "string") {
+    return NOT_PARSED;
+  }
+
+  try {
+    return schema.transform(value as ConfigValue, context);
+  } catch {
+    return NOT_PARSED;
+  }
+}
+
+/**
+ * Applies the built-in constraints and, for object schemas, the nested
+ * property schemas. Returns the value to continue with (rebuilt when an
+ * item or property schema rewrote part of it).
+ */
+function checkConstraints(
+  value: unknown,
+  schema: AnyConfigSchema,
+  context: ConfigValidationContext,
+  issues: ConfigValidationIssue[],
+): ConfigValue {
+  const rewritten = validateBuiltInRules(value, schema, context, issues);
+
+  // An object schema carries `properties` / `additionalProperties`;
+  // delegate to validateConfigObject so nested constraints are enforced.
   const objectSchema = schema as Partial<ConfigObjectSchema>;
-
-  let base: ConfigValue = rewritten ?? (value as ConfigValue);
 
   if (
     matchesConfigType(value, ConfigValueType.OBJECT) &&
@@ -515,52 +604,17 @@ export function validateConfigValue(
         properties: objectSchema.properties ?? {},
         additionalProperties: objectSchema.additionalProperties,
       },
-      path,
+      context.path,
     );
 
     issues.push(...nested.issues);
 
     if (nested.value !== undefined) {
-      base = nested.value;
+      return nested.value;
     }
   }
 
-  if (schema.validate) {
-    const result = schema.validate(base, validationContext);
-
-    appendCustomValidationResult(result, path, issues);
-  }
-
-  let transformed: ConfigValue = base;
-
-  const hasErrors = (): boolean =>
-    issues.some((issue) => issue.severity === ConfigValidationSeverity.ERROR);
-
-  // Transforms only run on values that passed validation; running
-  // them on invalid input would surface invalid values to callers.
-  if (schema.transform && !hasErrors()) {
-    try {
-      transformed = schema.transform(base, validationContext);
-    } catch (error) {
-      issues.push(
-        createConfigValidationIssue(
-          path,
-          error instanceof Error ? error.message : String(error),
-          "TRANSFORM_FAILED",
-        ),
-      );
-    }
-  }
-
-  const valid = !hasErrors();
-
-  return {
-    valid,
-    // Invalid values are never returned; callers fall back to the
-    // schema default or undefined instead.
-    value: valid ? transformed : undefined,
-    issues,
-  };
+  return rewritten ?? (value as ConfigValue);
 }
 
 /**
