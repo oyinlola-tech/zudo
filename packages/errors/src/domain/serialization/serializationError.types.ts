@@ -89,7 +89,11 @@ export class CircularReferenceError extends SerializationError {
 /**
  * Error thrown when maximum serialization depth is exceeded.
  *
- * Over-deep data is a server-side data bug, so this is an internal (500) error.
+ * By default over-deep data is a server-side data bug, so this is an
+ * internal (500) error. Code that checks UNTRUSTED input (for example
+ * `assertDepthWithinLimit` in `@zudojs/validation`) passes
+ * `{ statusCode: 400, expose: true }`: too-deep client input is a client
+ * error. The message holds only the two numbers, so it is safe to expose.
  */
 export class SerializationDepthError extends SerializationError {
   public override readonly depth: number;
@@ -97,13 +101,17 @@ export class SerializationDepthError extends SerializationError {
   /** @deprecated Use `maxDepth`. */
   public readonly maxDepthValue: number;
 
-  constructor(depth: number, maxDepth: number) {
+  constructor(
+    depth: number,
+    maxDepth: number,
+    options: { readonly statusCode?: number; readonly expose?: boolean } = {},
+  ) {
     super(`Maximum serialization depth exceeded: ${depth} > ${maxDepth}`, {
       code: ErrorCode.MAX_DEPTH_EXCEEDED,
       depth,
       maxDepth,
-      statusCode: 500,
-      expose: false,
+      statusCode: options.statusCode ?? 500,
+      expose: options.expose ?? false,
     });
     this.depth = depth;
     this.maxDepth = maxDepth;

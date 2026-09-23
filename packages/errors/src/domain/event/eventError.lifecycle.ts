@@ -154,6 +154,25 @@ export class EventBusDisposedError extends EventError {
 }
 
 /**
+ * Error thrown when publishing or subscribing on a stopped event bus.
+ * Call `start()` to resume.
+ */
+export class EventBusStoppedError extends EventError {
+  public readonly operation: string;
+
+  constructor(operation: string) {
+    super(`Cannot ${operation} on a stopped event bus. Call start() first.`, {
+      code: ErrorCode.LIFECYCLE_STATE,
+      statusCode: 500,
+      expose: false,
+      isOperational: true,
+      metadata: { operation },
+    });
+    this.operation = operation;
+  }
+}
+
+/**
  * Error thrown when a pattern exceeds its configured handler limit.
  *
  * The limit exists to catch a subscribe-without-unsubscribe leak. Registering

@@ -54,6 +54,12 @@ export enum ErrorCode {
   SESSION_EXPIRED = "ERR_SESSION_EXPIRED",
   TOKEN_INVALID = "ERR_TOKEN_INVALID",
   TOKEN_EXPIRED = "ERR_TOKEN_EXPIRED",
+  /** A token that verified but has been revoked (logout, rotation replay). */
+  TOKEN_REVOKED = "ERR_TOKEN_REVOKED",
+  /** The account is temporarily locked after repeated failed sign-ins. */
+  ACCOUNT_LOCKED = "ERR_ACCOUNT_LOCKED",
+  /** The account exists but has been deactivated. */
+  ACCOUNT_DEACTIVATED = "ERR_ACCOUNT_DEACTIVATED",
 
   CRYPTO = "ERR_CRYPTO",
   CRYPTO_KEY = "ERR_CRYPTO_KEY",
@@ -103,6 +109,8 @@ export enum ErrorCode {
   QUERY_HANDLER_NOT_FOUND = "ERR_QUERY_HANDLER_NOT_FOUND",
   INVALID_COMMAND = "ERR_INVALID_COMMAND",
   INVALID_QUERY = "ERR_INVALID_QUERY",
+  COMMAND_FAILED = "ERR_COMMAND_FAILED",
+  QUERY_FAILED = "ERR_QUERY_FAILED",
   EVENT_HANDLER_FAILED = "ERR_EVENT_HANDLER_FAILED",
   CONFIGURATION_ERROR = "ERR_CONFIGURATION_ERROR",
 

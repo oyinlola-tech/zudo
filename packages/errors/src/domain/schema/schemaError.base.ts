@@ -12,10 +12,17 @@ import {
   toJsonSafeIssues,
 } from "../shared/domainError.helpers.js";
 
-/** Options for constructing a SchemaError. */
-export interface SchemaErrorOptions extends Omit<BaseErrorOptions, "category"> {
+/**
+ * Options for constructing a SchemaError.
+ *
+ * @typeParam TIssue - Shape of one issue. `@zudojs/errors` cannot know it
+ *   (the schema package sits above it), so it defaults to `unknown`;
+ *   `@zudojs/schema` throws `SchemaError<SchemaIssue>`.
+ */
+export interface SchemaErrorOptions<TIssue = unknown>
+  extends Omit<BaseErrorOptions, "category"> {
   readonly category?: ErrorCategory;
-  readonly issues?: readonly unknown[];
+  readonly issues?: readonly TIssue[];
 }
 
 /**
@@ -27,10 +34,10 @@ export interface SchemaErrorOptions extends Omit<BaseErrorOptions, "category"> {
  * (`value`, `received`, `input`, `actual`) with a type/size description so
  * that secrets submitted by a client are never echoed back or logged.
  */
-export class SchemaError extends BaseError {
-  public readonly issues: readonly unknown[];
+export class SchemaError<TIssue = unknown> extends BaseError {
+  public readonly issues: readonly TIssue[];
 
-  constructor(message: string, options: SchemaErrorOptions = {}) {
+  constructor(message: string, options: SchemaErrorOptions<TIssue> = {}) {
     super(message, {
       ...options,
       code: options.code ?? ErrorCode.SCHEMA_VALIDATION,
@@ -59,11 +66,11 @@ export class SchemaError extends BaseError {
 }
 
 /** Creates a schema error. */
-export function createSchemaError(
+export function createSchemaError<TIssue = unknown>(
   message: string,
-  options: SchemaErrorOptions = {},
-): SchemaError {
-  return new SchemaError(message, options);
+  options: SchemaErrorOptions<TIssue> = {},
+): SchemaError<TIssue> {
+  return new SchemaError<TIssue>(message, options);
 }
 
 /** Determines whether an unknown value is a SchemaError. */

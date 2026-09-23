@@ -41,9 +41,14 @@ export class TransactionCommitError extends TransactionError {
 export class TransactionRollbackError extends TransactionError {
   constructor(
     transactionId: string,
-    options?: { readonly cause?: unknown; readonly originalError?: unknown },
+    options?: {
+      readonly cause?: unknown;
+      readonly originalError?: unknown;
+      /** Overrides the default "rollback failed" message (for subclasses). */
+      readonly message?: string;
+    },
   ) {
-    super(`Transaction "${transactionId}" rollback failed`, {
+    super(options?.message ?? `Transaction "${transactionId}" rollback failed`, {
       code: ErrorCode.DATABASE_TRANSACTION,
       cause: options?.cause,
       metadata: {
@@ -53,6 +58,25 @@ export class TransactionRollbackError extends TransactionError {
             ? options.originalError.message
             : String(options?.originalError ?? "unknown"),
       },
+    });
+  }
+}
+
+/**
+ * A commit was refused because the transaction was marked rollback-only;
+ * the transaction was rolled back instead.
+ *
+ * Distinct from a rollback that *failed*. It extends
+ * `TransactionRollbackError`, so existing `instanceof` checks and the
+ * `ERR_DATABASE_TRANSACTION` code still match, while the message and
+ * class say what actually happened. `metadata.originalError` carries the
+ * reason passed to `markRollbackOnly`.
+ */
+export class TransactionRollbackOnlyError extends TransactionRollbackError {
+  constructor(transactionId: string, reason?: unknown) {
+    super(transactionId, {
+      originalError: reason ?? "marked rollback-only",
+      message: `Transaction "${transactionId}" commit refused: transaction marked rollback-only`,
     });
   }
 }

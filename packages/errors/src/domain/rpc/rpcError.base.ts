@@ -12,11 +12,21 @@ import { ErrorSeverity } from "../../base/types/errorSeverity.type.js";
 export interface RPCErrorOptions extends Omit<BaseErrorOptions, "category"> {
   readonly category?: ErrorCategory;
   readonly procedureName?: string;
+  /** Structured, caller-safe detail sent with the error's wire payload. */
+  readonly details?: unknown;
 }
 
 /** Base error for all RPC failures. */
 export class RPCError extends BaseError {
   public readonly procedureName?: string;
+
+  /**
+   * Structured, caller-safe detail carried by the wire payload — validation
+   * issues, `{ retryAfter }` for a rate limit, or whatever a custom error
+   * sent. Set on errors an RPC client rebuilds from a response; `undefined`
+   * when the payload had none.
+   */
+  public declare readonly details?: unknown;
 
   constructor(message: string, options: RPCErrorOptions = {}) {
     super(message, {
@@ -29,6 +39,13 @@ export class RPCError extends BaseError {
       isOperational: options.isOperational ?? true,
     });
     this.procedureName = options.procedureName;
+    if (options.details !== undefined) {
+      Object.defineProperty(this, "details", {
+        value: options.details,
+        enumerable: true,
+        configurable: true,
+      });
+    }
   }
 
   public override toJSON() {
@@ -37,6 +54,7 @@ export class RPCError extends BaseError {
       ...(this.procedureName !== undefined
         ? { procedureName: this.procedureName }
         : {}),
+      ...(this.details !== undefined ? { details: this.details } : {}),
     };
   }
 }
