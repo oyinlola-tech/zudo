@@ -12,9 +12,12 @@ export {
   TokenExpiredError,
   TokenInvalidError,
   TokenRevokedError,
-  AccountLockedError,
   AccountDeactivatedError,
   AccessDeniedError,
   SessionExpiredError,
-  AuthRateLimitError,
 } from "./authError.base.js";
+export {
+  AccountLockedError,
+  AuthRateLimitError,
+  type ThrottleErrorOptions,
+} from "./authError.throttle.js";

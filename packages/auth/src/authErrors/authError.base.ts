@@ -86,40 +86,19 @@ export class TokenInvalidError extends AuthError {
 }
 
 /**
- * Token has been revoked.
+ * Token has been revoked (logout, or a refresh token replayed after
+ * rotation).
+ *
+ * `401` with `ERR_TOKEN_REVOKED`: the credential is no longer valid, so the
+ * client must authenticate again. It was `403 ERR_FORBIDDEN`, which told a
+ * client that re-authenticating would not help.
  */
 export class TokenRevokedError extends AuthError {
   constructor(message = "Token has been revoked", options?: AuthErrorOptions) {
     super(message, {
-      code: ErrorCode.FORBIDDEN,
-      category: ErrorCategory.AUTHORIZATION,
-      statusCode: 403,
+      code: ErrorCode.TOKEN_REVOKED,
+      statusCode: 401,
       ...options,
-    });
-  }
-}
-
-/**
- * User account is locked (too many failed attempts).
- *
- * `423 Locked`; `metadata.retryAfterSeconds` is intended for a `Retry-After`
- * response header.
- */
-export class AccountLockedError extends AuthError {
-  constructor(
-    message = "Account is locked due to too many failed attempts",
-    options?: AuthErrorOptions & { readonly retryAfterSeconds?: number },
-  ) {
-    const { retryAfterSeconds, metadata, ...rest } = options ?? {};
-    super(message, {
-      code: ErrorCode.FORBIDDEN,
-      category: ErrorCategory.RATE_LIMIT,
-      statusCode: 423,
-      ...rest,
-      metadata: {
-        retryAfterSeconds: retryAfterSeconds ?? 900,
-        ...metadata,
-      },
     });
   }
 }
@@ -133,7 +112,7 @@ export class AccountDeactivatedError extends AuthError {
     options?: AuthErrorOptions,
   ) {
     super(message, {
-      code: ErrorCode.FORBIDDEN,
+      code: ErrorCode.ACCOUNT_DEACTIVATED,
       category: ErrorCategory.AUTHORIZATION,
       statusCode: 403,
       ...options,
@@ -172,28 +151,6 @@ export class SessionExpiredError extends AuthError {
       code: ErrorCode.SESSION_EXPIRED,
       statusCode: 401,
       ...options,
-    });
-  }
-}
-
-/**
- * Rate limit exceeded for an auth endpoint.
- */
-export class AuthRateLimitError extends AuthError {
-  constructor(
-    message = "Too many authentication attempts",
-    options?: AuthErrorOptions & { readonly retryAfterSeconds?: number },
-  ) {
-    const { retryAfterSeconds, metadata, ...rest } = options ?? {};
-    super(message, {
-      code: ErrorCode.RATE_LIMITED,
-      category: ErrorCategory.RATE_LIMIT,
-      statusCode: 429,
-      ...rest,
-      metadata: {
-        retryAfterSeconds: retryAfterSeconds ?? 60,
-        ...metadata,
-      },
     });
   }
 }
