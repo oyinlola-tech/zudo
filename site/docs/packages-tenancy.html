@@ -123,7 +123,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.1</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/tenancy</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Works out which customer a request belongs to, refuses the request when it cannot be sure, and carries that answer through the rest of your code.
@@ -346,7 +346,7 @@ console.<span class="fn">log</span>(<span class="kw">await</span> <span class="f
           Most apps accept more than one way of naming a tenant. A <em>chain</em> holds several resolvers, sorts them by priority (highest first) and asks each in turn.
         </p>
         <p class="mb-4 leading-relaxed">
-          The chain's context type is inferred from its resolvers: it is the intersection of what they read, so a chain of a JWT and a header resolver needs both <code>getClaims</code> and <code>getHeader</code>, and TypeScript says so if you leave one out. <code>chain.resolve(context)</code> returns a <code>TenantResolutionResult</code>: the winning <code>resolution</code>, every <code>candidate</code> collected, and a <code>conflict</code> flag. <code>chain.asResolver()</code> hands you the chain packaged as a single resolver, which is what the HTTP middleware wants.
+          The chain's context type is inferred from its resolvers: it is the intersection of what they read, so a chain of a JWT and a header resolver needs both <code>getClaims</code> and <code>getHeader</code>, and TypeScript says so if you leave one out. <code>chain.resolve(context)</code> returns a <code>TenantResolutionResult</code>: the winning <code>resolution</code>, every <code>candidate</code> collected, and a <code>conflict</code> flag. <code>chain.asResolver()</code> hands you the chain packaged as a single resolver. Since 1.3.1 the HTTP middleware accepts the chain itself and does that for you.
         </p>
         <div class="code-block mb-4"><span class="kw">import</span> {
   <span class="fn">createHeaderResolver</span>,
@@ -631,7 +631,7 @@ repository.<span class="fn">add</span>({
 ]);
 
 <span class="kw">export const</span> resolveTenant = <span class="fn">createResolveTenantMiddleware</span>({
-  resolver: chain.<span class="fn">asResolver</span>(),
+  resolver: chain, <span class="cmt">// a chain is accepted as it is (since 1.3.1)</span>
   repository,
   storage,
   minimumTrust: <span class="str">"verified"</span>,
@@ -664,22 +664,29 @@ router.<span class="fn">get</span>(<span class="str">"/orders"</span>, (ctx) =&g
         <div class="callout callout-note mb-4">
           <p class="text-sm"><strong>Changed in 1.3.0:</strong> two workarounds are no longer needed. Up to 1.2.x the refusals were plain <code>{ status, body, headers }</code> objects that <code>@zudojs/http</code> ignored, so a refused request came back as <code>200</code> with an empty body, and the fix was a wrapper that turned the object into a response. The middleware also needed <code>as never</code> to fit a route's <code>middleware</code> list, and <code>createResolverChain([createJwtResolver(), createSubdomainResolver(…)])</code> failed with <code>TS2322</code> unless you wrote <code>&lt;HttpResolverContext&gt;</code>. Remove the wrapper, the casts and the type argument when you upgrade; an explicit type argument still compiles.</p>
         </div>
+        <div class="callout callout-note mb-4">
+          <p class="text-sm"><strong>Changed in 1.3.1:</strong> <code>resolver</code> accepts a chain from <code>createResolverChain</code> as it is. Up to 1.3.0 you had to pass <code>chain.asResolver()</code>: the chain itself was a type error, and if cast through, every request was refused, because a chain's <code>resolve</code> returns <code>{ resolution, candidates, conflict }</code>, which carries no <code>trust</code>. A chain is now recognised by its <code>asResolver</code> method and adapted; <code>.asResolver()</code> still works. The accepted union is exported as <code>TenantResolverSource</code>. <code>getClaims</code> (here and on <code>createHttpResolverContext</code>) is now generic over the middleware context it reads, so a helper typed with <code>@zudojs/http</code>'s <code>HttpMiddlewareContext</code> no longer needs a cast; its type is exported as <code>TenantClaimsReader</code>. A reader for something that is not a middleware context is still a type error. Tested against a real server: <code>Host: acme.example.com</code> answered <code>200 {"tenant":"Acme Corp"}</code> with <code>resolver: chain</code>, and claims read by a typed <code>readClaims</code> helper resolved the same tenant.</p>
+        </div>
 
         <h3 class="text-lg font-bold mb-3 mt-8">Where JWT claims come from</h3>
         <p class="mb-4 leading-relaxed">
           The middleware does not verify tokens. It reads already-verified claims from request state under the key <code>TENANT_CLAIMS_STATE_KEY</code> (<code>"tenancy:claims"</code>). Your authentication middleware publishes them there, or you supply a <code>getClaims</code> function.
         </p>
-        <div class="code-block mb-4"><span class="kw">import</span> { <span class="const">TENANT_CLAIMS_STATE_KEY</span> } <span class="kw">from</span> <span class="str">"@zudojs/tenancy"</span>;
+        <div class="code-block mb-4"><span class="kw">import type</span> { <span class="tp">HttpMiddlewareContext</span> } <span class="kw">from</span> <span class="str">"@zudojs/http"</span>;
+<span class="kw">import</span> { <span class="const">TENANT_CLAIMS_STATE_KEY</span>, <span class="kw">type</span> <span class="tp">TenantClaims</span> } <span class="kw">from</span> <span class="str">"@zudojs/tenancy"</span>;
 
 <span class="cmt">// In your auth middleware, after the signature has been verified:</span>
 context.state.<span class="fn">set</span>(<span class="const">TENANT_CLAIMS_STATE_KEY</span>, { tenant_id: <span class="str">"acme"</span> });
 
-<span class="cmt">// Or tell the tenancy middleware where to look instead:</span>
+<span class="cmt">// Or tell the tenancy middleware where to look instead. A helper typed with</span>
+<span class="cmt">// @zudojs/http's own context is accepted without a cast (since 1.3.1).</span>
+<span class="kw">const</span> readClaims = (ctx: <span class="tp">HttpMiddlewareContext</span>) =&gt; ctx.state.<span class="fn">get</span>&lt;<span class="tp">TenantClaims</span>&gt;(<span class="str">"auth:claims"</span>);
+
 <span class="fn">createResolveTenantMiddleware</span>({
-  resolver: chain.<span class="fn">asResolver</span>(),
+  resolver: chain,
   repository,
   storage,
-  getClaims: (ctx) =&gt; ctx.state.<span class="fn">get</span>(<span class="str">"auth:claims"</span>),
+  getClaims: readClaims,
 });</div>
 
         <p class="mb-4 leading-relaxed">
@@ -807,7 +814,7 @@ console.<span class="fn">log</span>(<span class="fn">tenantKey</span>(acme, <spa
           <table class="doc-table">
             <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
             <tbody>
-              <tr><td><code>createResolveTenantMiddleware(options)</code></td><td>Resolves, checks and enters the tenant context.</td><td>Options: <code>resolver</code>, <code>repository</code>, <code>storage</code>, <code>minimumTrust</code> (default <code>"verified"</code>), <code>slugLookup</code> (default <code>true</code>), <code>allowInactive</code>, <code>getClaims</code>, <code>notFoundResponse</code>, <code>optional</code> (lets a request that resolves to no tenant continue without one; default <code>false</code> &rarr; 404).</td></tr>
+              <tr><td><code>createResolveTenantMiddleware(options)</code></td><td>Resolves, checks and enters the tenant context.</td><td>Options: <code>resolver</code> (a resolver or, since 1.3.1, a chain: <code>TenantResolverSource</code>), <code>repository</code>, <code>storage</code>, <code>minimumTrust</code> (default <code>"verified"</code>), <code>slugLookup</code> (default <code>true</code>), <code>allowInactive</code>, <code>getClaims</code> (a <code>TenantClaimsReader</code>, generic over the middleware context), <code>notFoundResponse</code>, <code>optional</code> (lets a request that resolves to no tenant continue without one; default <code>false</code> &rarr; 404).</td></tr>
               <tr><td><code>createRequireTenantMiddleware({ requirement?, deniedResponse? })</code></td><td>Enforces tenant presence.</td><td><code>"required"</code> (default), <code>"optional"</code>, <code>"forbidden"</code>.</td></tr>
               <tr><td><code>createTenantGuardMiddleware({ repository? })</code></td><td>Re-checks that the tenant in state is active.</td><td>Runs after resolve.</td></tr>
               <tr><td><code>createTenantPropagationMiddleware(storage)</code></td><td>Re-enters the context from request state.</td><td>For later pipeline stages.</td></tr>

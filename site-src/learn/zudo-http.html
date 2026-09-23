@@ -365,7 +365,7 @@ GET /crash -> 500 {"error":"Internal Server Error"}
 <h2 id="task-api">Put it in the Task API</h2>
 <p>Now connect the <code>TaskService</code> from the previous lesson to real routes. These files from that lesson do not change:</p>
 <details class="lx-solution"><summary>Show the unchanged files</summary>
-<file name="src/repositories/task.store.ts" project="task-api">
+<file name="src/repositories/tasks.store.ts" project="task-api">
 export type Priority = "low" | "normal" | "high";
 
 export interface StoredTask {
@@ -387,7 +387,7 @@ export class TaskStore {
   }
 }
 </file>
-<file name="src/validators/task.schema.ts" project="task-api">
+<file name="src/dtos/tasks.dto.ts" project="task-api">
 import { schema } from "@zudojs/schema";
 import type { Infer } from "@zudojs/schema";
 
@@ -399,10 +399,10 @@ export const NewTaskSchema = schema.object({
 
 export type NewTask = Infer<typeof NewTaskSchema>;
 </file>
-<file name="src/services/task.service.ts" project="task-api">
+<file name="src/services/tasks.service.ts" project="task-api">
 import { ConflictError, NotFoundError } from "@zudojs/errors";
-import type { StoredTask, TaskStore } from "../repositories/task.store.js";
-import { NewTaskSchema } from "../validators/task.schema.js";
+import { NewTaskSchema } from "../dtos/tasks.dto.js";
+import type { StoredTask, TaskStore } from "../repositories/tasks.store.js";
 
 export interface Clock {
   now(): Date;
@@ -436,24 +436,35 @@ export class TaskService {
 }
 </file>
 </details>
-<p>Put the <code>readJson</code> helper in <code>src/utils/http.ts</code>. Then create <code>src/routes/tasks.routes.ts</code>. A route file only translates between HTTP and the service: it reads the request, calls the service, and chooses the status. The rules stay in the service.</p>
-<example file="src/utils/http.ts" project="task-api" browser="no">
-import { badRequest, HttpError } from "@zudojs/http";
-import type { HttpRequestContext } from "@zudojs/http";
-
-export function readJson(request: HttpRequestContext): unknown {
-  const type = request.getHeader("content-type") ?? "";
-  if (!type.startsWith("application/json")) {
+<p>Open <code>src/utils/http.ts</code>. The CLI already wrote helpers from this lesson there. <code>json(status, data)</code> builds a response with <code>createResponseContext</code>. <code>readJsonBody(ctx)</code> is the generated version of <code>readJson</code>: it decodes the bytes, runs <code>JSON.parse</code> inside <code>try</code>, throws <code>badRequest</code> for broken JSON and returns <code>unknown</code>. It also returns <code>undefined</code> for an empty body. It skips one check, the <code>Content-Type</code>. Add that check just before the <code>try</code> (and <code>HttpError</code> to the <code>@zudojs/http</code> import at the top), then add a <code>parseId</code> helper below the function:</p>
+<example file="src/utils/http.ts (part)" browser="no" check="skip">
+/**
+ * The request body parsed as JSON; `undefined` when there is none.
+ * A body that is not sent as JSON is answered with 415, malformed JSON with 400.
+ */
+export function readJsonBody(ctx: HttpRouterContext): unknown {
+  const body: unknown = ctx.request.body;
+  if (body === undefined || body === null) return undefined;
+  const text =
+    body instanceof Uint8Array
+      ? new TextDecoder().decode(body)
+      : typeof body === "string"
+        ? body
+        : undefined;
+  if (text === undefined) return body;
+  if (text.trim() === "") return undefined;
+  const type = ctx.request.getHeader("content-type") ?? "";
+  if (!type.toLowerCase().startsWith("application/json")) {
     throw new HttpError(415, "Send JSON with Content-Type: application/json");
   }
-  const text = new TextDecoder().decode(request.body as Uint8Array);
   try {
-    return JSON.parse(text);
+    return JSON.parse(text) as unknown;
   } catch {
-    throw badRequest("The request body is not valid JSON");
+    throw badRequest("The request body is not valid JSON.");
   }
 }
 
+/** A task id from the path; anything but a positive whole number is answered with 400. */
 export function parseId(raw: string | undefined): number {
   const id = Number(raw);
   if (!Number.isSafeInteger(id) || id < 1) {
@@ -462,11 +473,121 @@ export function parseId(raw: string | undefined): number {
   return id;
 }
 </example>
+<p>Media types are not case-sensitive, so the check lower-cases the header first. <code>parseId</code> refuses ids such as <code>abc</code>, <code>1.5</code> or <code>-3</code> with a 400, before the service ever sees them.</p>
+<details class="lx-solution"><summary>Show the whole src/utils/http.ts</summary>
+<file name="src/utils/http.ts" project="task-api">
+import {
+  HttpError,
+  badRequest,
+  createResponseContext,
+  type HttpMiddleware,
+  type HttpResponseContext,
+  type HttpRouterContext,
+} from "@zudojs/http";
+import type { SchemaIssue } from "@zudojs/schema";
+import { generateSecurityHeaders } from "@zudojs/security";
+
+/** A JSON response with `status`. */
+export function json(status: number, data: unknown): HttpResponseContext {
+  return createResponseContext({ status }).json(data);
+}
+
+/** A response with no body (for example 204). */
+export function empty(status: number): HttpResponseContext {
+  return createResponseContext({ status });
+}
+
+/** 400 listing where the input failed validation, without echoing it back. */
+export function validationFailed(issues: readonly SchemaIssue[]): HttpResponseContext {
+  return json(400, {
+    error: "Validation failed",
+    issues: issues.map((issue) => ({
+      path: issue.path.map(String).join("."),
+      message: issue.message,
+    })),
+  });
+}
+
+/**
+ * The request body parsed as JSON; `undefined` when there is none.
+ * A body that is not sent as JSON is answered with 415, malformed JSON with 400.
+ */
+export function readJsonBody(ctx: HttpRouterContext): unknown {
+  const body: unknown = ctx.request.body;
+  if (body === undefined || body === null) return undefined;
+  const text =
+    body instanceof Uint8Array
+      ? new TextDecoder().decode(body)
+      : typeof body === "string"
+        ? body
+        : undefined;
+  if (text === undefined) return body;
+  if (text.trim() === "") return undefined;
+  const type = ctx.request.getHeader("content-type") ?? "";
+  if (!type.toLowerCase().startsWith("application/json")) {
+    throw new HttpError(415, "Send JSON with Content-Type: application/json");
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw badRequest("The request body is not valid JSON.");
+  }
+}
+
+/** A task id from the path; anything but a positive whole number is answered with 400. */
+export function parseId(raw: string | undefined): number {
+  const id = Number(raw);
+  if (!Number.isSafeInteger(id) || id < 1) {
+    throw badRequest("The task id must be a positive whole number");
+  }
+  return id;
+}
+
+/**
+ * The response for an error that carries an exposed 4xx status
+ * (NotFoundError, badRequest(), ...). Anything else is left to the server,
+ * which answers a generic 500 and never leaks the message.
+ */
+export function errorResponse(error: unknown): HttpResponseContext | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const candidate = error as {
+    readonly statusCode?: unknown;
+    readonly expose?: unknown;
+    readonly message?: unknown;
+    readonly code?: unknown;
+  };
+  const status = candidate.statusCode;
+  if (typeof status !== "number" || status < 400 || status > 499) return undefined;
+  if (candidate.expose !== true || typeof candidate.message !== "string") return undefined;
+  return json(status, {
+    error: candidate.message,
+    ...(typeof candidate.code === "string" ? { code: candidate.code } : {}),
+  });
+}
+
+/**
+ * Adds the @zudojs/security default headers (CSP, HSTS, nosniff,
+ * X-Frame-Options DENY, ...) to every response that does not set its own:
+ * the /docs page, for instance, sends a CSP that allows its assets.
+ */
+export function securityHeaders(): HttpMiddleware {
+  const defaults = Object.entries(generateSecurityHeaders());
+  return async (_context, next) => {
+    const response = (await next()).clone();
+    const present = new Set(Object.keys(response.headers).map((name) => name.toLowerCase()));
+    for (const [name, value] of defaults) {
+      if (!present.has(name.toLowerCase())) response.setHeader(name, value);
+    }
+    return response;
+  };
+}
+</file>
+</details>
+<p>Now create <code>src/routes/tasks.routes.ts</code>, next to the generated <code>health.routes.ts</code> and <code>examples.routes.ts</code>. A route file only translates between HTTP and the service: it reads the request, calls the service, and chooses the status. The rules stay in the service.</p>
 <example file="src/routes/tasks.routes.ts" project="task-api" browser="no">
-import { createResponseContext } from "@zudojs/http";
 import type { HttpRouter } from "@zudojs/http";
-import type { TaskService } from "../services/task.service.js";
-import { parseId, readJson } from "../utils/http.js";
+import type { TaskService } from "../services/tasks.service.js";
+import { json, parseId, readJsonBody } from "../utils/http.js";
 
 export function registerTaskRoutes(router: HttpRouter, tasks: TaskService): void {
   router.get("/tasks", () => tasks.list());
@@ -474,17 +595,17 @@ export function registerTaskRoutes(router: HttpRouter, tasks: TaskService): void
   router.get("/tasks/:id", (ctx) => tasks.get(parseId(ctx.params.id)));
 
   router.post("/tasks", (ctx) => {
-    const task = tasks.create(readJson(ctx.request));
-    return createResponseContext({ status: 201 }).setHeader("location", `/tasks/${task.id}`).json(task);
+    const task = tasks.create(readJsonBody(ctx));
+    return json(201, task).setHeader("location", `/tasks/${task.id}`);
   });
 }
 </example>
-<p><code>parseId</code> refuses ids such as <code>abc</code>, <code>1.5</code> or <code>-3</code> with a 400, before the service ever sees them. This script checks the routes against a real server, with a fixed clock:</p>
+<p>The generated example resource splits this job in two: <code>examples.routes.ts</code> lists the paths, and <code>examples.controller.ts</code> reads each request and calls the service. That pays off with many routes. For three, one file is enough. This script checks the routes against a real server, with a fixed clock:</p>
 <example file="src/check-http.ts" project="task-api" browser="no">
 import { createHttpServer, createNodeHttpAdapter, createRouter } from "@zudojs/http";
-import { TaskStore } from "./repositories/task.store.js";
+import { TaskStore } from "./repositories/tasks.store.js";
 import { registerTaskRoutes } from "./routes/tasks.routes.js";
-import { TaskService } from "./services/task.service.js";
+import { TaskService } from "./services/tasks.service.js";
 
 const service = new TaskService(new TaskStore(), { now: () => new Date("2026-09-23T09:00:00Z") });
 const router = createRouter();
@@ -517,58 +638,78 @@ GET /tasks/1 200 {"id":1,"title":"Buy milk","done":false,"priority":"high","crea
 GET /tasks/abc 400 {"error":"The task id must be a positive whole number","code":"BAD_REQUEST"}
 GET /tasks 200 [{"id":1,"title":"Buy milk","done":false,"priority":"high","createdAt":"2026-09-23T09:00:00.000Z"}]
 </output>
-<p>Finally, the server. In <code>src/server.ts</code>, build a router, register the routes with the <code>TaskService</code> from the runtime's container, keep <code>/health</code> as a route, and let the handler dispatch. Replace the whole <code>createHttpServer</code> call and the <code>import</code>s at the top:</p>
-<example file="src/server.ts (part)" project="task-api" browser="no" check="skip">
-import {
-  createHttpServer,
-  createNodeHttpAdapter,
-  createResponseContext,
-  createRouter,
-} from "@zudojs/http";
+<p>Last, register the routes with the real app. The generated wiring already exists: <code>src/server.ts</code> builds a router, <code>registerRoutes</code> in <code>src/routes/index.ts</code> adds every route to it, and <code>createDependencies</code> in <code>src/container.ts</code> hands each route file what it needs. Three small edits connect the task routes to the service in the runtime's container. First, <code>createDependencies</code> receives that container and resolves the service. The container becomes a required option, so remove the <code>= {}</code> default:</p>
+<example file="src/container.ts (part)" browser="no" check="skip">
+/** Options for {@link createDependencies}. */
+export interface DependencyOptions {
+  /** The runtime's container, filled by registerServices. */
+  readonly container: Container;
+  /** Readiness for /health; server.ts passes the runtime's. */
+  readonly health?: HealthCheck;
+}
 
-import { createApp } from "./app.js";
-import { HealthController } from "./controllers/index.js";
-import { registerTaskRoutes } from "./routes/tasks.routes.js";
-import { TaskService } from "./services/task.service.js";
+export function createDependencies(options: DependencyOptions) {
+  const health: HealthCheck =
+    options.health ?? (async () => ({ ready: true, checks: {} }));
 
-// resolvePort() and `await runtime.start()` stay as they were.
-
-const router = createRouter();
-router.get("/health", () =>
-  runtime.state === "running"
-    ? createResponseContext().json(new HealthController().check())
-    : createResponseContext({ status: 503 }).json({ status: "unavailable" }),
-);
-registerTaskRoutes(router, runtime.context.container.resolve(TaskService));
-
-const server = createHttpServer({
-  adapter: createNodeHttpAdapter({
-    host: process.env["HOST"] ?? "0.0.0.0",
-    port: resolvePort(),
-  }),
-  handler: async (request) => (await router.dispatch(request)).response,
-});
+  return {
+    health,
+    tasks: options.container.resolve(TaskService),
+    // zudojs:container:start
+    examplesController: new ExamplesController(new ExamplesService(new InMemoryExamplesRepository())),
+    // zudojs:container:end
+  };
+}
 </example>
-<p>Start it with <code>npm run dev</code>, and try the API from a second terminal:</p>
-<shell title="Terminal on your computer">
+<p>Second, <code>registerRoutes</code> registers the task routes, outside the markers:</p>
+<example file="src/routes/index.ts (part)" browser="no" check="skip">
+import { registerTaskRoutes } from "./tasks.routes.js";
+
+export function registerRoutes(router: HttpRouter, deps: AppDependencies): void {
+  registerHealthRoutes(router, deps.health);
+  registerTaskRoutes(router, deps.tasks);
+  // zudojs:routes:start
+  registerExamplesRoutes(router, deps.examplesController);
+  // zudojs:routes:end
+}
+</example>
+<p>Third, <code>src/server.ts</code> passes the runtime's container:</p>
+<example file="src/server.ts (part)" browser="no" check="skip">
+registerRoutes(
+  router,
+  createDependencies({
+    container: runtime.context.container,
+    health: async () => {
+      // ...unchanged
+    },
+  }),
+);
+</example>
+<p>Errors need no wiring. A thrown <code>NotFoundError</code> or <code>badRequest</code> reaches the <code>dispatch</code> step further down in <code>src/server.ts</code>, which answers with the generated <code>errorResponse</code> helper: <code>{"error": message, "code": code}</code> and the error's status. Any other error becomes a plain 500. Start the server with <code>npm run dev</code>, and try the API from a second terminal:</p>
+<shell title="Second terminal">
 $ curl -i -X POST http://localhost:3000/tasks -H "content-type: application/json" -d '{"title":"Buy milk"}'
 HTTP/1.1 201 Created
-location: /tasks/2
 content-type: application/json
+location: /tasks/2
+x-content-type-options: nosniff
+x-frame-options: DENY
+…
 content-length: 99
-Date: Wed, 23 Sep 2026 14:04:10 GMT
+Date: Wed, 23 Sep 2026 19:48:34 GMT
 Connection: keep-alive
 Keep-Alive: timeout=5
 
-{"id":2,"title":"Buy milk","done":false,"priority":"normal","createdAt":"2026-09-23T14:04:10.510Z"}
+{"id":2,"title":"Buy milk","done":false,"priority":"normal","createdAt":"2026-09-23T19:48:34.755Z"}
 $ curl http://localhost:3000/tasks
-[{"id":1,"title":"Read the runtime lesson","done":true,"priority":"normal","createdAt":"2026-09-23T09:00:00.000Z"},{"id":2,"title":"Buy milk","done":false,"priority":"normal","createdAt":"2026-09-23T14:04:10.510Z"}]
+[{"id":1,"title":"Read the runtime lesson","done":true,"priority":"normal","createdAt":"2026-09-23T09:00:00.000Z"},{"id":2,"title":"Buy milk","done":false,"priority":"normal","createdAt":"2026-09-23T19:48:34.755Z"}]
 $ curl http://localhost:3000/tasks/7
 {"error":"Task 7 not found","code":"ERR_RESOURCE_NOT_FOUND"}
+$ curl -X POST http://localhost:3000/tasks -d 'title=Buy milk'
+{"error":"Send JSON with Content-Type: application/json","code":"UNSUPPORTED_MEDIA_TYPE"}
 </shell>
 <tip>On Windows PowerShell, type <code>curl.exe</code>, and put the JSON in double quotes with the inner quotes escaped: <code>-d "{\"title\":\"Buy milk\"}"</code>.</tip>
-<p>The new task got id 2, and the list shows it next to the one the <code>tasks</code> module added at startup. Both live in the one <code>TaskStore</code> singleton, shared by the modules and the service through the container.</p>
-<tip>The router can also document your API. Give a route an <code>openapi</code> option (a summary, tags, and schemas for its input and output), and <code>mountOpenAPI(router, { info: { title: "Task API", version: "1.0.0" } })</code> from <code>@zudojs/http</code> serves the generated document at <code>/openapi.json</code> and a docs page at <code>/docs</code>. <a href="/learn/zudo-openapi">OpenAPI documents</a> covers API documentation. A related helper, <code>mountFetchHandler(router, path, handler)</code>, serves a web-standard <code>(request: Request) =&gt; Response</code> handler under a path of your router.</tip>
+<p>The new task got id 2, and the list shows it next to the one the <code>tasks</code> module added at startup. Both live in the one <code>TaskStore</code> singleton, shared by the modules and the service through the container. The <code>…</code> stands for the other security headers, which the next lesson explains. The last request sent a form instead of JSON (<code>-d</code> without a <code>content-type</code> header does that), and got the 415 from your new check.</p>
+<tip>The router can also document your API. You ran <code>zudojs add openapi</code> in <a href="/learn/zudo-create-project#add">Create the Task API project</a>, so <code>src/server.ts</code> already calls <code>mountOpenAPI(router, …)</code>, which serves <code>/openapi.json</code> and a docs page at <code>/docs</code>. Only routes with an <code>openapi</code> option are listed, so the task routes are not in it yet; <code>examples.routes.ts</code> shows what the option looks like. <a href="/learn/zudo-openapi">OpenAPI documents</a> covers it. A related helper, <code>mountFetchHandler(router, path, handler)</code>, serves a web-standard <code>(request: Request) =&gt; Response</code> handler under a path of your router.</tip>
 </section>
 
 <section>
@@ -649,5 +790,5 @@ limit=1&limit=2 -> 400 {"error":"limit must be a whole number from 1 to 50","cod
 <li>Throwing <code>NotFoundError</code>, <code>ConflictError</code>, <code>badRequest()</code> or a <code>SchemaError</code> becomes the matching 4xx. Any other error becomes a generic 500.</li>
 <li>Cookies set with <code>response.cookie()</code> are <code>HttpOnly</code>, <code>Secure</code> and <code>SameSite=Lax</code> by default.</li>
 </ul>
-<p>Next, wrap every route in <strong>middleware</strong>: security headers, CORS, rate limits and a graceful shutdown.</p>
+<p>Next, the <strong>middleware</strong> around every route: security headers, CORS, rate limits and a graceful shutdown. The CLI wrote most of it for you; the next lesson shows how it works and what to add.</p>
 </section>

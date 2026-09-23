@@ -123,7 +123,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.1</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/serialization</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Turns JavaScript values into text you can store or send, and turns that text back into the same values &mdash; including Date, BigInt, Map, Set, Uint8Array and Error.
@@ -400,10 +400,14 @@ console.<span class="fn">log</span>(withBuiltins.<span class="fn">serialize</spa
   onlyMine.<span class="fn">serialize</span>({ tags: <span class="kw">new</span> <span class="tp">Set</span>([<span class="str">"sale"</span>]) });
 } <span class="kw">catch</span> (error) {
   console.<span class="fn">log</span>((error <span class="kw">as</span> <span class="tp">Error</span>).name); <span class="cm">// SerializeError</span>
+  console.<span class="fn">log</span>((error <span class="kw">as</span> <span class="tp">Error</span>).message);
+  <span class="cm">// Cannot serialize a Set with preserveTypes: no transformer is registered for it, and JSON</span>
+  <span class="cm">// would write it as {} and lose its contents. Register a transformer for Set, or keep the</span>
+  <span class="cm">// built-in transformers enabled (do not pass builtins: false).</span>
 }</div>
 
         <div class="callout callout-warning">
-          <strong class="text-zudo-yellow">Nothing is silently flattened to <code>{}</code> any more:</strong> with <code>preserveTypes</code>, a value no transformer handles that JSON would write as <code>{}</code> (a <code>Map</code>, <code>Set</code>, <code>WeakMap</code>, <code>WeakSet</code>, <code>WeakRef</code>, <code>Promise</code>, <code>RegExp</code>, <code>Error</code>, <code>ArrayBuffer</code> or <code>DataView</code>) throws <code>SerializeError</code> naming the type. With the built-ins enabled that only happens for types that have no built-in transformer, such as <code>RegExp</code>. Two things are unchanged: with <code>builtins: false</code> a <code>Date</code> is still written by <code>JSON.stringify</code> as an ISO string (and reads back as a string), and the fast path without <code>preserveTypes</code> is plain <code>JSON.stringify</code>, which still writes a <code>Map</code> as <code>{}</code>.
+          <strong class="text-zudo-yellow">Nothing is silently flattened to <code>{}</code> any more:</strong> with <code>preserveTypes</code>, a value no transformer handles that JSON would write as <code>{}</code> (a <code>Map</code>, <code>Set</code>, <code>WeakMap</code>, <code>WeakSet</code>, <code>WeakRef</code>, <code>Promise</code>, <code>RegExp</code>, <code>Error</code>, <code>ArrayBuffer</code> or <code>DataView</code>) throws <code>SerializeError</code> naming the type. With the built-ins enabled that only happens for types that have no built-in transformer, such as <code>RegExp</code>. The message names the type with the right article (&ldquo;an Error&rdquo;, &ldquo;an ArrayBuffer&rdquo;), and suggests keeping the built-ins on only when they are off and one of them would handle the type; otherwise it tells you to register a transformer (since 1.2.1; 1.2.0 said &ldquo;a Error&rdquo; and suggested the built-ins even when they were on). Two things are unchanged: with <code>builtins: false</code> a <code>Date</code> is still written by <code>JSON.stringify</code> as an ISO string (and reads back as a string), and the fast path without <code>preserveTypes</code> is plain <code>JSON.stringify</code>, which still writes a <code>Map</code> as <code>{}</code>.
         </div>
       </section>
 
@@ -574,8 +578,17 @@ serializer.<span class="fn">serialize</span>(
   { preserveTypes: <span class="kw">true</span>, includeStack: <span class="kw">true</span> },
 );</div>
 
+        <p class="mt-4 mb-3">
+          On the way back in, a built-in error class is rebuilt with its own constructor: <code class="bg-black/5 px-1">TypeError</code>, <code class="bg-black/5 px-1">RangeError</code>, <code class="bg-black/5 px-1">SyntaxError</code>, <code class="bg-black/5 px-1">ReferenceError</code>, <code class="bg-black/5 px-1">EvalError</code>, <code class="bg-black/5 px-1">URIError</code> and <code class="bg-black/5 px-1">AggregateError</code>, so <code class="bg-black/5 px-1">instanceof</code> holds. Any other name, such as your own <code class="bg-black/5 px-1">MyError</code>, comes back as an <code class="bg-black/5 px-1">Error</code> with <code class="bg-black/5 px-1">name</code> set. The rebuilt error's <code class="bg-black/5 px-1">stack</code> is only its header line:
+        </p>
+        <div class="code-block"><span class="kw">const</span> wire = serializer.<span class="fn">serialize</span>({ failure: <span class="kw">new</span> <span class="tp">TypeError</span>(<span class="str">"bad input"</span>) }, { preserveTypes: <span class="kw">true</span> });
+<span class="kw">const</span> { failure } = serializer.<span class="fn">deserialize</span>&lt;{ failure: <span class="tp">Error</span> }&gt;(wire, { preserveTypes: <span class="kw">true</span> });
+
+console.<span class="fn">log</span>(failure <span class="kw">instanceof</span> <span class="tp">TypeError</span>); <span class="cm">// true</span>
+console.<span class="fn">log</span>(failure.stack);                <span class="cm">// "TypeError: bad input" — no frames</span></div>
+
         <div class="callout callout-note">
-          A stack that arrives from the wire is attached to the rebuilt error as a hidden <code>originalStack</code> property rather than replacing the real <code>stack</code>, so a reconstructed error never lies about where it came from.
+          A stack that arrives from the wire (sent with <code>includeStack: true</code>) is attached to the rebuilt error as a hidden <code>originalStack</code> property rather than replacing the real <code>stack</code>, so a reconstructed error never lies about where it came from. <strong>Changed in 1.2.1:</strong> a rebuilt error used to be a plain <code>Error</code> (so <code>instanceof TypeError</code> was <code>false</code>), and its <code>stack</code> carried the deserializer's own frames, which looked like the original stack. Now the class is right and <code>stack</code> is the header line only.
         </div>
 
         <div class="callout callout-warning">
@@ -898,7 +911,7 @@ console.<span class="fn">log</span>(back.items.<span class="fn">has</span>(<span
             <strong>Importing <code>SerializerNotFoundError</code> from <code>@zudojs/serialization</code>.</strong> The import fails &mdash; the class is not re-exported here. Fix: <code>import { SerializerNotFoundError } from "@zudojs/errors";</code>
           </li>
           <li class="border-l-4 border-zudo-blue pl-4">
-            <strong>Expecting a stack trace on a deserialized error.</strong> Stacks are left out by default and a wire-supplied one lands on <code>originalStack</code>. Fix: pass <code>includeStack: true</code> when serializing, and read <code>originalStack</code> on the other side.
+            <strong>Expecting a stack trace on a deserialized error.</strong> Stacks are left out by default, a rebuilt error's own <code>stack</code> is only its header line, and a wire-supplied one lands on <code>originalStack</code>. Fix: pass <code>includeStack: true</code> when serializing, and read <code>originalStack</code> on the other side.
           </li>
         </ul>
       </section>

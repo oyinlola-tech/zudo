@@ -298,7 +298,7 @@ ready: false health: degraded
 shutdown   store
 destroy    store
 </output>
-<p>When the store lost its connection, the app kept running but reported itself <strong>degraded</strong>: still alive, not fully working. The generated <code>src/app.ts</code> registers one check, <code>modules</code>, and the generated <code>/health</code> route answers 503 when the runtime is not running.</p>
+<p>When the store lost its connection, the app kept running but reported itself <strong>degraded</strong>: still alive, not fully working. The generated <code>src/app.ts</code> registers one check, <code>modules</code>, and the generated <code>/health</code> route answers 503 when the runtime is not running. At the <a href="#task-api">end of this lesson</a>, <code>/health</code> reports every readiness check.</p>
 </section>
 
 <section>
@@ -456,8 +456,9 @@ stop  pool
 
 <section>
 <h2 id="task-api">Put it in the Task API</h2>
-<p>Now give the real project two modules. First, somewhere to keep tasks. For now it is a <code>Map</code> in memory (the <a href="/learn/zudo-database">database lesson</a> replaces it with PostgreSQL). The generated project has an empty <code>src/repositories/</code> folder for code that stores data, so create <code>src/repositories/task.store.ts</code>:</p>
-<example file="src/repositories/task.store.ts" project="task-api" browser="no">
+<p>Open <code>src/app.ts</code>. The runtime it builds already has two modules: <code>integrations</code>, which starts the outside connections listed in <code>src/integrations/</code> (none yet), and <code>app</code>, a placeholder <code>AppModule</code> that only logs "app module initialized". You will replace the placeholder with two real modules.</p>
+<p>First, somewhere to keep tasks. For now it is a <code>Map</code> in memory (the <a href="/learn/zudo-database">database lesson</a> replaces it with PostgreSQL). Code that stores data goes in <code>src/repositories/</code>, next to the example resource's <code>examples.repository.ts</code>. Create <code>src/repositories/tasks.store.ts</code>:</p>
+<example file="src/repositories/tasks.store.ts" project="task-api" browser="no">
 export type Priority = "low" | "normal" | "high";
 
 export interface StoredTask {
@@ -479,11 +480,11 @@ export class TaskStore {
   }
 }
 </example>
-<p>The <code>store</code> module "connects" it when the app starts and clears it when the app stops. Create <code>src/modules/store.module.ts</code>:</p>
+<p>The <code>store</code> module "connects" it when the app starts and clears it when the app stops. Create <code>src/modules/store.module.ts</code>, next to the generated <code>app.module.ts</code>:</p>
 <example file="src/modules/store.module.ts" project="task-api" browser="no">
 import { BaseModule } from "@zudojs/core";
 import type { ModuleContext } from "@zudojs/core";
-import type { TaskStore } from "../repositories/task.store.js";
+import type { TaskStore } from "../repositories/tasks.store.js";
 
 export class StoreModule extends BaseModule {
   public readonly id = "store";
@@ -509,7 +510,7 @@ export class StoreModule extends BaseModule {
 <example file="src/modules/tasks.module.ts" project="task-api" browser="no">
 import { BaseModule } from "@zudojs/core";
 import type { ModuleContext } from "@zudojs/core";
-import type { TaskStore } from "../repositories/task.store.js";
+import type { TaskStore } from "../repositories/tasks.store.js";
 
 export class TasksModule extends BaseModule {
   public readonly id = "tasks";
@@ -535,87 +536,128 @@ export class TasksModule extends BaseModule {
   }
 }
 </example>
-<p>Register both in <code>src/app.ts</code>. Both modules receive the same <code>TaskStore</code> object. The order in the list does not matter any more, but a readiness check for the store now does:</p>
-<example file="src/app.ts" project="task-api" browser="no">
+<p>The two new modules replace the placeholder. Delete <code>src/modules/app.module.ts</code> and <code>src/services/app.service.ts</code>, empty <code>src/services/index.ts</code> (the next lesson puts the task service in that folder), and make <code>src/modules/index.ts</code> export the new modules instead:</p>
+<example file="src/modules/index.ts" project="task-api" browser="no">
+export { StoreModule } from "./store.module.js";
+export { TasksModule } from "./tasks.module.js";
+</example>
+<p>Now change <code>src/app.ts</code>. It needs four edits: import the new modules and <code>TaskStore</code> instead of <code>AppModule</code>, create one <code>TaskStore</code>, put the two modules in the list where <code>new AppModule()</code> was, and register a readiness check for the store. Both modules receive the same store object, and the order in the list no longer matters. This is the whole file afterwards:</p>
+<example file="src/app.ts" browser="no" check="skip">
+import type { Server } from "node:http";
+
 import { resolveEnvironment } from "@zudojs/constants";
 import { createContainer } from "@zudojs/container";
 import type { Module } from "@zudojs/core";
 import { createEventBus } from "@zudojs/events";
-import { createLogger, LoggerLevel } from "@zudojs/logger";
-import { createRuntime } from "@zudojs/runtime";
-import type { Runtime } from "@zudojs/runtime";
-import { StoreModule } from "./modules/store.module.js";
-import { TasksModule } from "./modules/tasks.module.js";
-import { TaskStore } from "./repositories/task.store.js";
+import { createLogger } from "@zudojs/logger";
+import { createRuntime, type Runtime } from "@zudojs/runtime";
 
-export function createApp(level: LoggerLevel = LoggerLevel.INFO): Runtime {
+import type { AppConfig } from "./configs/index.js";
+import { IntegrationsModule, integrations } from "./integrations/index.js";
+import { StoreModule, TasksModule } from "./modules/index.js";
+import { TaskStore } from "./repositories/tasks.store.js";
+
+/** What {@link createApp} needs. */
+export interface AppOptions {
+  readonly config: AppConfig;
+  /** The Node HTTP server, for integrations that attach to it. */
+  readonly httpServer?: Server;
+}
+
+/**
+ * Assembles the application runtime.
+ *
+ * `createRuntime` takes two arguments: the dependencies the runtime and its
+ * modules share, and the options describing this application. Integrations
+ * (`src/integrations`) are registered first so they start before, and stop
+ * after, every other module.
+ */
+export function createApp(options: AppOptions): Runtime {
+  const logger = createLogger({ name: "task-api" });
+  const container = createContainer();
+  const eventBus = createEventBus();
   const store = new TaskStore();
+
   const modules = new Map<string, Module>();
-  for (const module of [new TasksModule(store), new StoreModule(store)]) {
+  const integrationsModule = new IntegrationsModule(integrations, {
+    config: options.config,
+    ...(options.httpServer === undefined ? {} : { httpServer: options.httpServer }),
+  });
+  modules.set(integrationsModule.id, integrationsModule);
+  for (const module of [
+    new TasksModule(store),
+    new StoreModule(store),
+  ] as Module[]) {
     modules.set(module.id, module);
   }
 
   const runtime = createRuntime(
-    {
-      modules,
-      logger: createLogger({ name: "task-api", level }),
-      container: createContainer(),
-      eventBus: createEventBus(),
-    },
+    { modules, logger, container, eventBus },
     {
       applicationName: "task-api",
       applicationVersion: "0.1.0",
+      // NODE_ENV is read the same way the framework reads it: `prod` and
+      // `Production` are production, an unknown value warns once.
       environment: resolveEnvironment(),
+      // Signals are handled explicitly in server.ts.
       handleSignals: false,
     },
   );
 
   runtime.registerReadinessCheck("modules", () => runtime.state === "running");
   runtime.registerReadinessCheck("store", () => store.connected);
+
   return runtime;
 }
 </example>
-<p>The <code>level</code> parameter lets a test script silence the logs. <code>src/server.ts</code> calls <code>createApp()</code> without arguments and keeps them.</p>
-<p>The two new modules replace the placeholder <code>AppModule</code>. Delete <code>src/modules/app.module.ts</code> and <code>src/services/app.service.ts</code>, empty <code>src/services/index.ts</code>, and make <code>src/modules/index.ts</code> export the new modules instead:</p>
-<example file="src/modules/index.ts" project="task-api" browser="no">
-export { StoreModule } from "./store.module.js";
-export { TasksModule } from "./tasks.module.js";
+<p>The readiness check does nothing yet, because nothing asks for it. The generated <code>/health</code> route gets its answer from a <code>health</code> function in <code>src/server.ts</code>, which only looks at <code>runtime.state</code> and the integrations. Change that function so it also runs the readiness checks and reports each one. <code>runtime.readiness.checks</code> holds the result of every check by name:</p>
+<example file="src/server.ts (part)" browser="no" check="skip">
+const router = createRouter();
+registerRoutes(
+  router,
+  createDependencies({
+    health: async () => {
+      const checks = await checkIntegrations(integrations);
+      await runtime.runReadinessChecks();
+      for (const [name, check] of runtime.readiness.checks) {
+        checks[name] = check.ready ? "up" : "down";
+      }
+      const ready = runtime.ready && Object.values(checks).every((check) => check === "up");
+      return { ready, checks };
+    },
+  }),
+);
 </example>
-<p>A quick script proves the wiring works:</p>
-<example file="src/check-runtime.ts" project="task-api" browser="no">
-import { LoggerLevel } from "@zudojs/logger";
-import { createApp } from "./app.js";
-
-const runtime = createApp(LoggerLevel.FATAL);
-await runtime.start();
-await runtime.runReadinessChecks();
-console.log(runtime.state, runtime.ready, runtime.health.state);
-await runtime.stop();
-console.log(runtime.state);
-</example>
-<output>
-running true healthy
-stopped
-</output>
-<p>Run the same script in your project, and then start the real server to see the modules' log lines:</p>
+<p><code>runtime.ready</code> is <code>false</code> as soon as one check fails, and the <code>modules</code> check already covers "the runtime is running". So <code>/health</code> answers 503 while the app starts or stops, and also if the store ever loses its connection. Check the types, then start the server:</p>
 <shell title="Terminal on your computer">
 $ npx tsc --noEmit
-$ npx tsx src/check-runtime.ts
-running true healthy
-stopped
 $ npm run dev
 
 > task-api@0.1.0 dev
 > tsx watch src/server.ts
 
-2026-09-23T17:18:27.579Z [INFO] [task-api] store connected
-2026-09-23T17:18:27.584Z [INFO] [task-api] tasks ready, 1 in store
-2026-09-23T17:18:27.586Z [INFO] [task-api] All modules initialized. modules=["store","tasks"] durationMs=13
-2026-09-23T17:18:27.589Z [INFO] [task-api] All modules started. modules=["store","tasks"] durationMs=1
-2026-09-23T17:18:27.591Z [INFO] [task-api] Runtime is ready. runtimeId=rt_fdbfb86ceabf4b5cb862194c8f5cdb3d environment=development
-Listening on port 3000
+2026-09-23T19:44:12.201Z [INFO] [task-api] store connected
+2026-09-23T19:44:12.203Z [INFO] [task-api] tasks ready, 1 in store
+2026-09-23T19:44:12.204Z [INFO] [task-api] All modules initialized. modules=["integrations","store","tasks"] durationMs=5
+2026-09-23T19:44:12.206Z [INFO] [task-api] All modules started. modules=["integrations","store","tasks"] durationMs=0
+2026-09-23T19:44:12.206Z [INFO] [task-api] Runtime is ready. runtimeId=rt_e953a0efe9854de8b4c3beae6745ee88 environment=development
+Listening on http://0.0.0.0:3000
 </shell>
-<p><code>tsc</code> printed nothing, so the project still type-checks. Your times and <code>runtimeId</code> will differ. The store logs before the tasks module, because of the dependency, then the runtime reports every module initialized and started. <code>/health</code> still answers as before. Stop the server with <kbd>Ctrl</kbd> + <kbd>C</kbd>.</p>
+<p><code>tsc</code> printed nothing, so the project still type-checks. Your times and <code>runtimeId</code> will differ. <code>integrations</code> comes first because <code>src/app.ts</code> registers it first and nothing depends on it; then the store, then the tasks module, because of the dependency. In a second terminal, ask for the health report:</p>
+<shell title="Second terminal">
+$ curl http://localhost:3000/health
+{"status":"ok","checks":{"modules":"up","store":"up"},"timestamp":"2026-09-23T19:44:12.351Z"}
+</shell>
+<p>Both readiness checks are listed. Now press <kbd>Ctrl</kbd> + <kbd>C</kbd> in the server's terminal and read the order on the way out:</p>
+<shell title="Terminal on your computer">
+^C2026-09-23T19:44:12.361Z [INFO] [task-api] Initiating graceful shutdown. timeoutMs=30000
+2026-09-23T19:44:12.363Z [INFO] [task-api] All modules stopped. modules=["tasks","store","integrations"] durationMs=1
+2026-09-23T19:44:12.363Z [INFO] [task-api] store closed
+2026-09-23T19:44:12.363Z [INFO] [task-api] All modules destroyed. durationMs=0
+2026-09-23T19:44:12.364Z [INFO] [task-api] Graceful shutdown complete.
+2026-09-23T19:44:12.364Z [INFO] [task-api] Runtime stopped. runtimeId=rt_e953a0efe9854de8b4c3beae6745ee88
+</shell>
+<p>The modules stopped in reverse order. "store closed" comes after "All modules stopped", because the store module does its work in <code>onDestroy</code>, the second round of stopping.</p>
 </section>
 
 <section>
@@ -692,12 +734,9 @@ initialize - Schema is out of date
 </solution>
 </exercise>
 <exercise title="Stop on failure">
-<p>In the Task API, <code>src/server.ts</code> calls <code>await runtime.start()</code> without a <code>try</code>. Change it so that a failed start logs the error, calls <code>runtime.stop()</code> and exits with code 1.</p>
+<p>In the Task API, <code>src/server.ts</code> calls <code>await runtime.start()</code> without a <code>try</code>, just before it creates the HTTP server. Change it so that a failed start logs the error, calls <code>runtime.stop()</code> and exits with code 1.</p>
 <solution>
-<example file="src/server.ts (part)" project="task-api" browser="no" check="skip">
-import { createApp } from "./app.js";
-
-const runtime = createApp();
+<example file="src/server.ts (part)" browser="no" check="skip">
 try {
   await runtime.start();
 } catch (error) {
