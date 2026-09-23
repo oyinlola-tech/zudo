@@ -125,7 +125,317 @@ console.log(paginate(titles, null, 3));
 [ 'Buy milk', 'Write report' ]
 [ 'Call Ada', 'Fix bug' ]
 [ 'Buy milk', 'Write report', 'Call Ada' ]
-[ 'Buy milk', 'Write report', 'Call Ada' ]
+[]
 </output>
-<p>A default is used when the argument is missing or <code>undefined</code>, but <em>not</em> when it is <code>null</code>. In the last call, <code>page</code> was <code>null</code>. <code>(null - 1)</code> is <code>-1</code>, so <code>start</code> was <code>-3</code>, and <code>slice(-3, 0)</code> happened to return... wait, it did not: the output shows the first three titles. Look closer: <code>null - 1</code> is <code>-1</code>, times 3 is <code>-3</code>, and <code>slice(-3, 0)</code> is empty. So why did it work? Because <code>(null - 1) * 3</code> is <code>-3</code> only if you do the maths in that order. Try it yourself in the practice section below. The lesson here: do not rely on <code>null</code> meaning "use the default". If a value may be <code>null</code>, use <code>??</code> on it.</p>
+<p>A default is used when the argument is missing or <code>undefined</code>. It is <em>not</em> used for <code>null</code>. In the last call, <code>page</code> was <code>null</code>, so <code>start</code> became <code>(null - 1) * 3</code>, which is <code>-3</code>, and the page came back empty. That matters in a backend, because JSON has <code>null</code> but no <code>undefined</code>: a client that sends <code>"page": null</code> skips your default. If a value may be <code>null</code>, use <code>??</code> on it: <code>paginate(items, input.page ?? 1)</code>.</p>
+</section>
+
+<section>
+<h2 id="destructuring">Destructuring in depth</h2>
+<p>In <a href="/learn/js-data">Objects and JSON</a> you pulled properties out of an object with <code>const { name } = user</code>. Destructuring can do much more. Here are the forms you will read and write every day:</p>
+<example file="destructure.js">
+const task = {
+  id: 7,
+  title: "Buy milk",
+  owner: { name: "Ada", email: "ada@example.com" },
+};
+
+const { title: taskTitle, priority = 3 } = task;
+console.log(taskTitle, priority);
+
+const { owner: { name: ownerName } } = task;
+console.log(ownerName);
+
+const [first, , third = "none"] = ["a", "b"];
+console.log(first, third);
+
+const [key, value] = "limit=10".split("=");
+console.log(key, value);
+
+let a = 1;
+let b = 2;
+[a, b] = [b, a];
+console.log(a, b);
+</example>
+<output>
+Buy milk 3
+Ada
+a none
+limit 10
+2 1
+</output>
+<ul>
+<li><strong>Renaming</strong>: <code>{ title: taskTitle }</code> reads <code>title</code> into a variable called <code>taskTitle</code>. Read the colon as "into".</li>
+<li><strong>Defaults</strong>: <code>{ priority = 3 }</code> uses 3 because the task has no priority. Like default parameters, it applies to <code>undefined</code> only.</li>
+<li><strong>Nested</strong>: <code>{ owner: { name: ownerName } }</code> goes one level deeper. It crashes if <code>owner</code> is missing, so use it only on data you trust.</li>
+<li><strong>Arrays</strong> take items by position. An empty slot, <code>[first, , third]</code>, skips an item.</li>
+<li><strong>Swapping</strong> two variables takes one line.</li>
+</ul>
+<h3>Destructuring parameters</h3>
+<p>The most useful place for destructuring is a function's parameter list. Instead of an <code>options</code> object you read property by property, you name the options you expect and give each a default:</p>
+<example file="params.js">
+function createTask({ title, done = false, tags = [] } = {}) {
+  return { title, done, tags };
+}
+
+console.log(createTask({ title: "Buy milk" }));
+console.log(createTask({ title: "Plan week", tags: ["work"] }));
+console.log(createTask());
+</example>
+<output>
+{ title: 'Buy milk', done: false, tags: [] }
+{ title: 'Plan week', done: false, tags: [ 'work' ] }
+{ title: undefined, done: false, tags: [] }
+</output>
+<p>The <code>= {}</code> at the end is the default for the whole parameter. Without it, <code>createTask()</code> would crash trying to destructure <code>undefined</code>. You can see at a glance which options the function understands.</p>
+</section>
+
+<section>
+<h2 id="spread-rest">Spread and rest: same dots, opposite jobs</h2>
+<p>The three dots <code>...</code> mean two opposite things depending on where they stand:</p>
+<ul>
+<li><strong>Spread</strong> <em>expands</em> one array or object into many items. It appears where values are <em>used</em>: in an array <code>[...a]</code>, an object <code>{ ...o }</code>, or a function call <code>f(...args)</code>.</li>
+<li><strong>Rest</strong> <em>collects</em> many items into one array or object. It appears where names are <em>created</em>: in a parameter list <code>function f(...args)</code> or a destructuring pattern <code>const [x, ...others] = list</code>.</li>
+</ul>
+<example file="spread-rest.js">
+const priorities = [3, 1, 2];
+console.log(Math.max(...priorities));
+
+const more = [...priorities, 5];
+console.log(more, priorities);
+
+function tag(title, ...tags) {
+  return `${title} [${tags.join(", ")}]`;
+}
+console.log(tag("Buy milk", "home", "shopping"));
+
+const [firstTask, ...laterTasks] = ["Buy milk", "Write report", "Call Ada"];
+console.log(firstTask, laterTasks);
+
+const { id, ...changes } = { id: 7, title: "Buy oat milk", done: true };
+console.log(id, changes);
+</example>
+<output>
+3
+[ 3, 1, 2, 5 ] [ 3, 1, 2 ]
+Buy milk [home, shopping]
+Buy milk [ 'Write report', 'Call Ada' ]
+7 { title: 'Buy oat milk', done: true }
+</output>
+<p><code>Math.max</code> wants separate numbers, not an array, so spread expands the array into three arguments. In <code>tag</code>, the rest parameter collected every argument after the first into the array <code>tags</code>. A rest element must always come last.</p>
+<note>Old code used a hidden variable called <code>arguments</code> to reach extra arguments. A rest parameter replaces it, and it is a real array, so <code>map</code> and <code>join</code> work on it.</note>
+</section>
+
+<section>
+<h2 id="object-literals">Enhanced object literals</h2>
+<p>You saw shorthand properties and computed properties in <a href="/learn/js-data">Objects and JSON</a>. Together with short methods, they are called <strong>enhanced object literals</strong>. Here is an old-style response builder next to its modern form:</p>
+<example file="literals.js">
+function oldResponse(status, field, value) {
+  var body = {};
+  body[field] = value;
+  return {
+    status: status,
+    body: body,
+    describe: function () {
+      return this.status + " " + JSON.stringify(this.body);
+    },
+  };
+}
+
+function newResponse(status, field, value) {
+  return {
+    status,
+    body: { [field]: value },
+    describe() {
+      return `${this.status} ${JSON.stringify(this.body)}`;
+    },
+  };
+}
+
+console.log(oldResponse(201, "id", 7).describe());
+console.log(newResponse(201, "id", 7).describe());
+</example>
+<output>
+201 {"id":7}
+201 {"id":7}
+</output>
+<p>Same behaviour, half the noise. <code>status</code> is shorthand for <code>status: status</code>, <code>[field]</code> is a computed property, and <code>describe() { }</code> is a short method.</p>
+</section>
+
+<section>
+<h2 id="var">var, let and const</h2>
+<p>Old code declares every variable with <code>var</code>. Modern code uses <code>const</code> by default and <code>let</code> when the value must change. <code>var</code> ignores blocks, which leads to bugs like this one:</p>
+<example file="var.js">
+var label = "outer";
+if (true) {
+  var label = "inner";
+}
+console.log(label);
+
+let name = "outer";
+if (true) {
+  let name = "inner";
+}
+console.log(name);
+</example>
+<output>
+inner
+outer
+</output>
+<p>The <code>var</code> inside the <code>if</code> silently overwrote the outer one. With <code>let</code>, the inner <code>name</code> exists only inside its block. <a href="/learn/js-scope">Scope and how code runs</a> explains exactly why. When you modernise code, replace every <code>var</code> with <code>const</code>, and change it to <code>let</code> only if the code assigns to it again.</p>
+</section>
+
+<section>
+<h2 id="modules-preview">A first look at modules</h2>
+<p>Old browser code put everything in one global space, and files shared variables by accident. Modern JavaScript splits code into <strong>modules</strong>: each file keeps its names to itself, <code>export</code>s what others may use, and <code>import</code>s what it needs. Here the formatter lives in its own file:</p>
+<example file="format.js" project="preview">
+export function formatTitle(task) {
+  return `${task.done ? "[x]" : "[ ]"} ${task.title}`;
+}
+</example>
+<example file="main.js" project="preview">
+import { formatTitle } from "./format.js";
+
+console.log(formatTitle({ title: "Buy milk", done: true }));
+</example>
+<output>
+[x] Buy milk
+</output>
+<p>That is all you need for now. <a href="/learn/js-modules">Modules</a> teaches them fully: named and default exports, CommonJS <code>require</code>, and how to organise a project.</p>
+</section>
+
+<section>
+<h2 id="refactor">Build: the full refactor</h2>
+<p>Now rewrite <code>formatTask</code> from the start of the lesson with every tool you have seen. Keep the old version next to it, so you can compare the two on the same inputs:</p>
+<example file="refactor.js">
+function oldFormatTask(task, options) {
+  options = options || {};
+  var prefix = options.prefix || "-";
+  var owner = task.owner && task.owner.name ? task.owner.name : "nobody";
+  var priority = task.priority || 3;
+  return prefix + " " + task.title + " (" + owner + ", priority " + priority + ")";
+}
+
+function formatTask({ title, owner, priority = 3 }, { prefix = "-" } = {}) {
+  const who = owner?.name ?? "nobody";
+  return `${prefix} ${title} (${who}, priority ${priority})`.trim();
+}
+
+const cases = [
+  [{ title: "Buy milk", owner: { name: "Ada" }, priority: 1 }],
+  [{ title: "Write report" }, { prefix: "*" }],
+  [{ title: "Fix login bug", priority: 0 }, { prefix: "" }],
+];
+
+for (const args of cases) {
+  console.log("old:", oldFormatTask(...args));
+  console.log("new:", formatTask(...args));
+}
+</example>
+<output>
+old: - Buy milk (Ada, priority 1)
+new: - Buy milk (Ada, priority 1)
+old: * Write report (nobody, priority 3)
+new: * Write report (nobody, priority 3)
+old: - Fix login bug (nobody, priority 3)
+new: Fix login bug (nobody, priority 0)
+</output>
+<p>The new version gives the same result for the normal cases and fixes both bugs in the third one:</p>
+<ul>
+<li>The default <code>priority = 3</code> only applies to a missing value, so priority <code>0</code> survives.</li>
+<li>The default <code>prefix = "-"</code> only applies when no prefix was given, so <code>""</code> is kept. <code>.trim()</code> removes the leading space that an empty prefix leaves.</li>
+<li><code>owner?.name ?? "nobody"</code> replaces the whole <code>&&</code> and <code>? :</code> line.</li>
+<li>The test loop passes each case with spread: <code>formatTask(...args)</code> turns the array into separate arguments.</li>
+</ul>
+<p>This is how to refactor safely in real projects too: keep the old behaviour, check it on the same inputs, and change only what you meant to change. In <a href="/learn/testing-basics">Testing</a> you will turn a loop like this into automatic tests.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Modernise a config reader">
+<p>Rewrite this function with destructuring, default values and <code>??</code>. A <code>port</code> of <code>0</code> must be kept (it means "pick any free port"), and a missing <code>host</code> must become <code>"localhost"</code>.</p>
+<example file="config-old.js">
+function readConfig(config) {
+  var port = config.port || 3000;
+  var host = config.host || "localhost";
+  return "http://" + host + ":" + port;
+}
+
+console.log(readConfig({ port: 0 }));
+</example>
+<output>
+http://localhost:3000
+</output>
+<solution>
+<example file="config-new.js">
+function readConfig({ port = 3000, host = "localhost" } = {}) {
+  return `http://${host}:${port}`;
+}
+
+console.log(readConfig({ port: 0 }));
+console.log(readConfig({ host: "api.example.com" }));
+console.log(readConfig());
+</example>
+<output>
+http://localhost:0
+http://api.example.com:3000
+http://localhost:3000
+</output>
+<p>If the config could contain <code>null</code> values (for example after <code>JSON.parse</code>), use <code>config.port ?? 3000</code> instead of a default, because defaults ignore <code>null</code>.</p>
+</solution>
+</exercise>
+<exercise title="Sum with rest">
+<p>Write <code>total(label, ...amounts)</code> that returns a string like <code>Groceries: 12</code>, adding up all the amounts. Then call it with an existing array of amounts using spread.</p>
+<solution>
+<example file="total.js">
+function total(label, ...amounts) {
+  const sum = amounts.reduce((acc, n) => acc + n, 0);
+  return `${label}: ${sum}`;
+}
+
+console.log(total("Groceries", 4, 5, 3));
+
+const week = [10, 20, 5];
+console.log(total("Week", ...week));
+console.log(total("Nothing"));
+</example>
+<output>
+Groceries: 12
+Week: 35
+Nothing: 0
+</output>
+</solution>
+</exercise>
+<exercise title="Safe nested read">
+<p>A request may or may not have <code>request.user.settings.language</code>. Write <code>languageOf(request)</code> that returns it, or <code>"en"</code> when any part is missing. It must not crash on <code>{}</code>.</p>
+<solution>
+<example file="language.js">
+function languageOf(request) {
+  return request.user?.settings?.language ?? "en";
+}
+
+console.log(languageOf({ user: { settings: { language: "fr" } } }));
+console.log(languageOf({ user: {} }));
+console.log(languageOf({}));
+</example>
+<output>
+fr
+en
+en
+</output>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Template literals <code>`${x}`</code> replace string gluing with <code>+</code>.</li>
+<li><code>a?.b</code> reads safely through <code>null</code> and <code>undefined</code>. <code>a ?? b</code> falls back only for <code>null</code> and <code>undefined</code>, so it keeps <code>0</code> and <code>""</code>.</li>
+<li>Default parameters and destructuring defaults apply to <code>undefined</code> only, never to <code>null</code>.</li>
+<li>Destructuring can rename (<code>{ a: b }</code>), set defaults, go into nested objects, and take arrays apart by position.</li>
+<li>Spread expands (<code>f(...list)</code>, <code>{ ...obj }</code>). Rest collects (<code>function f(...args)</code>, <code>const { id, ...rest } = obj</code>).</li>
+<li>Use <code>const</code> by default, <code>let</code> when you reassign, and never <code>var</code>.</li>
+<li>Refactor with the old and new versions side by side, checked on the same inputs.</li>
+</ul>
 </section>
