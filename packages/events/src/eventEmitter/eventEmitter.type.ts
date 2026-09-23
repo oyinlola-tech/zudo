@@ -2,6 +2,8 @@
  * Event emitter type definitions for Zudojs.
  */
 
+import type { EventHandlerError } from "@zudojs/errors";
+
 import type { Event } from "../eventTypes/eventDefinition.type.js";
 
 import type { RegisteredEventHandler } from "../eventHandler/eventHandler.core.js";
@@ -106,7 +108,7 @@ export interface EventEmitResult<TEvent extends Event = Event> {
    * Handler failures wrapped as EventHandlerError (cause holds the
    * raw thrown value).
    */
-  readonly errors: readonly unknown[];
+  readonly errors: readonly EventHandlerError[];
   /**
    * Number of handlers that completed successfully.
    */

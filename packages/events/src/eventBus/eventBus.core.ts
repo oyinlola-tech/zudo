@@ -39,12 +39,12 @@ import {
 import { warnObserverError } from "../eventErrors/eventWarning.helper.js";
 
 import type {
-  EventMiddlewareLike,
   EventMiddlewareOptions,
   RegisteredEventMiddleware,
 } from "../eventMiddleware/eventMiddleware.type.js";
 
 import type {
+  EventBusMiddlewareItem,
   EventBusOptions,
   PublishOptions,
   EventPublishResult,
@@ -218,8 +218,13 @@ export class EventBus {
     return busOff(this.emitter, subscription, () => this.ensureNotDisposed());
   }
 
+  /**
+   * Adds bus middleware: a middleware function or object, or a
+   * registered middleware from createEventMiddleware() or a builder
+   * helper such as validateEventMiddleware().
+   */
   use(
-    middleware: EventMiddlewareLike,
+    middleware: EventBusMiddlewareItem,
     options: EventMiddlewareOptions = {},
   ): () => void {
     this.ensureNotDisposed();

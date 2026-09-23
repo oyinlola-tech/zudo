@@ -11,7 +11,10 @@ import type {
 
 import { executeRegisteredEventHandler } from "../eventHandler/eventHandler.core.js";
 
-import { createEventHandlerError } from "../eventErrors/eventError.base.js";
+import {
+  createEventHandlerError,
+  type EventHandlerError,
+} from "../eventErrors/eventError.base.js";
 
 import type { EventHandlerExecutionResult } from "./eventEmitter.type.js";
 
@@ -39,6 +42,11 @@ export interface DispatchHooks {
 
 /**
  * Executes handlers sequentially.
+ *
+ * Rejects with EventDispatchAbortedError when the dispatch signal is
+ * aborted before a handler starts or while any handler — including
+ * the last or only one — is running, even if that handler then
+ * returns normally.
  */
 export async function emitSequential<TEvent extends Event>(
   handlers: readonly RegisteredEventHandler<TEvent>[],
@@ -46,7 +54,7 @@ export async function emitSequential<TEvent extends Event>(
   context: EventHandlerContext<TEvent>,
   errorMode: EventErrorMode,
   results: EventHandlerExecutionResult[],
-  errors: unknown[],
+  errors: EventHandlerError[],
   hooks: DispatchHooks,
 ): Promise<void> {
   for (const handler of handlers) {
@@ -113,5 +121,13 @@ export async function emitSequential<TEvent extends Event>(
         throw wrapped;
       }
     }
+  }
+
+  // The check at the top of the loop only runs before the *next*
+  // handler, so an abort during the last (or only) handler used to
+  // resolve as a normal, successful dispatch — while the same abort
+  // with a handler still to come rejected.
+  if (context.signal.aborted) {
+    throw createAbortError(event, results, errors);
   }
 }

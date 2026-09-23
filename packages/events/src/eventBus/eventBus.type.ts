@@ -2,6 +2,8 @@
  * Event bus type definitions for Zudojs.
  */
 
+import type { EventHandlerError } from "@zudojs/errors";
+
 import type { Event } from "../eventTypes/eventDefinition.type.js";
 
 import type {
@@ -113,7 +115,11 @@ export interface EventPublishResult<TEvent extends Event = Event> {
    */
   readonly failed: number;
   readonly results: readonly unknown[];
-  readonly errors: readonly unknown[];
+  /**
+   * Handler failures, each wrapped as EventHandlerError (its
+   * `cause` is the raw thrown value).
+   */
+  readonly errors: readonly EventHandlerError[];
   /**
    * True when a middleware did not call next(), so no handler ran.
    */

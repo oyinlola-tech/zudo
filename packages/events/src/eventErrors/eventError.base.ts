@@ -2,15 +2,12 @@
  * @zudojs/events/eventErrors/eventError.base
  *
  * Event error types are centralized in @zudojs/errors and
- * re-exported here. A few event-bus specific errors that the
- * errors package does not define yet live in this file.
+ * re-exported here, including EventBusStoppedError and
+ * EventBusDisposedError. EventDispatchAbortedError is extended here
+ * to carry the partial results of an aborted dispatch.
  */
 
-import {
-  ErrorCode,
-  EventError,
-  EventDispatchAbortedError as BaseEventDispatchAbortedError,
-} from "@zudojs/errors";
+import { EventDispatchAbortedError as BaseEventDispatchAbortedError } from "@zudojs/errors";
 
 export {
   EventError,
@@ -34,6 +31,8 @@ export {
   EventMiddlewareError,
   EventSerializationError,
   EventDeserializationError,
+  EventBusDisposedError,
+  EventBusStoppedError,
 } from "@zudojs/errors";
 
 /**
@@ -74,35 +73,5 @@ export class EventDispatchAbortedError extends BaseEventDispatchAbortedError {
     this.results = Object.freeze([...(options.results ?? [])]);
 
     this.errors = Object.freeze([...(options.errors ?? [])]);
-  }
-}
-
-/**
- * Error thrown when an EventBus is used after dispose().
- */
-export class EventBusDisposedError extends EventError {
-  constructor() {
-    super("Event bus has already been disposed.", {
-      code: ErrorCode.LIFECYCLE_DISPOSED,
-      statusCode: 500,
-      expose: false,
-      isOperational: false,
-    });
-  }
-}
-
-/**
- * Error thrown when publishing or subscribing on a stopped
- * EventBus. Call start() to resume.
- */
-export class EventBusStoppedError extends EventError {
-  constructor(operation: string) {
-    super(`Cannot ${operation} on a stopped event bus. Call start() first.`, {
-      code: ErrorCode.LIFECYCLE_STATE,
-      statusCode: 500,
-      expose: false,
-      isOperational: true,
-      metadata: { operation },
-    });
   }
 }

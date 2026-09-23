@@ -16,7 +16,10 @@ import type {
 
 import { executeRegisteredEventHandler } from "../eventHandler/eventHandler.core.js";
 
-import { createEventHandlerError } from "../eventErrors/eventError.base.js";
+import {
+  createEventHandlerError,
+  type EventHandlerError,
+} from "../eventErrors/eventError.base.js";
 
 import type { EventHandlerExecutionResult } from "./eventEmitter.type.js";
 
@@ -35,7 +38,7 @@ export async function emitParallel<TEvent extends Event>(
   context: EventHandlerContext<TEvent>,
   errorMode: EventErrorMode,
   results: EventHandlerExecutionResult[],
-  errors: unknown[],
+  errors: EventHandlerError[],
   hooks: DispatchHooks,
 ): Promise<void> {
   if (context.signal.aborted) {

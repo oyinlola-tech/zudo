@@ -71,6 +71,9 @@ CREATED ──(first use / start)──▶ ACTIVE ◀──(start)── STOPPED
 - `stop()` moves the bus to `STOPPED`; publishing or subscribing then throws
   `EventBusStoppedError` until `start()` is called. Handlers and definitions are kept.
 - `dispose()` is final; every operation throws `EventBusDisposedError`.
+- Both errors are defined in `@zudojs/errors` (as `EventError` subclasses) and
+  re-exported from `@zudojs/events`, so `instanceof` works whichever package you
+  import them from.
 
 ## Publish results
 
@@ -89,6 +92,33 @@ In the default `CONTINUE` error mode handler failures are collected in
 `result.errors` (and forwarded to the `onError` option). In `THROW` mode the first
 `EventHandlerError` rejects the publish. Errors thrown by a middleware itself are
 wrapped as `EventMiddlewareError`; handler errors and aborts pass through unwrapped.
+
+## Middleware
+
+`bus.use()` accepts everything the `middleware` constructor option does: a
+middleware function or `{ handle }` object, or a registered middleware from
+`createEventMiddleware()` or a builder helper (`validateEventMiddleware`,
+`beforeEvent`, `aroundEvent`, `timingEventMiddleware`, …). It returns a function
+that removes the middleware again.
+
+```typescript
+const remove = bus.use(validateEventMiddleware((event) => event.payload != null));
+```
+
+## Timeouts and aborts
+
+A handler registered with `timeoutMs` fails with `EventTimeoutError` when it
+does not settle in time, and the `context.signal` it received is aborted with
+that error as its `reason`, so a handler that listens to the signal can stop
+its work. Timing out one handler does not abort the dispatch or other handlers.
+
+Pass `signal` to `publish()` to abort a sequential dispatch. The publish rejects
+with `EventDispatchAbortedError` (carrying the partial `results` and `errors`)
+when the signal is aborted before a handler starts **or while any handler is
+running — including the last or only one**, even if that handler then returns
+normally. In `PARALLEL` mode every handler has already started, so only a
+signal that is aborted before dispatch begins rejects; handlers can still
+observe `context.signal`.
 
 ## Registry
 

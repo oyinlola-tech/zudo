@@ -355,8 +355,15 @@ export async function executeEventHandler<TEvent extends Event>(
 /**
  * Executes a registered handler, applying its timeout when one
  * is configured. A timed-out execution rejects with
- * EventTimeoutError; the underlying handler keeps running but its
- * eventual result is ignored.
+ * EventTimeoutError and aborts the `context.signal` the handler
+ * received (its `reason` is that EventTimeoutError), so a handler
+ * that observes the signal can stop its work. A handler that
+ * ignores the signal keeps running, but its eventual result is
+ * ignored.
+ *
+ * The handler's signal also follows the dispatch signal: aborting
+ * the publish aborts it too. Timing out one handler does not abort
+ * the dispatch or any other handler.
  */
 export async function executeRegisteredEventHandler<TEvent extends Event>(
   registration: RegisteredEventHandler<TEvent>,
@@ -371,20 +378,29 @@ export async function executeRegisteredEventHandler<TEvent extends Event>(
 
   let timer: ReturnType<typeof setTimeout> | undefined;
 
+  const deadline = new AbortController();
+
+  const handlerContext: EventHandlerContext<TEvent> = Object.freeze({
+    ...context,
+    signal: AbortSignal.any([context.signal, deadline.signal]),
+  });
+
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      reject(
-        new EventTimeoutError(timeoutMs, {
-          eventType: event.type,
-          eventId: event.id,
-        }),
-      );
+      const error = new EventTimeoutError(timeoutMs, {
+        eventType: event.type,
+        eventId: event.id,
+      });
+
+      deadline.abort(error);
+
+      reject(error);
     }, timeoutMs);
   });
 
   try {
     return await Promise.race([
-      executeEventHandler(registration.handler, event, context),
+      executeEventHandler(registration.handler, event, handlerContext),
       timeout,
     ]);
   } finally {

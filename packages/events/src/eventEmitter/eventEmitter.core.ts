@@ -33,6 +33,7 @@ import { EventRegistry } from "../eventRegistry/eventRegistry.store.js";
 import {
   EventEmitterDisposedError,
   InvalidEventError,
+  type EventHandlerError,
 } from "../eventErrors/eventError.base.js";
 
 import type {
@@ -160,7 +161,7 @@ export class EventEmitter {
 
     const results: EventHandlerExecutionResult[] = [];
 
-    const errors: unknown[] = [];
+    const errors: EventHandlerError[] = [];
 
     if (handlers.length === 0) {
       return {

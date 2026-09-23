@@ -125,13 +125,27 @@ export function busOff(
  * Adds middleware to the bus. The middleware is validated
  * eagerly (invalid middleware or a non-finite priority throw
  * here, not on the next publish).
+ *
+ * Accepts the same items as the `middleware` constructor option: a
+ * plain middleware function or object, or a registered middleware
+ * made by createEventMiddleware() or a builder helper such as
+ * validateEventMiddleware(). For a registered middleware its own id,
+ * description, priority and enabled flag are kept unless `options`
+ * overrides them.
  */
 export function busUse(
   busMiddleware: RegisteredEventMiddleware[],
-  middleware: EventMiddlewareLike,
+  middleware: EventBusMiddlewareItem,
   options: EventMiddlewareOptions = {},
 ): () => void {
-  const registered = createEventMiddleware(middleware, options);
+  const registered = isRegisteredEventMiddleware(middleware)
+    ? createEventMiddleware(middleware.middleware, {
+        id: options.id ?? middleware.id,
+        description: options.description ?? middleware.description,
+        priority: options.priority ?? middleware.priority,
+        enabled: options.enabled ?? middleware.enabled,
+      })
+    : createEventMiddleware(middleware as EventMiddlewareLike, options);
 
   busMiddleware.push(registered);
 
