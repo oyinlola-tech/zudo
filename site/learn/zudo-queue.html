@@ -245,6 +245,7 @@ later: completed</pre></div>
 <li><code>queue.process(name, processor)</code> registers the function for jobs with that name. The in-memory queue starts checking for work as soon as a processor exists.</li>
 <li><code>queue.add(name, data)</code> stores a job and returns at once. The job is <code>waiting</code>: the request did not wait for the work.</li>
 <li>A moment later the processor ran and the job is <code>completed</code>. <code>queue.close()</code> shuts the queue down. Always call it when your program stops.</li>
+<li>While a queue has jobs it can run, it keeps Node.js alive, so a script cannot exit before its jobs are done. An idle or closed queue never holds the process open. (<code>keepAlive: false</code> turns this off.)</li>
 </ul>
 <p>A job moves through these <strong>states</strong>: <code>waiting</code> (ready), <code>scheduled</code> (not due yet), <code>active</code> (running), <code>completed</code>, <code>retrying</code> (failed, waiting to try again) and <code>dead_letter</code> (every try failed).</p>
 <div class="callout callout-warning"><p class="lx-callout-label">WHAT GOES IN A JOB</p>Put small, plain data in a job: ids, an email address, a date. Not whole objects from the database, which may have changed by the time the job runs, and never secrets such as passwords or API keys: queues are stored, logged and shown in dashboards. The processor should load fresh data by id, and read secrets from its own configuration.</div>
@@ -352,7 +353,7 @@ retry 6: exponential 30000 ms, fixed 1000 ms
 retry 7: exponential 30000 ms, fixed 1000 ms</pre></div>
 </figure>
 <p>The waits double from 1 second and stop growing at <code>maxDelay</code>, 30 seconds. Now imagine the mail server was down for a minute and 5,000 jobs failed at the same moment. With these exact numbers, all 5,000 retry at the same moment too, and knock the server over again. <strong>Jitter</strong> adds randomness to each wait, so the retries spread out. The default is <code>"full"</code>: a random wait between 0 and the computed one. Leave it on in production. It is off here only so the numbers are the same every time.</p>
-<p>Here is a processor that fails twice and then works. <code>job.attempt</code> counts the tries that came before this one, so it starts at 0:</p>
+<p>Here is a processor that fails twice and then works. The second argument of the processor, the <strong>job context</strong>, has <code>attemptNumber</code>: 1 on the first try, 2 on the second, and so on. (<code>job.attempt</code> also exists, but it counts the tries that came <em>before</em> this one, so it starts at 0.)</p>
 <figure class="lx-example" data-index="3" data-file="retry.ts">
 <figcaption class="lx-bar"><span class="lx-file">retry.ts</span><button type="button" class="lx-edit" data-index="3" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="3"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createInMemoryQueue<span class="t-pn">,</span> createQueueName<span class="t-pn">,</span> createExponentialBackoff <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/queue"</span><span class="t-pn">;</span>
@@ -360,8 +361,8 @@ retry 7: exponential 30000 ms, fixed 1000 ms</pre></div>
 <span class="t-kw">const</span> wait <span class="t-op">=</span> <span class="t-pn">(</span>ms<span class="t-op">:</span> <span class="t-ty">number</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">new</span> <span class="t-ty">Promise</span><span class="t-pn">(</span><span class="t-pn">(</span>resolve<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-fn">setTimeout</span><span class="t-pn">(</span>resolve<span class="t-pn">,</span> ms<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> queue <span class="t-op">=</span> createInMemoryQueue<span class="t-op">&lt;</span><span class="t-pn">{</span> taskId<span class="t-op">:</span> <span class="t-ty">number</span> <span class="t-pn">}</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-fn">createQueueName</span><span class="t-pn">(</span><span class="t-str">"reminders"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
-queue<span class="t-pn">.</span><span class="t-fn">process</span><span class="t-pn">(</span><span class="t-str">"send-reminder"</span><span class="t-pn">,</span> <span class="t-kw">async</span> <span class="t-pn">(</span>job<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
-  <span class="t-kw">const</span> attempt <span class="t-op">=</span> job<span class="t-pn">.</span><span class="t-prop">attempt</span> <span class="t-op">+</span> <span class="t-num">1</span><span class="t-pn">;</span>
+queue<span class="t-pn">.</span><span class="t-fn">process</span><span class="t-pn">(</span><span class="t-str">"send-reminder"</span><span class="t-pn">,</span> <span class="t-kw">async</span> <span class="t-pn">(</span>job<span class="t-pn">,</span> context<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
+  <span class="t-kw">const</span> attempt <span class="t-op">=</span> context<span class="t-pn">.</span><span class="t-prop">attemptNumber</span><span class="t-pn">;</span>
   <span class="t-kw">if</span> <span class="t-pn">(</span>attempt <span class="t-op">&lt;</span> <span class="t-num">3</span><span class="t-pn">)</span> <span class="t-pn">{</span>
     console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`try <span class="t-op">${</span><span class="t-prop">attempt</span><span class="t-op">}</span>: mail server timed out`</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">Error</span><span class="t-pn">(</span><span class="t-str">"mail server timed out"</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -384,8 +385,8 @@ console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const queue = createInMemoryQueue<{ taskId: number }>(createQueueName("reminders"));
 
-queue.process("send-reminder", async (job) => {
-  const attempt = job.attempt + 1;
+queue.process("send-reminder", async (job, context) => {
+  const attempt = context.attemptNumber;
   if (attempt < 3) {
     console.log(`try ${attempt}: mail server timed out`);
     throw new Error("mail server timed out");
@@ -533,7 +534,7 @@ dead-lettered: 1</pre></div>
 </figure>
 <p>Each entry keeps the job, the error and the number of attempts. What you do with dead letters is a decision for your team:</p>
 <ul>
-<li><strong>Alert</strong> when the count grows. A dead-letter queue nobody looks at is just a slower way to lose data. The <a href="/learn/zudo-observability">observability lesson</a> shows how to count and alert.</li>
+<li><strong>Alert</strong> when the count grows. A dead-letter queue nobody looks at is just a slower way to lose data. Every queue has an <code>events</code> emitter: <code>queue.events?.on("job:failed", ({ job, error }) =&gt; …)</code> runs on every failed attempt, and <code>getStats().deadLettered</code> gives the count. The <a href="/learn/zudo-observability">observability lesson</a> shows how to count and alert.</li>
 <li><strong>Fix and replay.</strong> If a bug caused the failures, fix it, then add the jobs again with <code>queue.add(dead.job.name, dead.job.data)</code>.</li>
 <li><strong>Stop early for permanent errors.</strong> Retrying "mailbox does not exist" three times wastes time. A processor can check the error and give up at once, for example by marking the reminder as failed in the database and returning normally.</li>
 </ul>

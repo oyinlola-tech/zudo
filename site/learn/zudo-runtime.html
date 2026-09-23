@@ -317,11 +317,13 @@ state: stopped</pre></div>
 <thead><tr><th>State</th><th>Meaning</th></tr></thead>
 <tbody>
 <tr><td><code>created</code></td><td>Built, nothing has run yet.</td></tr>
-<tr><td><code>initializing</code></td><td>Running the <code>onInitialize</code> and <code>onReady</code> hooks.</td></tr>
+<tr><td><code>initializing</code></td><td>Running the <code>onInitialize</code> hooks.</td></tr>
+<tr><td><code>initialized</code></td><td>Every module has initialized. The runtime passes through this state on its way to <code>starting</code>.</td></tr>
+<tr><td><code>starting</code></td><td>Running the <code>onReady</code> hooks.</td></tr>
 <tr><td><code>running</code></td><td>Everything is up.</td></tr>
 <tr><td><code>stopping</code></td><td>Running the <code>onShutdown</code> and <code>onDestroy</code> hooks.</td></tr>
 <tr><td><code>stopped</code></td><td>Everything is down. A stopped runtime cannot be started again; create a new one.</td></tr>
-<tr><td><code>failed</code></td><td>Something went wrong on the way up or down.</td></tr>
+<tr><td><code>failed</code></td><td>Something went wrong on the way up or down. This is not the end: you can still call <code>stop()</code> to clean up.</td></tr>
 </tbody>
 </table></div>
 <p>Each change is also announced as an <strong>event</strong> on the event bus you passed in. Other parts of your program can listen without the runtime knowing about them. Here a listener prints the runtime events and the state at that moment:</p>
@@ -344,7 +346,15 @@ state: stopped</pre></div>
   <span class="t-pn">{</span> applicationName<span class="t-op">:</span> <span class="t-str">"task-api"</span><span class="t-pn">,</span> environment<span class="t-op">:</span> <span class="t-str">"development"</span><span class="t-pn">,</span> handleSignals<span class="t-op">:</span> <span class="t-cn">false</span> <span class="t-pn">}</span><span class="t-pn">,</span>
 <span class="t-pn">)</span><span class="t-pn">;</span>
 
-<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> <span class="t-kw">type</span> <span class="t-kw">of</span> <span class="t-pn">[</span><span class="t-str">"runtime.initializing"</span><span class="t-pn">,</span> <span class="t-str">"runtime.running"</span><span class="t-pn">,</span> <span class="t-str">"runtime.stopping"</span><span class="t-pn">,</span> <span class="t-str">"runtime.stopped"</span><span class="t-pn">]</span> <span class="t-kw">as</span> <span class="t-kw">const</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+<span class="t-kw">const</span> types <span class="t-op">=</span> <span class="t-pn">[</span>
+  <span class="t-str">"runtime.initializing"</span><span class="t-pn">,</span>
+  <span class="t-str">"runtime.initialized"</span><span class="t-pn">,</span>
+  <span class="t-str">"runtime.starting"</span><span class="t-pn">,</span>
+  <span class="t-str">"runtime.running"</span><span class="t-pn">,</span>
+  <span class="t-str">"runtime.stopping"</span><span class="t-pn">,</span>
+  <span class="t-str">"runtime.stopped"</span><span class="t-pn">,</span>
+<span class="t-pn">]</span> <span class="t-kw">as</span> <span class="t-kw">const</span><span class="t-pn">;</span>
+<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> <span class="t-kw">type</span> <span class="t-kw">of</span> types<span class="t-pn">)</span> <span class="t-pn">{</span>
   eventBus<span class="t-pn">.</span><span class="t-fn">on</span><span class="t-pn">(</span><span class="t-kw">type</span><span class="t-pn">,</span> <span class="t-pn">(</span>event<span class="t-pn">)</span> <span class="t-op">=&gt;</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`event <span class="t-op">${</span><span class="t-prop">event.type</span><span class="t-op">}</span> (state: <span class="t-op">${</span><span class="t-prop">runtime.state</span><span class="t-op">}</span>)`</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-pn">}</span>
 
@@ -368,7 +378,15 @@ const runtime = createRuntime(
   { applicationName: "task-api", environment: "development", handleSignals: false },
 );
 
-for (const type of ["runtime.initializing", "runtime.running", "runtime.stopping", "runtime.stopped"] as const) {
+const types = [
+  "runtime.initializing",
+  "runtime.initialized",
+  "runtime.starting",
+  "runtime.running",
+  "runtime.stopping",
+  "runtime.stopped",
+] as const;
+for (const type of types) {
   eventBus.on(type, (event) => console.log(`event ${event.type} (state: ${runtime.state})`));
 }
 
@@ -376,6 +394,8 @@ await runtime.start();
 await runtime.stop();</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx events.ts</code></div><pre class="lx-no-copy">event runtime.initializing (state: initializing)
 initialize store
+event runtime.initialized (state: initialized)
+event runtime.starting (state: starting)
 ready      store
 event runtime.running (state: running)
 event runtime.stopping (state: stopping)
@@ -383,8 +403,8 @@ shutdown   store
 destroy    store
 event runtime.stopped (state: stopped)</pre></div>
 </figure>
+<p>The two rounds of startup show up as states: every <code>onInitialize</code> runs while the state is <code>initializing</code>, and every <code>onReady</code> while it is <code>starting</code>.</p>
 <p>There are also events for every module (<code>runtime.module.initializing</code>, <code>runtime.module.failed</code>, …) and for health changes. In later lessons, logging and monitoring code listens to them.</p>
-<div class="callout callout-note"><p class="lx-callout-label">NOTE</p>The type in <code>@zudojs/runtime</code> also lists two states, <code>initialized</code> and <code>starting</code>, that the runtime never enters in version 1.2.1: <code>onReady</code> runs while the state is still <code>initializing</code>. Only rely on the six states above.</div>
 </section>
 
 <section>
@@ -586,13 +606,19 @@ destroy    store</pre></div>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createLogger<span class="t-pn">,</span> <span class="t-ty">LoggerLevel</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/logger"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createRuntime <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/runtime"</span><span class="t-pn">;</span>
 
+<span class="t-kw">let</span> listener<span class="t-op">:</span> <span class="t-ty">NodeJS</span><span class="t-pn">.</span><span class="t-ty">Timeout</span> <span class="t-op">|</span> <span class="t-cn">undefined</span><span class="t-pn">;</span>
+
 <span class="t-kw">const</span> http<span class="t-op">:</span> <span class="t-ty">Module</span> <span class="t-op">=</span> <span class="t-pn">{</span>
   id<span class="t-op">:</span> <span class="t-str">"http"</span><span class="t-pn">,</span>
   name<span class="t-op">:</span> <span class="t-str">"http"</span><span class="t-pn">,</span>
-  onReady<span class="t-op">:</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"http: accepting requests"</span><span class="t-pn">)</span><span class="t-pn">,</span>
+  onReady<span class="t-op">:</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
+    listener <span class="t-op">=</span> <span class="t-fn">setInterval</span><span class="t-pn">(</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-num">1000</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"http: accepting requests"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span><span class="t-pn">,</span>
   onShutdown<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
     console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"http: finishing requests in progress..."</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-kw">await</span> <span class="t-kw">new</span> <span class="t-ty">Promise</span><span class="t-pn">(</span><span class="t-pn">(</span>resolve<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-fn">setTimeout</span><span class="t-pn">(</span>resolve<span class="t-pn">,</span> <span class="t-num">100</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-fn">clearInterval</span><span class="t-pn">(</span>listener<span class="t-pn">)</span><span class="t-pn">;</span>
     console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"http: closed"</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-pn">}</span><span class="t-pn">,</span>
 <span class="t-pn">}</span><span class="t-pn">;</span>
@@ -618,13 +644,19 @@ import { createEventBus } from "@zudojs/events";
 import { createLogger, LoggerLevel } from "@zudojs/logger";
 import { createRuntime } from "@zudojs/runtime";
 
+let listener: NodeJS.Timeout | undefined;
+
 const http: Module = {
   id: "http",
   name: "http",
-  onReady: () => console.log("http: accepting requests"),
+  onReady: () => {
+    listener = setInterval(() => {}, 1000);
+    console.log("http: accepting requests");
+  },
   onShutdown: async () => {
     console.log("http: finishing requests in progress...");
     await new Promise((resolve) => setTimeout(resolve, 100));
+    clearInterval(listener);
     console.log("http: closed");
   },
 };
@@ -648,7 +680,8 @@ http: finishing requests in progress...
 http: closed
 process exits with code 0, state: stopped</pre></div>
 </figure>
-<p>The signal did not kill the process. The runtime caught it, waited for the <code>onShutdown</code> hook to finish its 100 ms of work, and only then let the process end. A second <code>SIGTERM</code> during shutdown exits at once, in case shutdown hangs, and <code>shutdownTimeout</code> (30 seconds by default) puts an upper limit on the whole thing.</p>
+<p>The <code>setInterval</code> stands in for a real server's open network socket. As long as something like that is open, Node.js keeps the process running. <code>onShutdown</code> closes it, the way a real HTTP module closes its server.</p>
+<p>The signal did not kill the process. The runtime caught it, waited for the <code>onShutdown</code> hook to finish its 100 ms of work, and ran <code>stop()</code> to the end. The runtime does not call <code>process.exit()</code> itself: once the last open handle was closed, Node.js ended the process on its own, with code 0. A second <code>SIGTERM</code> during shutdown exits at once, in case shutdown hangs, and <code>shutdownTimeout</code> (30 seconds by default) puts an upper limit on the whole thing.</p>
 <p>Why does the generated <code>src/app.ts</code> pass <code>handleSignals: false</code>? Because the HTTP server in <code>src/server.ts</code> is not a module. <code>server.ts</code> handles the signals itself so it can stop things in the right order: first <code>server.stop()</code> (no new requests, finish the current ones), then <code>runtime.stop()</code> (close everything the requests used). If both listened, they would race each other. You will see the server side of this in <a href="/learn/zudo-middleware">Middleware, CORS, security headers and graceful shutdown</a>.</p>
 </section>
 
@@ -663,6 +696,7 @@ process exits with code 0, state: stopped</pre></div>
 <tr><td><code>applicationVersion</code></td><td><code>"0.1.0"</code></td><td>Your app's version.</td></tr>
 <tr><td><code>handleSignals</code></td><td><code>true</code></td><td>Stop gracefully on <code>SIGTERM</code> and <code>SIGINT</code>.</td></tr>
 <tr><td><code>startupTimeout</code> / <code>shutdownTimeout</code></td><td>60000 / 30000</td><td>Longest time, in milliseconds, that starting or stopping may take.</td></tr>
+<tr><td><code>disposeContainerOnStop</code></td><td><code>false</code></td><td>You created the container, so by default you own it and <code>stop()</code> leaves it alone. Set <code>true</code> to let <code>stop()</code> also clean up (dispose) the container after every module has stopped. The next lesson is about the container.</td></tr>
 </tbody>
 </table></div>
 <p>Everything about the running application is available as <code>runtime.context</code>. And each hook receives a <strong>module context</strong> (<code>ModuleContext</code>) with the module's own information and the runtime's <code>logger</code>. Modules are usually classes that extend <code>BaseModule</code> from <code>@zudojs/core</code>, like the generated <code>AppModule</code>. The <code>options</code> you give <code>BaseModule</code> come back in <code>context.options</code>:</p>
@@ -1089,30 +1123,13 @@ npm run dev"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ <
 <span class="lx-res">&gt; task-api@0.1.0 dev</span>
 <span class="lx-res">&gt; tsx watch src/server.ts</span>
 <span class="lx-res"></span>
-<span class="lx-res">{</span>
-<span class="lx-res">  timestamp: '2026-09-23T13:39:53.796Z',</span>
-<span class="lx-res">  level: 'info',</span>
-<span class="lx-res">  message: '2026-09-23T13:39:53.796Z [INFO] [task-api] store connected',</span>
-<span class="lx-res">  logger: 'task-api',</span>
-<span class="lx-res">  metadata: {}</span>
-<span class="lx-res">}</span>
-<span class="lx-res">{</span>
-<span class="lx-res">  timestamp: '2026-09-23T13:39:53.799Z',</span>
-<span class="lx-res">  level: 'info',</span>
-<span class="lx-res">  message: '2026-09-23T13:39:53.799Z [INFO] [task-api] tasks ready, 1 in store',</span>
-<span class="lx-res">  logger: 'task-api',</span>
-<span class="lx-res">  metadata: {}</span>
-<span class="lx-res">}</span>
-<span class="lx-res">{</span>
-<span class="lx-res">  timestamp: '2026-09-23T13:39:53.799Z',</span>
-<span class="lx-res">  level: 'info',</span>
-<span class="lx-res">  message: '2026-09-23T13:39:53.799Z [INFO] [task-api] All modules initialized. modules=["store","tasks"] durationMs=5',</span>
-<span class="lx-res">  logger: 'task-api',</span>
-<span class="lx-res">  metadata: { modules: [ 'store', 'tasks' ], durationMs: 5 }</span>
-<span class="lx-res">}</span>
-<span class="lx-res">…</span>
+<span class="lx-res">2026-09-23T17:18:27.579Z [INFO] [task-api] store connected</span>
+<span class="lx-res">2026-09-23T17:18:27.584Z [INFO] [task-api] tasks ready, 1 in store</span>
+<span class="lx-res">2026-09-23T17:18:27.586Z [INFO] [task-api] All modules initialized. modules=["store","tasks"] durationMs=13</span>
+<span class="lx-res">2026-09-23T17:18:27.589Z [INFO] [task-api] All modules started. modules=["store","tasks"] durationMs=1</span>
+<span class="lx-res">2026-09-23T17:18:27.591Z [INFO] [task-api] Runtime is ready. runtimeId=rt_fdbfb86ceabf4b5cb862194c8f5cdb3d environment=development</span>
 <span class="lx-res">Listening on port 3000</span></pre></figure>
-<p><code>tsc</code> printed nothing, so the project still type-checks. Your times will differ. The store logs before the tasks module, because of the dependency, then the runtime reports every module initialized and started. <code>/health</code> still answers as before. Stop the server with <kbd>Ctrl</kbd> + <kbd>C</kbd>.</p>
+<p><code>tsc</code> printed nothing, so the project still type-checks. Your times and <code>runtimeId</code> will differ. The store logs before the tasks module, because of the dependency, then the runtime reports every module initialized and started. <code>/health</code> still answers as before. Stop the server with <kbd>Ctrl</kbd> + <kbd>C</kbd>.</p>
 </section>
 
 <section>
@@ -1205,7 +1222,8 @@ destroy    tasks
 destroy    store
 initialize - Schema is out of date</pre></div>
 </figure>
-<p>The failure happened in the first round, so no module ever became ready and there is nothing to shut down. <code>http</code> was never initialized, so it is not destroyed either. <code>tasks</code> is destroyed even though its <code>onInitialize</code> failed halfway: it may have opened something before throwing, so its <code>onDestroy</code> must cope with a half-initialized state.</p></details></div>
+<p>The failure happened in the first round, so no module ever became ready and there is nothing to shut down. <code>http</code> was never initialized, so it is not destroyed either. <code>tasks</code> is destroyed even though its <code>onInitialize</code> failed halfway: it may have opened something before throwing, so its <code>onDestroy</code> must cope with a half-initialized state.</p>
+<p>The error itself is a <code>RuntimeInitializationError</code>, a kind of <code>RuntimeStartError</code>, so the <code>instanceof RuntimeStartError</code> check matches it too.</p></details></div>
 <div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Stop on failure</h3><p>In the Task API, <code>src/server.ts</code> calls <code>await runtime.start()</code> without a <code>try</code>. Change it so that a failed start logs the error, calls <code>runtime.stop()</code> and exits with code 1.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="17" data-file="src/server.ts (part)" data-project="task-api">
 <figcaption class="lx-bar"><span class="lx-file">src/server.ts (part)</span><button type="button" class="lx-edit" data-index="17" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createApp <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./app.js"</span><span class="t-pn">;</span>

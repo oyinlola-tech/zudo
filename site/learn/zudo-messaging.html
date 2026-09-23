@@ -190,7 +190,7 @@
 <span class="lx-res"></span>
 <span class="lx-res">added 1 package, and audited 75 packages in 3s</span>
 <span class="lx-res">…</span></pre></figure>
-<p>Only one package was added, because the packages it builds on, <code>@zudojs/errors</code> and <code>@zudojs/constants</code>, are already in your project. Every example on this page runs in the browser terminal, and on your computer with <code>npx tsx src/&lt;file&gt;.ts</code>.</p>
+<p>Only one package was added, because the packages it builds on, <code>@zudojs/errors</code>, <code>@zudojs/constants</code> and <code>@zudojs/middleware</code>, are already in your project. Every example on this page runs in the browser terminal, and on your computer with <code>npx tsx src/&lt;file&gt;.ts</code>.</p>
 </section>
 
 <section>
@@ -525,7 +525,7 @@ console.log("result:", result.value);</script>
 result: queued</pre></div>
 </figure>
 <p>Both handlers logged the same correlation id, <code>req-7f3a</code>. The first message had no parent: its causation id defaults to its own id, which was not in the map yet, so it printed <code>undefined</code>. The second one names <code>reminder.send</code> as its cause. <code>bus.dispatch(message)</code> sends a message you already built.</p>
-<div class="callout callout-warning"><p class="lx-callout-label">PUT THE CORRELATION ID ON THE MESSAGE</p>You can also pass <code>{ context: { correlationId } }</code> as the second argument of <code>send</code>. Handlers then see it in <code>context.correlationId</code>, but the message itself does not carry it, so <code>createDerivedMessage</code> cannot copy it and the follow-up message starts a new chain. Set <code>correlationId</code> on the message, as above, and the chain stays intact.</div>
+<p>You can also pass the id as the second argument of <code>send</code>: <code>bus.send(input, { context: { correlationId } })</code>. The bus copies it onto the message it builds (unless the input already has its own), so <code>createDerivedMessage</code> keeps the chain intact either way. The Task API code at the end of this page uses that form.</p>
 <p>In the Task API, use the HTTP request id as the correlation id. The observability lesson puts the same id on every log line and trace, so one search finds the whole story.</p>
 </section>
 
@@ -591,7 +591,7 @@ handler: gave up before attempt 3</pre></div>
 
 <section>
 <h2 id="cancellation">Cancellation with AbortController</h2>
-<p>Sometimes the caller decides to stop, for example because the user closed the page. An <strong>AbortController</strong> is the object that owns a signal: you pass <code>controller.signal</code> to the work, and call <code>controller.abort()</code> to cancel it. The shortest way for a handler to respect it is <code>signal.throwIfAborted()</code>, which throws if the signal was aborted and does nothing otherwise:</p>
+<p>Sometimes the caller decides to stop, for example because the user closed the page. An <strong>AbortController</strong> is the object that owns a signal: you pass <code>controller.signal</code> to the work, and call <code>controller.abort()</code> to cancel it. The bus links that signal to the handler's <code>context.signal</code>:</p>
 <figure class="lx-example" data-index="7" data-file="cancel.ts">
 <figcaption class="lx-bar"><span class="lx-file">cancel.ts</span><button type="button" class="lx-edit" data-index="7" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="7"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createMessageBus<span class="t-pn">,</span> <span class="t-ty">MessageDispatchAbortedError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/messaging"</span><span class="t-pn">;</span>
@@ -601,7 +601,10 @@ handler: gave up before attempt 3</pre></div>
 
 bus<span class="t-pn">.</span><span class="t-fn">on</span><span class="t-pn">(</span><span class="t-str">"report.build"</span><span class="t-pn">,</span> <span class="t-kw">async</span> <span class="t-pn">(</span>message<span class="t-pn">,</span> context<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
   <span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">let</span> page <span class="t-op">=</span> <span class="t-num">1</span><span class="t-pn">;</span> page <span class="t-op">&lt;=</span> <span class="t-num">5</span><span class="t-pn">;</span> page<span class="t-op">++</span><span class="t-pn">)</span> <span class="t-pn">{</span>
-    context<span class="t-pn">.</span><span class="t-prop">signal</span><span class="t-pn">.</span><span class="t-fn">throwIfAborted</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">if</span> <span class="t-pn">(</span>context<span class="t-pn">.</span><span class="t-prop">signal</span><span class="t-pn">.</span><span class="t-prop">aborted</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+      console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`handler: stopped before page <span class="t-op">${</span><span class="t-prop">page</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+      <span class="t-kw">return</span> <span class="t-str">"cancelled"</span><span class="t-pn">;</span>
+    <span class="t-pn">}</span>
     <span class="t-kw">await</span> <span class="t-fn">wait</span><span class="t-pn">(</span><span class="t-num">30</span><span class="t-pn">)</span><span class="t-pn">;</span>
     console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`built page <span class="t-op">${</span><span class="t-prop">page</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-pn">}</span>
@@ -612,7 +615,7 @@ bus<span class="t-pn">.</span><span class="t-fn">on</span><span class="t-pn">(</
 <span class="t-fn">setTimeout</span><span class="t-pn">(</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> controller<span class="t-pn">.</span><span class="t-fn">abort</span><span class="t-pn">(</span><span class="t-kw">new</span> <span class="t-ty">Error</span><span class="t-pn">(</span><span class="t-str">"the user closed the page"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-num">45</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> result <span class="t-op">=</span> <span class="t-kw">await</span> bus<span class="t-pn">.</span><span class="t-fn">send</span><span class="t-pn">(</span><span class="t-pn">{</span> <span class="t-kw">type</span><span class="t-op">:</span> <span class="t-str">"report.build"</span><span class="t-pn">,</span> payload<span class="t-op">:</span> <span class="t-cn">null</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-pn">{</span> signal<span class="t-op">:</span> controller<span class="t-pn">.</span><span class="t-prop">signal</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"success:"</span><span class="t-pn">,</span> result<span class="t-pn">.</span><span class="t-prop">success</span><span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>result<span class="t-pn">.</span><span class="t-prop">error</span><span class="t-op">?</span><span class="t-pn">.</span><span class="t-prop">message</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>result<span class="t-pn">.</span><span class="t-prop">error</span><span class="t-op">?</span><span class="t-pn">.</span><span class="t-prop">message</span><span class="t-pn">,</span> result<span class="t-pn">.</span><span class="t-prop">error</span> <span class="t-kw">instanceof</span> <span class="t-ty">MessageDispatchAbortedError</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
 <span class="t-kw">try</span> <span class="t-pn">{</span>
   <span class="t-kw">await</span> bus<span class="t-pn">.</span><span class="t-fn">send</span><span class="t-pn">(</span><span class="t-pn">{</span> <span class="t-kw">type</span><span class="t-op">:</span> <span class="t-str">"report.build"</span><span class="t-pn">,</span> payload<span class="t-op">:</span> <span class="t-cn">null</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-pn">{</span> signal<span class="t-op">:</span> controller<span class="t-pn">.</span><span class="t-prop">signal</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -627,7 +630,10 @@ const bus = createMessageBus();
 
 bus.on("report.build", async (message, context) => {
   for (let page = 1; page <= 5; page++) {
-    context.signal.throwIfAborted();
+    if (context.signal.aborted) {
+      console.log(`handler: stopped before page ${page}`);
+      return "cancelled";
+    }
     await wait(30);
     console.log(`built page ${page}`);
   }
@@ -638,7 +644,7 @@ const controller = new AbortController();
 setTimeout(() => controller.abort(new Error("the user closed the page")), 45);
 const result = await bus.send({ type: "report.build", payload: null }, { signal: controller.signal });
 console.log("success:", result.success);
-console.log(result.error?.message);
+console.log(result.error?.message, result.error instanceof MessageDispatchAbortedError);
 
 try {
   await bus.send({ type: "report.build", payload: null }, { signal: controller.signal });
@@ -646,13 +652,19 @@ try {
   console.log("already aborted:", error instanceof MessageDispatchAbortedError);
 }</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx cancel.ts</code> and of the browser terminal</div><pre class="lx-no-copy">built page 1
-built page 2
 success: false
-Handler "build-report" failed: the user closed the page
-already aborted: true</pre></div>
+Message dispatch was aborted. true
+already aborted: true
+built page 2
+handler: stopped before page 3</pre></div>
 </figure>
-<p>Each page takes 30 ms. The controller aborted after 45 ms, while page 2 was being built. The handler finished that page, noticed the abort before page 3, and threw. The error you pass to <code>abort()</code> becomes the signal's <code>reason</code>, and <code>throwIfAborted()</code> throws it, so the dispatch failed with your message. The second <code>send</code> used a signal that was already aborted, so it never started: that is one of the few cases where <code>send</code> throws instead of returning a result.</p>
-<div class="callout callout-warning"><p class="lx-callout-label">WHY THE HANDLER MUST THROW</p>If a handler sees the abort and simply <code>return</code>s, and it is the only handler, the dispatch reports <code>success: true</code> with whatever the handler returned. The caller then believes the work was done. Use <code>throwIfAborted()</code>, or throw <code>context.signal.reason</code>, so a cancelled job is reported as cancelled.</div>
+<p>Each page takes 30 ms. The controller aborted after 45 ms, while page 2 was being built. Follow the lines:</p>
+<ul>
+<li><code>send</code> returned at once, at 45 ms, with <code>success: false</code> and a <code>MessageDispatchAbortedError</code>. The caller does not wait for the handler. The reason you gave to <code>abort()</code> stays on <code>controller.signal.reason</code> if you want to log it.</li>
+<li>The second <code>send</code> used a signal that was already aborted, so it never started: that is one of the few cases where <code>send</code> throws instead of returning a result.</li>
+<li>The handler, still running in the background, finished page 2, saw the aborted signal and stopped before page 3.</li>
+</ul>
+<p>The dispatch is reported as aborted even though the handler returned normally with <code>"cancelled"</code>, so the caller can never mistake cancelled work for finished work (since <code>@zudojs/messaging</code> 1.2.0). A handler that ignores the signal does no harm to the result, but it wastes work: it would build all five pages for nobody. A shorter way to stop is <code>context.signal.throwIfAborted()</code>, which throws if the signal was aborted and does nothing otherwise.</p>
 </section>
 
 <section>
@@ -852,7 +864,7 @@ console.log("success:", result.success, "steps done:", steps);</script>
 <li>A message nobody handles is still a success. Use <code>allowMultipleHandlers: false</code> and <code>hasHandlers</code> for requests that need exactly one answer.</li>
 <li>Middleware wraps every dispatch. It runs in ascending priority order. Validate payloads there.</li>
 <li>The correlation id ties one operation together, and the causation id points to the direct parent. <code>createDerivedMessage</code> keeps both right.</li>
-<li><code>timeout</code> and an <code>AbortController</code> cancel through <code>context.signal</code>. Handlers must check it and throw, because nothing stops them by force.</li>
+<li><code>timeout</code> and an <code>AbortController</code> cancel through <code>context.signal</code>. The send returns at once with a failure, but handlers must check the signal and stop themselves, because nothing stops them by force.</li>
 </ul>
 </section>
       </div>

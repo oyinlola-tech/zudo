@@ -354,7 +354,7 @@ true false</pre></div>
 
 <span class="t-kw">const</span> container <span class="t-op">=</span> <span class="t-fn">createContainer</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 container<span class="t-pn">.</span><span class="t-fn">registerValue</span><span class="t-pn">(</span><span class="t-cn">START</span><span class="t-pn">,</span> <span class="t-str">"2026-09-23T09:00:00Z"</span><span class="t-pn">)</span><span class="t-pn">;</span>
-container<span class="t-pn">.</span><span class="t-fn">registerFactory</span><span class="t-pn">(</span><span class="t-cn">CLOCK</span><span class="t-pn">,</span> <span class="t-pn">(</span>start<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-pn">{</span> now<span class="t-op">:</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">new</span> <span class="t-ty">Date</span><span class="t-pn">(</span><span class="t-ty">String</span><span class="t-pn">(</span>start<span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-pn">[</span><span class="t-cn">START</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
+container<span class="t-pn">.</span><span class="t-fn">registerFactory</span><span class="t-pn">(</span><span class="t-cn">CLOCK</span><span class="t-pn">,</span> <span class="t-pn">(</span>start<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-pn">{</span> now<span class="t-op">:</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">new</span> <span class="t-ty">Date</span><span class="t-pn">(</span>start<span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-pn">[</span><span class="t-cn">START</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
 container<span class="t-pn">.</span><span class="t-fn">registerClass</span><span class="t-pn">(</span><span class="t-ty">TaskStore</span><span class="t-pn">,</span> <span class="t-ty">TaskStore</span><span class="t-pn">)</span><span class="t-pn">;</span>
 container<span class="t-pn">.</span><span class="t-fn">registerClass</span><span class="t-pn">(</span><span class="t-ty">TaskService</span><span class="t-pn">,</span> <span class="t-ty">TaskService</span><span class="t-pn">,</span> <span class="t-pn">{</span> inject<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-ty">TaskStore</span><span class="t-pn">,</span> <span class="t-cn">CLOCK</span><span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
@@ -385,7 +385,7 @@ const START = createToken<string>("StartTime");
 
 const container = createContainer();
 container.registerValue(START, "2026-09-23T09:00:00Z");
-container.registerFactory(CLOCK, (start) => ({ now: () => new Date(String(start)) }), [START]);
+container.registerFactory(CLOCK, (start) => ({ now: () => new Date(start) }), [START]);
 container.registerClass(TaskStore, TaskStore);
 container.registerClass(TaskService, TaskService, { inject: [TaskStore, CLOCK] });
 
@@ -394,7 +394,111 @@ console.log(service.create("Buy milk"));</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx providers.ts</code> and of the browser terminal</div><pre class="lx-no-copy">#1 Buy milk at 2026-09-23T09:00:00.000Z</pre></div>
 </figure>
 <p>To build <code>TaskService</code>, the container first resolved <code>TaskStore</code> (a class with no dependencies) and <code>CLOCK</code> (a factory, which needed <code>START</code>), then called <code>new TaskService(store, clock)</code>. You never wrote that call.</p>
-<div class="callout callout-warning"><p class="lx-callout-label">THE INJECT LIST IS NOT TYPE-CHECKED</p>In version 1.1.2, TypeScript does not compare <code>inject: [TaskStore, CLOCK]</code> with the constructor, and factory arguments arrive typed as <code>unknown</code>. That is why the factory above wraps <code>start</code> in <code>String(...)</code>. If you swap the two tokens, the code still compiles and fails when it runs. Keep the <code>inject</code> list next to the constructor and in the same order, and let a test resolve every service once, so a mistake shows up in the test run.</div>
+<p>What if you <code>resolve</code> a class you never registered? The container builds it for you, as a transient, but only when its constructor takes no parameters. Otherwise it cannot know what to pass, and it tells you how to register the class:</p>
+<figure class="lx-example" data-index="4" data-file="auto.ts">
+<figcaption class="lx-bar"><span class="lx-file">auto.ts</span><button type="button" class="lx-edit" data-index="4" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="4"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createContainer <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
+
+<span class="t-kw">class</span> <span class="t-ty">TaskStore</span> <span class="t-pn">{</span>
+  <span class="t-kw">readonly</span> titles<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">[</span><span class="t-pn">]</span> <span class="t-op">=</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">;</span>
+<span class="t-pn">}</span>
+<span class="t-kw">class</span> <span class="t-ty">TaskService</span> <span class="t-pn">{</span>
+  <span class="t-fn">constructor</span><span class="t-pn">(</span><span class="t-kw">readonly</span> store<span class="t-op">:</span> <span class="t-ty">TaskStore</span><span class="t-pn">)</span> <span class="t-pn">{</span><span class="t-pn">}</span>
+<span class="t-pn">}</span>
+
+<span class="t-kw">const</span> container <span class="t-op">=</span> <span class="t-fn">createContainer</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>container<span class="t-pn">.</span><span class="t-fn">resolve</span><span class="t-pn">(</span><span class="t-ty">TaskStore</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">titles</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">try</span> <span class="t-pn">{</span>
+  container<span class="t-pn">.</span><span class="t-fn">resolve</span><span class="t-pn">(</span><span class="t-ty">TaskService</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-pn">}</span> <span class="t-kw">catch</span> <span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-pn">{</span>
+  console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-pn">(</span>error <span class="t-kw">as</span> <span class="t-ty">Error</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">name</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-pn">(</span>error <span class="t-kw">as</span> <span class="t-ty">Error</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">message</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-pn">}</span>
+</code></pre>
+<script type="text/plain" class="lx-src">import { createContainer } from "@zudojs/container";
+
+class TaskStore {
+  readonly titles: string[] = [];
+}
+class TaskService {
+  constructor(readonly store: TaskStore) {}
+}
+
+const container = createContainer();
+console.log(container.resolve(TaskStore).titles);
+try {
+  container.resolve(TaskService);
+} catch (error) {
+  console.log((error as Error).name);
+  console.log((error as Error).message);
+}</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx auto.ts</code> and of the browser terminal</div><pre class="lx-no-copy">[]
+RegistrationNotFoundError
+Cannot auto-register class "TaskService": its constructor declares 1 parameter and no inject list is registered, so it would be built with undefined dependencies. Register it with container.registerClass(TaskService, TaskService, { inject: [/* one token per parameter */] }) or container.registerFactory(TaskService, (...deps) =&gt; new TaskService(...deps), [/* tokens */]).</pre></div>
+</figure>
+<p>Registering every service explicitly is still the clearer choice: the composition root then lists everything the app is made of.</p>
+<p>The factory's parameter <code>start</code> has no type annotation, yet TypeScript knows it is a <code>string</code>: a factory's parameters are typed from its <code>inject</code> list, in order (since <code>@zudojs/container</code> 1.2.0). So a factory whose parameters do not match its tokens does not compile. Here the two parameters are in the wrong order:</p>
+<figure class="lx-example" data-index="5" data-file="factory-check.ts">
+<figcaption class="lx-bar"><span class="lx-file">factory-check.ts</span><button type="button" class="lx-edit" data-index="5" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="5"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createContainer<span class="t-pn">,</span> createToken <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
+
+<span class="t-kw">interface</span> <span class="t-ty">Clock</span> <span class="t-pn">{</span>
+  <span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Date</span><span class="t-pn">;</span>
+<span class="t-pn">}</span>
+
+<span class="t-kw">class</span> <span class="t-ty">TaskStore</span> <span class="t-pn">{</span>
+  <span class="t-kw">readonly</span> titles<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">[</span><span class="t-pn">]</span> <span class="t-op">=</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">;</span>
+<span class="t-pn">}</span>
+
+<span class="t-kw">class</span> <span class="t-ty">TaskService</span> <span class="t-pn">{</span>
+  <span class="t-fn">constructor</span><span class="t-pn">(</span><span class="t-kw">readonly</span> store<span class="t-op">:</span> <span class="t-ty">TaskStore</span><span class="t-pn">,</span> <span class="t-kw">readonly</span> clock<span class="t-op">:</span> <span class="t-ty">Clock</span><span class="t-pn">)</span> <span class="t-pn">{</span><span class="t-pn">}</span>
+<span class="t-pn">}</span>
+
+<span class="t-kw">const</span> <span class="t-cn">CLOCK</span> <span class="t-op">=</span> createToken<span class="t-op">&lt;</span><span class="t-ty">Clock</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-str">"Clock"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> container <span class="t-op">=</span> <span class="t-fn">createContainer</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+container<span class="t-pn">.</span><span class="t-fn">registerFactory</span><span class="t-pn">(</span>
+  <span class="t-ty">TaskService</span><span class="t-pn">,</span>
+  <span class="t-pn">(</span>clock<span class="t-pn">,</span> store<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">new</span> <span class="t-ty">TaskService</span><span class="t-pn">(</span>store<span class="t-pn">,</span> clock<span class="t-pn">)</span><span class="t-pn">,</span>
+  <span class="t-pn">[</span><span class="t-ty">TaskStore</span><span class="t-pn">,</span> <span class="t-cn">CLOCK</span><span class="t-pn">]</span><span class="t-pn">,</span>
+<span class="t-pn">)</span><span class="t-pn">;</span>
+</code></pre>
+<script type="text/plain" class="lx-src">import { createContainer, createToken } from "@zudojs/container";
+
+interface Clock {
+  now(): Date;
+}
+
+class TaskStore {
+  readonly titles: string[] = [];
+}
+
+class TaskService {
+  constructor(readonly store: TaskStore, readonly clock: Clock) {}
+}
+
+const CLOCK = createToken<Clock>("Clock");
+
+const container = createContainer();
+container.registerFactory(
+  TaskService,
+  (clock, store) => new TaskService(store, clock),
+  [TaskStore, CLOCK],
+);</script>
+<div class="lx-out lx-out-tsc"><div class="lx-out-label">What <code>npx tsc --noEmit</code> prints</div><pre class="lx-no-copy">factory-check.ts:20:37 - error TS2741: Property 'titles' is missing in type 'Clock' but required in type 'TaskStore'.
+
+20   (clock, store) =&gt; new TaskService(store, clock),
+                                       ~~~~~
+
+  factory-check.ts:8:12 - 'titles' is declared here.
+    8   readonly titles: string[] = [];
+                 ~~~~~~
+
+
+Found 1 error in factory-check.ts:20</pre></div>
+</figure>
+<p>The second token is <code>CLOCK</code>, so the second parameter is a <code>Clock</code>, even though it is called <code>store</code>. The constructor wants a <code>TaskStore</code> there, and a <code>Clock</code> has no <code>titles</code>. The names of the parameters do not matter; their order does.</p>
+<div class="callout callout-warning"><p class="lx-callout-label">THE CLASS INJECT LIST IS NOT TYPE-CHECKED</p>For <code>registerClass</code>, TypeScript still does not compare <code>inject: [TaskStore, CLOCK]</code> with the constructor. If you swap the two tokens there, the code compiles and fails when it runs. Keep the <code>inject</code> list next to the constructor and in the same order, and let a test resolve every service once, so a mistake shows up in the test run. When you want the compiler to check the wiring, register the class with a factory instead: <code>registerFactory(TaskService, (store, clock) =&gt; new TaskService(store, clock), [TaskStore, CLOCK])</code>.</div>
 </section>
 
 <section>
@@ -406,8 +510,8 @@ console.log(service.create("Buy milk"));</script>
 <li><code>ContainerScope.SCOPED</code>: one instance per <strong>scope</strong>. A scope is a short-lived child of the container, usually one per HTTP request.</li>
 </ul>
 <p>The identity operator <code>===</code> shows the difference: it is <code>true</code> only for the very same object.</p>
-<figure class="lx-example" data-index="4" data-file="lifetimes.ts">
-<figcaption class="lx-bar"><span class="lx-file">lifetimes.ts</span><button type="button" class="lx-edit" data-index="4" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="4"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<figure class="lx-example" data-index="6" data-file="lifetimes.ts">
+<figcaption class="lx-bar"><span class="lx-file">lifetimes.ts</span><button type="button" class="lx-edit" data-index="6" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="6"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ContainerScope</span><span class="t-pn">,</span> createContainer <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
 
 <span class="t-kw">let</span> created <span class="t-op">=</span> <span class="t-num">0</span><span class="t-pn">;</span>
@@ -460,8 +564,8 @@ objects created: 5</pre></div>
 </figure>
 <p>Count the objects: one <code>TaskStore</code>, two <code>Report</code>s (one per <code>resolve</code>), and two <code>RequestInfo</code>s (one per scope). A singleton stays the same everywhere, even when resolved through a scope.</p>
 <p>The container also stops you from mixing lifetimes in a dangerous way:</p>
-<figure class="lx-example" data-index="5" data-file="lifetime-errors.ts">
-<figcaption class="lx-bar"><span class="lx-file">lifetime-errors.ts</span><button type="button" class="lx-edit" data-index="5" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="5"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<figure class="lx-example" data-index="7" data-file="lifetime-errors.ts">
+<figcaption class="lx-bar"><span class="lx-file">lifetime-errors.ts</span><button type="button" class="lx-edit" data-index="7" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="7"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ContainerScope</span><span class="t-pn">,</span> createContainer <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
 
 <span class="t-kw">class</span> <span class="t-ty">RequestInfo</span> <span class="t-pn">{</span><span class="t-pn">}</span>
@@ -523,14 +627,14 @@ Captive dependency: singleton "TaskService" depends on scoped "RequestInfo". A l
 <li>A scoped dependency belongs to a request, so asking for it with no scope is a <code>ScopedResolutionError</code>.</li>
 <li>A singleton lives forever. If it kept a reference to one request's <code>RequestInfo</code>, every later request would see the first request's data: a real data leak between users. The container refuses with a <code>CaptiveDependencyError</code>. The rule: a dependency must live at least as long as the thing that uses it.</li>
 </ul>
-<div class="callout callout-note"><p class="lx-callout-label">NOTE</p>Error messages name a class token by its class name. A token made with <code>createToken("Mailer")</code> appears as <code>Symbol(Mailer)</code>, because that is how it is stored inside the container.</div>
+<div class="callout callout-note"><p class="lx-callout-label">NOTE</p>Error messages name a class token by its class name, and a token made with <code>createToken("Mailer")</code> by its name, <code>Mailer</code>.</div>
 </section>
 
 <section>
 <h2 id="circular">Circular dependencies</h2>
 <p>If A needs B and B needs A, neither can be built first. You met this problem between modules in <a href="/learn/zudo-runtime#dependencies">the runtime lesson</a>. The container detects it too, and names the whole loop:</p>
-<figure class="lx-example" data-index="6" data-file="circular.ts">
-<figcaption class="lx-bar"><span class="lx-file">circular.ts</span><button type="button" class="lx-edit" data-index="6" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="6"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<figure class="lx-example" data-index="8" data-file="circular.ts">
+<figcaption class="lx-bar"><span class="lx-file">circular.ts</span><button type="button" class="lx-edit" data-index="8" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="8"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">CircularDependencyError</span><span class="t-pn">,</span> createContainer <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
 
 <span class="t-kw">class</span> <span class="t-ty">TaskService</span> <span class="t-pn">{</span>
@@ -580,8 +684,8 @@ try {
 <section>
 <h2 id="disposal">Disposal: cleaning up</h2>
 <p>Some objects hold resources: a database connection, a file, a timer. When the app stops, they must be released. An object is <strong>disposable</strong> if it has a <code>dispose()</code> method. <code>container.dispose()</code> calls it on every singleton the container created, newest first, so a service is disposed before the pool it uses:</p>
-<figure class="lx-example" data-index="7" data-file="disposal.ts">
-<figcaption class="lx-bar"><span class="lx-file">disposal.ts</span><button type="button" class="lx-edit" data-index="7" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="7"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<figure class="lx-example" data-index="9" data-file="disposal.ts">
+<figcaption class="lx-bar"><span class="lx-file">disposal.ts</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="9"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ContainerScope</span><span class="t-pn">,</span> createContainer <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
 
 <span class="t-kw">class</span> <span class="t-ty">Pool</span> <span class="t-pn">{</span>
@@ -642,14 +746,14 @@ pool closed
 disposed: true</pre></div>
 </figure>
 <p>Disposing a scope only disposes that scope's objects. Transient objects are never tracked, so whoever resolved them must clean them up. Values you gave with <code>registerValue</code> are never disposed either: the container did not create them, so it does not own them.</p>
-<p>The runtime does not dispose the container for you. In the Task API, dispose it at the very end of shutdown, after <code>runtime.stop()</code>.</p>
+<p>By default, the runtime does not dispose the container for you: you created it, so you own it. Either dispose it yourself at the very end of shutdown, after <code>runtime.stop()</code>, or pass the runtime option <code>disposeContainerOnStop: true</code> (from <a href="/learn/zudo-runtime#options">the runtime lesson</a>), and <code>runtime.stop()</code> disposes it after every module has stopped.</p>
 </section>
 
 <section>
 <h2 id="testing">Testing with fakes</h2>
 <p>This is where dependency injection pays off. In a test you want the real <code>TaskService</code> but not the real outside world: no real e-mails, a fixed clock. <code>container.replace</code> swaps one registration, and every singleton that was built on the old one is rebuilt. <code>snapshot</code> and <code>restoreSnapshot</code> put everything back afterwards:</p>
-<figure class="lx-example" data-index="8" data-file="fakes.ts">
-<figcaption class="lx-bar"><span class="lx-file">fakes.ts</span><button type="button" class="lx-edit" data-index="8" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="8"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<figure class="lx-example" data-index="10" data-file="fakes.ts">
+<figcaption class="lx-bar"><span class="lx-file">fakes.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="10"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ContainerScope</span><span class="t-pn">,</span> createContainer<span class="t-pn">,</span> createToken <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
 
 <span class="t-kw">interface</span> <span class="t-ty">Mailer</span> <span class="t-pn">{</span>
@@ -718,8 +822,8 @@ SMTP to ada@example.com: "Water the plants" is done</pre></div>
 <section>
 <h2 id="task-api">Put it in the Task API</h2>
 <p>The Task API gets a real <code>TaskService</code>, built by the container. It uses the <code>TaskStore</code> from the previous lesson, which does not change:</p>
-<figure class="lx-example" data-index="9" data-file="src/repositories/task.store.ts" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">src/repositories/task.store.ts</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
+<figure class="lx-example" data-index="11" data-file="src/repositories/task.store.ts" data-project="task-api">
+<figcaption class="lx-bar"><span class="lx-file">src/repositories/task.store.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">export</span> <span class="t-kw">type</span> <span class="t-ty">Priority</span> <span class="t-op">=</span> <span class="t-str">"low"</span> <span class="t-op">|</span> <span class="t-str">"normal"</span> <span class="t-op">|</span> <span class="t-str">"high"</span><span class="t-pn">;</span>
 
 <span class="t-kw">export</span> <span class="t-kw">interface</span> <span class="t-ty">StoredTask</span> <span class="t-pn">{</span>
@@ -763,8 +867,8 @@ export class TaskStore {
 }</script>
 </figure>
 <p>Copy <code>task.schema.ts</code> from the <code>ts-tasks</code> folder of <a href="/learn/zudo-first-code">Your first Zudo code</a> to <code>src/validators/task.schema.ts</code>, with one change:</p>
-<figure class="lx-example" data-index="10" data-file="src/validators/task.schema.ts" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">src/validators/task.schema.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="12" data-file="src/validators/task.schema.ts" data-project="task-api">
+<figcaption class="lx-bar"><span class="lx-file">src/validators/task.schema.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Infer</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
 
@@ -789,8 +893,8 @@ export type NewTask = Infer<typeof NewTaskSchema>;</script>
 </figure>
 <p>Add <code>as const</code> after the list of priorities, as shown. Without it, TypeScript widens the list to <code>string[]</code>, so the inferred <code>priority</code> type would be any string instead of exactly <code>"low" | "normal" | "high"</code>, and it would not fit the store's <code>Priority</code> type.</p>
 <p>The service is the one from that lesson, changed to receive its store and a clock instead of creating them. Create <code>src/services/task.service.ts</code>:</p>
-<figure class="lx-example" data-index="11" data-file="src/services/task.service.ts" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">src/services/task.service.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="13" data-file="src/services/task.service.ts" data-project="task-api">
+<figcaption class="lx-bar"><span class="lx-file">src/services/task.service.ts</span><button type="button" class="lx-edit" data-index="13" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ConflictError</span><span class="t-pn">,</span> <span class="t-ty">NotFoundError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">StoredTask</span><span class="t-pn">,</span> <span class="t-ty">TaskStore</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"../repositories/task.store.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">NewTaskSchema</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"../validators/task.schema.js"</span><span class="t-pn">;</span>
@@ -862,8 +966,8 @@ export class TaskService {
 }</script>
 </figure>
 <p>Now the composition root: one file that says how everything is built. Create <code>src/container.ts</code>:</p>
-<figure class="lx-example" data-index="12" data-file="src/container.ts" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">src/container.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="14" data-file="src/container.ts" data-project="task-api">
+<figcaption class="lx-bar"><span class="lx-file">src/container.ts</span><button type="button" class="lx-edit" data-index="14" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ContainerScope</span><span class="t-pn">,</span> createToken <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Container</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">TaskStore</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./repositories/task.store.js"</span><span class="t-pn">;</span>
@@ -899,8 +1003,8 @@ export function registerServices(container: Container): void {
 }</script>
 </figure>
 <p>In <code>src/app.ts</code>, fill the container before building the runtime and take the store from it, so the modules and the service share one store. Only these lines change:</p>
-<figure class="lx-example" data-index="13" data-file="src/app.ts (part)" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">src/app.ts (part)</span><button type="button" class="lx-edit" data-index="13" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="15" data-file="src/app.ts (part)" data-project="task-api">
+<figcaption class="lx-bar"><span class="lx-file">src/app.ts (part)</span><button type="button" class="lx-edit" data-index="15" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> registerServices <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./container.js"</span><span class="t-pn">;</span>
 
 <span class="t-kw">export</span> <span class="t-kw">function</span> <span class="t-fn">createApp</span><span class="t-pn">(</span>level<span class="t-op">:</span> <span class="t-ty">LoggerLevel</span> <span class="t-op">=</span> <span class="t-ty">LoggerLevel</span><span class="t-pn">.</span><span class="t-cn">INFO</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Runtime</span> <span class="t-pn">{</span>
@@ -920,8 +1024,8 @@ export function createApp(level: LoggerLevel = LoggerLevel.INFO): Runtime {
   //   { modules, logger: createLogger({ name: "task-api", level }), container, eventBus: createEventBus() }</script>
 </figure>
 <p>Code that needs the service, such as the routes in the next lesson, asks the runtime's container: <code>runtime.context.container.resolve(TaskService)</code>. This check script does the same with its own container, and swaps the clock for a fixed one, exactly as a test would:</p>
-<figure class="lx-example" data-index="14" data-file="src/check-container.ts" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">src/check-container.ts</span><button type="button" class="lx-edit" data-index="14" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="16" data-file="src/check-container.ts" data-project="task-api">
+<figcaption class="lx-bar"><span class="lx-file">src/check-container.ts</span><button type="button" class="lx-edit" data-index="16" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createContainer <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-cn">CLOCK</span><span class="t-pn">,</span> registerServices <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./container.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">TaskStore</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./repositories/task.store.js"</span><span class="t-pn">;</span>
@@ -980,8 +1084,8 @@ npx tsc --noEmit"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>An id generator</h3><p>Register an <code>IdGenerator</code> class whose <code>next()</code> method returns 1, 2, 3, … Resolve it twice and call <code>next()</code> on each. Try it first as transient (the default), then as a singleton. Explain the difference in output.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="15" data-file="ids.ts">
-<figcaption class="lx-bar"><span class="lx-file">ids.ts</span><button type="button" class="lx-edit" data-index="15" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="15"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>An id generator</h3><p>Register an <code>IdGenerator</code> class whose <code>next()</code> method returns 1, 2, 3, … Resolve it twice and call <code>next()</code> on each. Try it first as transient (the default), then as a singleton. Explain the difference in output.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="17" data-file="ids.ts">
+<figcaption class="lx-bar"><span class="lx-file">ids.ts</span><button type="button" class="lx-edit" data-index="17" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="17"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ContainerScope</span><span class="t-pn">,</span> createContainer <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
 
 <span class="t-kw">class</span> <span class="t-ty">IdGenerator</span> <span class="t-pn">{</span>
@@ -1021,8 +1125,8 @@ for (const scope of [ContainerScope.TRANSIENT, ContainerScope.SINGLETON]) {
 singleton 1 2</pre></div>
 </figure>
 <p>Transient gave two separate generators, so both started at 1: two tasks could get the same id. An id generator must be shared, so it has to be a singleton.</p></details></div>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>One scope per request</h3><p>Register a scoped <code>RequestContext</code> class with a <code>requestId</code> property, and a transient <code>AuditLog</code> that receives it. Simulate two requests with two scopes, resolve <code>AuditLog</code> twice in each, and show that both logs in the same request share the same <code>RequestContext</code>.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="16" data-file="per-request.ts">
-<figcaption class="lx-bar"><span class="lx-file">per-request.ts</span><button type="button" class="lx-edit" data-index="16" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="16"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>One scope per request</h3><p>Register a scoped <code>RequestContext</code> class with a <code>requestId</code> property, and a transient <code>AuditLog</code> that receives it. Simulate two requests with two scopes, resolve <code>AuditLog</code> twice in each, and show that both logs in the same request share the same <code>RequestContext</code>.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="18" data-file="per-request.ts">
+<figcaption class="lx-bar"><span class="lx-file">per-request.ts</span><button type="button" class="lx-edit" data-index="18" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="18"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ContainerScope</span><span class="t-pn">,</span> createContainer <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/container"</span><span class="t-pn">;</span>
 
 <span class="t-kw">let</span> counter <span class="t-op">=</span> <span class="t-num">0</span><span class="t-pn">;</span>
