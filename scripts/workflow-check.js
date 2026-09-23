@@ -102,6 +102,14 @@ export function collectSizeViolations(packagesDir, rootDir) {
 }
 
 /**
+ * Published packages install-all.sh must not install. `zudojs` is the
+ * global-install alias for `zudojs-cli` (`npm install -g zudojs`); the script
+ * already installs zudojs-cli, and adding both would give a project two
+ * packages that claim the same `zudojs` and `zudo` binaries.
+ */
+const INSTALL_SCRIPT_EXEMPT = new Set(["zudojs"]);
+
+/**
  * Checks that install-all.sh names exactly the non-private packages in
  * `packages/`. The script once installed `@zudojs/cli`, which was never
  * published (the CLI is `zudojs-cli`), and aborted under `set -e`.
@@ -120,7 +128,9 @@ export function checkInstallScript(scriptPath, packages) {
     ].map((match) => match[1]),
   );
   const published = new Set(
-    packages.filter((pkg) => !pkg.private).map((pkg) => pkg.name),
+    packages
+      .filter((pkg) => !pkg.private && !INSTALL_SCRIPT_EXEMPT.has(pkg.name))
+      .map((pkg) => pkg.name),
   );
   const errors = [];
   for (const name of published) {

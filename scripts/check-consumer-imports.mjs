@@ -92,8 +92,21 @@ for (const name of names) {
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   // "./package.json" is a deliberate export, but importing JSON needs an
   // import attribute and proves nothing about the package's code.
+  // Executables are not libraries: importing a bin runs it. check-exports.js
+  // already proves every bin resolves, so skip subpaths that point at one, and
+  // skip bin-only packages (the \`zudojs\` install alias) entirely.
+  const bins = new Set(
+    Object.values(typeof manifest.bin === "string" ? { b: manifest.bin } : manifest.bin ?? {})
+      .map((b) => (b.startsWith("./") ? b.slice(2) : b)),
+  );
+  const target = (v) => {
+    const t = typeof v === "string" ? v : v?.import ?? v?.default ?? "";
+    return t.startsWith("./") ? t.slice(2) : t;
+  };
+  if (!manifest.exports && !manifest.main && bins.size > 0) { ok++; continue; }
   const subpaths = manifest.exports
-    ? Object.keys(manifest.exports).filter((k) => k.startsWith(".") && k !== "./package.json")
+    ? Object.keys(manifest.exports).filter((k) => k.startsWith(".") && k !== "./package.json"
+        && !bins.has(target(manifest.exports[k])))
     : ["."];
 
   for (const subpath of subpaths) {

@@ -53,6 +53,7 @@ export const TIERS = {
   http: 3,
   cli: 3,
   testing: 4,
+  zudojs: 4,
 };
 
 /** Converts a package name such as `@zudojs/auth-oauth` to its tier key. */
