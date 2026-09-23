@@ -306,7 +306,9 @@ export class MemoryCacheAdapter implements CacheAdapter {
       return undefined;
     }
     if (entry.expiresAt === null) return null;
-    return entry.expiresAt - monotonicNow();
+    // Whole milliseconds, rounded down: the monotonic clock is fractional,
+    // so a TTL of 10000 read back straight after `set` was 9999.52….
+    return Math.max(0, Math.floor(entry.expiresAt - monotonicNow()));
   }
 
   async expire(key: string, ttl: CacheTTL): Promise<boolean> {

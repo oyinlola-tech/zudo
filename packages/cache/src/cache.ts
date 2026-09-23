@@ -143,7 +143,7 @@ export class CacheService implements CacheHealthChecker {
     options?: NamespaceOptions,
   ): Promise<CacheGetResult<TValue>> {
     if (!this.enabled) return { hit: false, value: null };
-    const fullKey = this.keyBuilder.build(key, options);
+    const fullKey = this.buildKey(key, options);
     try {
       const result = await this.store.get<TValue>(fullKey);
       if (!result.hit || !this.serializer) return result;
@@ -173,8 +173,8 @@ export class CacheService implements CacheHealthChecker {
     },
   ): Promise<CacheSetResult> {
     if (!this.enabled) return { success: false, key, expiresAt: null };
-    const fullKey = this.keyBuilder.build(key, options);
-    if (options?.tags) for (const tag of options.tags) assertValidTag(tag);
+    const fullKey = this.buildKey(key, options);
+    if (options?.tags) this.validateTags(key, options.tags);
     try {
       const stored = this.serializer ? this.serialize(value) : value;
       const result = await this.store.set(fullKey, stored, {
@@ -207,7 +207,7 @@ export class CacheService implements CacheHealthChecker {
     options?: NamespaceOptions,
   ): Promise<CacheDeleteResult> {
     if (!this.enabled) return { deleted: false, key };
-    const fullKey = this.keyBuilder.build(key, options);
+    const fullKey = this.buildKey(key, options);
     try {
       const result = await this.store.delete(fullKey);
       await this.tagStore.removeKey?.(fullKey);
@@ -220,7 +220,7 @@ export class CacheService implements CacheHealthChecker {
 
   async has(key: string, options?: NamespaceOptions): Promise<boolean> {
     if (!this.enabled) return false;
-    const fullKey = this.keyBuilder.build(key, options);
+    const fullKey = this.buildKey(key, options);
     try {
       return await this.store.has(fullKey);
     } catch (error) {
@@ -268,15 +268,21 @@ export class CacheService implements CacheHealthChecker {
     }
   }
 
-  /** Remaining TTL for a key (undefined = missing, null = never expires). */
+  /**
+   * Remaining TTL for a key in whole milliseconds, rounded down
+   * (undefined = missing, null = never expires).
+   */
   async ttl(
     key: string,
     options?: NamespaceOptions,
   ): Promise<number | null | undefined> {
     if (!this.enabled) return undefined;
-    const fullKey = this.keyBuilder.build(key, options);
+    const fullKey = this.buildKey(key, options);
     try {
-      return await this.store.ttl?.(fullKey);
+      const remaining = await this.store.ttl?.(fullKey);
+      return typeof remaining === "number" && Number.isFinite(remaining)
+        ? Math.max(0, Math.floor(remaining))
+        : remaining;
     } catch (error) {
       if (this.failSilently) return undefined;
       throw error;
@@ -290,7 +296,7 @@ export class CacheService implements CacheHealthChecker {
     options?: NamespaceOptions,
   ): Promise<boolean> {
     if (!this.enabled) return false;
-    const fullKey = this.keyBuilder.build(key, options);
+    const fullKey = this.buildKey(key, options);
     try {
       return (await this.store.expire?.(fullKey, ttl)) ?? false;
     } catch (error) {
@@ -305,7 +311,7 @@ export class CacheService implements CacheHealthChecker {
     options?: CacheOrComputeOptions,
   ): Promise<CacheOrComputeResult<TValue>> {
     if (!this.enabled) return { value: await fn(), cached: false };
-    const fullKey = this.keyBuilder.build(key, options);
+    const fullKey = this.buildKey(key, options);
     if (!options?.forceRefresh) {
       const cached = await this.get<TValue>(key, options);
       if (cached.hit) return { value: cached.value as TValue, cached: true };
@@ -336,7 +342,7 @@ export class CacheService implements CacheHealthChecker {
     options?: NamespaceOptions,
   ): Promise<{ readonly cleared: number }> {
     if (!this.enabled) return { cleared: 0 };
-    for (const tag of tags) assertValidTag(tag);
+    this.validateTags(tags.join(","), tags);
     try {
       return await this.invalidation.invalidateByTag(
         tags,
@@ -402,7 +408,7 @@ export class CacheService implements CacheHealthChecker {
         { code, statusCode: 503 },
       );
     }
-    const lockKey = this.keyBuilder.build(
+    const lockKey = this.buildKey(
       key,
       options?.namespace !== undefined
         ? { namespace: options.namespace }
@@ -581,13 +587,37 @@ export class CacheService implements CacheHealthChecker {
   }
 
   private qualifyPattern(pattern: string, namespace?: CacheNamespace): string {
-    if (this.keyBuilder.buildPattern) {
-      return this.keyBuilder.buildPattern(
-        pattern,
-        namespace !== undefined ? { namespace } : undefined,
-      );
+    const build = this.keyBuilder.buildPattern?.bind(this.keyBuilder);
+    if (!build) return pattern;
+    return this.guardInput(pattern, () =>
+      build(pattern, namespace !== undefined ? { namespace } : undefined),
+    );
+  }
+
+  /** Builds a full key, counting a rejected key in the error stats. */
+  private buildKey(key: string, options?: NamespaceOptions): string {
+    return this.guardInput(key, () => this.keyBuilder.build(key, options));
+  }
+
+  /** Validates tags, counting a rejected tag in the error stats. */
+  private validateTags(key: string, tags: readonly CacheTag[]): void {
+    this.guardInput(key, () => {
+      for (const tag of tags) assertValidTag(tag);
+    });
+  }
+
+  /**
+   * Runs input validation. A rejection is recorded like an adapter failure
+   * (`getStats().errors`, `cache.error`) and rethrown: invalid input is a
+   * caller error, so `failSilently` never hides it.
+   */
+  private guardInput<T>(key: string, validate: () => T): T {
+    try {
+      return validate();
+    } catch (error) {
+      this.store.recordError(key, error);
+      throw error;
     }
-    return pattern;
   }
 
   private async purgeTagsMatching(pattern: string): Promise<void> {

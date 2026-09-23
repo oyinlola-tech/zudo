@@ -201,6 +201,16 @@ export class DefaultCacheStore implements CacheStore {
     };
   }
 
+  /**
+   * Records an error raised before any adapter call — a rejected key, tag or
+   * pattern — so `getStats().errors` and `cache.error` cover input
+   * validation the way they already covered a rejected TTL.
+   */
+  recordError(key: string, error: unknown): void {
+    this.metrics?.incrementError(key);
+    this.emit({ type: "cache.error", key, occurredAt: new Date(), error });
+  }
+
   private emit(event: CacheEvent): void {
     const specific = this.handlers.get(event.type);
     const wildcard = this.handlers.get("*");

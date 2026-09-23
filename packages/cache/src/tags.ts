@@ -16,6 +16,8 @@
  * invalidation tolerates keys that no longer exist in the cache.
  */
 
+import { ErrorCode } from "@zudojs/errors";
+
 import type {
   CacheClearResult,
   CacheKey,
@@ -44,7 +46,7 @@ function scopedTag(tag: CacheTag, options?: CacheTagOptions): string {
 export function assertValidTag(tag: CacheTag): void {
   if (typeof tag !== "string" || tag.length === 0) {
     throw new CacheError("Cache tag must be a non-empty string.", {
-      code: "CACHE_OPERATION_FAILED",
+      code: ErrorCode.INVALID_INPUT,
       statusCode: 400,
       expose: true,
     });
@@ -52,7 +54,7 @@ export function assertValidTag(tag: CacheTag): void {
   if (tag.length > MAX_TAG_LENGTH || tag.includes(SCOPE_SEPARATOR)) {
     throw new CacheError(
       `Invalid cache tag: tags must be at most ${MAX_TAG_LENGTH} characters and must not contain NUL.`,
-      { code: "CACHE_OPERATION_FAILED", statusCode: 400, expose: true },
+      { code: ErrorCode.INVALID_INPUT, statusCode: 400, expose: true },
     );
   }
 }
