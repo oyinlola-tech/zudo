@@ -2,7 +2,10 @@ import type { Plugin } from "../pluginTypes/plugin.type.js";
 import type {
   PluginContext,
   PluginEvents,
+  PluginEventSource,
 } from "../pluginTypes/pluginContext.type.js";
+import { toPluginEvents } from "../pluginEvents/pluginEvent.bus.js";
+import { deliverPluginEvent } from "../pluginEvents/pluginEvent.deliver.js";
 import type {
   PluginRegistry,
   RegisteredPlugin,
@@ -77,8 +80,11 @@ export interface PluginManagerOptions {
    * lifecycle events emitted through `context.events` cannot cover it.
    * Without this, `PLUGIN_EVENTS.REGISTERED` was a name nothing ever
    * emitted.
+   *
+   * Accepts an event bus such as `@zudojs/events`' `EventBus` as well as a
+   * `PluginEvents` sink.
    */
-  readonly events?: PluginEvents;
+  readonly events?: PluginEventSource;
   /**
    * Logger for teardown failures when `onError` is not supplied.
    * Defaults to the logger on the context passed to `start()`/`stop()`.
@@ -99,6 +105,9 @@ export class PluginManager {
   private readonly plugins: Map<string, Plugin> = new Map();
 
   private readonly options: PluginManagerOptions;
+
+  /** `options.events`, adapted to the sink interface. */
+  private readonly events: PluginEvents | undefined;
 
   /**
    * Dependency-first order from the last successful resolution.
@@ -136,6 +145,7 @@ export class PluginManager {
         : {},
     );
     this.options = options;
+    this.events = options.events ? toPluginEvents(options.events) : undefined;
   }
 
   /**
@@ -471,24 +481,21 @@ export class PluginManager {
   }
 
   /**
-   * Emits `plugin:registered`, containing a throwing subscriber so a bad
-   * listener cannot fail the registration that triggered it.
+   * Emits `plugin:registered`, containing a throwing subscriber — or a
+   * rejecting async `emit` — so a bad listener cannot fail the
+   * registration that triggered it.
    */
   private emitRegistered(plugin: Plugin): void {
-    const events = this.options.events;
-
-    if (!events) {
+    if (!this.events) {
       return;
     }
 
-    try {
-      events.emit(
-        PLUGIN_EVENTS.REGISTERED,
-        createPluginLifecycleEvent(plugin.metadata, "registered"),
-      );
-    } catch (error) {
-      this.report(error, plugin.metadata.name);
-    }
+    deliverPluginEvent(
+      this.events,
+      PLUGIN_EVENTS.REGISTERED,
+      createPluginLifecycleEvent(plugin.metadata, "registered"),
+      (error) => this.report(error, plugin.metadata.name),
+    );
   }
 
   private report(error: unknown, pluginName: string): void {

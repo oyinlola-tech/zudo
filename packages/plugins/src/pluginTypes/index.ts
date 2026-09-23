@@ -13,6 +13,8 @@ export type {
   PluginConfig,
   PluginLogger,
   PluginEvents,
+  PluginEventBus,
+  PluginEventSource,
   PluginDisposable,
 } from "./pluginContext.type.js";
 export type { Plugin } from "./plugin.type.js";

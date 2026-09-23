@@ -14,12 +14,14 @@ import {
 } from "../pluginEvents/pluginEvent.core.js";
 import { AbandonedHooks } from "./pluginLifecycle.abandoned.js";
 import { reportPluginFailure } from "./pluginLifecycle.report.js";
+import { deliverPluginEvent } from "../pluginEvents/pluginEvent.deliver.js";
 
 /**
  * Emits a plugin lifecycle event if the context supports events.
  *
  * A throwing subscriber must not abort the lifecycle phase that emitted
- * the event, so delivery failures are contained here.
+ * the event, so delivery failures — a synchronous throw or an async
+ * `emit` that rejects — are contained and reported here.
  */
 function emitLifecycleEvent(
   context: PluginContext,
@@ -35,9 +37,7 @@ function emitLifecycleEvent(
 
   const event = createPluginLifecycleEvent(plugin, state, previousState, error);
 
-  try {
-    context.events.emit(eventName, event);
-  } catch (emitError) {
+  deliverPluginEvent(context.events, eventName, event, (emitError) => {
     queueMicrotask(() => {
       reportPluginFailure(
         context.logger,
@@ -46,7 +46,7 @@ function emitLifecycleEvent(
         { plugin: plugin.name, event: eventName },
       );
     });
-  }
+  });
 }
 
 /** Largest delay a timer can represent. */

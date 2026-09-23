@@ -79,6 +79,10 @@ export {
   createPluginLifecycleEvent,
 } from "./pluginEvents/pluginEvent.core.js";
 export type { PluginLifecycleEvent } from "./pluginEvents/pluginEvent.core.js";
+export {
+  isPluginEventBus,
+  toPluginEvents,
+} from "./pluginEvents/pluginEvent.bus.js";
 
 export {
   buildDiagnosticReport,
@@ -133,6 +137,8 @@ export type {
   PluginConfig,
   PluginLogger,
   PluginEvents,
+  PluginEventBus,
+  PluginEventSource,
   PluginDisposable,
   Plugin,
   PluginErrorOptions,

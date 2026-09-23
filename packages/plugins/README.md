@@ -155,7 +155,31 @@ const manager = new PluginManager({
 });
 ```
 
-A throwing subscriber never fails the phase that emitted the event.
+A throwing subscriber never fails the phase that emitted the event, and
+neither does an async `emit` whose promise rejects: both are reported
+(through `onError`, the logger, or a `ZudoPluginWarning`) instead of
+propagating. Before 1.3 an async rejection escaped as an
+`unhandledRejection`, which terminates Node by default, after `start()` had
+already resolved.
+
+### Using an `@zudojs/events` bus
+
+Both the manager's `events` option and `createPluginContext`'s `events`
+accept an `EventBus` directly. It is adapted with `toPluginEvents`, so
+`context.events` is still a `PluginEvents`: `emit(name, payload)` publishes
+`{ type: name, payload }` (the bus normalises `plugin:started` to
+`plugin.started`), `on(name, handler)` subscribes and hands the handler the
+event's payload, and `off(name, handler)` cancels that subscription.
+
+```typescript
+import { EventBus } from "@zudojs/events";
+
+const bus = new EventBus();
+bus.on("plugin.*", (event) => console.log(event.type, event.payload));
+
+const manager = new PluginManager({ events: bus });
+await manager.start(createPluginContext({ name: "host" }, { events: bus }));
+```
 
 ## Diagnostics
 

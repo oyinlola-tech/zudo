@@ -4,9 +4,10 @@ import type {
   PluginContainer,
   PluginConfig,
   PluginLogger,
-  PluginEvents,
+  PluginEventSource,
   PluginDisposable,
 } from "../pluginTypes/pluginContext.type.js";
+import { toPluginEvents } from "../pluginEvents/pluginEvent.bus.js";
 
 /**
  * Options for creating a plugin context.
@@ -18,7 +19,11 @@ export interface CreatePluginContextOptions {
 
   readonly logger?: PluginLogger;
 
-  readonly events?: PluginEvents;
+  /**
+   * Event sink, or an event bus such as `@zudojs/events`' `EventBus`,
+   * which is adapted so `context.events` is always a `PluginEvents`.
+   */
+  readonly events?: PluginEventSource;
 
   /**
    * Collection that receives everything the plugin registers for
@@ -66,7 +71,7 @@ export function createOwnedPluginContext(
     container: options.container,
     config: options.config,
     logger: options.logger,
-    events: options.events,
+    events: options.events ? toPluginEvents(options.events) : undefined,
     onDispose(handler) {
       disposables.push({ dispose: handler });
     },

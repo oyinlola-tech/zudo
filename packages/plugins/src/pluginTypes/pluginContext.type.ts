@@ -27,14 +27,41 @@ export interface PluginLogger {
 
 /**
  * Minimal events interface for plugin context.
+ *
+ * `emit` may return a promise. A rejection is contained and reported, just
+ * like a synchronous throw — it never fails the phase that emitted.
  */
 export interface PluginEvents {
   on(event: string, handler: (event: unknown) => void): void;
 
   off(event: string, handler: (event: unknown) => void): void;
 
-  emit(event: string, payload: unknown): void;
+  emit(event: string, payload: unknown): void | PromiseLike<unknown>;
 }
+
+/**
+ * The part of an event bus the plugin system uses — satisfied by
+ * `@zudojs/events`' `EventBus`, which can be passed wherever
+ * {@link PluginEventSource} is accepted.
+ */
+export interface PluginEventBus {
+  publishEvent(input: {
+    readonly type: string;
+    readonly payload: unknown;
+  }): Promise<unknown>;
+
+  on(
+    eventType: string,
+    handler: (event: { readonly payload: unknown }) => unknown,
+  ): { unsubscribe(): void };
+}
+
+/**
+ * What the plugin system accepts as an event source: a
+ * {@link PluginEvents} sink, or an event bus it adapts with
+ * `toPluginEvents`.
+ */
+export type PluginEventSource = PluginEvents | PluginEventBus;
 
 /**
  * Something a plugin registers so the manager releases it on shutdown.
