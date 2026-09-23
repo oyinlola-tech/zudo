@@ -6,6 +6,8 @@
  * concerns.
  */
 
+import { isGuardResponse } from "@zudojs/middleware";
+
 import type {
   HttpMethod,
   MatchedRoute,
@@ -14,13 +16,20 @@ import type {
 
 import type { HttpMiddleware } from "../../httpMiddleware/httpMiddleware.type.js";
 
+import { applyGuardResponse } from "../../httpMiddleware/pipeline/httpPipeline.guardResponse.js";
+
 import { HttpResponseContext } from "../../httpResponse/httpResponse.context.js";
 
 import { createRouterContext } from "../httpRouter.context.js";
 
+import { normalizeResponse } from "../core/factory/httpRoute.factory.base.js";
+
 import { RouterMiddlewareState } from "../httpRouter.state.js";
 
-import { getRequestSignal } from "../core/util/httpRoute.util.js";
+import {
+  applyRouteParams,
+  getRequestSignal,
+} from "../core/util/httpRoute.util.js";
 
 import type {
   RouteMatcher,
@@ -399,6 +408,9 @@ function createDispatchContext(
   response: ResponseContext,
   match: RouteMatcherResult,
 ): RouteDispatchContext {
+  /* Route middleware reads params from the request, so set them first. */
+  applyRouteParams(request, match.params);
+
   return Object.freeze({
     request,
 
@@ -481,7 +493,7 @@ function toDispatchHandler(
   preserveResponse = false,
 ): RouteDispatchHandler {
   return async (request, response) => {
-    const result = await handler(
+    const returned = await handler(
       createRouterContext({
         request,
         route: context.route,
@@ -489,6 +501,16 @@ function toDispatchHandler(
         signal: getRequestSignal(request),
       }),
     );
+
+    /* A web Response or a plain value becomes a response context, exactly
+     * as the router treats it (a plain value is a 200 JSON body). */
+    const result =
+      preserveResponse ||
+      returned === undefined ||
+      returned === null ||
+      returned instanceof HttpResponseContext
+        ? returned
+        : await normalizeResponse(returned);
 
     if (
       !preserveResponse &&
@@ -527,7 +549,7 @@ function toRouteMiddleware(
   state: RouterMiddlewareState,
 ): RouteMiddleware {
   return async (request, response, next) => {
-    await middleware(
+    const result = await middleware(
       {
         request,
         response,
@@ -541,6 +563,11 @@ function toRouteMiddleware(
         return response;
       },
     );
+
+    /* A guard's refusal is written onto the dispatch response, not dropped. */
+    if (isGuardResponse(result)) {
+      applyGuardResponse(response, result);
+    }
   };
 }
 

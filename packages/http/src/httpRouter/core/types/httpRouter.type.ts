@@ -4,6 +4,8 @@
  * Core types for routing, route definitions, and router context.
  */
 
+import type { RouteOpenAPIMetadata } from "@zudojs/openapi";
+
 import type { HttpRequestContext as RequestContext } from "../../../httpRequest/httpRequest.context.js";
 
 import type { HttpResponseContext as ResponseContext } from "../../../httpResponse/httpResponse.context.js";
@@ -24,13 +26,25 @@ export type HttpMethod =
   | "CONNECT"
   | "TRACE";
 
+/**
+ * A plain, JSON-serialisable value a route handler may return: an object,
+ * array, string, number, boolean or `null`.
+ */
+export type RouterJsonValue = object | string | number | boolean | null;
+
+/**
+ * What a route handler may return, as server handlers do:
+ * - an `HttpResponseContext` or a web `Response`: sent as built;
+ * - a plain value: sent as `200` with a JSON body
+ *   (`return { id }` is `ctx.middleware.response.json({ id })`);
+ * - `undefined` / `null`: `204 No Content`.
+ */
+export type RouterHandlerResult =
+  ResponseContext | Response | RouterJsonValue | void;
+
 export type RouterHandler = (
   context: HttpRouterContext,
-) =>
-  | ResponseContext
-  | Response
-  | void
-  | Promise<ResponseContext | Response | void>;
+) => RouterHandlerResult | Promise<RouterHandlerResult>;
 
 export type RouterHandlerLike = RouterHandler | HttpMiddleware;
 
@@ -44,6 +58,15 @@ export interface HttpRouterContext {
   readonly signal: AbortSignal;
 }
 
+/**
+ * OpenAPI documentation a route carries: summary, tags, operationId,
+ * `params` / `query` / `headers` / `body` schemas, responses, security,
+ * `deprecated`, `hidden`. It is `@zudojs/openapi`'s `RouteOpenAPIMetadata`,
+ * so the schemas it names document the route in `generateOpenAPIDocument`.
+ * `false` hides the route from the generated document.
+ */
+export type HttpRouteOpenAPI = RouteOpenAPIMetadata | false;
+
 export interface RouteDefinition {
   readonly method: HttpMethod | readonly HttpMethod[] | "*";
   readonly path: string;
@@ -52,6 +75,8 @@ export interface RouteDefinition {
   readonly name?: string;
   readonly metadata?: Readonly<Record<string, unknown>>;
   readonly strictTrailingSlash?: boolean;
+  /** OpenAPI documentation; stored as `metadata.openapi`. */
+  readonly openapi?: HttpRouteOpenAPI;
 }
 
 export interface RouteOptions {
@@ -59,6 +84,12 @@ export interface RouteOptions {
   readonly middleware?: readonly HttpMiddleware[];
   readonly metadata?: Readonly<Record<string, unknown>>;
   readonly strictTrailingSlash?: boolean;
+  /**
+   * OpenAPI documentation; stored as `metadata.openapi`, where
+   * `generateOpenAPIDocument` reads it. Takes precedence over a
+   * `metadata.openapi` passed alongside it.
+   */
+  readonly openapi?: HttpRouteOpenAPI;
 }
 
 export interface MatchedRoute {

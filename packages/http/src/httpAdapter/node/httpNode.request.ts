@@ -26,6 +26,8 @@ import { parseQueryString } from "../../httpQuery/index.js";
 
 import { findRequestTargetViolation } from "../../httpRequest/target/httpRequest.target.js";
 
+import { resolveIncomingRequestId } from "../../httpRequest/requestId/httpRequest.requestId.js";
+
 /* -------------------------------------------------------------------------- */
 /* Proxy Trust                                                                */
 /* -------------------------------------------------------------------------- */
@@ -253,7 +255,13 @@ export function createNodeRequestContext(
 
   const query = parseNodeQuery(request);
 
+  const id =
+    options.trustRequestId === false
+      ? undefined
+      : resolveIncomingRequestId(request.headers["x-request-id"]);
+
   return createRequestContext({
+    ...(id === undefined ? {} : { id }),
     method: (request.method as string)?.toUpperCase() ?? "GET",
     url,
     protocol,
@@ -262,5 +270,6 @@ export function createNodeRequestContext(
     headers,
     query,
     remoteAddress,
+    signal: options.signal,
   });
 }

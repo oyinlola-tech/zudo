@@ -5,12 +5,15 @@
  * route creation and dispatch.
  */
 
+import { isGuardResponse } from "@zudojs/middleware";
+
 import type {
   HttpMethod,
   MatchedRoute,
   CompiledRoute,
   HttpRouterContext,
   HttpRouterRequestContext,
+  RouterHandlerResult,
 } from "../types/httpRouter.type.js";
 
 import { HttpRouterError } from "../error/httpRouter.error.js";
@@ -23,6 +26,10 @@ import {
   HttpResponseContext,
   type HttpResponseContext as ResponseContext,
 } from "../../../httpResponse/httpResponse.context.js";
+
+import { bufferWebResponse } from "../../../httpResponse/httpResponse.fromWeb.js";
+
+import { applyGuardResponse } from "../../../httpMiddleware/pipeline/httpPipeline.guardResponse.js";
 
 /* -------------------------------------------------------------------------- */
 /* Method Helpers                                                             */
@@ -155,30 +162,32 @@ export function createFallbackRoute(
 /* -------------------------------------------------------------------------- */
 
 /**
- * Coerces a handler result into a response context.
+ * Coerces a handler result into a response context: a response context or
+ * web `Response` as built, `undefined`/`null` as `204`, and any other value
+ * as a `200` JSON body, the way server handlers treat a plain value. A
+ * plain object used to be dropped for an empty `204`.
  */
 export async function normalizeResponse(
-  value: ResponseContext | Response | void,
+  value: RouterHandlerResult,
 ): Promise<ResponseContext> {
   if (value instanceof HttpResponseContext) {
     return value;
   }
 
   if (typeof Response !== "undefined" && value instanceof Response) {
-    const body =
-      value.body === null
-        ? undefined
-        : new Uint8Array(await value.arrayBuffer());
-
-    return new HttpResponseContext({
-      status: value.status,
-      statusText: value.statusText,
-      headers: Object.fromEntries(value.headers.entries()),
-      body,
-    });
+    /*
+     * `Object.fromEntries(headers.entries())` folded every `Set-Cookie` into
+     * one comma-joined value, which browsers read as a single malformed
+     * cookie. `bufferWebResponse` keeps each cookie separate.
+     */
+    return bufferWebResponse(value);
   }
 
-  return new HttpResponseContext({ status: 204 });
+  if (value === undefined || value === null) {
+    return new HttpResponseContext({ status: 204 });
+  }
+
+  return new HttpResponseContext({ status: 200 }).json(value);
 }
 
 /**
@@ -320,6 +329,14 @@ export async function executeRoute(
 
     if (result instanceof HttpResponseContext) {
       return mergeRouteResponse(ambient, result);
+    }
+
+    /*
+     * A guard (permissions, tenancy) refusing the request. Before this was
+     * honoured the returned object was ignored and the ambient 200 went out.
+     */
+    if (isGuardResponse(result)) {
+      return applyGuardResponse(ambient, result);
     }
 
     if (typeof Response !== "undefined" && result instanceof Response) {

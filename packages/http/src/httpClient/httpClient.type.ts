@@ -25,14 +25,28 @@ export type HttpClientQuery =
 export type HttpResponseType =
   "auto" | "json" | "text" | "arrayBuffer" | "blob" | "response";
 
+/**
+ * Retry policy for the HTTP client. See the README's "Retries and backoff".
+ */
 export interface HttpRetryOptions {
+  /** Retries after the first attempt (default 0: no retries). */
   readonly retries?: number;
+  /** Base delay in ms (default 1000). */
   readonly retryDelay?: number;
+  /** Upper bound on any single wait, in ms (default 30000). */
   readonly maxRetryDelay?: number;
+  /** Statuses that are retried (default 429, 502, 503, 504). */
   readonly retryStatusCodes?: readonly number[];
+  /** Methods that may be retried at all (default GET, HEAD, OPTIONS). */
   readonly retryMethods?: readonly HttpClientMethod[];
+  /** Retry transport failures such as a refused connection (default true). */
   readonly retryOnNetworkError?: boolean;
+  /** Retry a request that hit `timeout` (default: `retryOnNetworkError`). */
+  readonly retryOnTimeout?: boolean;
+  /** `"exponential"` doubles the delay per attempt (default); `"fixed"` does not. */
   readonly backoff?: "fixed" | "exponential";
+  /** Wait a random 0..delay instead of exactly the delay (default true). */
+  readonly jitter?: boolean;
 }
 
 export interface HttpClientResponse<T = unknown> {

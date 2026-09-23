@@ -92,6 +92,8 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
   private readonly trustProxy:
     boolean | number | string | readonly string[] | undefined;
 
+  private readonly trustRequestId: boolean;
+
   private readonly maxConnections: number | undefined;
 
   private readonly connectionsCheckingInterval: number;
@@ -162,6 +164,8 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
 
     this.trustProxy = options.trustProxy;
 
+    this.trustRequestId = options.trustRequestId ?? true;
+
     if (options.trustProxy !== undefined) {
       compileTrustProxy(options.trustProxy);
     }
@@ -208,7 +212,10 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
   /* Request / Response                                                       */
   /* ------------------------------------------------------------------------ */
 
-  override createRequest(input: unknown): HttpRequestContext {
+  override createRequest(
+    input: unknown,
+    signal?: AbortSignal,
+  ): HttpRequestContext {
     if (!isIncomingMessage(input)) {
       throw new TypeError(
         "NodeHttpAdapter.createRequest expected an IncomingMessage.",
@@ -218,6 +225,8 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
     return createNodeRequestContext(input, {
       maxBodySize: this.maxBodySize,
       trustProxy: this.trustProxy,
+      trustRequestId: this.trustRequestId,
+      signal,
     });
   }
 
@@ -264,8 +273,21 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
 
     let context: HttpRequestContext;
 
+    const disconnect = new AbortController();
+
+    /*
+     * `close` before the response finished means the client went away.
+     * Handlers see it as `request.signal` / the router's `ctx.signal`, and a
+     * streamed response body stops being pulled.
+     */
+    response.once("close", () => {
+      if (!response.writableFinished) {
+        disconnect.abort();
+      }
+    });
+
     try {
-      context = this.createRequest(request);
+      context = this.createRequest(request, disconnect.signal);
     } catch (error) {
       /*
        * The request could not even be described (an unparseable request

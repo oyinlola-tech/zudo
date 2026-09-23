@@ -10,17 +10,19 @@ import { HttpServer } from "../core/httpServer.core.js";
 import type {
   HttpServerState,
   HttpServerAddress,
+  HttpServerOptions,
 } from "../types/httpServer.type.js";
 
-export function createHttpServer(options: {
-  readonly name?: string;
-  readonly adapter: unknown;
-  readonly handler?: unknown;
-  readonly errorHandler?: unknown;
-  readonly gracefulShutdownTimeout?: number;
-  readonly metadata?: Readonly<Record<string, unknown>>;
-}): HttpServer {
-  return new HttpServer(options as never);
+/**
+ * Creates an HTTP server around an adapter.
+ *
+ * The options are `HttpServerOptions`, so `handler: async (request) => ...`
+ * infers `request` as `HttpRequestContext` (it used to be typed `unknown`,
+ * which made the quick start fail under `strict` with TS7006), and
+ * `errorHandler` receives the thrown error and the request.
+ */
+export function createHttpServer(options: HttpServerOptions): HttpServer {
+  return new HttpServer(options);
 }
 
 export async function startServer(server: HttpServer): Promise<HttpServer> {

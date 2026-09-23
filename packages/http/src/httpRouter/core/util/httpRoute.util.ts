@@ -48,6 +48,30 @@ export function getRequestSignal(
 }
 
 /**
+ * Copies the matched route's parameters onto the request before any route
+ * middleware runs, so `request.getParam("id")` / `request.params` see them
+ * in middleware as well as in the handler. They were only on the router
+ * context, so a guard reading the request (a permissions
+ * `extractResource`, an ownership check) always saw `undefined` and denied.
+ */
+export function applyRouteParams(
+  request: RequestContext,
+  params: Readonly<Record<string, string>>,
+): void {
+  const target = request as unknown as {
+    setParam?: (name: string, value: string | undefined) => unknown;
+  };
+
+  if (typeof target.setParam !== "function") {
+    return;
+  }
+
+  for (const [name, value] of Object.entries(params)) {
+    target.setParam(name, value);
+  }
+}
+
+/**
  * Parses a request-target with the canonical parser shared by the request
  * context and path-scoped middleware.
  */

@@ -4,6 +4,8 @@
  * @module httpMiddleware/pipeline/helpers
  */
 
+import { isGuardResponse, type GuardResponse } from "@zudojs/middleware";
+
 import type {
   HttpMiddlewareContext,
   RegisteredMiddleware,
@@ -19,6 +21,8 @@ import {
 } from "../../httpResponse/httpResponse.fromWeb.js";
 
 import { HttpMiddlewareError } from "../httpMiddleware.error.js";
+
+import { guardResponseToContext } from "./httpPipeline.guardResponse.js";
 
 export async function nextResult(
   context: HttpMiddlewareContext,
@@ -42,9 +46,24 @@ export async function nextResult(
  * @throws {HttpMiddlewareError} If no response context can be determined.
  */
 export function normalizeResult(
-  result: void | Response | RequestContext | ResponseContext | undefined,
+  result:
+    | void
+    | Response
+    | RequestContext
+    | ResponseContext
+    | GuardResponse
+    | undefined,
   fallback?: ResponseContext,
 ): ResponseContext {
+  /*
+   * A guard response is checked before the structural `isResponseContext`
+   * test, which would otherwise pass the frozen plain object through as if it
+   * were a response context.
+   */
+  if (isGuardResponse(result)) {
+    return guardResponseToContext(result);
+  }
+
   /*
    * The `Response` check must come first. `isResponseContext` tests for a
    * `headers` property, and `headers` is a getter on `Response.prototype`, so

@@ -166,6 +166,8 @@ export class HttpRequestContext {
 
   private portValue: number | undefined;
 
+  private readonly signalValue: AbortSignal | undefined;
+
   constructor(init: RequestContextInit) {
     this.id = init.id ?? generateRequestId();
 
@@ -196,6 +198,18 @@ export class HttpRequestContext {
     this.hostnameValue = init.hostname;
 
     this.portValue = init.port;
+
+    this.signalValue = init.signal;
+  }
+
+  /**
+   * Aborts when the request is abandoned — for the Node adapter, when the
+   * client disconnects before the response finished. `RequestContextInit`
+   * always accepted a `signal`, but the constructor dropped it, so the
+   * router handed every handler a signal that could never fire.
+   */
+  get signal(): AbortSignal | undefined {
+    return this.signalValue;
   }
 
   /* ------------------------------------------------------------------------ */
@@ -515,6 +529,7 @@ export class HttpRequestContext {
       protocol: this.protocolValue,
       hostname: this.hostnameValue,
       port: this.portValue,
+      signal: this.signalValue,
       state: {
         ...Object.fromEntries(this.stateMap),
       },

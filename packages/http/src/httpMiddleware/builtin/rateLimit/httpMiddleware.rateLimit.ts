@@ -22,6 +22,7 @@
 import {
   createRateLimiter,
   parseClientIp,
+  retryAfterSeconds,
   type RateLimiterOptions,
   type RateLimitRequest,
   type RateLimitResponse,
@@ -53,9 +54,12 @@ export type RateLimitMiddlewareOptions =
   | { readonly limiter: HttpRateLimiter };
 
 /**
- * Creates middleware that answers `429 Too Many Requests` (with
- * `Retry-After`, from the `@zudojs/security` handler) once a client exceeds
- * its allowance, and otherwise passes the request on.
+ * Creates middleware that answers `429 Too Many Requests` once a client
+ * exceeds its allowance, and otherwise passes the request on. The 429 has a
+ * JSON body (`{"error":{"code":"RATE_LIMIT_EXCEEDED",...}}`) sent as
+ * `application/json`, and always a `Retry-After` header (the
+ * `@zudojs/security` handler's, or one computed from the limiter's reset
+ * time when a custom handler leaves it out).
  */
 export function createRateLimitMiddleware(
   options: RateLimitMiddlewareOptions,
@@ -75,7 +79,9 @@ export function createRateLimitMiddleware(
 
     const rejection: RateLimitResponse = { statusCode: 429, headers: {} };
 
-    if (limiter.middleware(limitRequest, rejection).allowed) {
+    const decision = limiter.middleware(limitRequest, rejection);
+
+    if (decision.allowed) {
       return next();
     }
 
@@ -85,8 +91,39 @@ export function createRateLimitMiddleware(
       response.setHeader(name.toLowerCase(), value);
     }
 
-    return response.setBody(rejection.body ?? "Too Many Requests");
+    if (response.headers["retry-after"] === undefined) {
+      response.setHeader("retry-after", String(retryAfterSeconds(decision)));
+    }
+
+    const body = rejection.body ?? DEFAULT_REJECTION_BODY;
+
+    /*
+     * The limiter's body is JSON, but it went out as a bare string, which the
+     * writer labels `text/plain`. A handler's own content type is kept.
+     */
+    if (response.headers["content-type"] === undefined) {
+      response.setHeader(
+        "content-type",
+        isJson(body) ? "application/json; charset=utf-8" : "text/plain; charset=utf-8",
+      );
+    }
+
+    return response.setBody(body);
   };
+}
+
+/** Body sent when a custom limiter handler supplies none. */
+const DEFAULT_REJECTION_BODY = JSON.stringify({
+  error: { code: "RATE_LIMIT_EXCEEDED", message: "Too Many Requests" },
+});
+
+function isJson(body: string): boolean {
+  try {
+    JSON.parse(body);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function clientIpOf(remoteAddress: string | undefined): string {

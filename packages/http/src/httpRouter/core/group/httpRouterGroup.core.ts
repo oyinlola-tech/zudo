@@ -7,11 +7,14 @@
 
 import type {
   HttpMethod,
+  HttpRouteOpenAPI,
   RouteOptions,
   RouterHandler,
 } from "../types/httpRouter.type.js";
 
 import type { HttpRouter } from "../register/httpRouter.register.js";
+
+import { mergeRouteOpenAPI } from "../../../httpOpenApi/routeTable/routeTable.merge.js";
 
 export class HttpRouterGroup {
   constructor(
@@ -121,7 +124,20 @@ export class HttpRouterGroup {
   }
 
   private mergeOptions(options: RouteOptions): RouteOptions {
+    /*
+     * `metadata.openapi` is the same setting as `openapi` (the router stores
+     * one as the other). Reading only `openapi` let a group's documentation
+     * defaults replace a route's `metadata: { openapi: false }`, publishing
+     * a route its author had hidden.
+     */
+    const openapi = mergeRouteOpenAPI(
+      openAPIOf(this.defaults),
+      openAPIOf(options),
+    );
+
     return {
+      ...(openapi === undefined ? {} : { openapi }),
+
       name: options.name ?? this.defaults.name,
 
       middleware: [
@@ -138,4 +154,9 @@ export class HttpRouterGroup {
         options.strictTrailingSlash ?? this.defaults.strictTrailingSlash,
     };
   }
+}
+
+function openAPIOf(options: RouteOptions): HttpRouteOpenAPI | undefined {
+  return options.openapi ??
+    (options.metadata?.["openapi"] as HttpRouteOpenAPI | undefined);
 }

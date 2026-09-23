@@ -43,6 +43,7 @@ import {
 import {
   getRequestMethod,
   getRequestSignal,
+  applyRouteParams,
   getRequestUrl,
   normalizeMatchPath,
   normalizePath,
@@ -109,6 +110,7 @@ export class HttpRouter {
         middleware: definition.middleware,
         metadata: definition.metadata,
         strictTrailingSlash: definition.strictTrailingSlash,
+        openapi: definition.openapi,
       });
     }
 
@@ -420,6 +422,8 @@ export class HttpRouter {
     };
 
     if (match.matched && match.route) {
+      applyRouteParams(request, match.params);
+
       const response = await executeRoute(match.route, routerContext);
 
       return {
@@ -520,6 +524,7 @@ export class HttpRouter {
 
       metadata: Object.freeze({
         ...(options.metadata ?? {}),
+        ...(options.openapi === undefined ? {} : { openapi: options.openapi }),
       }),
 
       handler,

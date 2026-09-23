@@ -15,10 +15,7 @@ import type { HttpRequestContext as RequestContext } from "../../httpRequest/htt
 
 import type { HttpResponseContext as ResponseContext } from "../../httpResponse/httpResponse.context.js";
 
-import {
-  HttpMiddlewareError,
-  HttpMiddlewarePipelineError,
-} from "../httpMiddleware.error.js";
+import { HttpMiddlewareError } from "../httpMiddleware.error.js";
 
 import { normalizeResult } from "./httpPipeline.helper.js";
 
@@ -89,67 +86,35 @@ export async function executePipeline(
       return dispatch(index + 1);
     };
 
-    try {
-      const result = await entry.middleware(context, next);
+    /*
+     * A failure propagates as the error that was thrown, never a wrapper and
+     * never swallowed. An outer middleware's `await next()` rejects with it,
+     * so code after `await next()` does not run unless that middleware
+     * catches it (`try/catch`, `try/finally`), and `instanceof NotFoundError`
+     * works there and in the server's `errorHandler`. It used to be wrapped
+     * in `HttpMiddlewareError` here and `HttpMiddlewarePipelineError` below,
+     * which hid the original in `cause` / `errors[0].cause`.
+     */
+    const result = await entry.middleware(context, next);
 
-      return normalizeResult(result, response);
-    } catch (error) {
-      /*
-       * Rethrow rather than returning the untouched response. Swallowing here
-       * let an inner failure resume the *outer* frames, so middleware that
-       * runs after `await next()` — access logging, CORS and security header
-       * emission, audit commits — executed against a response that was about
-       * to be discarded, and recorded the request as a success.
-       */
-      throw error instanceof HttpMiddlewareError
-        ? error
-        : new HttpMiddlewareError(
-            `Middleware "${entry.name}" threw an error.`,
-            {
-              middlewareId: entry.id,
-              middlewareName: entry.name,
-              cause: error,
-            },
-          );
-    }
+    return normalizeResult(result, response);
   };
 
   try {
     return await dispatch(0);
   } catch (error) {
-    const middlewareError =
-      error instanceof HttpMiddlewareError
-        ? error
-        : new HttpMiddlewareError("HTTP middleware pipeline failed.", {
-            cause: error,
-          });
-
-    if (pipelineOptions.onError) {
-      try {
-        /*
-         * A successful `onError` is a genuine recovery and must be returned.
-         * Previously every caught error was recorded before `onError` ran and
-         * the recorded list was rethrown afterwards, so the handler's result
-         * was always discarded and the option could never take effect.
-         */
-        const errorResult = await pipelineOptions.onError(
-          middlewareError.cause ?? error,
-          context,
-        );
-
-        return normalizeResult(errorResult, response);
-      } catch (handlerError) {
-        /* The handler's own failure is reported, not swallowed. */
-        throw new HttpMiddlewarePipelineError([
-          middlewareError,
-          new HttpMiddlewareError(
-            "HTTP middleware error handler threw an error.",
-            { cause: handlerError },
-          ),
-        ]);
-      }
+    if (!pipelineOptions.onError) {
+      throw error;
     }
 
-    throw new HttpMiddlewarePipelineError([middlewareError]);
+    /*
+     * A successful `onError` is a genuine recovery and is returned. If the
+     * handler throws, what it threw propagates: rethrowing the error it was
+     * given passes that original on, and throwing a translated error (a
+     * `NotFoundError` for a missing row) replaces it.
+     */
+    const errorResult = await pipelineOptions.onError(error, context);
+
+    return normalizeResult(errorResult, response);
   }
 }

@@ -28,6 +28,12 @@ export interface NodeAdapterOptions
 
   readonly trustProxy?: boolean | number | string | readonly string[];
 
+  /**
+   * Whether `request.id` reuses a well-formed incoming `x-request-id`
+   * header (default: `true`); see {@link NodeRequestOptions.trustRequestId}.
+   */
+  readonly trustRequestId?: boolean;
+
   readonly requestTimeout?: number;
 
   readonly headersTimeout?: number;
@@ -78,6 +84,17 @@ export interface NodeRequestOptions {
    * - string[]: Trust specific IP addresses
    */
   readonly trustProxy?: TrustProxy;
+
+  /** Signal carried by the context; aborted when the client disconnects. */
+  readonly signal?: AbortSignal;
+
+  /**
+   * Whether `request.id` reuses the client's `x-request-id` header
+   * (default: `true`). The header is used only when it is at most 128
+   * characters of `[A-Za-z0-9._:-]`; any other value is ignored and an id
+   * is generated. `false` always generates one.
+   */
+  readonly trustRequestId?: boolean;
 }
 
 export interface NodeServerAddress {

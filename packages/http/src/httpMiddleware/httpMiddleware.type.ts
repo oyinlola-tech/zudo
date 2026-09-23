@@ -4,6 +4,8 @@
  * @module httpMiddleware/types
  */
 
+import type { GuardResponse } from "@zudojs/middleware";
+
 import type { HttpRequestContext as RequestContext } from "../httpRequest/httpRequest.context.js";
 
 import type { HttpResponseContext as ResponseContext } from "../httpResponse/httpResponse.context.js";
@@ -12,12 +14,20 @@ import type { HttpResponseContext as ResponseContext } from "../httpResponse/htt
 /* Types                                                                      */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * What a middleware may return.
+ *
+ * A `GuardResponse` (from `createGuardResponse` in `@zudojs/middleware`) is
+ * sent with its own status, headers and body; it is how a guard in a
+ * lower-tier package, which cannot import this one, answers 401/403/404.
+ */
 export type HttpMiddlewareResult =
   | void
   | Response
   | RequestContext
   | ResponseContext
-  | Promise<void | Response | RequestContext | ResponseContext>;
+  | GuardResponse
+  | Promise<void | Response | RequestContext | ResponseContext | GuardResponse>;
 
 export type HttpNext = () => Promise<ResponseContext>;
 

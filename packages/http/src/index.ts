@@ -50,6 +50,8 @@ export * from "./httpAgent/index.js";
 export * from "./httpProxy/index.js";
 export * from "./httpSecurity/index.js";
 export * from "./httpRouter/index.js";
+export * from "./httpOpenApi/index.js";
+export * from "./httpFetchMount/index.js";
 
 /* -------------------------------------------------------------------------- */
 /* Ambiguous re-exports                                                       */

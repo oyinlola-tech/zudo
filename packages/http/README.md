@@ -82,12 +82,111 @@ answers 502 and never exposes the cause.
 - `HttpServer.stop()` gives in-flight requests the full
   `gracefulShutdownTimeout`.
 
+## OpenAPI from your routes
+
+Routes carry their own documentation through the `openapi` option, and the
+document is generated from the routes the router actually registered — no
+second list to keep in sync. Schemas may be `@zudojs/schema` schemas or raw
+OpenAPI schemas.
+
+```typescript
+import { objectSchema, stringSchema, numberSchema, optionalSchema } from "@zudojs/schema";
+import { createRouter, generateOpenAPIDocument, mountOpenAPI } from "@zudojs/http";
+
+const user = objectSchema({ id: stringSchema().uuid(), name: stringSchema() });
+
+const router = createRouter();
+router.get("/users/:id", getUser, {
+  openapi: {
+    summary: "Get a user",
+    tags: ["users"],
+    params: objectSchema({ id: stringSchema().uuid() }),
+    responses: { "200": { schema: user }, "404": { description: "No such user" } },
+  },
+});
+router.get("/users", listUsers, {
+  openapi: { query: objectSchema({ limit: optionalSchema(numberSchema().int()) }) },
+});
+router.post("/users", createUser, {
+  openapi: { body: objectSchema({ name: stringSchema() }), responses: { "201": { schema: user } } },
+});
+router.get("/health", health, { openapi: false }); // never documented
+
+// One-off document:
+const document = generateOpenAPIDocument(router, {
+  info: { title: "Users API", version: "1.0.0" },
+  exclude: ["/internal/*"],
+  validate: true,
+});
+
+// Or serve it: GET /openapi.json and a Swagger UI page at GET /docs.
+mountOpenAPI(router, {
+  info: { title: "Users API", version: "1.0.0" },
+  yamlPath: "/openapi.yaml",        // optional
+  ui: { renderer: "redoc" },        // optional; any renderOpenAPIUI option
+});
+```
+
+- `:id` and `{id}` become `{id}`; every template slot is documented even when
+  nothing declares it. A regex-constrained `:id(\d+)` becomes a parameter
+  with that `pattern`, an optional `:id?` is documented as both paths, and a
+  wildcard `*rest` becomes a `{rest}` slot (`wildcards: "exclude"` drops such
+  routes instead).
+- Left out: `all()` routes, `CONNECT`, routes with `openapi: false` or
+  `{ hidden: true }`, and anything matched by `exclude` (exact path,
+  `"/prefix/*"`, a `RegExp`, or a predicate). The router's automatic `HEAD`
+  and `OPTIONS` answers are not registered routes and never appear.
+  `undocumented: "exclude"` documents only routes that declare `openapi`.
+- Router groups pass `openapi` defaults to their routes: tags are unioned,
+  everything else is overridden by the route.
+- The document follows the router: a route added later is in the next
+  `generateOpenAPIDocument` call and the next request to a mounted
+  `/openapi.json`. `createRouterOpenAPI(router, options)` gives the
+  underlying `OpenAPIManager`, re-read only when the route table changed.
+- Paths are configurable (`path`, `docsPath: false` to disable the page,
+  `ui.specUrl` when served under a prefix), and `middleware` protects the
+  documentation routes.
+
+## Mounting web-standard handlers
+
+`mountFetchHandler` serves any `(request: Request) => Response | Promise<Response>`
+handler — an `@zudojs/rpc` server, `@zudojs/api` operations, another
+fetch-style app — under a path of a router or router group.
+
+```typescript
+import { mountFetchHandler } from "@zudojs/http";
+import { createRPCFetchHandler } from "@zudojs/rpc";
+
+const unmount = mountFetchHandler(router, "/rpc", createRPCFetchHandler(rpcServer));
+// { methods: ["POST"], stripPrefix: false, middleware: [auth] } are optional
+```
+
+The handler sees the original method, query, headers (connection-scoped ones
+removed) and body; the mount path is stripped from its URL by default and
+passed as `x-forwarded-prefix`. Its `Response` is streamed back with status,
+status text and headers intact, each `Set-Cookie` kept separate. The
+request's `signal` aborts when the client disconnects. A handler that throws
+or returns something other than a `Response` fails the request like any
+route (a generic 500 unless the error carries a status). `toWebRequest(context)`
+does the request conversion on its own.
+
+The origin of the handler's `request.url` comes from the client's `Host`
+header (or `X-Forwarded-Host` from a trusted proxy) unless you pin it with
+`{ origin: "https://api.example.com" }`. Pin it whenever the handler builds
+absolute URLs or compares `Origin` against its own.
+
+Every Node request context now carries that signal too: `request.signal` and
+the router's `ctx.signal` abort when the client goes away, and a streamed
+response body stops being read.
+
 ## Features
 
 - Runtime-independent HTTP server abstraction
 - Request/response wrappers with full Web API compatibility
 - Middleware pipeline with error handling
 - Router with parameter extraction
+- OpenAPI documents generated from the registered routes
+- Mounting of web-standard fetch handlers
 - CORS, security headers, and content negotiation
 - HTTP client with interceptors
 

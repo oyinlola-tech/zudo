@@ -5,18 +5,11 @@
  * exponential backoff, and delay utilities.
  */
 
-import type { HttpClientMethod } from "./httpClient.type.js";
+import type { HttpClientMethod, HttpRetryOptions } from "./httpClient.type.js";
 
-/** Retry options for the HTTP client. */
-export interface HttpRetryOptions {
-  readonly retries?: number;
-  readonly retryDelay?: number;
-  readonly maxRetryDelay?: number;
-  readonly retryStatusCodes?: readonly number[];
-  readonly retryMethods?: readonly HttpClientMethod[];
-  readonly retryOnNetworkError?: boolean;
-  readonly backoff?: "fixed" | "exponential";
-}
+import { HttpClientTimeoutError } from "./httpClient.error.js";
+
+export type { HttpRetryOptions } from "./httpClient.type.js";
 
 /**
  * Normalize retry options with defaults.
@@ -32,7 +25,10 @@ export function normalizeRetryOptions(
     retryStatusCodes: options.retryStatusCodes ?? [429, 502, 503, 504],
     retryMethods: options.retryMethods ?? ["GET", "HEAD", "OPTIONS"],
     retryOnNetworkError: options.retryOnNetworkError ?? true,
+    retryOnTimeout:
+      options.retryOnTimeout ?? options.retryOnNetworkError ?? true,
     backoff: options.backoff ?? "exponential",
+    jitter: options.jitter ?? true,
   };
 }
 
@@ -51,6 +47,12 @@ export function shouldRetryStatus(
 
 /**
  * Check if an error should trigger a retry.
+ *
+ * Transport failures are retried when `retryOnNetworkError` is on, and
+ * timeouts when `retryOnTimeout` is on (it defaults to
+ * `retryOnNetworkError`). Both apply only to `retryMethods`, which default
+ * to the idempotent `GET`, `HEAD` and `OPTIONS`. A caller's own abort is
+ * never retried.
  */
 export function shouldRetryError(
   error: unknown,
@@ -58,15 +60,26 @@ export function shouldRetryError(
   retry?: HttpRetryOptions,
 ): boolean {
   if (!retry?.retries) return false;
-  if (!retry.retryOnNetworkError) return false;
 
   /*
-   * A connection that drops after the server processed the request is
-   * indistinguishable from one that never arrived, so replaying a
-   * non-idempotent method duplicates its side effects. `retryMethods` exists
-   * for exactly this and was honoured only on the status path.
+   * A connection that drops (or a request that times out) after the server
+   * processed it is indistinguishable from one that never arrived, so
+   * replaying a non-idempotent method duplicates its side effects.
+   * `retryMethods` exists for exactly this and was honoured only on the
+   * status path.
    */
   if (!retry.retryMethods?.includes(method as HttpClientMethod)) return false;
+
+  /*
+   * Timeouts were never retried: `isRetryableNetworkError` does not match
+   * `HttpClientTimeoutError`, so `retryOnNetworkError` had no effect on the
+   * most common transient failure.
+   */
+  if (error instanceof HttpClientTimeoutError) {
+    return retry.retryOnTimeout ?? retry.retryOnNetworkError ?? true;
+  }
+
+  if (!retry.retryOnNetworkError) return false;
 
   return isRetryableNetworkError(error);
 }
@@ -99,7 +112,15 @@ function isRetryableNetworkError(error: unknown): boolean {
 }
 
 /**
- * Calculate retry delay with exponential backoff.
+ * Calculate the wait before retry number `attempt + 1`.
+ *
+ * The delay is `retryDelay` (fixed backoff) or `retryDelay * 2^attempt`
+ * (exponential), capped at `maxRetryDelay`. With `jitter` (the default) the
+ * wait is drawn uniformly from 0 up to that delay ("full jitter"), so a
+ * burst of clients that failed together does not retry in lockstep;
+ * `jitter: false` waits exactly the delay. Jitter used to add up to a
+ * fixed 1000 ms whatever `retryDelay` was, so `retryDelay: 50` could wait
+ * a second.
  */
 export function calculateRetryDelay(
   attempt: number,
@@ -108,10 +129,9 @@ export function calculateRetryDelay(
   const base = retry.retryDelay ?? 1000;
   const max = retry.maxRetryDelay ?? 30_000;
   const ms = retry.backoff === "fixed" ? base : base * Math.pow(2, attempt);
+  const capped = Math.max(0, Math.min(ms, max));
 
-  /* Clamp *after* jitter, and on the fixed branch too, or `maxRetryDelay`
-   * is not actually a maximum. */
-  return Math.min(ms + Math.random() * 1000, max);
+  return retry.jitter === false ? capped : Math.random() * capped;
 }
 
 /**

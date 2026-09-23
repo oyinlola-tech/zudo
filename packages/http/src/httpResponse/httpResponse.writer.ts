@@ -350,11 +350,25 @@ export async function writeReadableStream(
 ): Promise<void> {
   const reader = stream.getReader();
 
+  let finished = false;
+
   try {
     while (true) {
+      /*
+       * A sink that stopped accepting data (the client disconnected) will
+       * never drain. Without this check an unbounded stream — server-sent
+       * events, a proxied download — kept being pulled into a dead socket
+       * for as long as its source produced.
+       */
+      if (writer.writable === false) {
+        break;
+      }
+
       const result = await reader.read();
 
       if (result.done) {
+        finished = true;
+
         break;
       }
 
@@ -367,6 +381,11 @@ export async function writeReadableStream(
       }
     }
   } finally {
+    if (!finished) {
+      /* Tell the source to stop producing; its failure is not ours. */
+      await reader.cancel().catch(() => undefined);
+    }
+
     reader.releaseLock();
   }
 }
