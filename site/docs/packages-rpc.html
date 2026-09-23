@@ -341,6 +341,7 @@ console.<span class="fn">log</span>(registry.<span class="fn">describe</span>())
         <ul class="space-y-2 mt-4 mb-4 text-sm">
           <li class="flex gap-2"><span class="font-bold">&rarr;</span> <code class="bg-black/5 px-1">auth</code> — the identity the server sees as <code class="bg-black/5 px-1">context.auth</code>: a fixed value, or a function of the request. In memory, your own code is the one vouching for it.</li>
           <li class="flex gap-2"><span class="font-bold">&rarr;</span> <code class="bg-black/5 px-1">serializer</code> — how frames are copied. Pass another serializer to match a remote transport, or <code class="bg-black/5 px-1">false</code> to hand frames over by reference.</li>
+          <li class="flex gap-2"><span class="font-bold">&rarr;</span> When the caller aborts (its signal fires, or the call times out), the transport passes that signal to the server, so the handler's <code class="bg-black/5 px-1">context.signal</code> aborts and the server stops the work too.</li>
           <li class="flex gap-2"><span class="font-bold">&rarr;</span> After <code class="bg-black/5 px-1">client.close()</code> every send fails with <code class="bg-black/5 px-1">RPCUnavailableError</code>.</li>
         </ul>
 
@@ -421,6 +422,8 @@ console.<span class="fn">log</span>(total);
           <li class="flex gap-2"><span class="font-bold">&rarr;</span> It accepts only <code class="bg-black/5 px-1">POST</code> with a JSON content type, and reads at most <code class="bg-black/5 px-1">maxBodyBytes</code> (default <code class="bg-black/5 px-1">DEFAULT_RPC_HTTP_MAX_BODY_BYTES</code>, 1 MiB plus 64 KiB for the envelope) without buffering more.</li>
           <li class="flex gap-2"><span class="font-bold">&rarr;</span> Every reply is an RPC frame, even for a bad HTTP request (wrong method, wrong content type, oversized or invalid body). A caller never gets an HTML error page.</li>
           <li class="flex gap-2"><span class="font-bold">&rarr;</span> An <code class="bg-black/5 px-1">auth</code> hook that throws <code class="bg-black/5 px-1">RPCAuthenticationError</code> refuses the call. Anything else it throws is answered as an internal error.</li>
+          <li class="flex gap-2"><span class="font-bold">&rarr;</span> The call runs under the request's signal. If the client disconnects, the procedure is cancelled (<code class="bg-black/5 px-1">context.signal</code> aborts and the dispatch ends with <code class="bg-black/5 px-1">RPC_CANCELLED</code>) instead of running on to its timeout for nobody.</li>
+          <li class="flex gap-2"><span class="font-bold">&rarr;</span> A frame whose payload or metadata holds a <code class="bg-black/5 px-1">__proto__</code>, <code class="bg-black/5 px-1">constructor</code> or <code class="bg-black/5 px-1">prototype</code> key is refused with <code class="bg-black/5 px-1">RPC_INVALID_REQUEST</code>. See <a href="#unsafe-keys" class="underline">Refusing unsafe keys</a>.</li>
           <li class="flex gap-2"><span class="font-bold">&rarr;</span> The HTTP status follows the wire code, as below. The status is advisory, for proxies and dashboards; <code class="bg-black/5 px-1">error.code</code> in the body is what counts.</li>
         </ul>
 
@@ -434,7 +437,8 @@ console.<span class="fn">log</span>(total);
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_INVALID_REQUEST, RPC_DESERIALIZATION_ERROR</td><td class="p-3 font-mono">400</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_UNAUTHENTICATED</td><td class="p-3 font-mono">401</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_FORBIDDEN</td><td class="p-3 font-mono">403</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_PROCEDURE_NOT_FOUND</td><td class="p-3 font-mono">404</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_PROCEDURE_NOT_FOUND, RPC_NOT_FOUND</td><td class="p-3 font-mono">404</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_CONFLICT</td><td class="p-3 font-mono">409</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_VALIDATION_ERROR</td><td class="p-3 font-mono">422</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_RATE_LIMITED</td><td class="p-3 font-mono">429</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_CANCELLED</td><td class="p-3 font-mono">499</td></tr>
@@ -447,7 +451,7 @@ console.<span class="fn">log</span>(total);
 
         <h3 class="text-lg font-bold mb-3 mt-6">What the client transport does for you</h3>
         <p class="mb-4 leading-relaxed">
-          It aborts the underlying <code class="bg-black/5 px-1">fetch</code> when the call's signal or deadline fires, so a timed-out call frees its connection. Its failures are typed: a network failure, or a reply that is not an RPC frame for this request (a proxy's HTML page, a truncated or oversized body), is an <code class="bg-black/5 px-1">RPCTransportError</code>; an expired deadline is an <code class="bg-black/5 px-1">RPCTimeoutError</code>; a caller abort is an <code class="bg-black/5 px-1">RPCCancelledError</code>. Other options: <code class="bg-black/5 px-1">fetch</code> (your own fetch function), <code class="bg-black/5 px-1">serializer</code> and <code class="bg-black/5 px-1">maxResponseBytes</code>.
+          It aborts the underlying <code class="bg-black/5 px-1">fetch</code> when the call's signal or deadline fires, so a timed-out call frees its connection. Its failures are typed: a network failure, or a reply that is not an RPC frame for this request (a proxy's HTML page, a truncated or oversized body), is an <code class="bg-black/5 px-1">RPCTransportError</code>; an expired deadline is an <code class="bg-black/5 px-1">RPCTimeoutError</code>; a caller abort is an <code class="bg-black/5 px-1">RPCCancelledError</code>. The deadline is clamped to the range Node's timers accept (<code class="bg-black/5 px-1">MAX_TIMER_DELAY</code>, about 24.8 days): a larger timeout, or <code class="bg-black/5 px-1">Infinity</code>, used to overflow and fail every call at once, and now simply means "wait a very long time". Other options: <code class="bg-black/5 px-1">fetch</code> (your own fetch function), <code class="bg-black/5 px-1">serializer</code> and <code class="bg-black/5 px-1">maxResponseBytes</code>.
         </p>
 
         <div class="callout callout-warning mt-4">
@@ -468,7 +472,7 @@ console.<span class="fn">log</span>(total);
         </p>
 
         <p class="mb-4 leading-relaxed">
-          The signal is how a call is cancelled. Nothing forces a handler to stop, so check the signal wherever giving up makes sense.
+          The signal is how a call is cancelled. It aborts when the procedure's timeout or the caller's deadline passes, and also when the caller goes away: the second argument of <code class="bg-black/5 px-1">server.handle(request, { auth, signal })</code> is an <code class="bg-black/5 px-1">RPCContextOptions</code>, and its <code class="bg-black/5 px-1">signal</code> is the caller's. The built-in HTTP handler and memory transport pass it for you; a custom transport should pass the signal of its connection. Nothing forces a handler to stop, so check the signal wherever giving up makes sense.
         </p>
 
         <div class="code-block"><span class="kw">import</span> { <span class="fn">createRPCProcedure</span>, <span class="fn">throwIfCancelled</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
@@ -618,6 +622,26 @@ console.<span class="fn">log</span>(response.success, response.error?.code);
         <p class="mt-4 leading-relaxed">
           Set either limit to <code class="bg-black/5 px-1">0</code> to skip that check when the transport already enforces a frame limit.
         </p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6" id="unsafe-keys">Refusing unsafe keys</h3>
+        <p class="mb-4 leading-relaxed">
+          <code class="bg-black/5 px-1">JSON.parse</code> keeps a key named <code class="bg-black/5 px-1">__proto__</code>, <code class="bg-black/5 px-1">constructor</code> or <code class="bg-black/5 px-1">prototype</code> as an ordinary property. A handler that later merges its input into another object (<code class="bg-black/5 px-1">{ ...defaults, ...input }</code> is safe, <code class="bg-black/5 px-1">Object.assign</code> into a shared object or a hand-written deep merge often is not) can have that object's prototype replaced: an attack called <em>prototype pollution</em>. So the server refuses a frame whose <code class="bg-black/5 px-1">payload</code> or <code class="bg-black/5 px-1">metadata</code> holds one of those keys at any depth, before any middleware or handler runs.
+        </p>
+
+        <div class="code-block"><span class="kw">const</span> response = <span class="kw">await</span> server.<span class="fn">handle</span>(
+  <span class="fn">createRPCRequest</span>({
+    id: <span class="str">"req-2"</span>,
+    procedure: <span class="str">"users.getUser"</span>,
+    payload: <span class="tp">JSON</span>.<span class="fn">parse</span>(<span class="str">'{"id":"1","__proto__":{"isAdmin":true}}'</span>),
+  }),
+);
+
+console.<span class="fn">log</span>(response.error?.code, <span class="str">"|"</span>, response.error?.message);
+<span class="cm">// RPC_INVALID_REQUEST | Request contains the forbidden key "__proto__".</span></div>
+
+        <p class="mt-4 leading-relaxed">
+          If a procedure genuinely receives such keys (a JSON document store, say) and never merges them, turn the check off with <code class="bg-black/5 px-1">new RPCServer(undefined, undefined, { limits: { allowUnsafeKeys: true } })</code>. The check is <code class="bg-black/5 px-1">findUnsafeKey(value)</code> from <a href="/docs/packages-security" class="underline">@zudojs/security</a>; call it yourself on anything else you decode.
+        </p>
       </section>
 
       <!-- Errors -->
@@ -630,6 +654,10 @@ console.<span class="fn">log</span>(response.success, response.error?.code);
 
         <p class="mb-4 leading-relaxed">
           The code is the contract. It is why a caller can tell a rejected session from a timeout without matching on message text.
+        </p>
+
+        <p class="mb-4 leading-relaxed">
+          You do not have to throw RPC classes. Domain code usually throws the ready-made errors from <a href="/docs/packages-errors" class="underline">@zudojs/errors</a>, and those that are built with <code class="bg-black/5 px-1">expose: true</code> (the 4xx ones are, by default) reach the caller with their own message under the code that matches their status. A <code class="bg-black/5 px-1">ValidationError</code> sends its issues as <code class="bg-black/5 px-1">details</code> (without the values the caller sent), and a <code class="bg-black/5 px-1">RateLimitError</code> sends <code class="bg-black/5 px-1">{ retryAfter }</code>. Before this release they all arrived as <code class="bg-black/5 px-1">RPC_INTERNAL_ERROR</code>.
         </p>
 
         <div class="border-4 border-black">
@@ -653,17 +681,24 @@ console.<span class="fn">log</span>(response.success, response.error?.code);
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCUnavailableError</td><td class="p-3 font-mono">RPC_UNAVAILABLE</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCSerializationError</td><td class="p-3 font-mono">RPC_SERIALIZATION_ERROR</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCDeserializationError</td><td class="p-3 font-mono">RPC_DESERIALIZATION_ERROR</td></tr>
-              <tr><td class="p-3">anything else</td><td class="p-3 font-mono">RPC_INTERNAL_ERROR</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">NotFoundError (404)</td><td class="p-3 font-mono">RPC_NOT_FOUND</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ConflictError (409)</td><td class="p-3 font-mono">RPC_CONFLICT</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ValidationError (400/422)</td><td class="p-3 font-mono">RPC_VALIDATION_ERROR</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">AuthenticationError (401)</td><td class="p-3 font-mono">RPC_UNAUTHENTICATED</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">AuthorizationError (403)</td><td class="p-3 font-mono">RPC_FORBIDDEN</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RateLimitError (429)</td><td class="p-3 font-mono">RPC_RATE_LIMITED</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3">any other <code>@zudojs/errors</code> error with <code>expose: true</code></td><td class="p-3">by status (408/504 &rarr; <code>RPC_TIMEOUT</code>, 503 &rarr; <code>RPC_UNAVAILABLE</code>), otherwise its own <code>code</code></td></tr>
+              <tr><td class="p-3">anything else, and any error with <code>expose: false</code></td><td class="p-3 font-mono">RPC_INTERNAL_ERROR</td></tr>
             </tbody>
           </table>
         </div>
 
         <div class="callout callout-danger mt-4">
-          <strong class="text-zudo-red">Danger:</strong> an unrecognised error never sends its own message. Exception text can name hosts, paths, credentials or queries, and the caller is a stranger. They get one fixed sentence plus the request id. The same applies to any <code>RPCError</code> thrown with <code>expose: false</code> &mdash; <code>RPCInternalError</code>, <code>RPCSerializationError</code>, or a plain <code>new RPCError(...)</code> &mdash; its <code>code</code> is sent but its message is replaced. Pass the server's <code>onInternalError</code> hook if you want the real error — that hook is the only place it is recorded.
+          <strong class="text-zudo-red">Danger:</strong> an unrecognised or non-exposed error never sends its own message. Exception text can name hosts, paths, credentials or queries, and the caller is a stranger. They get one fixed sentence plus the request id. The same applies to any <code>RPCError</code> thrown with <code>expose: false</code> &mdash; <code>RPCInternalError</code>, <code>RPCSerializationError</code>, or a plain <code>new RPCError(...)</code> &mdash; its <code>code</code> is sent but its message is replaced. A <code>@zudojs/errors</code> error with <code>expose: false</code> (a <code>DatabaseError</code>, for example) goes out as <code>RPC_INTERNAL_ERROR</code> with the fixed message. Pass the server's <code>onInternalError</code> hook if you want the real error — that hook is the only place it is recorded.
         </div>
 
         <p class="mb-4 mt-6 leading-relaxed">
-          On the caller's side, <code class="bg-black/5 px-1">RPCClient</code> rebuilds a typed error from the wire code (the same mapping is exported as <code class="bg-black/5 px-1">rpcErrorFromWire</code>), so you can branch with <code class="bg-black/5 px-1">instanceof</code> instead of comparing strings. The codes above come back as <code class="bg-black/5 px-1">RPCProcedureNotFoundError</code>, <code class="bg-black/5 px-1">RPCValidationError</code> (with its <code class="bg-black/5 px-1">issues</code>), <code class="bg-black/5 px-1">RPCInvalidRequestError</code>, <code class="bg-black/5 px-1">RPCAuthenticationError</code>, <code class="bg-black/5 px-1">RPCForbiddenError</code>, <code class="bg-black/5 px-1">RPCRateLimitedError</code>, <code class="bg-black/5 px-1">RPCTimeoutError</code>, <code class="bg-black/5 px-1">RPCCancelledError</code> or <code class="bg-black/5 px-1">RPCUnavailableError</code>. Any other code becomes a plain <code class="bg-black/5 px-1">RPCError</code>. Either way, the server's wire <code class="bg-black/5 px-1">code</code> and <code class="bg-black/5 px-1">details</code> are kept on the error.
+          On the caller's side, <code class="bg-black/5 px-1">RPCClient</code> rebuilds a typed error from the wire code (the same mapping is exported as <code class="bg-black/5 px-1">rpcErrorFromWire</code>), so you can branch with <code class="bg-black/5 px-1">instanceof</code> instead of comparing strings. The codes above come back as <code class="bg-black/5 px-1">RPCProcedureNotFoundError</code>, <code class="bg-black/5 px-1">RPCValidationError</code> (with its <code class="bg-black/5 px-1">issues</code>), <code class="bg-black/5 px-1">RPCInvalidRequestError</code>, <code class="bg-black/5 px-1">RPCAuthenticationError</code>, <code class="bg-black/5 px-1">RPCForbiddenError</code>, <code class="bg-black/5 px-1">RPCRateLimitedError</code>, <code class="bg-black/5 px-1">RPCTimeoutError</code>, <code class="bg-black/5 px-1">RPCCancelledError</code> or <code class="bg-black/5 px-1">RPCUnavailableError</code>. Any other code, including <code class="bg-black/5 px-1">RPC_NOT_FOUND</code> and <code class="bg-black/5 px-1">RPC_CONFLICT</code>, becomes a plain <code class="bg-black/5 px-1">RPCError</code>. Either way, <code class="bg-black/5 px-1">error.code</code> is the wire code and <code class="bg-black/5 px-1">error.details</code> holds the server's details, so <code class="bg-black/5 px-1">error.code === "RPC_TIMEOUT"</code> and <code class="bg-black/5 px-1">error instanceof RPCTimeoutError</code> both work. That includes errors the client raises itself (its own deadline, a cancelled signal, a closed client), and <code class="bg-black/5 px-1">"RPC_TRANSPORT_ERROR"</code> for a network failure. The class codes such as <code class="bg-black/5 px-1">"ERR_RPC_TIMEOUT"</code> are never what a client error carries; before this release timeouts, cancellations and unavailability came back with them.
         </p>
 
         <div class="code-block"><span class="kw">import</span> {
@@ -698,6 +733,39 @@ server.<span class="fn">register</span>(
 
         <p class="mt-4 leading-relaxed">
           <strong>What you should see:</strong> <code class="bg-black/5 px-1">RPC_FORBIDDEN | Admins only.</code> The error object itself did not cross the boundary — only its code and message did — but the client rebuilt an <code class="bg-black/5 px-1">RPCForbiddenError</code> from that code, so the <code class="bg-black/5 px-1">instanceof</code> check passes. The same works over HTTP.
+        </p>
+
+        <p class="mt-4 mb-4 leading-relaxed">This one throws plain <code class="bg-black/5 px-1">@zudojs/errors</code> errors from the handler and branches on the code on the caller's side:</p>
+
+        <div class="code-block"><span class="kw">import</span> { <span class="tp">RPCServer</span>, <span class="tp">RPCClient</span>, <span class="fn">createRPCProcedure</span>, <span class="fn">createRPCMemoryTransport</span>, <span class="tp">RPCError</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
+<span class="kw">import</span> { <span class="tp">NotFoundError</span>, <span class="fn">databaseQueryError</span> } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+
+<span class="kw">const</span> server = <span class="kw">new</span> <span class="fn">RPCServer</span>();
+server.<span class="fn">register</span>(
+  <span class="fn">createRPCProcedure</span>(<span class="str">"users.get"</span>, <span class="kw">async</span> (input: { id: <span class="tp">string</span> }) =&gt; {
+    <span class="kw">throw new</span> <span class="fn">NotFoundError</span>(<span class="str">`User ${input.id} was not found.`</span>);
+  }),
+);
+server.<span class="fn">register</span>(
+  <span class="fn">createRPCProcedure</span>(<span class="str">"reports.run"</span>, <span class="kw">async</span> () =&gt; {
+    <span class="kw">throw</span> <span class="fn">databaseQueryError</span>(<span class="str">'relation "users" does not exist'</span>);
+  }),
+);
+
+<span class="kw">const</span> client = <span class="kw">new</span> <span class="fn">RPCClient</span>(<span class="fn">createRPCMemoryTransport</span>(server));
+
+<span class="kw">for</span> (<span class="kw">const</span> [name, input] <span class="kw">of</span> [[<span class="str">"users.get"</span>, { id: <span class="str">"42"</span> }], [<span class="str">"reports.run"</span>, {}]] <span class="kw">as const</span>) {
+  <span class="kw">try</span> {
+    <span class="kw">await</span> client.<span class="fn">call</span>(name, input);
+  } <span class="kw">catch</span> (error) {
+    <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">RPCError</span>) console.<span class="fn">log</span>(error.code, <span class="str">"|"</span>, error.message);
+  }
+}
+<span class="cm">// RPC_NOT_FOUND | User 42 was not found.</span>
+<span class="cm">// RPC_INTERNAL_ERROR | The server encountered an internal error while handling this request.</span></div>
+
+        <p class="mt-4 leading-relaxed">
+          The <code class="bg-black/5 px-1">NotFoundError</code> is exposed, so its message travels. The <code class="bg-black/5 px-1">DatabaseError</code> is not, so the caller sees only the fixed sentence, and the SQL detail stays on the server, where <code class="bg-black/5 px-1">onInternalError</code> can log it.
         </p>
       </section>
 
@@ -750,7 +818,11 @@ console.<span class="fn">log</span>(value, tries);
         </p>
 
         <p class="mt-4 leading-relaxed">
-          To cancel a call yourself, pass a signal in <code class="bg-black/5 px-1">RPCCallOptions.signal</code>. An <code class="bg-black/5 px-1">AbortSignal</code> alone cannot be aborted — only its controller can — so <code class="bg-black/5 px-1">createCancellableSignal()</code> hands you both as <code class="bg-black/5 px-1">{ signal, cancel }</code>. Whatever reason the abort carries, the client always throws an <code class="bg-black/5 px-1">RPCCancelledError</code>, keeping the original as <code class="bg-black/5 px-1">cause</code>.
+          To cancel a call yourself, pass a signal in <code class="bg-black/5 px-1">RPCCallOptions.signal</code>. An <code class="bg-black/5 px-1">AbortSignal</code> alone cannot be aborted — only its controller can — so <code class="bg-black/5 px-1">createCancellableSignal()</code> hands you both as <code class="bg-black/5 px-1">{ signal, cancel }</code>. Whatever reason the abort carries, the client always throws an <code class="bg-black/5 px-1">RPCCancelledError</code>, keeping the original as <code class="bg-black/5 px-1">cause</code>. The cancel reaches the server as well: the handler's <code class="bg-black/5 px-1">context.signal</code> aborts, so a cancelled or timed-out call stops the work on both sides.
+        </p>
+
+        <p class="mt-4 leading-relaxed">
+          The client's deadline timer and the <code class="bg-black/5 px-1">retry()</code> backoff timer keep the Node process alive while they wait, and are cleared the moment the call settles. So a plain script that awaits a call really does wait for its timeout. Before this release those timers did not hold the process open, and a script whose only pending work was an unanswered call exited early with code 13 ("unsettled top-level await") instead of reporting <code class="bg-black/5 px-1">RPC_TIMEOUT</code>.
         </p>
 
         <div class="callout callout-warning mt-4">
@@ -887,9 +959,10 @@ console.<span class="fn">log</span>(value, tries);
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCProcedure<br>RPCHandler<br>RPCProcedureOptions</td><td class="p-3">A procedure and its handler.</td><td class="p-3">Generic over input and output.</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCRequest<br>RPCResponse<br>RPCErrorPayload<br>RPCMetadata</td><td class="p-3">The messages on the wire.</td><td class="p-3">Check <code>success</code> before reading <code>result</code>. Each has an Options variant for its factory.</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCContext</td><td class="p-3">Per-call request, metadata, signal and state.</td><td class="p-3">Second argument to every handler and middleware.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCContextOptions</td><td class="p-3">Second argument of <code>server.handle(request, options)</code>.</td><td class="p-3"><code>auth</code> (verified identity) and <code>signal</code> (the caller's; aborting it cancels the call with <code>RPC_CANCELLED</code>).</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCTransport<br>RPCMiddleware<br>RPCInterceptor</td><td class="p-3">The pieces you plug in.</td><td class="p-3">Middleware is a function; a transport and an interceptor are objects. Use a built-in transport or implement <code>RPCTransport</code> yourself.</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCMemoryTransportOptions<br>RPCHttpTransportOptions<br>RPCFetchHandlerOptions<br>RPCFrameSerializer</td><td class="p-3">Options for the built-in transports.</td><td class="p-3">Memory: <code>auth</code>, <code>serializer</code> (<code>false</code> = by reference). HTTP client: <code>url</code>, <code>headers</code>, <code>fetch</code>, <code>serializer</code>, <code>maxResponseBytes</code>. Fetch handler: <code>auth</code>, <code>serializer</code>, <code>maxBodyBytes</code>, <code>onInternalError</code>.</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCServerOptions<br>RPCDispatcherOptions<br>RPCClientOptions<br>RPCCallOptions<br>RPCRequestLimits</td><td class="p-3">Everything you can configure.</td><td class="p-3">Server: <code>limits</code>, <code>dispatch</code>, <code>onInternalError</code>. Limits: <code>maxPayloadBytes</code> (1 MB), <code>maxRequestIdLength</code> (128), <code>enforceProcedureNamePattern</code> (true). Dispatch: <code>defaultTimeout</code>, <code>honourDeadline</code>, <code>interceptors</code>. Client and call: <code>timeout</code>, <code>maxPending</code>, <code>signal</code>, <code>metadata</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCServerOptions<br>RPCDispatcherOptions<br>RPCClientOptions<br>RPCCallOptions<br>RPCRequestLimits</td><td class="p-3">Everything you can configure.</td><td class="p-3">Server: <code>limits</code>, <code>dispatch</code>, <code>onInternalError</code>. Limits: <code>maxPayloadBytes</code> (1 MB), <code>maxRequestIdLength</code> (128), <code>enforceProcedureNamePattern</code> (true), <code>allowUnsafeKeys</code> (false). Dispatch: <code>defaultTimeout</code>, <code>honourDeadline</code>, <code>interceptors</code>. Client and call: <code>timeout</code>, <code>maxPending</code>, <code>signal</code>, <code>metadata</code>.</td></tr>
               <tr><td class="p-3 font-mono">RPCSchema<br>RPCRetryOptions<br>RPCBackoff<br>RPCJitter<br>CancellableSignal</td><td class="p-3">Validation and reliability settings.</td><td class="p-3"><code>RPCSchema</code> needs only <code>safeParse</code>. Backoff: fixed, linear, exponential. Jitter: none, full, equal.</td></tr>
             </tbody>
           </table>
@@ -912,7 +985,7 @@ console.<span class="fn">log</span>(value, tries);
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DEFAULT_RPC_HTTP_MAX_BODY_BYTES</td><td class="p-3">1114112</td><td class="p-3">Largest body <code>createRPCFetchHandler</code> reads: <code>MAX_RPC_PAYLOAD_SIZE</code> plus 64 KiB for the envelope.</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MAX_RPC_FRAME_DEPTH</td><td class="p-3">128</td><td class="p-3">Nesting depth the default serializer decodes.</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_HTTP_STATUS</td><td class="p-3">Code → status map</td><td class="p-3">The table in <a href="#http-transport" class="underline">Over HTTP</a>. Unlisted codes are sent as 500.</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MAX_TIMER_DELAY</td><td class="p-3">2147483647</td><td class="p-3">Retry delays clamp to it, so a big backoff cannot overflow into an instant retry.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MAX_TIMER_DELAY</td><td class="p-3">2147483647</td><td class="p-3">Retry delays, the client deadline and the HTTP transport's request timeout clamp to it, so a huge value cannot overflow into an instant retry or an instant timeout.</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">PROCEDURE_NAME_PATTERN</td><td class="p-3 font-mono">/^[a-z][a-zA-Z0-9]*(\.[a-z][a-zA-Z0-9]*)+$/</td><td class="p-3">At least two dot-separated segments.</td></tr>
               <tr><td class="p-3 font-mono">INTERNAL_ERROR_MESSAGE</td><td class="p-3">Fixed sentence</td><td class="p-3">What a caller sees instead of an unexpected exception.</td></tr>
             </tbody>
@@ -948,6 +1021,9 @@ console.<span class="fn">log</span>(value, tries);
           </li>
           <li class="border-l-4 border-zudo-red pl-4">
             <strong>Retrying everything.</strong> Replaying a forbidden or invalid call burns attempts and can duplicate side effects. Use <code class="bg-black/5 px-1">retryIf</code>, and check <code class="bg-black/5 px-1">idempotent</code> from <code class="bg-black/5 px-1">registry.describe()</code>.
+          </li>
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Comparing <code class="bg-black/5 px-1">error.code</code> with <code class="bg-black/5 px-1">ErrorCode.RPC_TIMEOUT</code>.</strong> That is the class code, <code class="bg-black/5 px-1">"ERR_RPC_TIMEOUT"</code>. A client error carries the wire code, so compare with <code class="bg-black/5 px-1">"RPC_TIMEOUT"</code>, or use <code class="bg-black/5 px-1">instanceof RPCTimeoutError</code>.
           </li>
           <li class="border-l-4 border-zudo-red pl-4">
             <strong>Ignoring <code class="bg-black/5 px-1">options.signal</code> in a custom transport.</strong> The client still rejects on time, but the socket stays open. Pass the signal to <code class="bg-black/5 px-1">fetch</code> or your socket library. The built-in transports already do this.
@@ -1015,6 +1091,7 @@ console.<span class="fn">log</span>(value, tries);
       <a href="#context" class="toc-link">Context</a>
       <a href="#middleware" class="toc-link">Middleware</a>
       <a href="#validation" class="toc-link">Validating Input</a>
+      <a href="#unsafe-keys" class="toc-link toc-link-nested">Refusing Unsafe Keys</a>
       <a href="#errors" class="toc-link">Errors</a>
       <a href="#reliability" class="toc-link">Timeouts &amp; Retries</a>
       <a href="#vs-api-http" class="toc-link">RPC vs API vs HTTP</a>

@@ -25,7 +25,7 @@ function head({ title, description, path, keywords }) {
   <!-- seo:start -->
   <!-- seo:end -->
   <meta name="keywords" content="${escapeAttr(keywords || "zudo, learn, javascript, typescript, node.js, backend, tutorial")}">
-  <meta name="author" content="Oyinlola Tech">
+  <meta name="author" content="Oluwayemi Oyinlola Michael">
 
   <link rel="icon" type="image/svg+xml" href="/assets/zudo-favicon.svg">
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
@@ -125,7 +125,7 @@ ${bodyHtml.trim()}
 
     <aside class="doc-toc" aria-label="On this page">
       <div class="p-4 text-xs font-bold uppercase text-black/60 tracking-wider">On this page</div>
-${toc.map((h) => `      <a href="#${h.id}" class="toc-link">${escapeHtml(h.text)}</a>`).join("\n")}
+${toc.map((h) => `      <a href="#${h.id}" class="toc-link">${h.text}</a>`).join("\n")}
     </aside>
 
   </div>

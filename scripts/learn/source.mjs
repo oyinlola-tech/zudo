@@ -126,8 +126,14 @@ function renderExample(ex, highlight, index) {
   return html + `</figure>`;
 }
 
+/* <shell> holds plain terminal text, but authors also write it as HTML
+   (&lt;, &amp;); decode those first so both spellings render the same. */
+function decodeEntities(s) {
+  return s.replace(/&(lt|gt|quot|#39|amp);/g, (m, e) => ({ lt: "<", gt: ">", quot: '"', "#39": "'", amp: "&" })[e]);
+}
+
 function renderShell(a, raw) {
-  const text = dedent(raw);
+  const text = decodeEntities(dedent(raw));
   const commands = [];
   const body = text
     .split("\n")
@@ -147,6 +153,7 @@ function renderShell(a, raw) {
   );
 }
 
+/* Titles are lesson HTML (entities already written as &quot; etc.), so they are inserted as-is. */
 const CALLOUTS = { note: ["callout-note", "NOTE"], tip: ["callout-tip", "TIP"], warn: ["callout-warning", "WATCH OUT"] };
 
 /** Lesson source → the HTML that goes inside <main>. */
@@ -172,13 +179,13 @@ export function renderBody(lesson, highlight) {
   for (const [tag, [cls, label]] of Object.entries(CALLOUTS)) {
     html = html.replace(
       new RegExp(`<${tag}(?:\\s+title="([^"]*)")?>([\\s\\S]*?)</${tag}>`, "g"),
-      (m, title, inner) => `<div class="callout ${cls}"><p class="lx-callout-label">${title ? escapeHtml(title) : label}</p>${inner.trim()}</div>`,
+      (m, title, inner) => `<div class="callout ${cls}"><p class="lx-callout-label">${title || label}</p>${inner.trim()}</div>`,
     );
   }
   html = html.replace(/<exercise\s+title="([^"]*)">([\s\S]*?)<\/exercise>/g, (m, title, inner) => {
     const [task, solution] = inner.split(/<solution>/);
     return (
-      `<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>${escapeHtml(title)}</h3>${task.trim()}` +
+      `<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>${title}</h3>${task.trim()}` +
       (solution ? `<details class="lx-solution"><summary>Show a solution</summary>${solution.replace(/<\/solution>/, "").trim()}</details>` : "") +
       `</div>`
     );
