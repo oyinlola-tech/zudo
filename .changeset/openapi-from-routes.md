@@ -1,0 +1,12 @@
+---
+"@zudojs/http": minor
+"@zudojs/openapi": minor
+---
+
+OpenAPI is now generated from the application instead of being added to the manager by hand. `@zudojs/http` routes take an `openapi` option (summary, tags, operationId, `params`/`query`/`headers`/`body` schemas, responses, security, `deprecated`, `false` to hide; merged from router groups), and `generateOpenAPIDocument(router, options)`, `createRouterOpenAPI(router, options)` and `mountOpenAPI(router, options)` (serves `/openapi.json`, optional YAML and a Swagger UI/ReDoc page at `/docs`) build the document from the routes the router actually registered: `:id`/`{id}` become templates, regex constraints become parameter patterns, optional segments expand, wildcards are documented or excluded, `all()`/`CONNECT` and automatic HEAD/OPTIONS never appear, and routes can be excluded by path, RegExp or predicate. `mountFetchHandler(router, basePath, handler)` serves a web-standard `(Request) => Response` handler from a router (headers, body, status, every Set-Cookie and a streamed body preserved; the request's signal aborts on client disconnect), with `toWebRequest` exported on its own.
+
+`@zudojs/openapi` adds the transport-neutral `createOpenAPIDocumentFromRoutes(routes, options)` / `createOpenAPIManagerFromRoutes` over the structural `OpenAPIRouteDescriptor`, `OpenAPIManager.setRoutes()` and `routeWarnings()`, and route metadata accepts `@zudojs/schema` or raw schemas for `params`, `query`, `headers`, `cookies`, `body` and response `schema`. Every path template slot is now documented even when undeclared, and `security: []` (a public operation) is no longer dropped.
+
+Fixes in `@zudojs/http`: `RequestContextInit.signal` was silently discarded, so the router's `ctx.signal` could never fire (the Node adapter now aborts it when the client disconnects); a `Response` returned by a route handler had every `Set-Cookie` folded into one invalid header; a streamed response body kept being read after the client disconnected and the source was never cancelled.
+
+From the release security review: `mountFetchHandler`'s and `toWebRequest`'s `origin` option now pins the handler's origin for every request. Before, it was only a fallback, and the client's `Host` header always chose it. A group's `openapi` defaults no longer override a route's `metadata: { openapi: false }` or `{ hidden: true }`, which had published hidden routes. `toWebRequest` labels a parsed body it re-encodes as `application/json` unless the request already had a JSON content type.

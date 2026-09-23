@@ -1,0 +1,22 @@
+---
+"@zudojs/api": minor
+"@zudojs/rpc": minor
+"@zudojs/errors": minor
+---
+
+Ship working transports and bindings.
+
+`@zudojs/rpc` now includes transports. `createRPCMemoryTransport(server)` connects a client to a server in the same process, round-tripping frames through JSON by default. `createRPCHttpTransport({ url })` calls a remote server with the global `fetch`; timeouts and cancellation abort the request. `createRPCFetchHandler(server)` is a web-standard `(request: Request) => Promise<Response>` handler that any HTTP server can mount. It bounds request bodies, decodes them with `@zudojs/serialization`, answers every failure with an RPC error frame, and never sends stack traces or internal messages. The client now rebuilds typed errors from the wire (`RPCValidationError`, `RPCProcedureNotFoundError`, `RPCAuthenticationError`, `RPCForbiddenError`, …) and keeps the wire `code` and `details` on them. `mapRPCError` exposes the server's error-to-wire mapping.
+
+`@zudojs/api` now serves one operation over four transports, all running through the same executor, interceptors and schema validation, with one client-safe error shape (`APIWireError`):
+
+- HTTP: `createApiFetchHandler(operations)`, a web-standard fetch handler. Routes come from `metadata.http` (`{ method, path: "/users/:id" }`) and default to `POST /<name>`.
+- RPC: `registerApiRpcProcedures(server, operations)`.
+- Queues: `bindApiQueue(queue, operations)`.
+- CLI: `runApiCli(operations, argv)`. It parses `--field value` and `--json`, prints the result, and returns a sysexits-style exit code.
+
+`describeApiRoutes` returns the structural `APIOperationRoute` contract. `toOpenAPIRouteDescriptors(operations, { basePath })` converts the operations into `@zudojs/openapi` route descriptors, so `createOpenAPIDocumentFromRoutes` documents them in one call, including the success and error envelopes. Both fetch handlers mount on `@zudojs/http` with `mountFetchHandler(router, "/api", handler)`. `TransportContextKey` tells interceptors which binding a call came through.
+
+Hardening from the release security review. The RPC server refuses (`RPC_INVALID_REQUEST`) a frame whose `payload` or `metadata` holds a `__proto__`, `constructor` or `prototype` key at any depth (opt out with `limits: { allowUnsafeKeys: true }`; `findUnsafeKey(value)` is exported), and every API binding refuses such keys in its input: 400 over HTTP, a validation error over RPC, queues and the CLI. `RPCContextOptions.signal` carries the caller's signal into dispatch, so a client that disconnects from `createRPCFetchHandler`, or a memory-transport caller that aborts, cancels the procedure (`context.signal` aborts, `RPC_CANCELLED`) instead of letting it run to its timeout. `createRPCHttpTransport` clamps its deadline to the timer range: a timeout past about 24.8 days, or `Infinity`, used to fail every call at once. The API RPC binding no longer sends the message of an `expose: false` error whose code has an RPC equivalent (such as `createAPIError(msg, { code: ErrorCode.API_UNAVAILABLE })`); it travels with the generic internal message, as over HTTP. `createApiFetchHandler` answers 415 to a body route called with a non-JSON content type even when the body is empty, so a cross-site HTML form cannot trigger an input-less operation.
+
+RPC client fixes found by running the package in plain scripts. The client deadline and the `retry()` backoff timers are no longer unref'd, so a script awaiting a call stays alive until it times out. Before, Node exited with code 13 ("unsettled top-level await") first. Both timers are still cleared the moment the call settles. `error.code` on every error an `RPCClient` rejects with is now the wire code. `RPC_TIMEOUT`, `RPC_CANCELLED` and `RPC_UNAVAILABLE` used to come back with the class codes (`ERR_RPC_TIMEOUT` …), and so did the client's own deadline and cancellation errors. `instanceof` is unchanged. `RPCError` (in `@zudojs/errors`) declares a readonly `details` and accepts it as an option. A `@zudojs/errors` error thrown with `expose: true` (`NotFoundError`, `ConflictError`, `ValidationError`, `AuthenticationError`, `AuthorizationError`, `RateLimitError` …) now reaches the caller under the matching code (new `RPC_NOT_FOUND` 404 and `RPC_CONFLICT` 409, plus `RPC_VALIDATION_ERROR`, `RPC_UNAUTHENTICATED`, `RPC_FORBIDDEN`, `RPC_RATE_LIMITED` …) with its own message, instead of as `RPC_INTERNAL_ERROR`. Non-exposed errors stay internal.
