@@ -4,14 +4,16 @@
  *
  * Lesson source = front matter + HTML with these extra tags:
  *   <example file="a.ts" project="p" browser="no" check="skip|tsc-error">code</example>
- *   <output [kind="tsc"]>what the example prints</output>   (right after an example)
+ *   <output [kind="tsc"] [mask="ms,iso"]>what it prints</output>  (right after an example;
+ *                                                            mask: parts that differ per run,
+ *                                                            see MASKS in check-node.mjs)
  *   <file name="package.json" project="p">contents</file>  (shown, not run)
  *   <shell title="…">$ command\noutput</shell>              (run on your computer)
  *   <note>, <tip>, <warn>                                    (callouts)
  *   <exercise title="…"> … <solution> … </solution></exercise>
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export function escapeHtml(s) {
@@ -51,6 +53,8 @@ export function readCourse(root) {
   let n = 0;
   for (const part of course.parts) {
     for (const slug of part.lessons) {
+      /* A lesson listed in course.json but not written yet is left out. */
+      if (!existsSync(join(dir, slug + ".html"))) continue;
       n++;
       const raw = readFileSync(join(dir, slug + ".html"), "utf8");
       const fm = raw.match(/^---\n([\s\S]*?)\n---\n/);
@@ -60,7 +64,9 @@ export function readCourse(root) {
         const i = line.indexOf(":");
         if (i > 0) meta[line.slice(0, i).trim()] = line.slice(i + 1).trim();
       }
-      lessons.push({ slug, number: n, part: part.title, partId: part.id, meta, body: raw.slice(fm[0].length) });
+      const tier = meta.tier || part.tier || "foundation";
+      if (course.tiers && !course.tiers[tier]) throw new Error(`${slug}.html: unknown tier "${tier}"`);
+      lessons.push({ slug, number: n, part: part.title, partId: part.id, tier, meta, body: raw.slice(fm[0].length) });
     }
   }
   return { course, lessons };
@@ -81,6 +87,7 @@ export function extractExamples(lesson) {
       code: dedent(m[3]),
       expected: m[4] ? dedent(m[6]) : null,
       outputKind: m[4] ? attrs(m[5]).kind || "run" : null,
+      mask: m[4] ? attrs(m[5]).mask || null : null,
     });
   }
   return out;

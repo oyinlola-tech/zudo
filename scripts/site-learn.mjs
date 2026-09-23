@@ -6,7 +6,7 @@
  *   pnpm site:learn:check            build, then run every example in Node (npm packages,
  *                                    tsx, tsc) and in the browser terminal, and check the
  *                                    terminal's Node-style formatter against util.inspect
- *   node scripts/site-learn.mjs --node|--browser|--inspect [--only <slug>]
+ *   node scripts/site-learn.mjs --node|--browser|--inspect [--only <slug>[,<slug>…]]
  *
  * Lesson sources live in site-src/learn (see scripts/learn/source.mjs for the tags).
  * The generated pages are committed, because Vercel never runs this script.
@@ -28,7 +28,8 @@ import { headings, loadHighlighter, readCourse, renderBody } from "./learn/sourc
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = join(ROOT, "site", "learn");
 const args = process.argv.slice(2);
-const only = args.includes("--only") ? args[args.indexOf("--only") + 1] : null;
+/* --only slug[,slug…] limits the checks (the build always covers every lesson). */
+const only = args.includes("--only") ? args[args.indexOf("--only") + 1].split(",") : null;
 const wantAll = args.includes("--check");
 
 const SEO_BLOCK = /[ \t]*<!-- seo:start -->[\s\S]*?<!-- seo:end -->/;
@@ -111,6 +112,6 @@ function report(name, results) {
 const lessons = build();
 let failures = 0;
 if (wantAll || args.includes("--inspect")) failures += report("formatter vs util.inspect", checkInspect());
-if (wantAll || args.includes("--node")) failures += report("examples in Node", checkNode(lessons, { only }));
+if (wantAll || args.includes("--node")) failures += report("examples in Node", checkNode(lessons, { only, root: ROOT }));
 if (wantAll || args.includes("--browser")) failures += report("examples in the browser terminal", await checkBrowser(ROOT, lessons, { only }));
 process.exitCode = failures ? 1 : 0;

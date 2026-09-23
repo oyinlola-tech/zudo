@@ -9,7 +9,7 @@ import { spawn } from "node:child_process";
 import { join } from "node:path";
 
 import { launchBrowser } from "./cdp.mjs";
-import { normalize } from "./check-node.mjs";
+import { applyMasks, normalize } from "./check-node.mjs";
 import { extractExamples } from "./source.mjs";
 
 async function startServer(root) {
@@ -35,7 +35,7 @@ export async function checkBrowser(root, lessons, { log = console.log, only = nu
   const results = [];
   try {
     for (const lesson of lessons) {
-      if (only && lesson.slug !== only) continue;
+      if (only && !only.includes(lesson.slug)) continue;
       browser.consoleErrors.length = 0;
       await browser.goto(`${server.url}/learn/${lesson.slug}`);
       await browser.evaluate(
@@ -47,8 +47,8 @@ export async function checkBrowser(root, lessons, { log = console.log, only = nu
         if (ex.tag === "file" || !ex.browser || ex.expected === null || ex.outputKind === "tsc" || ex.check === "skip") continue;
         const label = `${lesson.slug} #${i} ${ex.file}`;
         const lines = await browser.evaluate(`ZudoLearn.run(${i})`);
-        const got = normalize(lines.filter((l) => l.kind !== "stack").map((l) => l.text).join("\n"));
-        const want = normalize(ex.expected);
+        const got = applyMasks(normalize(lines.filter((l) => l.kind !== "stack").map((l) => l.text).join("\n")), ex.mask);
+        const want = applyMasks(normalize(ex.expected), ex.mask);
         results.push({ label, ok: got === want, detail: got === want ? "" : `  want:\n${want}\n  got:\n${got}` });
       }
       if (browser.consoleErrors.length) {

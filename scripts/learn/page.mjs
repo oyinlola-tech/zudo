@@ -6,6 +6,12 @@
 
 import { escapeAttr, escapeHtml } from "./source.mjs";
 
+function tierBadge(course, tier, extra = "") {
+  const t = course.tiers && course.tiers[tier];
+  if (!t) return "";
+  return `<span class="lx-tier lx-tier-${tier}${extra}" title="${escapeAttr(t.label + ": " + t.summary)}">${escapeHtml(t.label)}</span>`;
+}
+
 function head({ title, description, path, keywords }) {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -43,6 +49,7 @@ function sidebar(course, lessons, activeSlug) {
   let html = `    <aside class="doc-sidebar lx-sidebar" id="docSidebar" aria-label="Learn">\n`;
   html += `      <a href="/learn" class="sidebar-item${activeSlug === null ? " sidebar-item-active" : ""}">Course overview</a>\n`;
   for (const part of course.parts) {
+    if (!lessons.some((l) => l.partId === part.id)) continue;
     html += `      <div class="sidebar-section mt-4">${escapeHtml(part.title)}</div>\n`;
     for (const l of lessons.filter((x) => x.partId === part.id)) {
       const active = l.slug === activeSlug ? " sidebar-item-active" : "";
@@ -92,7 +99,7 @@ ${sidebar(course, lessons, lesson.slug)}
 
       <header class="lx-hero">
         <div class="lx-hero-tag">LESSON ${lesson.number} OF ${lessons.length}</div>
-        <p class="lx-hero-part">${escapeHtml(lesson.part)}</p>
+        <p class="lx-hero-part">${escapeHtml(lesson.part)} ${tierBadge(course, lesson.tier)}</p>
         <h1>${escapeHtml(m.title)}</h1>
         <p class="lx-hero-lead">${escapeHtml(m.description)}</p>
         <ul class="lx-hero-meta">
@@ -146,18 +153,29 @@ ${sidebar(course, lessons, null)}
 ${m.bodyHtml}
       </div>
 
+      <section class="lx-tiers" aria-labelledby="tiers">
+        <h2 id="tiers">Not every lesson is for everyone</h2>
+        <p>Every part and lesson carries one of four labels. A complete beginner follows the whole path in order. If you already know JavaScript, skip to <a href="/learn/node-runtime">Node.js and npm</a>; if you already build backends in TypeScript, go straight to <a href="/learn/zudo-welcome">Meet ZudoJS</a>.</p>
+        <ul class="lx-tier-list">
+${Object.keys(course.tiers || {})
+  .map((k) => `          <li>${tierBadge(course, k)}<span>${escapeHtml(course.tiers[k].summary)}</span></li>`)
+  .join("\n")}
+        </ul>
+      </section>
+
       <section class="lx-map" aria-label="Course map">
 ${course.parts
+  .filter((part) => lessons.some((l) => l.partId === part.id))
   .map(
     (part, pi) => `        <div class="lx-map-part">
-          <p class="lx-map-kicker">PART ${pi + 1}</p>
+          <p class="lx-map-kicker">PART ${pi + 1} ${tierBadge(course, part.tier || "foundation")}</p>
           <h2 id="${part.id}">${escapeHtml(part.title)}</h2>
           <p class="lx-map-lead">${escapeHtml(part.summary)}</p>
           <ol class="lx-map-list">
 ${lessons
   .filter((l) => l.partId === part.id)
   .map(
-    (l) => `            <li><a href="/learn/${l.slug}" data-lesson="${l.slug}"><span class="lx-map-num">${l.number}</span><span class="lx-map-text"><strong>${escapeHtml(l.meta.title)}</strong><span>${escapeHtml(l.meta.description)}</span></span><span class="lx-map-min">${escapeHtml(l.meta.minutes || "15")} min</span></a></li>`,
+    (l) => `            <li><a href="/learn/${l.slug}" data-lesson="${l.slug}"><span class="lx-map-num">${l.number}</span><span class="lx-map-text"><strong>${escapeHtml(l.meta.title)}</strong><span>${escapeHtml(l.meta.description)}</span></span><span class="lx-map-min">${l.tier !== (part.tier || "foundation") ? tierBadge(course, l.tier, " lx-tier-sm") : ""}${escapeHtml(l.meta.minutes || "15")} min</span></a></li>`,
   )
   .join("\n")}
           </ol>
@@ -169,7 +187,8 @@ ${lessons
 
     <aside class="doc-toc" aria-label="On this page">
       <div class="p-4 text-xs font-bold uppercase text-black/60 tracking-wider">On this page</div>
-${course.parts.map((p) => `      <a href="#${p.id}" class="toc-link">${escapeHtml(p.title)}</a>`).join("\n")}
+      <a href="#tiers" class="toc-link">Where to start</a>
+${course.parts.filter((p) => lessons.some((l) => l.partId === p.id)).map((p) => `      <a href="#${p.id}" class="toc-link">${escapeHtml(p.title)}</a>`).join("\n")}
     </aside>
   </div>
 `;
