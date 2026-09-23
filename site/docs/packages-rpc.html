@@ -296,42 +296,162 @@ console.<span class="fn">log</span>(registry.<span class="fn">describe</span>())
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TRANSPORTS</h2>
 
         <p class="mb-4 leading-relaxed">
-          A <strong>transport</strong> is an object with one required method: <code class="bg-black/5 px-1">send(request, options?)</code>. It takes an <code class="bg-black/5 px-1">RPCRequest</code>, gets it to the server however it likes, and resolves with the <code class="bg-black/5 px-1">RPCResponse</code> that comes back. An optional <code class="bg-black/5 px-1">close()</code> releases the connection.
+          A <strong>transport</strong> is an object with one required method: <code class="bg-black/5 px-1">send(request, options?)</code>. It takes an <code class="bg-black/5 px-1">RPCRequest</code>, gets it to the server however it likes, and resolves with the <code class="bg-black/5 px-1">RPCResponse</code> that comes back. <code class="bg-black/5 px-1">options.signal</code> aborts the call and <code class="bg-black/5 px-1">options.timeout</code> is the deadline in milliseconds. An optional <code class="bg-black/5 px-1">close()</code> releases the connection.
         </p>
 
         <p class="mb-4 leading-relaxed">
-          The package ships no transport implementations, deliberately: writing one is a dozen lines, and it keeps the RPC layer free of any network dependency. This one posts each request as JSON.
+          You rarely write one. The package ships three pieces, and the client and server never know which one is in use:
         </p>
 
-        <div class="code-block"><span class="kw">import type</span> {
-  <span class="tp">RPCTransport</span>,
-  <span class="tp">RPCRequest</span>,
-  <span class="tp">RPCResponse</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
+        <div class="border-4 border-black mb-6">
+          <table class="doc-table w-full text-sm">
+            <thead class="bg-black text-white">
+              <tr>
+                <th class="p-3 text-left">Function</th>
+                <th class="p-3 text-left">Side</th>
+                <th class="p-3 text-left">Use it for</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createRPCMemoryTransport(server, options?)</td><td class="p-3">Client</td><td class="p-3">Tests, and modular monoliths where caller and server share a process.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createRPCHttpTransport({ url, … })</td><td class="p-3">Client</td><td class="p-3">Calling a server in another process over HTTP, with the global <code>fetch</code>.</td></tr>
+              <tr><td class="p-3 font-mono">createRPCFetchHandler(server, options?)</td><td class="p-3">Server</td><td class="p-3">Answering those HTTP calls. It is a web-standard <code>(request: Request) =&gt; Promise&lt;Response&gt;</code>.</td></tr>
+            </tbody>
+          </table>
+        </div>
 
-<span class="kw">function</span> <span class="fn">createHttpTransport</span>(url: <span class="tp">string</span>): <span class="tp">RPCTransport</span> {
-  <span class="kw">return</span> {
-    <span class="kw">async</span> <span class="fn">send</span>(request: <span class="tp">RPCRequest</span>, options): <span class="tp">Promise</span>&lt;<span class="tp">RPCResponse</span>&gt; {
-      <span class="kw">const</span> httpResponse = <span class="kw">await</span> <span class="fn">fetch</span>(url, {
-        method: <span class="str">"POST"</span>,
-        headers: { <span class="str">"content-type"</span>: <span class="str">"application/json"</span> },
-        body: <span class="tp">JSON</span>.<span class="fn">stringify</span>(request),
-        <span class="cm">// Honouring the signal is what frees the socket when</span>
-        <span class="cm">// the caller cancels or the call times out.</span>
-        signal: options?.signal,
-      });
+        <h3 class="text-lg font-bold mb-3 mt-6" id="transport-memory">In memory</h3>
 
-      <span class="kw">return</span> (<span class="kw">await</span> httpResponse.<span class="fn">json</span>()) <span class="kw">as</span> <span class="tp">RPCResponse</span>;
-    },
-  };
-}</div>
-
-        <p class="mt-4 leading-relaxed">
-          <strong>What you should see:</strong> nothing yet — this only builds the pipe. Pass it to <code class="bg-black/5 px-1">new RPCClient(createHttpTransport("https://example.com/rpc"))</code> and every call goes over HTTP.
+        <p class="mb-4 leading-relaxed">
+          The memory transport calls <code class="bg-black/5 px-1">server.handle()</code> directly. It still behaves like a network in one important way: by default every request and response is <strong>round-tripped through JSON</strong>. The server never shares objects with the caller, and a value that could not cross a real network (a <code class="bg-black/5 px-1">BigInt</code> result, a circular object) fails here too, so your tests catch it before production does.
         </p>
+
+        <div class="code-block"><span class="kw">import</span> { <span class="tp">RPCClient</span>, <span class="fn">createRPCMemoryTransport</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
+
+<span class="kw">const</span> client = <span class="kw">new</span> <span class="fn">RPCClient</span>(
+  <span class="fn">createRPCMemoryTransport</span>(server, {
+    <span class="cm">// Handed to the server as the trusted context.auth.</span>
+    auth: { userId: <span class="str">"u1"</span> },
+  }),
+  { timeout: <span class="num">5_000</span> },
+);
+
+<span class="kw">const</span> user = <span class="kw">await</span> client.<span class="fn">call</span>(<span class="str">"users.getUser"</span>, { id: <span class="str">"123"</span> });</div>
+
+        <ul class="space-y-2 mt-4 mb-4 text-sm">
+          <li class="flex gap-2"><span class="font-bold">&rarr;</span> <code class="bg-black/5 px-1">auth</code> — the identity the server sees as <code class="bg-black/5 px-1">context.auth</code>: a fixed value, or a function of the request. In memory, your own code is the one vouching for it.</li>
+          <li class="flex gap-2"><span class="font-bold">&rarr;</span> <code class="bg-black/5 px-1">serializer</code> — how frames are copied. Pass another serializer to match a remote transport, or <code class="bg-black/5 px-1">false</code> to hand frames over by reference.</li>
+          <li class="flex gap-2"><span class="font-bold">&rarr;</span> After <code class="bg-black/5 px-1">client.close()</code> every send fails with <code class="bg-black/5 px-1">RPCUnavailableError</code>.</li>
+        </ul>
+
+        <h3 class="text-lg font-bold mb-3 mt-6" id="transport-custom">Writing your own</h3>
+
+        <p class="mb-4 leading-relaxed">
+          For any other carrier, implement <code class="bg-black/5 px-1">send</code> yourself. This one hands each frame to a message broker (the <code class="bg-black/5 px-1">broker</code> object stands in for your client library). On the far side, pass the frame to <code class="bg-black/5 px-1">server.handle(frame)</code> and send its response back.
+        </p>
+
+        <div class="code-block"><span class="kw">import type</span> { <span class="tp">RPCTransport</span>, <span class="tp">RPCResponse</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
+
+<span class="kw">const</span> transport: <span class="tp">RPCTransport</span> = {
+  <span class="kw">async</span> <span class="fn">send</span>(request, options): <span class="tp">Promise</span>&lt;<span class="tp">RPCResponse</span>&gt; {
+    <span class="cm">// Honouring the signal is what frees the connection when</span>
+    <span class="cm">// the caller cancels or the call times out.</span>
+    <span class="kw">return</span> broker.<span class="fn">request</span>(<span class="str">"rpc"</span>, request, { signal: options?.signal });
+  },
+};</div>
 
         <div class="callout callout-note mt-4">
-          <strong class="text-zudo-blue">In plain words:</strong> the client still protects itself if your transport ignores <code>options.signal</code> — it races the signal on its own. But the connection stays open until the transport lets it go.
+          <strong class="text-zudo-blue">In plain words:</strong> the client still protects itself if your transport ignores <code>options.signal</code> — it races the signal on its own. But the connection stays open until the transport lets it go. <code>mapRPCError(error)</code> is the mapping the server uses to turn a thrown error into a wire payload, if your transport needs to answer one itself.
+        </div>
+      </section>
+
+      <!-- Over HTTP -->
+      <section id="http-transport" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OVER HTTP</h2>
+
+        <p class="mb-4 leading-relaxed">
+          Serving procedures over HTTP takes two pieces. On the server, <code class="bg-black/5 px-1">createRPCFetchHandler(server)</code> turns your <code class="bg-black/5 px-1">RPCServer</code> into a <strong>fetch handler</strong>: a function that takes a web-standard <code class="bg-black/5 px-1">Request</code> and returns a <code class="bg-black/5 px-1">Response</code>. On the caller, <code class="bg-black/5 px-1">createRPCHttpTransport({ url })</code> POSTs each call to it as JSON.
+        </p>
+
+        <p class="mb-4 leading-relaxed">
+          Because the handler speaks the Fetch API, anything that serves <code class="bg-black/5 px-1">Request</code> → <code class="bg-black/5 px-1">Response</code> can host it: <a href="/docs/packages-http" class="underline">@zudojs/http</a>, <code class="bg-black/5 px-1">Bun.serve</code>, <code class="bg-black/5 px-1">Deno.serve</code>, or an edge runtime. On <code class="bg-black/5 px-1">@zudojs/http</code>, mount it with <code class="bg-black/5 px-1">mountFetchHandler</code> and no glue code:
+        </p>
+
+        <div class="code-block"><span class="cm">// server.ts</span>
+<span class="kw">import</span> { <span class="tp">RPCServer</span>, <span class="fn">createRPCProcedure</span>, <span class="fn">createRPCFetchHandler</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
+<span class="kw">import</span> { <span class="fn">createRouter</span>, <span class="fn">mountFetchHandler</span> } <span class="kw">from</span> <span class="str">"@zudojs/http"</span>;
+
+<span class="kw">const</span> server = <span class="kw">new</span> <span class="fn">RPCServer</span>();
+server.<span class="fn">register</span>(
+  <span class="fn">createRPCProcedure</span>(<span class="str">"math.sum"</span>, <span class="kw">async</span> (input: { a: <span class="tp">number</span>; b: <span class="tp">number</span> }) =&gt; input.a + input.b),
+);
+
+<span class="kw">const</span> handle = <span class="fn">createRPCFetchHandler</span>(server, {
+  <span class="cm">// Verify the caller here; the result becomes context.auth.</span>
+  auth: <span class="kw">async</span> (request) =&gt; <span class="fn">verifyBearer</span>(request.headers.<span class="fn">get</span>(<span class="str">"authorization"</span>)),
+  <span class="fn">onInternalError</span>: (error, requestId) =&gt; console.<span class="fn">error</span>(requestId, error),
+});
+
+<span class="kw">const</span> router = <span class="fn">createRouter</span>();
+<span class="fn">mountFetchHandler</span>(router, <span class="str">"/rpc"</span>, handle);
+<span class="cm">// Or elsewhere: Bun.serve({ port: 3000, fetch: handle });</span></div>
+
+        <div class="code-block mt-4"><span class="cm">// client.ts</span>
+<span class="kw">import</span> { <span class="tp">RPCClient</span>, <span class="fn">createRPCHttpTransport</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
+
+<span class="kw">const</span> client = <span class="kw">new</span> <span class="fn">RPCClient</span>(
+  <span class="fn">createRPCHttpTransport</span>({
+    url: <span class="str">"http://127.0.0.1:3000/rpc"</span>,
+    <span class="cm">// A function runs per call, so a refreshed token is always used.</span>
+    headers: () =&gt; ({ authorization: <span class="str">`Bearer ${</span><span class="fn">currentToken</span>()<span class="str">}`</span> }),
+  }),
+  { timeout: <span class="num">5_000</span> },
+);
+
+<span class="kw">const</span> total = <span class="kw">await</span> client.<span class="fn">call</span>&lt;{ a: <span class="tp">number</span>; b: <span class="tp">number</span> }, <span class="tp">number</span>&gt;(<span class="str">"math.sum"</span>, { a: <span class="num">1</span>, b: <span class="num">2</span> });
+console.<span class="fn">log</span>(total);
+<span class="cm">// 3</span></div>
+
+        <p class="mt-4 mb-4 leading-relaxed">
+          <strong>What you should see:</strong> <code class="bg-black/5 px-1">3</code>. <code class="bg-black/5 px-1">verifyBearer</code> and <code class="bg-black/5 px-1">currentToken</code> are yours to write. The handler answers every path it is mounted on, so the prefix <code class="bg-black/5 px-1">mountFetchHandler</code> strips does not matter.
+        </p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">What the handler does for you</h3>
+        <ul class="space-y-2 mb-4 text-sm">
+          <li class="flex gap-2"><span class="font-bold">&rarr;</span> It accepts only <code class="bg-black/5 px-1">POST</code> with a JSON content type, and reads at most <code class="bg-black/5 px-1">maxBodyBytes</code> (default <code class="bg-black/5 px-1">DEFAULT_RPC_HTTP_MAX_BODY_BYTES</code>, 1 MiB plus 64 KiB for the envelope) without buffering more.</li>
+          <li class="flex gap-2"><span class="font-bold">&rarr;</span> Every reply is an RPC frame, even for a bad HTTP request (wrong method, wrong content type, oversized or invalid body). A caller never gets an HTML error page.</li>
+          <li class="flex gap-2"><span class="font-bold">&rarr;</span> An <code class="bg-black/5 px-1">auth</code> hook that throws <code class="bg-black/5 px-1">RPCAuthenticationError</code> refuses the call. Anything else it throws is answered as an internal error.</li>
+          <li class="flex gap-2"><span class="font-bold">&rarr;</span> The HTTP status follows the wire code, as below. The status is advisory, for proxies and dashboards; <code class="bg-black/5 px-1">error.code</code> in the body is what counts.</li>
+        </ul>
+
+        <div class="border-4 border-black mb-6">
+          <table class="doc-table w-full text-sm">
+            <thead class="bg-black text-white">
+              <tr><th class="p-3 text-left">Wire code</th><th class="p-3 text-left">HTTP status</th></tr>
+            </thead>
+            <tbody>
+              <tr class="border-b-2 border-black/10"><td class="p-3">success</td><td class="p-3 font-mono">200</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_INVALID_REQUEST, RPC_DESERIALIZATION_ERROR</td><td class="p-3 font-mono">400</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_UNAUTHENTICATED</td><td class="p-3 font-mono">401</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_FORBIDDEN</td><td class="p-3 font-mono">403</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_PROCEDURE_NOT_FOUND</td><td class="p-3 font-mono">404</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_VALIDATION_ERROR</td><td class="p-3 font-mono">422</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_RATE_LIMITED</td><td class="p-3 font-mono">429</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_CANCELLED</td><td class="p-3 font-mono">499</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_UNAVAILABLE</td><td class="p-3 font-mono">503</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_TIMEOUT, RPC_DEADLINE_EXCEEDED</td><td class="p-3 font-mono">504</td></tr>
+              <tr><td class="p-3">RPC_INTERNAL_ERROR, RPC_SERIALIZATION_ERROR, any custom code</td><td class="p-3 font-mono">500</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">What the client transport does for you</h3>
+        <p class="mb-4 leading-relaxed">
+          It aborts the underlying <code class="bg-black/5 px-1">fetch</code> when the call's signal or deadline fires, so a timed-out call frees its connection. Its failures are typed: a network failure, or a reply that is not an RPC frame for this request (a proxy's HTML page, a truncated or oversized body), is an <code class="bg-black/5 px-1">RPCTransportError</code>; an expired deadline is an <code class="bg-black/5 px-1">RPCTimeoutError</code>; a caller abort is an <code class="bg-black/5 px-1">RPCCancelledError</code>. Other options: <code class="bg-black/5 px-1">fetch</code> (your own fetch function), <code class="bg-black/5 px-1">serializer</code> and <code class="bg-black/5 px-1">maxResponseBytes</code>.
+        </p>
+
+        <div class="callout callout-warning mt-4">
+          <strong class="text-zudo-yellow">Watch out:</strong> use the same serializer on both ends. The default is plain JSON. <code>createRPCJsonSerializer({ preserveTypes: true })</code> also carries <code>Date</code>, <code>BigInt</code>, <code>Map</code> and <code>Set</code>, but only if the server and the client both use it.
         </div>
       </section>
 
