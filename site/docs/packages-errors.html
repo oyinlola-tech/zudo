@@ -386,7 +386,8 @@ console.<span class="fn">log</span>(slowDown.<span class="fn">getRetryAfterSecon
             <tr><td><code>DatabaseError</code></td><td>500</td><td>no</td><td><code>databaseConnectionError</code>, <code>databaseQueryError</code>, <code>databaseTransactionError</code></td></tr>
             <tr><td><code>TimeoutError</code></td><td>varies</td><td>request timeouts only</td><td><code>requestTimeoutError</code>, <code>databaseTimeoutError</code>, <code>serviceTimeoutError</code>, <code>lockTimeoutError</code></td></tr>
             <tr><td><code>ExternalServiceError</code></td><td>502 (429 passes through)</td><td>no</td><td><code>service</code>, <code>responseStatus</code> options</td></tr>
-            <tr><td>Subsystem families</td><td>mostly 500/503</td><td>no</td><td><code>CacheError</code>, <code>StorageError</code>, <code>NetworkError</code>, <code>ContainerError</code>, <code>AdapterError</code>, <code>MiddlewareError</code>, <code>EventError</code>, <code>MessageError</code>, <code>QueueError</code>, <code>SchedulerError</code>, <code>PluginError</code>, <code>RPCError</code>, <code>APIError</code>, <code>SchemaError</code>, <code>SerializationError</code>, <code>LifecycleError</code>, <code>ModuleError</code>, <code>RuntimeError</code>, <code>SystemError</code>, <code>CryptoError</code>, <code>LoggingError</code></td></tr>
+            <tr><td>Subsystem families</td><td>mostly 500/503</td><td>no</td><td><code>CacheError</code>, <code>StorageError</code>, <code>NetworkError</code>, <code>ContainerError</code>, <code>AdapterError</code>, <code>MiddlewareError</code>, <code>EventError</code>, <code>MessageError</code>, <code>QueueError</code>, <code>SchedulerError</code>, <code>PluginError</code>, <code>RPCError</code>, <code>APIError</code>, <code>SerializationError</code>, <code>LifecycleError</code>, <code>ModuleError</code>, <code>RuntimeError</code>, <code>SystemError</code>, <code>CryptoError</code>, <code>LoggingError</code></td></tr>
+            <tr><td><code>SchemaError&lt;TIssue&gt;</code></td><td>400</td><td>yes</td><td><code>createSchemaError(message, { issues })</code>, <code>isSchemaError</code>. See <a href="#schema-and-rpc-errors" class="underline">below</a>.</td></tr>
             <tr><td><code>EventListenerLimitExceededError</code><br><code>ERR_EVENT_LISTENER_LIMIT_EXCEEDED</code></td><td>500</td><td>no — never</td><td><code>pattern</code>, <code>count</code>, <code>limit</code> fields, also copied into <code>metadata</code></td></tr>
           </tbody>
         </table>
@@ -398,6 +399,29 @@ console.<span class="fn">log</span>(slowDown.<span class="fn">getRetryAfterSecon
         <p class="mb-3 leading-relaxed">
           Before 1.2.0 the class did not exist here and nothing in the framework ever threw it, so a <code>catch</code> branch testing for it was unreachable. <code>@zudojs/events</code> now raises it, but only when a registry, emitter or bus is configured to enforce its handler limit; the default is still a one-shot warning that lets the registration through. The class is owned by <code>@zudojs/errors</code> and re-exported from <code>@zudojs/events</code>, so an import from either package resolves to the same constructor and <code>instanceof</code> matches across both.
         </p>
+
+        <h3 id="schema-and-rpc-errors" class="text-lg font-bold mb-3 mt-6">SchemaError and RPCError: typed extras</h3>
+        <p class="mb-3 leading-relaxed">
+          Two families carry structured data beyond the message. <code>SchemaError</code> holds the list of validation <code>issues</code>. It is <em>generic</em>: <code>SchemaError&lt;TIssue = unknown&gt;</code> takes the shape of one issue as a type parameter. This package sits below <code>@zudojs/schema</code> and cannot know that shape, so the default is <code>unknown</code>; <code>@zudojs/schema</code> throws <code>SchemaError&lt;SchemaIssue&gt;</code>. <code>SchemaErrorOptions&lt;TIssue&gt;</code> and <code>createSchemaError&lt;TIssue&gt;</code> take the same parameter, and code that never names it keeps working unchanged.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> { createSchemaError, RPCError } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+
+<span class="kw">interface</span> <span class="tp">FieldIssue</span> { <span class="kw">readonly</span> field: <span class="tp">string</span>; <span class="kw">readonly</span> message: <span class="tp">string</span> }
+
+<span class="kw">const</span> invalid = <span class="fn">createSchemaError</span>&lt;<span class="tp">FieldIssue</span>&gt;(<span class="str">"Validation failed"</span>, {
+  issues: [{ field: <span class="str">"email"</span>, message: <span class="str">"Invalid email format"</span> }],
+});
+console.<span class="fn">log</span>(invalid.issues[<span class="num">0</span>].field, invalid.statusCode); <span class="cmt">// "email" 400</span>
+
+<span class="cmt">// RPCError declares a readonly `details`, set through the option of the same name.</span>
+<span class="kw">const</span> limited = <span class="kw">new</span> <span class="tp">RPCError</span>(<span class="str">"Too many calls."</span>, { details: { retryAfter: <span class="num">30</span> } });
+console.<span class="fn">log</span>(limited.details); <span class="cmt">// { retryAfter: 30 }</span></div>
+        <p class="mb-3 leading-relaxed">
+          <code>RPCError</code> now declares a readonly <code>details</code> and accepts it as an option. <code>details</code> is the structured, caller-safe part of an RPC error's wire payload: validation issues, <code>{ retryAfter }</code> for a rate limit, or whatever a custom error sent. An <code>@zudojs/rpc</code> client sets it on the errors it rebuilds from a response, so you read <code>error.details</code> without a cast. <code>toJSON()</code> includes it when present.
+        </p>
+        <div class="callout callout-tip">
+          <strong>Tip:</strong> when you catch an error from <code>schema.parse()</code>, narrow it with <code>isSchemaValidationError</code> from <code>@zudojs/schema</code> rather than <code>instanceof SchemaError</code>: the guard types <code>error.issues</code> as <code>readonly SchemaIssue[]</code>, where <code>instanceof</code> leaves them <code>unknown</code>.
+        </div>
       </section>
 
       <!-- Custom errors -->
@@ -627,6 +651,8 @@ console.<span class="fn">log</span>(mapped.statusCode, mapped.code); <span class
             <tr><td><code>PublicErrorResponse</code></td><td>Return type of <code>serializePublicError</code>.</td><td><code>code</code>, <code>message</code>, <code>category</code>, <code>statusCode</code>, <code>metadata?</code>.</td></tr>
             <tr><td><code>PublicErrorHandlerResult</code></td><td>Return type of <code>handlePublic</code> / <code>toPublicResult</code>.</td><td><code>code</code>, <code>message</code>, <code>statusCode</code>, <code>requestId?</code>, <code>correlationId?</code>, <code>details?</code>.</td></tr>
             <tr><td><code>ErrorMetadata</code>, <code>ErrorMetadataValue</code></td><td>Shape of the metadata bag.</td><td>JSON-safe values only.</td></tr>
+            <tr><td><code>SchemaErrorOptions&lt;TIssue = unknown&gt;</code></td><td>Options for <code>SchemaError</code> / <code>createSchemaError</code>.</td><td>Base options plus <code>issues?: readonly TIssue[]</code>.</td></tr>
+            <tr><td><code>RPCErrorOptions</code></td><td>Options for <code>RPCError</code>.</td><td>Base options plus <code>procedureName?</code> and <code>details?: unknown</code>.</td></tr>
             <tr><td><code>ValidationIssue</code></td><td>One entry in <code>ValidationError.issues</code>.</td><td><code>message</code> plus optional <code>field</code>, <code>path</code>, <code>code</code>, <code>value</code>.</td></tr>
             <tr><td><code>SENSITIVE_METADATA_KEY_PATTERN</code></td><td>Default regex for secret-looking keys.</td><td>Override per call with <code>sensitiveKeyPattern</code>.</td></tr>
             <tr><td><code>REDACTED_METADATA_VALUE</code></td><td>The string <code>"[REDACTED]"</code>.</td><td></td></tr>
@@ -707,6 +733,7 @@ console.<span class="fn">log</span>(mapped.statusCode, mapped.code); <span class
       <a href="#base-error" class="toc-link">BaseError</a>
       <a href="#codes-categories-severity" class="toc-link">Codes, Categories, Severity</a>
       <a href="#ready-made-errors" class="toc-link">Ready-made Errors</a>
+      <a href="#schema-and-rpc-errors" class="toc-link toc-link-nested">SchemaError and RPCError</a>
       <a href="#custom-errors" class="toc-link">Writing Your Own Error</a>
       <a href="#metadata" class="toc-link">Metadata</a>
       <a href="#serializing" class="toc-link">Serializing</a>

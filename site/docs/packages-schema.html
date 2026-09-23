@@ -224,9 +224,8 @@ console.<span class="fn">log</span>(user);
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><code class="bg-black/5 px-1">parse(input)</code> returns the parsed value, or <strong>throws</strong> a <code class="bg-black/5 px-1">SchemaError</code>. Use it when a bad value means "stop here".</span></li>
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <span><code class="bg-black/5 px-1">safeParse(input)</code> never throws. It returns <code class="bg-black/5 px-1">{ success: true, data }</code> or <code class="bg-black/5 px-1">{ success: false, issues }</code>. Use it when you want to show the errors to someone.</span></li>
         </ul>
-        <p class="mb-3 text-sm">Both accept <code class="bg-black/5 px-1">unknown</code>, so you can pass the raw result of <code class="bg-black/5 px-1">JSON.parse</code> straight in. This catches the thrown error from <code class="bg-black/5 px-1">parse()</code>.</p>
-        <div class="code-block mb-4"><span class="kw">import</span> { schema } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
-<span class="kw">import</span> { SchemaError } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+        <p class="mb-3 text-sm">Both accept <code class="bg-black/5 px-1">unknown</code>, so you can pass the raw result of <code class="bg-black/5 px-1">JSON.parse</code> straight in. This catches the thrown error from <code class="bg-black/5 px-1">parse()</code> and reads its issues.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { schema, isSchemaValidationError } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
 
 <span class="kw">const</span> AgeSchema = schema.<span class="fn">number</span>().<span class="fn">int</span>().<span class="fn">min</span>(<span class="num">0</span>);
 <span class="kw">const</span> fromTheWire: <span class="tp">unknown</span> = JSON.<span class="fn">parse</span>(<span class="str">'"forty"'</span>);
@@ -234,13 +233,21 @@ console.<span class="fn">log</span>(user);
 <span class="kw">try</span> {
   AgeSchema.<span class="fn">parse</span>(fromTheWire);
 } <span class="kw">catch</span> (error) {
-  <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">SchemaError</span>) {
-    console.<span class="fn">log</span>(error.message, error.issues.length);
-    <span class="cmt">// Validation failed 1</span>
+  <span class="kw">if</span> (<span class="fn">isSchemaValidationError</span>(error)) {
+    <span class="cmt">// error.issues is readonly SchemaIssue[] here: no cast needed.</span>
+    <span class="kw">for</span> (<span class="kw">const</span> issue <span class="kw">of</span> error.issues) {
+      console.<span class="fn">log</span>(issue.code, issue.message);
+    }
+    <span class="cmt">// invalid_type Expected number, received string</span>
+  } <span class="kw">else</span> {
+    <span class="kw">throw</span> error; <span class="cmt">// not a validation failure: a real bug</span>
   }
 }</div>
+        <p class="mb-4 leading-relaxed">
+          <code class="bg-black/5 px-1">parse()</code> throws a <code class="bg-black/5 px-1">SchemaError&lt;SchemaIssue&gt;</code>. <code class="bg-black/5 px-1">isSchemaValidationError(error)</code> is a <em>type guard</em>: a function whose <code class="bg-black/5 px-1">true</code> answer tells TypeScript what the value is. After it, <code class="bg-black/5 px-1">error.issues</code> is typed <code class="bg-black/5 px-1">readonly SchemaIssue[]</code>, and the guard has also checked at runtime that every issue has a <code class="bg-black/5 px-1">code</code>, <code class="bg-black/5 px-1">path</code> and <code class="bg-black/5 px-1">message</code>. Anything else, such as a <code class="bg-black/5 px-1">TypeError</code> from your own code, fails the guard, so you can rethrow it.
+        </p>
         <div class="callout callout-tip">
-          <strong class="text-zudo-green">Tip:</strong> <code class="bg-black/5 px-1">SchemaError</code> lives in <code class="bg-black/5 px-1">@zudojs/errors</code>, not in this package. Import it from there.
+          <strong class="text-zudo-green">Tip:</strong> <code class="bg-black/5 px-1">SchemaError</code> itself lives in <code class="bg-black/5 px-1">@zudojs/errors</code>, which cannot know this package's issue type, so <code class="bg-black/5 px-1">error instanceof SchemaError</code> alone leaves <code class="bg-black/5 px-1">error.issues</code> as <code class="bg-black/5 px-1">unknown[]</code>. Use the guard instead of writing <code class="bg-black/5 px-1">error.issues as SchemaIssue[]</code>.
         </div>
       </section>
 
@@ -280,6 +287,7 @@ console.<span class="fn">log</span>(user);
         <div class="callout callout-note">
           <strong class="text-zudo-blue">In plain words:</strong> read <code class="bg-black/5 px-1">path</code> to find the field, <code class="bg-black/5 px-1">code</code> to decide how to handle it in code, and <code class="bg-black/5 px-1">message</code> to tell a person.
         </div>
+        <p class="mt-4 text-sm">Messages are written to be shown to people, so counts read naturally: <code class="bg-black/5 px-1">schema.string().min(1)</code> reports "String must be at least 1 character" and <code class="bg-black/5 px-1">schema.array(item).min(1)</code> reports "Array must have at least 1 item", while larger counts use the plural ("at least 2 characters"). Match on <code class="bg-black/5 px-1">code</code>, never on the message text.</p>
       </section>
 
       <!-- Building blocks -->
@@ -597,7 +605,8 @@ console.<span class="fn">log</span>(<span class="fn">greet</span>(UserSchema.<sp
           <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
             <tr><td><code class="bg-black/5 px-1">isSchemaSuccess(r)</code>, <code class="bg-black/5 px-1">isSchemaFailure(r)</code></td><td>Type guards for a <code class="bg-black/5 px-1">SchemaResult</code>.</td><td>Same as checking <code class="bg-black/5 px-1">r.success</code>.</td></tr>
-            <tr><td><code class="bg-black/5 px-1">unwrapSchemaResult(r)</code></td><td>Returns <code class="bg-black/5 px-1">r.data</code> or throws a plain <code class="bg-black/5 px-1">Error</code> listing the messages.</td><td>Not a <code class="bg-black/5 px-1">SchemaError</code>.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">unwrapSchemaResult(r)</code></td><td>Returns <code class="bg-black/5 px-1">r.data</code> or throws a <code class="bg-black/5 px-1">SchemaError&lt;SchemaIssue&gt;</code> carrying the issues.</td><td>Its message lists the issue messages; read <code class="bg-black/5 px-1">error.issues</code> for the details.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">isSchemaValidationError(error)</code></td><td>Type guard for a caught value: <code class="bg-black/5 px-1">true</code> when it is a <code class="bg-black/5 px-1">SchemaError</code> whose issues all have the <code class="bg-black/5 px-1">SchemaIssue</code> shape.</td><td>Narrows <code class="bg-black/5 px-1">error.issues</code> to <code class="bg-black/5 px-1">readonly SchemaIssue[]</code> without a cast. Works for errors from <code class="bg-black/5 px-1">parse()</code> and <code class="bg-black/5 px-1">unwrapSchemaResult()</code>.</td></tr>
             <tr><td><code class="bg-black/5 px-1">schemaSuccess(data)</code>, <code class="bg-black/5 px-1">schemaFailure(issues)</code></td><td>Build a result by hand.</td><td>Useful in tests.</td></tr>
           </tbody>
         </table>
@@ -619,7 +628,7 @@ console.<span class="fn">log</span>(<span class="fn">greet</span>(UserSchema.<sp
         <table class="doc-table mb-4">
           <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr><td><code class="bg-black/5 px-1">SchemaError</code></td><td>Thrown by <code class="bg-black/5 px-1">parse()</code>; has <code class="bg-black/5 px-1">.issues</code> and <code class="bg-black/5 px-1">.hasIssues()</code>.</td><td>Import from <code class="bg-black/5 px-1">@zudojs/errors</code>. Status code 400.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">SchemaError</code></td><td>Thrown by <code class="bg-black/5 px-1">parse()</code> and <code class="bg-black/5 px-1">unwrapSchemaResult()</code> as <code class="bg-black/5 px-1">SchemaError&lt;SchemaIssue&gt;</code>; has <code class="bg-black/5 px-1">.issues</code> and <code class="bg-black/5 px-1">.hasIssues()</code>.</td><td>Import from <code class="bg-black/5 px-1">@zudojs/errors</code>. Status code 400. Narrow a caught value with <code class="bg-black/5 px-1">isSchemaValidationError</code>.</td></tr>
             <tr><td><code class="bg-black/5 px-1">SchemaIssueCode</code></td><td>Object of every issue code string.</td><td>Import from <code class="bg-black/5 px-1">@zudojs/constants</code>.</td></tr>
           </tbody>
         </table>
@@ -636,6 +645,7 @@ console.<span class="fn">log</span>(<span class="fn">greet</span>(UserSchema.<sp
           <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <span><strong>Using <code class="bg-black/5 px-1">schema.number()</code> for query-string values.</strong> <code class="bg-black/5 px-1">"3"</code> is a string, so it fails with <code class="bg-black/5 px-1">invalid_type</code>. Use <code class="bg-black/5 px-1">schema.coerce.number()</code>.</span></li>
           <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <span><strong>Expecting extra keys to survive.</strong> Objects strip unknown keys by default, so <code class="bg-black/5 px-1">parse()</code> returns a smaller object than you passed in. Call <code class="bg-black/5 px-1">.passthrough()</code> to keep them or <code class="bg-black/5 px-1">.strict()</code> to reject them.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Importing <code class="bg-black/5 px-1">SchemaError</code> from <code class="bg-black/5 px-1">@zudojs/schema</code>.</strong> It is not exported there; import it from <code class="bg-black/5 px-1">@zudojs/errors</code>.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <span><strong>Casting <code class="bg-black/5 px-1">error.issues as SchemaIssue[]</code>.</strong> A cast checks nothing and hides the case where the caught value is some other error. Use <code class="bg-black/5 px-1">if (isSchemaValidationError(error))</code>, which narrows the type and checks the issues at runtime.</span></li>
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <span><strong>Forgetting the type annotation on a lazy schema.</strong> TypeScript errors with "implicitly has type any". Declare it as <code class="bg-black/5 px-1">const Tree: Schema&lt;TreeNode&gt; = schema.lazy(...)</code>.</span></li>
         </ul>
       </section>

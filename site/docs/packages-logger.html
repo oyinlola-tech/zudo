@@ -355,11 +355,11 @@ yarn add @zudojs/logger</div>
             <tbody>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">fatal / error / warn / info / debug / trace</td>
-                <td class="p-3">Log at the corresponding severity level with optional metadata</td>
+                <td class="p-3">Log at the corresponding severity level with optional metadata. To log a caught <code>Error</code> with its stack, see <a href="#logging-errors" class="underline">Logging errors</a></td>
               </tr>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">log(level, message, options?)</td>
-                <td class="p-3">Dynamic level logging with extended options (error, source, context)</td>
+                <td class="p-3">Dynamic level logging with extended options (<code>error</code>, <code>metadata</code>, <code>source</code>, <code>context</code>). The typed way to log an <code>Error</code> together with metadata</td>
               </tr>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">child(options?)</td>
@@ -443,7 +443,7 @@ yarn add @zudojs/logger</div>
                 <td class="p-3 font-mono">transports</td>
                 <td class="p-3">LoggerTransportLike[]</td>
                 <td class="p-3">[]</td>
-                <td class="p-3">Destinations for formatted log entries</td>
+                <td class="p-3">Destinations for formatted log entries. When the list is empty, a console transport is used</td>
               </tr>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">enabled</td>
@@ -533,6 +533,42 @@ yarn add @zudojs/logger</div>
 logger.<span class="fn">info</span>(<span class="str">"Application started"</span>, { port: <span class="num">3000</span> });
 logger.<span class="fn">debug</span>(<span class="str">"Config loaded"</span>, { configPath: <span class="str">"./config.json"</span> });
 logger.<span class="fn">error</span>(<span class="str">"Connection failed"</span>, { host: <span class="str">"localhost"</span>, retryCount: <span class="num">3</span> });</div>
+        <p class="mt-3 text-sm text-black/70">
+          With no <code>transports</code> the logger writes to the console, one formatted line per call, using the default text formatter:
+        </p>
+        <div class="code-block mt-2">2026-09-23T10:15:02.114Z [INFO] [my-app] Application started port=3000
+2026-09-23T10:15:02.116Z [DEBUG] [my-app] Config loaded configPath=./config.json
+2026-09-23T10:15:02.117Z [ERROR] [my-app] Connection failed host=localhost retryCount=3</div>
+      </section>
+
+      <!-- Logging Errors -->
+      <section id="logging-errors" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">LOGGING ERRORS</h2>
+        <p class="mb-4">
+          When something throws, you usually want two things in the log: the error itself, with its <em>stack trace</em> (the list of function calls that led to it), and a few facts about what you were doing, such as an order id. The level methods take a message and a metadata object, so the typed way to send both is <code>logger.log(level, message, { error, metadata })</code>.
+        </p>
+        <div class="code-block"><span class="kw">import</span> { <span class="fn">createLogger</span>, <span class="tp">LoggerLevel</span> } <span class="kw">from</span> <span class="str">"@zudojs/logger"</span>;
+
+<span class="kw">const</span> logger = <span class="fn">createLogger</span>({ name: <span class="str">"payments"</span> });
+
+<span class="kw">try</span> {
+  <span class="kw">throw new</span> <span class="tp">Error</span>(<span class="str">"card declined"</span>);
+} <span class="kw">catch</span> (err) {
+  logger.<span class="fn">log</span>(<span class="tp">LoggerLevel</span>.ERROR, <span class="str">"payment failed"</span>, {
+    error: err <span class="kw">instanceof</span> <span class="tp">Error</span> ? err : <span class="kw">new</span> <span class="tp">Error</span>(<span class="tp">String</span>(err)),
+    metadata: { orderId: <span class="str">"o_42"</span> },
+  });
+}</div>
+        <p class="mt-3 mb-2 text-sm text-black/70">What you should see: the formatted line, then the stack on the lines below it.</p>
+        <div class="code-block">2026-09-23T10:15:02.114Z [ERROR] [payments] payment failed orderId=o_42
+Error: card declined
+    at file:///app/src/pay.ts:6:9</div>
+        <p class="mt-4 mb-4">
+          The level methods keep a single signature, <code>logger.error(message, metadata?)</code>, so every custom <code>Logger</code> implementation and every structural logger type (<code>{ warn(message, context?) }</code>) still matches. JavaScript, or loosely typed TypeScript, often passes the caught error straight in as the second argument: <code>logger.error("payment failed", err)</code>. That call now logs <code>err</code> as the entry's <code>error</code>, stack included. It used to be read as metadata, and because an <code>Error</code> has no enumerable fields it vanished from the log without a trace.
+        </p>
+        <div class="callout callout-tip">
+          <strong class="text-zudo-green">Tip:</strong> in TypeScript, prefer <code>log(LoggerLevel.ERROR, ..., { error, metadata })</code>. It type-checks, and it keeps the error and your metadata in one entry. Putting the error inside metadata (<code>{ err }</code>) also works, but then it is serialized as a metadata field (<code>{ name, message, stack }</code>) rather than recorded as the entry's <code>error</code>.
+        </div>
       </section>
 
       <!-- Child Loggers -->
@@ -1007,7 +1043,7 @@ logger.<span class="fn">info</span>(<span class="str">"Request handled"</span>, 
             <tbody>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">createConsoleLoggerTransport()</td>
-                <td class="p-3">Writes to console.error / console.warn / console.info / console.debug based on level</td>
+                <td class="p-3">Writes to console.error / console.warn / console.info / console.debug based on level. When the formatter produced a string it prints exactly that line; when the formatter returns an object it prints the serialized entry</td>
               </tr>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">createConditionalLoggerTransport(transport, predicate)</td>
@@ -1023,6 +1059,17 @@ logger.<span class="fn">info</span>(<span class="str">"Request handled"</span>, 
               </tr>
             </tbody>
           </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Console Output</h3>
+        <p class="mb-3 text-sm">With the default text formatter the console transport prints one line per entry: timestamp, level, logger name, message, then the metadata as <code>key=value</code> pairs. When the entry carries an error and the formatter includes stack traces, the stack follows on the next lines, with no trailing space left on the first line.</p>
+        <div class="code-block"><span class="kw">import</span> { <span class="fn">createLogger</span>, <span class="fn">createConsoleLoggerTransport</span> } <span class="kw">from</span> <span class="str">"@zudojs/logger"</span>;
+
+<span class="kw">const</span> logger = <span class="fn">createLogger</span>({ name: <span class="str">"svc"</span>, transports: [<span class="fn">createConsoleLoggerTransport</span>()] });
+logger.<span class="fn">warn</span>(<span class="str">"careful"</span>, { userId: <span class="str">"u1"</span> });
+<span class="cm">// 2026-09-23T10:15:02.114Z [WARN] [svc] careful userId=u1</span></div>
+        <div class="callout callout-note mt-4">
+          <strong class="text-zudo-blue">Changed in this release:</strong> the console transport used to print a record object around the formatted text, so the timestamp and level appeared twice on every line. It now prints the formatted line on its own.
         </div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Transport Helpers</h3>
@@ -1400,6 +1447,7 @@ process.<span class="fn">on</span>(<span class="str">"SIGTERM"</span>, <span cla
       <a href="#log-levels" class="toc-link">Log Levels</a>
       <a href="#logger-interface" class="toc-link">Logger Interface</a>
       <a href="#creating-loggers" class="toc-link">Creating Loggers</a>
+      <a href="#logging-errors" class="toc-link">Logging Errors</a>
       <a href="#child-loggers" class="toc-link">Child Loggers</a>
       <a href="#log-context" class="toc-link">Log Context</a>
       <a href="#log-entry" class="toc-link">Log Entry</a>
