@@ -1,12 +1,18 @@
 /**
  * zudojs-cli — Which files a resource-family schematic writes.
  *
- * `resource`, `route`, `controller`, `repository` and `dto` all write part
+ * `resource`, `route`, `controller`, `service`, `repository` and `dto` all write part
  * of the same DTO → repository → service → controller → routes chain. Each
  * writes its own layer ("primary") and any lower layer that does not exist
  * yet ("required"), so whatever it writes compiles on its own:
  * `generate controller users` also writes the users service, repository
  * and DTO when they are missing, and never touches them when they exist.
+ *
+ * `service` used to have a generator of its own that wrote
+ * `services/<name>/<name>.service.ts`, a second layout next to the
+ * `services/<name>.service.ts` every other schematic and the container
+ * wiring use; `generate controller` after `generate service` then wrote a
+ * second, unrelated service. It is part of the chain now.
  */
 
 import type { ResourceLayer } from "../../templates/resource/index.js";
@@ -16,6 +22,7 @@ export const RESOURCE_SCHEMATICS = [
   "resource",
   "route",
   "controller",
+  "service",
   "repository",
   "dto",
 ] as const;
@@ -53,6 +60,8 @@ export function planResource(schematic: ResourceSchematic): ResourcePlan {
       };
     case "controller":
       return { primary: ["controller"], required: ["dto", "repository", "service"], register: false };
+    case "service":
+      return { primary: ["service"], required: ["dto", "repository"], register: false };
     case "repository":
       return { primary: ["repository"], required: ["dto"], register: false };
     case "dto":

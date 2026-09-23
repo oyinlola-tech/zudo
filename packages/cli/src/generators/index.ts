@@ -9,7 +9,6 @@ export { FullstackComposer } from "./fullstack/index.js";
 export { IntegrationGenerator } from "./integration/index.js";
 export { InfrastructureGenerator } from "./infrastructure/index.js";
 export { generateModule } from "./module/module.generator.js";
-export { generateService } from "./service/service.generator.js";
 export { generateCommand } from "./command/command.generator.js";
 export { generateQuery } from "./query/query.generator.js";
 export {

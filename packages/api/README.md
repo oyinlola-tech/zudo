@@ -59,6 +59,7 @@ import {
   type APIExecutionContext,
   type APIExecutorOptions,
   type APIHandler,
+  type APIHandlerContext,
   type APIInterceptor,
   type APIOperation,
   type APIOperationMetadata,
@@ -308,6 +309,8 @@ Every operation has a deadline. `timeout` must be a positive, finite integer of 
 
 The handler always receives a `context.signal`, even when the caller supplied none. It aborts when the deadline elapses (its `reason` is the `APITimeoutError` the call fails with, 504) or when the caller's signal aborts (its `reason` is the `ErrorCode.OPERATION_CANCELLED` error the call fails with), so pass it into anything that supports it (`fetch`, a driver query, a loop check) and the work stops instead of running on and repeating side effects after the caller has given up. The signal is not aborted when the handler completes normally. Everything else on the handler's context (`requestId`, `state`, `get`/`set`, `metadata`) is the caller's context. Branch on `ErrorCode.OPERATION_CANCELLED` rather than on the (nginx-convention) 499 status.
 
+The type says so too: a handler's context is `APIHandlerContext` (`APIContext & { readonly signal: AbortSignal }`), so `context.signal` needs no `!` under strict TypeScript. Only the handler's view is narrowed; a context you build with `createAPIContext` and pass to `executor.execute(op, input, context)` may still omit the signal, and a handler annotated with the plain `APIContext` is still accepted.
+
 ```typescript
 const exportReport = defineOperation({
   name: "reports.export",
@@ -341,7 +344,7 @@ At most `MAX_INTERCEPTORS` interceptors per executor, and each `next()` may be a
 
 ## Context
 
-`APIContext` carries the request id, an optional `AbortSignal`, caller state, and typed key/value slots. Keys carry their own identity, so two keys created with the same name never collide:
+`APIContext` carries the request id, an optional `AbortSignal` (always present on the handler's `APIHandlerContext`), caller state, and typed key/value slots. Keys carry their own identity, so two keys created with the same name never collide:
 
 ```typescript
 const FeatureFlagsKey = createContextKey<readonly string[]>("featureFlags");

@@ -9,7 +9,6 @@
 import { join } from "node:path";
 
 import type { CLIContext } from "../cliType/cliType.type.js";
-import { generateService } from "../generators/service/service.generator.js";
 import { generateModule } from "../generators/module/module.generator.js";
 import type { ModuleRegistration } from "../generators/module/module.registration.js";
 import { generateCommand } from "../generators/command/command.generator.js";
@@ -94,10 +93,6 @@ function getArchitectureRoot(
       return "src";
 
     case "microservice":
-      if (schematic === "service") {
-        // A new service is a new app in the workspace.
-        return "apps/services";
-      }
       // `--service <name>` selects which app the schematic belongs to.
       // Without it the gateway app — the one app always generated — is used.
       // Modules go to that app's src/modules, next to the scaffolded ones,
@@ -114,13 +109,6 @@ function getArchitectureRoot(
     default:
       if (schematic === "module") {
         return "src/modules";
-      }
-      if (schematic === "service") {
-        // The monolith template scaffolds `src/services/app.service.ts` and a
-        // `src/services/index.ts` barrel. Generating into `src/<name>/`
-        // instead left two conventions in one project, and the generated
-        // service was never exported from the barrel the template owns.
-        return "src/services";
       }
       return "src";
   }
@@ -359,9 +347,6 @@ async function runSchematic(
       options.architecture === "microservice" ? undefined : options.service;
 
     switch (schematic) {
-      case "service":
-        return await generateService({ name, basePath, dryRun }, cwd);
-
       case "module":
         return await generateModule(
           { name, feature: true, basePath, dryRun, onRegistered: options.onModuleRegistered },

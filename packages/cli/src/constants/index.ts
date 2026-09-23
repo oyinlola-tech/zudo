@@ -171,7 +171,11 @@ export const SCHEMA_CHOICES: readonly CLIChoiceOption[] = Object.freeze([
     label: "Resource",
     hint: "DTO, repository, service, controller, CRUD routes and a test, registered",
   },
-  { value: "service", label: "Service (CQRS)" },
+  {
+    value: "service",
+    label: "Service",
+    hint: "src/services/<name>.service.ts, plus its DTO and repository when missing",
+  },
   { value: "module", label: "Module" },
   { value: "command", label: "Command" },
   { value: "query", label: "Query" },

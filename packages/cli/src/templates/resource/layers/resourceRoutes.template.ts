@@ -2,7 +2,7 @@
  * zudojs-cli — A resource's CRUD routes (with OpenAPI metadata) and test.
  */
 
-import type { ResourceNames } from "../resource.names.js";
+import { withArticle, type ResourceNames } from "../resource.names.js";
 
 /** `routes/<slug>.routes.ts`: `register<Pascal>Routes(router, controller)`. */
 export function renderResourceRoutes(n: ResourceNames): string {
@@ -33,7 +33,7 @@ export function register${n.pascal}Routes(
 
   router.get(\`\${BASE_PATH}/:id\`, controller.get, {
     openapi: {
-      summary: "Get a ${n.label}",
+      summary: "Get ${withArticle(n.label)}",
       tags: TAGS,
       params: ${n.entity}ParamsSchema,
       responses: { "200": { description: "The ${n.label}", schema: ${n.entity}Schema }, "400": invalid, "404": missing },
@@ -42,7 +42,7 @@ export function register${n.pascal}Routes(
 
   router.post(BASE_PATH, controller.create, {
     openapi: {
-      summary: "Create a ${n.label}",
+      summary: "Create ${withArticle(n.label)}",
       tags: TAGS,
       body: Create${n.entity}Schema,
       responses: { "201": { description: "Created", schema: ${n.entity}Schema }, "400": invalid },
@@ -51,7 +51,7 @@ export function register${n.pascal}Routes(
 
   router.patch(\`\${BASE_PATH}/:id\`, controller.update, {
     openapi: {
-      summary: "Update a ${n.label}",
+      summary: "Update ${withArticle(n.label)}",
       tags: TAGS,
       params: ${n.entity}ParamsSchema,
       body: Update${n.entity}Schema,
@@ -61,7 +61,7 @@ export function register${n.pascal}Routes(
 
   router.delete(\`\${BASE_PATH}/:id\`, controller.remove, {
     openapi: {
-      summary: "Delete a ${n.label}",
+      summary: "Delete ${withArticle(n.label)}",
       tags: TAGS,
       params: ${n.entity}ParamsSchema,
       responses: { "204": { description: "Deleted" }, "400": invalid, "404": missing },
@@ -96,7 +96,7 @@ const client = createHttpTestClient(router);
 afterAll(() => client.close());
 
 describe("${n.routePath}", () => {
-  it("creates, reads, updates and deletes a ${n.label}", async () => {
+  it("creates, reads, updates and deletes ${withArticle(n.label)}", async () => {
     const created = await client
       .post("${n.routePath}")
       .send({ name: "Ada" })

@@ -210,7 +210,11 @@ export class DefaultDispatcher implements Dispatcher {
     signal: AbortSignal | undefined,
     controller: AbortController,
   ): { signal: AbortSignal; release: () => void } {
-    if (signal?.aborted) throw new MessageDispatchAbortedError();
+    if (signal?.aborted) {
+      throw new MessageDispatchAbortedError(undefined, {
+        cause: signal.reason,
+      });
+    }
     if (!signal) {
       return { signal: controller.signal, release: () => {} };
     }
@@ -236,6 +240,7 @@ export class DefaultDispatcher implements Dispatcher {
         throw new MessageDispatchAbortedError(undefined, {
           messageType: message.type,
           messageId: message.id,
+          cause: context.signal.reason,
         });
       }
       const start = performance.now();

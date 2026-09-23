@@ -51,16 +51,22 @@ export class MessageTypeNotFoundError extends MessageError {
   }
 }
 
-/** Error thrown when message dispatch is aborted. */
+/**
+ * Error thrown when message dispatch is aborted.
+ *
+ * `options.cause` is the abort signal's `reason`, so the caller's reason
+ * for cancelling survives as `error.cause`.
+ */
 export class MessageDispatchAbortedError extends MessageError {
   constructor(
     message = "Message dispatch was aborted.",
-    options: { messageType?: string; messageId?: string } = {},
+    options: { messageType?: string; messageId?: string; cause?: unknown } = {},
   ) {
     super(message, {
       code: ErrorCode.MESSAGE_ABORTED,
       messageType: options.messageType,
       messageId: options.messageId,
+      cause: options.cause,
       statusCode: 499,
       expose: false,
     });

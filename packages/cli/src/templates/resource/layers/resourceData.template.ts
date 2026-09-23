@@ -2,13 +2,13 @@
  * zudojs-cli — A resource's DTO schemas and in-memory repository.
  */
 
-import type { ResourceNames } from "../resource.names.js";
+import { withArticle, type ResourceNames } from "../resource.names.js";
 
 /** `dtos/<slug>.dto.ts`: @zudojs/schema schemas and their inferred types. */
 export function renderResourceDto(n: ResourceNames): string {
   return `import { schema, type Infer } from "@zudojs/schema";
 
-/** A ${n.label} as the API returns it. */
+/** ${withArticle(n.label, true)} as the API returns it. */
 export const ${n.entity}Schema = schema.object({
   id: schema.string().uuid(),
   name: schema.string(),

@@ -84,3 +84,20 @@ export function resourceNames(raw: string): ResourceNames {
     routePath: `/api/v1/${slug}`,
   };
 }
+
+/** Words spelled with a vowel but said with a consonant sound ("a user"). */
+const CONSONANT_SOUND = /^(u[bcdfghjklmnpqrstvwxyz][aeiou]|uu|eu|ewe|one|once)/;
+/** Words spelled with a consonant but said with a vowel sound ("an hour"). */
+const VOWEL_SOUND = /^(hour|honest|honor|honour|heir)/;
+
+/**
+ * Prefixes `noun` with "a" or "an" by its (approximate) opening sound:
+ * `example` → "an example", `user` → "a user", `hour` → "an hour".
+ * Pass `capitalize` for the start of a sentence ("An example").
+ */
+export function withArticle(noun: string, capitalize = false): string {
+  const word = noun.toLowerCase();
+  const vowel = VOWEL_SOUND.test(word) || (/^[aeiou]/.test(word) && !CONSONANT_SOUND.test(word));
+  const article = vowel ? "an" : "a";
+  return `${capitalize ? article.charAt(0).toUpperCase() + article.slice(1) : article} ${noun}`;
+}

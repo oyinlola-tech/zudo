@@ -28,13 +28,15 @@ export interface AbortRejection {
  * The error a dispatch fails with once `signal` has aborted.
  *
  * A timeout aborts with its own {@link MessageTimeoutError}, which is kept;
- * any other abort is reported as {@link MessageDispatchAbortedError}.
+ * any other abort is reported as {@link MessageDispatchAbortedError}, whose
+ * `cause` is the signal's `reason`.
  */
 export function abortErrorFor(signal: AbortSignal, message: Message): Error {
   if (signal.reason instanceof MessageTimeoutError) return signal.reason;
   return new MessageDispatchAbortedError(undefined, {
     messageType: message.type,
     messageId: message.id,
+    cause: signal.reason,
   });
 }
 

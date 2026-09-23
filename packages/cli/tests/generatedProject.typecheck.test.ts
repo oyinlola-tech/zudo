@@ -28,6 +28,8 @@ import { generateMicroserviceFiles } from "../src/templates/microservice/index.j
 import { writeFileTree } from "../src/utils/utils.fileSystem.js";
 import { generateResource } from "../src/generators/resource/index.js";
 import { generateModule } from "../src/generators/module/index.js";
+import { generateCommand } from "../src/generators/command/index.js";
+import { generateQuery } from "../src/generators/query/index.js";
 import { applyAppRecipe, FEATURE_RECIPES, type AppRecipe } from "../src/recipes/index.js";
 import type { ScaffoldOptions } from "../src/types/index.js";
 
@@ -305,6 +307,61 @@ describe("generated projects after generate and add", () => {
         dir,
       );
       await addOfflineRecipes(dir, appRoot);
+      expect(generatedDiagnostics(await typecheck(dir))).toBe("");
+    },
+    300_000,
+  );
+});
+
+/**
+ * `generate command|query` wrote `BaseCommand`/`BaseQuery` classes and
+ * handlers returning `{ success }` long after @zudojs/cqrs dropped those
+ * names: a fresh project failed with TS2724/TS2305/TS2720. The usage file
+ * registers both handlers and runs them through the real buses' types.
+ */
+describe("generated CQRS schematics", () => {
+  it(
+    "monolith: generate command widget + generate query widget type-check",
+    async () => {
+      const dir = await scaffold("cqrs", generateMonolithFiles(scaffoldOptions()));
+      await generateCommand({ name: "widget", basePath: "src" }, dir);
+      await generateQuery({ name: "widget", basePath: "src" }, dir);
+      await generateCommand({ name: "create-order", basePath: "src" }, dir);
+      await writeFile(
+        join(dir, "src", "cqrs.usage.ts"),
+        `import { createCommandBus, createQueryBus } from "@zudojs/cqrs";
+
+import { createWidgetCommand, registerWidgetCommand, type WidgetCommandResult } from "./commands/widget/index.js";
+import { createWidgetQuery, registerWidgetQuery, type WidgetQueryResult } from "./queries/widget/index.js";
+import { CREATE_ORDER_COMMAND, CreateOrderCommandHandler } from "./commands/create-order/index.js";
+
+export async function run(): Promise<readonly [WidgetCommandResult, WidgetQueryResult]> {
+  const commands = registerWidgetCommand(createCommandBus());
+  commands.register(CREATE_ORDER_COMMAND, new CreateOrderCommandHandler());
+  const queries = registerWidgetQuery(createQueryBus());
+  const created = await commands.execute<ReturnType<typeof createWidgetCommand>, WidgetCommandResult>(
+    createWidgetCommand({ data: { name: "w" } }),
+  );
+  const found = await queries.execute<ReturnType<typeof createWidgetQuery>, WidgetQueryResult>(
+    createWidgetQuery({ filter: { id: created.id } }),
+  );
+  return [created, found] as const;
+}
+`,
+        "utf-8",
+      );
+      expect(generatedDiagnostics(await typecheck(dir))).toBe("");
+    },
+    300_000,
+  );
+
+  it(
+    "monolith: generate service task then generate controller task type-checks",
+    async () => {
+      const dir = await scaffold("service-controller", generateMonolithFiles(scaffoldOptions()));
+      const layout = { base: "src", appSrc: "src", appRoot: "", prisma: false };
+      await generateResource({ name: "task", schematic: "service", layout }, dir);
+      await generateResource({ name: "task", schematic: "controller", layout }, dir);
       expect(generatedDiagnostics(await typecheck(dir))).toBe("");
     },
     300_000,

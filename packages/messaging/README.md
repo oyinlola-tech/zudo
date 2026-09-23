@@ -117,6 +117,28 @@ that ignores its signal. `handlerResults` still lists every handler that
 finished. Before 1.2.0 an abort during the last handler was reported as
 `success: true`.
 
+The error's `cause` is the signal's `reason`, so the reason you aborted with
+survives the dispatch:
+
+```typescript
+const controller = new AbortController();
+bus.on("report", () => {
+  controller.abort(new Error("user navigated away"));
+});
+
+const result = await bus.send(
+  { type: "report", payload: {} },
+  { signal: controller.signal },
+);
+result.error; // MessageDispatchAbortedError
+result.error?.cause; // Error: user navigated away
+```
+
+A signal that is already aborted when the dispatch starts rejects the call
+with the same error and the same `cause`. `controller.abort()` without an
+argument gives the platform's default `AbortError` `DOMException` as the
+cause. Before 1.2.2 `cause` was always `undefined`.
+
 Cancellation uses only `AbortSignal` and `setTimeout`, so it works in
 browsers and other non-Node runtimes. 1.2.0 scheduled the abort with Node's
 `setImmediate`, and aborting a dispatch in a browser threw

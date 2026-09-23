@@ -1,5 +1,7 @@
 import type { APIContext } from "../context/context.type.js";
 
+import type { APIHandlerContext } from "../handler/handler.type.js";
+
 import type { APIError } from "../errors/index.js";
 
 import { APITimeoutError, createAPIError, ErrorCode } from "../errors/index.js";
@@ -33,7 +35,7 @@ export function abortedError(operationName: string): APIError {
 export function withContextSignal(
   context: APIContext,
   signal: AbortSignal,
-): APIContext {
+): APIHandlerContext {
   const derived = Object.create(context, {
     signal: { value: signal, enumerable: true },
     requestId: { value: context.requestId, enumerable: true },
@@ -41,7 +43,7 @@ export function withContextSignal(
     get: { value: context.get.bind(context), enumerable: true },
     set: { value: context.set.bind(context), enumerable: true },
     metadata: { get: () => context.metadata, enumerable: true },
-  }) as APIContext;
+  }) as APIHandlerContext;
   return Object.freeze(derived);
 }
 

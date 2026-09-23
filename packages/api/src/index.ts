@@ -106,7 +106,10 @@ export {
 } from "./api/context/context.type.js";
 
 // Handler
-export type { APIHandler } from "./api/handler/handler.type.js";
+export type {
+  APIHandler,
+  APIHandlerContext,
+} from "./api/handler/handler.type.js";
 
 // Operation
 export type {
