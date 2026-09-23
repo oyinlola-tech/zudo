@@ -123,7 +123,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.1</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/runtime</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Application runtime orchestrator for the Zudojs framework. Manages the complete lifecycle from creation through shutdown with deterministic dependency ordering, rollback, signal handling, readiness tracking, and health checks.
@@ -245,9 +245,9 @@ stopped</div>
 
         <div class="code-block"><span class="kw">type</span> <span class="tp">RuntimeState</span> =
   | <span class="str">"created"</span>       <span class="cm">// built, nothing has run yet</span>
-  | <span class="str">"initializing"</span>  <span class="cm">// running module hooks to bring modules up</span>
-  | <span class="str">"initialized"</span>   <span class="cm">// in the type, but never entered (see below)</span>
-  | <span class="str">"starting"</span>      <span class="cm">// in the type, but never entered (see below)</span>
+  | <span class="str">"initializing"</span>  <span class="cm">// onInitialize hooks are running</span>
+  | <span class="str">"initialized"</span>   <span class="cm">// every module has initialized</span>
+  | <span class="str">"starting"</span>      <span class="cm">// onReady hooks are running</span>
   | <span class="str">"running"</span>       <span class="cm">// everything is up</span>
   | <span class="str">"stopping"</span>      <span class="cm">// modules are being torn down</span>
   | <span class="str">"stopped"</span>       <span class="cm">// everything is down</span>
@@ -261,8 +261,8 @@ stopped</div>
           </thead>
           <tbody>
             <tr><td><span class="code-inline">created</span></td><td>initializing, stopped, failed</td></tr>
-            <tr><td><span class="code-inline">initializing</span></td><td>initialized, running, failed</td></tr>
-            <tr><td><span class="code-inline">initialized</span></td><td>starting, running, failed</td></tr>
+            <tr><td><span class="code-inline">initializing</span></td><td>initialized, failed</td></tr>
+            <tr><td><span class="code-inline">initialized</span></td><td>starting, failed</td></tr>
             <tr><td><span class="code-inline">starting</span></td><td>running, failed</td></tr>
             <tr><td><span class="code-inline">running</span></td><td>stopping, failed</td></tr>
             <tr><td><span class="code-inline">stopping</span></td><td>stopped, failed</td></tr>
@@ -271,10 +271,8 @@ stopped</div>
           </tbody>
         </table>
 
-        <div class="border-4 border-black bg-zudo-red/10 p-4 mb-6">
-          <p class="font-bold mb-2">In 1.2.1 the runtime never enters <code class="bg-black/5 px-1">initialized</code> or <code class="bg-black/5 px-1">starting</code>.</p>
-          <p class="text-sm mb-2">A normal boot goes <code class="bg-black/5 px-1">created &rarr; initializing &rarr; running</code>. The state stays <code class="bg-black/5 px-1">initializing</code> while every <code class="bg-black/5 px-1">onInitialize</code> <em>and</em> every <code class="bg-black/5 px-1">onReady</code> hook runs, then jumps straight to <code class="bg-black/5 px-1">running</code>. The two middle states exist in the type and in the table above, but nothing moves into them, and the <code class="bg-black/5 px-1">runtime.initialized</code> / <code class="bg-black/5 px-1">runtime.starting</code> events are never published.</p>
-          <p class="text-sm">So do not wait for <code class="bg-black/5 px-1">state === "starting"</code> or use it to tell "initializing" apart from "readying" &mdash; a hook that reads <code class="bg-black/5 px-1">runtime.state</code> sees <code class="bg-black/5 px-1">"initializing"</code> in both.</p>
+        <div class="callout callout-note mb-6">
+          <strong class="text-zudo-blue">Changed in v1.3.0:</strong> <code>start()</code> passes through every state in order: <code>created &rarr; initializing &rarr; initialized &rarr; starting &rarr; running</code>. <code>onInitialize</code> hooks see <code>initializing</code> and <code>onReady</code> hooks see <code>starting</code>, and the runtime publishes <code>runtime.initialized</code> and <code>runtime.starting</code> between the two phases. <code>RUNTIME_STATE_TRANSITIONS</code> no longer allows <code>initializing &rarr; running</code> or <code>initialized &rarr; running</code>. In 1.2.1 the two middle states were declared but never entered, and <code>onReady</code> ran while the state still read <code>initializing</code>.
         </div>
 
         <div class="callout callout-note">
@@ -292,7 +290,7 @@ stopped</div>
 <span class="fn">console</span>.<span class="fn">log</span>(<span class="fn">canTransition</span>(<span class="str">"created"</span>, <span class="str">"initializing"</span>)); <span class="cm">// true</span>
 <span class="fn">console</span>.<span class="fn">log</span>(<span class="fn">canTransition</span>(<span class="str">"stopped"</span>, <span class="str">"running"</span>));   <span class="cm">// false</span>
 <span class="fn">console</span>.<span class="fn">log</span>(<span class="fn">isTerminalState</span>(<span class="str">"stopped"</span>));               <span class="cm">// true</span>
-<span class="fn">console</span>.<span class="fn">log</span>(<span class="fn">isTerminalState</span>(<span class="str">"failed"</span>));                <span class="cm">// true — yet stop() still works from "failed"</span>
+<span class="fn">console</span>.<span class="fn">log</span>(<span class="fn">isTerminalState</span>(<span class="str">"failed"</span>));                <span class="cm">// false — stop() still works from "failed"</span>
 <span class="fn">console</span>.<span class="fn">log</span>(<span class="fn">isRunning</span>(<span class="str">"running"</span>));                     <span class="cm">// true</span>
 <span class="fn">console</span>.<span class="fn">log</span>(<span class="fn">hasFailed</span>(<span class="str">"failed"</span>));                      <span class="cm">// true</span></div>
 
@@ -326,7 +324,7 @@ stopped</div>
           </thead>
           <tbody>
             <tr><td><span class="code-inline">onInitialize</span></td><td>Bringing the module up: open connections, read config.</td><td>Dependencies first</td></tr>
-            <tr><td><span class="code-inline">onReady</span></td><td>After every module has initialized: start accepting work. <code>runtime.state</code> is still <code>initializing</code> here.</td><td>Dependencies first</td></tr>
+            <tr><td><span class="code-inline">onReady</span></td><td>After every module has initialized: start accepting work. <code>runtime.state</code> is <code>starting</code> here (it was still <code>initializing</code> before v1.3.0).</td><td>Dependencies first</td></tr>
             <tr><td><span class="code-inline">onShutdown</span></td><td>Shutting down: stop accepting work, drain.</td><td>Reverse</td></tr>
             <tr><td><span class="code-inline">onDestroy</span></td><td>Last call: release everything the module still holds.</td><td>Reverse</td></tr>
           </tbody>
@@ -500,7 +498,7 @@ databaseConnected = <span class="kw">true</span>;
           </thead>
           <tbody>
             <tr><td><span class="code-inline">created</span>, <span class="code-inline">stopped</span></td><td>unknown</td></tr>
-            <tr><td><span class="code-inline">initializing</span> (and <span class="code-inline">initialized</span>, <span class="code-inline">starting</span>, which 1.2.1 never enters)</td><td>starting</td></tr>
+            <tr><td><span class="code-inline">initializing</span>, <span class="code-inline">initialized</span>, <span class="code-inline">starting</span></td><td>starting</td></tr>
             <tr><td><span class="code-inline">running</span></td><td>healthy or degraded, from the checks</td></tr>
             <tr><td><span class="code-inline">stopping</span></td><td>stopping</td></tr>
             <tr><td><span class="code-inline">failed</span></td><td>unhealthy</td></tr>
@@ -567,9 +565,9 @@ eventBus.<span class="fn">on</span>(<span class="str">"runtime.health.changed"</
 <span class="cm">// Pass this same eventBus in the runtime's dependencies.</span>
 <span class="cm">// A clean boot prints: health: unknown -&gt; starting, then starting -&gt; healthy</span></div>
 
-        <p class="mt-6 mb-3">Sixteen event types are emitted, in four families:</p>
+        <p class="mt-6 mb-3">Eighteen event types are emitted, in four families:</p>
         <ul class="space-y-2 mb-4">
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Runtime</strong> — <code>runtime.initializing</code>, <code>.running</code>, <code>.stopping</code>, <code>.stopped</code>, <code>.failed</code>. There is no <code>runtime.created</code>, <code>.initialized</code> or <code>.starting</code> event, and none is in the <code>RuntimeEventType</code> union.</li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Runtime</strong> — <code>runtime.initializing</code>, <code>.initialized</code>, <code>.starting</code>, <code>.running</code>, <code>.stopping</code>, <code>.stopped</code>, <code>.failed</code>. <code>.initialized</code> and <code>.starting</code> are published since v1.3.0. There is no <code>runtime.created</code> event.</li>
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Module</strong> — <code>runtime.module.initializing</code>, <code>.initialized</code>, <code>.starting</code>, <code>.started</code>, <code>.stopping</code>, <code>.stopped</code>, <code>.failed</code></li>
           <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Shutdown</strong> — <code>runtime.shutdown.drain</code>, <code>runtime.shutdown.complete</code></li>
           <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>Derived state</strong> — <code>runtime.health.changed</code>, <code>runtime.readiness.changed</code></li>

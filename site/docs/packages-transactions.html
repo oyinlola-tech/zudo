@@ -123,7 +123,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.1.1</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/transactions</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Run a group of database writes so that either all of them happen or none of them do, with nesting, savepoints, retries and hooks.
@@ -291,8 +291,8 @@ console.<span class="fn">log</span>(transaction.state); <span class="cm">// "com
           <p class="text-sm"><strong>Watch out:</strong> committing a transaction that was already rolled back throws <code>TransactionStateError</code>. Only a second commit of an already-committed transaction is a harmless no-op.</p>
         </div>
 
-        <div class="callout callout-warning">
-          <p class="text-sm"><strong>The other way round is silent:</strong> <code>manager.rollback(transaction, reason)</code> on a transaction that is already <code>committed</code> (or already rolled back or failed) does nothing and does not throw. The state stays <code>"committed"</code>, so a <code>catch</code> block that rolls back after a late failure has <em>not</em> undone anything. Check <code>transaction.state</code> if you need to know, and put follow-up work that can fail inside the transaction, before the commit.</p>
+        <div class="callout callout-note">
+          <p class="text-sm"><strong>The other way round throws too (since v1.2.0):</strong> <code>manager.rollback(transaction, reason)</code> on a transaction that is already <code>committed</code> throws <code>TransactionStateError</code>, matching <code>Transaction.rollback()</code>. Before v1.2.0 it silently did nothing, so a <code>catch</code> block that rolled back after a late failure looked as if it had undone the work. Rolling back an already rolled-back or failed transaction is still a harmless no-op, and <code>run()</code> no longer tries to roll back when an error (for example from an <code>afterCommit</code> hook) arrives after a successful commit.</p>
         </div>
       </section>
 
@@ -305,9 +305,32 @@ console.<span class="fn">log</span>(transaction.state); <span class="cm">// "com
         <p class="mb-4 leading-relaxed">
           A <em>handle</em> is whatever your <code>begin()</code> returns — a client, a connection, an id. The manager stores it and hands it straight back to you on commit and rollback, without looking inside.
         </p>
-        <div class="callout callout-warning">
-          <p class="text-sm"><strong>Watch out:</strong> the handle only flows between the manager and the adapter. The <code>Transaction</code> your callback receives, and <code>manager.getCurrent()</code>, have no public way to reach it, so application code cannot get "the connection of the current transaction" from this package. Keep that link yourself: have your adapter's <code>begin()</code> store the connection somewhere your repositories can read it (for example your own <code>AsyncLocalStorage</code>, or a <code>WeakMap</code> keyed by the transaction id), or use a database package that runs queries on the transaction client for you.</p>
-        </div>
+        <p class="mb-4 leading-relaxed">
+          Application code can reach the handle too, so a repository can run its queries on "the connection of the current transaction". Since v1.2.0 <code>getTransactionHandle&lt;T&gt;(transaction)</code> returns the handle of a transaction you hold, and <code>currentTransactionHandle&lt;T&gt;()</code> or <code>manager.getCurrentHandle&lt;T&gt;()</code> the handle of whatever transaction is in scope. A participant resolves to the handle of the transaction it joined, a savepoint to its connection's handle, and a non-transactional scope (or no transaction at all) to <code>undefined</code>. Use the handle for work inside the transaction; commit and roll back through the manager, or you bypass its state machine, hooks and events.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> {
+  <span class="fn">createTransactionManager</span>,
+  <span class="fn">createInMemoryAdapter</span>,
+  <span class="fn">currentTransactionHandle</span>,
+  <span class="fn">getTransactionHandle</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
+
+<span class="kw">const</span> manager = <span class="fn">createTransactionManager</span>({ adapter: <span class="fn">createInMemoryAdapter</span>() });
+
+<span class="cmt">// A repository deep in the call stack finds the transaction's connection itself.</span>
+<span class="kw">function</span> <span class="fn">connectionForQuery</span>(): <span class="tp">unknown</span> {
+  <span class="kw">return</span> currentTransactionHandle() ?? <span class="str">"the pool"</span>;
+}
+
+<span class="kw">await</span> manager.<span class="fn">run</span>(<span class="kw">async</span> (transaction) =&gt; {
+  console.<span class="fn">log</span>(<span class="fn">connectionForQuery</span>() === <span class="fn">getTransactionHandle</span>(transaction)); <span class="cmt">// true</span>
+  console.<span class="fn">log</span>(manager.<span class="fn">getCurrentHandle</span>() === <span class="fn">getTransactionHandle</span>(transaction)); <span class="cmt">// true</span>
+});
+
+console.<span class="fn">log</span>(<span class="fn">connectionForQuery</span>()); <span class="cmt">// "the pool"</span></div>
+        <p class="mb-4 leading-relaxed">
+          <code>currentTransactionHandle()</code> reads the shared default context. If you gave the manager its own <code>context</code>, pass that context, or call <code>manager.getCurrentHandle()</code>. <code>getTransactionHandle</code> throws <code>TypeError</code> for an object this package did not create.
+        </p>
         <p class="mb-4 leading-relaxed">
           An adapter also declares its <code>capabilities</code>: whether it can do savepoints, nested transactions, read-only transactions, timeouts, and which isolation levels it accepts. Asking for something the adapter did not declare throws <code>TransactionIsolationError</code> (unsupported isolation level) or <code>TransactionCapabilityError</code> (any other capability) before any work starts.
         </p>
@@ -467,12 +490,12 @@ console.<span class="fn">log</span>(log); <span class="cm">// [ 'BEGIN', 'COMMIT
           Sometimes you know a transaction must not be kept, but you are not the code that will finish it — you are three functions deep. Mark it <em>rollback-only</em> and carry on; whoever tries to commit it gets a rollback instead.
         </p>
         <p class="mb-4 leading-relaxed">
-          The flag is checked before the adapter is asked to commit, so a rollback can never be reported to you as a commit.
+          The flag is checked before the adapter is asked to commit, so a rollback can never be reported to you as a commit. The commit rejects with <code>TransactionRollbackOnlyError</code> (new in v1.2.0), a <code>TransactionRollbackError</code> subclass whose message reads <code>Transaction "txn_…" commit refused: transaction marked rollback-only</code>. The reason you gave is in <code>error.metadata.originalError</code>. Before v1.2.0 this was a plain <code>TransactionRollbackError</code> with the misleading message "rollback failed"; <code>instanceof TransactionRollbackError</code> and the error code still match.
         </p>
         <div class="code-block mb-4"><span class="kw">import</span> {
   <span class="fn">createTransactionManager</span>,
   <span class="fn">createInMemoryAdapter</span>,
-  <span class="tp">TransactionRollbackError</span>,
+  <span class="tp">TransactionRollbackOnlyError</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
 
 <span class="kw">const</span> manager = <span class="fn">createTransactionManager</span>({
@@ -485,31 +508,50 @@ transaction.<span class="fn">markRollbackOnly</span>(<span class="str">"stock ch
 <span class="kw">try</span> {
   <span class="kw">await</span> manager.<span class="fn">commit</span>(transaction);
 } <span class="kw">catch</span> (error) {
-  console.<span class="fn">log</span>(error <span class="kw">instanceof</span> <span class="tp">TransactionRollbackError</span>); <span class="cm">// true</span>
+  console.<span class="fn">log</span>(error <span class="kw">instanceof</span> <span class="tp">TransactionRollbackOnlyError</span>); <span class="cm">// true</span>
+  console.<span class="fn">log</span>((error <span class="kw">as</span> <span class="tp">Error</span>).message);
+  <span class="cm">// Transaction "txn_…" commit refused: transaction marked rollback-only</span>
 }
 
 console.<span class="fn">log</span>(transaction.state); <span class="cm">// "rolled_back"</span></div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Timeouts</h3>
         <p class="mb-4 leading-relaxed">
-          <code>timeout</code> is a number of milliseconds. When it passes, the transaction is marked rollback-only and <code>timedOut</code> becomes <code>true</code>, so the commit at the end of <code>run()</code> turns into a rollback.
+          <code>timeout</code> is a number of milliseconds. When it passes, the transaction is marked rollback-only, <code>timedOut</code> becomes <code>true</code>, and <code>transaction.signal</code> (an <code>AbortSignal</code>, new in v1.2.0) aborts with a <code>TransactionTimeoutError</code> as its reason. <code>run()</code> stops waiting for the callback at that moment: it rolls back and rejects with the <code>TransactionTimeoutError</code> straight away.
         </p>
-        <div class="code-block mb-4"><span class="kw">await</span> manager.<span class="fn">run</span>(<span class="kw">async</span> () =&gt; {
-  <span class="kw">await new</span> <span class="tp">Promise</span>((resolve) =&gt; <span class="fn">setTimeout</span>(resolve, <span class="num">40</span>));
-}, { timeout: <span class="num">10</span> });
-<span class="cm">// rejects with TransactionTimeoutError; the adapter saw BEGIN then ROLLBACK</span></div>
+        <div class="code-block mb-4"><span class="kw">import</span> {
+  <span class="fn">createTransactionManager</span>,
+  <span class="fn">createInMemoryAdapter</span>,
+  <span class="tp">TransactionTimeoutError</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
+
+<span class="kw">const</span> manager = <span class="fn">createTransactionManager</span>({ adapter: <span class="fn">createInMemoryAdapter</span>() });
+
+<span class="kw">const</span> started = Date.<span class="fn">now</span>();
+<span class="kw">try</span> {
+  <span class="kw">await</span> manager.<span class="fn">run</span>(<span class="kw">async</span> (transaction) =&gt; {
+    <span class="cm">// Hand the signal to cancellable work so it stops too.</span>
+    <span class="kw">await new</span> <span class="tp">Promise</span>((resolve, reject) =&gt; {
+      <span class="kw">const</span> timer = <span class="fn">setTimeout</span>(resolve, <span class="num">300</span>);
+      transaction.signal.<span class="fn">addEventListener</span>(<span class="str">"abort"</span>, () =&gt; {
+        <span class="fn">clearTimeout</span>(timer);
+        <span class="fn">reject</span>(transaction.signal.reason);
+      });
+    });
+  }, { timeout: <span class="num">20</span> });
+} <span class="kw">catch</span> (error) {
+  console.<span class="fn">log</span>(error <span class="kw">instanceof</span> <span class="tp">TransactionTimeoutError</span>, Date.<span class="fn">now</span>() - started &lt; <span class="num">100</span>); <span class="cm">// true true</span>
+}</div>
         <p class="mb-4 leading-relaxed">
-          A timeout does not interrupt your callback — it cannot, since the work is already in flight. It guarantees the result is thrown away, not that the work stops early. The timer is cleared as soon as the transaction ends.
+          JavaScript cannot cancel a promise, so a callback that ignores the signal keeps running in the background after <code>run()</code> has rejected; its eventual result or error is discarded. Any side effect it has outside the transaction (an HTTP call, a queue message, a file) still happens. Pass <code>transaction.signal</code> to <code>fetch</code>, your driver, or anything else that accepts one, or use the database's own statement timeout. A participant exposes the signal of the transaction it joined, and a savepoint's signal also aborts with its parent's. <code>raceSignal(work, signal)</code> is the helper <code>run()</code> uses: it settles with <code>work</code>, or rejects with <code>signal.reason</code> as soon as the signal aborts.
         </p>
 
         <div class="callout callout-warning">
-          <p class="text-sm"><strong>Watch out:</strong> a timed-out transaction is rolled back and <code>commit()</code>/<code>run()</code> throw <code>TransactionTimeoutError</code> (<code>transaction.timedOut</code> is also true). Transactions opened with <code>begin()</code> time out too. The adapter must declare <code>timeouts: true</code> or the <code>timeout</code> option is rejected up front.</p>
+          <p class="text-sm"><strong>Watch out:</strong> a timed-out transaction is rolled back and <code>commit()</code>/<code>run()</code> throw <code>TransactionTimeoutError</code> (<code>transaction.timedOut</code> is also true). Transactions opened with <code>begin()</code> time out too: their signal aborts and the later <code>commit()</code> rejects. The adapter must declare <code>timeouts: true</code> or the <code>timeout</code> option is rejected up front.</p>
         </div>
 
-        <div class="border-4 border-black bg-zudo-red/10 p-4 mb-6">
-          <p class="font-bold mb-2">A timeout does not stop your callback, and the database may still be doing the work.</p>
-          <p class="text-sm mb-2">When the timer fires, the manager only flags the transaction. Your callback runs to the end; in the example above it still finishes its 40&nbsp;ms of work, and only then does <code>run()</code> roll back and reject. Any side effect outside the transaction (an HTTP call, a queue message, a file) has already happened by then. If the work itself must stop, pass your own <code>AbortSignal</code> into it, or use the database's own statement timeout.</p>
-          <p class="text-sm">If you watch events with <code>onEvent</code>, a timed-out transaction reports <code>transaction.timed_out</code> <strong>twice</strong>: once when the timer fires, and again when the commit is refused. Count timeouts from the <code>TransactionTimeoutError</code>, not from the events.</p>
+        <div class="callout callout-note">
+          <p class="text-sm"><strong>Changed in v1.2.0:</strong> <code>transaction.timed_out</code> is emitted once per timeout, from the timer. It used to be emitted a second time when the commit of a timed-out transaction was refused. Before v1.2.0 there was also no signal, and <code>run()</code> waited for the callback to finish before rolling back.</p>
         </div>
       </section>
 
@@ -640,6 +682,8 @@ console.<span class="fn">log</span>(registry.<span class="fn">getActive</span>()
               <tr><td><code>isModifiable(transaction)</code></td><td><code>true</code> while the state is <code>active</code> or <code>pending</code>.</td><td>Takes a transaction, not a state.</td></tr>
               <tr><td><code>summarizeTransaction(transaction)</code></td><td>One-line summary for logs.</td><td>e.g. <code>"Transaction txn_ab12, state=active, duration=42ms"</code>.</td></tr>
               <tr><td><code>canTransition(from, to)</code> / <code>isTerminal(state)</code> / <code>createTransitionFunction(get, set)</code></td><td>The state machine rules, on their own.</td><td>For custom <code>Transaction</code> implementations.</td></tr>
+              <tr><td><code>getTransactionHandle&lt;T&gt;(transaction)</code> / <code>currentTransactionHandle&lt;T&gt;(context?)</code></td><td>The adapter handle behind a transaction, or behind the one in scope.</td><td>New in v1.2.0. <code>undefined</code> outside a transaction or in a non-transactional scope.</td></tr>
+              <tr><td><code>raceSignal(work, signal)</code></td><td>Settles with <code>work</code>, or rejects with <code>signal.reason</code> once <code>signal</code> aborts.</td><td>New in v1.2.0. The abandoned promise keeps running; its rejection is observed.</td></tr>
               <tr><td><code>asSavepointHandle(handle)</code></td><td>Narrows a handle to <code>{ parent, savepoint }</code>, or <code>undefined</code>.</td><td>For adapters that inspect nested handles.</td></tr>
             </tbody>
           </table>
@@ -653,8 +697,9 @@ console.<span class="fn">log</span>(registry.<span class="fn">getActive</span>()
               <tr><td><code>run&lt;T&gt;(callback, options?)</code></td><td>Opens a transaction, runs the callback, commits or rolls back.</td><td>Returns whatever the callback returns. Honours <code>retry</code>.</td></tr>
               <tr><td><code>begin(options?)</code></td><td>Opens a transaction and returns it.</td><td>You must commit or roll it back yourself.</td></tr>
               <tr><td><code>commit(transaction)</code></td><td>Commits it, or rolls back if it is rollback-only.</td><td>No-op for participants and already-committed transactions; throws otherwise when not <code>active</code>.</td></tr>
-              <tr><td><code>rollback(transaction, reason?)</code></td><td>Rolls back, or marks the joined transaction rollback-only.</td><td>Already-finished transactions are a no-op.</td></tr>
+              <tr><td><code>rollback(transaction, reason?)</code></td><td>Rolls back, or marks the joined transaction rollback-only.</td><td>Throws <code>TransactionStateError</code> on a committed transaction (since v1.2.0); already rolled-back or failed ones are a no-op.</td></tr>
               <tr><td><code>getCurrent()</code></td><td>The transaction in scope right now, or <code>undefined</code>.</td><td>Reads the async context.</td></tr>
+              <tr><td><code>getCurrentHandle&lt;T&gt;()</code></td><td>The adapter handle of the transaction in scope, or <code>undefined</code>.</td><td>New in v1.2.0. Uses this manager's context.</td></tr>
             </tbody>
           </table>
         </div>
@@ -667,6 +712,7 @@ console.<span class="fn">log</span>(registry.<span class="fn">getActive</span>()
               <tr><td><code>id</code>, <code>parentId</code>, <code>startedAt</code></td><td>Identity and start time.</td><td><code>id</code> looks like <code>txn_ab12…</code>; a participant shares the id it joined.</td></tr>
               <tr><td><code>kind</code></td><td><code>"root"</code>, <code>"participant"</code>, <code>"savepoint"</code> or <code>"none"</code>.</td><td>How the manager routes commit and rollback.</td></tr>
               <tr><td><code>state</code>, <code>timedOut</code></td><td>Lifecycle state and whether the timeout fired.</td><td>See the state table above.</td></tr>
+              <tr><td><code>signal</code></td><td>An <code>AbortSignal</code> that aborts with a <code>TransactionTimeoutError</code> when the transaction times out.</td><td>New in v1.2.0. Never aborts without a <code>timeout</code>. Participants share the joined transaction's signal.</td></tr>
               <tr><td><code>options</code>, <code>metadata</code></td><td>The options it was opened with; metadata as a map.</td><td><code>metadata</code> hands back a copy, so writing to it changes nothing.</td></tr>
               <tr><td><code>markRollbackOnly(reason?)</code> / <code>isRollbackOnly()</code></td><td>Forbid the commit / ask whether it was forbidden.</td><td>On a participant, both apply to the joined transaction.</td></tr>
               <tr><td><code>afterCommit(cb)</code> / <code>afterRollback(cb)</code></td><td>Run a callback once this transaction ends that way.</td><td>The other list is discarded, so exactly one set runs.</td></tr>
@@ -695,13 +741,14 @@ console.<span class="fn">log</span>(registry.<span class="fn">getActive</span>()
           <table class="doc-table">
             <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
             <tbody>
-              <tr><td><code>TransactionError</code></td><td>Base class for every error here.</td><td>Owned by <a href="/docs/packages-errors" class="font-bold text-zudo-blue hover:underline">@zudojs/errors</a> and re-exported here (all 12 classes), so <code>instanceof</code> matches either import.</td></tr>
+              <tr><td><code>TransactionError</code></td><td>Base class for every error here.</td><td>Owned by <a href="/docs/packages-errors" class="font-bold text-zudo-blue hover:underline">@zudojs/errors</a> and re-exported here (all 13 classes), so <code>instanceof</code> matches either import.</td></tr>
               <tr><td><code>TransactionStateError</code></td><td>The transaction is in the wrong state for what you asked.</td><td>Thrown by commit, rollback and illegal transitions.</td></tr>
-              <tr><td><code>TransactionRollbackError</code></td><td>The commit turned into a rollback, or the rollback itself failed.</td><td>This is what a rollback-only commit rejects with. Its message says <code>Transaction "txn_…" rollback failed</code> even when the rollback worked and the commit was only refused; the real reason (the <code>markRollbackOnly</code> reason, or the participant's error) is in <code>error.metadata.originalError</code>, and a driver failure during rollback is in <code>cause</code>. Log those, not the message.</td></tr>
+              <tr><td><code>TransactionRollbackError</code></td><td>The commit turned into a rollback, or the rollback itself failed.</td><td>A driver failure during rollback is in <code>cause</code>. Accepts an optional <code>message</code> option.</td></tr>
+              <tr><td><code>TransactionRollbackOnlyError</code></td><td>A commit was refused because the transaction was marked rollback-only (by <code>markRollbackOnly</code> or a failing participant).</td><td>New in v1.2.0; extends <code>TransactionRollbackError</code>. Message: <code>commit refused: transaction marked rollback-only</code>. The reason is in <code>error.metadata.originalError</code>.</td></tr>
               <tr><td><code>TransactionCommitError</code></td><td>The adapter refused the commit.</td><td>The driver error is in <code>cause</code>.</td></tr>
               <tr><td><code>TransactionAdapterError</code></td><td>The adapter misbehaved.</td><td>The in-memory adapter throws it for a foreign handle or an unknown savepoint. A missing capability is <code>TransactionIsolationError</code> / <code>TransactionCapabilityError</code>.</td></tr>
               <tr><td><code>TransactionPropagationError</code></td><td>A propagation rule was broken.</td><td><code>mandatory</code> with nothing open, <code>never</code> with something open, an unknown mode.</td></tr>
-              <tr><td><code>TransactionTimeoutError</code>, <code>TransactionIsolationError</code>, <code>TransactionCapabilityError</code>, <code>SavepointError</code></td><td>A timed-out commit; an isolation level or other capability the adapter did not declare; a savepoint that could not be released or rolled back to.</td><td>Thrown by the manager.</td></tr>
+              <tr><td><code>TransactionTimeoutError</code>, <code>TransactionIsolationError</code>, <code>TransactionCapabilityError</code>, <code>SavepointError</code></td><td>A timed-out transaction (also <code>transaction.signal.reason</code>); an isolation level or other capability the adapter did not declare; a savepoint that could not be released or rolled back to.</td><td>Thrown by the manager.</td></tr>
               <tr><td><code>TransactionRequiredError</code>, <code>TransactionUnexpectedError</code></td><td>Extra error classes you can throw from your own adapters and services.</td><td>The package itself never throws these.</td></tr>
             </tbody>
           </table>
@@ -719,7 +766,7 @@ console.<span class="fn">log</span>(registry.<span class="fn">getActive</span>()
               <tr><td><code>TransactionHooks</code>, <code>TransactionHookContext</code>, <code>TransactionErrorContext</code></td><td>Hook shapes.</td><td>Hooks receive <code>{ transaction }</code>, <code>onError</code> also <code>{ error }</code>.</td></tr>
               <tr><td><code>TransactionRegistry</code></td><td>Contract for a registry.</td><td>Implement it to publish open transactions elsewhere.</td></tr>
               <tr><td><code>Savepoint</code>, <code>TransactionResult</code></td><td>Shapes for savepoint objects and run results.</td><td>Declarations only — nothing in the package returns one.</td></tr>
-              <tr><td><code>TRANSACTION_EVENTS</code>, <code>TransactionEvent</code>, <code>TransactionEventHandler</code></td><td>Names and shapes for transaction lifecycle events.</td><td>Pass <code>onEvent</code> to <code>createTransactionManager</code> to receive them. A throwing handler is ignored. A timeout is reported twice (see Timeouts).</td></tr>
+              <tr><td><code>TRANSACTION_EVENTS</code>, <code>TransactionEvent</code>, <code>TransactionEventHandler</code></td><td>Names and shapes for transaction lifecycle events.</td><td>Pass <code>onEvent</code> to <code>createTransactionManager</code> to receive them. A throwing handler is ignored. A timeout is reported once (see Timeouts).</td></tr>
             </tbody>
           </table>
         </div>
@@ -746,7 +793,7 @@ console.<span class="fn">log</span>(registry.<span class="fn">getActive</span>()
             <p class="text-sm"><strong>Retrying everything.</strong> Without <code>shouldRetry</code>, a constraint violation is replayed until the attempts run out — slower, and the error is the same each time. Return <code>true</code> only for deadlocks and serialization failures.</p>
           </li>
           <li class="border-2 border-black p-4">
-            <p class="text-sm"><strong>Expecting <code>timeout</code> to cancel the work.</strong> It marks the transaction rollback-only, so the result is thrown away, but your callback keeps running to the end. Add your own cancellation if the work itself must stop.</p>
+            <p class="text-sm"><strong>Ignoring <code>transaction.signal</code>.</strong> On a timeout <code>run()</code> rolls back and rejects at once, but a callback that does not watch the signal keeps running in the background and its side effects still happen. Pass <code>transaction.signal</code> to cancellable work.</p>
           </li>
           <li class="border-2 border-black p-4">
             <p class="text-sm"><strong>Declaring capabilities the adapter does not have.</strong> Claiming <code>savepoints: true</code> without implementing <code>createSavepoint</code> makes <code>propagation: "nested"</code> throw; claiming isolation levels the driver ignores means a <code>serializable</code> unit of work silently runs at the default. Declare only what you implement.</p>

@@ -123,7 +123,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.4.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/permissions</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Authorization engine for the Zudojs framework. Supports RBAC, ABAC, resource policies, wildcards, role hierarchy, condition combinators, ability compilation, and explain mode.
@@ -150,7 +150,7 @@ pnpm add @zudojs/permissions
 yarn add @zudojs/permissions</div>
 
         <div class="callout callout-note">
-          <strong class="text-zudo-blue">Dependencies:</strong> @zudojs/permissions depends on @zudojs/errors only. Its HTTP middleware composes with the @zudojs/http pipeline structurally &mdash; the types are mirrored locally &mdash; so no dependency or peer on @zudojs/http is declared.
+          <strong class="text-zudo-blue">Dependencies:</strong> @zudojs/permissions depends on @zudojs/errors and @zudojs/middleware (for <code>createGuardResponse</code>). Its HTTP middleware composes with the @zudojs/http pipeline structurally &mdash; the types are mirrored locally and are assignable to @zudojs/http's own &mdash; so no dependency or peer on @zudojs/http is declared.
         </div>
       </section>
 
@@ -165,7 +165,7 @@ yarn add @zudojs/permissions</div>
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Permission parsing and matching</strong> with resource:action format and wildcard support</li>
           <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Role hierarchy</strong> with inheritance chains and circular detection</li>
           <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>Rule engine</strong> with exact, wildcard, and conditional (ABAC) matching — deny-overrides by default, priority-based on request</li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Policy evaluation</strong> with wildcard matching, timeouts, priority ordering, and fail-closed error handling</li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Policy evaluation</strong> with wildcard matching, timeouts, priority ordering, and fail-closed error handling &mdash; a policy narrows access by default and grants only with <code class="bg-black/5 px-1">effect: "grant"</code></li>
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Ability context</strong> for pre-resolved actors with can/cannot/check/explain</li>
           <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Decision caching</strong> keyed by actor, permission and resource, with configurable TTL, size cap and actor-level invalidation &mdash; opt-in only for resolver-backed engines, via <code class="bg-black/5 px-1">resolverCacheKey</code></li>
           <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>HTTP middleware</strong> integration with actor extraction and permission guards</li>
@@ -223,8 +223,13 @@ yarn add @zudojs/permissions</div>
             <tbody>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono text-sm">@zudojs/errors</td>
-                <td class="p-3">1.1.0</td>
+                <td class="p-3">1.3.0</td>
                 <td class="p-3">Base error classes (AuthorizationError, ErrorCode)</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono text-sm">@zudojs/middleware</td>
+                <td class="p-3">1.1.0</td>
+                <td class="p-3"><code>createGuardResponse</code>: the 401/403 refusals the HTTP guards return</td>
               </tr>
               <tr>
                 <td class="p-3 font-mono text-sm">@zudojs/http</td>
@@ -573,7 +578,7 @@ permissions.<span class="fn">remove</span>(<span class="str">"post:admin"</span>
   condition: <span class="fn">not</span>(<span class="fn">tenantIsolation</span>()),
 }]
 <span class="cm">// role grants invoice:read → tenant A reading B's invoice: false, B reading B's: true</span></div>
-          <p class="text-sm mt-2">Use the allow-rule form only when no role grants the permission on its own.</p>
+          <p class="text-sm mt-2">Use the allow-rule form only when no role grants the permission on its own. The deny rule also holds against policies: a policy with <code class="bg-black/5 px-1">effect: "grant"</code> cannot override it (tested in v1.4.0: tenant A reading B's invoice through a granting policy is still <code class="bg-black/5 px-1">false</code>).</p>
         </div>
       </section>
 
@@ -584,6 +589,7 @@ permissions.<span class="fn">remove</span>(<span class="str">"post:admin"</span>
         <h3 class="text-lg font-bold mb-3 mt-6">PermissionPolicyDefinition</h3>
         <div class="code-block"><span class="kw">interface</span> <span class="tp">PermissionPolicyDefinition</span> {
   <span class="kw">readonly</span> name: <span class="tp">string</span>;
+  <span class="kw">readonly</span> effect?: <span class="tp">PolicyEffect</span>;  <span class="cm">// "constrain" (default) | "grant"</span>
   <span class="kw">readonly</span> permissions: <span class="kw">readonly</span> <span class="tp">string</span>[];
   <span class="kw">readonly</span> cacheable?: <span class="tp">boolean</span>;
   <span class="kw">readonly</span> priority?: <span class="tp">number</span>;
@@ -591,14 +597,72 @@ permissions.<span class="fn">remove</span>(<span class="str">"post:admin"</span>
     <span class="tp">PermissionDecision</span> | <span class="tp">Promise</span>&lt;<span class="tp">PermissionDecision</span>&gt;;
 }</div>
 
-        <div class="border-4 border-black bg-zudo-red/10 p-4 mb-6">
-          <p class="font-bold mb-2">A policy that returns <code class="bg-black/5 px-1">allowed: true</code> grants the permission on its own.</p>
-          <p class="text-sm mb-2">When at least one policy applies to a permission, the policies decide: any <code class="bg-black/5 px-1">allowed: false</code> denies, and otherwise the request is allowed with reason <code class="bg-black/5 px-1">policy_allow</code>. The actor's roles are <strong>not</strong> checked as well, and there is no "abstain" result. A policy that returns <code class="bg-black/5 px-1">{ allowed: true }</code> for everyone therefore lets an actor with no roles at all through.</p>
-          <p class="text-sm">So a policy meant as an extra <em>restriction</em> (business hours, a feature switch, a region) must check who the actor is before it allows, as the example below does with <code class="bg-black/5 px-1">actorHasRole</code>.</p>
+        <h3 class="text-lg font-bold mb-3 mt-6">What a policy's answer means</h3>
+        <p class="mb-3 text-sm">A policy runs alongside the rules for every permission it lists. Policies run highest priority first and stop at the first denial. A policy that returns <code class="bg-black/5 px-1">allowed: false</code>, throws, or exceeds <code class="bg-black/5 px-1">policyTimeout</code> denies, and a denial always wins. What <code class="bg-black/5 px-1">allowed: true</code> means depends on the policy's <code class="bg-black/5 px-1">effect</code>:</p>
+        <ul class="space-y-2 mb-4 text-sm">
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <span><code class="bg-black/5 px-1">"constrain"</code> (the default): &ldquo;no objection&rdquo;. The policy is an extra condition on top of RBAC/ABAC, so the actor's roles, direct permissions or rules must still grant the permission. It can take access away, never hand it out.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <span><code class="bg-black/5 px-1">"grant"</code>: an independent grant. The allow grants the permission even when no role or rule does, with reason <code class="bg-black/5 px-1">policy_allow</code>. Use it only for a policy that establishes the right on its own, such as an ownership check. Only the exact string <code class="bg-black/5 px-1">"grant"</code> grants; a typo constrains.</span></li>
+        </ul>
+        <div class="code-block"><span class="kw">import</span> { <span class="fn">createPermissionEngine</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
+
+<span class="kw">let</span> maintenance = <span class="kw">false</span>;
+
+<span class="kw">const</span> engine = <span class="fn">createPermissionEngine</span>({
+  roles: [{ name: <span class="str">"staff"</span>, permissions: [<span class="str">"task:*"</span>] }],
+  policies: [
+    {
+      name: <span class="str">"maintenance-window"</span>,
+      permissions: [<span class="str">"task:*"</span>], <span class="cm">// wildcards work here too</span>
+      cacheable: <span class="kw">false</span>,        <span class="cm">// reads state outside the actor and resource</span>
+      evaluate: () =&gt;
+        maintenance ? { allowed: <span class="kw">false</span>, reason: <span class="str">"maintenance"</span> } : { allowed: <span class="kw">true</span> },
+    },
+  ],
+});
+
+<span class="kw">const</span> staff = { id: <span class="str">"u1"</span>, roles: [<span class="str">"staff"</span>] };
+<span class="kw">const</span> guest = { id: <span class="str">"u2"</span> };
+
+console.<span class="fn">log</span>(<span class="kw">await</span> engine.<span class="fn">can</span>(staff, <span class="str">"task:delete"</span>)); <span class="cm">// true  — the role grants; the policy has no objection</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> engine.<span class="fn">can</span>(guest, <span class="str">"task:delete"</span>)); <span class="cm">// false — no role grants it; an allow is not a grant</span>
+maintenance = <span class="kw">true</span>;
+console.<span class="fn">log</span>(<span class="kw">await</span> engine.<span class="fn">can</span>(staff, <span class="str">"task:delete"</span>)); <span class="cm">// false — the policy denies</span></div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Policies that grant</h3>
+        <p class="mb-3 text-sm">A policy that establishes the right on its own says so with <code class="bg-black/5 px-1">effect: "grant"</code>. There is no &ldquo;abstain&rdquo;: under <code class="bg-black/5 px-1">"grant"</code> an allow grants and a deny still denies, so a policy that returns <code class="bg-black/5 px-1">false</code> for everyone but the author also locks out editors whose role grants the permission. Let them through explicitly:</p>
+        <div class="code-block"><span class="kw">import</span> { <span class="fn">actorHasRole</span>, <span class="fn">createPermissionEngine</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
+
+<span class="kw">const</span> posts = <span class="fn">createPermissionEngine</span>({
+  roles: [{ name: <span class="str">"editor"</span>, permissions: [<span class="str">"post:update"</span>] }],
+  policies: [
+    {
+      name: <span class="str">"author-can-edit"</span>,
+      permissions: [<span class="str">"post:update"</span>],
+      effect: <span class="str">"grant"</span>, <span class="cm">// an allow here grants, even with no role</span>
+      evaluate: ({ actor, resource }) =&gt; ({
+        <span class="cm">// A false here denies everyone, editors included, so let the role through too.</span>
+        allowed:
+          (resource <span class="kw">as</span> { authorId?: <span class="tp">string</span> } | <span class="kw">undefined</span>)?.authorId === actor.id ||
+          <span class="fn">actorHasRole</span>(actor, <span class="str">"editor"</span>),
+      }),
+    },
+  ],
+});
+
+<span class="kw">const</span> post = { id: <span class="str">"p1"</span>, authorId: <span class="str">"ada"</span> };
+
+console.<span class="fn">log</span>(<span class="kw">await</span> posts.<span class="fn">check</span>({ id: <span class="str">"ada"</span> }, <span class="str">"post:update"</span>, post));
+<span class="cm">// { allowed: true, reason: "policy_allow", policy: "author-can-edit" }</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> posts.<span class="fn">can</span>({ id: <span class="str">"bob"</span> }, <span class="str">"post:update"</span>, post));                    <span class="cm">// false</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> posts.<span class="fn">can</span>({ id: <span class="str">"eve"</span>, roles: [<span class="str">"editor"</span>] }, <span class="str">"post:update"</span>, post)); <span class="cm">// true</span></div>
+        <p class="mt-3 mb-3 text-sm">A granting policy never overrides a denial from another policy, an explicit deny, or a deny rule that applied. <code class="bg-black/5 px-1">policyGrants(policy, defaultEffect?)</code> tells you whether a policy would grant, and <code class="bg-black/5 px-1">DEFAULT_POLICY_EFFECT</code> is <code class="bg-black/5 px-1">"constrain"</code>. Internally, an allow from constraining policies alone is recorded as <code class="bg-black/5 px-1">policy_pass</code>; the decision you get back then carries the grant's reason (such as <code class="bg-black/5 px-1">role_permission</code>) with <code class="bg-black/5 px-1">policy</code> naming the policies that ran.</p>
+
+        <div class="callout callout-warning mb-6">
+          <strong class="text-zudo-yellow">Changed in 1.4.0 (behaviour change, security):</strong> up to 1.3.x an allowing policy granted the permission on its own, so a policy meant as a restriction, such as business hours, let an actor with no roles through, and the old advice was to check the role inside every policy. That check is no longer needed. <strong>If you relied on a policy to grant access, those checks now deny</strong> until you add <code>effect: "grant"</code> to that policy. <code>createPermissionEngine({ defaultPolicyEffect: "grant" })</code> restores the old behaviour for every policy that sets no <code>effect</code>; prefer marking the individual policies.
         </div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">createPolicyRegistry</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">actorHasRole</span>, <span class="fn">createPolicyRegistry</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
+        <div class="code-block"><span class="kw">import</span> { <span class="fn">createPolicyRegistry</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
 
 <span class="kw">const</span> policies = <span class="fn">createPolicyRegistry</span>();
 
@@ -606,20 +670,18 @@ policies.<span class="fn">define</span>({
   name: <span class="str">"business-hours"</span>,
   permissions: [<span class="str">"post:publish"</span>],
   priority: <span class="num">10</span>,
-  <span class="fn">evaluate</span>(ctx) {
+  cacheable: <span class="kw">false</span>, <span class="cm">// depends on the clock</span>
+  <span class="fn">evaluate</span>() {
     <span class="kw">const</span> hour = <span class="kw">new</span> <span class="fn">Date</span>().<span class="fn">getHours</span>();
     <span class="kw">if</span> (hour &lt; <span class="num">9</span> || hour &gt;= <span class="num">17</span>) {
-      <span class="kw">return</span> { allowed: <span class="num">false</span>, reason: <span class="str">"Outside business hours"</span> };
+      <span class="kw">return</span> { allowed: <span class="kw">false</span>, reason: <span class="str">"Outside business hours"</span> };
     }
-    <span class="cm">// Allowing here grants post:publish outright, so check the role first.</span>
-    <span class="kw">if</span> (!<span class="fn">actorHasRole</span>(ctx.actor, <span class="str">"editor"</span>) &amp;&amp; !<span class="fn">actorHasRole</span>(ctx.actor, <span class="str">"admin"</span>)) {
-      <span class="kw">return</span> { allowed: <span class="num">false</span>, reason: <span class="str">"Only editors publish"</span> };
-    }
-    <span class="kw">return</span> { allowed: <span class="num">true</span>, reason: <span class="str">"Within business hours"</span> };
+    <span class="cm">// "No objection": the actor's roles still have to grant post:publish.</span>
+    <span class="kw">return</span> { allowed: <span class="kw">true</span> };
   },
 });
 
-policies.<span class="fn">forPermission</span>(<span class="str">"post:publish"</span>); <span class="cm">// [business-hours policy]</span></div>
+console.<span class="fn">log</span>(policies.<span class="fn">forPermission</span>(<span class="str">"post:publish"</span>).<span class="fn">map</span>((policy) =&gt; policy.name)); <span class="cm">// [ 'business-hours' ]</span></div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Policy Errors</h3>
         <div class="border-4 border-black">
@@ -647,6 +709,7 @@ policies.<span class="fn">forPermission</span>(<span class="str">"post:publish"<
   <span class="kw">readonly</span> getRole?: (name: <span class="tp">string</span>) =&gt; <span class="tp">RoleDefinition</span> | <span class="tp">undefined</span>;
   <span class="kw">readonly</span> policies?: <span class="kw">readonly</span> <span class="tp">PermissionPolicyDefinition</span>[];
   <span class="kw">readonly</span> policyTimeout?: <span class="tp">number</span>;
+  <span class="kw">readonly</span> defaultPolicyEffect?: <span class="tp">PolicyEffect</span>;  <span class="cm">// default "constrain"</span>
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">evaluate</h3>
@@ -705,6 +768,8 @@ policies.<span class="fn">forPermission</span>(<span class="str">"post:publish"<
   ],
   policies: [businessHoursPolicy],
   policyTimeout: <span class="num">5000</span>,
+  <span class="cm">// defaultPolicyEffect: "grant" would restore the pre-1.4 behaviour for</span>
+  <span class="cm">// policies without an effect; prefer effect: "grant" on single policies.</span>
 });
 
 <span class="cm">// Simple boolean check</span>
@@ -892,17 +957,16 @@ roleStore.<span class="fn">set</span>(<span class="str">"user-1"</span>, [<span 
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">HTTP MIDDLEWARE</h2>
         <p class="mb-4">Middleware factories that integrate the authorization engine with <code class="bg-black/5 px-1">@zudojs/http</code>'s middleware pipeline.</p>
 
-        <div class="border-4 border-black bg-zudo-red/10 p-4 mb-6">
-          <p class="font-bold mb-2">Inside <code class="bg-black/5 px-1">@zudojs/http</code> 1.3.0, a refusal from these guards is sent as HTTP 200, not 401/403.</p>
-          <p class="text-sm mb-2">When <code class="bg-black/5 px-1">authorize()</code>, <code class="bg-black/5 px-1">createRequirePermissionMiddleware()</code>, <code class="bg-black/5 px-1">createRequirePermissionsMiddleware()</code> or <code class="bg-black/5 px-1">createActorMiddleware({ requireActor: true })</code> refuses, it returns a plain object <code class="bg-black/5 px-1">{ status: 403, body, headers }</code> (401 with no actor). <code class="bg-black/5 px-1">@zudojs/http</code> treats any value that is not one of its own response contexts as data. Tested against a real server: as route middleware (<code class="bg-black/5 px-1">router.put(path, handler, { middleware: [authorize(…)] })</code>) the client gets <strong>200 with an empty body</strong>; in an <code class="bg-black/5 px-1">HttpMiddlewarePipeline</code> it gets <strong>200</strong> with <code class="bg-black/5 px-1">{"status":403,"body":{…},"headers":{…}}</code> as the JSON body. The handler does not run in either case, so nothing is modified, but clients, caches and monitoring see a success, and a front end that checks <code class="bg-black/5 px-1">response.ok</code> carries on as if the write worked.</p>
-          <p class="text-sm">With <code class="bg-black/5 px-1">@zudojs/http</code>, throw instead: <code class="bg-black/5 px-1">UnauthorizedError</code> and <code class="bg-black/5 px-1">ForbiddenError</code> from <code class="bg-black/5 px-1">@zudojs/errors</code> are answered with 401 and 403. Do it in your own guard, as below, or at the top of the handler. Keep the factories on this page for frameworks that understand a returned <code class="bg-black/5 px-1">{ status, body, headers }</code>, and test the status code you actually get.</p>
-        </div>
+        <p class="mb-4">A refusal is a real HTTP response. <code class="bg-black/5 px-1">authorize()</code>, <code class="bg-black/5 px-1">createRequirePermissionMiddleware()</code>, <code class="bg-black/5 px-1">createRequirePermissionsMiddleware()</code> and <code class="bg-black/5 px-1">createActorMiddleware({ requireActor: true })</code> return a guard response (<code class="bg-black/5 px-1">createGuardResponse</code> from <a href="/docs/packages-middleware" class="text-zudo-blue font-bold">@zudojs/middleware</a>): <code class="bg-black/5 px-1">403</code> when the engine denies, <code class="bg-black/5 px-1">401</code> with <code class="bg-black/5 px-1">WWW-Authenticate: Bearer</code> when there is no actor. <code class="bg-black/5 px-1">@zudojs/http</code> sends it with that status and a JSON body, and the guards go straight into a route's <code class="bg-black/5 px-1">middleware</code> list with no cast.</p>
 
-        <div class="code-block mb-6"><span class="kw">import</span> { <span class="tp">ForbiddenError</span>, <span class="tp">UnauthorizedError</span> } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-<span class="kw">import</span> { <span class="fn">createResponseContext</span>, <span class="fn">createRouter</span> } <span class="kw">from</span> <span class="str">"@zudojs/http"</span>;
-<span class="kw">import type</span> { <span class="tp">HttpMiddleware</span>, <span class="tp">HttpRequestContext</span> } <span class="kw">from</span> <span class="str">"@zudojs/http"</span>;
-<span class="kw">import</span> { <span class="fn">createPermissionEngine</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
-<span class="kw">import type</span> { <span class="tp">PermissionActor</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
+        <div class="code-block mb-6"><span class="kw">import</span> { <span class="fn">createHttpServer</span>, <span class="fn">createNodeHttpAdapter</span>, <span class="fn">createRouter</span> } <span class="kw">from</span> <span class="str">"@zudojs/http"</span>;
+<span class="kw">import</span> {
+  <span class="fn">authorize</span>,
+  <span class="fn">createActorMiddleware</span>,
+  <span class="fn">createPermissionEngine</span>,
+  ACTOR_STATE_KEY,
+  <span class="kw">type</span> <span class="tp">PermissionActor</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
 
 <span class="kw">const</span> engine = <span class="fn">createPermissionEngine</span>({
   roles: [
@@ -911,32 +975,48 @@ roleStore.<span class="fn">set</span>(<span class="str">"user-1"</span>, [<span 
   ],
 });
 
-<span class="cm">// Build the actor from a verified token or session, never from a client header.</span>
-<span class="kw">declare function</span> <span class="fn">currentActor</span>(request: <span class="tp">HttpRequestContext</span>): <span class="tp">Promise</span>&lt;<span class="tp">PermissionActor</span> | <span class="tp">undefined</span>&gt;;
-
-<span class="cm">// @zudojs/http answers UnauthorizedError with 401 and ForbiddenError with 403.</span>
-<span class="kw">function</span> <span class="fn">requirePermission</span>(permission: <span class="tp">string</span>): <span class="tp">HttpMiddleware</span> {
-  <span class="kw">return async</span> (context, next) =&gt; {
-    <span class="kw">const</span> actor = <span class="kw">await</span> <span class="fn">currentActor</span>(context.request);
-    <span class="kw">if</span> (!actor) <span class="kw">throw new</span> <span class="tp">UnauthorizedError</span>(<span class="str">"Sign in first"</span>);
-    <span class="kw">if</span> (!(<span class="kw">await</span> engine.<span class="fn">can</span>(actor, permission))) <span class="kw">throw new</span> <span class="tp">ForbiddenError</span>(<span class="str">"Forbidden"</span>);
-    <span class="kw">return</span> <span class="fn">next</span>();
-  };
-}
+<span class="cm">// Stand-in for your verified session lookup. Never trust a client-chosen role.</span>
+<span class="kw">const</span> sessions = <span class="kw">new</span> <span class="tp">Map</span>&lt;<span class="tp">string</span>, <span class="tp">PermissionActor</span>&gt;([
+  [<span class="str">"s-editor"</span>, { id: <span class="str">"u1"</span>, roles: [<span class="str">"editor"</span>] }],
+  [<span class="str">"s-viewer"</span>, { id: <span class="str">"u2"</span>, roles: [<span class="str">"viewer"</span>] }],
+]);
 
 <span class="kw">const</span> router = <span class="fn">createRouter</span>();
-router.<span class="fn">put</span>(<span class="str">"/posts/:id"</span>, () =&gt; <span class="fn">createResponseContext</span>().<span class="fn">json</span>({ updated: <span class="kw">true</span> }), {
-  middleware: [<span class="fn">requirePermission</span>(<span class="str">"post:update"</span>)],
+router.<span class="fn">put</span>(<span class="str">"/posts/:id"</span>, () =&gt; ({ updated: <span class="kw">true</span> }), {
+  middleware: [
+    <span class="fn">createActorMiddleware</span>({
+      extractActor: (ctx) =&gt; sessions.<span class="fn">get</span>(ctx.request.<span class="fn">getHeader</span>?.(<span class="str">"x-session"</span>) ?? <span class="str">""</span>),
+    }),
+    <span class="fn">authorize</span>(engine, <span class="str">"post:update"</span>, {
+      extractActor: (ctx) =&gt; ctx.state.<span class="fn">get</span>(ACTOR_STATE_KEY) <span class="kw">as</span> <span class="tp">PermissionActor</span> | <span class="kw">undefined</span>,
+    }),
+  ],
 });
-<span class="cm">// viewer → 403 {"error":"Forbidden","code":"ERR_HTTP_FORBIDDEN"}</span>
-<span class="cm">// no actor → 401 {"error":"Sign in first","code":"ERR_HTTP_UNAUTHORIZED"}</span>
-<span class="cm">// editor → 200 {"updated":true}</span></div>
+
+<span class="kw">const</span> server = <span class="fn">createHttpServer</span>({
+  adapter: <span class="fn">createNodeHttpAdapter</span>({ host: <span class="str">"127.0.0.1"</span>, port: <span class="num">3000</span> }),
+  handler: <span class="kw">async</span> (request) =&gt; (<span class="kw">await</span> router.<span class="fn">dispatch</span>(request)).response,
+});
+<span class="kw">await</span> server.<span class="fn">start</span>();
+
+<span class="cm">// PUT /posts/1, x-session: s-editor → 200 {"updated":true}</span>
+<span class="cm">// PUT /posts/1, x-session: s-viewer → 403 {"error":"Forbidden","message":"Access denied"}</span>
+<span class="cm">// PUT /posts/1, no session          → 401 {"error":"Unauthorized","message":"Authentication required"}</span></div>
+
+        <div class="callout callout-note mb-6">
+          <strong class="text-zudo-blue">Changed in 1.4.0:</strong> up to 1.3.x these guards returned a plain <code>{ status, body, headers }</code> object, which <code>@zudojs/http</code> treated as data: a refused request reached the client as <code>200</code> (the handler did not run), and the guards needed <code>as never</code> to fit a route's <code>middleware</code> list. If you replaced them with a guard that throws <code>ForbiddenError</code> / <code>UnauthorizedError</code>, that still works; you can now go back to the factories. A hand-written middleware typed with this package's <code>HttpMiddleware</code> can no longer return a plain object; return <code>createGuardResponse(...)</code> instead.
+        </div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Types</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">HttpMiddleware</span> = (
+        <div class="code-block"><span class="cm">// Generic over what next() resolves to, so it is assignable to @zudojs/http's own type.</span>
+<span class="kw">type</span> <span class="tp">HttpMiddlewareOutcome</span>&lt;<span class="tp">Downstream</span>&gt; = <span class="tp">void</span> | Response | <span class="tp">GuardResponse</span> | <span class="tp">Downstream</span>;
+
+<span class="kw">type</span> <span class="tp">HttpMiddleware</span> = &lt;<span class="tp">Downstream</span> <span class="kw">extends</span> <span class="tp">HttpResponseContext</span>&gt;(
   context: <span class="tp">HttpMiddlewareContext</span>,
-  next: () =&gt; <span class="tp">Promise</span>&lt;<span class="tp">HttpResponseContext</span>&gt;,
-) =&gt; <span class="tp">void</span> | Response | <span class="tp">HttpResponseContext</span> | <span class="tp">Promise</span>&lt;<span class="tp">void</span> | Response | <span class="tp">HttpResponseContext</span>&gt;;
+  next: () =&gt; <span class="tp">Promise</span>&lt;<span class="tp">Downstream</span>&gt;,
+) =&gt; <span class="tp">HttpMiddlewareOutcome</span>&lt;<span class="tp">Downstream</span>&gt; | <span class="tp">Promise</span>&lt;<span class="tp">HttpMiddlewareOutcome</span>&lt;<span class="tp">Downstream</span>&gt;&gt;;
+
+<span class="cm">// PermissionHttpResponse is an alias of GuardResponse from @zudojs/middleware.</span>
 
 <span class="kw">const</span> ACTOR_STATE_KEY = <span class="str">"permissions:actor"</span>;
 <span class="kw">const</span> DECISION_STATE_KEY = <span class="str">"permissions:decision"</span>;</div>
@@ -1002,7 +1082,7 @@ router.<span class="fn">put</span>(<span class="str">"/posts/:id"</span>, () =&g
   <span class="kw">readonly</span> permission: <span class="tp">string</span>;
   <span class="kw">readonly</span> extractResource?: (context: <span class="tp">HttpMiddlewareContext</span>) =&gt; <span class="tp">unknown</span> | <span class="tp">Promise</span>&lt;<span class="tp">unknown</span>&gt;;
 }</div>
-        <p class="mt-4 mb-4"><code class="bg-black/5 px-1">extractResource</code> may be async and is awaited; a loader that throws or rejects answers 403. An empty list passed to <code class="bg-black/5 px-1">createRequirePermissionsMiddleware</code> denies.</p>
+        <p class="mt-4 mb-4"><code class="bg-black/5 px-1">extractResource</code> may be async and is awaited; a loader that throws or rejects answers 403. An empty list passed to <code class="bg-black/5 px-1">createRequirePermissionsMiddleware</code> denies. <code class="bg-black/5 px-1">createForbiddenResponse</code>, <code class="bg-black/5 px-1">createUnauthorizedResponse</code> and <code class="bg-black/5 px-1">createJsonResponse(status, body)</code> build the same guard responses for your own middleware; <code class="bg-black/5 px-1">createJsonResponse</code> throws <code class="bg-black/5 px-1">RangeError</code> for a status outside 100&ndash;599.</p>
       </section>
 
       <!-- Observability -->

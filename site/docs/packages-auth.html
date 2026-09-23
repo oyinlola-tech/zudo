@@ -45,8 +45,8 @@
     "@context": "https://schema.org",
     "@type": "TechArticle",
     "headline": "@zudojs/auth — JWT, Sessions, RBAC, Password Hashing",
-    "description": "Complete reference for @zudojs/auth v1.2.0. JWT token management, password hashing, session management, RBAC, and auth utilities.",
-    "version": "1.2.0",
+    "description": "Complete reference for @zudojs/auth v1.3.0. JWT token management, password hashing, session management, RBAC, and auth utilities.",
+    "version": "1.3.0",
     "programmingLanguage": "TypeScript",
     "runtimePlatform": "Node.js >= 24.0.0",
     "license": "https://opensource.org/licenses/MIT",
@@ -55,7 +55,7 @@
     "publisher": { "@type": "Organization", "name": "Zudo" },
     "datePublished": "2026-01-01",
     "keywords": "zudojs, auth, authentication, jwt, session, rbac, password, hashing",
-    "dependencies": ["@zudojs/errors", "@zudojs/constants", "@zudojs/permissions"]
+    "dependencies": ["@zudojs/errors", "@zudojs/constants", "@zudojs/crypto", "@zudojs/permissions", "@zudojs/types"]
   }
   </script>
   <script type="application/ld+json">
@@ -162,7 +162,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/auth</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Authentication and authorization services — JWT tokens (access + refresh), password hashing (scrypt), session management, RBAC, brute-force lockout, and auth utilities.
@@ -219,12 +219,12 @@
           <!-- INSTALLATION -->
           <section class="mt-12" aria-labelledby="installation">
             <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="installation">INSTALLATION</h2>
-            <p class="text-body text-black/80 mb-4">Install the package and the three sibling packages it depends on.</p>
+            <p class="text-body text-black/80 mb-4">Install the package. Its dependencies, <span class="code-inline">@zudojs/constants</span>, <span class="code-inline">@zudojs/crypto</span>, <span class="code-inline">@zudojs/errors</span>, <span class="code-inline">@zudojs/permissions</span> and <span class="code-inline">@zudojs/types</span>, are installed with it.</p>
             <div class="code-block p-4 mb-4"><span class="cmt"># npm</span>
-$ npm install @zudojs/auth @zudojs/errors @zudojs/constants @zudojs/permissions
+$ npm install @zudojs/auth
 
 <span class="cmt"># pnpm</span>
-$ pnpm add @zudojs/auth @zudojs/errors @zudojs/constants @zudojs/permissions</div>
+$ pnpm add @zudojs/auth</div>
             <p class="text-body text-black/80 mb-4">Node.js 24 or newer is required, because the package uses the modern <span class="code-inline">node:crypto</span> scrypt API.</p>
             <div class="callout callout-note mb-6">
               <strong class="text-sm uppercase tracking-wider text-zudo-blue">Source of truth</strong>
@@ -347,10 +347,15 @@ console.<span class="fn">log</span>(payload.sub, payload.roles);
             <p class="text-body text-black/80 mb-4">
               What you should see: the two <span class="code-inline">console.log</span> lines above, then an uncaught <span class="code-inline">SessionExpiredError</span> from the last line — which is the point of the example.
             </p>
-            <div class="callout callout-warning mb-6">
-              <strong class="text-sm uppercase tracking-wider">login() does not normalise the identifier</strong>
-              <p class="text-sm mt-1"><span class="code-inline">findUser</span> receives exactly what was typed. Logging in with <span class="code-inline">"  Alice@Example.com "</span> passes that string, spaces and capitals included, so the lookup above misses and the user gets <span class="code-inline">InvalidCredentialsError</span>. (The login throttle, by contrast, <em>does</em> trim and lower-case its counter key.) Normalise once, in the same way when you store an email and when you look it up: call <span class="code-inline">auth.login({ identifier: input.trim().toLowerCase(), password })</span>, or do it inside <span class="code-inline">findUser</span>.</p>
+            <div class="callout callout-note mb-6">
+              <strong class="text-sm uppercase tracking-wider">login() normalises the identifier</strong>
+              <p class="text-sm mt-1">Before <span class="code-inline">findUser</span> sees it, the identifier is NFKC-folded and trimmed, and lower-cased when it is an email address; a username keeps its case. So logging in with <span class="code-inline">"  Alice@Example.COM "</span> finds the user above. Store identifiers through the same exported <span class="code-inline">normalizeLoginIdentifier()</span> at registration so both sides agree. Pass <span class="code-inline">normalizeIdentifier: false</span> to receive the raw string, or your own function. <em>Changed in 1.3.0:</em> earlier versions passed the raw string, so a case or whitespace variant missed the lookup.</p>
             </div>
+            <div class="code-block p-4 mb-4"><span class="kw">import</span> { <span class="fn">normalizeLoginIdentifier</span> } <span class="kw">from</span> <span class="str">"@zudojs/auth"</span>;
+
+<span class="cmt">// At registration, store the identifier the way login() will look it up.</span>
+console.<span class="fn">log</span>(<span class="fn">normalizeLoginIdentifier</span>(<span class="str">"  Alice@Example.COM "</span>)); <span class="cmt">// "alice@example.com"</span>
+console.<span class="fn">log</span>(<span class="fn">normalizeLoginIdentifier</span>(<span class="str">" BobTheBuilder "</span>));      <span class="cmt">// "BobTheBuilder" — usernames keep their case</span></div>
             <div class="callout callout-danger mb-6">
               <strong class="text-sm uppercase tracking-wider">Never hard-code secrets</strong>
               <p class="text-sm mt-1">The example reads both signing secrets from the environment and has no fallback, so set them before running it, e.g. <span class="code-inline">export JWT_ACCESS_SECRET=$(openssl rand -hex 32)</span> and the same for <span class="code-inline">JWT_REFRESH_SECRET</span>. Each must be at least 32 bytes, and the two must differ. <span class="code-inline">createAuthService()</span> checks them when it is <em>constructed</em>, not on first use: a missing, short or shared secret throws <span class="code-inline">AuthConfigurationError</span> (<span class="code-inline">ERR_CONFIGURATION_INVALID</span>) at startup. Never write <span class="code-inline">?? "some-default"</span> after <span class="code-inline">process.env</span>: a secret that is in your source code is not a secret.</p>
@@ -390,7 +395,7 @@ console.<span class="fn">log</span>(<span class="fn">needsRehash</span>(stored))
               Hashing the same password twice gives two different strings, because each hash gets a fresh random <em>salt</em> mixed in. That is expected — <span class="code-inline">verifyPassword()</span> reads the salt back out of the stored string.
             </p>
             <p class="text-body text-black/80 mb-4">
-              <span class="code-inline">hashPassword</span> returns a <a href="/docs/packages-crypto" class="underline hover:text-zudo-blue">@zudojs/crypto</a> hash, <span class="code-inline">v1$scrypt$16384$8$5$&lt;salt&gt;.&lt;hash&gt;</span>. Earlier <span class="code-inline">scrypt$…</span> hashes (all parameter sets and the param-less format) still verify, and <span class="code-inline">needsRehash()</span> returns <span class="code-inline">true</span> for every hash that is not a current-parameter crypto scrypt hash. Call it right after a successful login, while you still hold the plain password, and re-store a fresh hash if it says so. <span class="code-inline">hashPassword("")</span> throws <span class="code-inline">AuthError</span> (<span class="code-inline">INVALID_INPUT</span>).
+              <span class="code-inline">hashPassword</span> returns a <a href="/docs/packages-crypto" class="underline hover:text-zudo-blue">@zudojs/crypto</a> hash, <span class="code-inline">v1$scrypt$16384$8$5$&lt;salt&gt;.&lt;hash&gt;</span>. Earlier <span class="code-inline">scrypt$…</span> hashes (all parameter sets and the param-less format) still verify, and <span class="code-inline">needsRehash()</span> returns <span class="code-inline">true</span> for every hash that is not a current-parameter crypto scrypt hash. A hash made by <span class="code-inline">@zudojs/crypto</span>'s own <span class="code-inline">hashPassword()</span> with its defaults (same N, r and p; 16-byte salt, 32-byte key) counts as current and returns <span class="code-inline">false</span>; before 1.3.0 it was flagged on every login. Call it right after a successful login, while you still hold the plain password, and re-store a fresh hash if it says so. <span class="code-inline">hashPassword("")</span> throws <span class="code-inline">AuthError</span> (<span class="code-inline">INVALID_INPUT</span>).
             </p>
             <div class="callout callout-warning mb-6">
               <strong class="text-sm uppercase tracking-wider">verifyPassword never throws</strong>
@@ -568,6 +573,8 @@ console.<span class="fn">log</span>(<span class="tp">String</span>(userId) === <
                 <tr><td><span class="code-inline">loginThrottle</span></td><td>No</td><td>Failed-attempt lockout and login rate limiting.</td></tr>
                 <tr><td><span class="code-inline">allowInsecureFallbackGuard</span></td><td>No</td><td>Opt in to the built-in guard when no engine is configured. Read the warning below first.</td></tr>
                 <tr><td><span class="code-inline">fallbackAdminRole</span></td><td>No</td><td>Role the fallback guard treats as superuser (default <span class="code-inline">"admin"</span>).</td></tr>
+                <tr><td><span class="code-inline">normalizeIdentifier</span></td><td>No</td><td>How <span class="code-inline">login()</span> normalises the identifier before <span class="code-inline">findUser</span>. Default <span class="code-inline">normalizeLoginIdentifier</span>; <span class="code-inline">false</span> passes the raw string; or your own function.</td></tr>
+                <tr><td><span class="code-inline">externalSessionMethods</span></td><td>No</td><td>Methods <span class="code-inline">createSessionForUser()</span> may start a session for, e.g. <span class="code-inline">["oauth"]</span>. Default none, so it throws.</td></tr>
               </tbody>
             </table>
 
@@ -586,6 +593,7 @@ console.<span class="fn">log</span>(<span class="tp">String</span>(userId) === <
                 <tr><td><span class="code-inline">refresh(refreshToken)</span></td><td>Returns a new <span class="code-inline">TokenPair</span>, re-loading the user first.</td></tr>
                 <tr><td><span class="code-inline">logout(sessionId, refreshToken?)</span></td><td>Destroys the session; also revokes the refresh token when both it and a revocation store are supplied.</td></tr>
                 <tr><td><span class="code-inline">logoutAll(userId)</span></td><td>Destroys every session for the user — sign out everywhere.</td></tr>
+                <tr><td><span class="code-inline">createSessionForUser(userId, { method, userAgent?, ip?, metadata? })</span></td><td>Issues a session and tokens, like <span class="code-inline">login()</span>, for a user your code already authenticated another way (OAuth, passkey, magic link). No password check. See below.</td></tr>
                 <tr><td><span class="code-inline">checkAccess(context)</span></td><td>Authorization check. See RBAC below.</td></tr>
                 <tr><td><span class="code-inline">hashPassword(password)</span></td><td>Convenience wrapper over the standalone <span class="code-inline">hashPassword()</span>.</td></tr>
                 <tr><td><span class="code-inline">verifyPasswordHash(password, hash)</span></td><td>Convenience wrapper over the standalone <span class="code-inline">verifyPassword()</span>.</td></tr>
@@ -656,19 +664,111 @@ console.<span class="fn">log</span>(rotated.refreshToken !== tokens.refreshToken
             <p class="text-body text-black/80 mb-4">
               Add <span class="code-inline">loginThrottle</span> and repeated failures start costing the attacker. After <span class="code-inline">maxFailedAttempts</span> (default 5) the identifier is locked for <span class="code-inline">lockoutSeconds</span> (default 900) and <span class="code-inline">login()</span> throws <span class="code-inline">AccountLockedError</span>. Beyond <span class="code-inline">maxAttemptsPerWindow</span> (default 20) it throws <span class="code-inline">AuthRateLimitError</span> instead. A failure is reserved before the password is checked, so even a parallel burst gets only <span class="code-inline">maxFailedAttempts</span> guesses. Both budgets are per identifier: put a per-IP limiter (<span class="code-inline">createRateLimiter</span> from @zudojs/security) in front of <span class="code-inline">login()</span>. The in-memory store forgets an unlocked failure streak after <span class="code-inline">failureTtlSeconds</span> (default 900) and caps tracked identifiers at <span class="code-inline">maxEntries</span> (default 100 000).
             </p>
-            <div class="code-block p-4 mb-4"><span class="kw">import</span> { <span class="fn">createMemoryLoginAttemptStore</span> } <span class="kw">from</span> <span class="str">"@zudojs/auth"</span>;
+            <div class="code-block p-4 mb-4"><span class="kw">import</span> {
+  <span class="tp">AccountLockedError</span>,
+  <span class="fn">createAuthService</span>,
+  <span class="fn">createMemoryLoginAttemptStore</span>,
+  <span class="fn">createMemorySessionStore</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/auth"</span>;
 
-<span class="cmt">// Pass this as the `loginThrottle` option of createAuthService().</span>
-<span class="kw">const</span> loginThrottle = {
-  <span class="op">store:</span> <span class="fn">createMemoryLoginAttemptStore</span>({ <span class="op">windowSeconds:</span> <span class="num">60</span> }),
-  <span class="op">maxFailedAttempts:</span> <span class="num">5</span>,      <span class="cmt">// -&gt; AccountLockedError (HTTP 423)</span>
-  <span class="op">lockoutSeconds:</span> <span class="num">900</span>,
-  <span class="op">maxAttemptsPerWindow:</span> <span class="num">20</span>,  <span class="cmt">// -&gt; AuthRateLimitError (HTTP 429)</span>
-  <span class="op">windowSeconds:</span> <span class="num">60</span>,
-};</div>
+<span class="kw">function</span> <span class="fn">requireEnv</span>(name: <span class="tp">string</span>): <span class="tp">string</span> {
+  <span class="kw">const</span> value = process.env[name];
+  <span class="kw">if</span> (!value) <span class="kw">throw</span> <span class="kw">new</span> <span class="tp">Error</span>(<span class="str">`${name} is not set`</span>);
+  <span class="kw">return</span> value;
+}
+
+<span class="kw">const</span> auth = <span class="fn">createAuthService</span>({
+  <span class="op">token:</span> {
+    <span class="op">accessSecret:</span> <span class="fn">requireEnv</span>(<span class="str">"JWT_ACCESS_SECRET"</span>),
+    <span class="op">refreshSecret:</span> <span class="fn">requireEnv</span>(<span class="str">"JWT_REFRESH_SECRET"</span>),
+  },
+  <span class="op">sessionStore:</span> <span class="fn">createMemorySessionStore</span>(),
+  <span class="op">sessionTtlSeconds:</span> <span class="num">3600</span>,
+  <span class="op">findUser:</span> <span class="kw">async</span> () =&gt; <span class="kw">null</span>, <span class="cmt">// every login fails in this example</span>
+  <span class="op">findUserById:</span> <span class="kw">async</span> () =&gt; <span class="kw">null</span>,
+  <span class="op">verifyPassword:</span> <span class="kw">async</span> () =&gt; <span class="kw">false</span>,
+  <span class="op">loginThrottle:</span> {
+    <span class="op">store:</span> <span class="fn">createMemoryLoginAttemptStore</span>({ <span class="op">windowSeconds:</span> <span class="num">60</span> }),
+    <span class="op">maxFailedAttempts:</span> <span class="num">5</span>,      <span class="cmt">// -&gt; AccountLockedError (HTTP 423)</span>
+    <span class="op">lockoutSeconds:</span> <span class="num">900</span>,
+    <span class="op">maxAttemptsPerWindow:</span> <span class="num">20</span>,  <span class="cmt">// -&gt; AuthRateLimitError (HTTP 429)</span>
+    <span class="op">windowSeconds:</span> <span class="num">60</span>,
+  },
+});
+
+<span class="kw">for</span> (<span class="kw">let</span> attempt = <span class="num">1</span>; attempt &lt;= <span class="num">6</span>; attempt++) {
+  <span class="kw">try</span> {
+    <span class="kw">await</span> auth.<span class="fn">login</span>({ <span class="op">identifier:</span> <span class="str">"mallory@example.com"</span>, <span class="op">password:</span> <span class="str">"guess"</span> });
+  } <span class="kw">catch</span> (error) {
+    <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">AccountLockedError</span>) {
+      console.<span class="fn">log</span>(attempt, error.statusCode, error.code, error.retryAfterSeconds, error.headers);
+      <span class="cmt">// 6 423 ERR_ACCOUNT_LOCKED 900 { 'retry-after': '900' }</span>
+    }
+  }
+}</div>
+            <p class="text-body text-black/80 mb-4">
+              <span class="code-inline">AccountLockedError</span> and <span class="code-inline">AuthRateLimitError</span> carry <span class="code-inline">retryAfterSeconds</span> (for the lockout, the time left on the lock) and a matching <span class="code-inline">Retry-After</span> header in <span class="code-inline">error.headers</span>. Thrown from a <a href="/docs/packages-http" class="underline hover:text-zudo-blue">@zudojs/http</a> handler, the error answers <span class="code-inline">423</span> with that header copied onto the response.
+            </p>
             <p class="text-body text-black/80 mb-4">
               Counters are keyed by the submitted identifier &mdash; trimmed, NFKC-normalised and lower-cased, so case or whitespace variants share one budget &mdash; not by a resolved user, so unknown and real accounts are throttled identically. Both memory stores are per-process; back them with Redis if you run more than one instance.
             </p>
+          </section>
+
+          <!-- EXTERNAL SESSIONS -->
+          <section class="mt-12" aria-labelledby="external-sessions">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="external-sessions">SESSIONS FOR OAUTH AND OTHER SIGN-INS</h2>
+            <p class="text-body text-black/80 mb-4">
+              A user authenticated some other way &mdash; the callback of <a href="/docs/packages-auth-oauth" class="underline hover:text-zudo-blue">@zudojs/auth-oauth</a>, a passkey, a magic link &mdash; still needs a session and tokens. <span class="code-inline">createSessionForUser()</span> issues them exactly as <span class="code-inline">login()</span> would, without a password check.
+            </p>
+            <div class="code-block p-4 mb-4"><span class="kw">import</span> { <span class="fn">createAuthService</span>, <span class="fn">createMemorySessionStore</span>, <span class="fn">toUserId</span>, <span class="kw">type</span> <span class="tp">AuthUser</span> } <span class="kw">from</span> <span class="str">"@zudojs/auth"</span>;
+
+<span class="kw">function</span> <span class="fn">requireEnv</span>(name: <span class="tp">string</span>): <span class="tp">string</span> {
+  <span class="kw">const</span> value = process.env[name];
+  <span class="kw">if</span> (!value) <span class="kw">throw</span> <span class="kw">new</span> <span class="tp">Error</span>(<span class="str">`${name} is not set`</span>);
+  <span class="kw">return</span> value;
+}
+
+<span class="kw">const</span> alice: <span class="tp">AuthUser</span> = {
+  <span class="op">id:</span> <span class="fn">toUserId</span>(<span class="str">"user-123"</span>),
+  <span class="op">email:</span> <span class="str">"alice@example.com"</span>,
+  <span class="op">roles:</span> [<span class="str">"editor"</span>],
+  <span class="op">active:</span> <span class="kw">true</span>,
+  <span class="op">createdAt:</span> <span class="kw">new</span> <span class="tp">Date</span>(),
+};
+
+<span class="kw">const</span> auth = <span class="fn">createAuthService</span>({
+  <span class="op">token:</span> {
+    <span class="op">accessSecret:</span> <span class="fn">requireEnv</span>(<span class="str">"JWT_ACCESS_SECRET"</span>),
+    <span class="op">refreshSecret:</span> <span class="fn">requireEnv</span>(<span class="str">"JWT_REFRESH_SECRET"</span>),
+  },
+  <span class="op">sessionStore:</span> <span class="fn">createMemorySessionStore</span>(),
+  <span class="op">sessionTtlSeconds:</span> <span class="num">3600</span>,
+  <span class="op">findUser:</span> <span class="kw">async</span> () =&gt; <span class="kw">null</span>,          <span class="cmt">// no password logins in this example</span>
+  <span class="op">findUserById:</span> <span class="kw">async</span> (id) =&gt; (id === alice.id ? alice : <span class="kw">null</span>),
+  <span class="op">verifyPassword:</span> <span class="kw">async</span> () =&gt; <span class="kw">false</span>,
+  <span class="op">externalSessionMethods:</span> [<span class="str">"oauth"</span>],   <span class="cmt">// off by default</span>
+});
+
+<span class="cmt">// In the OAuth callback, after state and PKCE were verified and the provider</span>
+<span class="cmt">// identity was mapped to one of YOUR users. Never use a user id from the request.</span>
+<span class="kw">const</span> { user, tokens, sessionId } = <span class="kw">await</span> auth.<span class="fn">createSessionForUser</span>(alice.id, {
+  <span class="op">method:</span> <span class="str">"oauth"</span>,
+  <span class="op">metadata:</span> { <span class="op">provider:</span> <span class="str">"github"</span> }, <span class="cmt">// stored on the session with authMethod: "oauth"</span>
+});
+console.<span class="fn">log</span>(user.email, (<span class="kw">await</span> auth.<span class="fn">verifyToken</span>(tokens.accessToken)).sub);
+<span class="cmt">// alice@example.com user-123</span>
+
+<span class="kw">try</span> {
+  <span class="kw">await</span> auth.<span class="fn">createSessionForUser</span>(alice.id, { <span class="op">method:</span> <span class="str">"magic-link"</span> });
+} <span class="kw">catch</span> (error) {
+  console.<span class="fn">log</span>((error <span class="kw">as</span> <span class="tp">Error</span>).name); <span class="cmt">// AuthConfigurationError — not in externalSessionMethods</span>
+}
+
+<span class="kw">await</span> auth.<span class="fn">logout</span>(sessionId); <span class="cmt">// ends it like any other session</span></div>
+            <div class="callout callout-danger mb-6">
+              <strong class="text-sm uppercase tracking-wider">It checks no credential</strong>
+              <p class="text-sm mt-1">Your code is asserting that the user is authenticated, so the method is off unless you list it in <span class="code-inline">externalSessionMethods</span>; any other <span class="code-inline">method</span> throws <span class="code-inline">AuthConfigurationError</span>. It still loads the user with <span class="code-inline">findUserById()</span> and refuses an unknown user (<span class="code-inline">InvalidCredentialsError</span>) or a deactivated one (<span class="code-inline">AccountDeactivatedError</span>). <strong>Never pass it a user id taken from the request</strong>: a route that forwards a client-supplied id hands out sessions for any account. The session records <span class="code-inline">metadata.authMethod</span>, and <span class="code-inline">logout()</span> / <span class="code-inline">logoutAll()</span> end it like any other. Added in 1.3.0.</p>
+            </div>
           </section>
 
           <!-- RBAC -->
@@ -795,7 +895,8 @@ console.<span class="fn">log</span>(<span class="fn">generateCsrfToken</span>().
                 <tr><td><span class="code-inline">createAuthService(config)</span></td><td>Builds the full auth service.</td><td>The entry point for real applications.</td></tr>
                 <tr><td><span class="code-inline">hashPassword(password, saltLength?)</span></td><td>Hashes a password with scrypt (N=16384, r=8, p=5) via @zudojs/crypto.</td><td>Async. Salt length 16–64 bytes, default 32.</td></tr>
                 <tr><td><span class="code-inline">verifyPassword(password, hash)</span></td><td>Checks a password against a stored hash.</td><td>Async. Returns <span class="code-inline">false</span> instead of throwing.</td></tr>
-                <tr><td><span class="code-inline">needsRehash(hash)</span></td><td>Says whether a stored hash uses outdated settings.</td><td>Call after a successful login.</td></tr>
+                <tr><td><span class="code-inline">needsRehash(hash)</span></td><td>Says whether a stored hash uses outdated settings.</td><td>Call after a successful login. <span class="code-inline">false</span> for current hashes, including <span class="code-inline">@zudojs/crypto</span>'s defaults.</td></tr>
+                <tr><td><span class="code-inline">normalizeLoginIdentifier(identifier)</span></td><td>NFKC, trim, and lower-case for an email address.</td><td>What <span class="code-inline">login()</span> applies by default. Use it at registration too.</td></tr>
                 <tr><td><span class="code-inline">generateRandomToken(length?)</span></td><td>Random hex string for reset links and similar.</td><td>Length in bytes, 16–1024, default 32.</td></tr>
                 <tr><td><span class="code-inline">createTokenPair(userId, config, options?)</span></td><td>Mints an access + refresh pair.</td><td>Synchronous. No session binding unless you pass <span class="code-inline">sessionId</span>; <span class="code-inline">createAuthService()</span> rejects such unbound tokens unless <span class="code-inline">allowSessionlessTokens</span> is true.</td></tr>
                 <tr><td><span class="code-inline">verifyAccessToken(token, config)</span></td><td>Verifies an access token.</td><td>Returns a result object; only bad config throws.</td></tr>
@@ -840,6 +941,7 @@ console.<span class="fn">log</span>(<span class="fn">generateCsrfToken</span>().
                 <tr><td><span class="code-inline">Permission</span> / <span class="code-inline">Role</span></td><td>Re-exports from @zudojs/permissions.</td><td>Prefer importing them from that package in new code.</td></tr>
                 <tr><td><span class="code-inline">GuardContext</span> / <span class="code-inline">GuardResult</span></td><td>Input and output of <span class="code-inline">checkAccess()</span>.</td><td></td></tr>
                 <tr><td><span class="code-inline">PasswordCredentials</span> / <span class="code-inline">ApiKeyCredentials</span></td><td>Credential shapes.</td><td>API-key verification is not implemented here.</td></tr>
+                <tr><td><span class="code-inline">ExternalSessionOptions</span> / <span class="code-inline">ExternalSessionResult</span></td><td>Input and output of <span class="code-inline">createSessionForUser()</span>.</td><td><span class="code-inline">{ method, userAgent?, ip?, metadata? }</span>; the result has the <span class="code-inline">login()</span> shape.</td></tr>
               </tbody>
             </table>
 
@@ -848,26 +950,26 @@ console.<span class="fn">log</span>(<span class="fn">generateCsrfToken</span>().
               Every error extends <span class="code-inline">AuthError</span>, re-exported from <a href="/docs/packages-errors" class="underline hover:text-zudo-blue">@zudojs/errors</a> (a <span class="code-inline">BaseError</span>). Each carries an HTTP status code and a message that is safe to show a client — the messages never reveal whether an account exists.
             </p>
             <table class="doc-table mb-6">
-              <thead><tr><th>Name</th><th>Thrown when</th><th>Status</th></tr></thead>
+              <thead><tr><th>Name</th><th>Thrown when</th><th>Status / code</th></tr></thead>
               <tbody>
-                <tr><td><span class="code-inline">AuthError</span></td><td>Base class for everything below.</td><td>401</td></tr>
-                <tr><td><span class="code-inline">AuthConfigurationError</span></td><td>Bad secrets, or <span class="code-inline">checkAccess()</span> with no engine.</td><td>500</td></tr>
-                <tr><td><span class="code-inline">InvalidCredentialsError</span></td><td>Unknown user or wrong password.</td><td>401</td></tr>
-                <tr><td><span class="code-inline">TokenExpiredError</span></td><td>The token's <span class="code-inline">exp</span> has passed.</td><td>401</td></tr>
-                <tr><td><span class="code-inline">TokenInvalidError</span></td><td>Malformed, mis-signed, or wrong-type token.</td><td>401</td></tr>
-                <tr><td><span class="code-inline">TokenRevokedError</span></td><td>A used refresh token was replayed.</td><td>403</td></tr>
-                <tr><td><span class="code-inline">AccountLockedError</span></td><td>Too many failed logins.</td><td>423</td></tr>
-                <tr><td><span class="code-inline">AccountDeactivatedError</span></td><td>The account is not <span class="code-inline">active</span>.</td><td>403</td></tr>
-                <tr><td><span class="code-inline">AccessDeniedError</span></td><td>Insufficient permissions.</td><td>403</td></tr>
-                <tr><td><span class="code-inline">SessionExpiredError</span></td><td>The token's session is gone or expired.</td><td>401</td></tr>
-                <tr><td><span class="code-inline">AuthRateLimitError</span></td><td>Too many login attempts in the window.</td><td>429</td></tr>
+                <tr><td><span class="code-inline">AuthError</span></td><td>Base class for everything below.</td><td>401 <span class="code-inline">ERR_AUTHENTICATION</span></td></tr>
+                <tr><td><span class="code-inline">AuthConfigurationError</span></td><td>Bad secrets, <span class="code-inline">checkAccess()</span> with no engine, or <span class="code-inline">createSessionForUser()</span> with an unlisted method.</td><td>500 <span class="code-inline">ERR_CONFIGURATION_INVALID</span></td></tr>
+                <tr><td><span class="code-inline">InvalidCredentialsError</span></td><td>Unknown user or wrong password.</td><td>401 <span class="code-inline">ERR_INVALID_CREDENTIALS</span></td></tr>
+                <tr><td><span class="code-inline">TokenExpiredError</span></td><td>The token's <span class="code-inline">exp</span> has passed.</td><td>401 <span class="code-inline">ERR_TOKEN_EXPIRED</span></td></tr>
+                <tr><td><span class="code-inline">TokenInvalidError</span></td><td>Malformed, mis-signed, or wrong-type token.</td><td>401 <span class="code-inline">ERR_TOKEN_INVALID</span></td></tr>
+                <tr><td><span class="code-inline">TokenRevokedError</span></td><td>A used refresh token was replayed.</td><td>401 <span class="code-inline">ERR_TOKEN_REVOKED</span></td></tr>
+                <tr><td><span class="code-inline">AccountLockedError</span></td><td>Too many failed logins.</td><td>423 <span class="code-inline">ERR_ACCOUNT_LOCKED</span></td></tr>
+                <tr><td><span class="code-inline">AccountDeactivatedError</span></td><td>The account is not <span class="code-inline">active</span>.</td><td>403 <span class="code-inline">ERR_ACCOUNT_DEACTIVATED</span></td></tr>
+                <tr><td><span class="code-inline">AccessDeniedError</span></td><td>Insufficient permissions.</td><td>403 <span class="code-inline">ERR_ACCESS_DENIED</span></td></tr>
+                <tr><td><span class="code-inline">SessionExpiredError</span></td><td>The token's session is gone or expired.</td><td>401 <span class="code-inline">ERR_SESSION_EXPIRED</span></td></tr>
+                <tr><td><span class="code-inline">AuthRateLimitError</span></td><td>Too many login attempts in the window.</td><td>429 <span class="code-inline">ERR_RATE_LIMITED</span></td></tr>
               </tbody>
             </table>
             <p class="text-body text-black/80 mb-4">
-              <span class="code-inline">AccountLockedError</span>, <span class="code-inline">AccountDeactivatedError</span> and <span class="code-inline">TokenRevokedError</span> all carry the same <span class="code-inline">code</span>, <span class="code-inline">ERR_FORBIDDEN</span> (the locked one with status 423, the other two 403). Do not branch on <span class="code-inline">error.code</span> to tell them apart; use <span class="code-inline">instanceof</span> on the class.
+              <em>Changed in 1.3.0:</em> <span class="code-inline">AccountLockedError</span>, <span class="code-inline">AccountDeactivatedError</span> and <span class="code-inline">TokenRevokedError</span> used to share the code <span class="code-inline">ERR_FORBIDDEN</span>, and <span class="code-inline">TokenRevokedError</span> was a <span class="code-inline">403</span>. Each now has its own code, and a revoked token is a <span class="code-inline">401</span> (category authentication), because the client has to sign in again. A client that matched <span class="code-inline">ERR_FORBIDDEN</span> for these, or treated a revoked refresh token as a 403, must be updated.
             </p>
             <p class="text-body text-black/80 mb-4">
-              <span class="code-inline">AuthErrorOptions</span> is exported too, for constructing these yourself. <span class="code-inline">AccountLockedError</span> and <span class="code-inline">AuthRateLimitError</span> put a <span class="code-inline">retryAfterSeconds</span> value in their metadata, ready for a <span class="code-inline">Retry-After</span> header.
+              <span class="code-inline">AuthErrorOptions</span> is exported too, for constructing these yourself. <span class="code-inline">AccountLockedError</span> and <span class="code-inline">AuthRateLimitError</span> carry <span class="code-inline">retryAfterSeconds</span> (also in their metadata) and a <span class="code-inline">Retry-After</span> header in <span class="code-inline">headers</span>, which <span class="code-inline">@zudojs/http</span> copies onto the response.
             </p>
 
             <h3 class="text-h3 mb-3">Constants</h3>
@@ -891,6 +993,7 @@ console.<span class="fn">log</span>(<span class="fn">generateCsrfToken</span>().
               <li><strong>Trusting <span class="code-inline">extractUserId()</span> to identify the caller.</strong> It reads an unverified payload, so anyone can forge a user id. <em>Fix:</em> call <span class="code-inline">verifyToken()</span> and use <span class="code-inline">payload.sub</span>.</li>
               <li><strong>Shipping the in-memory stores.</strong> Sessions, revocations and attempt counters vanish on restart and are not shared between instances, so logouts and lockouts do not hold. <em>Fix:</em> implement <span class="code-inline">SessionStore</span>, <span class="code-inline">TokenRevocationStore</span> and <span class="code-inline">LoginAttemptStore</span> against Redis or your database.</li>
               <li><strong>Setting <span class="code-inline">allowInsecureFallbackGuard: true</span> to make <span class="code-inline">checkAccess()</span> stop throwing.</strong> The fallback ignores the permission string and grants owners and admins everything. <em>Fix:</em> configure a <span class="code-inline">permissions</span> engine.</li>
+              <li><strong>Passing a request value to <span class="code-inline">createSessionForUser()</span>.</strong> It checks no password, so a route that forwards a client-supplied user id signs anyone in as anyone. <em>Fix:</em> call it only after your own verification (OAuth state and PKCE, a passkey assertion) mapped the identity to a user, and list only the methods you use in <span class="code-inline">externalSessionMethods</span>.</li>
               <li><strong>Forgetting <span class="code-inline">absoluteSessionTtlSeconds</span>.</strong> An idle timeout alone lets an active session live forever, so a stolen session id never dies. <em>Fix:</em> set a hard ceiling, for example seven days.</li>
             </ul>
           </section>
@@ -972,6 +1075,7 @@ console.<span class="fn">log</span>(<span class="fn">generateCsrfToken</span>().
       <a href="#session-section" class="toc-link">SESSIONS</a>
       <a href="#branded-ids" class="toc-link">User &amp; Session IDs</a>
       <a href="#auth-service-section" class="toc-link">Auth Service</a>
+      <a href="#external-sessions" class="toc-link">OAuth &amp; Other Sign-ins</a>
       <a href="#rbac-section" class="toc-link">RBAC &amp; Permissions</a>
       <a href="#utils-section" class="toc-link">Request Utilities</a>
       <a href="#api-reference" class="toc-link">API Reference</a>

@@ -123,7 +123,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/tenancy</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Works out which customer a request belongs to, refuses the request when it cannot be sure, and carries that answer through the rest of your code.
@@ -177,10 +177,10 @@
       <!-- ==================== INSTALLATION ==================== -->
       <section id="installation" class="mb-16">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
-        <p class="mb-4 leading-relaxed">Install the package. It pulls in <code>@zudojs/errors</code> and <code>@zudojs/constants</code> on its own. It needs Node 24 or newer.</p>
+        <p class="mb-4 leading-relaxed">Install the package. It pulls in <code>@zudojs/errors</code>, <code>@zudojs/constants</code> and <code>@zudojs/middleware</code> on its own. It needs Node 24 or newer.</p>
         <div class="code-block mb-4">$ npm install @zudojs/tenancy</div>
 
-        <p class="mb-4 leading-relaxed">The HTTP middleware plugs into the <code>@zudojs/http</code> pipeline without depending on it: it reads headers through <code>request.getHeader()</code>, or from a plain object or <code>Map</code>. Install <code>@zudojs/http</code> if you want its server, and wrap the middleware as shown in <a href="#http-middleware" class="underline">HTTP middleware</a> so its refusals keep their status codes.</p>
+        <p class="mb-4 leading-relaxed">The HTTP middleware plugs into the <code>@zudojs/http</code> pipeline without depending on it: it reads headers through <code>request.getHeader()</code>, or from a plain object or <code>Map</code>. Install <code>@zudojs/http</code> if you want its server; the middleware goes straight into a route's <code>middleware</code> list, as shown in <a href="#http-middleware" class="underline">HTTP middleware</a>.</p>
         <div class="code-block mb-4">$ npm install @zudojs/http</div>
 
         <div class="callout callout-note mb-4">
@@ -346,26 +346,16 @@ console.<span class="fn">log</span>(<span class="kw">await</span> <span class="f
           Most apps accept more than one way of naming a tenant. A <em>chain</em> holds several resolvers, sorts them by priority (highest first) and asks each in turn.
         </p>
         <p class="mb-4 leading-relaxed">
-          <code>chain.resolve(context)</code> returns a <code>TenantResolutionResult</code>: the winning <code>resolution</code>, every <code>candidate</code> collected, and a <code>conflict</code> flag. <code>chain.asResolver()</code> hands you the chain packaged as a single resolver, which is what the HTTP middleware wants.
+          The chain's context type is inferred from its resolvers: it is the intersection of what they read, so a chain of a JWT and a header resolver needs both <code>getClaims</code> and <code>getHeader</code>, and TypeScript says so if you leave one out. <code>chain.resolve(context)</code> returns a <code>TenantResolutionResult</code>: the winning <code>resolution</code>, every <code>candidate</code> collected, and a <code>conflict</code> flag. <code>chain.asResolver()</code> hands you the chain packaged as a single resolver, which is what the HTTP middleware wants.
         </p>
         <div class="code-block mb-4"><span class="kw">import</span> {
   <span class="fn">createHeaderResolver</span>,
   <span class="fn">createJwtResolver</span>,
   <span class="fn">createResolverChain</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/tenancy"</span>;
-<span class="kw">import type</span> {
-  <span class="tp">HeaderContext</span>,
-  <span class="tp">JwtContext</span>,
-  <span class="tp">TenantResolver</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/tenancy"</span>;
 
-<span class="cmt">// One context type covering everything the chain's resolvers read.</span>
-<span class="kw">type</span> <span class="tp">RequestFacts</span> = <span class="tp">JwtContext</span> &amp; <span class="tp">HeaderContext</span>;
-
-<span class="kw">const</span> resolvers: <span class="kw">readonly</span> <span class="tp">TenantResolver</span>&lt;<span class="tp">RequestFacts</span>&gt;[] = [
-  <span class="fn">createJwtResolver</span>(),
-  <span class="fn">createHeaderResolver</span>(),
-];
+<span class="cmt">// The chain's context is inferred: it needs getClaims (JWT) and getHeader.</span>
+<span class="kw">const</span> resolvers = [<span class="fn">createJwtResolver</span>(), <span class="fn">createHeaderResolver</span>()];
 
 <span class="kw">const</span> chain = <span class="fn">createResolverChain</span>(resolvers, { detectConflicts: <span class="kw">true</span> });
 
@@ -609,7 +599,8 @@ console.<span class="fn">log</span>(tenant.name);  <span class="cmt">// "Acme Co
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">4.</span> Refuses a non-active tenant with the same <code>404</code> as an unknown one, unless <code>allowInactive</code> is set.</li>
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">5.</span> Puts the tenant in request state and runs the rest of the request inside the tenant context.</li>
         </ul>
-        <div class="code-block mb-4"><span class="kw">import</span> {
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createHttpServer</span>, <span class="fn">createNodeHttpAdapter</span>, <span class="fn">createRouter</span> } <span class="kw">from</span> <span class="str">"@zudojs/http"</span>;
+<span class="kw">import</span> {
   <span class="fn">createJwtResolver</span>,
   <span class="fn">createMemoryTenantRepository</span>,
   <span class="fn">createRequireTenantMiddleware</span>,
@@ -618,8 +609,9 @@ console.<span class="fn">log</span>(tenant.name);  <span class="cmt">// "Acme Co
   <span class="fn">createSubdomainResolver</span>,
   <span class="fn">createTenantContextStorage</span>,
   <span class="fn">createTenantId</span>,
+  <span class="const">TENANT_STATE_KEY</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/tenancy"</span>;
-<span class="kw">import type</span> { <span class="tp">HttpResolverContext</span>, <span class="tp">TenantResolver</span> } <span class="kw">from</span> <span class="str">"@zudojs/tenancy"</span>;
+<span class="kw">import type</span> { <span class="tp">Tenant</span> } <span class="kw">from</span> <span class="str">"@zudojs/tenancy"</span>;
 
 <span class="kw">export const</span> storage = <span class="fn">createTenantContextStorage</span>();
 
@@ -632,12 +624,11 @@ repository.<span class="fn">add</span>({
   metadata: {},
 });
 
-<span class="kw">const</span> resolvers: <span class="kw">readonly</span> <span class="tp">TenantResolver</span>&lt;<span class="tp">HttpResolverContext</span>&gt;[] = [
+<span class="cmt">// The chain's context is inferred from its resolvers: JWT claims and the host.</span>
+<span class="kw">const</span> chain = <span class="fn">createResolverChain</span>([
   <span class="fn">createJwtResolver</span>(),
   <span class="fn">createSubdomainResolver</span>({ baseDomain: <span class="str">"example.com"</span> }),
-];
-
-<span class="kw">const</span> chain = <span class="fn">createResolverChain</span>(resolvers);
+]);
 
 <span class="kw">export const</span> resolveTenant = <span class="fn">createResolveTenantMiddleware</span>({
   resolver: chain.<span class="fn">asResolver</span>(),
@@ -647,49 +638,32 @@ repository.<span class="fn">add</span>({
 });
 
 <span class="cmt">// Run after resolveTenant. Answers 401 when no tenant was established.</span>
-<span class="kw">export const</span> requireTenant = <span class="fn">createRequireTenantMiddleware</span>();</div>
-        <p class="mb-4 leading-relaxed">
-          Register <code>resolveTenant</code> before <code>requireTenant</code>, and both before your routes. By default (<code>minimumTrust: "verified"</code>) a tenant named only by an untrusted header or a URL path is refused; pass <code>minimumTrust: "untrusted"</code> to opt down.
-        </p>
-        <p class="mb-4 leading-relaxed">
-          <strong>Common mistake:</strong> passing the resolvers inline, as in <code>createResolverChain([createJwtResolver(), createSubdomainResolver(…)])</code>. TypeScript infers the chain's context from the first resolver and rejects the others with <code>TS2322</code> (<em>Property 'getHost' is missing in type 'JwtContext'</em>). Type the array as above, or name the context: <code>createResolverChain&lt;HttpResolverContext&gt;([…])</code>.
-        </p>
+<span class="kw">export const</span> requireTenant = <span class="fn">createRequireTenantMiddleware</span>();
 
-        <div class="border-4 border-black bg-zudo-red/10 p-4 mb-6">
-          <p class="font-bold mb-2">Inside <code class="bg-black/5 px-1">@zudojs/http</code> 1.3.0, these refusals are sent as HTTP 200.</p>
-          <p class="text-sm mb-2">The 400/401/403/404 answers listed above are plain <code class="bg-black/5 px-1">{ status, body, headers }</code> objects, and <code class="bg-black/5 px-1">@zudojs/http</code> only honours a status on its own response contexts. Tested against a real server with <code class="bg-black/5 px-1">resolveTenant</code> as route middleware: a header-only tenant, an unknown host and a request with no tenant all came back <strong>200 with an empty body</strong>. (In an <code class="bg-black/5 px-1">HttpMiddlewarePipeline</code> the refusal object is sent as a 200 JSON body instead.) The route handler did not run, so no tenant data leaked, but clients and monitoring see a success, and a <code class="bg-black/5 px-1">404 Tenant not found</code> becomes an empty 200 page. The same applies to <code class="bg-black/5 px-1">createRequireTenantMiddleware</code> and <code class="bg-black/5 px-1">createTenantGuardMiddleware</code>.</p>
-          <p class="text-sm">Wrap each tenancy middleware so a refusal becomes a real response. The wrapper below keeps the status, headers and body the middleware chose and passes every allowed request through unchanged, still inside the tenant context:</p>
+<span class="kw">const</span> router = <span class="fn">createRouter</span>();
+router.<span class="fn">get</span>(<span class="str">"/orders"</span>, (ctx) =&gt; {
+  <span class="kw">const</span> tenant = ctx.state.<span class="fn">get</span>(<span class="const">TENANT_STATE_KEY</span>) <span class="kw">as</span> <span class="tp">Tenant</span>;
+  <span class="kw">return</span> { tenant: tenant.name };
+}, { middleware: [resolveTenant, requireTenant] });
+
+<span class="kw">const</span> server = <span class="fn">createHttpServer</span>({
+  adapter: <span class="fn">createNodeHttpAdapter</span>({ host: <span class="str">"127.0.0.1"</span>, port: <span class="num">3000</span> }),
+  handler: <span class="kw">async</span> (request) =&gt; (<span class="kw">await</span> router.<span class="fn">dispatch</span>(request)).response,
+});
+<span class="kw">await</span> server.<span class="fn">start</span>();
+
+<span class="cmt">// GET /orders, Host: acme.example.com   → 200 {"tenant":"Acme Corp"}</span>
+<span class="cmt">// GET /orders, Host: nobody.example.com → 404 {"error":"Tenant not found"}</span>
+<span class="cmt">// GET /orders, Host: localhost          → 404 {"error":"Tenant not found"}</span></div>
+        <p class="mb-4 leading-relaxed">
+          Register <code>resolveTenant</code> before <code>requireTenant</code>, and both before your routes. By default (<code>minimumTrust: "verified"</code>) a tenant named only by an untrusted header or a URL path is refused with <code>403</code>; pass <code>minimumTrust: "untrusted"</code> to opt down.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          The refusals are real HTTP responses. Every tenancy middleware answers with a <em>guard response</em> built by <code>createGuardResponse</code> from <a href="/docs/packages-middleware" class="font-bold text-zudo-blue hover:underline">@zudojs/middleware</a>, which <code>@zudojs/http</code> sends with its status, headers and JSON body. Tested against a real server: an unknown host answered <code>404</code>, a header-only tenant (with a header resolver in the chain) <code>403</code>, and <code>requireTenant</code> with no tenant <code>401</code>, each as <code>application/json</code>.
+        </p>
+        <div class="callout callout-note mb-4">
+          <p class="text-sm"><strong>Changed in 1.3.0:</strong> two workarounds are no longer needed. Up to 1.2.x the refusals were plain <code>{ status, body, headers }</code> objects that <code>@zudojs/http</code> ignored, so a refused request came back as <code>200</code> with an empty body, and the fix was a wrapper that turned the object into a response. The middleware also needed <code>as never</code> to fit a route's <code>middleware</code> list, and <code>createResolverChain([createJwtResolver(), createSubdomainResolver(…)])</code> failed with <code>TS2322</code> unless you wrote <code>&lt;HttpResolverContext&gt;</code>. Remove the wrapper, the casts and the type argument when you upgrade; an explicit type argument still compiles.</p>
         </div>
-
-        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createResponseContext</span> } <span class="kw">from</span> <span class="str">"@zudojs/http"</span>;
-<span class="kw">import type</span> { <span class="tp">HttpMiddleware</span>, <span class="tp">HttpResponseContext</span> } <span class="kw">from</span> <span class="str">"@zudojs/http"</span>;
-<span class="kw">import</span> { <span class="fn">createResolveTenantMiddleware</span> } <span class="kw">from</span> <span class="str">"@zudojs/tenancy"</span>;
-
-<span class="kw">type</span> <span class="tp">TenancyMiddleware</span> = <span class="tp">ReturnType</span>&lt;<span class="kw">typeof</span> createResolveTenantMiddleware&gt;;
-<span class="kw">interface</span> <span class="tp">Refusal</span> {
-  <span class="kw">readonly</span> status: <span class="tp">number</span>;
-  <span class="kw">readonly</span> body: <span class="tp">unknown</span>;
-  <span class="kw">readonly</span> headers: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">string</span>&gt;&gt;;
-}
-
-<span class="cmt">// If the tenancy middleware called next(), return what the route produced.</span>
-<span class="cmt">// Otherwise it refused: send its status instead of letting http send 200.</span>
-<span class="kw">export function</span> <span class="fn">withHttpStatus</span>(middleware: <span class="tp">TenancyMiddleware</span>): <span class="tp">HttpMiddleware</span> {
-  <span class="kw">return async</span> (context, next) =&gt; {
-    <span class="kw">let</span> response: <span class="tp">HttpResponseContext</span> | <span class="tp">undefined</span>;
-    <span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">middleware</span>(context, <span class="kw">async</span> () =&gt; {
-      response = <span class="kw">await</span> <span class="fn">next</span>();
-      <span class="kw">return</span> response;
-    });
-    <span class="kw">if</span> (response) <span class="kw">return</span> response;
-    <span class="kw">const</span> { status, headers, body } = result <span class="kw">as</span> <span class="tp">Refusal</span>;
-    <span class="kw">return</span> <span class="fn">createResponseContext</span>({ status, headers, body: <span class="tp">JSON</span>.<span class="fn">stringify</span>(body) });
-  };
-}
-
-<span class="cmt">// router.get("/orders", listOrders, { middleware: [withHttpStatus(resolveTenant)] });</span>
-<span class="cmt">// header only → 403 {"error":"Tenant could not be established for this route"}</span>
-<span class="cmt">// unknown host → 404 {"error":"Tenant not found"}</span></div>
 
         <h3 class="text-lg font-bold mb-3 mt-8">Where JWT claims come from</h3>
         <p class="mb-4 leading-relaxed">
@@ -781,7 +755,7 @@ console.<span class="fn">log</span>(<span class="fn">tenantKey</span>(acme, <spa
               <tr><td><code>createHeaderResolver({ headerName?, trust?, priority? })</code></td><td>Reads the tenant from a header.</td><td><code>x-tenant-id</code>, priority 80, trust <code>untrusted</code>.</td></tr>
               <tr><td><code>createPathResolver({ prefix?, priority? })</code></td><td>Reads the tenant from the first path segment after <code>prefix</code>; paths outside the prefix resolve to nothing.</td><td>Priority 60, trust <code>untrusted</code>.</td></tr>
               <tr><td><code>createDomainResolver({ registry?, repository?, priority? })</code></td><td>Maps the host to a tenant through a registered custom domain.</td><td>Priority 75, trust <code>verified</code>.</td></tr>
-              <tr><td><code>createResolverChain(resolvers, options?)</code></td><td>Runs resolvers in priority order.</td><td>Returns <code>resolve</code>, <code>resolveTenant</code>, <code>asResolver</code>.</td></tr>
+              <tr><td><code>createResolverChain(resolvers, options?)</code></td><td>Runs resolvers in priority order.</td><td>Returns <code>resolve</code>, <code>resolveTenant</code>, <code>asResolver</code>. The context is inferred as the intersection of what the resolvers read (<code>ResolverChainContext</code>); an explicit type argument also works.</td></tr>
             </tbody>
           </table>
         </div>
@@ -839,7 +813,8 @@ console.<span class="fn">log</span>(<span class="fn">tenantKey</span>(acme, <spa
               <tr><td><code>createTenantPropagationMiddleware(storage)</code></td><td>Re-enters the context from request state.</td><td>For later pipeline stages.</td></tr>
               <tr><td><code>createHttpResolverContext(context, getClaims?)</code></td><td>Adapts an HTTP context to the resolver accessor.</td><td>The resolve middleware calls it for you.</td></tr>
               <tr><td><code>TENANT_STATE_KEY</code>, <code>TENANT_CONTEXT_STATE_KEY</code>, <code>TENANT_CLAIMS_STATE_KEY</code></td><td>State keys for tenant, context and claims.</td><td><code>"tenancy:tenant"</code>, <code>"tenancy:context"</code>, <code>"tenancy:claims"</code>.</td></tr>
-              <tr><td><code>createJsonErrorResponse</code>, <code>createBadRequest</code>, <code>createUnauthorized</code>, <code>createForbidden</code>, <code>createNotFound</code></td><td>Frozen JSON error responses.</td><td>Body is <code>{ error: message }</code>.</td></tr>
+              <tr><td><code>createJsonErrorResponse</code>, <code>createBadRequest</code>, <code>createUnauthorized</code>, <code>createForbidden</code>, <code>createNotFound</code></td><td>Frozen JSON error responses.</td><td>Guard responses (<code>isGuardResponse</code> is <code>true</code>), so <code>@zudojs/http</code> sends their status. Body is <code>{ error: message }</code>.</td></tr>
+              <tr><td><code>createJsonResponse(status, body)</code></td><td>A guard response with any status and JSON body.</td><td>For a custom refusal in your own middleware. Added in 1.3.0.</td></tr>
             </tbody>
           </table>
         </div>

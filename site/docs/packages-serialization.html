@@ -123,7 +123,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.1.1</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/serialization</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Turns JavaScript values into text you can store or send, and turns that text back into the same values &mdash; including Date, BigInt, Map, Set, Uint8Array and Error.
@@ -188,7 +188,7 @@
         <div class="code-block">$ npm install @zudojs/serialization</div>
 
         <p class="mb-3 mt-4 text-sm text-black/60">
-          It depends on <code>@zudojs/constants</code> (tag names and limits), <code>@zudojs/errors</code> (the error classes it throws), <code>@zudojs/types</code> and <code>@zudojs/validation</code>, all at version 1.0.0.
+          It depends on <code>@zudojs/constants</code> (tag names and limits), <code>@zudojs/errors</code> (the error classes it throws), <code>@zudojs/types</code> and <code>@zudojs/validation</code>.
         </p>
 
         <div class="callout callout-note">
@@ -345,8 +345,9 @@ serializer.<span class="fn">deserialize</span>(json, { strict: <span class="kw">
 <span class="kw">const</span> moneyTransformer: <span class="tp">TypeTransformer</span>&lt;<span class="tp">Money</span>&gt; = {
   type: <span class="str">"Money"</span>,
   canSerialize: (value): value <span class="kw">is</span> <span class="tp">Money</span> =&gt; value <span class="kw">instanceof</span> <span class="tp">Money</span>,
-  <span class="cm">// Return the whole tagged object, not just the value.</span>
-  serialize: (value) =&gt; ({ <span class="str">$type</span>: <span class="str">"Money"</span>, <span class="str">$value</span>: <span class="fn">String</span>(value.cents) }),
+  <span class="cm">// Return just the value; it is wrapped as { $type: "Money", $value } for you.</span>
+  serialize: (value) =&gt; <span class="fn">String</span>(value.cents),
+  <span class="cm">// deserialize always receives the full tagged object.</span>
   deserialize: (value) =&gt;
     <span class="kw">new</span> <span class="fn">Money</span>(<span class="fn">Number</span>((value <span class="kw">as</span> { $value: <span class="tp">string</span> }).$value)),
 };
@@ -366,12 +367,43 @@ console.<span class="fn">log</span>(json);
 console.<span class="fn">log</span>(back.price <span class="kw">instanceof</span> <span class="tp">Money</span>, back.price.cents, back.placedAt <span class="kw">instanceof</span> <span class="tp">Date</span>);
 <span class="cm">// true 499 true</span></div>
 
-        <div class="callout callout-warning">
-          <strong class="text-zudo-yellow">Watch out:</strong> <code>serialize</code> must return the complete tagged object, <code>{ $type: "Money", $value: &hellip; }</code>. The serializer does not add the tag for you. A transformer that returns only the bare value (<code>serialize: (m) =&gt; String(m.cents)</code>) writes <code>{"price":"499"}</code>, and on the way back nothing marks it as money: you get the string <code>"499"</code>, with no error.
-        </div>
+        <p class="mt-4 mb-3">
+          Since v1.2.0 <code>serialize</code> may return just the value, as above, and the serializer wraps it as <code>{ $type, $value }</code>. Returning the full tagged object <code>{ $type: "Money", $value: &hellip; }</code> yourself, as the built-ins do, still works: any plain object with its own string <code>$type</code> is taken as-is. <code>deserialize</code> always receives the full tagged object, so read <code>$value</code> from it. (Before v1.2.0 a bare return was written untagged and read back as a plain string.)
+        </p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Your own registry</h3>
+        <p class="mb-3">
+          You can also pass a <code class="bg-black/5 px-1">TransformerRegistry</code> of your own, to <code>new JSONSerializer({ transformers })</code> or to <code>createSerializer("json", { transformers })</code>. Since v1.2.0 the built-in transformers stay behind it: your registry is consulted first (so it can override a built-in tag such as <code>"Date"</code>), and dates, maps, sets and the rest still work. Pass <code>builtins: false</code> to use only your registry; <code>createBuiltinTransformers()</code> returns a registry holding all six if you want to start from them.
+        </p>
+        <div class="code-block"><span class="kw">import</span> { <span class="fn">createSerializer</span>, <span class="tp">TransformerRegistry</span>, <span class="kw">type</span> <span class="tp">TypeTransformer</span> } <span class="kw">from</span> <span class="str">"@zudojs/serialization"</span>;
+
+<span class="kw">class</span> <span class="tp">Money</span> {
+  <span class="fn">constructor</span>(<span class="kw">public readonly</span> cents: <span class="tp">number</span>) {}
+}
+
+<span class="kw">const</span> money: <span class="tp">TypeTransformer</span>&lt;<span class="tp">Money</span>&gt; = {
+  type: <span class="str">"Money"</span>,
+  canSerialize: (value): value <span class="kw">is</span> <span class="tp">Money</span> =&gt; value <span class="kw">instanceof</span> <span class="tp">Money</span>,
+  serialize: (value) =&gt; value.cents,
+  deserialize: (value) =&gt; <span class="kw">new</span> <span class="fn">Money</span>((value <span class="kw">as</span> { $value: <span class="tp">number</span> }).$value),
+};
+
+<span class="kw">const</span> registry = <span class="kw">new</span> <span class="tp">TransformerRegistry</span>();
+registry.<span class="fn">register</span>(money);
+
+<span class="kw">const</span> withBuiltins = <span class="fn">createSerializer</span>(<span class="str">"json"</span>, { transformers: registry, preserveTypes: <span class="kw">true</span> });
+console.<span class="fn">log</span>(withBuiltins.<span class="fn">serialize</span>({ price: <span class="kw">new</span> <span class="fn">Money</span>(<span class="num">499</span>), tags: <span class="kw">new</span> <span class="tp">Set</span>([<span class="str">"sale"</span>]) }));
+<span class="cm">// {"price":{"$type":"Money","$value":499},"tags":{"$type":"Set","$value":["sale"]}}</span>
+
+<span class="kw">const</span> onlyMine = <span class="fn">createSerializer</span>(<span class="str">"json"</span>, { transformers: registry, builtins: <span class="kw">false</span>, preserveTypes: <span class="kw">true</span> });
+<span class="kw">try</span> {
+  onlyMine.<span class="fn">serialize</span>({ tags: <span class="kw">new</span> <span class="tp">Set</span>([<span class="str">"sale"</span>]) });
+} <span class="kw">catch</span> (error) {
+  console.<span class="fn">log</span>((error <span class="kw">as</span> <span class="tp">Error</span>).name); <span class="cm">// SerializeError</span>
+}</div>
 
         <div class="callout callout-warning">
-          <strong class="text-zudo-yellow">Watch out:</strong> <code>new JSONSerializer({ transformers: registry })</code> <em>replaces</em> the built-in set with your registry; <code>createSerializer("json", { transformers })</code> does the same. A fresh <code>new TransformerRegistry()</code> starts empty, so with only your own transformer in it a <code>Date</code> comes back as a string and a <code>Map</code> or <code>Set</code> is written as <code>{}</code>, losing its contents without an error. If you need your own registry, register the built-ins you still want on it too (<code>DateTransformer</code>, <code>BigIntTransformer</code>, <code>MapTransformer</code>, <code>SetTransformer</code>, <code>BufferTransformer</code>, <code>ErrorTransformer</code>). Otherwise use <code>registerTransformer</code> as above.
+          <strong class="text-zudo-yellow">Nothing is silently flattened to <code>{}</code> any more:</strong> with <code>preserveTypes</code>, a value no transformer handles that JSON would write as <code>{}</code> (a <code>Map</code>, <code>Set</code>, <code>WeakMap</code>, <code>WeakSet</code>, <code>WeakRef</code>, <code>Promise</code>, <code>RegExp</code>, <code>Error</code>, <code>ArrayBuffer</code> or <code>DataView</code>) throws <code>SerializeError</code> naming the type. With the built-ins enabled that only happens for types that have no built-in transformer, such as <code>RegExp</code>. Two things are unchanged: with <code>builtins: false</code> a <code>Date</code> is still written by <code>JSON.stringify</code> as an ISO string (and reads back as a string), and the fast path without <code>preserveTypes</code> is plain <code>JSON.stringify</code>, which still writes a <code>Map</code> as <code>{}</code>.
         </div>
       </section>
 
@@ -641,7 +673,12 @@ console.<span class="fn">log</span>(back.items.<span class="fn">has</span>(<span
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">createSerializer(format, options?)</td>
                 <td class="p-3">Creates a serializer for a format.</td>
-                <td class="p-3">Only <code>"json"</code> is supported. Options: <code>transformers</code>, plus every serialize/deserialize option (<code>pretty</code>, <code>preserveTypes</code>, <code>maxSize</code>, <code>maxDepth</code>, <code>strict</code>, &hellip;) &mdash; kept as per-instance defaults.</td>
+                <td class="p-3">Only <code>"json"</code> is supported. Options: <code>transformers</code> (consulted before the built-ins), <code>builtins</code> (default <code>true</code>), plus every serialize/deserialize option (<code>pretty</code>, <code>preserveTypes</code>, <code>maxSize</code>, <code>maxDepth</code>, <code>strict</code>, &hellip;) &mdash; kept as per-instance defaults.</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono">createBuiltinTransformers()</td>
+                <td class="p-3">Returns a new <code>TransformerRegistry</code> holding the six built-in transformers.</td>
+                <td class="p-3">New in v1.2.0. A starting point for a registry you pass with <code>builtins: false</code>.</td>
               </tr>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">createDefaultRegistry()</td>
@@ -706,7 +743,7 @@ console.<span class="fn">log</span>(back.items.<span class="fn">has</span>(<span
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">JSONSerializer</td>
                 <td class="p-3">The JSON serializer. <code>serialize</code>, <code>deserialize</code>, <code>registerTransformer</code>, plus <code>name</code> and <code>contentType</code>.</td>
-                <td class="p-3">Constructor takes <code>{ transformers?, defaults? }</code>. With no arguments it registers all six built-in transformers.</td>
+                <td class="p-3">Constructor takes <code>JSONSerializerOptions</code>: <code>{ transformers?, builtins?, defaults? }</code>. Your <code>transformers</code> are consulted first and the built-ins stay behind them unless <code>builtins: false</code>. With no arguments it registers all six built-in transformers.</td>
               </tr>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">SerializerRegistry</td>
@@ -754,9 +791,14 @@ console.<span class="fn">log</span>(back.items.<span class="fn">has</span>(<span
                 <td class="p-3"><code>preserveTypes</code>, <code>maxDepth</code>, <code>maxSize</code>, <code>strict</code>, <code>allowUnsafeKeys</code>.</td>
               </tr>
               <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono">JSONSerializerOptions</td>
+                <td class="p-3">Constructor options for <code>JSONSerializer</code>.</td>
+                <td class="p-3"><code>transformers</code>, <code>builtins</code>, <code>defaults</code>. Exported since v1.2.0.</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">TypeTransformer&lt;TValue&gt;</td>
                 <td class="p-3">The contract a custom transformer implements.</td>
-                <td class="p-3"><code>type</code>, <code>canSerialize</code>, <code>serialize(value, options?)</code>, <code>deserialize(value, options?)</code>.</td>
+                <td class="p-3"><code>type</code>, <code>canSerialize</code>, <code>serialize(value, options?)</code> (return the bare value or the full tagged object), <code>deserialize(value, options?)</code> (always receives the full tagged object).</td>
               </tr>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">SerializedEnvelope</td>
@@ -828,7 +870,7 @@ console.<span class="fn">log</span>(back.items.<span class="fn">has</span>(<span
               </tr>
               <tr>
                 <td class="p-3 font-mono">SerializeError</td>
-                <td class="p-3">A value cannot be written, such as an invalid <code>Date</code> or an oversized BigInt.</td>
+                <td class="p-3">A value cannot be written, such as an invalid <code>Date</code>, an oversized BigInt, or (with <code>preserveTypes</code>) a <code>Map</code>, <code>Set</code>, <code>RegExp</code>, <code>Promise</code> or similar that no transformer handles and JSON would write as <code>{}</code></td>
                 <td class="p-3">A <code>SerializationError</code>.</td>
               </tr>
             </tbody>
@@ -850,10 +892,7 @@ console.<span class="fn">log</span>(back.items.<span class="fn">has</span>(<span
             <strong>Sending a <code>BigInt</code> down the fast path.</strong> <code>JSON.stringify</code> throws <em>"Do not know how to serialize a BigInt"</em>. Fix: turn on <code>preserveTypes</code>.
           </li>
           <li class="border-l-4 border-zudo-yellow pl-4">
-            <strong>Passing your own <code>TransformerRegistry</code> and losing the built-ins.</strong> Dates silently come back as strings, and maps and sets are written as <code>{}</code>. Fix: call <code>registerTransformer</code> on a default <code>new JSONSerializer()</code>, or register the built-in transformers you still need on your registry.
-          </li>
-          <li class="border-l-4 border-zudo-red pl-4">
-            <strong>Returning a bare value from a transformer's <code>serialize</code>.</strong> The tag is lost and the value reads back as plain data. Fix: return <code>{ $type: "YourTag", $value: &hellip; }</code>.
+            <strong>Passing <code>builtins: false</code> and then serializing a <code>Map</code>.</strong> Under <code>preserveTypes</code> it throws <code>SerializeError</code>, and a <code>Date</code> quietly becomes a string. Fix: leave the built-ins on (the default) and let your registry override only the tags you need.
           </li>
           <li class="border-l-4 border-zudo-green pl-4">
             <strong>Importing <code>SerializerNotFoundError</code> from <code>@zudojs/serialization</code>.</strong> The import fails &mdash; the class is not re-exported here. Fix: <code>import { SerializerNotFoundError } from "@zudojs/errors";</code>
