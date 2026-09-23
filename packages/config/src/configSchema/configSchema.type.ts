@@ -70,6 +70,21 @@ export interface ConfigSchema<T extends ConfigValue = ConfigValue> {
    * serialization redact them.
    */
   readonly secret?: boolean;
+  /**
+   * Coerces string input before the type check. Defaults to `true`.
+   *
+   * Environment variables, `.env` files and CLI flags are always
+   * strings, so a `NUMBER` or `BOOLEAN` schema could never pass on them.
+   * When the value is a string, the schema does not itself accept
+   * strings, and the schema type includes `NUMBER` or `BOOLEAN`, the
+   * string is parsed strictly first: decimal numbers only (`"8080"`
+   * passes, `"80a"` and `"0x1F90"` do not), and booleans by the
+   * `parseConfigBoolean` convention (`true/false`, `1/0`, `yes/no`,
+   * `y/n`, `on/off`). A string that does not parse is still reported
+   * as `TYPE_MISMATCH`. `validate` and `transform` receive the coerced
+   * value. Set `false` to require a real number or boolean.
+   */
+  readonly coerce?: boolean;
   readonly validate?: (
     value: T,
     context: ConfigValidationContext,

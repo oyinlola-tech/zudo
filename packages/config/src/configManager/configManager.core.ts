@@ -33,6 +33,8 @@ import type { ConfigResolver } from "../configResolver/core/configResolver.core.
 
 import type { ScopedConfigResolver } from "../configResolver/accessors/configResolver.scoped.js";
 
+import type { ConfigWiden } from "../configResolver/core/configResolver.type.js";
+
 import { createConfigResolver } from "../configResolver/core/configResolver.factory.js";
 
 import type {
@@ -333,10 +335,15 @@ export class ConfigManager {
   /**
    * Gets a raw configuration value.
    */
-  get<T extends ConfigValue = ConfigValue>(key: string): T | undefined {
+  get<T extends ConfigValue = ConfigValue>(key: string): T | undefined;
+  get<T extends ConfigValue>(key: string, fallback: T): ConfigWiden<T>;
+  get<T extends ConfigValue = ConfigValue>(
+    key: string,
+    fallback?: T,
+  ): T | ConfigWiden<T> | undefined {
     this.assertActive();
 
-    return this.resolver.get<T>(key);
+    return this.resolver.get<T>(key, fallback as T);
   }
 
   /**
@@ -363,6 +370,9 @@ export class ConfigManager {
   /**
    * Gets a string value.
    */
+  string(key: string): string | undefined;
+  string(key: string, fallback: string): string;
+  string(key: string, fallback?: string): string | undefined;
   string(key: string, fallback?: string): string | undefined {
     this.assertActive();
 
@@ -372,6 +382,9 @@ export class ConfigManager {
   /**
    * Gets a number value.
    */
+  number(key: string): number | undefined;
+  number(key: string, fallback: number): number;
+  number(key: string, fallback?: number): number | undefined;
   number(key: string, fallback?: number): number | undefined {
     this.assertActive();
 
@@ -381,6 +394,9 @@ export class ConfigManager {
   /**
    * Gets a boolean value.
    */
+  boolean(key: string): boolean | undefined;
+  boolean(key: string, fallback: boolean): boolean;
+  boolean(key: string, fallback?: boolean): boolean | undefined;
   boolean(key: string, fallback?: boolean): boolean | undefined {
     this.assertActive();
 
@@ -390,6 +406,9 @@ export class ConfigManager {
   /**
    * Gets a bigint value.
    */
+  bigint(key: string): bigint | undefined;
+  bigint(key: string, fallback: bigint): bigint;
+  bigint(key: string, fallback?: bigint): bigint | undefined;
   bigint(key: string, fallback?: bigint): bigint | undefined {
     this.assertActive();
 
@@ -399,6 +418,9 @@ export class ConfigManager {
   /**
    * Gets a Date value.
    */
+  date(key: string): Date | undefined;
+  date(key: string, fallback: Date): Date;
+  date(key: string, fallback?: Date): Date | undefined;
   date(key: string, fallback?: Date): Date | undefined {
     this.assertActive();
 
@@ -408,6 +430,12 @@ export class ConfigManager {
   /**
    * Gets an object value.
    */
+  object<T extends ConfigValue = ConfigValue>(key: string): T | undefined;
+  object<T extends ConfigValue = ConfigValue>(key: string, fallback: T): T;
+  object<T extends ConfigValue = ConfigValue>(
+    key: string,
+    fallback?: T,
+  ): T | undefined;
   object<T extends ConfigValue = ConfigValue>(
     key: string,
     fallback?: T,
@@ -420,6 +448,15 @@ export class ConfigManager {
   /**
    * Gets an array value.
    */
+  array<T extends ConfigValue = ConfigValue>(key: string): readonly T[] | undefined;
+  array<T extends ConfigValue = ConfigValue>(
+    key: string,
+    fallback: readonly T[],
+  ): readonly T[];
+  array<T extends ConfigValue = ConfigValue>(
+    key: string,
+    fallback?: readonly T[],
+  ): readonly T[] | undefined;
   array<T extends ConfigValue = ConfigValue>(
     key: string,
     fallback?: readonly T[],

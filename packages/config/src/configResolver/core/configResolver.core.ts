@@ -17,6 +17,7 @@ import type { ConfigStore } from "../../configStore/configStore.core.js";
 import type {
   ConfigResolverOptions,
   ConfigResolutionResult,
+  ConfigWiden,
 } from "./configResolver.type.js";
 
 import { ScopedConfigResolver } from "../accessors/configResolver.scoped.js";
@@ -45,10 +46,17 @@ export class ConfigResolver {
   /**
    * Returns the raw configuration value.
    */
-  get<T extends ConfigValue = ConfigValue>(key: string): T | undefined {
+  get<T extends ConfigValue = ConfigValue>(key: string): T | undefined;
+  get<T extends ConfigValue>(key: string, fallback: T): ConfigWiden<T>;
+  get<T extends ConfigValue = ConfigValue>(
+    key: string,
+    fallback?: T,
+  ): T | ConfigWiden<T> | undefined {
     const value = this.store.get<T>(key);
 
-    return this.prepareValue(value) as T | undefined;
+    return this.prepareValue(value === undefined ? fallback : value) as
+      | T
+      | undefined;
   }
 
   /**
@@ -150,6 +158,9 @@ export class ConfigResolver {
   /**
    * Returns a string configuration value.
    */
+  string(key: string): string | undefined;
+  string(key: string, fallback: string): string;
+  string(key: string, fallback?: string): string | undefined;
   string(key: string, fallback?: string): string | undefined {
     const value = this.store.get(key);
 
@@ -186,6 +197,9 @@ export class ConfigResolver {
   /**
    * Returns a number configuration value.
    */
+  number(key: string): number | undefined;
+  number(key: string, fallback: number): number;
+  number(key: string, fallback?: number): number | undefined;
   number(key: string, fallback?: number): number | undefined {
     const value = this.store.get(key);
 
@@ -234,6 +248,9 @@ export class ConfigResolver {
   /**
    * Returns a boolean configuration value.
    */
+  boolean(key: string): boolean | undefined;
+  boolean(key: string, fallback: boolean): boolean;
+  boolean(key: string, fallback?: boolean): boolean | undefined;
   boolean(key: string, fallback?: boolean): boolean | undefined {
     const value = this.store.get(key);
 
@@ -278,6 +295,9 @@ export class ConfigResolver {
   /**
    * Returns a bigint configuration value.
    */
+  bigint(key: string): bigint | undefined;
+  bigint(key: string, fallback: bigint): bigint;
+  bigint(key: string, fallback?: bigint): bigint | undefined;
   bigint(key: string, fallback?: bigint): bigint | undefined {
     const value = this.store.get(key);
 
@@ -303,6 +323,9 @@ export class ConfigResolver {
   /**
    * Returns a Date configuration value.
    */
+  date(key: string): Date | undefined;
+  date(key: string, fallback: Date): Date;
+  date(key: string, fallback?: Date): Date | undefined;
   date(key: string, fallback?: Date): Date | undefined {
     const value = this.store.get(key);
 
@@ -355,6 +378,12 @@ export class ConfigResolver {
   /**
    * Returns an object configuration value.
    */
+  object<T extends ConfigValue = ConfigValue>(key: string): T | undefined;
+  object<T extends ConfigValue = ConfigValue>(key: string, fallback: T): T;
+  object<T extends ConfigValue = ConfigValue>(
+    key: string,
+    fallback?: T,
+  ): T | undefined;
   object<T extends ConfigValue = ConfigValue>(
     key: string,
     fallback?: T,
@@ -380,6 +409,15 @@ export class ConfigResolver {
   /**
    * Returns an array configuration value.
    */
+  array<T extends ConfigValue = ConfigValue>(key: string): readonly T[] | undefined;
+  array<T extends ConfigValue = ConfigValue>(
+    key: string,
+    fallback: readonly T[],
+  ): readonly T[];
+  array<T extends ConfigValue = ConfigValue>(
+    key: string,
+    fallback?: readonly T[],
+  ): readonly T[] | undefined;
   array<T extends ConfigValue = ConfigValue>(
     key: string,
     fallback?: readonly T[],

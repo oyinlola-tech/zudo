@@ -22,6 +22,8 @@ import {
 
 import type { ConfigObjectSchema } from "./configSchema.type.js";
 
+import { coerceConfigInput } from "./configSchema.coerce.js";
+
 /**
  * Returns the runtime configuration value type.
  */
@@ -404,11 +406,15 @@ function validateBuiltInRules(
  * Validates a value against a schema.
  */
 export function validateConfigValue(
-  value: unknown,
+  input: unknown,
   schema: AnyConfigSchema,
   context?: Partial<ConfigValidationContext>,
 ): ConfigValidationResult {
   const path = context?.path ?? "$";
+
+  // Env-style strings are parsed for NUMBER/BOOLEAN schemas before the
+  // type check; otherwise "8080" could never satisfy a NUMBER schema.
+  const value = coerceConfigInput(input, schema);
 
   const validationContext: ConfigValidationContext = {
     path,
