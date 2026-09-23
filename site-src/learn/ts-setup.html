@@ -1,0 +1,247 @@
+---
+title: From JavaScript to TypeScript
+description: Install TypeScript, turn a JavaScript file into TypeScript, and watch the compiler catch a bug that JavaScript ran without complaint.
+minutes: 25
+youNeed: Lessons 1 to 5
+youBuild: A TypeScript project with tsx and tsc set up
+keywords: typescript tutorial, install typescript, tsx, tsc noEmit, tsconfig.json, javascript to typescript
+---
+<section>
+<h2 id="the-bug">A bug JavaScript lets through</h2>
+<p>Here is a small piece of the Task API in plain JavaScript. Read it carefully before you run it. There is a mistake.</p>
+<example file="report.js">
+const task = { id: 1, title: "Buy milk", done: false };
+
+function report(task) {
+  return `#${task.id} ${task.titel} (${task.done ? "done" : "open"})`;
+}
+
+console.log(report(task));
+</example>
+<output>
+#1 undefined (open)
+</output>
+<p>The property is spelled <code>titel</code>. JavaScript did not complain. It read a property that does not exist, got <code>undefined</code>, and printed it. In a real API that <code>undefined</code> would be sent to users or saved to the database, and nobody would notice until much later.</p>
+<p><strong>TypeScript</strong> is JavaScript plus <strong>types</strong>: notes that say what shape each value has. A program called the <strong>compiler</strong> reads those notes and reports mistakes like this before the code ever runs. ZudoJS is written in TypeScript, and so is the rest of this course.</p>
+</section>
+
+<section>
+<h2 id="install">Install TypeScript</h2>
+<p>Make a new project folder for the TypeScript lessons:</p>
+<shell>
+$ mkdir ts-tasks
+$ cd ts-tasks
+$ npm init -y
+$ npm pkg set type=module
+$ npm install -D typescript tsx @types/node
+added 7 packages, and audited 8 packages in 10s
+
+found 0 vulnerabilities
+npm warn install-scripts 1 package has install scripts not yet covered by allowScripts:
+npm warn install-scripts   esbuild@0.28.2 (postinstall: node install.js)
+npm warn install-scripts
+npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install-scripts approve <pkg>` to allow.
+</shell>
+<p>Three packages, installed as <strong>dev dependencies</strong> (<code>-D</code>), meaning tools you use while writing code, not code your app needs to run:</p>
+<ul>
+<li><code>typescript</code> gives you <code>tsc</code>, the TypeScript compiler. It checks your types.</li>
+<li><code>tsx</code> runs a <code>.ts</code> file directly, like <code>node</code> runs a <code>.js</code> file.</li>
+<li><code>@types/node</code> describes Node.js itself to TypeScript, for example what <code>console.log</code> accepts.</li>
+</ul>
+<note title="ABOUT THAT WARNING">Recent versions of npm ask before running a package's install script. <code>esbuild</code>, which <code>tsx</code> uses, has one that only double-checks its download. <code>tsx</code> works without it. If you want the warning gone, run <code>npm install-scripts approve esbuild</code>, which records your approval in <code>package.json</code>. Your version numbers and timings may differ from the ones shown.</note>
+<p>Check both tools:</p>
+<shell>
+$ npx tsc --version
+Version 7.0.2
+$ npx tsx --version
+tsx v4.23.15
+node v24.19.0
+</shell>
+<p><code>npx</code> runs a program from your project's <code>node_modules</code> folder, so you do not need to install anything globally.</p>
+</section>
+
+<section>
+<h2 id="tsconfig">Tell TypeScript about your project</h2>
+<p>The compiler reads its settings from <code>tsconfig.json</code>. Create it in the project folder:</p>
+<file name="tsconfig.json" project="report">
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "verbatimModuleSyntax": true
+  }
+}
+</file>
+<p>What the settings mean:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Setting</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td><code>target</code>, <code>module</code>, <code>moduleResolution</code></td><td>Modern JavaScript and Node.js ES modules, the same as your <code>package.json</code> says.</td></tr>
+<tr><td><code>strict</code></td><td>Turns on every safety check. Always use it. It is what makes TypeScript worth having.</td></tr>
+<tr><td><code>noEmit</code></td><td><code>tsc</code> only checks; it writes no files. <code>tsx</code> does the running.</td></tr>
+<tr><td><code>skipLibCheck</code>, <code>types</code></td><td>Skip checking installed packages' own type files, and load the Node.js types you installed.</td></tr>
+<tr><td><code>verbatimModuleSyntax</code></td><td>Makes you mark imports that are only types with <code>import type</code>. ZudoJS code follows this rule.</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="first-ts">Your first TypeScript file</h2>
+<p>Save the same code as <code>report.ts</code>, and add one thing: a <strong>type</strong> that describes a task, and a note on the parameter saying <code>task</code> is one of those.</p>
+<example file="report.ts" project="report" check="tsc-error">
+type Task = {
+  id: number;
+  title: string;
+  done: boolean;
+};
+
+const task: Task = { id: 1, title: "Buy milk", done: false };
+
+function report(task: Task): string {
+  return `#${task.id} ${task.titel} (${task.done ? "done" : "open"})`;
+}
+
+console.log(report(task));
+</example>
+<output kind="tsc">
+report.ts:10:24 - error TS2551: Property 'titel' does not exist on type 'Task'. Did you mean 'title'?
+
+10   return `#${task.id} ${task.titel} (${task.done ? "done" : "open"})`;
+                          ~~~~~
+
+  report.ts:3:3
+    3   title: string;
+        ~~~~~
+    'title' is declared here.
+
+
+Found 1 error in report.ts:10
+</output>
+<p>Run the compiler. <code>--noEmit</code> is already in <code>tsconfig.json</code>, but writing it keeps the command's meaning clear:</p>
+<shell>
+$ npx tsc --noEmit
+</shell>
+<p>It prints the error shown above. It names the file, line 10 and column 24, marks the exact spot with <code>~~~~~</code>, and even suggests the fix: <em>Did you mean 'title'?</em> The bug was caught without running the program at all.</p>
+<p>Fix the typo and check again. When <code>tsc</code> prints nothing, there are no errors. Then run the file with <code>tsx</code>:</p>
+<example file="report.ts" project="report">
+type Task = {
+  id: number;
+  title: string;
+  done: boolean;
+};
+
+const task: Task = { id: 1, title: "Buy milk", done: false };
+
+function report(task: Task): string {
+  return `#${task.id} ${task.title} (${task.done ? "done" : "open"})`;
+}
+
+console.log(report(task));
+</example>
+<output>
+#1 Buy milk (open)
+</output>
+<shell>
+$ npx tsc --noEmit
+$ npx tsx report.ts
+#1 Buy milk (open)
+</shell>
+<p>The workflow for the rest of the course is these two commands: <code>tsc</code> to check, <code>tsx</code> to run.</p>
+</section>
+
+<section>
+<h2 id="erased">Types disappear when the code runs</h2>
+<p>Types exist only for the compiler. <code>tsx</code> removes them and runs what is left, which is ordinary JavaScript. That has two consequences:</p>
+<ul>
+<li><strong>tsx does not check types.</strong> It will happily run <code>report.ts</code> with the typo in it and print <code>undefined</code>. Only <code>tsc</code> checks. Run it before you trust your code.</li>
+<li><strong>The browser terminal does not check types either.</strong> It removes them the same way <code>tsx</code> does. Type errors only show on your computer, with <code>npx tsc --noEmit</code>.</li>
+</ul>
+<tip>VS Code runs the TypeScript checker as you type. The typo above gets a red squiggle the moment you write it, which is the fastest feedback of all.</tip>
+<p>There is one more consequence, and it matters a lot for a backend: types cannot check data that arrives while the program is running, such as a request from a user. Lesson 8 shows the problem and lesson 9 solves it with ZudoJS.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Let the compiler find three bugs">
+<p>This file has three mistakes. Save it as <code>bugs.ts</code> in your project and run <code>npx tsc --noEmit</code>. Read each error, fix it, and run the file with <code>npx tsx bugs.ts</code>.</p>
+<example file="bugs.ts" project="bugs" check="tsc-error" browser="no">
+type Task = {
+  id: number;
+  title: string;
+  done: boolean;
+};
+
+const task: Task = { id: "1", title: "Buy milk", done: false };
+
+function complete(task: Task): Task {
+  return { ...task, done: "yes" };
+}
+
+console.log(complete(task).title.toUppercase());
+</example>
+<output kind="tsc">
+bugs.ts:7:22 - error TS2322: Type 'string' is not assignable to type 'number'.
+
+7 const task: Task = { id: "1", title: "Buy milk", done: false };
+                       ~~
+
+  bugs.ts:2:3
+    2   id: number;
+        ~~
+    The expected type comes from property 'id' which is declared here on type 'Task'
+
+bugs.ts:10:21 - error TS2322: Type 'string' is not assignable to type 'boolean'.
+
+10   return { ...task, done: "yes" };
+                       ~~~~
+
+  bugs.ts:4:3
+    4   done: boolean;
+        ~~~~
+    The expected type comes from property 'done' which is declared here on type 'Task'
+
+bugs.ts:13:34 - error TS2551: Property 'toUppercase' does not exist on type 'string'. Did you mean 'toUpperCase'?
+
+13 console.log(complete(task).title.toUppercase());
+                                    ~~~~~~~~~~~
+
+
+Found 3 errors in the same file, starting at: bugs.ts:7
+</output>
+<solution>
+<example file="bugs.ts" project="bugs">
+type Task = {
+  id: number;
+  title: string;
+  done: boolean;
+};
+
+const task: Task = { id: 1, title: "Buy milk", done: false };
+
+function complete(task: Task): Task {
+  return { ...task, done: true };
+}
+
+console.log(complete(task).title.toUpperCase());
+</example>
+<output>
+BUY MILK
+</output>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>TypeScript adds types to JavaScript. The compiler, <code>tsc</code>, uses them to catch mistakes before the code runs.</li>
+<li><code>npm install -D typescript tsx @types/node</code>, plus a <code>tsconfig.json</code> with <code>strict</code> on, sets up a project.</li>
+<li><code>npx tsc --noEmit</code> checks. <code>npx tsx file.ts</code> runs. Running does not check.</li>
+<li>Types are removed before the code runs, so they cannot check data that arrives at runtime.</li>
+</ul>
+</section>
