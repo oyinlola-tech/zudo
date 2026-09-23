@@ -8,13 +8,17 @@ import { MAX_TIMER_DELAY } from "../retryPolicy/retryPolicy.core.js";
  * Schedule a job for future execution.
  *
  * The timer is registered so the queue can clear it on close, and
- * unreferenced so a scheduled job never by itself keeps the process
- * alive.
+ * unreferenced: the queue's poll loop, not each job's timer, decides whether
+ * pending work holds the process open.
+ *
+ * @param onDue - Told when the job has been promoted to `waiting`, so a
+ *   consumer can claim it now rather than on its next poll.
  */
 export function scheduleJob<TData>(
   job: Job<TData>,
   scheduledTimers: Map<JobId, ReturnType<typeof setTimeout>>,
   jobs: Map<string, Job<TData>>,
+  onDue?: () => void,
 ): void {
   if (!job.scheduledAt) {
     return;
@@ -26,6 +30,7 @@ export function scheduleJob<TData>(
     // An unparseable schedule would otherwise fire immediately via NaN
     // coercion; promote the job instead of guessing at a delay.
     jobs.set(job.id, updateJobState(job, JobStateEnum.WAITING));
+    onDue?.();
     return;
   }
 
@@ -44,6 +49,7 @@ export function scheduleJob<TData>(
     const currentJob = jobs.get(job.id);
     if (currentJob && currentJob.state === JobStateEnum.SCHEDULED) {
       jobs.set(job.id, updateJobState(currentJob, JobStateEnum.WAITING));
+      onDue?.();
     }
   }, delay);
 

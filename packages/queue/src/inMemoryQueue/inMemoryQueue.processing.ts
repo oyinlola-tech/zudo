@@ -66,6 +66,8 @@ export interface ProcessJobDependencies<TData> {
   readonly deregisterRetryTimer?: (jobId: JobId) => void;
   /** Invoked whenever a job reaches a terminal state. */
   readonly onSettled?: (job: Job<TData>) => void;
+  /** Invoked when a retrying job's backoff elapses and it is runnable again. */
+  readonly onJobReady?: () => void;
   /** Whether the owning queue has been disposed. */
   readonly isDisposed: () => boolean;
   /**
@@ -258,11 +260,12 @@ export async function handleJobFailure<TData>(
           failedAt: undefined,
         });
         jobs.set(job.id, waitingJob);
+        deps.onJobReady?.();
       }
     }, delay);
 
-    // `unref` keeps a pending retry from holding the process open; the
-    // queue clears the timer explicitly on close.
+    // Unreferenced: the queue's poll loop decides whether a pending retry
+    // holds the process open. The queue clears the timer on close.
     timer.unref?.();
     deps.registerRetryTimer(job.id, timer);
 

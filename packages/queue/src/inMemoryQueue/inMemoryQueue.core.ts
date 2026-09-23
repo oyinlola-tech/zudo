@@ -26,10 +26,7 @@ import {
   DEFAULT_DEAD_LETTER_JOBS,
   createInMemoryDeadLetterStore,
 } from "../deadLetter/deadLetter.core.js";
-import {
-  InMemoryQueueEventEmitter,
-  createNoopQueueEventEmitter,
-} from "../queueEmitter/queueEmitter.core.js";
+import { InMemoryQueueEventEmitter } from "../queueEmitter/queueEmitter.core.js";
 import type { QueueEventEmitter } from "../queueEmitter/queueEmitter.type.js";
 import type {
   DeadLetterJob,
@@ -43,6 +40,7 @@ import {
   scheduleJob,
   promoteDueScheduledJobs,
 } from "./inMemoryQueue.scheduling.js";
+import { QueuePoller, hasPendingWork, selectNextJob } from "./polling/index.js";
 
 /** Terminal states a job never leaves. */
 const TERMINAL_STATES: ReadonlySet<JobStateEnum> = new Set([
@@ -76,7 +74,9 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
   /** Whether the internal poller claims jobs; see `setAutoProcess`. */
   private autoProcess: boolean;
   private activeCount = 0;
-  private pollTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly poller: QueuePoller;
+  /** Consumers to tell when a job may have become runnable. */
+  private readonly readyListeners: Set<() => void> = new Set();
   private readonly scheduledTimers: Map<JobId, ReturnType<typeof setTimeout>> =
     new Map();
   private readonly retryTimers: Map<JobId, ReturnType<typeof setTimeout>> =
@@ -102,16 +102,18 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
     deadLetteredCount: 0,
   };
 
-  private emptySince = 0;
-
-  private backoffMs = 50;
-
   constructor(name: QueueName, options?: QueueOptions) {
     this.name = name;
     this.options = options ?? {};
     this.serializer = this.options.serializer ?? JsonSerializer;
     this.middleware = this.options.middleware ?? [];
-    this.emitter = options?.eventEmitter ?? createNoopQueueEventEmitter();
+    // A working emitter by default: `queue.events` used to be a silent no-op
+    // unless one was passed in.
+    this.emitter =
+      options?.eventEmitter ??
+      new InMemoryQueueEventEmitter(
+        this.options.logger ? { logger: this.options.logger } : {},
+      );
 
     // A supplied emitter is built before the queue exists, so it cannot have
     // been given the queue's logger. Hand it over, so a throwing listener is
@@ -130,6 +132,29 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
         maxEntries: DEFAULT_DEAD_LETTER_JOBS,
       });
     this.autoProcess = this.options.autoProcess ?? true;
+    this.poller = new QueuePoller({
+      ...(this.options.pollInterval !== undefined
+        ? { pollInterval: this.options.pollInterval }
+        : {}),
+      tick: () => this.processTick(),
+      isLive: () => !this.disposed && this.processors.size > 0,
+      shouldKeepAlive: () => this.shouldKeepAlive(),
+    });
+  }
+
+  /**
+   * Subscribes to "a job may have become runnable": one was added, released
+   * or reclaimed, a delay or retry backoff elapsed, or the queue resumed.
+   *
+   * A `Worker` uses this to claim immediately instead of on its next poll.
+   *
+   * @returns A function that unsubscribes.
+   */
+  onJobReady(listener: () => void): () => void {
+    this.readyListeners.add(listener);
+    return () => {
+      this.readyListeners.delete(listener);
+    };
   }
 
   /**
@@ -142,13 +167,15 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
    */
   setAutoProcess(enabled: boolean): void {
     this.autoProcess = enabled;
+    if (enabled) this.poller.wake();
   }
 
   /**
    * The emitter this queue publishes lifecycle events on.
    *
-   * A no-op emitter when the queue was created without one, so a worker can
-   * report its lifecycle unconditionally.
+   * An in-memory emitter when the queue was created without one, so
+   * `queue.events.on(...)` works out of the box and a worker can report its
+   * lifecycle unconditionally.
    */
   get events(): QueueEventEmitter {
     return this.emitter;
@@ -213,11 +240,14 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
       this.deduplicationIndex.set(mergedOptions.deduplicationKey, jobId);
     }
     if (job.state === JobStateEnum.SCHEDULED && job.scheduledAt) {
-      scheduleJob(job, this.scheduledTimers, this.jobs);
+      scheduleJob(job, this.scheduledTimers, this.jobs, () => this.jobReady());
     }
 
-    this.backoffMs = 50;
-    this.emptySince = 0;
+    // Wake the poller and any worker now. Resetting the back-off without
+    // re-arming the pending timer left a job added after an idle spell
+    // waiting up to 2 s; a delayed job wakes it too, so the pending work
+    // holds the process open.
+    this.jobReady();
 
     return job;
   }
@@ -226,7 +256,8 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
     if (this.disposed) throw new QueueDisposedError(this.name);
     assertProcessor(processor, name);
     this.processors.set(name, processor);
-    if (!this.pollTimer) this.startPolling();
+    // Jobs already waiting under this name are runnable now.
+    this.poller.wake();
   }
 
   async getJob(jobId: JobId): Promise<Job<TData> | null> {
@@ -281,6 +312,7 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
       jobId,
       updateJobState(job, JobStateEnum.WAITING, { startedAt: undefined }),
     );
+    this.jobReady();
     return true;
   }
 
@@ -350,9 +382,7 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
   async resume(): Promise<void> {
     if (this.disposed) throw new QueueDisposedError(this.name);
     this.paused = false;
-    this.backoffMs = 50;
-    this.emptySince = 0;
-    if (!this.pollTimer && this.processors.size > 0) this.startPolling();
+    this.jobReady();
   }
   isPaused(): boolean {
     return this.paused;
@@ -376,7 +406,8 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
     // Stop accepting and dispatching work before draining, so the set of
     // in-flight jobs cannot grow while we wait for it.
     this.disposed = true;
-    this.stopPolling();
+    this.poller.stop();
+    this.readyListeners.clear();
 
     for (const timer of this.scheduledTimers.values()) clearTimeout(timer);
     this.scheduledTimers.clear();
@@ -400,8 +431,6 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
 
     this.activeCount = 0;
     this.paused = false;
-    this.emptySince = 0;
-    this.backoffMs = 50;
   }
 
   /**
@@ -442,7 +471,12 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
    * Round-trips a payload through the configured serializer.
    */
   private encodePayload(jobId: JobId, data: TData): TData {
-    if (this.options.serializePayloads === false) {
+    // A passthrough serializer means "store the payload as given": there is
+    // no string form to round-trip through.
+    if (
+      this.options.serializePayloads === false ||
+      this.serializer.passthrough === true
+    ) {
       return data;
     }
 
@@ -460,70 +494,38 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
   }
 
   /**
-   * Selects the highest-priority job that is due and runnable.
-   *
-   * Ties on priority are broken by creation time, oldest first. The
-   * incumbent is tracked by reference rather than by a sentinel priority,
-   * so jobs with negative priorities are selectable like any other.
+   * Selects the next job that is due and runnable; see {@link selectNextJob}
+   * for the ordering.
    */
   private selectJob(
     predicate?: (job: Job<TData>) => boolean,
   ): Job<TData> | null {
-    const now = Date.now();
-    let nextJob: Job<TData> | null = null;
+    return selectNextJob(this.jobs.values(), Date.now(), predicate);
+  }
 
-    for (const job of this.jobs.values()) {
-      if (job.state !== JobStateEnum.WAITING) continue;
-      if (job.scheduledAt && new Date(job.scheduledAt).getTime() > now)
-        continue;
-      if (predicate && !predicate(job)) continue;
+  /**
+   * Whether the poll loop should hold the process open: while the queue is
+   * consuming and has work one of its processors can run. Work nothing can
+   * consume, a paused queue and `keepAlive: false` never do.
+   */
+  private shouldKeepAlive(): boolean {
+    if (this.options.keepAlive === false) return false;
+    if (this.disposed || this.paused || !this.autoProcess) return false;
+    if (this.activeCount > 0) return true;
+    return hasPendingWork(this.jobs.values(), (job) =>
+      this.processors.has(job.name),
+    );
+  }
 
-      if (nextJob === null) {
-        nextJob = job;
-        continue;
+  /** Wakes the poll loop and tells consumers a job may be runnable. */
+  private jobReady(): void {
+    this.poller.wake();
+    for (const listener of [...this.readyListeners]) {
+      try {
+        listener();
+      } catch {
+        // A consumer's wake-up hook must not break the producer.
       }
-
-      if (job.priority > nextJob.priority) {
-        nextJob = job;
-        continue;
-      }
-
-      if (job.priority === nextJob.priority) {
-        const candidateTime = new Date(job.createdAt).getTime();
-        const incumbentTime = new Date(nextJob.createdAt).getTime();
-        if (candidateTime < incumbentTime) nextJob = job;
-      }
-    }
-
-    return nextJob;
-  }
-
-  private startPolling(): void {
-    this.scheduleTick(this.options.pollInterval ?? 50);
-  }
-
-  private scheduleNextTick(): void {
-    this.scheduleTick(this.backoffMs);
-  }
-
-  private scheduleTick(interval: number): void {
-    if (this.disposed) return;
-
-    this.pollTimer = setTimeout(() => {
-      this.pollTimer = null;
-      this.processTick().finally(() => {
-        if (!this.disposed && this.processors.size > 0) this.scheduleNextTick();
-      });
-    }, interval);
-
-    // The poll timer must not be the reason a process stays alive.
-    this.pollTimer.unref?.();
-  }
-
-  private stopPolling(): void {
-    if (this.pollTimer) {
-      clearTimeout(this.pollTimer);
-      this.pollTimer = null;
     }
   }
 
@@ -606,6 +608,7 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
             this.retryTimers.delete(jobId);
           },
           onSettled: (settled) => this.recordSettled(settled),
+          onJobReady: () => this.jobReady(),
           isDisposed: () => this.disposed,
           ...(this.options.logger ? { logger: this.options.logger } : {}),
         },
@@ -618,15 +621,27 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
     } finally {
       this.activeCount--;
       this.inFlight.delete(job.id);
+      // A slot is free: claim the next job now rather than on the next poll.
+      this.poller.wake();
       if (forwardAbort && consumerSignal) {
         consumerSignal.removeEventListener("abort", forwardAbort);
       }
     }
   }
 
-  private async processTick(): Promise<void> {
-    if (this.paused || this.disposed) return;
+  /**
+   * One poll: promotes due delayed jobs, claims runnable jobs up to the
+   * concurrency limit, and reclaims stalled ones.
+   *
+   * @returns Whether any job was dispatched.
+   */
+  private async processTick(): Promise<boolean> {
+    if (this.paused || this.disposed) return false;
     const concurrency = Math.max(1, this.options.concurrency ?? 1);
+
+    // Promote first, so a job whose delay just elapsed is claimable in this
+    // same tick.
+    promoteDueScheduledJobs(this.jobs, this.scheduledTimers);
 
     let processed = 0;
 
@@ -646,21 +661,8 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
       void this.runJob(job);
     }
 
-    if (processed > 0) {
-      this.backoffMs = 50;
-      this.emptySince = 0;
-    } else if (this.emptySince === 0) {
-      this.emptySince = Date.now();
-      this.backoffMs = 50;
-    } else {
-      const elapsed = Date.now() - this.emptySince;
-      if (elapsed > 500) {
-        this.backoffMs = Math.min(this.backoffMs * 2, 2000);
-      }
-    }
-
-    promoteDueScheduledJobs(this.jobs, this.scheduledTimers);
     this.reclaimStalledJobs();
+    return processed > 0;
   }
 
   /**
@@ -726,6 +728,7 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
         updateJobState(job, JobStateEnum.WAITING, { startedAt: undefined }),
       );
       this.emitter.emit("job:failed", { job, error });
+      this.jobReady();
     }
   }
 

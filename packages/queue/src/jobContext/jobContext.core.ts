@@ -19,6 +19,7 @@ export function createJobContext<TData>(
 ): JobContext<TData> {
   return {
     job,
+    attemptNumber: job.attempt + 1,
     signal,
     updateProgress: async (progress: JobProgress) => {
       if (options.onProgress) {

@@ -24,7 +24,11 @@ export interface Job<TData = unknown> {
   readonly data: TData;
   /** Current state of the job. */
   readonly state: JobState;
-  /** Number of attempts made. */
+  /**
+   * Number of attempts already made, so `0` while the first attempt runs.
+   * Inside a processor, `context.attemptNumber` is the 1-based number of
+   * the attempt in progress (`attempt + 1`).
+   */
   readonly attempt: number;
   /** Maximum number of attempts allowed. */
   readonly maxAttempts: number;

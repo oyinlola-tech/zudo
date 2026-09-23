@@ -10,8 +10,18 @@ import type { WorkerState } from "../jobTypes/jobTypes.type.js";
 export interface WorkerOptions {
   /** Maximum number of jobs to process concurrently. */
   readonly concurrency?: number;
-  /** Poll interval in milliseconds. */
+  /**
+   * Milliseconds between polls while idle. Defaults to 100. A queue that
+   * supports `onJobReady` (the in-memory queue does) wakes the worker as soon
+   * as a job becomes runnable, so this bounds only how often it re-checks.
+   */
   readonly pollInterval?: number;
+  /**
+   * Whether a started worker holds the Node.js process open until `stop()`
+   * or `forceStop()`. Defaults to `true`; `false` leaves its timers
+   * unreferenced.
+   */
+  readonly keepAlive?: boolean;
   /**
    * Default job timeout in milliseconds, applied to jobs that do not
    * carry their own. Stall detection is a queue-level concern; configure

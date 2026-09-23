@@ -72,6 +72,70 @@ await queue.close();
 - Bounded retention of settled jobs and of dead-lettered jobs, so a long-lived
   queue does not grow without limit
 
+## Polling and process lifetime
+
+The queue's own consumer polls every `pollInterval` milliseconds when you set
+one; unset, it starts at 50 ms and backs off to 2000 ms while idle. It never
+waits out that interval when work arrives: `add()`, a delayed job coming due, a
+retry's backoff elapsing, `resume()` and a finished job all wake it at once. A
+`Worker` is woken the same way through `queue.onJobReady`, so its
+`pollInterval` only bounds how often an idle worker re-checks.
+
+Pending work keeps the Node.js process alive. While the queue has waiting,
+delayed, retrying or running jobs that one of its processors can run, a script
+whose only work is the queue does not exit before the jobs run. A started
+`Worker` keeps the process alive until `stop()` or `forceStop()`. An idle queue,
+a paused one, work that no processor handles, and a closed queue never hold the
+process open. Pass `keepAlive: false` (to the queue or the worker) for the old
+behaviour, where every timer was unreferenced.
+
+## Payloads
+
+Payloads round-trip through the serializer on `add()`, so the stored job is a
+copy. The default `JsonSerializer` preserves `Date`, `BigInt`, `Map`, `Set`,
+`Uint8Array` and `Error`, so a field typed `Date` arrives as a `Date`:
+
+```typescript
+const reminders = createInMemoryQueue<{ at: Date }>(createQueueName("reminders"));
+reminders.process("remind", async (job) => job.data.at.getTime()); // a real Date
+```
+
+`createJsonSerializer({ preserveTypes: false })` gives plain JSON, where a
+`Date` becomes its ISO string (type it as `string`). `PassthroughSerializer`
+(or `serializePayloads: false`) stores payloads by reference, class instances
+included, with no copy and no serialization.
+
+## Ordering
+
+Higher `priority` runs first. Within a priority, jobs run in the order they
+became runnable: when they were added, or for a delayed job when its delay
+elapsed, so a delayed job never jumps ahead of jobs that were already waiting
+when it came due. A retried job keeps its original place in line.
+
+## Attempts
+
+`job.attempt` counts the attempts already made, so it is `0` while the first
+attempt runs. `context.attemptNumber` is the 1-based number of the attempt in
+progress (`job.attempt + 1`), the same convention as `ctx.attempt` in
+`@zudojs/scheduler`:
+
+```typescript
+queue.process("sync", async (job, context) => {
+  context.log(`attempt ${context.attemptNumber} of ${job.maxAttempts}`);
+});
+```
+
+## Events
+
+`queue.events` works without configuration: a queue created without an
+`eventEmitter` gets an in-memory one.
+
+```typescript
+queue.events?.on("job:completed", ({ job, result }) => {
+  console.log(job.id, result);
+});
+```
+
 ## Workers, timeouts and context
 
 **One consumer at a time.** `queue.process()` registers a processor and, by

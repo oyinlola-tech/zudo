@@ -45,13 +45,36 @@ export interface QueueOptions {
   readonly concurrency?: number;
   /** Default job options. */
   readonly defaultJobOptions?: Partial<JobOptions>;
-  /** Serializer for job payloads. */
+  /**
+   * Serializer for job payloads. Defaults to `JsonSerializer`, which
+   * round-trips `Date`, `BigInt`, `Map`, `Set`, `Uint8Array` and `Error`.
+   */
   readonly serializer?: Serializer;
   /** Middleware for job processing. */
   readonly middleware?: QueueMiddleware[];
-  /** Poll interval in milliseconds. */
+  /**
+   * Milliseconds between polls of the queue's own consumer.
+   *
+   * When set, every poll uses it. When unset, polls start at 50 ms and back
+   * off to 2000 ms while the queue is idle. Either way the poller does not
+   * wait for its next poll when work arrives: `add()`, a delayed job coming
+   * due, a retry's backoff elapsing, `resume()` and a job finishing all wake
+   * it immediately.
+   */
   readonly pollInterval?: number;
-  /** Event emitter for queue lifecycle events. */
+  /**
+   * Whether pending work holds the Node.js process open. Defaults to `true`:
+   * while the queue has waiting, delayed, retrying or running jobs that one of
+   * its processors can run, its poll timer is referenced, so a script whose
+   * only work is the queue does not exit before the jobs run. An idle queue,
+   * a paused one, work no processor handles, and a closed queue never hold it.
+   * Set to `false` to leave every timer unreferenced.
+   */
+  readonly keepAlive?: boolean;
+  /**
+   * Event emitter for queue lifecycle events. Defaults to an in-memory
+   * emitter, reachable as `queue.events`.
+   */
   readonly eventEmitter?: QueueEventEmitter;
   /** Store that receives jobs which exhausted their attempts. */
   readonly deadLetterStore?: DeadLetterStore<never>;
@@ -227,6 +250,15 @@ export interface Queue<TData = unknown> {
    * turns it off so a worker is never racing the queue for jobs.
    */
   setAutoProcess?(enabled: boolean): void;
+  /**
+   * Subscribes to "a job may have become runnable" (added, released,
+   * reclaimed, a delay or retry backoff elapsed, the queue resumed). A
+   * `Worker` uses it to claim at once instead of on its next poll; a queue
+   * without it is simply polled.
+   *
+   * @returns A function that unsubscribes.
+   */
+  onJobReady?(listener: () => void): () => void;
 }
 
 /**

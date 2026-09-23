@@ -46,6 +46,8 @@ export function createWorker<TData>(
   let activeJobs = 0;
   let polling = false;
   let abortController: AbortController | null = null;
+  const keepAlive = options?.keepAlive ?? true;
+  let stopWatching: (() => void) | undefined;
 
   queue.setAutoProcess?.(false);
 
@@ -98,7 +100,19 @@ export function createWorker<TData>(
     }
 
     pollTimer = setTimeout(runPoll, delay);
-    pollTimer.unref?.();
+    // A started worker is the process's reason to stay alive until it is
+    // stopped; an unreferenced timer let a script exit before any job ran.
+    if (!keepAlive) pollTimer.unref?.();
+  };
+
+  /** Claims at once when the queue reports a runnable job, if a slot is free. */
+  const onJobReady = (): void => {
+    if (activeJobs < concurrency) scheduleNextPoll(0);
+  };
+
+  const unwatch = (): void => {
+    stopWatching?.();
+    stopWatching = undefined;
   };
 
   /**
@@ -225,6 +239,7 @@ export function createWorker<TData>(
 
       try {
         state = WorkerState.RUNNING;
+        stopWatching = queue.onJobReady?.(onJobReady);
         emitLifecycle("worker:started");
         scheduleNextPoll(0);
       } catch (error) {
@@ -243,11 +258,13 @@ export function createWorker<TData>(
       if (state !== WorkerState.RUNNING && state !== WorkerState.STARTING) {
         // Still clear any timer armed before the state moved on.
         clearPollTimer();
+        unwatch();
         return;
       }
 
       state = WorkerState.DRAINING;
       clearPollTimer();
+      unwatch();
 
       // Graceful means graceful: in-flight jobs get `drainTimeout` to
       // finish on their own. Aborting them up front — as this once did —
@@ -280,6 +297,7 @@ export function createWorker<TData>(
         state !== WorkerState.CREATED && state !== WorkerState.STOPPED;
       abortController?.abort();
       clearPollTimer();
+      unwatch();
       state = WorkerState.STOPPED;
       // A worker that never started never stopped: reporting it would give a
       // readiness listener a transition that did not happen.
