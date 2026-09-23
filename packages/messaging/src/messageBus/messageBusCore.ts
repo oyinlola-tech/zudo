@@ -80,7 +80,15 @@ export class InMemoryMessageBus implements MessageBus {
     input: MessageInput<TPayload>,
     options: DispatchOptions<TResult> = {},
   ): Promise<DispatchResult<TResult>> {
-    return this.dispatch(createMessage(input), options);
+    // Identifiers given through the dispatch context belong on the message
+    // too; otherwise `createDerivedMessage` in a handler starts a new chain.
+    const context = options.context;
+    const message = createMessage({
+      ...input,
+      correlationId: input.correlationId ?? context?.correlationId,
+      causationId: input.causationId ?? context?.causationId,
+    });
+    return this.dispatch(message, options);
   }
 
   on<TPayload, TResult>(

@@ -88,8 +88,34 @@ one that failed, with its real duration.
 Handlers receive the dispatch context as their second argument: the
 `headers`, `state` and correlation/causation overrides passed through
 `DispatchOptions.context`, plus anything a middleware stored in
-`context.state`. A dispatch cancelled through its `AbortSignal` between
-handlers fails with `MessageDispatchAbortedError`.
+`context.state`.
+
+`send()` also puts a `correlationId` or `causationId` given in
+`options.context` on the message it builds (unless the input carries its
+own), so `createDerivedMessage(message, …)` in a handler stays in the same
+chain:
+
+```typescript
+bus.on("order.placed", (message) => {
+  const next = createDerivedMessage(message, { type: "invoice.requested", payload: {} });
+  next.correlationId; // "req-42"
+});
+
+await bus.send(
+  { type: "order.placed", payload: order },
+  { context: { correlationId: toCorrelationId("req-42") } },
+);
+```
+
+## Cancellation
+
+A dispatch whose `AbortSignal` fires fails with `MessageDispatchAbortedError`
+(`success: false`), whenever the abort lands: between handlers, or during the
+last or only one — even if that handler ignores the signal and returns
+normally. Like a timeout, it settles promptly rather than waiting for a handler
+that ignores its signal. `handlerResults` still lists every handler that
+finished. Before 1.2.0 an abort during the last handler was reported as
+`success: true`.
 
 ## Timeouts
 

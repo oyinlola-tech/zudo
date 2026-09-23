@@ -27,6 +27,10 @@ import { resolveMessageHandler } from "../messageHandler/messageHandlerType.type
 import { HandlerRegistryStore } from "../handlerRegistry/handlerRegistryStore.js";
 import { runMessagePipeline } from "../messageMiddleware/messageMiddlewarePipeline.js";
 import {
+  abortRejection,
+  assertDispatchNotAborted,
+} from "./dispatcher.abort.js";
+import {
   MessageDispatchAbortedError,
   MessageHandlerError,
   MessageMiddlewareError,
@@ -88,6 +92,7 @@ export class DefaultDispatcher implements Dispatcher {
     const handlerResults: HandlerExecutionResult[] = [];
 
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const aborted = abortRejection(context.signal, message);
 
     try {
       const run = runMessagePipeline(
@@ -110,16 +115,23 @@ export class DefaultDispatcher implements Dispatcher {
 
       // `DispatchOptions.timeout` was documented on the dispatcher but only
       // ever honoured by the bus wrapper, so anyone holding a dispatcher
-      // directly got no timeout at all.
-      const pipelineResult =
-        timeout > 0
-          ? await Promise.race([
-              run,
+      // directly got no timeout at all. An abort settles the dispatch the
+      // same way: promptly, and as a failure.
+      const pipelineResult = await Promise.race([
+        run,
+        aborted.promise,
+        ...(timeout > 0
+          ? [
               this.timeoutRejection(message, timeout, controller, (t) => {
                 timer = t;
               }),
-            ])
-          : await run;
+            ]
+          : []),
+      ]);
+
+      // A handler that returned normally after the abort does not make the
+      // dispatch a success: it was cancelled.
+      assertDispatchNotAborted(context.signal, message);
 
       return {
         success: true,
@@ -145,6 +157,7 @@ export class DefaultDispatcher implements Dispatcher {
       };
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      aborted.dispose();
       // Detach from the caller's signal, otherwise a long-lived signal
       // shared across dispatches accumulates one listener per dispatch.
       release();

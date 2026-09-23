@@ -62,6 +62,10 @@ export interface MessageBus {
 
   /**
    * Convenience method: creates and dispatches a message from input.
+   *
+   * A `correlationId` or `causationId` given in `options.context` is also
+   * put on the message when the input carries none, so a message derived
+   * from it in a handler stays in the same chain.
    */
   send<TPayload, TResult>(
     input: MessageInput<TPayload>,
