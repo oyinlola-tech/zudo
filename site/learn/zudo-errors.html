@@ -508,7 +508,7 @@ console.log(await handler.handlePublic(new Error("connect ECONNREFUSED 10.0.0.5:
 
 <section>
 <h2 id="http-handler">Errors in @zudojs/http</h2>
-<p>You have been relying on <code>@zudojs/http</code>'s built-in error handling since <a href="/learn/zudo-http#status">Routes, requests and responses</a>: an error with a status becomes a response with that status and <code>{"error": message, "code": code}</code>; anything else becomes a plain 500. That is safe, but the Task API wants more:</p>
+<p>You have been relying on simple error handling since <a href="/learn/zudo-http#status">Routes, requests and responses</a>, built into <code>@zudojs/http</code> and copied by the Task API's generated code: an error with a status becomes a response with that status and <code>{"error": message, "code": code}</code>; anything else becomes a plain 500. That is safe, but the Task API wants more:</p>
 <ul>
 <li>validation errors should list their issues, not just say "Validation failed",</li>
 <li>every error body should have the same shape, with the request id, so a user can report it and you can find the log line,</li>
@@ -590,171 +590,135 @@ caught: TypeError | NotFoundError? false
 
 <section>
 <h2 id="task-api">Put it in the Task API</h2>
-<p>Create <code>src/utils/errors.ts</code>. <code>toErrorResponse</code> is the Task API's error handler. It normalizes what was thrown, reports bugs with their full details, and answers with one body shape for every error:</p>
-<figure class="lx-example" data-index="7" data-file="src/utils/errors.ts" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">src/utils/errors.ts</span><button type="button" class="lx-edit" data-index="7" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<p>The Task API already has an error handler: the CLI wrote one. In <code>src/server.ts</code>, the <code>dispatch</code> step that runs the router catches whatever a route throws:</p>
+<figure class="lx-example" data-index="7" data-file="src/server.ts (part)">
+<figcaption class="lx-bar"><span class="lx-file">src/server.ts (part)</span><button type="button" class="lx-edit" data-index="7" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<pre class="lx-code"><code><span class="t-kw">const</span> dispatch<span class="t-op">:</span> <span class="t-ty">HttpMiddleware</span> <span class="t-op">=</span> <span class="t-kw">async</span> <span class="t-pn">(</span>context<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
+  <span class="t-kw">try</span> <span class="t-pn">{</span>
+    <span class="t-kw">return</span> <span class="t-pn">(</span><span class="t-kw">await</span> router<span class="t-pn">.</span><span class="t-fn">dispatch</span><span class="t-pn">(</span>context<span class="t-pn">.</span><span class="t-prop">request</span><span class="t-pn">,</span> <span class="t-pn">{</span> signal<span class="t-op">:</span> context<span class="t-pn">.</span><span class="t-prop">signal</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">response</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span> <span class="t-kw">catch</span> <span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-pn">{</span>
+    <span class="t-kw">const</span> response <span class="t-op">=</span> <span class="t-fn">errorResponse</span><span class="t-pn">(</span>error<span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">if</span> <span class="t-pn">(</span>response <span class="t-op">===</span> <span class="t-cn">undefined</span><span class="t-pn">)</span> <span class="t-kw">throw</span> error<span class="t-pn">;</span>
+    <span class="t-kw">return</span> response<span class="t-pn">;</span>
+  <span class="t-pn">}</span>
+<span class="t-pn">}</span><span class="t-pn">;</span>
+</code></pre>
+<script type="text/plain" class="lx-src">const dispatch: HttpMiddleware = async (context) => {
+  try {
+    return (await router.dispatch(context.request, { signal: context.signal })).response;
+  } catch (error) {
+    const response = errorResponse(error);
+    if (response === undefined) throw error;
+    return response;
+  }
+};</script>
+</figure>
+<p><code>errorResponse</code>, in <code>src/utils/http.ts</code>, answers an error with an exposed 4xx status with <code>{"error": message, "code": code}</code>. For anything else it returns <code>undefined</code>, the error is thrown on, and <code>@zudojs/http</code> answers a plain 500. That is safe, and it is the behaviour you have seen since <a href="/learn/zudo-http#task-api">Routes, requests and responses</a>. The step also sits in the right place: last in the pipeline, after CORS, so an error answer is an ordinary response to the middleware around it and gets the CORS headers too. Without them, the browser would hide the error body from your web app.</p>
+<p>Replace <code>errorResponse</code> with a handler that does the rest of this lesson. Create <code>src/utils/errors.ts</code>:</p>
+<figure class="lx-example" data-index="8" data-file="src/utils/errors.ts" data-project="task-api">
+<figcaption class="lx-bar"><span class="lx-file">src/utils/errors.ts</span><button type="button" class="lx-edit" data-index="8" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> normalizeToBaseError<span class="t-pn">,</span> serializePublicError <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">BaseError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createResponseContext <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddleware</span><span class="t-pn">,</span> <span class="t-ty">HttpResponseContext</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> createLogger <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/logger"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpResponseContext</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Logger</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/logger"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> isSchemaValidationError <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
 
 <span class="t-kw">export</span> <span class="t-kw">type</span> <span class="t-ty">ErrorReporter</span> <span class="t-op">=</span> <span class="t-pn">(</span>error<span class="t-op">:</span> <span class="t-ty">BaseError</span><span class="t-pn">,</span> requestId<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">void</span><span class="t-pn">;</span>
 
-<span class="t-kw">const</span> logger <span class="t-op">=</span> <span class="t-fn">createLogger</span><span class="t-pn">(</span><span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"task-api"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">const</span> logBugs<span class="t-op">:</span> <span class="t-ty">ErrorReporter</span> <span class="t-op">=</span> <span class="t-pn">(</span>error<span class="t-pn">,</span> requestId<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
-  logger<span class="t-pn">.</span><span class="t-fn">error</span><span class="t-pn">(</span><span class="t-str">"request failed"</span><span class="t-pn">,</span> <span class="t-pn">{</span> requestId<span class="t-pn">,</span> error<span class="t-op">:</span> error<span class="t-pn">.</span><span class="t-fn">toJSON</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-pn">}</span><span class="t-pn">;</span>
+<span class="t-kw">export</span> <span class="t-kw">function</span> <span class="t-fn">logBugs</span><span class="t-pn">(</span>logger<span class="t-op">:</span> <span class="t-ty">Logger</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">ErrorReporter</span> <span class="t-pn">{</span>
+  <span class="t-kw">return</span> <span class="t-pn">(</span>error<span class="t-pn">,</span> requestId<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
+    logger<span class="t-pn">.</span><span class="t-fn">error</span><span class="t-pn">(</span><span class="t-str">"request failed"</span><span class="t-pn">,</span> <span class="t-pn">{</span> requestId<span class="t-pn">,</span> error<span class="t-op">:</span> error<span class="t-pn">.</span><span class="t-fn">toJSON</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span><span class="t-pn">;</span>
+<span class="t-pn">}</span>
 
-<span class="t-kw">export</span> <span class="t-kw">function</span> <span class="t-fn">toErrorResponse</span><span class="t-pn">(</span>thrown<span class="t-op">:</span> <span class="t-ty">unknown</span><span class="t-pn">,</span> requestId<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">,</span> report<span class="t-op">:</span> <span class="t-ty">ErrorReporter</span> <span class="t-op">=</span> logBugs<span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">HttpResponseContext</span> <span class="t-pn">{</span>
+<span class="t-kw">export</span> <span class="t-kw">function</span> <span class="t-fn">toErrorResponse</span><span class="t-pn">(</span>thrown<span class="t-op">:</span> <span class="t-ty">unknown</span><span class="t-pn">,</span> requestId<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">,</span> report<span class="t-op">:</span> <span class="t-ty">ErrorReporter</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">HttpResponseContext</span> <span class="t-pn">{</span>
   <span class="t-kw">const</span> error <span class="t-op">=</span> <span class="t-fn">normalizeToBaseError</span><span class="t-pn">(</span>thrown<span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span>error<span class="t-pn">.</span><span class="t-prop">isOperational</span> <span class="t-op">||</span> error<span class="t-pn">.</span><span class="t-prop">statusCode</span> <span class="t-op">&gt;=</span> <span class="t-num">500</span><span class="t-pn">)</span> <span class="t-pn">{</span>
     <span class="t-fn">report</span><span class="t-pn">(</span>error<span class="t-pn">,</span> requestId<span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-pn">}</span>
   <span class="t-kw">const</span> <span class="t-pn">{</span> code<span class="t-pn">,</span> message <span class="t-pn">}</span> <span class="t-op">=</span> <span class="t-fn">serializePublicError</span><span class="t-pn">(</span>error<span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-kw">const</span> issues <span class="t-op">=</span> <span class="t-fn">isSchemaValidationError</span><span class="t-pn">(</span>thrown<span class="t-pn">)</span>
-    <span class="t-op">?</span> thrown<span class="t-pn">.</span><span class="t-prop">issues</span><span class="t-pn">.</span><span class="t-fn">map</span><span class="t-pn">(</span><span class="t-pn">(</span>i<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-pn">{</span> field<span class="t-op">:</span> i<span class="t-pn">.</span><span class="t-prop">path</span><span class="t-pn">.</span><span class="t-fn">join</span><span class="t-pn">(</span><span class="t-str">"."</span><span class="t-pn">)</span><span class="t-pn">,</span> message<span class="t-op">:</span> i<span class="t-pn">.</span><span class="t-prop">message</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span>
+    <span class="t-op">?</span> thrown<span class="t-pn">.</span><span class="t-prop">issues</span><span class="t-pn">.</span><span class="t-fn">map</span><span class="t-pn">(</span><span class="t-pn">(</span>issue<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-pn">{</span> path<span class="t-op">:</span> issue<span class="t-pn">.</span><span class="t-prop">path</span><span class="t-pn">.</span><span class="t-fn">map</span><span class="t-pn">(</span><span class="t-ty">String</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">join</span><span class="t-pn">(</span><span class="t-str">"."</span><span class="t-pn">)</span><span class="t-pn">,</span> message<span class="t-op">:</span> issue<span class="t-pn">.</span><span class="t-prop">message</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span>
     <span class="t-op">:</span> <span class="t-cn">undefined</span><span class="t-pn">;</span>
   <span class="t-kw">return</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">{</span> status<span class="t-op">:</span> error<span class="t-pn">.</span><span class="t-prop">statusCode</span> <span class="t-pn">}</span><span class="t-pn">)</span>
     <span class="t-pn">.</span><span class="t-fn">setHeader</span><span class="t-pn">(</span><span class="t-str">"x-request-id"</span><span class="t-pn">,</span> requestId<span class="t-pn">)</span>
-    <span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">{</span> error<span class="t-op">:</span> <span class="t-pn">{</span> code<span class="t-pn">,</span> message<span class="t-pn">,</span> requestId<span class="t-pn">,</span> <span class="t-op">...</span><span class="t-pn">(</span>issues <span class="t-op">?</span> <span class="t-pn">{</span> issues <span class="t-pn">}</span> <span class="t-op">:</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">)</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
-
-<span class="t-kw">export</span> <span class="t-kw">function</span> <span class="t-fn">handleErrors</span><span class="t-pn">(</span>report<span class="t-op">?:</span> <span class="t-ty">ErrorReporter</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">HttpMiddleware</span> <span class="t-pn">{</span>
-  <span class="t-kw">return</span> <span class="t-kw">async</span> <span class="t-pn">(</span>context<span class="t-pn">,</span> next<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
-    <span class="t-kw">try</span> <span class="t-pn">{</span>
-      <span class="t-kw">return</span> <span class="t-kw">await</span> <span class="t-fn">next</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-pn">}</span> <span class="t-kw">catch</span> <span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-pn">{</span>
-      <span class="t-kw">return</span> <span class="t-fn">toErrorResponse</span><span class="t-pn">(</span>error<span class="t-pn">,</span> context<span class="t-pn">.</span><span class="t-prop">request</span><span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">,</span> report<span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-pn">}</span>
-  <span class="t-pn">}</span><span class="t-pn">;</span>
+    <span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">{</span> error<span class="t-op">:</span> message<span class="t-pn">,</span> code<span class="t-pn">,</span> requestId<span class="t-pn">,</span> <span class="t-op">...</span><span class="t-pn">(</span>issues <span class="t-op">?</span> <span class="t-pn">{</span> issues <span class="t-pn">}</span> <span class="t-op">:</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-pn">}</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { normalizeToBaseError, serializePublicError } from "@zudojs/errors";
 import type { BaseError } from "@zudojs/errors";
 import { createResponseContext } from "@zudojs/http";
-import type { HttpMiddleware, HttpResponseContext } from "@zudojs/http";
-import { createLogger } from "@zudojs/logger";
+import type { HttpResponseContext } from "@zudojs/http";
+import type { Logger } from "@zudojs/logger";
 import { isSchemaValidationError } from "@zudojs/schema";
 
 export type ErrorReporter = (error: BaseError, requestId: string) => void;
 
-const logger = createLogger({ name: "task-api" });
-const logBugs: ErrorReporter = (error, requestId) => {
-  logger.error("request failed", { requestId, error: error.toJSON() });
-};
+export function logBugs(logger: Logger): ErrorReporter {
+  return (error, requestId) => {
+    logger.error("request failed", { requestId, error: error.toJSON() });
+  };
+}
 
-export function toErrorResponse(thrown: unknown, requestId: string, report: ErrorReporter = logBugs): HttpResponseContext {
+export function toErrorResponse(thrown: unknown, requestId: string, report: ErrorReporter): HttpResponseContext {
   const error = normalizeToBaseError(thrown);
   if (!error.isOperational || error.statusCode >= 500) {
     report(error, requestId);
   }
   const { code, message } = serializePublicError(error);
   const issues = isSchemaValidationError(thrown)
-    ? thrown.issues.map((i) => ({ field: i.path.join("."), message: i.message }))
+    ? thrown.issues.map((issue) => ({ path: issue.path.map(String).join("."), message: issue.message }))
     : undefined;
   return createResponseContext({ status: error.statusCode })
     .setHeader("x-request-id", requestId)
-    .json({ error: { code, message, requestId, ...(issues ? { issues } : {}) } });
-}
-
-export function handleErrors(report?: ErrorReporter): HttpMiddleware {
-  return async (context, next) => {
-    try {
-      return await next();
-    } catch (error) {
-      return toErrorResponse(error, context.request.id, report);
-    }
-  };
+    .json({ error: message, code, requestId, ...(issues ? { issues } : {}) });
 }</script>
 </figure>
 <ul>
-<li>Only bugs are reported. A 404 is not something to fix, and logging every one would bury the real problems.</li>
-<li>The message comes from <code>serializePublicError</code>, so it is the real message for 4xx errors and "An unexpected error occurred." for everything else.</li>
-<li>The issues are copied field by field. Nothing else from the error reaches the client.</li>
-<li><code>handleErrors</code> is the middleware from the previous section, calling <code>toErrorResponse</code>.</li>
+<li>It always answers, so no error is thrown on to a plain 500 any more. A bug still gets a 500, with the generic message from <code>serializePublicError</code>.</li>
+<li>Only bugs are reported. A 404 is not something to fix, and logging every one would bury the real problems. The <code>report</code> function is a parameter, so a test can see what would be logged; <code>logBugs</code> builds the real one from a logger.</li>
+<li>The body keeps the field names the generated code already uses, <code>error</code> and <code>code</code>, and adds the <code>requestId</code> (also sent as the <code>x-request-id</code> header). For a <code>SchemaError</code> it adds the <code>issues</code>, shaped like the generated <code>validationFailed</code> helper: a <code>path</code> and a <code>message</code> per problem. Nothing else from the error reaches the client.</li>
 </ul>
-<p>Add the middleware to <code>src/middlewares/pipeline.ts</code>, just before the router, and let the pipeline pass the optional <code>report</code> on:</p>
-<figure class="lx-example" data-index="8" data-file="src/middlewares/pipeline.ts" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">src/middlewares/pipeline.ts</span><button type="button" class="lx-edit" data-index="8" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
-<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span>
-  createCorsMiddleware<span class="t-pn">,</span>
-  createRateLimitMiddleware<span class="t-pn">,</span>
-  createSecurityMiddleware<span class="t-pn">,</span>
-  <span class="t-ty">HttpMiddlewarePipeline</span><span class="t-pn">,</span>
-<span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddleware</span><span class="t-pn">,</span> <span class="t-ty">HttpRouter</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> createRateLimiter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/security"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> handleErrors <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"../utils/errors.js"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">ErrorReporter</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"../utils/errors.js"</span><span class="t-pn">;</span>
+<p>In <code>src/server.ts</code>, import the two functions instead of <code>errorResponse</code>, build the reporter from the runtime's logger, and let <code>dispatch</code> return the answer:</p>
+<figure class="lx-example" data-index="9" data-file="src/server.ts (part)">
+<figcaption class="lx-bar"><span class="lx-file">src/server.ts (part)</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> logBugs<span class="t-pn">,</span> toErrorResponse <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./utils/errors.js"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> securityHeaders <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./utils/http.js"</span><span class="t-pn">;</span>
 
-<span class="t-kw">export</span> <span class="t-kw">interface</span> <span class="t-ty">PipelineOptions</span> <span class="t-pn">{</span>
-  <span class="t-kw">readonly</span> corsOrigins<span class="t-op">:</span> <span class="t-kw">readonly</span> <span class="t-ty">string</span><span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">;</span>
-  <span class="t-kw">readonly</span> production<span class="t-op">:</span> <span class="t-ty">boolean</span><span class="t-pn">;</span>
-  <span class="t-kw">readonly</span> report<span class="t-op">?:</span> <span class="t-ty">ErrorReporter</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
+<span class="t-cmt">// ...</span>
 
-<span class="t-kw">export</span> <span class="t-kw">function</span> <span class="t-fn">buildPipeline</span><span class="t-pn">(</span>router<span class="t-op">:</span> <span class="t-ty">HttpRouter</span><span class="t-pn">,</span> options<span class="t-op">:</span> <span class="t-ty">PipelineOptions</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">HttpMiddlewarePipeline</span> <span class="t-pn">{</span>
-  <span class="t-kw">const</span> writes <span class="t-op">=</span> <span class="t-fn">createRateLimitMiddleware</span><span class="t-pn">(</span><span class="t-pn">{</span> limiter<span class="t-op">:</span> <span class="t-fn">createRateLimiter</span><span class="t-pn">(</span><span class="t-pn">{</span> windowMs<span class="t-op">:</span> <span class="t-num">60_000</span><span class="t-pn">,</span> max<span class="t-op">:</span> <span class="t-num">20</span> <span class="t-pn">}</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">const</span> limitWrites<span class="t-op">:</span> <span class="t-ty">HttpMiddleware</span> <span class="t-op">=</span> <span class="t-pn">(</span>context<span class="t-pn">,</span> next<span class="t-pn">)</span> <span class="t-op">=&gt;</span>
-    <span class="t-pn">[</span><span class="t-str">"GET"</span><span class="t-pn">,</span> <span class="t-str">"HEAD"</span><span class="t-pn">,</span> <span class="t-str">"OPTIONS"</span><span class="t-pn">]</span><span class="t-pn">.</span><span class="t-fn">includes</span><span class="t-pn">(</span>context<span class="t-pn">.</span><span class="t-prop">request</span><span class="t-pn">.</span><span class="t-prop">method</span><span class="t-pn">)</span> <span class="t-op">?</span> <span class="t-fn">next</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">:</span> <span class="t-fn">writes</span><span class="t-pn">(</span>context<span class="t-pn">,</span> next<span class="t-pn">)</span><span class="t-pn">;</span>
-
-  <span class="t-kw">const</span> pipeline <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">HttpMiddlewarePipeline</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  pipeline<span class="t-pn">.</span><span class="t-fn">use</span><span class="t-pn">(</span>
-    <span class="t-fn">createSecurityMiddleware</span><span class="t-pn">(</span>options<span class="t-pn">.</span><span class="t-prop">production</span> <span class="t-op">?</span> <span class="t-pn">{</span><span class="t-pn">}</span> <span class="t-op">:</span> <span class="t-pn">{</span> strictTransportSecurity<span class="t-op">:</span> <span class="t-str">"max-age=0"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
-    <span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"security"</span><span class="t-pn">,</span> priority<span class="t-op">:</span> <span class="t-op">-</span><span class="t-num">100</span> <span class="t-pn">}</span><span class="t-pn">,</span>
-  <span class="t-pn">)</span><span class="t-pn">;</span>
-  pipeline<span class="t-pn">.</span><span class="t-fn">use</span><span class="t-pn">(</span><span class="t-fn">createCorsMiddleware</span><span class="t-pn">(</span><span class="t-pn">{</span> allowOrigin<span class="t-op">:</span> options<span class="t-pn">.</span><span class="t-prop">corsOrigins</span><span class="t-pn">,</span> credentials<span class="t-op">:</span> <span class="t-cn">true</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"cors"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  pipeline<span class="t-pn">.</span><span class="t-fn">use</span><span class="t-pn">(</span><span class="t-fn">createRateLimitMiddleware</span><span class="t-pn">(</span><span class="t-pn">{</span> windowMs<span class="t-op">:</span> <span class="t-num">60_000</span><span class="t-pn">,</span> max<span class="t-op">:</span> <span class="t-num">300</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"rate-limit"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  pipeline<span class="t-pn">.</span><span class="t-fn">use</span><span class="t-pn">(</span>limitWrites<span class="t-pn">,</span> <span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"write-limit"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  pipeline<span class="t-pn">.</span><span class="t-fn">use</span><span class="t-pn">(</span><span class="t-fn">handleErrors</span><span class="t-pn">(</span>options<span class="t-pn">.</span><span class="t-prop">report</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"errors"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  pipeline<span class="t-pn">.</span><span class="t-fn">use</span><span class="t-pn">(</span><span class="t-kw">async</span> <span class="t-pn">(</span>context<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-kw">await</span> router<span class="t-pn">.</span><span class="t-fn">dispatch</span><span class="t-pn">(</span>context<span class="t-pn">.</span><span class="t-prop">request</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">response</span><span class="t-pn">,</span> <span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"router"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">return</span> pipeline<span class="t-pn">;</span>
-<span class="t-pn">}</span>
+<span class="t-kw">const</span> reportBug <span class="t-op">=</span> <span class="t-fn">logBugs</span><span class="t-pn">(</span>runtime<span class="t-pn">.</span><span class="t-prop">context</span><span class="t-pn">.</span><span class="t-prop">logger</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> dispatch<span class="t-op">:</span> <span class="t-ty">HttpMiddleware</span> <span class="t-op">=</span> <span class="t-kw">async</span> <span class="t-pn">(</span>context<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
+  <span class="t-kw">try</span> <span class="t-pn">{</span>
+    <span class="t-kw">return</span> <span class="t-pn">(</span><span class="t-kw">await</span> router<span class="t-pn">.</span><span class="t-fn">dispatch</span><span class="t-pn">(</span>context<span class="t-pn">.</span><span class="t-prop">request</span><span class="t-pn">,</span> <span class="t-pn">{</span> signal<span class="t-op">:</span> context<span class="t-pn">.</span><span class="t-prop">signal</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">response</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span> <span class="t-kw">catch</span> <span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-pn">{</span>
+    <span class="t-kw">return</span> <span class="t-fn">toErrorResponse</span><span class="t-pn">(</span>error<span class="t-pn">,</span> context<span class="t-pn">.</span><span class="t-prop">request</span><span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">,</span> reportBug<span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span>
+<span class="t-pn">}</span><span class="t-pn">;</span>
 </code></pre>
-<script type="text/plain" class="lx-src">import {
-  createCorsMiddleware,
-  createRateLimitMiddleware,
-  createSecurityMiddleware,
-  HttpMiddlewarePipeline,
-} from "@zudojs/http";
-import type { HttpMiddleware, HttpRouter } from "@zudojs/http";
-import { createRateLimiter } from "@zudojs/security";
-import { handleErrors } from "../utils/errors.js";
-import type { ErrorReporter } from "../utils/errors.js";
+<script type="text/plain" class="lx-src">import { logBugs, toErrorResponse } from "./utils/errors.js";
+import { securityHeaders } from "./utils/http.js";
 
-export interface PipelineOptions {
-  readonly corsOrigins: readonly string[];
-  readonly production: boolean;
-  readonly report?: ErrorReporter;
-}
+// ...
 
-export function buildPipeline(router: HttpRouter, options: PipelineOptions): HttpMiddlewarePipeline {
-  const writes = createRateLimitMiddleware({ limiter: createRateLimiter({ windowMs: 60_000, max: 20 }) });
-  const limitWrites: HttpMiddleware = (context, next) =>
-    ["GET", "HEAD", "OPTIONS"].includes(context.request.method) ? next() : writes(context, next);
-
-  const pipeline = new HttpMiddlewarePipeline();
-  pipeline.use(
-    createSecurityMiddleware(options.production ? {} : { strictTransportSecurity: "max-age=0" }),
-    { name: "security", priority: -100 },
-  );
-  pipeline.use(createCorsMiddleware({ allowOrigin: options.corsOrigins, credentials: true }), { name: "cors" });
-  pipeline.use(createRateLimitMiddleware({ windowMs: 60_000, max: 300 }), { name: "rate-limit" });
-  pipeline.use(limitWrites, { name: "write-limit" });
-  pipeline.use(handleErrors(options.report), { name: "errors" });
-  pipeline.use(async (context) => (await router.dispatch(context.request)).response, { name: "router" });
-  return pipeline;
-}</script>
+const reportBug = logBugs(runtime.context.logger);
+const dispatch: HttpMiddleware = async (context) => {
+  try {
+    return (await router.dispatch(context.request, { signal: context.signal })).response;
+  } catch (error) {
+    return toErrorResponse(error, context.request.id, reportBug);
+  }
+};</script>
 </figure>
-<p>Why just before the router, and not first? The error answer is an ordinary response to the middleware around it. The CORS middleware then adds its headers to error answers too, so your web app can read the list of issues. Otherwise the browser would hide the error body from it. The optional <code>report</code> lets a test see what would be logged. This check script uses a stand-in router that fails in every possible way:</p>
-<figure class="lx-example" data-index="9" data-file="src/check-errors.ts" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">src/check-errors.ts</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<p>Nothing else uses <code>errorResponse</code> now, so delete it from <code>src/utils/http.ts</code>. This check script builds the same <code>dispatch</code> step around a stand-in router that fails in every possible way, and prints what the reporter receives:</p>
+<figure class="lx-example" data-index="10" data-file="src/check-errors.ts" data-project="task-api">
+<figcaption class="lx-bar"><span class="lx-file">src/check-errors.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ConflictError</span><span class="t-pn">,</span> <span class="t-ty">NotFoundError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> badRequest<span class="t-pn">,</span> createHttpServer<span class="t-pn">,</span> createNodeHttpAdapter<span class="t-pn">,</span> createResponseContext<span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> badRequest<span class="t-pn">,</span> createRequestContext<span class="t-pn">,</span> createResponseContext<span class="t-pn">,</span> createRouter<span class="t-pn">,</span> <span class="t-ty">HttpMiddlewarePipeline</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddleware</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> buildPipeline <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./middlewares/pipeline.js"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> toErrorResponse <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./utils/errors.js"</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> router <span class="t-op">=</span> <span class="t-fn">createRouter</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 router<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"/missing"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span> <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">NotFoundError</span><span class="t-pn">(</span><span class="t-str">"Task 9 not found"</span><span class="t-pn">)</span><span class="t-pn">;</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -762,31 +726,31 @@ router<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn"
 router<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"/invalid"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
   <span class="t-kw">return</span> schema<span class="t-pn">.</span><span class="t-ty">object</span><span class="t-pn">(</span><span class="t-pn">{</span> title<span class="t-op">:</span> schema<span class="t-pn">.</span><span class="t-ty">string</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">min</span><span class="t-pn">(</span><span class="t-num">3</span><span class="t-pn">)</span><span class="t-pn">,</span> done<span class="t-op">:</span> schema<span class="t-pn">.</span><span class="t-ty">boolean</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">parse</span><span class="t-pn">(</span><span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"no"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-router<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"/json"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span> <span class="t-kw">throw</span> <span class="t-fn">badRequest</span><span class="t-pn">(</span><span class="t-str">"The request body is not valid JSON"</span><span class="t-pn">)</span><span class="t-pn">;</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+router<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"/json"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span> <span class="t-kw">throw</span> <span class="t-fn">badRequest</span><span class="t-pn">(</span><span class="t-str">"The request body is not valid JSON."</span><span class="t-pn">)</span><span class="t-pn">;</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 router<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"/bug"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span> <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">TypeError</span><span class="t-pn">(</span><span class="t-str">"Cannot read properties of undefined (reading 'title')"</span><span class="t-pn">)</span><span class="t-pn">;</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
-<span class="t-kw">const</span> pipeline <span class="t-op">=</span> <span class="t-fn">buildPipeline</span><span class="t-pn">(</span>router<span class="t-pn">,</span> <span class="t-pn">{</span>
-  corsOrigins<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">,</span>
-  production<span class="t-op">:</span> <span class="t-cn">false</span><span class="t-pn">,</span>
-  report<span class="t-op">:</span> <span class="t-pn">(</span>error<span class="t-pn">,</span> requestId<span class="t-pn">)</span> <span class="t-op">=&gt;</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`  [report] <span class="t-op">${</span><span class="t-prop">error.code</span><span class="t-op">}</span> (<span class="t-op">${</span><span class="t-prop">(error.cause as Error).message</span><span class="t-op">}</span>) request=<span class="t-op">${</span><span class="t-prop">requestId.length</span><span class="t-op">}</span> chars`</span><span class="t-pn">)</span><span class="t-pn">,</span>
-<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">const</span> server <span class="t-op">=</span> <span class="t-fn">createHttpServer</span><span class="t-pn">(</span><span class="t-pn">{</span>
-  adapter<span class="t-op">:</span> <span class="t-fn">createNodeHttpAdapter</span><span class="t-pn">(</span><span class="t-pn">{</span> host<span class="t-op">:</span> <span class="t-str">"127.0.0.1"</span><span class="t-pn">,</span> port<span class="t-op">:</span> <span class="t-num">0</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
-  handler<span class="t-op">:</span> <span class="t-pn">(</span>request<span class="t-pn">)</span> <span class="t-op">=&gt;</span> pipeline<span class="t-pn">.</span><span class="t-fn">execute</span><span class="t-pn">(</span>request<span class="t-pn">,</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">,</span>
-<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">await</span> server<span class="t-pn">.</span><span class="t-fn">start</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> path <span class="t-kw">of</span> <span class="t-pn">[</span><span class="t-str">"/missing"</span><span class="t-pn">,</span> <span class="t-str">"/conflict"</span><span class="t-pn">,</span> <span class="t-str">"/invalid"</span><span class="t-pn">,</span> <span class="t-str">"/json"</span><span class="t-pn">,</span> <span class="t-str">"/bug"</span><span class="t-pn">]</span><span class="t-pn">)</span> <span class="t-pn">{</span>
-  <span class="t-kw">const</span> response <span class="t-op">=</span> <span class="t-kw">await</span> <span class="t-fn">fetch</span><span class="t-pn">(</span><span class="t-tpl">`http://127.0.0.1:<span class="t-op">${</span><span class="t-prop">server.address?.port</span><span class="t-op">}</span><span class="t-op">${</span><span class="t-prop">path</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">const</span> body <span class="t-op">=</span> <span class="t-pn">(</span><span class="t-kw">await</span> response<span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-kw">as</span> <span class="t-pn">{</span> error<span class="t-op">:</span> <span class="t-ty">Record</span><span class="t-op">&lt;</span><span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-ty">unknown</span><span class="t-op">&gt;</span> <span class="t-pn">}</span><span class="t-pn">;</span>
-  <span class="t-kw">const</span> <span class="t-pn">{</span> requestId<span class="t-pn">,</span> <span class="t-op">...</span><span class="t-prop">rest</span> <span class="t-pn">}</span> <span class="t-op">=</span> body<span class="t-pn">.</span><span class="t-prop">error</span><span class="t-pn">;</span>
-  console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>path<span class="t-pn">,</span> response<span class="t-pn">.</span><span class="t-prop">status</span><span class="t-pn">,</span> <span class="t-cn">JSON</span><span class="t-pn">.</span><span class="t-fn">stringify</span><span class="t-pn">(</span>rest<span class="t-pn">)</span><span class="t-pn">,</span> requestId <span class="t-op">===</span> response<span class="t-pn">.</span><span class="t-prop">headers</span><span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"x-request-id"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> dispatch<span class="t-op">:</span> <span class="t-ty">HttpMiddleware</span> <span class="t-op">=</span> <span class="t-kw">async</span> <span class="t-pn">(</span>context<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
+  <span class="t-kw">try</span> <span class="t-pn">{</span>
+    <span class="t-kw">return</span> <span class="t-pn">(</span><span class="t-kw">await</span> router<span class="t-pn">.</span><span class="t-fn">dispatch</span><span class="t-pn">(</span>context<span class="t-pn">.</span><span class="t-prop">request</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">response</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span> <span class="t-kw">catch</span> <span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-pn">{</span>
+    <span class="t-kw">return</span> <span class="t-fn">toErrorResponse</span><span class="t-pn">(</span>error<span class="t-pn">,</span> context<span class="t-pn">.</span><span class="t-prop">request</span><span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">,</span> <span class="t-pn">(</span>e<span class="t-pn">,</span> id<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
+      console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`  [report] <span class="t-op">${</span><span class="t-prop">e.code</span><span class="t-op">}</span> (<span class="t-op">${</span><span class="t-prop">(e.cause as Error).message</span><span class="t-op">}</span>) request=<span class="t-op">${</span><span class="t-prop">id.length</span><span class="t-op">}</span> chars`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span>
+<span class="t-pn">}</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> pipeline <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">HttpMiddlewarePipeline</span><span class="t-pn">(</span><span class="t-pn">{</span> middlewares<span class="t-op">:</span> <span class="t-pn">[</span>dispatch<span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> url <span class="t-kw">of</span> <span class="t-pn">[</span><span class="t-str">"/missing"</span><span class="t-pn">,</span> <span class="t-str">"/conflict"</span><span class="t-pn">,</span> <span class="t-str">"/invalid"</span><span class="t-pn">,</span> <span class="t-str">"/json"</span><span class="t-pn">,</span> <span class="t-str">"/bug"</span><span class="t-pn">]</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+  <span class="t-kw">const</span> response <span class="t-op">=</span> <span class="t-kw">await</span> pipeline<span class="t-pn">.</span><span class="t-fn">execute</span><span class="t-pn">(</span><span class="t-fn">createRequestContext</span><span class="t-pn">(</span><span class="t-pn">{</span> method<span class="t-op">:</span> <span class="t-str">"GET"</span><span class="t-pn">,</span> url <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">const</span> <span class="t-pn">{</span> requestId<span class="t-pn">,</span> <span class="t-op">...</span><span class="t-prop">rest</span> <span class="t-pn">}</span> <span class="t-op">=</span> <span class="t-cn">JSON</span><span class="t-pn">.</span><span class="t-fn">parse</span><span class="t-pn">(</span><span class="t-ty">String</span><span class="t-pn">(</span>response<span class="t-pn">.</span><span class="t-prop">body</span><span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-kw">as</span> <span class="t-ty">Record</span><span class="t-op">&lt;</span><span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-ty">unknown</span><span class="t-op">&gt;</span><span class="t-pn">;</span>
+  console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>url<span class="t-pn">,</span> response<span class="t-pn">.</span><span class="t-prop">status</span><span class="t-pn">,</span> <span class="t-cn">JSON</span><span class="t-pn">.</span><span class="t-fn">stringify</span><span class="t-pn">(</span>rest<span class="t-pn">)</span><span class="t-pn">,</span> requestId <span class="t-op">===</span> response<span class="t-pn">.</span><span class="t-prop">headers</span><span class="t-pn">[</span><span class="t-str">"x-request-id"</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-pn">}</span>
-<span class="t-kw">await</span> server<span class="t-pn">.</span><span class="t-fn">stop</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { ConflictError, NotFoundError } from "@zudojs/errors";
-import { badRequest, createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+import { badRequest, createRequestContext, createResponseContext, createRouter, HttpMiddlewarePipeline } from "@zudojs/http";
+import type { HttpMiddleware } from "@zudojs/http";
 import { schema } from "@zudojs/schema";
-import { buildPipeline } from "./middlewares/pipeline.js";
+import { toErrorResponse } from "./utils/errors.js";
 
 const router = createRouter();
 router.get("/missing", () => { throw new NotFoundError("Task 9 not found"); });
@@ -794,54 +758,57 @@ router.get("/conflict", () => { throw new ConflictError('A task called "Buy milk
 router.get("/invalid", () => {
   return schema.object({ title: schema.string().min(3), done: schema.boolean() }).parse({ title: "no" });
 });
-router.get("/json", () => { throw badRequest("The request body is not valid JSON"); });
+router.get("/json", () => { throw badRequest("The request body is not valid JSON."); });
 router.get("/bug", () => { throw new TypeError("Cannot read properties of undefined (reading 'title')"); });
 
-const pipeline = buildPipeline(router, {
-  corsOrigins: [],
-  production: false,
-  report: (error, requestId) => console.log(`  [report] ${error.code} (${(error.cause as Error).message}) request=${requestId.length} chars`),
-});
-const server = createHttpServer({
-  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
-  handler: (request) => pipeline.execute(request, createResponseContext()),
-});
-await server.start();
-for (const path of ["/missing", "/conflict", "/invalid", "/json", "/bug"]) {
-  const response = await fetch(`http://127.0.0.1:${server.address?.port}${path}`);
-  const body = (await response.json()) as { error: Record<string, unknown> };
-  const { requestId, ...rest } = body.error;
-  console.log(path, response.status, JSON.stringify(rest), requestId === response.headers.get("x-request-id"));
-}
-await server.stop();</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx src/check-errors.ts</code></div><pre class="lx-no-copy">/missing 404 {"code":"ERR_RESOURCE_NOT_FOUND","message":"Task 9 not found"} true
-/conflict 409 {"code":"ERR_CONFLICT","message":"A task called \"Buy milk\" already exists"} true
-/invalid 400 {"code":"ERR_SCHEMA_VALIDATION","message":"Validation failed","issues":[{"field":"title","message":"String must be at least 3 characters"},{"field":"done","message":"Required field missing: done"}]} true
-/json 400 {"code":"BAD_REQUEST","message":"The request body is not valid JSON"} true
+const dispatch: HttpMiddleware = async (context) => {
+  try {
+    return (await router.dispatch(context.request)).response;
+  } catch (error) {
+    return toErrorResponse(error, context.request.id, (e, id) => {
+      console.log(`  [report] ${e.code} (${(e.cause as Error).message}) request=${id.length} chars`);
+    });
+  }
+};
+const pipeline = new HttpMiddlewarePipeline({ middlewares: [dispatch] });
+
+for (const url of ["/missing", "/conflict", "/invalid", "/json", "/bug"]) {
+  const response = await pipeline.execute(createRequestContext({ method: "GET", url }), createResponseContext());
+  const { requestId, ...rest } = JSON.parse(String(response.body)) as Record<string, unknown>;
+  console.log(url, response.status, JSON.stringify(rest), requestId === response.headers["x-request-id"]);
+}</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx src/check-errors.ts</code></div><pre class="lx-no-copy">/missing 404 {"error":"Task 9 not found","code":"ERR_RESOURCE_NOT_FOUND"} true
+/conflict 409 {"error":"A task called \"Buy milk\" already exists","code":"ERR_CONFLICT"} true
+/invalid 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","issues":[{"path":"title","message":"String must be at least 3 characters"},{"path":"done","message":"Required field missing: done"}]} true
+/json 400 {"error":"The request body is not valid JSON.","code":"BAD_REQUEST"} true
   [report] ERR_INTERNAL_ERROR (Cannot read properties of undefined (reading 'title')) request=36 chars
-/bug 500 {"code":"ERR_INTERNAL_ERROR","message":"An unexpected error occurred."} true</pre></div>
+/bug 500 {"error":"An unexpected error occurred.","code":"ERR_INTERNAL_ERROR"} true</pre></div>
 </figure>
-<p>Every failure now has the same shape: a <code>code</code>, a safe <code>message</code>, the <code>requestId</code> (the same value as the <code>x-request-id</code> header) and, for validation errors, the list of issues. The <code>TypeError</code> was the only one reported, and its text never reached the client.</p>
-<p>No change is needed in <code>src/server.ts</code>. Restart <code>npm run dev</code> and send the Task API a bad task:</p>
+<p>Every failure now has the same shape: a safe <code>error</code> message, a stable <code>code</code>, the <code>requestId</code> (the same value as the <code>x-request-id</code> header) and, for validation errors, the list of issues. The <code>TypeError</code> was the only one reported, and its text never reached the client. In the real server, <code>logBugs</code> writes that report as an <code>error</code> log line with the full error, stack trace included.</p>
+<p>Check the types, restart <code>npm run dev</code> and send the Task API a bad task:</p>
 <figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Terminal on your computer</span></figcaption>
-<pre class="lx-shell-body" data-copy="curl -i -X POST http://localhost:3000/tasks -H &quot;content-type: application/json&quot; -d '{&quot;title&quot;:&quot;no&quot;,&quot;priority&quot;:&quot;urgent&quot;}'"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>curl -i -X POST http://localhost:3000/tasks -H "content-type: application/json" -d '{"title":"no","priority":"urgent"}'</span>
+<pre class="lx-shell-body" data-copy="npx tsc --noEmit
+curl -i -X POST http://localhost:3000/tasks -H &quot;content-type: application/json&quot; -d '{&quot;title&quot;:&quot;no&quot;,&quot;priority&quot;:&quot;urgent&quot;}'"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>npx tsc --noEmit</span>
+<span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>curl -i -X POST http://localhost:3000/tasks -H "content-type: application/json" -d '{"title":"no","priority":"urgent"}'</span>
 <span class="lx-res">HTTP/1.1 400 Bad Request</span>
-<span class="lx-res">x-request-id: 37756806-cf40-4dc6-ad68-8ea387cdb550</span>
+<span class="lx-res">x-request-id: 0c91c71f-5e2a-4cd2-aa68-1f112e36b595</span>
 <span class="lx-res">content-type: application/json</span>
+<span class="lx-res">x-content-type-options: nosniff</span>
+<span class="lx-res">x-frame-options: DENY</span>
 <span class="lx-res">…</span>
-<span class="lx-res">content-length: 280</span>
-<span class="lx-res">Date: Wed, 23 Sep 2026 14:33:33 GMT</span>
+<span class="lx-res">content-length: 266</span>
+<span class="lx-res">Date: Wed, 23 Sep 2026 20:01:50 GMT</span>
 <span class="lx-res">Connection: keep-alive</span>
 <span class="lx-res">Keep-Alive: timeout=5</span>
 <span class="lx-res"></span>
-<span class="lx-res">{"error":{"code":"ERR_SCHEMA_VALIDATION","message":"Validation failed","requestId":"37756806-cf40-4dc6-ad68-8ea387cdb550","issues":[{"field":"title","message":"String must be at least 3 characters"},{"field":"priority","message":"Expected one of \"low\", \"normal\", \"high\""}]}}</span></pre></figure>
-<p>A client, or the web app's form, can now show "title: String must be at least 3 characters" right next to the title field.</p>
+<span class="lx-res">{"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION","requestId":"0c91c71f-5e2a-4cd2-aa68-1f112e36b595","issues":[{"path":"title","message":"String must be at least 3 characters"},{"path":"priority","message":"Expected one of \"low\", \"normal\", \"high\""}]}</span></pre></figure>
+<p>A client, or the web app's form, can now show "String must be at least 3 characters" right next to the title field. The generated example resource still answers bad input itself, with <code>validationFailed</code> in <code>examples.controller.ts</code>: its bodies have <code>error</code> and <code>issues</code>, but no <code>code</code> and no <code>requestId</code>. Keep that in mind if you copy its shape for a new resource.</p>
 </section>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Complete a task</h3><p>Add a <code>complete(id)</code> method to the <code>TaskService</code>: it throws <code>TaskAlreadyDoneError</code> when the task is already done, and <code>NotFoundError</code> when it does not exist. Try both through <code>toErrorResponse</code>-style handling: print the status and code of each outcome.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="10" data-file="complete.ts">
-<figcaption class="lx-bar"><span class="lx-file">complete.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="10"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Complete a task</h3><p>Add a <code>complete(id)</code> method to the <code>TaskService</code>: it throws <code>TaskAlreadyDoneError</code> when the task is already done, and <code>NotFoundError</code> when it does not exist. Try both through <code>toErrorResponse</code>-style handling: print the status and code of each outcome.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="11" data-file="complete.ts">
+<figcaption class="lx-bar"><span class="lx-file">complete.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="11"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">BaseError</span><span class="t-pn">,</span> <span class="t-ty">ErrorCategory</span><span class="t-pn">,</span> normalizeToBaseError<span class="t-pn">,</span> <span class="t-ty">NotFoundError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
 
 <span class="t-kw">class</span> <span class="t-ty">TaskAlreadyDoneError</span> <span class="t-kw">extends</span> <span class="t-ty">BaseError</span> <span class="t-pn">{</span>
@@ -912,8 +879,8 @@ for (const id of [1, 1, 5]) {
 404 ERR_RESOURCE_NOT_FOUND Task 5 not found</pre></div>
 </figure></details></div>
 <div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>What leaks?</h3><p>A teammate writes this handler. List everything that can leak to a client, and say what to use instead.</p>
-<figure class="lx-example" data-index="11" data-file="leaky.ts">
-<figcaption class="lx-bar"><span class="lx-file">leaky.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="11"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<figure class="lx-example" data-index="12" data-file="leaky.ts">
+<figcaption class="lx-bar"><span class="lx-file">leaky.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="12"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">function</span> <span class="t-fn">leakyHandler</span><span class="t-pn">(</span>error<span class="t-op">:</span> <span class="t-ty">unknown</span><span class="t-pn">)</span> <span class="t-pn">{</span>
   <span class="t-kw">return</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">{</span> status<span class="t-op">:</span> <span class="t-num">500</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">{</span>
     message<span class="t-op">:</span> <span class="t-pn">(</span>error <span class="t-kw">as</span> <span class="t-ty">Error</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">message</span><span class="t-pn">,</span>

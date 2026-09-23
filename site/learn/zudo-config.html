@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>Configuration — Learn ZudoJS</title>
   <link rel="alternate" type="text/markdown" href="/learn/zudo-config.md" title="Markdown version">
-  <meta name="description" content="Move the Task API's settings out of the code with @zudojs/config. Layer defaults, a config file and environment variables by priority, validate the result with a schema, keep secrets out of logs, and run the same code in development and production.">
+  <meta name="description" content="Keep settings out of the code with @zudojs/config. Layer defaults, a config file and environment variables by priority, validate the result with a schema, keep secrets out of logs, and make the Task API's generated configuration stricter in production than in development.">
   <!-- seo:start -->
   <!-- seo:end -->
   <meta name="keywords" content="zudojs config, configuration, createConfigManager, createDefaultsConfigSource, createEnvironmentConfigSource, createCustomConfigSource, environment variables, process.env, config file, priority, precedence, secrets, redaction, toSafeObject, NODE_ENV, resolveEnvironment, .env file, --env-file, twelve-factor, fail fast">
@@ -152,11 +152,11 @@
         <div class="lx-hero-tag">LESSON 53 OF 84</div>
         <p class="lx-hero-part">The ZudoJS core <span class="lx-tier lx-tier-core" title="Core: Required for everyday ZudoJS development.">Core</span></p>
         <h1>Configuration</h1>
-        <p class="lx-hero-lead">Move the Task API's settings out of the code with @zudojs/config. Layer defaults, a config file and environment variables by priority, validate the result with a schema, keep secrets out of logs, and run the same code in development and production.</p>
+        <p class="lx-hero-lead">Keep settings out of the code with @zudojs/config. Layer defaults, a config file and environment variables by priority, validate the result with a schema, keep secrets out of logs, and make the Task API's generated configuration stricter in production than in development.</p>
         <ul class="lx-hero-meta">
           <li><strong>45 min</strong> to read and try</li>
           <li><strong>You need:</strong> Middleware, CORS, security headers and graceful shutdown</li>
-          <li><strong>You build:</strong> A validated, typed configuration for the Task API that reads defaults, config.json and environment variables, and refuses to start in production without its secrets</li>
+          <li><strong>You build:</strong> A stricter Task API configuration that listens only on your own computer in development, checks every CORS origin, allows only https origins in production, and stops with one clear line when a setting is wrong</li>
         </ul>
         <div class="lx-hero-actions">
           <button type="button" class="lx-open-ide">Open the editor</button>
@@ -167,14 +167,14 @@
       <div class="lx-body">
 <section>
 <h2 id="why">Why configuration lives outside the code</h2>
-<p>The Task API now has settings written straight into <code>src/server.ts</code>: the port, the allowed CORS origins, the rate limits. That causes three problems:</p>
+<p>Picture the Task API with its settings written straight into <code>src/server.ts</code>: the port, the allowed CORS origins, the rate limits. That causes three problems:</p>
 <ul>
 <li><strong>They differ per environment.</strong> On your computer the web app runs at <code>http://localhost:5173</code>; in production it is <code>https://tasks.example.com</code>. Changing code to deploy is slow and risky.</li>
 <li><strong>Secrets would end up in git.</strong> A database password or a token-signing key written in code is visible to everyone who can read the repository, forever, even after you delete it.</li>
 <li><strong>Nobody can see what is configurable.</strong> The settings are scattered through the code.</li>
 </ul>
 <p><strong>Configuration</strong> is every value that changes between environments. The usual rule, from the "twelve-factor app" guidelines, is: code is the same everywhere, and configuration comes from outside, mostly from <strong>environment variables</strong>. You read those in <a href="/learn/node-apis">Node.js APIs</a> with <code>process.env</code>.</p>
-<p><code>@zudojs/config</code> collects settings from several places, decides which one wins, and keeps secrets out of logs. It is already in the Task API's <code>package.json</code>.</p>
+<p><code>@zudojs/config</code> collects settings from several places, decides which one wins, and keeps secrets out of logs. It is already in the Task API's <code>package.json</code>, and the generated <code>src/configs/index.ts</code> uses it. That is why your <code>src/server.ts</code> reads <code>config.port</code> and <code>config.corsOrigins</code> instead of fixed values. At the <a href="#task-api">end of this lesson</a> you read that file line by line and make it stricter.</p>
 </section>
 
 <section>
@@ -598,209 +598,361 @@ logger.info("configuration loaded", { port: 8080, jwtSecret: "n8VqT2xLm4pR7sKd9w
 <section>
 <h2 id="environments">Development and production</h2>
 <p><code>NODE_ENV</code> is the environment variable every Node.js tool uses to tell development from production. <code>resolveEnvironment()</code> from <code>@zudojs/constants</code> (already used in the generated <code>src/app.ts</code>) reads it and returns <code>"development"</code>, <code>"test"</code> or <code>"production"</code>. When it is not set, you get <code>"development"</code>.</p>
-<p>Production gets stricter rules. Development defaults are allowed to be convenient; production must be told everything explicitly:</p>
+<p>Production gets stricter rules. Development defaults are allowed to be convenient; production must be told everything explicitly. For the Task API, by the end of this lesson:</p>
 <div class="lx-table-wrap"><table>
 <thead><tr><th>Setting</th><th>Development</th><th>Production</th></tr></thead>
 <tbody>
-<tr><td><code>cors_origins</code></td><td>defaults to <code>http://localhost:5173</code></td><td>must be set</td></tr>
-<tr><td><code>jwt_secret</code></td><td>may be missing until you add login</td><td>must be set, 32+ characters</td></tr>
-<tr><td>HSTS header</td><td><code>max-age=0</code> (plain HTTP)</td><td>one year</td></tr>
+<tr><td><code>HOST</code></td><td>defaults to <code>127.0.0.1</code>: only your own computer can connect</td><td>defaults to <code>0.0.0.0</code>: reachable from the network</td></tr>
+<tr><td><code>CORS_ORIGINS</code></td><td>may list <code>http://localhost:5173</code></td><td><code>https://</code> origins only</td></tr>
+<tr><td>a token-signing secret (the <a href="/learn/zudo-auth">authentication lesson</a>)</td><td>may be missing until you add login</td><td>must be set, 32+ characters</td></tr>
 </tbody>
 </table></div>
-<p>For development, typing variables in front of every command gets old. Put them in a file called <code>.env</code> and let Node.js load it with <code>--env-file</code>. The generated <code>.gitignore</code> already lists <code>.env</code>, so it is never committed. The committed <code>.env.example</code> shows which variables exist, with no real values:</p>
+<p>For development, typing variables in front of every command gets old. Put them in a file called <code>.env</code>. The generated <code>src/configs/index.ts</code> loads it itself with Node's <code>process.loadEnvFile()</code>, before it reads the environment, and a variable set in the real environment wins over the file. (For a script that does not call <code>loadConfig</code>, <code>node --env-file=.env</code> and <code>tsx --env-file=.env</code> load it the same way.) The generated <code>.gitignore</code> already lists <code>.env</code>, so it is never committed. The committed <code>.env.example</code> shows which variables exist, with no real values. A <code>.env</code> for working with a web app on your computer:</p>
 <figure class="lx-example" data-index="10" data-file=".env" data-project="task-api">
 <figcaption class="lx-bar"><span class="lx-file">.env</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-cn">NODE_ENV</span><span class="t-op">=</span>development
-<span class="t-cn">TASKS_PORT</span><span class="t-op">=</span><span class="t-num">3000</span>
-<span class="t-cn">TASKS_CORS_ORIGINS</span><span class="t-op">=</span>http<span class="t-op">://</span>localhost<span class="t-op">:</span><span class="t-num">5173</span>
+<span class="t-cn">PORT</span><span class="t-op">=</span><span class="t-num">3000</span>
+<span class="t-cn">CORS_ORIGINS</span><span class="t-op">=</span>http<span class="t-op">://</span>localhost<span class="t-op">:</span><span class="t-num">5173</span>
 </code></pre>
 <script type="text/plain" class="lx-src">NODE_ENV=development
-TASKS_PORT=3000
-TASKS_CORS_ORIGINS=http://localhost:5173</script>
+PORT=3000
+CORS_ORIGINS=http://localhost:5173</script>
 </figure>
-<p>You will see it used at the end of the lesson.</p>
+<p>The generated project reads the plain names from <code>.env.example</code>, such as <code>PORT</code>, not <code>TASKS_PORT</code>: its environment source has no prefix. That works because <code>loadConfig</code> only ever reads the keys it names, and never logs the whole manager.</p>
 </section>
 
 <section>
 <h2 id="task-api">Put it in the Task API</h2>
-<p>The generated project has an empty <code>src/configs/index.ts</code>. Fill it with one function, <code>loadConfig</code>, that does everything from this lesson: the three sources, validation, and the production rules. It takes the environment as a parameter (the real <code>process.env</code> by default), which makes it easy to test:</p>
-<figure class="lx-example" data-index="11" data-file="src/configs/index.ts" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">src/configs/index.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
-<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> readFile <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"node:fs/promises"</span><span class="t-pn">;</span>
+<p>Open <code>src/configs/index.ts</code>. The CLI wrote a <code>loadConfig</code> function there that already follows most of this lesson. This is its end:</p>
+<figure class="lx-example" data-index="11" data-file="src/configs/index.ts (part)">
+<figcaption class="lx-bar"><span class="lx-file">src/configs/index.ts (part)</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<pre class="lx-code"><code><span class="t-kw">export</span> <span class="t-kw">async</span> <span class="t-kw">function</span> <span class="t-fn">loadConfig</span><span class="t-pn">(</span>env<span class="t-op">:</span> <span class="t-ty">NodeJS</span><span class="t-pn">.</span><span class="t-ty">ProcessEnv</span> <span class="t-op">=</span> process<span class="t-pn">.</span><span class="t-prop">env</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+  <span class="t-kw">if</span> <span class="t-pn">(</span>env <span class="t-op">===</span> process<span class="t-pn">.</span><span class="t-prop">env</span><span class="t-pn">)</span> <span class="t-fn">loadDotEnv</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">const</span> config <span class="t-op">=</span> <span class="t-fn">createConfigManager</span><span class="t-pn">(</span><span class="t-pn">{</span>
+    sources<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-fn">createEnvironmentConfigSource</span><span class="t-pn">(</span><span class="t-pn">{</span> env <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">]</span><span class="t-pn">,</span>
+  <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">await</span> config<span class="t-pn">.</span><span class="t-fn">load</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+  <span class="t-kw">return</span> <span class="t-ty">Object</span><span class="t-pn">.</span><span class="t-fn">freeze</span><span class="t-pn">(</span><span class="t-pn">{</span>
+    nodeEnv<span class="t-op">:</span> <span class="t-fn">text</span><span class="t-pn">(</span>config<span class="t-pn">,</span> <span class="t-str">"node_env"</span><span class="t-pn">,</span> <span class="t-str">"development"</span><span class="t-pn">)</span><span class="t-pn">,</span>
+    host<span class="t-op">:</span> <span class="t-fn">text</span><span class="t-pn">(</span>config<span class="t-pn">,</span> <span class="t-str">"host"</span><span class="t-pn">,</span> <span class="t-str">"0.0.0.0"</span><span class="t-pn">)</span><span class="t-pn">,</span>
+    port<span class="t-op">:</span> <span class="t-fn">port</span><span class="t-pn">(</span>config<span class="t-pn">)</span><span class="t-pn">,</span>
+    corsOrigins<span class="t-op">:</span> <span class="t-fn">list</span><span class="t-pn">(</span>config<span class="t-pn">,</span> <span class="t-str">"cors_origins"</span><span class="t-pn">)</span><span class="t-pn">,</span>
+    rateLimit<span class="t-op">:</span> <span class="t-ty">Object</span><span class="t-pn">.</span><span class="t-fn">freeze</span><span class="t-pn">(</span><span class="t-pn">{</span>
+      windowMs<span class="t-op">:</span> <span class="t-fn">int</span><span class="t-pn">(</span>config<span class="t-pn">,</span> <span class="t-str">"rate_limit_window_ms"</span><span class="t-pn">,</span> <span class="t-num">60_000</span><span class="t-pn">)</span><span class="t-pn">,</span>
+      max<span class="t-op">:</span> <span class="t-fn">int</span><span class="t-pn">(</span>config<span class="t-pn">,</span> <span class="t-str">"rate_limit_max"</span><span class="t-pn">,</span> <span class="t-num">300</span><span class="t-pn">)</span><span class="t-pn">,</span>
+    <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
+    <span class="t-cmt">// zudojs:config:start</span>
+    database<span class="t-op">:</span> <span class="t-ty">Object</span><span class="t-pn">.</span><span class="t-fn">freeze</span><span class="t-pn">(</span><span class="t-pn">{</span> url<span class="t-op">:</span> <span class="t-fn">text</span><span class="t-pn">(</span>config<span class="t-pn">,</span> <span class="t-str">"database_url"</span><span class="t-pn">,</span> <span class="t-str">""</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
+    <span class="t-cmt">// zudojs:config:end</span>
+  <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-pn">}</span>
+
+<span class="t-cmt">/** The loaded configuration. */</span>
+<span class="t-kw">export</span> <span class="t-kw">type</span> <span class="t-ty">AppConfig</span> <span class="t-op">=</span> <span class="t-ty">Awaited</span><span class="t-op">&lt;</span><span class="t-ty">ReturnType</span><span class="t-op">&lt;</span><span class="t-kw">typeof</span> loadConfig<span class="t-op">&gt;&gt;</span><span class="t-pn">;</span>
+</code></pre>
+<script type="text/plain" class="lx-src">export async function loadConfig(env: NodeJS.ProcessEnv = process.env) {
+  if (env === process.env) loadDotEnv();
+  const config = createConfigManager({
+    sources: [createEnvironmentConfigSource({ env })],
+  });
+  await config.load();
+
+  return Object.freeze({
+    nodeEnv: text(config, "node_env", "development"),
+    host: text(config, "host", "0.0.0.0"),
+    port: port(config),
+    corsOrigins: list(config, "cors_origins"),
+    rateLimit: Object.freeze({
+      windowMs: int(config, "rate_limit_window_ms", 60_000),
+      max: int(config, "rate_limit_max", 300),
+    }),
+    // zudojs:config:start
+    database: Object.freeze({ url: text(config, "database_url", "") }),
+    // zudojs:config:end
+  });
+}
+
+/** The loaded configuration. */
+export type AppConfig = Awaited<ReturnType<typeof loadConfig>>;</script>
+</figure>
+<ul>
+<li><strong>One source</strong>, the environment. <code>loadDotEnv()</code>, higher up in the file, first loads <code>.env</code> when it exists. The defaults are not a separate source: each helper takes its fallback, such as <code>300</code> for <code>RATE_LIMIT_MAX</code>.</li>
+<li><strong>Typed helpers.</strong> <code>text</code> reads a string, <code>list</code> splits <code>CORS_ORIGINS</code> at the commas, and <code>int</code> and <code>port</code> convert numbers.</li>
+<li><strong>Fail fast.</strong> <code>int</code> and <code>port</code> throw a <code>ConfigurationError</code> for a value such as <code>PORT=eighty</code>, so a typo stops the app at startup.</li>
+<li><strong>Frozen and typed.</strong> <code>Object.freeze</code> stops any code from changing a setting later, and <code>AppConfig</code> is the type TypeScript works out from the returned object. <code>src/server.ts</code> and <code>src/app.ts</code> use it.</li>
+<li><strong>Easy to test.</strong> <code>loadConfig</code> takes the environment as a parameter. Given a plain object, it does not touch <code>.env</code> or <code>process.env</code> at all.</li>
+<li>The <code>// zudojs:config</code> markers are where <code>zudojs add</code> puts the settings of a feature.</li>
+</ul>
+<p>Four things from this lesson are still missing: production is not stricter than development, the server listens on every network interface even on your laptop, <code>CORS_ORIGINS</code> accepts anything, and the write limit from the previous lesson is written in the code. Here is the whole file with all four added. The new parts are the two imports, <code>OriginSchema</code>, the <code>origins</code> helper, the <code>production</code> constant, and the <code>production</code>, <code>host</code>, <code>corsOrigins</code> and <code>writeMax</code> lines in <code>loadConfig</code>:</p>
+<figure class="lx-example" data-index="12" data-file="src/configs/index.ts" data-project="task-api">
+<figcaption class="lx-bar"><span class="lx-file">src/configs/index.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ConfigurationError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span>
-  <span class="t-ty">ConfigSourceType</span><span class="t-pn">,</span>
   createConfigManager<span class="t-pn">,</span>
-  createCustomConfigSource<span class="t-pn">,</span>
-  createDefaultsConfigSource<span class="t-pn">,</span>
   createEnvironmentConfigSource<span class="t-pn">,</span>
+  <span class="t-kw">type</span> <span class="t-ty">ConfigManager</span><span class="t-pn">,</span>
 <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/config"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> resolveEnvironment <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/constants"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ConfigurationError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Infer</span><span class="t-pn">,</span> <span class="t-ty">SchemaIssue</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
 
-<span class="t-kw">const</span> <span class="t-ty">ConfigSchema</span> <span class="t-op">=</span> schema<span class="t-pn">.</span><span class="t-ty">object</span><span class="t-pn">(</span><span class="t-pn">{</span>
-  port<span class="t-op">:</span> schema<span class="t-pn">.</span><span class="t-prop">coerce</span><span class="t-pn">.</span><span class="t-ty">number</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">int</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">min</span><span class="t-pn">(</span><span class="t-num">0</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">max</span><span class="t-pn">(</span><span class="t-num">65535</span><span class="t-pn">)</span><span class="t-pn">,</span>
-  host<span class="t-op">:</span> schema<span class="t-pn">.</span><span class="t-ty">string</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">min</span><span class="t-pn">(</span><span class="t-num">1</span><span class="t-pn">)</span><span class="t-pn">,</span>
-  cors_origins<span class="t-op">:</span> schema<span class="t-pn">.</span><span class="t-ty">string</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">max</span><span class="t-pn">(</span><span class="t-num">2000</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">transform</span><span class="t-pn">(</span><span class="t-pn">(</span>list<span class="t-pn">)</span> <span class="t-op">=&gt;</span>
-    list<span class="t-pn">.</span><span class="t-fn">split</span><span class="t-pn">(</span><span class="t-str">","</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">map</span><span class="t-pn">(</span><span class="t-pn">(</span>origin<span class="t-pn">)</span> <span class="t-op">=&gt;</span> origin<span class="t-pn">.</span><span class="t-fn">trim</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">filter</span><span class="t-pn">(</span><span class="t-pn">(</span>origin<span class="t-pn">)</span> <span class="t-op">=&gt;</span> origin<span class="t-pn">.</span><span class="t-prop">length</span> <span class="t-op">&gt;</span> <span class="t-num">0</span><span class="t-pn">)</span><span class="t-pn">,</span>
-  <span class="t-pn">)</span><span class="t-pn">,</span>
-  rate_limit_max<span class="t-op">:</span> schema<span class="t-pn">.</span><span class="t-prop">coerce</span><span class="t-pn">.</span><span class="t-ty">number</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">int</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">min</span><span class="t-pn">(</span><span class="t-num">1</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">max</span><span class="t-pn">(</span><span class="t-num">10_000</span><span class="t-pn">)</span><span class="t-pn">,</span>
-  jwt_secret<span class="t-op">:</span> schema<span class="t-pn">.</span><span class="t-ty">string</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">min</span><span class="t-pn">(</span><span class="t-num">32</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">max</span><span class="t-pn">(</span><span class="t-num">512</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">optional</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span>
-<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> <span class="t-cn">DEFAULT_PORT</span> <span class="t-op">=</span> <span class="t-num">3000</span><span class="t-pn">;</span>
 
-<span class="t-kw">export</span> <span class="t-kw">type</span> <span class="t-ty">AppConfig</span> <span class="t-op">=</span> <span class="t-ty">Infer</span><span class="t-op">&lt;</span><span class="t-kw">typeof</span> <span class="t-ty">ConfigSchema</span><span class="t-op">&gt;</span> <span class="t-op">&amp;</span> <span class="t-pn">{</span> <span class="t-kw">readonly</span> production<span class="t-op">:</span> <span class="t-ty">boolean</span> <span class="t-pn">}</span><span class="t-pn">;</span>
-
-<span class="t-kw">type</span> <span class="t-ty">Env</span> <span class="t-op">=</span> <span class="t-ty">Record</span><span class="t-op">&lt;</span><span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-ty">string</span> <span class="t-op">|</span> <span class="t-cn">undefined</span><span class="t-op">&gt;</span><span class="t-pn">;</span>
-
-<span class="t-kw">export</span> <span class="t-kw">async</span> <span class="t-kw">function</span> <span class="t-fn">loadConfig</span><span class="t-pn">(</span>env<span class="t-op">:</span> <span class="t-ty">Env</span> <span class="t-op">=</span> process<span class="t-pn">.</span><span class="t-prop">env</span><span class="t-pn">,</span> file <span class="t-op">=</span> <span class="t-str">"config.json"</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Promise</span><span class="t-op">&lt;</span><span class="t-ty">AppConfig</span><span class="t-op">&gt;</span> <span class="t-pn">{</span>
-  <span class="t-kw">const</span> production <span class="t-op">=</span> <span class="t-fn">resolveEnvironment</span><span class="t-pn">(</span>env<span class="t-pn">)</span> <span class="t-op">===</span> <span class="t-str">"production"</span><span class="t-pn">;</span>
-  <span class="t-kw">const</span> manager <span class="t-op">=</span> <span class="t-fn">createConfigManager</span><span class="t-pn">(</span><span class="t-pn">{</span>
-    sources<span class="t-op">:</span> <span class="t-pn">[</span>
-      <span class="t-fn">createDefaultsConfigSource</span><span class="t-pn">(</span><span class="t-pn">{</span>
-        port<span class="t-op">:</span> <span class="t-num">3000</span><span class="t-pn">,</span>
-        host<span class="t-op">:</span> production <span class="t-op">?</span> <span class="t-str">"0.0.0.0"</span> <span class="t-op">:</span> <span class="t-str">"127.0.0.1"</span><span class="t-pn">,</span>
-        cors_origins<span class="t-op">:</span> production <span class="t-op">?</span> <span class="t-str">""</span> <span class="t-op">:</span> <span class="t-str">"http://localhost:5173"</span><span class="t-pn">,</span>
-        rate_limit_max<span class="t-op">:</span> <span class="t-num">300</span><span class="t-pn">,</span>
-      <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
-      <span class="t-fn">createCustomConfigSource</span><span class="t-pn">(</span>
-        <span class="t-str">"file"</span><span class="t-pn">,</span>
-        <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-pn">{</span> values<span class="t-op">:</span> <span class="t-cn">JSON</span><span class="t-pn">.</span><span class="t-fn">parse</span><span class="t-pn">(</span><span class="t-kw">await</span> <span class="t-fn">readFile</span><span class="t-pn">(</span>file<span class="t-pn">,</span> <span class="t-str">"utf8"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">,</span> source<span class="t-op">:</span> file<span class="t-pn">,</span> <span class="t-kw">type</span><span class="t-op">:</span> <span class="t-ty">ConfigSourceType</span><span class="t-pn">.</span><span class="t-cn">FILE</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
-        <span class="t-pn">{</span> priority<span class="t-op">:</span> <span class="t-num">10</span><span class="t-pn">,</span> optional<span class="t-op">:</span> <span class="t-cn">true</span> <span class="t-pn">}</span><span class="t-pn">,</span>
-      <span class="t-pn">)</span><span class="t-pn">,</span>
-      <span class="t-fn">createEnvironmentConfigSource</span><span class="t-pn">(</span><span class="t-pn">{</span> prefix<span class="t-op">:</span> <span class="t-str">"TASKS_"</span><span class="t-pn">,</span> env<span class="t-pn">,</span> priority<span class="t-op">:</span> <span class="t-num">20</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
-    <span class="t-pn">]</span><span class="t-pn">,</span>
-  <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">await</span> manager<span class="t-pn">.</span><span class="t-fn">load</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-
-  <span class="t-kw">const</span> result <span class="t-op">=</span> <span class="t-ty">ConfigSchema</span><span class="t-pn">.</span><span class="t-fn">safeParse</span><span class="t-pn">(</span>manager<span class="t-pn">.</span><span class="t-fn">toObject</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span>result<span class="t-pn">.</span><span class="t-prop">success</span><span class="t-pn">)</span> <span class="t-pn">{</span>
-    <span class="t-kw">const</span> issues <span class="t-op">=</span> result<span class="t-pn">.</span><span class="t-prop">issues</span><span class="t-pn">.</span><span class="t-fn">map</span><span class="t-pn">(</span><span class="t-pn">(</span>issue<span class="t-op">:</span> <span class="t-ty">SchemaIssue</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-tpl">`<span class="t-op">${</span><span class="t-prop">issue.path.join(".")</span><span class="t-op">}</span>: <span class="t-op">${</span><span class="t-prop">issue.message</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">ConfigurationError</span><span class="t-pn">(</span><span class="t-tpl">`Invalid configuration: <span class="t-op">${</span><span class="t-prop">issues.join("; ")</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-cmt">/** Loads `.env` into process.env when it exists; real variables win. */</span>
+<span class="t-kw">function</span> <span class="t-fn">loadDotEnv</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-kw">void</span> <span class="t-pn">{</span>
+  <span class="t-kw">try</span> <span class="t-pn">{</span>
+    process<span class="t-pn">.</span><span class="t-fn">loadEnvFile</span><span class="t-pn">(</span><span class="t-str">".env"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span> <span class="t-kw">catch</span> <span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-pn">{</span>
+    <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-pn">(</span>error <span class="t-kw">as</span> <span class="t-ty">NodeJS</span><span class="t-pn">.</span><span class="t-ty">ErrnoException</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">code</span> <span class="t-op">!==</span> <span class="t-str">"ENOENT"</span><span class="t-pn">)</span> <span class="t-kw">throw</span> error<span class="t-pn">;</span>
   <span class="t-pn">}</span>
-  <span class="t-kw">const</span> config <span class="t-op">=</span> <span class="t-pn">{</span> <span class="t-op">...</span><span class="t-prop">result</span><span class="t-pn">.</span><span class="t-prop">data</span><span class="t-pn">,</span> production <span class="t-pn">}</span><span class="t-pn">;</span>
-  <span class="t-kw">if</span> <span class="t-pn">(</span>production <span class="t-op">&amp;&amp;</span> config<span class="t-pn">.</span><span class="t-prop">jwt_secret</span> <span class="t-op">===</span> <span class="t-cn">undefined</span><span class="t-pn">)</span> <span class="t-pn">{</span>
-    <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">ConfigurationError</span><span class="t-pn">(</span><span class="t-str">"TASKS_JWT_SECRET must be set in production"</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-pn">}</span>
-  <span class="t-kw">if</span> <span class="t-pn">(</span>production <span class="t-op">&amp;&amp;</span> config<span class="t-pn">.</span><span class="t-prop">cors_origins</span><span class="t-pn">.</span><span class="t-prop">length</span> <span class="t-op">===</span> <span class="t-num">0</span><span class="t-pn">)</span> <span class="t-pn">{</span>
-    <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">ConfigurationError</span><span class="t-pn">(</span><span class="t-str">"TASKS_CORS_ORIGINS must be set in production"</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-pn">}</span>
-  <span class="t-kw">return</span> config<span class="t-pn">;</span>
 <span class="t-pn">}</span>
+
+<span class="t-cmt">/** A string setting, or `fallback` when the variable is unset. */</span>
+<span class="t-kw">export</span> <span class="t-kw">function</span> <span class="t-fn">text</span><span class="t-pn">(</span>config<span class="t-op">:</span> <span class="t-ty">ConfigManager</span><span class="t-pn">,</span> key<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">,</span> fallback<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">string</span> <span class="t-pn">{</span>
+  <span class="t-kw">return</span> config<span class="t-pn">.</span><span class="t-ty">string</span><span class="t-pn">(</span>key<span class="t-pn">,</span> fallback<span class="t-pn">)</span> <span class="t-op">??</span> fallback<span class="t-pn">;</span>
+<span class="t-pn">}</span>
+
+<span class="t-cmt">/** A comma-separated list setting. */</span>
+<span class="t-kw">export</span> <span class="t-kw">function</span> <span class="t-fn">list</span><span class="t-pn">(</span>config<span class="t-op">:</span> <span class="t-ty">ConfigManager</span><span class="t-pn">,</span> key<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-kw">readonly</span> <span class="t-ty">string</span><span class="t-pn">[</span><span class="t-pn">]</span> <span class="t-pn">{</span>
+  <span class="t-kw">return</span> <span class="t-pn">(</span>config<span class="t-pn">.</span><span class="t-ty">string</span><span class="t-pn">(</span>key<span class="t-pn">,</span> <span class="t-str">""</span><span class="t-pn">)</span> <span class="t-op">??</span> <span class="t-str">""</span><span class="t-pn">)</span>
+    <span class="t-pn">.</span><span class="t-fn">split</span><span class="t-pn">(</span><span class="t-str">","</span><span class="t-pn">)</span>
+    <span class="t-pn">.</span><span class="t-fn">map</span><span class="t-pn">(</span><span class="t-pn">(</span>entry<span class="t-pn">)</span> <span class="t-op">=&gt;</span> entry<span class="t-pn">.</span><span class="t-fn">trim</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span>
+    <span class="t-pn">.</span><span class="t-fn">filter</span><span class="t-pn">(</span><span class="t-pn">(</span>entry<span class="t-pn">)</span> <span class="t-op">=&gt;</span> entry<span class="t-pn">.</span><span class="t-prop">length</span> <span class="t-op">&gt;</span> <span class="t-num">0</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-pn">}</span>
+
+<span class="t-cmt">/** An origin is a scheme, a host and an optional port: no path, no trailing slash. */</span>
+<span class="t-kw">const</span> <span class="t-ty">OriginSchema</span> <span class="t-op">=</span> schema
+  <span class="t-pn">.</span><span class="t-ty">string</span><span class="t-pn">(</span><span class="t-pn">)</span>
+  <span class="t-pn">.</span><span class="t-fn">url</span><span class="t-pn">(</span><span class="t-pn">)</span>
+  <span class="t-pn">.</span><span class="t-fn">refine</span><span class="t-pn">(</span><span class="t-pn">(</span>value<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">new</span> <span class="t-cn">URL</span><span class="t-pn">(</span>value<span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">origin</span> <span class="t-op">===</span> value<span class="t-pn">,</span> <span class="t-str">"not an origin"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-cmt">/** CORS_ORIGINS: exact origins such as https://tasks.example.com, and only https in production. */</span>
+<span class="t-kw">export</span> <span class="t-kw">function</span> <span class="t-fn">origins</span><span class="t-pn">(</span>config<span class="t-op">:</span> <span class="t-ty">ConfigManager</span><span class="t-pn">,</span> production<span class="t-op">:</span> <span class="t-ty">boolean</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-kw">readonly</span> <span class="t-ty">string</span><span class="t-pn">[</span><span class="t-pn">]</span> <span class="t-pn">{</span>
+  <span class="t-kw">const</span> entries <span class="t-op">=</span> <span class="t-fn">list</span><span class="t-pn">(</span>config<span class="t-pn">,</span> <span class="t-str">"cors_origins"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> entry <span class="t-kw">of</span> entries<span class="t-pn">)</span> <span class="t-pn">{</span>
+    <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span><span class="t-ty">OriginSchema</span><span class="t-pn">.</span><span class="t-fn">safeParse</span><span class="t-pn">(</span>entry<span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">success</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+      <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">ConfigurationError</span><span class="t-pn">(</span><span class="t-tpl">`CORS_ORIGINS must list origins such as https://tasks.example.com, got "<span class="t-op">${</span><span class="t-prop">entry</span><span class="t-op">}</span>".`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-pn">}</span>
+    <span class="t-kw">if</span> <span class="t-pn">(</span>production <span class="t-op">&amp;&amp;</span> <span class="t-op">!</span>entry<span class="t-pn">.</span><span class="t-fn">startsWith</span><span class="t-pn">(</span><span class="t-str">"https://"</span><span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+      <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">ConfigurationError</span><span class="t-pn">(</span><span class="t-tpl">`CORS_ORIGINS must use https in production, got "<span class="t-op">${</span><span class="t-prop">entry</span><span class="t-op">}</span>".`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-pn">}</span>
+  <span class="t-pn">}</span>
+  <span class="t-kw">return</span> entries<span class="t-pn">;</span>
+<span class="t-pn">}</span>
+
+<span class="t-cmt">/** A non-negative integer setting; anything else is a configuration error. */</span>
+<span class="t-kw">export</span> <span class="t-kw">function</span> <span class="t-fn">int</span><span class="t-pn">(</span>config<span class="t-op">:</span> <span class="t-ty">ConfigManager</span><span class="t-pn">,</span> key<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">,</span> fallback<span class="t-op">:</span> <span class="t-ty">number</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">number</span> <span class="t-pn">{</span>
+  <span class="t-kw">const</span> raw <span class="t-op">=</span> config<span class="t-pn">.</span><span class="t-ty">string</span><span class="t-pn">(</span>key<span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">if</span> <span class="t-pn">(</span>raw <span class="t-op">===</span> <span class="t-cn">undefined</span> <span class="t-op">||</span> raw<span class="t-pn">.</span><span class="t-fn">trim</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">===</span> <span class="t-str">""</span><span class="t-pn">)</span> <span class="t-kw">return</span> fallback<span class="t-pn">;</span>
+  <span class="t-kw">const</span> value <span class="t-op">=</span> <span class="t-ty">Number</span><span class="t-pn">(</span>raw<span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span><span class="t-ty">Number</span><span class="t-pn">.</span><span class="t-fn">isSafeInteger</span><span class="t-pn">(</span>value<span class="t-pn">)</span> <span class="t-op">||</span> value <span class="t-op">&lt;</span> <span class="t-num">0</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+    <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">ConfigurationError</span><span class="t-pn">(</span><span class="t-tpl">`<span class="t-op">${</span><span class="t-prop">key.toUpperCase()</span><span class="t-op">}</span> must be a non-negative integer, got "<span class="t-op">${</span><span class="t-prop">raw</span><span class="t-op">}</span>".`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span>
+  <span class="t-kw">return</span> value<span class="t-pn">;</span>
+<span class="t-pn">}</span>
+
+<span class="t-cmt">/** PORT, refusing anything that is not a TCP port. */</span>
+<span class="t-kw">function</span> <span class="t-fn">port</span><span class="t-pn">(</span>config<span class="t-op">:</span> <span class="t-ty">ConfigManager</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">number</span> <span class="t-pn">{</span>
+  <span class="t-kw">const</span> raw <span class="t-op">=</span> config<span class="t-pn">.</span><span class="t-ty">string</span><span class="t-pn">(</span><span class="t-str">"port"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">if</span> <span class="t-pn">(</span>raw <span class="t-op">===</span> <span class="t-cn">undefined</span> <span class="t-op">||</span> raw<span class="t-pn">.</span><span class="t-fn">trim</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">===</span> <span class="t-str">""</span><span class="t-pn">)</span> <span class="t-kw">return</span> <span class="t-cn">DEFAULT_PORT</span><span class="t-pn">;</span>
+  <span class="t-kw">const</span> value <span class="t-op">=</span> <span class="t-ty">Number</span><span class="t-pn">(</span>raw<span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span><span class="t-ty">Number</span><span class="t-pn">.</span><span class="t-fn">isInteger</span><span class="t-pn">(</span>value<span class="t-pn">)</span> <span class="t-op">||</span> value <span class="t-op">&lt;</span> <span class="t-num">0</span> <span class="t-op">||</span> value <span class="t-op">&gt;</span> <span class="t-num">65535</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+    <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">ConfigurationError</span><span class="t-pn">(</span><span class="t-tpl">`PORT must be an integer between 0 and 65535, got "<span class="t-op">${</span><span class="t-prop">raw</span><span class="t-op">}</span>".`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span>
+  <span class="t-kw">return</span> value<span class="t-pn">;</span>
+<span class="t-pn">}</span>
+
+<span class="t-cmt">/**
+ * Reads the application configuration from the environment (and `.env`).
+ * `zudojs add &lt;feature&gt;` adds the feature's settings between the markers.
+ */</span>
+<span class="t-kw">export</span> <span class="t-kw">async</span> <span class="t-kw">function</span> <span class="t-fn">loadConfig</span><span class="t-pn">(</span>env<span class="t-op">:</span> <span class="t-ty">NodeJS</span><span class="t-pn">.</span><span class="t-ty">ProcessEnv</span> <span class="t-op">=</span> process<span class="t-pn">.</span><span class="t-prop">env</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+  <span class="t-kw">if</span> <span class="t-pn">(</span>env <span class="t-op">===</span> process<span class="t-pn">.</span><span class="t-prop">env</span><span class="t-pn">)</span> <span class="t-fn">loadDotEnv</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">const</span> config <span class="t-op">=</span> <span class="t-fn">createConfigManager</span><span class="t-pn">(</span><span class="t-pn">{</span>
+    sources<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-fn">createEnvironmentConfigSource</span><span class="t-pn">(</span><span class="t-pn">{</span> env <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">]</span><span class="t-pn">,</span>
+  <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">await</span> config<span class="t-pn">.</span><span class="t-fn">load</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">const</span> production <span class="t-op">=</span> <span class="t-fn">resolveEnvironment</span><span class="t-pn">(</span>env<span class="t-pn">)</span> <span class="t-op">===</span> <span class="t-str">"production"</span><span class="t-pn">;</span>
+
+  <span class="t-kw">return</span> <span class="t-ty">Object</span><span class="t-pn">.</span><span class="t-fn">freeze</span><span class="t-pn">(</span><span class="t-pn">{</span>
+    nodeEnv<span class="t-op">:</span> <span class="t-fn">text</span><span class="t-pn">(</span>config<span class="t-pn">,</span> <span class="t-str">"node_env"</span><span class="t-pn">,</span> <span class="t-str">"development"</span><span class="t-pn">)</span><span class="t-pn">,</span>
+    production<span class="t-pn">,</span>
+    host<span class="t-op">:</span> <span class="t-fn">text</span><span class="t-pn">(</span>config<span class="t-pn">,</span> <span class="t-str">"host"</span><span class="t-pn">,</span> production <span class="t-op">?</span> <span class="t-str">"0.0.0.0"</span> <span class="t-op">:</span> <span class="t-str">"127.0.0.1"</span><span class="t-pn">)</span><span class="t-pn">,</span>
+    port<span class="t-op">:</span> <span class="t-fn">port</span><span class="t-pn">(</span>config<span class="t-pn">)</span><span class="t-pn">,</span>
+    corsOrigins<span class="t-op">:</span> <span class="t-fn">origins</span><span class="t-pn">(</span>config<span class="t-pn">,</span> production<span class="t-pn">)</span><span class="t-pn">,</span>
+    rateLimit<span class="t-op">:</span> <span class="t-ty">Object</span><span class="t-pn">.</span><span class="t-fn">freeze</span><span class="t-pn">(</span><span class="t-pn">{</span>
+      windowMs<span class="t-op">:</span> <span class="t-fn">int</span><span class="t-pn">(</span>config<span class="t-pn">,</span> <span class="t-str">"rate_limit_window_ms"</span><span class="t-pn">,</span> <span class="t-num">60_000</span><span class="t-pn">)</span><span class="t-pn">,</span>
+      max<span class="t-op">:</span> <span class="t-fn">int</span><span class="t-pn">(</span>config<span class="t-pn">,</span> <span class="t-str">"rate_limit_max"</span><span class="t-pn">,</span> <span class="t-num">300</span><span class="t-pn">)</span><span class="t-pn">,</span>
+      writeMax<span class="t-op">:</span> <span class="t-fn">int</span><span class="t-pn">(</span>config<span class="t-pn">,</span> <span class="t-str">"rate_limit_write_max"</span><span class="t-pn">,</span> <span class="t-num">20</span><span class="t-pn">)</span><span class="t-pn">,</span>
+    <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
+    <span class="t-cmt">// zudojs:config:start</span>
+    database<span class="t-op">:</span> <span class="t-ty">Object</span><span class="t-pn">.</span><span class="t-fn">freeze</span><span class="t-pn">(</span><span class="t-pn">{</span> url<span class="t-op">:</span> <span class="t-fn">text</span><span class="t-pn">(</span>config<span class="t-pn">,</span> <span class="t-str">"database_url"</span><span class="t-pn">,</span> <span class="t-str">""</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
+    <span class="t-cmt">// zudojs:config:end</span>
+  <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-pn">}</span>
+
+<span class="t-cmt">/** The loaded configuration. */</span>
+<span class="t-kw">export</span> <span class="t-kw">type</span> <span class="t-ty">AppConfig</span> <span class="t-op">=</span> <span class="t-ty">Awaited</span><span class="t-op">&lt;</span><span class="t-ty">ReturnType</span><span class="t-op">&lt;</span><span class="t-kw">typeof</span> loadConfig<span class="t-op">&gt;&gt;</span><span class="t-pn">;</span>
 </code></pre>
-<script type="text/plain" class="lx-src">import { readFile } from "node:fs/promises";
+<script type="text/plain" class="lx-src">import { ConfigurationError } from "@zudojs/errors";
 import {
-  ConfigSourceType,
   createConfigManager,
-  createCustomConfigSource,
-  createDefaultsConfigSource,
   createEnvironmentConfigSource,
+  type ConfigManager,
 } from "@zudojs/config";
 import { resolveEnvironment } from "@zudojs/constants";
-import { ConfigurationError } from "@zudojs/errors";
 import { schema } from "@zudojs/schema";
-import type { Infer, SchemaIssue } from "@zudojs/schema";
 
-const ConfigSchema = schema.object({
-  port: schema.coerce.number().int().min(0).max(65535),
-  host: schema.string().min(1),
-  cors_origins: schema.string().max(2000).transform((list) =>
-    list.split(",").map((origin) => origin.trim()).filter((origin) => origin.length > 0),
-  ),
-  rate_limit_max: schema.coerce.number().int().min(1).max(10_000),
-  jwt_secret: schema.string().min(32).max(512).optional(),
-});
+const DEFAULT_PORT = 3000;
 
-export type AppConfig = Infer<typeof ConfigSchema> & { readonly production: boolean };
+/** Loads `.env` into process.env when it exists; real variables win. */
+function loadDotEnv(): void {
+  try {
+    process.loadEnvFile(".env");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
 
-type Env = Record<string, string | undefined>;
+/** A string setting, or `fallback` when the variable is unset. */
+export function text(config: ConfigManager, key: string, fallback: string): string {
+  return config.string(key, fallback) ?? fallback;
+}
 
-export async function loadConfig(env: Env = process.env, file = "config.json"): Promise<AppConfig> {
-  const production = resolveEnvironment(env) === "production";
-  const manager = createConfigManager({
-    sources: [
-      createDefaultsConfigSource({
-        port: 3000,
-        host: production ? "0.0.0.0" : "127.0.0.1",
-        cors_origins: production ? "" : "http://localhost:5173",
-        rate_limit_max: 300,
-      }),
-      createCustomConfigSource(
-        "file",
-        async () => ({ values: JSON.parse(await readFile(file, "utf8")), source: file, type: ConfigSourceType.FILE }),
-        { priority: 10, optional: true },
-      ),
-      createEnvironmentConfigSource({ prefix: "TASKS_", env, priority: 20 }),
-    ],
+/** A comma-separated list setting. */
+export function list(config: ConfigManager, key: string): readonly string[] {
+  return (config.string(key, "") ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+/** An origin is a scheme, a host and an optional port: no path, no trailing slash. */
+const OriginSchema = schema
+  .string()
+  .url()
+  .refine((value) => new URL(value).origin === value, "not an origin");
+
+/** CORS_ORIGINS: exact origins such as https://tasks.example.com, and only https in production. */
+export function origins(config: ConfigManager, production: boolean): readonly string[] {
+  const entries = list(config, "cors_origins");
+  for (const entry of entries) {
+    if (!OriginSchema.safeParse(entry).success) {
+      throw new ConfigurationError(`CORS_ORIGINS must list origins such as https://tasks.example.com, got "${entry}".`);
+    }
+    if (production && !entry.startsWith("https://")) {
+      throw new ConfigurationError(`CORS_ORIGINS must use https in production, got "${entry}".`);
+    }
+  }
+  return entries;
+}
+
+/** A non-negative integer setting; anything else is a configuration error. */
+export function int(config: ConfigManager, key: string, fallback: number): number {
+  const raw = config.string(key);
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new ConfigurationError(`${key.toUpperCase()} must be a non-negative integer, got "${raw}".`);
+  }
+  return value;
+}
+
+/** PORT, refusing anything that is not a TCP port. */
+function port(config: ConfigManager): number {
+  const raw = config.string("port");
+  if (raw === undefined || raw.trim() === "") return DEFAULT_PORT;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0 || value > 65535) {
+    throw new ConfigurationError(`PORT must be an integer between 0 and 65535, got "${raw}".`);
+  }
+  return value;
+}
+
+/**
+ * Reads the application configuration from the environment (and `.env`).
+ * `zudojs add <feature>` adds the feature's settings between the markers.
+ */
+export async function loadConfig(env: NodeJS.ProcessEnv = process.env) {
+  if (env === process.env) loadDotEnv();
+  const config = createConfigManager({
+    sources: [createEnvironmentConfigSource({ env })],
   });
-  await manager.load();
+  await config.load();
+  const production = resolveEnvironment(env) === "production";
 
-  const result = ConfigSchema.safeParse(manager.toObject());
-  if (!result.success) {
-    const issues = result.issues.map((issue: SchemaIssue) => `${issue.path.join(".")}: ${issue.message}`);
-    throw new ConfigurationError(`Invalid configuration: ${issues.join("; ")}`);
-  }
-  const config = { ...result.data, production };
-  if (production && config.jwt_secret === undefined) {
-    throw new ConfigurationError("TASKS_JWT_SECRET must be set in production");
-  }
-  if (production && config.cors_origins.length === 0) {
-    throw new ConfigurationError("TASKS_CORS_ORIGINS must be set in production");
-  }
-  return config;
-}</script>
+  return Object.freeze({
+    nodeEnv: text(config, "node_env", "development"),
+    production,
+    host: text(config, "host", production ? "0.0.0.0" : "127.0.0.1"),
+    port: port(config),
+    corsOrigins: origins(config, production),
+    rateLimit: Object.freeze({
+      windowMs: int(config, "rate_limit_window_ms", 60_000),
+      max: int(config, "rate_limit_max", 300),
+      writeMax: int(config, "rate_limit_write_max", 20),
+    }),
+    // zudojs:config:start
+    database: Object.freeze({ url: text(config, "database_url", "") }),
+    // zudojs:config:end
+  });
+}
+
+/** The loaded configuration. */
+export type AppConfig = Awaited<ReturnType<typeof loadConfig>>;</script>
 </figure>
-<p>Two details. <code>safeParse</code> is used here, so the issues are typed properly and need no type assertion. And the error message lists setting <em>names</em> only, never values, so even a wrong secret cannot leak into the log through it. This script tries the function with four different environments:</p>
-<figure class="lx-example" data-index="12" data-file="src/check-config.ts" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">src/check-config.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<ul>
+<li><code>resolveEnvironment(env)</code> reads <code>NODE_ENV</code> from the same object as everything else, so a test can ask for production without touching the real environment.</li>
+<li>In development the server now listens on <code>127.0.0.1</code>, so only your own computer can reach it, which is safer on a laptop in a café. Production keeps <code>0.0.0.0</code>, because there the server must be reachable.</li>
+<li><code>OriginSchema</code> is the <a href="#validate">schema check</a> from this lesson. <code>new URL(value).origin</code> is the origin a browser would send, so a value is accepted only when it <em>is</em> one. <code>https://tasks.example.com/</code> with a trailing slash would never match a browser's <code>Origin</code> header, and <code>*</code> would allow every website. Both are refused at startup instead of failing quietly later.</li>
+<li>In production, an origin must use <code>https://</code>: a page served over plain HTTP can be changed by anyone on the network between the user and the site.</li>
+</ul>
+<p>This script tries the function with five different environments:</p>
+<figure class="lx-example" data-index="13" data-file="src/check-config.ts" data-project="task-api">
+<figcaption class="lx-bar"><span class="lx-file">src/check-config.ts</span><button type="button" class="lx-edit" data-index="13" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> loadConfig <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./configs/index.js"</span><span class="t-pn">;</span>
 
 <span class="t-kw">async</span> <span class="t-kw">function</span> <span class="t-fn">attempt</span><span class="t-pn">(</span>label<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">,</span> env<span class="t-op">:</span> <span class="t-ty">Record</span><span class="t-op">&lt;</span><span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-ty">string</span><span class="t-op">&gt;</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Promise</span><span class="t-op">&lt;</span><span class="t-kw">void</span><span class="t-op">&gt;</span> <span class="t-pn">{</span>
   <span class="t-kw">try</span> <span class="t-pn">{</span>
-    <span class="t-kw">const</span> config <span class="t-op">=</span> <span class="t-kw">await</span> <span class="t-fn">loadConfig</span><span class="t-pn">(</span>env<span class="t-pn">,</span> <span class="t-str">"no-such-file.json"</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>label<span class="t-pn">,</span> <span class="t-str">"-&gt;"</span><span class="t-pn">,</span> config<span class="t-pn">.</span><span class="t-prop">port</span><span class="t-pn">,</span> config<span class="t-pn">.</span><span class="t-prop">cors_origins</span><span class="t-pn">,</span> config<span class="t-pn">.</span><span class="t-prop">production</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">const</span> config <span class="t-op">=</span> <span class="t-kw">await</span> <span class="t-fn">loadConfig</span><span class="t-pn">(</span>env<span class="t-pn">)</span><span class="t-pn">;</span>
+    console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>label<span class="t-pn">,</span> <span class="t-str">"-&gt;"</span><span class="t-pn">,</span> config<span class="t-pn">.</span><span class="t-prop">host</span><span class="t-pn">,</span> config<span class="t-pn">.</span><span class="t-prop">port</span><span class="t-pn">,</span> config<span class="t-pn">.</span><span class="t-prop">corsOrigins</span><span class="t-pn">,</span> config<span class="t-pn">.</span><span class="t-prop">rateLimit</span><span class="t-pn">.</span><span class="t-prop">writeMax</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-pn">}</span> <span class="t-kw">catch</span> <span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-pn">{</span>
     console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>label<span class="t-pn">,</span> <span class="t-str">"-&gt;"</span><span class="t-pn">,</span> <span class="t-pn">(</span>error <span class="t-kw">as</span> <span class="t-ty">Error</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">name</span> <span class="t-op">+</span> <span class="t-str">":"</span><span class="t-pn">,</span> <span class="t-pn">(</span>error <span class="t-kw">as</span> <span class="t-ty">Error</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">message</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-pn">}</span>
 <span class="t-pn">}</span>
 
 <span class="t-kw">await</span> <span class="t-fn">attempt</span><span class="t-pn">(</span><span class="t-str">"development"</span><span class="t-pn">,</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">await</span> <span class="t-fn">attempt</span><span class="t-pn">(</span><span class="t-str">"bad port   "</span><span class="t-pn">,</span> <span class="t-pn">{</span> <span class="t-cn">TASKS_PORT</span><span class="t-op">:</span> <span class="t-str">"eighty"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">await</span> <span class="t-fn">attempt</span><span class="t-pn">(</span><span class="t-str">"production "</span><span class="t-pn">,</span> <span class="t-pn">{</span> <span class="t-cn">NODE_ENV</span><span class="t-op">:</span> <span class="t-str">"production"</span><span class="t-pn">,</span> <span class="t-cn">TASKS_CORS_ORIGINS</span><span class="t-op">:</span> <span class="t-str">"https://tasks.example.com"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">await</span> <span class="t-fn">attempt</span><span class="t-pn">(</span><span class="t-str">"production "</span><span class="t-pn">,</span> <span class="t-pn">{</span>
-  <span class="t-cn">NODE_ENV</span><span class="t-op">:</span> <span class="t-str">"production"</span><span class="t-pn">,</span>
-  <span class="t-cn">TASKS_CORS_ORIGINS</span><span class="t-op">:</span> <span class="t-str">"https://tasks.example.com"</span><span class="t-pn">,</span>
-  <span class="t-cn">TASKS_JWT_SECRET</span><span class="t-op">:</span> <span class="t-str">"n8VqT2xLm4pR7sKd9wYb3cFh6jZa1eUo"</span><span class="t-pn">,</span>
-<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">await</span> <span class="t-fn">attempt</span><span class="t-pn">(</span><span class="t-str">"bad port   "</span><span class="t-pn">,</span> <span class="t-pn">{</span> <span class="t-cn">PORT</span><span class="t-op">:</span> <span class="t-str">"eighty"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">await</span> <span class="t-fn">attempt</span><span class="t-pn">(</span><span class="t-str">"bad origin "</span><span class="t-pn">,</span> <span class="t-pn">{</span> <span class="t-cn">CORS_ORIGINS</span><span class="t-op">:</span> <span class="t-str">"http://localhost:5173/"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">await</span> <span class="t-fn">attempt</span><span class="t-pn">(</span><span class="t-str">"production "</span><span class="t-pn">,</span> <span class="t-pn">{</span> <span class="t-cn">NODE_ENV</span><span class="t-op">:</span> <span class="t-str">"production"</span><span class="t-pn">,</span> <span class="t-cn">CORS_ORIGINS</span><span class="t-op">:</span> <span class="t-str">"http://tasks.example.com"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">await</span> <span class="t-fn">attempt</span><span class="t-pn">(</span><span class="t-str">"production "</span><span class="t-pn">,</span> <span class="t-pn">{</span> <span class="t-cn">NODE_ENV</span><span class="t-op">:</span> <span class="t-str">"production"</span><span class="t-pn">,</span> <span class="t-cn">CORS_ORIGINS</span><span class="t-op">:</span> <span class="t-str">"https://tasks.example.com"</span><span class="t-pn">,</span> <span class="t-cn">RATE_LIMIT_WRITE_MAX</span><span class="t-op">:</span> <span class="t-str">"5"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { loadConfig } from "./configs/index.js";
 
 async function attempt(label: string, env: Record<string, string>): Promise<void> {
   try {
-    const config = await loadConfig(env, "no-such-file.json");
-    console.log(label, "->", config.port, config.cors_origins, config.production);
+    const config = await loadConfig(env);
+    console.log(label, "->", config.host, config.port, config.corsOrigins, config.rateLimit.writeMax);
   } catch (error) {
     console.log(label, "->", (error as Error).name + ":", (error as Error).message);
   }
 }
 
 await attempt("development", {});
-await attempt("bad port   ", { TASKS_PORT: "eighty" });
-await attempt("production ", { NODE_ENV: "production", TASKS_CORS_ORIGINS: "https://tasks.example.com" });
-await attempt("production ", {
-  NODE_ENV: "production",
-  TASKS_CORS_ORIGINS: "https://tasks.example.com",
-  TASKS_JWT_SECRET: "n8VqT2xLm4pR7sKd9wYb3cFh6jZa1eUo",
-});</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx src/check-config.ts</code></div><pre class="lx-no-copy">development -&gt; 3000 [ 'http://localhost:5173' ] false
-bad port    -&gt; ConfigurationError: Invalid configuration: port: Cannot coerce string to number
-production  -&gt; ConfigurationError: TASKS_JWT_SECRET must be set in production
-production  -&gt; 3000 [ 'https://tasks.example.com' ] true</pre></div>
+await attempt("bad port   ", { PORT: "eighty" });
+await attempt("bad origin ", { CORS_ORIGINS: "http://localhost:5173/" });
+await attempt("production ", { NODE_ENV: "production", CORS_ORIGINS: "http://tasks.example.com" });
+await attempt("production ", { NODE_ENV: "production", CORS_ORIGINS: "https://tasks.example.com", RATE_LIMIT_WRITE_MAX: "5" });</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx src/check-config.ts</code></div><pre class="lx-no-copy">development -&gt; 127.0.0.1 3000 [] 20
+bad port    -&gt; ConfigurationError: PORT must be an integer between 0 and 65535, got "eighty".
+bad origin  -&gt; ConfigurationError: CORS_ORIGINS must list origins such as https://tasks.example.com, got "http://localhost:5173/".
+production  -&gt; ConfigurationError: CORS_ORIGINS must use https in production, got "http://tasks.example.com".
+production  -&gt; 0.0.0.0 3000 [ 'https://tasks.example.com' ] 5</pre></div>
 </figure>
-<p>Development starts with its convenient defaults. A wrong port and a production start without its secret both stop with a <code>ConfigurationError</code> that says exactly what to fix. The last one has everything and starts.</p>
-<p>In <code>src/server.ts</code>, load the configuration first, before anything else starts, and use it everywhere the code had fixed values. If it is invalid, print the message and exit with code 1, without a stack trace: the message already says what to fix. The <code>DEFAULT_PORT</code> constant and the <code>resolvePort</code> function are no longer needed:</p>
-<figure class="lx-example" data-index="13" data-file="src/server.ts (part)" data-project="task-api">
-<figcaption class="lx-bar"><span class="lx-file">src/server.ts (part)</span><button type="button" class="lx-edit" data-index="13" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<p>Development starts with its safe defaults. A wrong port, a malformed origin and a plain-HTTP origin in production each stop with a <code>ConfigurationError</code> that says exactly what to fix. None of these settings is a secret, so the messages may show the value. For a secret, name the setting and never print its value.</p>
+<p>Now <code>src/server.ts</code>. It calls <code>loadConfig()</code> first, before anything else starts. If that throws, Node.js prints a long stack trace, which says less than the message. Catch it, print the message, and exit with code 1. While you are in the file, give the write limit its new setting:</p>
+<figure class="lx-example" data-index="14" data-file="src/server.ts (part)">
+<figcaption class="lx-bar"><span class="lx-file">src/server.ts (part)</span><button type="button" class="lx-edit" data-index="14" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> loadConfig<span class="t-pn">,</span> <span class="t-kw">type</span> <span class="t-ty">AppConfig</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./configs/index.js"</span><span class="t-pn">;</span>
 
 <span class="t-kw">let</span> config<span class="t-op">:</span> <span class="t-ty">AppConfig</span><span class="t-pn">;</span>
@@ -810,19 +962,11 @@ production  -&gt; 3000 [ 'https://tasks.example.com' ] true</pre></div>
   console<span class="t-pn">.</span><span class="t-fn">error</span><span class="t-pn">(</span><span class="t-tpl">`Cannot start: <span class="t-op">${</span><span class="t-prop">(error as Error).message</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
   process<span class="t-pn">.</span><span class="t-fn">exit</span><span class="t-pn">(</span><span class="t-num">1</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-pn">}</span>
+<span class="t-kw">const</span> httpServer <span class="t-op">=</span> <span class="t-fn">createServer</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> runtime <span class="t-op">=</span> <span class="t-fn">createApp</span><span class="t-pn">(</span><span class="t-pn">{</span> config<span class="t-pn">,</span> httpServer <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
-<span class="t-cmt">// ...runtime and router as before...</span>
-
-<span class="t-kw">const</span> pipeline <span class="t-op">=</span> <span class="t-fn">buildPipeline</span><span class="t-pn">(</span>router<span class="t-pn">,</span> <span class="t-pn">{</span> corsOrigins<span class="t-op">:</span> config<span class="t-pn">.</span><span class="t-prop">cors_origins</span><span class="t-pn">,</span> production<span class="t-op">:</span> config<span class="t-pn">.</span><span class="t-prop">production</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-
-<span class="t-kw">const</span> server <span class="t-op">=</span> <span class="t-fn">createHttpServer</span><span class="t-pn">(</span><span class="t-pn">{</span>
-  adapter<span class="t-op">:</span> <span class="t-fn">createNodeHttpAdapter</span><span class="t-pn">(</span><span class="t-pn">{</span> host<span class="t-op">:</span> config<span class="t-pn">.</span><span class="t-prop">host</span><span class="t-pn">,</span> port<span class="t-op">:</span> config<span class="t-pn">.</span><span class="t-prop">port</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
-  handler<span class="t-op">:</span> <span class="t-pn">(</span>request<span class="t-pn">)</span> <span class="t-op">=&gt;</span> pipeline<span class="t-pn">.</span><span class="t-fn">execute</span><span class="t-pn">(</span>request<span class="t-pn">,</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">,</span>
-  gracefulShutdownTimeout<span class="t-op">:</span> <span class="t-num">20_000</span><span class="t-pn">,</span>
-<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-
-<span class="t-kw">await</span> server<span class="t-pn">.</span><span class="t-fn">start</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`Listening on http://<span class="t-op">${</span><span class="t-prop">config.host</span><span class="t-op">}</span>:<span class="t-op">${</span><span class="t-prop">server.address?.port ?? config.port</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-cmt">// ...further down, in the pipeline:</span>
+    <span class="t-fn">writeLimitMiddleware</span><span class="t-pn">(</span><span class="t-pn">{</span> windowMs<span class="t-op">:</span> config<span class="t-pn">.</span><span class="t-prop">rateLimit</span><span class="t-pn">.</span><span class="t-prop">windowMs</span><span class="t-pn">,</span> max<span class="t-op">:</span> config<span class="t-pn">.</span><span class="t-prop">rateLimit</span><span class="t-pn">.</span><span class="t-prop">writeMax</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { loadConfig, type AppConfig } from "./configs/index.js";
 
@@ -833,45 +977,71 @@ try {
   console.error(`Cannot start: ${(error as Error).message}`);
   process.exit(1);
 }
+const httpServer = createServer();
+const runtime = createApp({ config, httpServer });
 
-// ...runtime and router as before...
-
-const pipeline = buildPipeline(router, { corsOrigins: config.cors_origins, production: config.production });
-
-const server = createHttpServer({
-  adapter: createNodeHttpAdapter({ host: config.host, port: config.port }),
-  handler: (request) => pipeline.execute(request, createResponseContext()),
-  gracefulShutdownTimeout: 20_000,
-});
-
-await server.start();
-console.log(`Listening on http://${config.host}:${server.address?.port ?? config.port}`);</script>
+// ...further down, in the pipeline:
+    writeLimitMiddleware({ windowMs: config.rateLimit.windowMs, max: config.rateLimit.writeMax }),</script>
 </figure>
-<p>Change the <code>dev</code> script in <code>package.json</code> so it loads <code>.env</code>: <code>"dev": "tsx watch --env-file=.env src/server.ts"</code>. Then try it, and try a production start without the secret:</p>
+<p>Last, <code>.env.example</code>, the list of settings for the next developer. Replace the <code>HOST=0.0.0.0</code> line, so a copied <code>.env</code> does not bring back the old default, and add the new setting. If you already copied <code>.env.example</code> to <code>.env</code>, remove <code>HOST</code> there too:</p>
+<figure class="lx-example" data-index="15" data-file=".env.example">
+<figcaption class="lx-bar"><span class="lx-file">.env.example</span><button type="button" class="lx-edit" data-index="15" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
+<pre class="lx-code"><code><span class="t-cn">NODE_ENV</span><span class="t-op">=</span>development
+# <span class="t-ty">Leave</span> <span class="t-cn">HOST</span> unset<span class="t-op">:</span> <span class="t-num">127.0</span><span class="t-pn">.</span><span class="t-num">0.1</span> <span class="t-kw">in</span> development<span class="t-pn">,</span> <span class="t-num">0.0</span><span class="t-pn">.</span><span class="t-num">0.0</span> <span class="t-kw">in</span> production
+# <span class="t-cn">HOST</span><span class="t-op">=</span>
+<span class="t-cn">PORT</span><span class="t-op">=</span><span class="t-num">3000</span>
+# <span class="t-ty">Comma</span><span class="t-op">-</span>separated origins allowed to call the <span class="t-cn">API</span> <span class="t-kw">from</span> a <span class="t-fn">browser</span> <span class="t-pn">(</span>empty<span class="t-op">:</span> none<span class="t-pn">)</span>
+<span class="t-cn">CORS_ORIGINS</span><span class="t-op">=</span>
+# <span class="t-ty">Requests</span> allowed per client per window
+<span class="t-cn">RATE_LIMIT_WINDOW_MS</span><span class="t-op">=</span><span class="t-num">60000</span>
+<span class="t-cn">RATE_LIMIT_MAX</span><span class="t-op">=</span><span class="t-num">300</span>
+# <span class="t-ty">Requests</span> that change <span class="t-fn">data</span> <span class="t-pn">(</span><span class="t-cn">POST</span><span class="t-pn">,</span> <span class="t-cn">PATCH</span><span class="t-pn">,</span> <span class="t-cn">DELETE</span><span class="t-pn">)</span> allowed per client per window
+<span class="t-cn">RATE_LIMIT_WRITE_MAX</span><span class="t-op">=</span><span class="t-num">20</span>
+<span class="t-cn">DATABASE_URL</span><span class="t-op">=</span>postgresql<span class="t-op">://</span>localhost<span class="t-op">:</span><span class="t-num">5432</span><span class="t-op">/</span>task<span class="t-op">-</span>api
+</code></pre>
+<script type="text/plain" class="lx-src">NODE_ENV=development
+# Leave HOST unset: 127.0.0.1 in development, 0.0.0.0 in production
+# HOST=
+PORT=3000
+# Comma-separated origins allowed to call the API from a browser (empty: none)
+CORS_ORIGINS=
+# Requests allowed per client per window
+RATE_LIMIT_WINDOW_MS=60000
+RATE_LIMIT_MAX=300
+# Requests that change data (POST, PATCH, DELETE) allowed per client per window
+RATE_LIMIT_WRITE_MAX=20
+DATABASE_URL=postgresql://localhost:5432/task-api</script>
+</figure>
+<p>Run the check script and the server in your project, then try two bad starts:</p>
 <figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Terminal on your computer</span></figcaption>
 <pre class="lx-shell-body" data-copy="npx tsx src/check-config.ts
 npm run dev
-NODE_ENV=production npx tsx src/server.ts"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>npx tsx src/check-config.ts</span>
-<span class="lx-res">development -&gt; 3000 [ 'http://localhost:5173' ] false</span>
-<span class="lx-res">bad port    -&gt; ConfigurationError: Invalid configuration: port: Cannot coerce string to number</span>
-<span class="lx-res">production  -&gt; ConfigurationError: TASKS_JWT_SECRET must be set in production</span>
-<span class="lx-res">production  -&gt; 3000 [ 'https://tasks.example.com' ] true</span>
+NODE_ENV=production CORS_ORIGINS=http://tasks.example.com npx tsx src/server.ts
+PORT=eighty npx tsx src/server.ts"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>npx tsx src/check-config.ts</span>
+<span class="lx-res">development -&gt; 127.0.0.1 3000 [] 20</span>
+<span class="lx-res">bad port    -&gt; ConfigurationError: PORT must be an integer between 0 and 65535, got "eighty".</span>
+<span class="lx-res">bad origin  -&gt; ConfigurationError: CORS_ORIGINS must list origins such as https://tasks.example.com, got "http://localhost:5173/".</span>
+<span class="lx-res">production  -&gt; ConfigurationError: CORS_ORIGINS must use https in production, got "http://tasks.example.com".</span>
+<span class="lx-res">production  -&gt; 0.0.0.0 3000 [ 'https://tasks.example.com' ] 5</span>
 <span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>npm run dev</span>
 <span class="lx-res"></span>
 <span class="lx-res">&gt; task-api@0.1.0 dev</span>
-<span class="lx-res">&gt; tsx watch --env-file=.env src/server.ts</span>
+<span class="lx-res">&gt; tsx watch src/server.ts</span>
 <span class="lx-res"></span>
 <span class="lx-res">…</span>
 <span class="lx-res">Listening on http://127.0.0.1:3000</span>
-<span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>NODE_ENV=production npx tsx src/server.ts</span>
-<span class="lx-res">Cannot start: TASKS_JWT_SECRET must be set in production</span></pre></figure>
-<p>The development server now listens on <code>127.0.0.1</code> instead of every network interface, which is safer on a laptop in a café. The production start refused to run without its secret, with a message that names the variable, and without printing any value.</p>
+<span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>NODE_ENV=production CORS_ORIGINS=http://tasks.example.com npx tsx src/server.ts</span>
+<span class="lx-res">Cannot start: CORS_ORIGINS must use https in production, got "http://tasks.example.com".</span>
+<span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>PORT=eighty npx tsx src/server.ts</span>
+<span class="lx-res">Cannot start: PORT must be an integer between 0 and 65535, got "eighty".</span></pre></figure>
+<p>Stop the development server with <kbd>Ctrl</kbd> + <kbd>C</kbd> before the last two commands, so port 3000 is free. The development server now listens on <code>127.0.0.1</code>, and <code>curl http://localhost:3000/health</code> still works, because <code>localhost</code> is your own computer. Both bad starts stopped at once, with one line that names the setting.</p>
+<div class="callout callout-tip"><p class="lx-callout-label">ON WINDOWS POWERSHELL</p>Set the variables first, then run: <code>$env:NODE_ENV="production"; $env:CORS_ORIGINS="http://tasks.example.com"; npx tsx src/server.ts</code>. Remove them again with <code>Remove-Item Env:NODE_ENV, Env:CORS_ORIGINS</code>.</div>
 </section>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A request timeout setting</h3><p>Add a <code>request_timeout_ms</code> setting to the <a href="#validate">config schema</a>, with a default of 30000 in the defaults source. It must be a whole number from 1000 to 120000. Check it with <code>TASKS_REQUEST_TIMEOUT_MS=500</code> and with <code>5000</code>.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="14" data-file="timeout-setting.ts">
-<figcaption class="lx-bar"><span class="lx-file">timeout-setting.ts</span><button type="button" class="lx-edit" data-index="14" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="14"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A request timeout setting</h3><p>Add a <code>request_timeout_ms</code> setting to the <a href="#validate">config schema</a>, with a default of 30000 in the defaults source. It must be a whole number from 1000 to 120000. Check it with <code>TASKS_REQUEST_TIMEOUT_MS=500</code> and with <code>5000</code>.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="16" data-file="timeout-setting.ts">
+<figcaption class="lx-bar"><span class="lx-file">timeout-setting.ts</span><button type="button" class="lx-edit" data-index="16" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="16"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createConfigManager<span class="t-pn">,</span> createDefaultsConfigSource<span class="t-pn">,</span> createEnvironmentConfigSource <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/config"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
 
@@ -923,7 +1093,7 @@ for (const value of ["500", "5000"]) {
 <li>Environment values are always strings. Use typed accessors or <code>schema.coerce</code> to convert them.</li>
 <li>Validate the whole configuration at startup and stop with a clear error: fail fast.</li>
 <li>Secrets only come from the environment, have no defaults, and never reach logs: use <code>toSafeObject()</code>, and the logger redacts secret-looking keys too.</li>
-<li><code>NODE_ENV=production</code> switches on stricter rules. A <code>.env</code> file, loaded with <code>--env-file</code> and never committed, is for development.</li>
+<li><code>NODE_ENV=production</code> switches on stricter rules. A <code>.env</code> file, loaded by the generated <code>loadConfig</code> (or with <code>--env-file</code>) and never committed, is for development.</li>
 </ul>
 <p>You have now used schemas for request bodies and for configuration. The next lesson looks at schemas in depth: coercion, transformations, refinements, and validating what goes <em>out</em> as well as what comes in.</p>
 </section>
