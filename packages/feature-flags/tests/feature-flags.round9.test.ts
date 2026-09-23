@@ -136,9 +136,9 @@ describe("FEATURE-FLAGS-R9-03: an empty environment value is not the number zero
     });
     const all = new Map((await provider.getAll()).map((f) => [f.key, f.defaultValue]));
 
-    expect(all.get("EMPTY")).toBe("");
-    expect(all.get("BLANK")).toBe("   ");
-    expect(all.get("ZERO")).toBe(0);
+    expect(all.get("empty")).toBe("");
+    expect(all.get("blank")).toBe("   ");
+    expect(all.get("zero")).toBe(0);
   });
 
   it("still parses booleans and numbers", async () => {
@@ -147,9 +147,9 @@ describe("FEATURE-FLAGS-R9-03: an empty environment value is not the number zero
     });
     const all = new Map((await provider.getAll()).map((f) => [f.key, f.defaultValue]));
 
-    expect(all.get("ON")).toBe(true);
-    expect(all.get("OFF")).toBe(false);
-    expect(all.get("RATE")).toBe(2.5);
+    expect(all.get("on")).toBe(true);
+    expect(all.get("off")).toBe(false);
+    expect(all.get("rate")).toBe(2.5);
   });
 });
 

@@ -40,8 +40,17 @@ export interface FeatureFlag {
   readonly key: string;
   /** Default value when no rule matches. */
   readonly defaultValue: FeatureFlagValue;
-  /** Whether the flag is globally enabled. */
+  /**
+   * Whether the flag is globally enabled — the kill switch. A flag with
+   * `enabled: false` serves its off value, never `defaultValue: true`.
+   */
   readonly enabled: boolean;
+  /**
+   * What the flag serves while it is off: killed, draft, archived, expired,
+   * or blocked by a dependency. Default: `false` for a boolean flag, the
+   * `defaultValue` for any other.
+   */
+  readonly offValue?: FeatureFlagValue;
   /** Human-readable description. */
   readonly description?: string;
   /** Lifecycle state. */

@@ -57,8 +57,9 @@ choose.
 interface FeatureFlag {
   key: string;
   enabled: boolean; // the global kill switch
-  defaultValue: FeatureFlagValue; // used whenever no rule decides
-  state?: "active" | "archived" | "draft";
+  defaultValue: FeatureFlagValue; // used when the flag is on and no rule decides
+  offValue?: FeatureFlagValue; // served while the flag is off (see below)
+  state?: "active" | "disabled" | "archived" | "draft";
   visibility?: "client" | "server";
   rules?: FeatureFlagRule[]; // evaluated in order, first match wins
   dependencies?: string[]; // other flags that must be on for the same context
@@ -68,6 +69,27 @@ interface FeatureFlag {
 
 `expiresAt` may also arrive as an ISO string or a timestamp — a flag loaded
 from JSON does — and expires the flag just the same.
+
+### Off means off
+
+A flag is **off** when it is killed (`enabled: false` or `state:
+"disabled"`), a draft, archived, expired, or blocked by a dependency. An off
+flag runs no rules and serves its **off value**:
+
+1. `offValue`, when the flag declares one;
+2. otherwise `false` for a boolean flag;
+3. otherwise `defaultValue` (a string, number or object flag has no natural
+   "off", so the baseline value is served).
+
+So `{ key: "x", enabled: false, defaultValue: true }` evaluates to `false`
+and `isEnabled("x")` is `false`. Before 1.4 an off flag served
+`defaultValue`, which made the kill switch fail open for any flag whose
+default was `true`. For a variant flag, declare the variant to fall back to:
+
+```typescript
+{ key: "checkout", enabled: false, defaultValue: "new", offValue: "control",
+  rules: [{ type: "variant", variants: [{ key: "new", weight: 50 }, { key: "control", weight: 50 }] }] }
+```
 
 ## Rules
 
@@ -131,8 +153,8 @@ dependency is **on for the same context**: the prerequisite is evaluated —
 state, expiry, rules, rollout, and its own dependencies — and must not be
 disabled, draft, archived or expired, nor evaluate to `false`, `null` or
 `undefined`. A prerequisite rolled out to 10% keeps its dependents off for the
-other 90%. Otherwise the result is `dependency_disabled` with the declared
-default. Cycles resolve to disabled; a shared dependency reached down two
+other 90%. Otherwise the result is `dependency_disabled` with the flag's
+off value. Cycles resolve to disabled; a shared dependency reached down two
 branches is not a cycle.
 
 `evaluateFlag()` on its own has no registry and cannot resolve dependencies,
@@ -177,7 +199,16 @@ calls per window instead of two per evaluation. The first successful call
 closes the window, and `refresh()` always probes.
 
 `createEnvironmentProvider` parses `true`/`false` and numbers; anything else,
-including an empty `FEATURE_X=`, stays a string.
+including an empty `FEATURE_X=`, stays a string. Every flag it reads is
+enabled.
+
+Keys are the variable name without the prefix, **lower-cased with `_`
+turned into `-`**: `FEATURE_NEW_CHECKOUT=true` is the flag `new-checkout`,
+the same key a memory or remote provider uses, so an environment variable
+overrides that flag inside a composite. `get()` normalises the key it is
+asked for the same way, so `NEW_CHECKOUT` and `new_checkout` also find it.
+Pass `keyFormat: "preserve"` to keep the variable's spelling (`NEW_CHECKOUT`),
+which was the behaviour before 1.4.
 
 ## Change propagation
 
@@ -193,9 +224,9 @@ changes.
 | -------------------------------- | ------------------------------------------------------ |
 | Flag not found                   | `not_found`, value `undefined`; `isEnabled` is `false` |
 | Flag not found, `throwOnMissing` | throws `FeatureFlagNotFoundError`                      |
-| Flag disabled or draft           | `disabled`, the declared default                       |
-| Flag archived or expired         | `expired`, the declared default                        |
-| Dependency not satisfied         | `dependency_disabled`, the declared default            |
+| Flag disabled or draft           | `disabled`, the off value; `isEnabled` is `false`      |
+| Flag archived or expired         | `expired`, the off value; `isEnabled` is `false`       |
+| Dependency not satisfied         | `dependency_disabled`, the off value                   |
 | Provider unreachable             | `error`, reported to `onError`; never enabled          |
 
 "Unreachable" covers both `getAll()` and a `get()` for a flag not yet loaded:

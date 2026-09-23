@@ -15,6 +15,7 @@ import type {
 } from "../featureFlagTypes/featureFlagEvaluation.js";
 import type { FeatureFlagRule } from "../featureFlagTypes/featureFlagRule/featureFlagRule.type.js";
 import { evaluateRule } from "./evaluatorRule.core.js";
+import { gateReason, offValueOf } from "./evaluatorGate.core.js";
 
 /** Options for {@link evaluateFlag}. */
 export interface EvaluateFlagOptions {
@@ -28,26 +29,6 @@ export interface EvaluateFlagOptions {
    * resolve them (`createFeatureFlags`) passes `true` once it has.
    */
   readonly dependenciesSatisfied?: boolean;
-}
-
-/**
- * Whether an `expiresAt` lies in the past.
- *
- * The type says `Date`, but a flag loaded from JSON — which is what every
- * remote provider hands over — carries an ISO string, and `"2020-01-01" <
- * new Date()` is always `false`. A flag that had expired at the source
- * therefore never expired here. Anything `Date` can parse is honoured; a
- * value it cannot parse is treated as no expiry.
- */
-function isExpired(expiresAt: unknown): boolean {
-  if (expiresAt === undefined || expiresAt === null) return false;
-  const time =
-    expiresAt instanceof Date
-      ? expiresAt.getTime()
-      : typeof expiresAt === "string" || typeof expiresAt === "number"
-        ? new Date(expiresAt).getTime()
-        : Number.NaN;
-  return !Number.isNaN(time) && time < Date.now();
 }
 
 /** The evaluation reason a matching rule of each type produces. */
@@ -72,6 +53,10 @@ function reasonFor(type: FeatureFlagRule["type"]): FeatureFlagEvaluationReason {
 /**
  * Evaluate a feature flag against a context.
  *
+ * A flag that is off — killed, draft, archived, expired, or blocked by a
+ * dependency — serves its off value (see {@link offValueOf}): `offValue`
+ * when declared, else `false` for a boolean flag, else `defaultValue`.
+ *
  * @param flag - The feature flag definition.
  * @param context - The evaluation context.
  * @param options - Facts the caller resolved that this function cannot.
@@ -84,47 +69,12 @@ export function evaluateFlag<
   context: FeatureFlagContext = {},
   options: EvaluateFlagOptions = {},
 ): FeatureFlagEvaluation<TValue> {
-  if (!flag.enabled) {
+  const gate = gateReason(flag, options);
+  if (gate) {
     return {
       key: flag.key,
-      value: flag.defaultValue as TValue,
-      reason: "disabled",
-      defaulted: true,
-    };
-  }
-
-  if (flag.state === "archived" || flag.state === "draft") {
-    return {
-      key: flag.key,
-      value: flag.defaultValue as TValue,
-      reason: flag.state === "archived" ? "expired" : "disabled",
-      defaulted: true,
-    };
-  }
-
-  if (isExpired(flag.metadata?.expiresAt)) {
-    return {
-      key: flag.key,
-      value: flag.defaultValue as TValue,
-      reason: "expired",
-      defaulted: true,
-    };
-  }
-
-  if (
-    flag.dependencies &&
-    flag.dependencies.length > 0 &&
-    options.dependenciesSatisfied !== true
-  ) {
-    // Previously this returned `dependency_disabled` for *every* flag that
-    // declared a dependency, satisfied or not — so a flag with dependencies
-    // could never turn on, and the caller's own dependency resolution was
-    // computed and then discarded.
-    return {
-      key: flag.key,
-      value: flag.defaultValue as TValue,
-      reason: "dependency_disabled",
-      matchedRule: undefined,
+      value: offValueOf(flag) as TValue,
+      reason: gate,
       defaulted: true,
     };
   }
