@@ -4,7 +4,10 @@
  * Simplified test application context creation.
  */
 
-export { createTestApplication } from "./testApplication.core.js";
+export {
+  createTestApplication,
+  DEFAULT_TEST_APPLICATION_TIME,
+} from "./testApplication.core.js";
 
 export type {
   TestApplication,

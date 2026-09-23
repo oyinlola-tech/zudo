@@ -1,7 +1,7 @@
 /**
  * Test message bus helpers.
  *
- * MessageBus with recording and assertion support.
+ * A real MessageBus that records every dispatch.
  */
 
 export { createTestMessageBus } from "./testMessageBus.core.js";

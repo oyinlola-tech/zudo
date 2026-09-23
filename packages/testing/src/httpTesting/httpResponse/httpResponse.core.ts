@@ -4,7 +4,7 @@
  * Provides a fluent API for constructing test HTTP responses.
  */
 
-import type { HTTPStatusCode } from "./httpStatusCode.type.js";
+import type { HTTPStatusCode } from "@zudojs/http";
 import type {
   TestHTTPResponse,
   HTTPResponseBuilder,

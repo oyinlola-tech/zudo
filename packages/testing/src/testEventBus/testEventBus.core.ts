@@ -1,132 +1,115 @@
 /**
  * Test event bus helpers.
  *
- * Wraps the real EventBus with recording and assertion support.
+ * A real EventBus that records every publication, whichever method it
+ * came through.
  */
 
-import { EventBus } from "@zudojs/events";
-
-import { randomUUID } from "node:crypto";
+import { EventBus, isEvent } from "@zudojs/events";
 
 import type {
   Event,
   EventInput,
   EventBusOptions,
   EventPublishResult,
+  PublishOptions,
 } from "@zudojs/events";
 
-import type { EventId } from "@zudojs/constants";
+import type { RecordedEvent, TestEventBus } from "./testEventBus.type.js";
+
+export type { RecordedEvent, TestEventBus } from "./testEventBus.type.js";
 
 /**
- * A recorded event publication.
+ * EventBus subclass that records at the publish entry points every other
+ * path (`emit`, a bus handed to code under test) funnels into.
  */
-export interface RecordedEvent<TPayload = unknown> {
-  readonly event: Event<TPayload>;
-  readonly result: EventPublishResult<Event<TPayload>>;
-  readonly timestamp: Date;
-}
+class RecordingEventBus extends EventBus implements TestEventBus {
+  private readonly recorded: RecordedEvent[] = [];
 
-/**
- * A test event bus with recording capabilities.
- */
-export interface TestEventBus {
-  readonly bus: EventBus;
+  constructor(options: EventBusOptions) {
+    super(options);
+    // Bound, so `const { publish, clear } = createTestEventBus()` keeps
+    // working as it did with the earlier closure-based wrapper.
+    this.publish = this.publish.bind(this);
+    this.publishEvent = this.publishEvent.bind(this);
+    this.emit = this.emit.bind(this);
+    this.findByType = this.findByType.bind(this);
+    this.clear = this.clear.bind(this);
+    this.dispose = this.dispose.bind(this);
+  }
 
-  /**
-   * All recorded publications.
-   */
-  readonly published: readonly RecordedEvent[];
+  get bus(): EventBus {
+    return this;
+  }
 
-  /**
-   * Publish an event and record the result.
-   */
-  publish: <TPayload>(
+  get published(): readonly RecordedEvent[] {
+    return [...this.recorded];
+  }
+
+  override publish<TEvent extends Event>(
+    event: TEvent,
+    options?: PublishOptions,
+  ): Promise<EventPublishResult<TEvent>>;
+  override publish<TPayload>(
     input: EventInput<TPayload>,
-  ) => Promise<EventPublishResult<Event<TPayload>>>;
+    options?: PublishOptions,
+  ): Promise<EventPublishResult<Event<TPayload>>>;
+  override async publish(
+    input: Event | EventInput,
+    options: PublishOptions = {},
+  ): Promise<EventPublishResult<Event>> {
+    const result = isEvent(input)
+      ? await super.publish(input, options)
+      : await super.publishEvent(input, options);
+    return this.record(result);
+  }
 
-  /**
-   * Find published events by type.
-   */
-  findByType: (type: string) => readonly RecordedEvent[];
+  override async publishEvent<TPayload>(
+    input: EventInput<TPayload>,
+    options: PublishOptions = {},
+  ): Promise<EventPublishResult<Event<TPayload>>> {
+    return this.record(await super.publishEvent(input, options));
+  }
 
-  /**
-   * Clear recorded publications.
-   */
-  clear: () => void;
+  findByType(type: string): readonly RecordedEvent[] {
+    return this.recorded.filter((entry) => entry.event.type === type);
+  }
 
-  /**
-   * Dispose the event bus.
-   */
-  dispose: () => void;
+  clear(): void {
+    this.recorded.length = 0;
+  }
+
+  private record<TResult extends EventPublishResult<Event>>(
+    result: TResult,
+  ): TResult {
+    this.recorded.push(
+      Object.freeze({ event: result.event, result, timestamp: new Date() }),
+    );
+    return result;
+  }
 }
 
 /**
- * Creates a test event bus with recording.
+ * Creates a started test event bus that records every publication.
  *
  * @param options - EventBus options.
- * @returns A TestEventBus instance.
+ * @returns A TestEventBus, which is itself an `EventBus`.
  *
  * @example
  * ```ts
- * const testBus = createTestEventBus();
+ * const events = createTestEventBus();
+ * const service = new UserService(events); // takes an EventBus
  *
- * await testBus.publish({ type: "user.created", payload: { id: "123" } });
+ * await service.register("ann");            // calls events.publishEvent(...)
  *
- * expect(testBus.published).toHaveLength(1);
- * expect(testBus.findByType("user.created")).toHaveLength(1);
- *
- * testBus.dispose();
+ * expect(events.findByType("user.created")).toHaveLength(1);
+ * events.dispose();
  * ```
  */
 export function createTestEventBus(
   options: EventBusOptions = {},
 ): TestEventBus {
-  const bus = new EventBus(options);
-  const published: RecordedEvent[] = [];
-
+  const bus = new RecordingEventBus(options);
   bus.start();
-
-  const publish = async <TPayload>(
-    input: EventInput<TPayload>,
-  ): Promise<EventPublishResult<Event<TPayload>>> => {
-    const event: Event<TPayload> = {
-      id: `evt_${randomUUID()}` as EventId,
-      type: input.type,
-      payload: input.payload,
-      timestamp: new Date(),
-      ...(input.metadata ? { metadata: input.metadata } : {}),
-    };
-
-    const result = await bus.publish(event);
-
-    published.push({
-      event: result.event,
-      result,
-      timestamp: new Date(),
-    });
-
-    return result;
-  };
-
-  const findByType = (type: string): readonly RecordedEvent[] =>
-    published.filter((e) => e.event.type === type);
-
-  const clear = (): void => {
-    published.length = 0;
-  };
-
-  const dispose = (): void => {
-    bus.dispose();
-  };
-
-  return {
-    bus,
-    get published() {
-      return [...published];
-    },
-    publish,
-    findByType,
-    clear,
-    dispose,
-  };
+  return bus;
 }

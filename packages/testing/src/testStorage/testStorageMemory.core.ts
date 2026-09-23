@@ -52,15 +52,28 @@ export class InMemoryTestStorage {
    * Only an omitted (or `undefined`) TTL means "never expires". A TTL of `0`
    * is a real deadline of now, so the entry is already expired on the next
    * read — a cache test writing `0` to mean "already stale" gets that.
+   * `Infinity` never expires, a negative TTL is already expired, and `NaN`
+   * throws (it used to produce an invalid deadline that never expired).
    */
   set(key: string, value: unknown, ttlMs?: number): void {
-    const expiresAt = ttlMs === undefined ? null : new Date(Date.now() + ttlMs);
+    if (ttlMs !== undefined && Number.isNaN(ttlMs)) {
+      throw new RangeError(
+        `TTL for "${key}" is NaN; pass a number of milliseconds or omit it.`,
+      );
+    }
+    const expiresAt =
+      ttlMs === undefined || ttlMs === Infinity
+        ? null
+        : new Date(Math.max(0, Date.now() + ttlMs));
     this.store.set(key, { value, expiresAt });
   }
 
-  /** Delete a value by key. Returns true if deleted. */
+  /**
+   * Delete a value by key. Returns true if a live value was deleted; an
+   * expired entry counts as absent, matching `has()`.
+   */
   delete(key: string): boolean {
-    return this.store.delete(key);
+    return this.live(key) !== undefined && this.store.delete(key);
   }
 
   /** Check if a key exists and is not expired, whatever its value. */

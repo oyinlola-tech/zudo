@@ -4,7 +4,7 @@
  * Types for test HTTP responses and response builders.
  */
 
-import type { HTTPStatusCode } from "./httpStatusCode.type.js";
+import type { HTTPStatusCode } from "@zudojs/http";
 
 /** A test HTTP response. */
 export interface TestHTTPResponse {

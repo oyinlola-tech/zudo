@@ -1,111 +1,59 @@
 /**
  * Test queue helpers.
  *
- * Wraps the real InMemoryQueue with recording and assertion support.
+ * A real InMemoryQueue that records every job added to it.
  */
 
-import { createInMemoryQueue, InMemoryQueue } from "@zudojs/queue";
+import { InMemoryQueue } from "@zudojs/queue";
 
-import type {
-  Job,
-  QueueName,
-  QueueOptions,
-  QueueStats,
-  JobOptions,
-} from "@zudojs/queue";
+import type { Job, JobOptions, QueueName, QueueOptions } from "@zudojs/queue";
+
+import type { RecordedJob, TestQueue } from "./testQueue.type.js";
+
+import { RecordingQueueView } from "./testQueue.view.js";
+
+export type { RecordedJob, TestQueue } from "./testQueue.type.js";
 
 /**
- * A recorded job addition.
+ * Creates a test queue that records every job added to it.
+ *
+ * @param name - Queue name.
+ * @param options - Queue options.
+ * @returns A TestQueue, which is itself a `Queue`.
+ *
+ * @example
+ * ```ts
+ * const reminders = createTestQueue<{ taskId: number }>(createQueueName("reminders"));
+ *
+ * await scheduler.remind(reminders, 7); // takes a Queue, calls add(...)
+ *
+ * expect(reminders.findByName("remind")).toHaveLength(1);
+ * await reminders.close();
+ * ```
  */
-export interface RecordedJob<TData = unknown> {
-  readonly job: Job<TData>;
-  readonly timestamp: Date;
-}
-
-/**
- * A test queue with recording capabilities.
- */
-export interface TestQueue<TData = unknown> {
-  readonly queue: InMemoryQueue<TData>;
-
-  /**
-   * All recorded jobs.
-   */
-  readonly jobs: readonly RecordedJob<TData>[];
-
-  /**
-   * Add a job and record it.
-   */
-  add: (name: string, data: TData, options?: JobOptions) => Promise<Job<TData>>;
-
-  /**
-   * Find jobs by name.
-   */
-  findByName: (name: string) => readonly RecordedJob<TData>[];
-
-  /**
-   * Get all job states.
-   */
-  getStats: () => Promise<QueueStats>;
-
-  /**
-   * Clear recorded jobs.
-   */
-  clear: () => void;
-
-  /**
-   * Close the queue.
-   */
-  close: () => Promise<void>;
-}
-
 export function createTestQueue<TData = unknown>(
   name: QueueName,
   options?: QueueOptions,
 ): TestQueue<TData> {
-  const queue = createInMemoryQueue<TData>(
-    name,
-    options,
-  ) as InMemoryQueue<TData>;
-  const recordedJobs: RecordedJob<TData>[] = [];
+  const queue = new InMemoryQueue<TData>(name, options);
+  const recorded: RecordedJob<TData>[] = [];
 
-  const add = async (
-    jobName: string,
-    data: TData,
-    jobOptions?: JobOptions,
-  ): Promise<Job<TData>> => {
-    const job = await queue.add(jobName, data, jobOptions);
-
-    recordedJobs.push({
-      job,
-      timestamp: new Date(),
-    });
-
-    return job;
-  };
-
-  const findByName = (name: string): readonly RecordedJob<TData>[] =>
-    recordedJobs.filter((r) => r.job.name === name);
-
-  const getStats = async (): Promise<QueueStats> => queue.getStats();
-
-  const clear = (): void => {
-    recordedJobs.length = 0;
-  };
-
-  const close = async (): Promise<void> => {
-    await queue.close();
-  };
-
-  return {
-    queue,
-    get jobs() {
-      return [...recordedJobs];
+  // Recorded on the queue instance itself, so `testQueue.queue.add(...)`,
+  // and code that was handed `queue`, record too.
+  const add = queue.add.bind(queue);
+  Object.defineProperty(queue, "add", {
+    configurable: true,
+    writable: true,
+    value: async (
+      jobName: string,
+      data: TData,
+      jobOptions?: JobOptions,
+    ): Promise<Job<TData>> => {
+      const job = await add(jobName, data, jobOptions);
+      recorded.push(Object.freeze({ job, timestamp: new Date() }));
+      return job;
     },
-    add,
-    findByName,
-    getStats,
-    clear,
-    close,
-  };
+  });
+
+  return new RecordingQueueView(queue, recorded);
 }

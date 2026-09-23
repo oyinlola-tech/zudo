@@ -16,6 +16,7 @@ export * from "./testEventBus/index.js";
 export * from "./testMessageBus/index.js";
 export * from "./testQueue/index.js";
 export * from "./httpTesting/index.js";
+export * from "./httpTestClient/index.js";
 export * from "./mocking/index.js";
 export * from "./fixtures/index.js";
 export * from "./assertions/index.js";

@@ -4,7 +4,7 @@
  * Convenience functions for creating common test HTTP responses.
  */
 
-import type { HTTPStatusCode } from "./httpStatusCode.type.js";
+import type { HTTPStatusCode } from "@zudojs/http";
 import type { TestHTTPResponse } from "./httpResponse.type.js";
 
 /**

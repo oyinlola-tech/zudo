@@ -1,19 +1,16 @@
 /**
  * Test message bus helpers.
  *
- * Wraps the real MessageBus with recording and assertion support.
+ * A real in-memory MessageBus that records every dispatch, whichever
+ * method it came through.
  */
 
-import { createMessageBus } from "@zudojs/messaging";
-
-import { randomUUID } from "node:crypto";
+import { InMemoryMessageBus } from "@zudojs/messaging";
 
 import type {
   Message,
-  MessageInput,
   MessageBus,
   MessageBusOptions,
-  MessageId,
   DispatchResult,
   DispatchOptions,
 } from "@zudojs/messaging";
@@ -28,107 +25,97 @@ export interface RecordedMessage<TPayload = unknown> {
 }
 
 /**
- * A test message bus with recording capabilities.
+ * A test message bus: a `MessageBus` (so it can be handed to any code
+ * that takes one) that records every dispatch.
+ *
+ * `send` and `dispatch` both record, whether called on the test bus or on
+ * `bus` (the same instance).
  */
-export interface TestMessageBus {
+export interface TestMessageBus extends MessageBus {
+  /** This bus. Kept for code written against the earlier wrapper. */
   readonly bus: MessageBus;
 
   /**
-   * All recorded dispatches.
+   * All recorded dispatches, oldest first.
    */
   readonly dispatched: readonly RecordedMessage[];
 
   /**
-   * Send a message and record the result.
-   */
-  send: <TPayload>(
-    input: MessageInput<TPayload>,
-    options?: DispatchOptions,
-  ) => Promise<DispatchResult>;
-
-  /**
    * Find dispatched messages by type.
    */
-  findByType: (type: string) => readonly RecordedMessage[];
+  findByType(type: string): readonly RecordedMessage[];
 
   /**
    * Clear recorded dispatches.
    */
-  clear: () => void;
-
-  /**
-   * Dispose the message bus.
-   */
-  dispose: () => void;
+  clear(): void;
 }
 
 /**
- * Creates a test message bus with recording.
+ * InMemoryMessageBus subclass that records at `dispatch`, the entry point
+ * `send` funnels into.
+ */
+class RecordingMessageBus extends InMemoryMessageBus implements TestMessageBus {
+  private readonly recorded: RecordedMessage[] = [];
+
+  constructor(options: MessageBusOptions) {
+    super(options);
+    // Bound, so destructured methods keep working as they did with the
+    // earlier closure-based wrapper.
+    this.send = this.send.bind(this);
+    this.dispatch = this.dispatch.bind(this);
+    this.findByType = this.findByType.bind(this);
+    this.clear = this.clear.bind(this);
+    this.dispose = this.dispose.bind(this);
+  }
+
+  get bus(): MessageBus {
+    return this;
+  }
+
+  get dispatched(): readonly RecordedMessage[] {
+    return [...this.recorded];
+  }
+
+  override async dispatch<TPayload, TResult>(
+    message: Message<TPayload>,
+    options?: DispatchOptions<TResult>,
+  ): Promise<DispatchResult<TResult>> {
+    const result = await super.dispatch(message, options);
+    this.recorded.push(
+      Object.freeze({ message, result, timestamp: new Date() }),
+    );
+    return result;
+  }
+
+  findByType(type: string): readonly RecordedMessage[] {
+    return this.recorded.filter((entry) => entry.message.type === type);
+  }
+
+  clear(): void {
+    this.recorded.length = 0;
+  }
+}
+
+/**
+ * Creates a test message bus that records every dispatch.
  *
  * @param options - MessageBus options.
- * @returns A TestMessageBus instance.
+ * @returns A TestMessageBus, which is itself a `MessageBus`.
  *
  * @example
  * ```ts
- * const testBus = createTestMessageBus();
+ * const messages = createTestMessageBus();
+ * messages.on("user.created", handler);
  *
- * testBus.bus.on("user.created", handler);
- * await testBus.send({ type: "user.created", payload: { id: "123" } });
+ * await notifier.run(messages); // takes a MessageBus, calls send(...)
  *
- * expect(testBus.dispatched).toHaveLength(1);
- * expect(testBus.findByType("user.created")).toHaveLength(1);
- *
- * testBus.dispose();
+ * expect(messages.findByType("user.created")).toHaveLength(1);
+ * messages.dispose();
  * ```
  */
 export function createTestMessageBus(
   options: MessageBusOptions = {},
 ): TestMessageBus {
-  const bus = createMessageBus(options);
-  const dispatched: RecordedMessage[] = [];
-
-  const send = async <TPayload>(
-    input: MessageInput<TPayload>,
-    dispatchOptions?: DispatchOptions,
-  ): Promise<DispatchResult> => {
-    const message: Message<TPayload> = {
-      id: `msg_${randomUUID()}` as MessageId,
-      type: input.type,
-      payload: input.payload,
-      timestamp: new Date(),
-      ...(input.metadata ? { metadata: input.metadata } : {}),
-    };
-
-    const result = await bus.send(message, dispatchOptions);
-
-    dispatched.push({
-      message,
-      result,
-      timestamp: new Date(),
-    });
-
-    return result;
-  };
-
-  const findByType = (type: string): readonly RecordedMessage[] =>
-    dispatched.filter((d) => d.message.type === type);
-
-  const clear = (): void => {
-    dispatched.length = 0;
-  };
-
-  const dispose = (): void => {
-    bus.dispose();
-  };
-
-  return {
-    bus,
-    get dispatched() {
-      return [...dispatched];
-    },
-    send,
-    findByType,
-    clear,
-    dispose,
-  };
+  return new RecordingMessageBus(options);
 }
