@@ -183,6 +183,40 @@ const timed = withTiming("db-lookup", lookup, {
 });
 ```
 
+## Guard responses
+
+A middleware that refuses a request — authentication, authorization, tenant
+resolution — answers with `createGuardResponse()` instead of calling `next()`:
+
+```typescript
+import { createGuardResponse, isGuardResponse } from "@zudojs/middleware";
+
+const requireApiKey = async (context, next) => {
+  if (!context.request.getHeader("x-api-key")) {
+    return createGuardResponse({
+      status: 401,
+      body: { error: "Unauthorized" },
+      headers: { "www-authenticate": "ApiKey" },
+    });
+  }
+  return next();
+};
+```
+
+`@zudojs/http` sends a guard response with its own status, headers and body
+(a structured body as JSON, with `content-type: application/json` unless you
+set one). It is the contract lower-tier packages use: `@zudojs/permissions`'
+`authorize()` and `@zudojs/tenancy`'s middleware return one for every 401,
+403 and 404, without depending on `@zudojs/http`.
+
+Only the brand counts. The object carries the registered symbol
+`GUARD_RESPONSE` (`Symbol.for("zudojs.middleware.guardResponse")`), which JSON
+cannot carry, so data that happens to have a `status` key is never mistaken
+for a response, and `isGuardResponse()` is `false` for any plain
+`{ status, body, headers }` object. The result is frozen; `status` must be an
+integer in 100–599 (`RangeError` otherwise) and header values strings
+(`TypeError`).
+
 ## Errors
 
 All errors extend `MiddlewareError`, which is the class owned by
