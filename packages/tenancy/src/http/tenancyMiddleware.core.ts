@@ -29,6 +29,7 @@ import { createHttpResolverContext } from "./httpResolverContext.js";
 import {
   createBadRequest,
   createForbidden,
+  createJsonResponse,
   createNotFound,
   createUnauthorized,
 } from "./httpHelpers.js";
@@ -126,11 +127,7 @@ export function createResolveTenantMiddleware(
   // learn which tenant ids exist or which of them are suspended.
   const notFound = (resolution: TenantResolution | undefined) =>
     options.notFoundResponse
-      ? {
-          status: 404,
-          body: options.notFoundResponse(resolution),
-          headers: { "content-type": "application/json" },
-        }
+      ? createJsonResponse(404, options.notFoundResponse(resolution))
       : createNotFound("Tenant not found");
 
   return async (context, next) => {
@@ -219,11 +216,7 @@ export function createRequireTenantMiddleware(
 
     if (!tenant) {
       return options?.deniedResponse
-        ? {
-            status: 401,
-            body: options.deniedResponse(undefined),
-            headers: { "content-type": "application/json" },
-          }
+        ? createJsonResponse(401, options.deniedResponse(undefined))
         : createUnauthorized("Tenant context is required");
     }
 

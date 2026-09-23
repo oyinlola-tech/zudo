@@ -51,9 +51,30 @@ const middleware = createResolveTenantMiddleware({
 });
 ```
 
+The chain's context type is inferred from its resolvers — what the JWT,
+domain and subdomain resolvers read, which `HttpResolverContext` provides — so
+the call needs no type argument and no casts. (Before 1.3 it failed with
+TS2322 unless you wrote `createResolverChain<HttpResolverContext>`; that form
+still works.)
+
 The middleware runs inside the real `@zudojs/http` pipeline without
 depending on it: headers are read through `request.getHeader()` when present,
-and otherwise from a plain object or a `Map`, case-insensitively.
+and otherwise from a plain object or a `Map`, case-insensitively. Its
+`HttpMiddleware` type is assignable to `@zudojs/http`'s, so it goes straight
+into a route's `middleware` list:
+
+```typescript
+router.get("/projects", listProjects, { middleware: [middleware] });
+```
+
+A refusal — 400, 401, 403, 404 — is a `GuardResponse` (`createGuardResponse`
+from `@zudojs/middleware`), which `@zudojs/http` sends with that status. The
+helpers `createBadRequest`, `createUnauthorized`, `createForbidden`,
+`createNotFound`, `createJsonErrorResponse` and `createJsonResponse` all
+return one. They used to return plain `{ status, body, headers }` objects,
+which `@zudojs/http` did not treat as a response, so a request carrying only
+an `x-tenant-id` header was refused (the handler never ran) but answered
+`200` instead of `403`.
 
 Read the current tenant anywhere downstream:
 

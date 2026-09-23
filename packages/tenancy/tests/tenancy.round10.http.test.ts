@@ -25,13 +25,12 @@ type RealMiddleware = Parameters<HttpMiddlewarePipeline["use"]>[0];
 type RealContext = Parameters<RealMiddleware>[0];
 
 // Compile-time: the real context satisfies the local mirror (the direction
-// the middleware reads). The return direction needs a cast, because http's
-// declared result type omits the plain `{ status, headers, body }` objects
-// its pipeline accepts at runtime.
+// the middleware reads), and the middleware is assignable to http's type
+// with no cast: a refusal is a `GuardResponse`, which http's result type
+// includes.
 const mirrorAcceptsReal = (context: RealContext): HttpMiddlewareContext =>
   context;
-const asReal = (middleware: HttpMiddleware): RealMiddleware =>
-  middleware as unknown as RealMiddleware;
+const asReal = (middleware: HttpMiddleware): RealMiddleware => middleware;
 
 const storage = createTenantContextStorage();
 const manager = createContextManager({ storage });

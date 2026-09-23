@@ -30,8 +30,34 @@ export interface TenantResolverChain<Context = unknown> {
   asResolver(): TenantResolver<Context>;
 }
 
+/** The context type one resolver reads. */
+type ResolverContextOf<Resolver> =
+  Resolver extends TenantResolver<infer Context> ? Context : never;
+
+type UnionToIntersection<Union> = (
+  Union extends unknown ? (value: Union) => void : never
+) extends (value: infer Intersection) => void
+  ? Intersection
+  : never;
+
+/**
+ * The context a chain of these resolvers needs: everything each of them
+ * reads. For the JWT, domain and subdomain resolvers that is
+ * `JwtContext & DomainContext & SubdomainContext`, which
+ * `HttpResolverContext` satisfies.
+ */
+export type ResolverChainContext<
+  Resolvers extends readonly TenantResolver<never>[],
+> = UnionToIntersection<ResolverContextOf<Resolvers[number]>>;
+
 /**
  * Create a resolver chain that tries resolvers in priority order.
+ *
+ * The chain's context is inferred from the resolvers — each reads a
+ * different part of the request, so it is the intersection of what they
+ * read — and `createResolverChain([createJwtResolver(), createDomainResolver(
+ * { repository })])` needs no type argument. Passing one explicitly
+ * (`createResolverChain<HttpResolverContext>([...])`) still works.
  *
  * A resolver that returns `undefined` found nothing, and the chain moves on.
  * A resolver that *throws* rejected a credential — an expired JWT, a bad
@@ -39,6 +65,16 @@ export interface TenantResolverChain<Context = unknown> {
  * source such as a client-supplied header decide the tenant for a request
  * whose credential was just refused.
  */
+export function createResolverChain<
+  const Resolvers extends readonly TenantResolver<never>[],
+>(
+  resolvers: Resolvers,
+  options?: ResolverChainOptions,
+): TenantResolverChain<ResolverChainContext<Resolvers>>;
+export function createResolverChain<Context = unknown>(
+  resolvers: readonly TenantResolver<Context>[],
+  options?: ResolverChainOptions,
+): TenantResolverChain<Context>;
 export function createResolverChain<Context = unknown>(
   resolvers: readonly TenantResolver<Context>[],
   options?: ResolverChainOptions,

@@ -5,5 +5,8 @@
  */
 
 export { createResolverChain } from "./resolverChain.core.js";
-export type { TenantResolverChain } from "./resolverChain.core.js";
+export type {
+  ResolverChainContext,
+  TenantResolverChain,
+} from "./resolverChain.core.js";
 export * from "./resolvers/index.js";

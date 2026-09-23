@@ -12,8 +12,6 @@ import {
   createHeaderResolver,
   getDefaultTrust,
 } from "../src/index.js";
-import type { TenantResolver } from "../src/index.js";
-import type { HttpResolverContext } from "../src/http/httpResolverContext.js";
 
 describe("README example", () => {
   it("runs exactly as documented", async () => {
@@ -25,12 +23,12 @@ describe("README example", () => {
       ["acme.io"],
     );
 
-    const resolver = createResolverChain<HttpResolverContext>([
-      createJwtResolver() as TenantResolver<HttpResolverContext>,
-      createDomainResolver({ repository }) as TenantResolver<HttpResolverContext>,
-      createSubdomainResolver({
-        baseDomain: "example.com",
-      }) as TenantResolver<HttpResolverContext>,
+    // Exactly the README's Quick Start: no type argument, no casts. The
+    // chain's context is inferred as what the three resolvers read.
+    const resolver = createResolverChain([
+      createJwtResolver(), // priority 100, trusted
+      createDomainResolver({ repository }), // priority 75: acme.io → t-1001
+      createSubdomainResolver({ baseDomain: "example.com" }), // priority 70
     ]);
 
     const middleware = createResolveTenantMiddleware({

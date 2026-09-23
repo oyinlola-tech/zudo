@@ -30,6 +30,7 @@ export {
   createBadRequest,
   createForbidden,
   createJsonErrorResponse,
+  createJsonResponse,
   createNotFound,
   createUnauthorized,
 } from "./httpHelpers.js";
