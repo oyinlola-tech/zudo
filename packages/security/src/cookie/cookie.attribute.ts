@@ -20,11 +20,16 @@ const DOMAIN_PATTERN = new RegExp(`^\\.?${LABEL}(?:\\.${LABEL})*$`);
 const MAX_DOMAIN_LENGTH = 253;
 
 /**
- * Characters never allowed in `Path`: controls (CR and LF included), DEL,
- * `;` which would end the attribute, and `,` which some parsers split
+ * Characters never allowed in `Path`: anything outside printable ASCII
+ * (controls, CR and LF included, DEL, and every non-ASCII character), `;`
+ * which would end the attribute, and `,` which some parsers split
  * `Set-Cookie` on.
+ *
+ * RFC 6265 §4.1.1 defines `path-value` as any CHAR (US-ASCII) except CTLs
+ * or `;`, so non-ASCII such as `"/ä"` is outside the grammar — percent-encode
+ * it (`"/%C3%A4"`). Space (0x20) is inside the grammar and stays allowed.
  */
-const PATH_UNSAFE = /[\x00-\x1F\x7F;,]/;
+const PATH_UNSAFE = /[^\x20-\x7E]|[;,]/;
 
 /**
  * Validates a cookie `Domain` attribute as a hostname: labels of
@@ -55,14 +60,16 @@ export function assertCookieDomain(domain: string): void {
  * Validates a cookie `Path` attribute.
  *
  * @param path - The Path value.
- * @throws {ValidationError} when it contains a control character, DEL, `;`
- *   or `,`.
+ * @throws {ValidationError} when it contains a character outside printable
+ *   ASCII (0x20–0x7E: a control character, DEL or any non-ASCII character),
+ *   `;` or `,`. Space is allowed, as RFC 6265 allows it.
  */
 export function assertCookiePath(path: string): void {
   if (typeof path !== "string" || PATH_UNSAFE.test(path)) {
     throw new ValidationError(
-      `Cookie Path contains invalid characters (injection risk): control ` +
-        `characters, ";" and "," are not allowed, got ${JSON.stringify(path)}`,
+      `Cookie Path contains invalid characters (injection risk): only ` +
+        `printable ASCII is allowed (percent-encode anything else), and ";" ` +
+        `and "," are not, got ${JSON.stringify(path)}`,
     );
   }
 }

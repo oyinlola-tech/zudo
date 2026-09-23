@@ -35,9 +35,11 @@
  * ```
  */
 
-import type { CsrfConfig } from "../types/security.type.js";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { HTTP_METHODS, type HttpMethod } from "@zudojs/constants";
 import { ConfigurationError } from "@zudojs/errors";
+import { assertCookiePath } from "../cookie/cookie.attribute.js";
+import type { CsrfConfig } from "../types/security.type.js";
 
 /** Default token expiration (1 hour). */
 const DEFAULT_EXPIRATION = 3600;
@@ -48,11 +50,8 @@ const DEFAULT_COOKIE_NAME = "_csrf";
 /** Default header name for CSRF token. */
 const DEFAULT_HEADER_NAME = "x-csrf-token";
 
-/** Methods that require CSRF protection. */
+/** Methods that never require CSRF protection (RFC 9110 safe methods). */
 const SAFE_METHODS = ["GET", "HEAD", "OPTIONS", "TRACE"];
-
-/** Default methods that require CSRF protection. */
-const DEFAULT_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
 
 /**
  * Minimum accepted secret length, in characters.
@@ -307,6 +306,15 @@ export function verifyDoubleSubmit(
  *
  * @param method - The HTTP method.
  * @param config - Optional CSRF configuration.
+ * The rule fails closed. A method skips the check only when, after
+ * upper-casing and with no trimming, it is exactly one of the safe methods
+ * (GET, HEAD, OPTIONS, TRACE) or — when `methods` is configured — a standard
+ * HTTP method the configured list deliberately leaves out (`methods:
+ * ["DELETE"]` exempts POST). Anything else — an empty or padded string
+ * (`""`, `"POST "`), an unknown method (`"FOO"`), CONNECT under the default
+ * list — requires protection. Before 1.3.1 every method not in `methods`
+ * skipped the check, so `""` and `"FOO"` passed `verify()` with no token.
+ *
  * @returns True if CSRF protection is required. A missing or non-string
  *   method is treated as requiring it, so a malformed request fails closed.
  */
@@ -320,16 +328,22 @@ export function requiresCsrfProtection(
     return true;
   }
 
-  if (SAFE_METHODS.includes(method.toUpperCase())) {
-    return false;
-  }
-
   // HTTP methods are case-sensitive on the wire but configured by hand;
   // comparing a lower-case `methods: ["post"]` against the upper-cased
   // request method used to protect nothing, silently.
   const upper = method.toUpperCase();
-  const methods = config?.methods ?? DEFAULT_METHODS;
-  return methods.some((m) => String(m).toUpperCase() === upper);
+  if (SAFE_METHODS.includes(upper)) {
+    return false;
+  }
+
+  const configured = config?.methods;
+  if (configured === undefined) {
+    return true;
+  }
+  if (configured.some((m) => String(m).toUpperCase() === upper)) {
+    return true;
+  }
+  return !HTTP_METHODS.has(upper as HttpMethod);
 }
 
 /**
@@ -428,6 +442,8 @@ export interface CsrfCookieOptions extends Omit<CsrfConfig, "secret"> {
  * @param token - The CSRF token to store.
  * @param config - Optional CSRF and cookie configuration.
  * @returns The Set-Cookie header value.
+ * @throws {ValidationError} when `path` breaks the cookie `Path` rules
+ *   (see `serializeCookie`).
  */
 export function generateCsrfCookie(
   token: string,
@@ -438,6 +454,7 @@ export function generateCsrfCookie(
   const httpOnly = config?.httpOnly ?? true;
   const secure = config?.secure ?? true;
   const path = config?.path ?? "/";
+  assertCookiePath(path);
 
   const parts = [`${name}=${token}`, `Path=${path}`];
 
@@ -519,12 +536,14 @@ export interface CsrfProtection {
  * @throws {ConfigurationError} when the secret is missing or shorter than
  *   {@link MIN_CSRF_SECRET_LENGTH}, or when `methods` is present but empty,
  *   not an array, or contains a non-method entry.
+ * @throws {ValidationError} when `path` breaks the cookie `Path` rules.
  */
 export function createCsrfProtection(
   config: CsrfProtectionOptions,
 ): CsrfProtection {
   assertUsableSecret(config.secret);
   assertUsableMethods(config.methods);
+  if (config.path !== undefined) assertCookiePath(config.path);
 
   const expiration = config.expiration ?? DEFAULT_EXPIRATION;
   const cookieName = config.cookieName ?? DEFAULT_COOKIE_NAME;

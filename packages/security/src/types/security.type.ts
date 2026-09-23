@@ -137,7 +137,13 @@ export interface CsrfConfig {
   readonly cookieName?: string;
   /** Header name for the CSRF token. */
   readonly headerName?: string;
-  /** Methods that require CSRF protection. */
+  /**
+   * Methods that require CSRF protection (default: POST, PUT, PATCH, DELETE).
+   *
+   * GET, HEAD, OPTIONS and TRACE never require it. A standard HTTP method
+   * left out of this list is exempt; an unknown, empty or malformed method
+   * always requires protection, whatever this list says.
+   */
   readonly methods?: readonly string[];
 }
 
