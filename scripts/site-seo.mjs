@@ -27,13 +27,13 @@ const OLD_ORIGIN =
 
 const HOME_TITLE = "ZudoJS — Modular TypeScript Framework for Node.js";
 const HOME_DESCRIPTION =
-  "ZudoJS (Zudo) is a modular TypeScript framework for Node.js: dependency injection, CQRS, events, HTTP, auth, queues and 39 @zudojs packages. Read the docs and get started.";
+  "ZudoJS (Zudo) is a modular TypeScript framework for Node.js: dependency injection, CQRS, events, HTTP, auth, queues and 39 @zudojs packages.";
 
 const PAGE_FIXES = {
   "docs/packages-types.html": {
     title: "@zudojs/types — Type Guards, Utility Types & Converters",
     description:
-      "Documentation for @zudojs/types — shared type guards (isPlainObject, isDate, isEmail), utility types (Maybe, DeepReadonly, Prettify) and type converters for the ZudoJS framework.",
+      "@zudojs/types docs: type guards (isPlainObject, isDate, isEmail), utility types (Maybe, DeepReadonly, Prettify) and converters for ZudoJS.",
   },
 };
 
@@ -147,6 +147,33 @@ function homeLd() {
     .join("\n");
 }
 
+/**
+ * BreadcrumbList for every page below the home page, so search results show
+ * "ZudoJS › Docs › Packages › …" and crawlers see how the pages nest.
+ */
+function breadcrumbLd(rel, title) {
+  const crumbs = [["ZudoJS", `${BASE}/`]];
+  if (rel.startsWith("docs/")) {
+    if (rel !== "docs/getting-started.html")
+      crumbs.push(["Docs", `${BASE}/docs/getting-started`]);
+    if (rel.startsWith("docs/packages-"))
+      crumbs.push(["Packages", `${BASE}/docs/packages`]);
+  }
+  const name = title.replace(/\s+[|—]\s+ZudoJS$/, "").split(" — ")[0];
+  crumbs.push([name, BASE + pathFor(rel)]);
+  const ld = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: crumbs.map(([name, item], i) => ({
+      "@type": "ListItem",
+      position: i + 1,
+      name,
+      item,
+    })),
+  };
+  return `  <script type="application/ld+json">${JSON.stringify(ld).replace(/</g, "\\u003c")}</script>`;
+}
+
 function seoBlock({ rel, url, title, description, noindex }) {
   const lines = [`  <!-- seo:start -->`];
   if (noindex) {
@@ -172,7 +199,7 @@ function seoBlock({ rel, url, title, description, noindex }) {
       `  <meta name="twitter:description" content="${escapeAttr(description)}">`,
       `  <meta name="twitter:image" content="${OG_IMAGE}">`,
     );
-    if (rel === "index.html") lines.push(homeLd());
+    lines.push(rel === "index.html" ? homeLd() : breadcrumbLd(rel, title));
   }
   lines.push(`  <!-- seo:end -->`);
   return lines.join("\n");
@@ -258,6 +285,11 @@ function lastModified(abs, url) {
   const fallback =
     previousLastmod.get(url) ?? new Date().toISOString().slice(0, 10);
   try {
+    const dirty = execFileSync("git", ["status", "--porcelain", "--", abs], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (dirty) return new Date().toISOString().slice(0, 10);
     const out = execFileSync("git", ["log", "-1", "--format=%cs", "--", abs], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
@@ -333,6 +365,57 @@ writeFileSync(
     "",
   ].join("\n"),
 );
+
+/**
+ * Crawl headers for files that are not HTML pages, written into both
+ * vercel.json files (the Vercel project deploys from site/, so site/vercel.json
+ * is the one that takes effect). Vercel reads vercel.json before the build
+ * runs, so this has to happen here and be committed, not at deploy time.
+ *
+ * - Each Markdown mirror (/docs/x.md, /brand.md) carries
+ *   `Link: <page>; rel="canonical"`, which consolidates it into its HTML page
+ *   instead of competing with it as a duplicate.
+ * - llms.txt, llms-full.txt and the build files served from site/ are
+ *   `noindex`: agents still read them, search results never show them.
+ */
+const NOINDEX_FILES = [
+  "/llms.txt",
+  "/llms-full.txt",
+  "/README.md",
+  "/serve.mjs",
+  "/tailwind.config.cjs",
+  "/vercel.json",
+];
+const isGeneratedHeader = (h) =>
+  h.headers.some(
+    (x) =>
+      (x.key === "Link" && x.value.includes('rel="canonical"')) ||
+      (x.key === "X-Robots-Tag" && NOINDEX_FILES.includes(h.source)),
+  );
+
+function crawlHeaders() {
+  const mirrors = indexable
+    .filter((p) => p.rel !== "index.html")
+    .map((p) => ({
+      source: pathFor(p.rel) + ".md",
+      headers: [{ key: "Link", value: `<${p.url}>; rel="canonical"` }],
+    }));
+  const noindex = NOINDEX_FILES.map((source) => ({
+    source,
+    headers: [{ key: "X-Robots-Tag", value: "noindex" }],
+  }));
+  return [...mirrors, ...noindex];
+}
+
+for (const file of [join(ROOT, "vercel.json"), join(ROOT, "..", "vercel.json")]) {
+  if (!existsSync(file)) continue;
+  const config = JSON.parse(readFileSync(file, "utf8"));
+  config.headers = [
+    ...(config.headers ?? []).filter((h) => !isGeneratedHeader(h)),
+    ...crawlHeaders(),
+  ];
+  writeFileSync(file, JSON.stringify(config, null, 2) + "\n");
+}
 
 console.log(
   `site-seo: ${pages.length} pages (${indexable.length} indexable) → ${BASE}`,
