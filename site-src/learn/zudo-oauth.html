@@ -233,7 +233,7 @@ verifier in the URL? false
 <ul>
 <li><code>response_type=code</code> asks for the authorization code flow. <code>client_id</code>, <code>redirect_uri</code> and <code>scope</code> say who is asking, where to come back to, and for what.</li>
 <li><code>access_type=offline</code> and <code>prompt=consent</code> come from the Google preset. They make Google issue a refresh token.</li>
-<li><code>state</code> and <code>code_challenge</code> are the two protections, explained next. They are random, so yours will differ.</li>
+<li><code>state</code> and <code>code_challenge</code> are the two protections, explained next. They are random, so yours will differ. <code>generateState()</code> makes 43 random characters; <code>createAuthorizationUrl</code> refuses a state shorter than 16, because a short one could be guessed.</li>
 <li>The client secret and the <code>codeVerifier</code> are <strong>not</strong> in the URL. The function returns the verifier to you, and you keep it on the server until step 5.</li>
 </ul>
 </section>
@@ -461,35 +461,30 @@ export async function findAccountById(id: UserId): Promise<AuthUser | null> {
   return [...byProviderId.values()].find((user) => user.id === id) ?? null;
 }
 </example>
-<p>Second, start a session. <code>@zudojs/auth</code>'s <code>login()</code> needs a password, which an OAuth user does not have. So you create the session in the session store yourself and bind a token pair to it with <code>sessionId</code>. The auth service then checks these tokens, and logs them out, exactly like password logins:</p>
+<p>Second, start a session. <code>@zudojs/auth</code>'s <code>login()</code> needs a password, which an OAuth user does not have. <code>auth.createSessionForUser(userId, { method })</code> creates the session and its tokens for a user your code has already authenticated in another way. The auth service then checks these tokens, and logs them out, exactly like password logins:</p>
 <example file="sessions.ts" project="oauth" browser="no">
-import { createAuthService, createMemorySessionStore, createTokenPair } from "@zudojs/auth";
-import type { AuthUser, TokenConfig, TokenPair } from "@zudojs/auth";
+import { createAuthService, createMemorySessionStore } from "@zudojs/auth";
 import { findAccountById } from "./accounts.js";
 import { requireEnv } from "./env.js";
 
-const tokenConfig: TokenConfig = {
-  accessSecret: requireEnv("JWT_ACCESS_SECRET"),
-  refreshSecret: requireEnv("JWT_REFRESH_SECRET"),
-};
-const sessionStore = createMemorySessionStore();
-
 export const auth = createAuthService({
-  token: tokenConfig,
-  sessionStore,
+  token: {
+    accessSecret: requireEnv("JWT_ACCESS_SECRET"),
+    refreshSecret: requireEnv("JWT_REFRESH_SECRET"),
+  },
+  sessionStore: createMemorySessionStore(),
   sessionTtlSeconds: 30 * 60,
   absoluteSessionTtlSeconds: 7 * 24 * 60 * 60,
   findUser: async () => null,
   findUserById: findAccountById,
   verifyPassword: async () => false,
+  externalSessionMethods: ["oauth"],
 });
-
-export async function startSession(user: AuthUser): Promise<TokenPair> {
-  const session = await sessionStore.create({ userId: user.id, ttlSeconds: 30 * 60, absoluteTtlSeconds: 7 * 24 * 60 * 60 });
-  return createTokenPair(user.id, tokenConfig, { roles: user.roles, sessionId: session.id });
-}
 </example>
-<p><code>findUser</code> returns <code>null</code> and <code>verifyPassword</code> returns <code>false</code>, so password login is switched off for this service. In an app with both kinds of login, you pass your real functions and share one session store.</p>
+<ul>
+<li><code>findUser</code> returns <code>null</code> and <code>verifyPassword</code> returns <code>false</code>, so password login is switched off for this service. In an app with both kinds of login, you pass your real functions.</li>
+<li><code>createSessionForUser</code> checks no password: it trusts your code. So it is switched off until you list the method in <code>externalSessionMethods</code>. It still loads the user with <code>findUserById</code> and refuses an unknown or deactivated one. Call it only after the callback has checked the state and exchanged the code, and never with a user id taken from the request.</li>
+</ul>
 <p>Third, the two routes:</p>
 <example file="server.ts" project="oauth" browser="no">
 import { parseCookies } from "@zudojs/auth";
@@ -499,7 +494,7 @@ import { badRequest, createNodeHttpAdapter, createResponseContext, createRouter 
 import { findOrCreateAccount } from "./accounts.js";
 import { CALLBACK_URL } from "./google.js";
 import { savePendingLogin, takeVerifiedLogin } from "./pending.js";
-import { startSession } from "./sessions.js";
+import { auth } from "./sessions.js";
 
 export async function startServer(google: OAuthConfig, port = 0) {
   const router = createRouter();
@@ -522,10 +517,10 @@ export async function startServer(google: OAuthConfig, port = 0) {
 
     const tokens = await exchangeCodeForToken(google, { code, codeVerifier, redirectUri: CALLBACK_URL });
     const user = findOrCreateAccount("google", await fetchUserInfo(google, tokens.accessToken));
-    const session = await startSession(user);
+    const session = await auth.createSessionForUser(user.id, { method: "oauth", metadata: { provider: "google" } });
     return createResponseContext()
       .cookie("oauth_login", "", { maxAge: 0, path: "/auth/google" })
-      .json({ userId: user.id, accessToken: session.accessToken });
+      .json({ userId: user.id, accessToken: session.tokens.accessToken });
   });
 
   const adapter = createNodeHttpAdapter({
