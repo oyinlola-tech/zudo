@@ -626,12 +626,12 @@ console.<span class="fn">log</span>(<span class="tp">Object</span>.<span class="
         <table class="doc-table mb-6">
           <thead><tr><th>Field</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
-          <tr><td><code>summary / description / operationId / tags / deprecated</code></td><td>Copied onto the operation</td><td>Router groups can set <code>openapi</code> defaults: tags are merged, every other field is overridden by the route.</td></tr>
+          <tr><td><code>summary / description / operationId / tags / deprecated</code></td><td>Copied onto the operation</td><td>Router groups can set <code>openapi</code> defaults: tags are merged, every other field is overridden by the route. A group's defaults never un-hide a route marked <code>openapi: false</code> or <code>hidden: true</code>.</td></tr>
           <tr><td><code>params / query / headers / cookies</code></td><td>One object schema each; every property becomes a parameter</td><td>Path parameters are always required.</td></tr>
           <tr><td><code>body</code></td><td>The request body</td><td>A schema (sent as <code>application/json</code>), or <code>{ schema, contentType?, required? }</code>.</td></tr>
           <tr><td><code>responses</code></td><td>Keyed by status, e.g. <code>"200"</code>, <code>"4XX"</code>, <code>"default"</code></td><td><code>{ schema }</code> or <code>{ description }</code>; the description defaults to the reason phrase.</td></tr>
           <tr><td><code>security</code></td><td>Who may call it</td><td><code>[]</code> marks the route public, overriding document-wide security.</td></tr>
-          <tr><td><code>false</code> or <code>{ hidden: true }</code></td><td>Leave the route out</td><td>Use it for health checks and internal endpoints.</td></tr>
+          <tr><td><code>false</code> or <code>{ hidden: true }</code></td><td>Leave the route out</td><td>Use it for health checks and internal endpoints. It wins over the route's group defaults; before this release a group with <code>openapi</code> defaults published such routes anyway.</td></tr>
           </tbody>
         </table>
         <h3 class="text-lg font-bold mb-3 mt-6">How route paths become OpenAPI paths</h3>
@@ -681,7 +681,7 @@ console.<span class="fn">log</span>(<span class="tp">Object</span>.<span class="
 <span class="cmt">// mountFetchHandler(router, "/api", createApiFetchHandler(registry, { executor }));</span></div>
         <div class="code-block mb-4">$ curl http://127.0.0.1:3000/hello/world
 <span class="cmt">{"path":"/world","prefix":"/hello"}</span></div>
-        <p class="mb-4 leading-relaxed">The handler sees the original method, query, headers (connection-scoped ones removed) and body. By default the mount path is stripped from its URL and passed along as <code>x-forwarded-prefix</code>, which is why <code>/hello/world</code> arrives as <code>/world</code>. So a handler that has its own base path setting, such as <code>createApiFetchHandler</code>'s <code>basePath</code>, should leave it unset. The returned function removes the mount again.</p>
+        <p class="mb-4 leading-relaxed">The handler sees the original method, query, headers (connection-scoped ones removed) and body. If an earlier middleware already parsed the body into an object, it is re-encoded as JSON and labelled <code>content-type: application/json</code> (unless the request already had a JSON content type), so the handler never receives JSON text under a form or text label. By default the mount path is stripped from its URL and passed along as <code>x-forwarded-prefix</code>, which is why <code>/hello/world</code> arrives as <code>/world</code>. So a handler that has its own base path setting, such as <code>createApiFetchHandler</code>'s <code>basePath</code>, should leave it unset. The returned function removes the mount again.</p>
         <p class="mb-4 leading-relaxed">The <code>Response</code> is streamed back with its status, status text and headers intact, and several <code>Set-Cookie</code> headers stay separate instead of being folded into one broken header. A handler that throws, or returns something that is not a <code>Response</code>, fails the request like any route: a generic <code>500</code> unless the error carries a status.</p>
         <table class="doc-table mb-6">
           <thead><tr><th>Option</th><th>What it does</th><th>Notes</th></tr></thead>
@@ -689,11 +689,17 @@ console.<span class="fn">log</span>(<span class="tp">Object</span>.<span class="
           <tr><td><code>methods</code></td><td>Methods routed to the handler</td><td>Default: every method.</td></tr>
           <tr><td><code>stripPrefix</code></td><td>Remove the mount path from the handler's URL</td><td>Default <code>true</code>.</td></tr>
           <tr><td><code>middleware</code></td><td>Middleware run before the handler</td><td>For example an auth check.</td></tr>
-          <tr><td><code>origin</code></td><td>Origin for <code>request.url</code> when the request has no usable host</td><td>Default <code>http://localhost</code>.</td></tr>
+          <tr><td><code>origin</code></td><td>Origin of the handler's <code>request.url</code>, e.g. <code>https://api.example.com</code></td><td>When set, used for every request. When not set, taken from the request's <code>Host</code> header (or <code>X-Forwarded-Host</code> from a trusted proxy), falling back to <code>http://localhost</code>. See below for why to pin it.</td></tr>
           <tr><td><code>name / openapi</code></td><td>Route name and documentation</td><td><code>openapi</code> defaults to <code>false</code>: a mounted handler documents its own operations.</td></tr>
           </tbody>
         </table>
-        <p class="mb-4 leading-relaxed"><code>toWebRequest(context)</code> does the request conversion on its own, if you want to call a fetch handler from inside a normal route.</p>
+        <h3 class="text-lg font-bold mb-3 mt-6" id="pinning-the-origin">Pinning the origin</h3>
+        <p class="mb-4 leading-relaxed">A web <code>Request</code> always has an absolute URL, such as <code>https://api.example.com/users</code>, but a request arriving over HTTP only carries the path. The scheme and host part, the <em>origin</em>, has to come from somewhere. Without the <code>origin</code> option it comes from the <code>Host</code> header, and the client chooses what that header says. A handler that builds absolute URLs from <code>request.url</code> (a redirect, a password-reset or OAuth callback link) or compares a request's <code>Origin</code> header with its own origin can then be steered to an attacker's host. Set <code>origin</code> to your public origin whenever the handler does either:</p>
+        <div class="code-block mb-4"><span class="fn">mountFetchHandler</span>(router, <span class="str">"/auth"</span>, authHandler, {
+  origin: process.env.<span class="const">PUBLIC_ORIGIN</span>, <span class="cmt">// e.g. "https://app.example.com"</span>
+});</div>
+        <p class="mb-4 leading-relaxed">When set, the option is used for every request, whatever <code>Host</code> says. Before this release it was only a fallback for requests with no usable host, so the client's header always won. Read the value from configuration rather than hard-coding it, so each environment serves its own origin.</p>
+        <p class="mb-4 leading-relaxed"><code>toWebRequest(context, options?)</code> does the request conversion on its own, if you want to call a fetch handler from inside a normal route. It takes the same <code>origin</code> option with the same meaning, plus <code>url</code>, <code>headers</code> and <code>signal</code>.</p>
         <div class="callout callout-tip mb-6">
           <strong class="text-zudo-green">Client disconnects</strong>
           <p class="mt-1">The handler's <code>request.signal</code> aborts when the client goes away. The same is now true everywhere on the Node adapter: <code>request.signal</code> and the router's <code>ctx.signal</code> abort when the client disconnects, and a streamed response body stops being read. Pass the signal to database calls and <code>fetch</code> so abandoned requests stop doing work.</p>
@@ -857,8 +863,8 @@ console.<span class="fn">log</span>(
           <tr><td><code>getCurrentRequestContext()</code></td><td>The request being handled, from anywhere in the call stack</td><td>Only inside <code>runWithRequestContext</code>. Working since v1.3.0: the <code>AsyncLocalStorage</code> behind it was loaded in a way that never resolved under ESM, so it always returned <code>undefined</code>.</td></tr>
           <tr><td><code>generateOpenAPIDocument(router, options)</code></td><td>OpenAPI document from the registered routes</td><td>See <a href="#openapi" class="underline">OpenAPI from your routes</a>.</td></tr>
           <tr><td><code>mountOpenAPI(router, options)</code></td><td>Serves <code>/openapi.json</code> and a docs page at <code>/docs</code></td><td>Returns <code>{ document, unmount }</code>. <code>createRouterOpenAPI</code> returns the manager instead.</td></tr>
-          <tr><td><code>mountFetchHandler(router, basePath, handler, options?)</code></td><td>Serves a <code>Request</code> → <code>Response</code> handler under a path</td><td>Returns an unmount function. See <a href="#mounting-fetch-handlers" class="underline">Mounting</a>.</td></tr>
-          <tr><td><code>toWebRequest(context, options?)</code></td><td>Converts a request context into a web <code>Request</code></td><td>What <code>mountFetchHandler</code> uses.</td></tr>
+          <tr><td><code>mountFetchHandler(router, basePath, handler, options?)</code></td><td>Serves a <code>Request</code> → <code>Response</code> handler under a path</td><td>Returns an unmount function. Set <code>origin</code> to pin the public origin. See <a href="#mounting-fetch-handlers" class="underline">Mounting</a>.</td></tr>
+          <tr><td><code>toWebRequest(context, options?)</code></td><td>Converts a request context into a web <code>Request</code></td><td>What <code>mountFetchHandler</code> uses. Options: <code>origin</code> (used for every request when set), <code>url</code>, <code>headers</code>, <code>signal</code>.</td></tr>
           <tr><td><code>getRequestIP(request, trustProxy?)</code> / <code>getRequestProtocol(request, trustProxy?)</code></td><td>The client address and scheme of a raw Node request</td><td><code>trustProxy</code> defaults to <code>false</code>, so forwarded headers are ignored unless you pass one.</td></tr>
           </tbody>
         </table>
@@ -930,6 +936,7 @@ console.<span class="fn">log</span>(
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Passing <code>port</code> to <code>createHttpServer</code>.</strong> It is silently ignored by JavaScript and rejected by TypeScript. Put <code>host</code>, <code>port</code>, and <code>trustProxy</code> on <code>createNodeHttpAdapter</code>.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Expecting <code>request.body</code> to be parsed.</strong> It is a <code>Uint8Array</code>. Decode with <code>new TextDecoder().decode(body)</code> and <code>JSON.parse</code> it yourself.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Expecting the router to run by itself.</strong> Nothing calls it until your handler does <code>router.dispatch(request)</code> and returns <code>result.response</code>.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Building links from <code>request.url</code> in a mounted handler without <code>origin</code>.</strong> The host part then comes from the client's <code>Host</code> header, so a reset or callback link can point at another site. Pass <code>mountFetchHandler(router, path, handler, { origin })</code> with your public origin.</span></li>
         </ul>
       </section>
 
@@ -992,6 +999,7 @@ console.<span class="fn">log</span>(
       <a href="#errors" class="toc-link">Errors</a>
       <a href="#openapi" class="toc-link">OpenAPI From Your Routes</a>
       <a href="#mounting-fetch-handlers" class="toc-link">Mounting Fetch Handlers</a>
+      <a href="#pinning-the-origin" class="toc-link toc-link-nested">Pinning the Origin</a>
       <a href="#client" class="toc-link">HTTP Client</a>
       <a href="#cors-and-security-headers" class="toc-link">CORS &amp; Security Headers</a>
       <a href="#api-reference" class="toc-link">API Reference</a>

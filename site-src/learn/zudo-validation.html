@@ -235,7 +235,31 @@ for (const body of [{ done: true }, { title: "Walk", id: 1, createdAt: "2020-01-
 {"title":"Walk","id":1,"createdAt":"2020-01-01"} -> [ 'Unknown key: id', 'Unknown key: createdAt' ]
 {} -> [ 'Send at least one field to change' ]
 </output>
-<p>Blindly copying request fields onto a stored object is a classic security hole called <strong>mass assignment</strong>: a client adds <code>"ownerId": 1</code> or <code>"role": "admin"</code> to a request and takes over data or rights. An explicit schema that lists exactly the changeable fields, strict or stripping, is the defence. Never spread the raw body (<code>{ ...task, ...body }</code>); spread only the parsed result.</p>
+<p>Blindly copying request fields onto a stored object is a classic security hole called <strong>mass assignment</strong>: a client adds <code>"ownerId": 1</code> or <code>"role": "admin"</code> to a request and takes over data or rights. An explicit schema that lists exactly the changeable fields, strict or stripping, is the defence. Never spread the raw body (<code>{ ...task, ...body }</code>).</p>
+<p>Spreading the <em>parsed</em> changes is not safe either, for a different reason. Look again at the first result above: <code>{ title: undefined, done: true, priority: undefined }</code>. In <code>@zudojs/schema</code> 1.1.1, a partial object keeps every field as a key, set to <code>undefined</code> when the client did not send it. Spreading that over a stored task wipes the fields the client never mentioned:</p>
+<example file="merge.ts">
+import { schema } from "@zudojs/schema";
+
+const UpdateTask = schema
+  .object({ title: schema.string().trim().min(3).max(100), done: schema.boolean() })
+  .partial()
+  .strict();
+
+const stored = { id: 1, title: "Buy milk", done: false };
+const changes = UpdateTask.parse({ done: true });
+
+console.log("spread:", { ...stored, ...changes });
+
+const sent = Object.fromEntries(Object.entries(changes).filter(([, value]) => value !== undefined));
+console.log("sent only:", sent);
+console.log("merged:", { ...stored, ...sent });
+</example>
+<output>
+spread: { id: 1, title: undefined, done: true }
+sent only: { done: true }
+merged: { id: 1, title: 'Buy milk', done: true }
+</output>
+<p>The plain spread lost the title. A database layer would then save it as empty (<code>NULL</code>). Either drop the <code>undefined</code> values first, as <code>sent</code> does, or copy each field with <code>??</code>, as the Task API's service does below.</p>
 </section>
 
 <section>
@@ -680,7 +704,7 @@ SchemaError Validation failed
 <li>Issues have <code>code</code>, <code>path</code> and <code>message</code>; turn them into per-field messages for clients.</li>
 <li>Query strings, parameters and environment variables are text: use <code>schema.coerce</code>. JSON bodies are not: use the normal schemas.</li>
 <li><code>.transform()</code> changes the output (and its type); <code>.refine()</code> and <code>schema.refine()</code> add your own synchronous rules. Check that dates are real, not just date-shaped.</li>
-<li>Write update schemas by hand without defaults, use <code>.strict()</code> to refuse unknown fields, and never spread a raw body onto stored data (mass assignment).</li>
+<li>Write update schemas by hand without defaults, use <code>.strict()</code> to refuse unknown fields, never spread a raw body onto stored data (mass assignment), and drop <code>undefined</code> values before merging parsed changes.</li>
 <li>A response schema is an allow-list for what leaves the server.</li>
 <li><code>@zudojs/validation</code>'s depth and size guards stop hostile JSON before a schema walks it.</li>
 </ul>

@@ -225,8 +225,12 @@ console.<span class="fn">log</span>(finished?.state); <span class="cmt">// "comp
 
 <span class="kw">await</span> queue.<span class="fn">close</span>();</div>
         <p class="mb-3">
-          What you should see: the "Sending ..." line, then <code class="bg-black/5 px-1">waiting</code>, then <code class="bg-black/5 px-1">completed</code>. The queue starts polling for work the moment you call <code class="bg-black/5 px-1">process()</code>, so you never have to start it by hand.
+          What you should see: <code class="bg-black/5 px-1">waiting</code>, then the "Sending ..." line, then <code class="bg-black/5 px-1">completed</code>. The queue starts polling for work the moment you call <code class="bg-black/5 px-1">process()</code>, so you never have to start it by hand.
         </p>
+
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out:</strong> the queue's poll timer is <code class="bg-black/5 px-1">unref()</code>'d, so the queue does not keep Node running. The quick start works because it waits with its own <code class="bg-black/5 px-1">setTimeout</code>. A script that only calls <code class="bg-black/5 px-1">process()</code> and <code class="bg-black/5 px-1">add()</code> exits with code 0 before the job runs. In a service, an HTTP server or similar keeps the process alive.
+        </div>
 
         <div class="callout callout-warning">
           <strong class="text-zudo-yellow">Watch out:</strong> the first argument to <code class="bg-black/5 px-1">createInMemoryQueue</code> is a <code class="bg-black/5 px-1">QueueName</code>, not a plain string. Wrap the name in <code class="bg-black/5 px-1">createQueueName()</code> or TypeScript will reject it.
@@ -241,6 +245,9 @@ console.<span class="fn">log</span>(finished?.state); <span class="cmt">// "comp
         </p>
         <p class="mb-4 leading-relaxed">
           A <strong>processor</strong> is an <code class="bg-black/5 px-1">async</code> function registered with <code class="bg-black/5 px-1">queue.process(name, fn)</code>. The queue calls it with two arguments: the job, and a <code class="bg-black/5 px-1">JobContext</code>. The context carries an <code class="bg-black/5 px-1">AbortSignal</code> that fires if the job times out or the queue shuts down, plus an <code class="bg-black/5 px-1">updateProgress()</code> method.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          Inside a processor, <code class="bg-black/5 px-1">job.attempt</code> counts the attempts that have <em>already failed</em>, so it starts at <strong>0</strong>: a job with <code class="bg-black/5 px-1">attempts: 3</code> runs with <code class="bg-black/5 px-1">job.attempt</code> equal to 0, then 1, then 2. Add 1 if you want to log "attempt 1 of 3". <code class="bg-black/5 px-1">job.maxAttempts</code> holds the total.
         </p>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Job states</h3>
@@ -316,6 +323,29 @@ console.<span class="fn">log</span>((<span class="kw">await</span> queue.<span c
         <div class="callout callout-warning mb-4">
           <strong class="text-zudo-yellow">Reserved key:</strong> <code class="bg-black/5 px-1">metadata["zudo:context"]</code> (exported as <code class="bg-black/5 px-1">CONTEXT_METADATA_KEY</code>) belongs to the queue's context carriers. Since v1.3.0 the queue drops whatever the caller put there before storing the job, whether or not a carrier captured anything. Before v1.3.0, an <code class="bg-black/5 px-1">add()</code> made with no ambient context kept the caller's record verbatim and the queue replayed it around the middleware and the processor &mdash; so an enqueuer could choose the tenant, correlation id or trace the job ran under. Context that a carrier genuinely captured is unaffected; put your own data under any other key.
         </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Dates and other non-JSON values in <code>data</code></h3>
+        <p class="mb-3">
+          <code class="bg-black/5 px-1">add()</code> copies the payload through the queue's serializer, and the default one is plain JSON. A <code class="bg-black/5 px-1">Date</code> in <code class="bg-black/5 px-1">data</code> therefore reaches the processor as an ISO <strong>string</strong>, while the TypeScript type still says <code class="bg-black/5 px-1">Date</code>. The compiler is happy and <code class="bg-black/5 px-1">job.data.dueAt.getTime()</code> throws <code class="bg-black/5 px-1">TypeError: job.data.dueAt.getTime is not a function</code> at run time. A <code class="bg-black/5 px-1">BigInt</code> makes <code class="bg-black/5 px-1">add()</code> throw <code class="bg-black/5 px-1">JobSerializationError</code>, and a <code class="bg-black/5 px-1">Map</code> or <code class="bg-black/5 px-1">Set</code> arrives as an empty <code class="bg-black/5 px-1">{}</code>.
+        </p>
+        <p class="mb-3">Pass a type-preserving serializer and they arrive intact:</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createInMemoryQueue</span>, <span class="fn">createQueueName</span>, <span class="fn">createJsonSerializer</span> } <span class="kw">from</span> <span class="str">"@zudojs/queue"</span>;
+
+<span class="kw">interface</span> <span class="tp">Reminder</span> { <span class="prop">userId</span>: <span class="tp">string</span>; <span class="prop">dueAt</span>: <span class="tp">Date</span>; }
+
+<span class="kw">const</span> queue = <span class="fn">createInMemoryQueue</span>&lt;<span class="tp">Reminder</span>&gt;(<span class="fn">createQueueName</span>(<span class="str">"reminders"</span>), {
+  <span class="prop">serializer</span>: <span class="fn">createJsonSerializer</span>({ <span class="prop">preserveTypes</span>: <span class="kw">true</span> }),
+});
+
+queue.<span class="fn">process</span>(<span class="str">"remind"</span>, <span class="kw">async</span> (job) =&gt; {
+  console.<span class="fn">log</span>(job.data.dueAt <span class="kw">instanceof</span> <span class="tp">Date</span>, job.data.dueAt.<span class="fn">toISOString</span>());
+});
+
+<span class="kw">await</span> queue.<span class="fn">add</span>(<span class="str">"remind"</span>, { <span class="prop">userId</span>: <span class="str">"u1"</span>, <span class="prop">dueAt</span>: <span class="kw">new</span> <span class="tp">Date</span>(<span class="str">"2026-10-01T09:00:00Z"</span>) });
+<span class="kw">await</span> <span class="kw">new</span> <span class="tp">Promise</span>((resolve) =&gt; <span class="fn">setTimeout</span>(resolve, <span class="num">200</span>));
+<span class="cmt">// true 2026-10-01T09:00:00.000Z</span>
+<span class="kw">await</span> queue.<span class="fn">close</span>();</div>
+        <p class="mb-3"><code class="bg-black/5 px-1">createJsonSerializer({ preserveTypes: true })</code> uses the tagged format of <a href="/docs/packages-serialization" class="text-zudo-blue underline">@zudojs/serialization</a>, so <code class="bg-black/5 px-1">Date</code>, <code class="bg-black/5 px-1">BigInt</code>, <code class="bg-black/5 px-1">Map</code> and <code class="bg-black/5 px-1">Set</code> round-trip.</p>
 
         <p class="mb-3">This example uses priority, delay and deduplication together. <code class="bg-black/5 px-1">JobPriorityLevels</code> is a set of named numbers you can use instead of guessing.</p>
         <div class="code-block mb-4"><span class="kw">import</span> {
@@ -499,7 +529,7 @@ console.<span class="fn">log</span>(worker.<span class="fn">getStats</span>());
           <thead><tr><th>Option</th><th>What it does</th><th>Default</th></tr></thead>
           <tbody>
             <tr><td><code>concurrency</code></td><td>How many jobs this worker runs at the same time</td><td><code>1</code></td></tr>
-            <tr><td><code>pollInterval</code></td><td>Milliseconds to wait before asking again when the queue is empty</td><td><code>100</code></td></tr>
+            <tr><td><code>pollInterval</code></td><td>Milliseconds to wait before asking again when the queue is empty. The worker uses this value on every poll.</td><td><code>100</code></td></tr>
             <tr><td><code>timeoutMs</code></td><td>Timeout for jobs that carry none of their own</td><td>queue default (30 s)</td></tr>
             <tr><td><code>middleware</code></td><td>Extra middleware run after the queue's own</td><td>none</td></tr>
             <tr><td><code>drainTimeout</code></td><td>How long <code>stop()</code> waits for running jobs before forcing</td><td><code>30000</code></td></tr>
@@ -726,7 +756,7 @@ console.<span class="fn">log</span>(emails.<span class="fn">isDisposed</span>())
           <thead><tr><th>Name</th><th>What it does</th><th>Default</th></tr></thead>
           <tbody>
             <tr><td><code>concurrency</code></td><td>Jobs the queue's own loop runs at once</td><td><code>1</code></td></tr>
-            <tr><td><code>pollInterval</code></td><td>Milliseconds between checks for work</td><td><code>50</code></td></tr>
+            <tr><td><code>pollInterval</code></td><td>Delay before the queue's own loop first checks for work. Only the first poll uses it; see the note below</td><td><code>50</code></td></tr>
             <tr><td><code>defaultJobOptions</code></td><td><code>JobOptions</code> applied to every <code>add()</code></td><td>none</td></tr>
             <tr><td><code>middleware</code></td><td>Middleware run around every processor</td><td><code>[]</code></td></tr>
             <tr><td><code>eventEmitter</code></td><td>Where lifecycle events go</td><td>no-op</td></tr>
@@ -742,6 +772,9 @@ console.<span class="fn">log</span>(emails.<span class="fn">isDisposed</span>())
             <tr><td><code>contextCarriers</code></td><td>Context (tenant, correlation id, trace ids) carried from <code>add()</code> into the processor; see <code>captureContext</code> / <code>runWithContext</code> and the README section "Carrying context across the queue"</td><td>none</td></tr>
           </tbody>
         </table>
+        <div class="callout callout-warning mb-6">
+          <strong class="text-zudo-yellow">Watch out: pickup latency.</strong> <code class="bg-black/5 px-1">QueueOptions.pollInterval</code> is honoured only for the first poll after <code class="bg-black/5 px-1">process()</code>. After that the queue's own loop polls every 50&nbsp;ms, and once it has found nothing for half a second it doubles the wait on each empty poll, up to 2000&nbsp;ms. <code class="bg-black/5 px-1">add()</code> resets that back-off but does not wake the sleeping poller, so a job added to a queue that has been idle can wait up to about 2 seconds before it starts, whatever <code class="bg-black/5 px-1">pollInterval</code> says. If pickup latency matters, run a <code class="bg-black/5 px-1">Worker</code>, which polls at its own <code class="bg-black/5 px-1">pollInterval</code> every time.
+        </div>
 
         <h3 class="text-lg font-bold mb-3">Types and constants</h3>
         <table class="doc-table mb-6">
@@ -789,7 +822,8 @@ console.<span class="fn">log</span>(emails.<span class="fn">isDisposed</span>())
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <span><strong>Importing errors from <code class="bg-black/5 px-1">@zudojs/queue</code>.</strong> The import is <code class="bg-black/5 px-1">undefined</code> at runtime and <code class="bg-black/5 px-1">instanceof</code> checks silently fail. Import <code class="bg-black/5 px-1">JobTimeoutError</code> and friends from <code class="bg-black/5 px-1">@zudojs/errors</code>.</span></li>
           <li class="flex gap-2"><span class="text-zudo-yellow font-bold">&rarr;</span> <span><strong>Reading <code class="bg-black/5 px-1">job.state</code> from the object <code class="bg-black/5 px-1">add()</code> returned.</strong> Jobs are immutable snapshots, so it stays <code class="bg-black/5 px-1">"waiting"</code> forever. Call <code class="bg-black/5 px-1">queue.getJob(job.id)</code> to see the current state.</span></li>
           <li class="flex gap-2"><span class="text-zudo-green font-bold">&rarr;</span> <span><strong>Expecting <code class="bg-black/5 px-1">attempts: 3</code> to retry instantly.</strong> Without a <code class="bg-black/5 px-1">backoff</code> the default is exponential starting at 1 second, so a test that waits 200 ms sees only one attempt. Pass <code class="bg-black/5 px-1">createFixedBackoff(10)</code> in tests.</span></li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> <span><strong>Adding a payload that is not plain JSON.</strong> Class instances lose their methods and cyclic objects throw <code class="bg-black/5 px-1">JobSerializationError</code>. Put IDs and plain data in the job, and load the rest inside the processor.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> <span><strong>Adding a payload that is not plain JSON.</strong> Class instances lose their methods, a <code class="bg-black/5 px-1">Date</code> arrives as a string even though its type says <code class="bg-black/5 px-1">Date</code>, and cyclic objects throw <code class="bg-black/5 px-1">JobSerializationError</code>. Put IDs and plain data in the job, or pass <code class="bg-black/5 px-1">serializer: createJsonSerializer({ preserveTypes: true })</code> to keep dates, BigInts, maps and sets.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">&rarr;</span> <span><strong>Treating <code class="bg-black/5 px-1">job.attempt</code> as 1-based.</strong> It is 0 on the first run. Use <code class="bg-black/5 px-1">job.attempt + 1</code> for a human-readable count.</span></li>
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <span><strong>Forgetting <code class="bg-black/5 px-1">close()</code>.</strong> Jobs you never awaited are abandoned and pending retries are lost when the process exits. Close every queue (or <code class="bg-black/5 px-1">manager.closeAll()</code>) during shutdown.</span></li>
         </ul>
       </section>

@@ -502,13 +502,52 @@ for (const body of [{ done: true }, { title: "Walk", id: 1, createdAt: "2020-01-
 {"title":"Walk","id":1,"createdAt":"2020-01-01"} -&gt; [ 'Unknown key: id', 'Unknown key: createdAt' ]
 {} -&gt; [ 'Send at least one field to change' ]</pre></div>
 </figure>
-<p>Blindly copying request fields onto a stored object is a classic security hole called <strong>mass assignment</strong>: a client adds <code>"ownerId": 1</code> or <code>"role": "admin"</code> to a request and takes over data or rights. An explicit schema that lists exactly the changeable fields, strict or stripping, is the defence. Never spread the raw body (<code>{ ...task, ...body }</code>); spread only the parsed result.</p>
+<p>Blindly copying request fields onto a stored object is a classic security hole called <strong>mass assignment</strong>: a client adds <code>"ownerId": 1</code> or <code>"role": "admin"</code> to a request and takes over data or rights. An explicit schema that lists exactly the changeable fields, strict or stripping, is the defence. Never spread the raw body (<code>{ ...task, ...body }</code>).</p>
+<p>Spreading the <em>parsed</em> changes is not safe either, for a different reason. Look again at the first result above: <code>{ title: undefined, done: true, priority: undefined }</code>. In <code>@zudojs/schema</code> 1.1.1, a partial object keeps every field as a key, set to <code>undefined</code> when the client did not send it. Spreading that over a stored task wipes the fields the client never mentioned:</p>
+<figure class="lx-example" data-index="7" data-file="merge.ts">
+<figcaption class="lx-bar"><span class="lx-file">merge.ts</span><button type="button" class="lx-run" data-index="7"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> <span class="t-ty">UpdateTask</span> <span class="t-op">=</span> schema
+  <span class="t-pn">.</span><span class="t-ty">object</span><span class="t-pn">(</span><span class="t-pn">{</span> title<span class="t-op">:</span> schema<span class="t-pn">.</span><span class="t-ty">string</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">trim</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">min</span><span class="t-pn">(</span><span class="t-num">3</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">max</span><span class="t-pn">(</span><span class="t-num">100</span><span class="t-pn">)</span><span class="t-pn">,</span> done<span class="t-op">:</span> schema<span class="t-pn">.</span><span class="t-ty">boolean</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span>
+  <span class="t-pn">.</span><span class="t-fn">partial</span><span class="t-pn">(</span><span class="t-pn">)</span>
+  <span class="t-pn">.</span><span class="t-fn">strict</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> stored <span class="t-op">=</span> <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-num">1</span><span class="t-pn">,</span> title<span class="t-op">:</span> <span class="t-str">"Buy milk"</span><span class="t-pn">,</span> done<span class="t-op">:</span> <span class="t-cn">false</span> <span class="t-pn">}</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> changes <span class="t-op">=</span> <span class="t-ty">UpdateTask</span><span class="t-pn">.</span><span class="t-fn">parse</span><span class="t-pn">(</span><span class="t-pn">{</span> done<span class="t-op">:</span> <span class="t-cn">true</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"spread:"</span><span class="t-pn">,</span> <span class="t-pn">{</span> <span class="t-op">...</span><span class="t-prop">stored</span><span class="t-pn">,</span> <span class="t-op">...</span><span class="t-prop">changes</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> sent <span class="t-op">=</span> <span class="t-ty">Object</span><span class="t-pn">.</span><span class="t-fn">fromEntries</span><span class="t-pn">(</span><span class="t-ty">Object</span><span class="t-pn">.</span><span class="t-fn">entries</span><span class="t-pn">(</span>changes<span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">filter</span><span class="t-pn">(</span><span class="t-pn">(</span><span class="t-pn">[</span><span class="t-pn">,</span> value<span class="t-pn">]</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> value <span class="t-op">!==</span> <span class="t-cn">undefined</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"sent only:"</span><span class="t-pn">,</span> sent<span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"merged:"</span><span class="t-pn">,</span> <span class="t-pn">{</span> <span class="t-op">...</span><span class="t-prop">stored</span><span class="t-pn">,</span> <span class="t-op">...</span><span class="t-prop">sent</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+</code></pre>
+<script type="text/plain" class="lx-src">import { schema } from "@zudojs/schema";
+
+const UpdateTask = schema
+  .object({ title: schema.string().trim().min(3).max(100), done: schema.boolean() })
+  .partial()
+  .strict();
+
+const stored = { id: 1, title: "Buy milk", done: false };
+const changes = UpdateTask.parse({ done: true });
+
+console.log("spread:", { ...stored, ...changes });
+
+const sent = Object.fromEntries(Object.entries(changes).filter(([, value]) => value !== undefined));
+console.log("sent only:", sent);
+console.log("merged:", { ...stored, ...sent });</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx merge.ts</code> and of the browser terminal</div><pre class="lx-no-copy">spread: { id: 1, title: undefined, done: true }
+sent only: { done: true }
+merged: { id: 1, title: 'Buy milk', done: true }</pre></div>
+</figure>
+<p>The plain spread lost the title. A database layer would then save it as empty (<code>NULL</code>). Either drop the <code>undefined</code> values first, as <code>sent</code> does, or copy each field with <code>??</code>, as the Task API's service does below.</p>
 </section>
 
 <section>
 <h2 id="route">Validating requests in a route</h2>
 <p>A route has up to three inputs to check: route parameters, the query string and the body. A small helper makes each check one line. It uses <code>parse</code>, so a failure throws a <code>SchemaError</code>, which <code>@zudojs/http</code> already answers with 400. To also show <em>which</em> fields failed, this version catches the error and returns the issues:</p>
-<figure class="lx-example" data-index="7" data-file="route.ts">
+<figure class="lx-example" data-index="8" data-file="route.ts">
 <figcaption class="lx-bar"><span class="lx-file">route.ts</span><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createHttpServer<span class="t-pn">,</span> createNodeHttpAdapter<span class="t-pn">,</span> createResponseContext<span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpRequestContext</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
@@ -593,8 +632,8 @@ await server.stop();</script>
 <h2 id="response">Validating responses</h2>
 <p>Validation is not only for what comes in. What goes <em>out</em> matters too. A stored task may carry fields that are none of the client's business: an internal owner id, a flag for soft deletion, a password hash on a user record. If a route sends the stored object as it is, every field goes out, including ones added next year by someone who never looked at this route.</p>
 <p>A <strong>response schema</strong> is an allow-list: because object schemas strip unknown keys, parsing the stored object keeps only the listed fields. It also catches bugs, such as a missing field, before the client sees them:</p>
-<figure class="lx-example" data-index="8" data-file="response.ts">
-<figcaption class="lx-bar"><span class="lx-file">response.ts</span><button type="button" class="lx-run" data-index="8"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<figure class="lx-example" data-index="9" data-file="response.ts">
+<figcaption class="lx-bar"><span class="lx-file">response.ts</span><button type="button" class="lx-run" data-index="9"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Infer</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
 
@@ -662,8 +701,8 @@ console.log(broken.success ? "ok" : broken.issues[0]);</script>
 <section>
 <h2 id="guards">Guards for hostile JSON</h2>
 <p>A schema walks through a value to check it. A hostile client can send JSON built to make that walk expensive: an array nested thousands of levels deep, or megabytes of data in one field. <code>@zudojs/validation</code> has cheap <strong>structural guards</strong> that stop as soon as a limit is passed, before any schema runs. It is already in the Task API's dependencies:</p>
-<figure class="lx-example" data-index="9" data-file="guards.ts">
-<figcaption class="lx-bar"><span class="lx-file">guards.ts</span><button type="button" class="lx-run" data-index="9"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<figure class="lx-example" data-index="10" data-file="guards.ts">
+<figcaption class="lx-bar"><span class="lx-file">guards.ts</span><button type="button" class="lx-run" data-index="10"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> assertDepthWithinLimit<span class="t-pn">,</span> assertSizeWithinLimit <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/validation"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">BaseError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
 
@@ -715,7 +754,7 @@ too big -&gt; SerializationPayloadTooLargeError 413 Serialized payload too large
 <section>
 <h2 id="task-api">Put it in the Task API</h2>
 <p>Now give the Task API a filtered, paginated list and a <code>PATCH</code> route. First the schemas. Replace <code>src/validators/task.schema.ts</code>:</p>
-<figure class="lx-example" data-index="10" data-file="src/validators/task.schema.ts" data-project="task-api">
+<figure class="lx-example" data-index="11" data-file="src/validators/task.schema.ts" data-project="task-api">
 <figcaption class="lx-bar"><span class="lx-file">src/validators/task.schema.ts</span><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Infer</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
@@ -795,7 +834,7 @@ export const TaskResponse = schema.object({
 </figure>
 <p>The <code>TaskStore</code> is unchanged. The service gets a filtered <code>list</code> and an <code>update</code> method. Its input types come from the schemas, so it trusts that the route has validated them:</p>
 <details class="lx-solution"><summary>Show the unchanged task store</summary>
-<figure class="lx-example" data-index="11" data-file="src/repositories/task.store.ts" data-project="task-api">
+<figure class="lx-example" data-index="12" data-file="src/repositories/task.store.ts" data-project="task-api">
 <figcaption class="lx-bar"><span class="lx-file">src/repositories/task.store.ts</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">export</span> <span class="t-kw">type</span> <span class="t-ty">Priority</span> <span class="t-op">=</span> <span class="t-str">"low"</span> <span class="t-op">|</span> <span class="t-str">"normal"</span> <span class="t-op">|</span> <span class="t-str">"high"</span><span class="t-pn">;</span>
 
@@ -840,7 +879,7 @@ export class TaskStore {
 }</script>
 </figure>
 </details>
-<figure class="lx-example" data-index="12" data-file="src/services/task.service.ts" data-project="task-api">
+<figure class="lx-example" data-index="13" data-file="src/services/task.service.ts" data-project="task-api">
 <figcaption class="lx-bar"><span class="lx-file">src/services/task.service.ts</span><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">ConflictError</span><span class="t-pn">,</span> <span class="t-ty">NotFoundError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">StoredTask</span><span class="t-pn">,</span> <span class="t-ty">TaskStore</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"../repositories/task.store.js"</span><span class="t-pn">;</span>
@@ -959,7 +998,7 @@ export class TaskService {
 }</script>
 </figure>
 <p>When <code>list</code> is called without a query, it uses the schema's defaults (page 1, 20 tasks), so the check scripts from earlier lessons keep working. <code>update</code> copies each field explicitly: only the three changeable fields can ever change, whatever the request contained. In <code>src/utils/http.ts</code>, <code>readJson</code> now runs the guards on every body:</p>
-<figure class="lx-example" data-index="13" data-file="src/utils/http.ts" data-project="task-api">
+<figure class="lx-example" data-index="14" data-file="src/utils/http.ts" data-project="task-api">
 <figcaption class="lx-bar"><span class="lx-file">src/utils/http.ts</span><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> badRequest<span class="t-pn">,</span> <span class="t-ty">HttpError</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpRequestContext</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
@@ -1010,7 +1049,7 @@ export function readJson(request: HttpRequestContext): unknown {
 }</script>
 </figure>
 <p>The routes validate every input and send every task through <code>TaskResponse</code>. The old <code>parseId</code> helper is replaced by the <code>TaskIdParams</code> schema:</p>
-<figure class="lx-example" data-index="14" data-file="src/routes/tasks.routes.ts" data-project="task-api">
+<figure class="lx-example" data-index="15" data-file="src/routes/tasks.routes.ts" data-project="task-api">
 <figcaption class="lx-bar"><span class="lx-file">src/routes/tasks.routes.ts</span><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createResponseContext <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpRouter</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
@@ -1073,7 +1112,7 @@ export function registerTaskRoutes(router: HttpRouter, tasks: TaskService): void
 }</script>
 </figure>
 <p>A check script exercises all of it against a real server:</p>
-<figure class="lx-example" data-index="15" data-file="src/check-validation.ts" data-project="task-api">
+<figure class="lx-example" data-index="16" data-file="src/check-validation.ts" data-project="task-api">
 <figcaption class="lx-bar"><span class="lx-file">src/check-validation.ts</span><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createHttpServer<span class="t-pn">,</span> createNodeHttpAdapter<span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpRequestContext</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
@@ -1158,8 +1197,8 @@ npx tsx src/check-validation.ts"><span class="lx-cmd"><span class="lx-prompt" ar
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A search parameter</h3><p>Add a <code>q</code> parameter to <code>ListTasksQuery</code> for searching titles. It is optional, is trimmed, must be 1 to 50 characters, and is compared in lower case, so turn it to lower case in the schema. Test it with <code>?q=%20MILK%20</code> (the <code>%20</code> are spaces) and with <code>?q=</code>.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="16" data-file="search.ts">
-<figcaption class="lx-bar"><span class="lx-file">search.ts</span><button type="button" class="lx-run" data-index="16"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A search parameter</h3><p>Add a <code>q</code> parameter to <code>ListTasksQuery</code> for searching titles. It is optional, is trimmed, must be 1 to 50 characters, and is compared in lower case, so turn it to lower case in the schema. Test it with <code>?q=%20MILK%20</code> (the <code>%20</code> are spaces) and with <code>?q=</code>.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="17" data-file="search.ts">
+<figcaption class="lx-bar"><span class="lx-file">search.ts</span><button type="button" class="lx-run" data-index="17"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> <span class="t-ty">ListTasksQuery</span> <span class="t-op">=</span> schema<span class="t-pn">.</span><span class="t-ty">object</span><span class="t-pn">(</span><span class="t-pn">{</span>
@@ -1189,8 +1228,8 @@ console.log(ListTasksQuery.parse({}));</script>
 </figure>
 <p><code>URLSearchParams</code> and the router decode <code>%20</code> into a space before your schema sees the value. An empty <code>q=</code> is refused rather than matching everything; leaving the parameter out entirely is what "no search" looks like.</p></details></div>
 <div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Spot the mass assignment</h3><p>This update function has a security hole. Find it, and fix it using <code>UpdateTaskSchema</code>.</p>
-<figure class="lx-example" data-index="17" data-file="hole.ts">
-<figcaption class="lx-bar"><span class="lx-file">hole.ts</span><button type="button" class="lx-run" data-index="17"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<figure class="lx-example" data-index="18" data-file="hole.ts">
+<figcaption class="lx-bar"><span class="lx-file">hole.ts</span><button type="button" class="lx-run" data-index="18"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">function</span> <span class="t-fn">updateTask</span><span class="t-pn">(</span>task<span class="t-op">:</span> <span class="t-ty">StoredTask</span><span class="t-pn">,</span> body<span class="t-op">:</span> <span class="t-ty">Record</span><span class="t-op">&lt;</span><span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-ty">unknown</span><span class="t-op">&gt;</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">StoredTask</span> <span class="t-pn">{</span>
   <span class="t-kw">return</span> <span class="t-pn">{</span> <span class="t-op">...</span><span class="t-prop">task</span><span class="t-pn">,</span> <span class="t-op">...</span><span class="t-prop">body</span> <span class="t-pn">}</span> <span class="t-kw">as</span> <span class="t-ty">StoredTask</span><span class="t-pn">;</span>
 <span class="t-pn">}</span>
@@ -1199,8 +1238,8 @@ console.log(ListTasksQuery.parse({}));</script>
   return { ...task, ...body } as StoredTask;
 }</script>
 </figure><details class="lx-solution"><summary>Show a solution</summary><p><code>{ ...task, ...body }</code> copies <em>every</em> field of the request body onto the task: <code>id</code>, <code>createdAt</code>, and in later lessons <code>ownerId</code>. A client could move a task to another user or overwrite its id. The <code>as StoredTask</code> hides the problem from TypeScript. The fix parses first and copies only known fields:</p>
-<figure class="lx-example" data-index="18" data-file="fixed.ts">
-<figcaption class="lx-bar"><span class="lx-file">fixed.ts</span><button type="button" class="lx-run" data-index="18"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<figure class="lx-example" data-index="19" data-file="fixed.ts">
+<figcaption class="lx-bar"><span class="lx-file">fixed.ts</span><button type="button" class="lx-run" data-index="19"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> <span class="t-ty">UpdateTaskSchema</span> <span class="t-op">=</span> schema
@@ -1266,7 +1305,7 @@ SchemaError Validation failed</pre></div>
 <li>Issues have <code>code</code>, <code>path</code> and <code>message</code>; turn them into per-field messages for clients.</li>
 <li>Query strings, parameters and environment variables are text: use <code>schema.coerce</code>. JSON bodies are not: use the normal schemas.</li>
 <li><code>.transform()</code> changes the output (and its type); <code>.refine()</code> and <code>schema.refine()</code> add your own synchronous rules. Check that dates are real, not just date-shaped.</li>
-<li>Write update schemas by hand without defaults, use <code>.strict()</code> to refuse unknown fields, and never spread a raw body onto stored data (mass assignment).</li>
+<li>Write update schemas by hand without defaults, use <code>.strict()</code> to refuse unknown fields, never spread a raw body onto stored data (mass assignment), and drop <code>undefined</code> values before merging parsed changes.</li>
 <li>A response schema is an allow-list for what leaves the server.</li>
 <li><code>@zudojs/validation</code>'s depth and size guards stop hostile JSON before a schema walks it.</li>
 </ul>

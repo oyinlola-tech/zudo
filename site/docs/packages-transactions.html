@@ -290,6 +290,10 @@ console.<span class="fn">log</span>(transaction.state); <span class="cm">// "com
         <div class="callout callout-warning">
           <p class="text-sm"><strong>Watch out:</strong> committing a transaction that was already rolled back throws <code>TransactionStateError</code>. Only a second commit of an already-committed transaction is a harmless no-op.</p>
         </div>
+
+        <div class="callout callout-warning">
+          <p class="text-sm"><strong>The other way round is silent:</strong> <code>manager.rollback(transaction, reason)</code> on a transaction that is already <code>committed</code> (or already rolled back or failed) does nothing and does not throw. The state stays <code>"committed"</code>, so a <code>catch</code> block that rolls back after a late failure has <em>not</em> undone anything. Check <code>transaction.state</code> if you need to know, and put follow-up work that can fail inside the transaction, before the commit.</p>
+        </div>
       </section>
 
       <!-- ==================== ADAPTERS ==================== -->
@@ -301,6 +305,9 @@ console.<span class="fn">log</span>(transaction.state); <span class="cm">// "com
         <p class="mb-4 leading-relaxed">
           A <em>handle</em> is whatever your <code>begin()</code> returns — a client, a connection, an id. The manager stores it and hands it straight back to you on commit and rollback, without looking inside.
         </p>
+        <div class="callout callout-warning">
+          <p class="text-sm"><strong>Watch out:</strong> the handle only flows between the manager and the adapter. The <code>Transaction</code> your callback receives, and <code>manager.getCurrent()</code>, have no public way to reach it, so application code cannot get "the connection of the current transaction" from this package. Keep that link yourself: have your adapter's <code>begin()</code> store the connection somewhere your repositories can read it (for example your own <code>AsyncLocalStorage</code>, or a <code>WeakMap</code> keyed by the transaction id), or use a database package that runs queries on the transaction client for you.</p>
+        </div>
         <p class="mb-4 leading-relaxed">
           An adapter also declares its <code>capabilities</code>: whether it can do savepoints, nested transactions, read-only transactions, timeouts, and which isolation levels it accepts. Asking for something the adapter did not declare throws <code>TransactionIsolationError</code> (unsupported isolation level) or <code>TransactionCapabilityError</code> (any other capability) before any work starts.
         </p>
@@ -350,7 +357,7 @@ console.<span class="fn">log</span>(log); <span class="cm">// [ 'BEGIN', 'COMMIT
           You ask for one per transaction with <code>isolation</code>. The adapter above accepts two of the four, so this throws:
         </p>
         <div class="code-block mb-4"><span class="kw">await</span> manager.<span class="fn">begin</span>({ isolation: <span class="str">"repeatable_read"</span> });
-<span class="cm">// TransactionAdapterError: Adapter does not support isolation level "repeatable_read"</span></div>
+<span class="cm">// TransactionIsolationError: Isolation level "repeatable_read" is not supported by the adapter</span></div>
       </section>
 
       <!-- ==================== PROPAGATION ==================== -->
@@ -490,13 +497,19 @@ console.<span class="fn">log</span>(transaction.state); <span class="cm">// "rol
         <div class="code-block mb-4"><span class="kw">await</span> manager.<span class="fn">run</span>(<span class="kw">async</span> () =&gt; {
   <span class="kw">await new</span> <span class="tp">Promise</span>((resolve) =&gt; <span class="fn">setTimeout</span>(resolve, <span class="num">40</span>));
 }, { timeout: <span class="num">10</span> });
-<span class="cm">// rejects with TransactionRollbackError; the adapter saw BEGIN then ROLLBACK</span></div>
+<span class="cm">// rejects with TransactionTimeoutError; the adapter saw BEGIN then ROLLBACK</span></div>
         <p class="mb-4 leading-relaxed">
           A timeout does not interrupt your callback — it cannot, since the work is already in flight. It guarantees the result is thrown away, not that the work stops early. The timer is cleared as soon as the transaction ends.
         </p>
 
         <div class="callout callout-warning">
           <p class="text-sm"><strong>Watch out:</strong> a timed-out transaction is rolled back and <code>commit()</code>/<code>run()</code> throw <code>TransactionTimeoutError</code> (<code>transaction.timedOut</code> is also true). Transactions opened with <code>begin()</code> time out too. The adapter must declare <code>timeouts: true</code> or the <code>timeout</code> option is rejected up front.</p>
+        </div>
+
+        <div class="border-4 border-black bg-zudo-red/10 p-4 mb-6">
+          <p class="font-bold mb-2">A timeout does not stop your callback, and the database may still be doing the work.</p>
+          <p class="text-sm mb-2">When the timer fires, the manager only flags the transaction. Your callback runs to the end; in the example above it still finishes its 40&nbsp;ms of work, and only then does <code>run()</code> roll back and reject. Any side effect outside the transaction (an HTTP call, a queue message, a file) has already happened by then. If the work itself must stop, pass your own <code>AbortSignal</code> into it, or use the database's own statement timeout.</p>
+          <p class="text-sm">If you watch events with <code>onEvent</code>, a timed-out transaction reports <code>transaction.timed_out</code> <strong>twice</strong>: once when the timer fires, and again when the commit is refused. Count timeouts from the <code>TransactionTimeoutError</code>, not from the events.</p>
         </div>
       </section>
 
@@ -614,7 +627,7 @@ console.<span class="fn">log</span>(registry.<span class="fn">getActive</span>()
           <table class="doc-table">
             <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
             <tbody>
-              <tr><td><code>createTransactionManager({ adapter, context?, hooks?, registry? })</code></td><td>Builds the manager you call from app code.</td><td><code>adapter</code> is required; the context defaults to a shared <code>AsyncLocalStorage</code> one.</td></tr>
+              <tr><td><code>createTransactionManager({ adapter, context?, hooks?, registry?, onEvent? })</code></td><td>Builds the manager you call from app code.</td><td><code>adapter</code> is required; the context defaults to a shared <code>AsyncLocalStorage</code> one. <code>onEvent</code> receives a <code>TransactionEvent</code> for each lifecycle step.</td></tr>
               <tr><td><code>createInMemoryAdapter()</code></td><td>Adapter that keeps handles in memory and emulates savepoints.</td><td>For tests and examples. Declares every capability.</td></tr>
               <tr><td><code>createAdapter(implementation, capabilities)</code></td><td>Copies an adapter with a frozen capability list.</td><td>Handy when one driver is used at two capability levels.</td></tr>
               <tr><td><code>createTransactionContext()</code></td><td>A fresh <code>AsyncLocalStorage</code>-backed context.</td><td>Pass as <code>context</code> to isolate a manager, as the tests do.</td></tr>
@@ -684,11 +697,12 @@ console.<span class="fn">log</span>(registry.<span class="fn">getActive</span>()
             <tbody>
               <tr><td><code>TransactionError</code></td><td>Base class for every error here.</td><td>Owned by <a href="/docs/packages-errors" class="font-bold text-zudo-blue hover:underline">@zudojs/errors</a> and re-exported here (all 12 classes), so <code>instanceof</code> matches either import.</td></tr>
               <tr><td><code>TransactionStateError</code></td><td>The transaction is in the wrong state for what you asked.</td><td>Thrown by commit, rollback and illegal transitions.</td></tr>
-              <tr><td><code>TransactionRollbackError</code></td><td>The commit turned into a rollback, or the rollback itself failed.</td><td>This is what a rollback-only or timed-out commit rejects with.</td></tr>
+              <tr><td><code>TransactionRollbackError</code></td><td>The commit turned into a rollback, or the rollback itself failed.</td><td>This is what a rollback-only commit rejects with. Its message says <code>Transaction "txn_…" rollback failed</code> even when the rollback worked and the commit was only refused; the real reason (the <code>markRollbackOnly</code> reason, or the participant's error) is in <code>error.metadata.originalError</code>, and a driver failure during rollback is in <code>cause</code>. Log those, not the message.</td></tr>
               <tr><td><code>TransactionCommitError</code></td><td>The adapter refused the commit.</td><td>The driver error is in <code>cause</code>.</td></tr>
-              <tr><td><code>TransactionAdapterError</code></td><td>A requested capability is missing, or the adapter misbehaved.</td><td>Thrown before any work starts.</td></tr>
+              <tr><td><code>TransactionAdapterError</code></td><td>The adapter misbehaved.</td><td>The in-memory adapter throws it for a foreign handle or an unknown savepoint. A missing capability is <code>TransactionIsolationError</code> / <code>TransactionCapabilityError</code>.</td></tr>
               <tr><td><code>TransactionPropagationError</code></td><td>A propagation rule was broken.</td><td><code>mandatory</code> with nothing open, <code>never</code> with something open, an unknown mode.</td></tr>
-              <tr><td><code>TransactionTimeoutError</code>, <code>TransactionIsolationError</code>, <code>SavepointError</code>, <code>TransactionRequiredError</code>, <code>TransactionUnexpectedError</code>, <code>TransactionCapabilityError</code></td><td>Extra error classes you can throw from your own adapters and services.</td><td>The package itself never throws these.</td></tr>
+              <tr><td><code>TransactionTimeoutError</code>, <code>TransactionIsolationError</code>, <code>TransactionCapabilityError</code>, <code>SavepointError</code></td><td>A timed-out commit; an isolation level or other capability the adapter did not declare; a savepoint that could not be released or rolled back to.</td><td>Thrown by the manager.</td></tr>
+              <tr><td><code>TransactionRequiredError</code>, <code>TransactionUnexpectedError</code></td><td>Extra error classes you can throw from your own adapters and services.</td><td>The package itself never throws these.</td></tr>
             </tbody>
           </table>
         </div>
@@ -705,7 +719,7 @@ console.<span class="fn">log</span>(registry.<span class="fn">getActive</span>()
               <tr><td><code>TransactionHooks</code>, <code>TransactionHookContext</code>, <code>TransactionErrorContext</code></td><td>Hook shapes.</td><td>Hooks receive <code>{ transaction }</code>, <code>onError</code> also <code>{ error }</code>.</td></tr>
               <tr><td><code>TransactionRegistry</code></td><td>Contract for a registry.</td><td>Implement it to publish open transactions elsewhere.</td></tr>
               <tr><td><code>Savepoint</code>, <code>TransactionResult</code></td><td>Shapes for savepoint objects and run results.</td><td>Declarations only — nothing in the package returns one.</td></tr>
-              <tr><td><code>TRANSACTION_EVENTS</code>, <code>TransactionEvent</code>, <code>TransactionEventHandler</code></td><td>Names and shapes for transaction lifecycle events.</td><td>Constants and types only; the package emits nothing. Publish them from hooks yourself.</td></tr>
+              <tr><td><code>TRANSACTION_EVENTS</code>, <code>TransactionEvent</code>, <code>TransactionEventHandler</code></td><td>Names and shapes for transaction lifecycle events.</td><td>Pass <code>onEvent</code> to <code>createTransactionManager</code> to receive them. A throwing handler is ignored. A timeout is reported twice (see Timeouts).</td></tr>
             </tbody>
           </table>
         </div>

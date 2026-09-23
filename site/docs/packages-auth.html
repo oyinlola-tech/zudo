@@ -296,6 +296,13 @@ $ pnpm add @zudojs/auth @zudojs/errors @zudojs/constants @zudojs/permissions</di
   <span class="kw">type</span> <span class="tp">AuthUser</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/auth"</span>;
 
+<span class="cmt">// Secrets come from the environment; a missing one stops the app at startup.</span>
+<span class="kw">function</span> <span class="fn">requireEnv</span>(name: <span class="tp">string</span>): <span class="tp">string</span> {
+  <span class="kw">const</span> value = process.env[name];
+  <span class="kw">if</span> (!value) <span class="kw">throw</span> <span class="kw">new</span> <span class="tp">Error</span>(<span class="str">`${name} is not set`</span>);
+  <span class="kw">return</span> value;
+}
+
 <span class="cmt">// 1. A user record. In a real app this row comes from your database.</span>
 <span class="kw">const</span> passwordHash = <span class="kw">await</span> <span class="fn">hashPassword</span>(<span class="str">"correct horse battery staple"</span>);
 
@@ -310,8 +317,8 @@ $ pnpm add @zudojs/auth @zudojs/errors @zudojs/constants @zudojs/permissions</di
 <span class="cmt">// 2. Wire the service. Every function below is one you supply.</span>
 <span class="kw">const</span> auth = <span class="fn">createAuthService</span>({
   <span class="op">token:</span> {
-    <span class="op">accessSecret:</span> <span class="str">"access-secret-at-least-32-bytes-long!!"</span>,
-    <span class="op">refreshSecret:</span> <span class="str">"refresh-secret-at-least-32-bytes-long!!"</span>,
+    <span class="op">accessSecret:</span> <span class="fn">requireEnv</span>(<span class="str">"JWT_ACCESS_SECRET"</span>),
+    <span class="op">refreshSecret:</span> <span class="fn">requireEnv</span>(<span class="str">"JWT_REFRESH_SECRET"</span>),
   },
   <span class="op">sessionStore:</span> <span class="fn">createMemorySessionStore</span>(),
   <span class="op">sessionTtlSeconds:</span> <span class="num">3600</span>,
@@ -338,11 +345,15 @@ console.<span class="fn">log</span>(payload.sub, payload.roles);
 <span class="kw">await</span> auth.<span class="fn">logout</span>(sessionId, tokens.refreshToken);
 <span class="kw">await</span> auth.<span class="fn">verifyToken</span>(tokens.accessToken); <span class="cmt">// throws SessionExpiredError</span></div>
             <p class="text-body text-black/80 mb-4">
-              What you should see: the three <span class="code-inline">console.log</span> lines above, then an uncaught <span class="code-inline">SessionExpiredError</span> from the last line — which is the point of the example.
+              What you should see: the two <span class="code-inline">console.log</span> lines above, then an uncaught <span class="code-inline">SessionExpiredError</span> from the last line — which is the point of the example.
             </p>
+            <div class="callout callout-warning mb-6">
+              <strong class="text-sm uppercase tracking-wider">login() does not normalise the identifier</strong>
+              <p class="text-sm mt-1"><span class="code-inline">findUser</span> receives exactly what was typed. Logging in with <span class="code-inline">"  Alice@Example.com "</span> passes that string, spaces and capitals included, so the lookup above misses and the user gets <span class="code-inline">InvalidCredentialsError</span>. (The login throttle, by contrast, <em>does</em> trim and lower-case its counter key.) Normalise once, in the same way when you store an email and when you look it up: call <span class="code-inline">auth.login({ identifier: input.trim().toLowerCase(), password })</span>, or do it inside <span class="code-inline">findUser</span>.</p>
+            </div>
             <div class="callout callout-danger mb-6">
               <strong class="text-sm uppercase tracking-wider">Never hard-code secrets</strong>
-              <p class="text-sm mt-1">The literal secrets above keep the example self-contained. In real code read them from the environment. Each must be at least 32 bytes, and the two must differ — otherwise <span class="code-inline">AuthConfigurationError</span> is thrown on the first token operation.</p>
+              <p class="text-sm mt-1">The example reads both signing secrets from the environment and has no fallback, so set them before running it, e.g. <span class="code-inline">export JWT_ACCESS_SECRET=$(openssl rand -hex 32)</span> and the same for <span class="code-inline">JWT_REFRESH_SECRET</span>. Each must be at least 32 bytes, and the two must differ. <span class="code-inline">createAuthService()</span> checks them when it is <em>constructed</em>, not on first use: a missing, short or shared secret throws <span class="code-inline">AuthConfigurationError</span> (<span class="code-inline">ERR_CONFIGURATION_INVALID</span>) at startup. Never write <span class="code-inline">?? "some-default"</span> after <span class="code-inline">process.env</span>: a secret that is in your source code is not a secret.</p>
             </div>
           </section>
 
@@ -416,9 +427,16 @@ console.<span class="fn">log</span>(<span class="fn">needsRehash</span>(stored))
   <span class="kw">type</span> <span class="tp">TokenConfig</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/auth"</span>;
 
+<span class="cmt">// Secrets come from the environment; a missing one stops the app at startup.</span>
+<span class="kw">function</span> <span class="fn">requireEnv</span>(name: <span class="tp">string</span>): <span class="tp">string</span> {
+  <span class="kw">const</span> value = process.env[name];
+  <span class="kw">if</span> (!value) <span class="kw">throw</span> <span class="kw">new</span> <span class="tp">Error</span>(<span class="str">`${name} is not set`</span>);
+  <span class="kw">return</span> value;
+}
+
 <span class="kw">const</span> config: <span class="tp">TokenConfig</span> = {
-  <span class="op">accessSecret:</span> <span class="str">"access-secret-at-least-32-bytes-long!!"</span>,
-  <span class="op">refreshSecret:</span> <span class="str">"refresh-secret-at-least-32-bytes-long!!"</span>,
+  <span class="op">accessSecret:</span> <span class="fn">requireEnv</span>(<span class="str">"JWT_ACCESS_SECRET"</span>),
+  <span class="op">refreshSecret:</span> <span class="fn">requireEnv</span>(<span class="str">"JWT_REFRESH_SECRET"</span>),
   <span class="op">accessTtl:</span> <span class="num">900</span>,
   <span class="op">refreshTtl:</span> <span class="num">604800</span>,
   <span class="op">issuer:</span> <span class="str">"my-api"</span>,
@@ -437,7 +455,7 @@ console.<span class="fn">log</span>(<span class="fn">needsRehash</span>(stored))
   console.<span class="fn">log</span>(result.error); <span class="cmt">// e.g. "Token expired" or "Invalid signature"</span>
 }</div>
             <p class="text-body text-black/80 mb-4">
-              A bad <em>token</em> is never an exception — it comes back as <span class="code-inline">{ valid: false, error }</span>. A bad <em>config</em> is: missing, short, or identical secrets throw <span class="code-inline">AuthConfigurationError</span>.
+              A bad <em>token</em> is never an exception — it comes back as <span class="code-inline">{ valid: false, error }</span>. A bad <em>config</em> is: missing, short, or identical secrets throw <span class="code-inline">AuthConfigurationError</span> from <span class="code-inline">createTokenPair</span> and <span class="code-inline">verifyAccessToken</span> on every call, and from <span class="code-inline">createAuthService()</span> as soon as it is constructed.
             </p>
             <p class="text-body text-black/80 mb-4">
               The token payload carries <span class="code-inline">sub</span> (user id), <span class="code-inline">iat</span> and <span class="code-inline">exp</span> (issued-at and expiry, in Unix seconds), <span class="code-inline">typ</span> (<span class="code-inline">"access"</span> or <span class="code-inline">"refresh"</span>), <span class="code-inline">jti</span> (a random id used for revocation), optional <span class="code-inline">roles</span>, and optional <span class="code-inline">sid</span> (the session it belongs to).
@@ -588,6 +606,13 @@ console.<span class="fn">log</span>(<span class="tp">String</span>(userId) === <
   <span class="kw">type</span> <span class="tp">AuthUser</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/auth"</span>;
 
+<span class="cmt">// Secrets come from the environment; a missing one stops the app at startup.</span>
+<span class="kw">function</span> <span class="fn">requireEnv</span>(name: <span class="tp">string</span>): <span class="tp">string</span> {
+  <span class="kw">const</span> value = process.env[name];
+  <span class="kw">if</span> (!value) <span class="kw">throw</span> <span class="kw">new</span> <span class="tp">Error</span>(<span class="str">`${name} is not set`</span>);
+  <span class="kw">return</span> value;
+}
+
 <span class="kw">const</span> alice: <span class="tp">AuthUser</span> = {
   <span class="op">id:</span> <span class="fn">toUserId</span>(<span class="str">"user-123"</span>),
   <span class="op">email:</span> <span class="str">"alice@example.com"</span>,
@@ -598,8 +623,8 @@ console.<span class="fn">log</span>(<span class="tp">String</span>(userId) === <
 
 <span class="kw">const</span> auth = <span class="fn">createAuthService</span>({
   <span class="op">token:</span> {
-    <span class="op">accessSecret:</span> <span class="str">"access-secret-at-least-32-bytes-long!!"</span>,
-    <span class="op">refreshSecret:</span> <span class="str">"refresh-secret-at-least-32-bytes-long!!"</span>,
+    <span class="op">accessSecret:</span> <span class="fn">requireEnv</span>(<span class="str">"JWT_ACCESS_SECRET"</span>),
+    <span class="op">refreshSecret:</span> <span class="fn">requireEnv</span>(<span class="str">"JWT_REFRESH_SECRET"</span>),
   },
   <span class="op">sessionStore:</span> <span class="fn">createMemorySessionStore</span>(),
   <span class="op">revocationStore:</span> <span class="fn">createMemoryTokenRevocationStore</span>(),
@@ -661,6 +686,13 @@ console.<span class="fn">log</span>(rotated.refreshToken !== tokens.refreshToken
 } <span class="kw">from</span> <span class="str">"@zudojs/auth"</span>;
 <span class="kw">import</span> { <span class="fn">createPermissionEngine</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
 
+<span class="cmt">// Secrets come from the environment; a missing one stops the app at startup.</span>
+<span class="kw">function</span> <span class="fn">requireEnv</span>(name: <span class="tp">string</span>): <span class="tp">string</span> {
+  <span class="kw">const</span> value = process.env[name];
+  <span class="kw">if</span> (!value) <span class="kw">throw</span> <span class="kw">new</span> <span class="tp">Error</span>(<span class="str">`${name} is not set`</span>);
+  <span class="kw">return</span> value;
+}
+
 <span class="kw">const</span> alice: <span class="tp">AuthUser</span> = {
   <span class="op">id:</span> <span class="fn">toUserId</span>(<span class="str">"user-123"</span>),
   <span class="op">email:</span> <span class="str">"alice@example.com"</span>,
@@ -671,8 +703,8 @@ console.<span class="fn">log</span>(rotated.refreshToken !== tokens.refreshToken
 
 <span class="kw">const</span> auth = <span class="fn">createAuthService</span>({
   <span class="op">token:</span> {
-    <span class="op">accessSecret:</span> <span class="str">"access-secret-at-least-32-bytes-long!!"</span>,
-    <span class="op">refreshSecret:</span> <span class="str">"refresh-secret-at-least-32-bytes-long!!"</span>,
+    <span class="op">accessSecret:</span> <span class="fn">requireEnv</span>(<span class="str">"JWT_ACCESS_SECRET"</span>),
+    <span class="op">refreshSecret:</span> <span class="fn">requireEnv</span>(<span class="str">"JWT_REFRESH_SECRET"</span>),
   },
   <span class="op">sessionStore:</span> <span class="fn">createMemorySessionStore</span>(),
   <span class="op">sessionTtlSeconds:</span> <span class="num">3600</span>,
@@ -832,6 +864,9 @@ console.<span class="fn">log</span>(<span class="fn">generateCsrfToken</span>().
               </tbody>
             </table>
             <p class="text-body text-black/80 mb-4">
+              <span class="code-inline">AccountLockedError</span>, <span class="code-inline">AccountDeactivatedError</span> and <span class="code-inline">TokenRevokedError</span> all carry the same <span class="code-inline">code</span>, <span class="code-inline">ERR_FORBIDDEN</span> (the locked one with status 423, the other two 403). Do not branch on <span class="code-inline">error.code</span> to tell them apart; use <span class="code-inline">instanceof</span> on the class.
+            </p>
+            <p class="text-body text-black/80 mb-4">
               <span class="code-inline">AuthErrorOptions</span> is exported too, for constructing these yourself. <span class="code-inline">AccountLockedError</span> and <span class="code-inline">AuthRateLimitError</span> put a <span class="code-inline">retryAfterSeconds</span> value in their metadata, ready for a <span class="code-inline">Retry-After</span> header.
             </p>
 
@@ -851,7 +886,7 @@ console.<span class="fn">log</span>(<span class="fn">generateCsrfToken</span>().
             <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="common-mistakes">COMMON MISTAKES</h2>
             <ul class="text-body text-black/80 list-disc pl-6 space-y-3 mb-6">
               <li><strong>Passing your email-keyed <span class="code-inline">findUser</span> as <span class="code-inline">findUserById</span>.</strong> Every refresh looks up a user id in an email-keyed table, gets nothing, and throws <span class="code-inline">AccountDeactivatedError</span>. Users drop out roughly 15 minutes after logging in. <em>Fix:</em> give <span class="code-inline">findUserById</span> a real id-keyed lookup.</li>
-              <li><strong>Using the same string for <span class="code-inline">accessSecret</span> and <span class="code-inline">refreshSecret</span>.</strong> The first token operation throws <span class="code-inline">AuthConfigurationError</span>, because one secret would let a refresh token be presented as an access token. <em>Fix:</em> two different secrets, each at least 32 bytes.</li>
+              <li><strong>Using the same string for <span class="code-inline">accessSecret</span> and <span class="code-inline">refreshSecret</span>.</strong> <span class="code-inline">createAuthService()</span> throws <span class="code-inline">AuthConfigurationError</span> at construction, because one secret would let a refresh token be presented as an access token. <em>Fix:</em> two different secrets, each at least 32 bytes.</li>
               <li><strong>Calling the standalone <span class="code-inline">refreshAccessToken()</span> on a public route.</strong> It does not rotate, revoke, re-load the user, or check the session, so a stolen refresh token works for a week. <em>Fix:</em> use <span class="code-inline">createAuthService().refresh()</span> with a <span class="code-inline">revocationStore</span>.</li>
               <li><strong>Trusting <span class="code-inline">extractUserId()</span> to identify the caller.</strong> It reads an unverified payload, so anyone can forge a user id. <em>Fix:</em> call <span class="code-inline">verifyToken()</span> and use <span class="code-inline">payload.sub</span>.</li>
               <li><strong>Shipping the in-memory stores.</strong> Sessions, revocations and attempt counters vanish on restart and are not shared between instances, so logouts and lockouts do not hold. <em>Fix:</em> implement <span class="code-inline">SessionStore</span>, <span class="code-inline">TokenRevocationStore</span> and <span class="code-inline">LoginAttemptStore</span> against Redis or your database.</li>

@@ -406,7 +406,10 @@ console.<span class="fn">log</span>(cors.<span class="fn">getDisallowedHeaders</
         <p class="mb-4">Issuing a token when a page is rendered:</p>
         <div class="code-block mb-4"><span class="kw">import</span> { generateCsrfToken, generateCsrfCookie } <span class="kw">from</span> <span class="str">"@zudojs/security"</span>;
 
-<span class="kw">const</span> secret = process.env.<span class="const">CSRF_SECRET</span> ?? <span class="str">"a-long-random-string"</span>;
+<span class="cmt">// At least 32 characters, e.g. randomBytes(32).toString("hex"). No fallback:</span>
+<span class="cmt">// a missing secret must stop the app, not quietly use a known string.</span>
+<span class="kw">const</span> secret = process.env.<span class="const">CSRF_SECRET</span>;
+<span class="kw">if</span> (!secret) <span class="kw">throw</span> <span class="kw">new</span> <span class="fn">Error</span>(<span class="str">"CSRF_SECRET is not set"</span>);
 
 <span class="cmt">// sessionId binds the token to one logged-in user.</span>
 <span class="kw">const</span> token = <span class="fn">generateCsrfToken</span>(secret, { sessionId: <span class="str">"user-42"</span>, expiration: <span class="num">3600</span> });
@@ -434,8 +437,15 @@ console.<span class="fn">log</span>(setCookie);
   <span class="kw">return</span> <span class="fn">verifyDoubleSubmit</span>(fromCookie, fromRequest, secret, { sessionId });
 }
 
-console.<span class="fn">log</span>(<span class="fn">checkCsrf</span>(<span class="str">"GET"</span>, {}, <span class="str">"user-42"</span>, <span class="str">"s3cret"</span>));  <span class="cmt">// true — nothing to check</span>
-console.<span class="fn">log</span>(<span class="fn">checkCsrf</span>(<span class="str">"POST"</span>, {}, <span class="str">"user-42"</span>, <span class="str">"s3cret"</span>)); <span class="cmt">// false — no token present</span></div>
+<span class="cmt">// secret is the CSRF_SECRET read above (32+ characters).</span>
+console.<span class="fn">log</span>(<span class="fn">checkCsrf</span>(<span class="str">"GET"</span>, {}, <span class="str">"user-42"</span>, secret));  <span class="cmt">// true — nothing to check</span>
+console.<span class="fn">log</span>(<span class="fn">checkCsrf</span>(<span class="str">"POST"</span>, {}, <span class="str">"user-42"</span>, secret)); <span class="cmt">// false — no token present</span>
+console.<span class="fn">log</span>(<span class="fn">checkCsrf</span>(<span class="str">"POST"</span>, { cookie: <span class="str">"_csrf=abc"</span>, <span class="str">"x-csrf-token"</span>: <span class="str">"abc"</span> }, <span class="str">"user-42"</span>, secret)); <span class="cmt">// false — forged token</span>
+<span class="fn">checkCsrf</span>(<span class="str">"POST"</span>, {}, <span class="str">"user-42"</span>, <span class="str">"s3cret"</span>); <span class="cmt">// throws ConfigurationError — secret under 32 characters</span></div>
+
+        <div class="callout callout-warning">
+          <strong>Two different failures:</strong> a missing, forged, expired or wrong-session token makes <code>verifyDoubleSubmit</code>, <code>validateCsrfToken</code> and <code>csrf.verify</code> return <code>false</code> &mdash; answer that with a 403. A bad <em>secret</em> (missing, empty, or under 32 characters) is a configuration error: every call throws <code>ConfigurationError</code> (<code>ERR_CONFIGURATION_INVALID</code>), even on a request that carries no token at all, and <code>generateCsrfToken</code> throws too. Validate the secret once at startup so this surfaces at boot and not as a 500 on the first POST.
+        </div>
 
         <p class="mb-4">
           <code class="bg-black/5 px-1">verifyDoubleSubmit</code> passes only when both tokens are present, byte-for-byte equal (compared in constant time), correctly signed, unexpired, and bound to the session id you pass. Comparing the two alone would not be enough. <code class="bg-black/5 px-1">validateCsrfToken</code> and <code class="bg-black/5 px-1">verifyDoubleSubmit</code> throw on a secret shorter than 32 characters (<code class="bg-black/5 px-1">MIN_CSRF_SECRET_LENGTH</code>), and the protected <code class="bg-black/5 px-1">methods</code> list is matched case-insensitively.
@@ -796,7 +806,7 @@ console.<span class="fn">log</span>(parsed.errors); <span class="cmt">// []</spa
 
 <span class="cmt">// A newline in an attribute would let the caller add headers of their own.</span>
 <span class="kw">try</span> {
-  <span class="fn">serializeCookie</span>({ name: <span class="str">"sid"</span>, value: <span class="str">"v"</span>, domain: <span class="str">"a\\r\\nX-Evil: 1"</span> });
+  <span class="fn">serializeCookie</span>({ name: <span class="str">"sid"</span>, value: <span class="str">"v"</span>, domain: <span class="str">"a\r\nX-Evil: 1"</span> });
 } <span class="kw">catch</span> (error) {
   console.<span class="fn">log</span>(error.message); <span class="cmt">// 'Cookie Domain contains invalid characters (injection risk): …'</span>
 }
@@ -937,8 +947,8 @@ console.<span class="fn">log</span>(<span class="const">DEFAULT_BODY_LIMITS</spa
         <table class="doc-table">
           <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr><td><code>generateCsrfToken(secret, options?)</code></td><td>Mints a signed token.</td><td><code>options</code> is <code>{ expiration?, sessionId? }</code> or a plain number of seconds. Empty secret throws.</td></tr>
-            <tr><td><code>validateCsrfToken(token, secret, options?)</code></td><td>Checks signature, expiry and session binding.</td><td>Returns <code>boolean</code>. <code>expiration</code> is the maximum lifetime you accept.</td></tr>
+            <tr><td><code>generateCsrfToken(secret, options?)</code></td><td>Mints a signed token.</td><td><code>options</code> is <code>{ expiration?, sessionId? }</code> or a plain number of seconds. Throws <code>ConfigurationError</code> on an empty secret or one under 32 characters.</td></tr>
+            <tr><td><code>validateCsrfToken(token, secret, options?)</code></td><td>Checks signature, expiry and session binding.</td><td>Returns <code>boolean</code> (<code>false</code> for a malformed or forged token). <code>expiration</code> is the maximum lifetime you accept. Throws on a short secret.</td></tr>
             <tr><td><code>verifyDoubleSubmit(cookieToken, requestToken, secret, options?)</code></td><td>Checks that both copies match and are valid.</td><td>Constant-time comparison. The usual entry point.</td></tr>
             <tr><td><code>createCsrfProtection(config)</code></td><td>Binds a secret, lifetime, cookie/header names and methods to the primitives.</td><td>Returns <code>{ issue, verify, requiresProtection }</code>. Throws <code>ConfigurationError</code> on a short secret or an unusable <code>methods</code> list.</td></tr>
             <tr><td><code>requiresCsrfProtection(method, config?)</code></td><td>Does this method change state?</td><td><code>false</code> for GET, HEAD, OPTIONS, TRACE. Throws <code>ConfigurationError</code> when <code>config.methods</code> is present but empty, not an array, or holds a blank entry.</td></tr>

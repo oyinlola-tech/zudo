@@ -321,7 +321,7 @@ handlers left: 1</div>
             <tr><td><span class="code-inline">id</span></td><td>Name for the handler. Must be unique on the bus; a duplicate throws <span class="code-inline">DuplicateEventHandlerError</span>.</td><td>generated</td></tr>
             <tr><td><span class="code-inline">priority</span></td><td>Higher numbers run first. Equal priorities keep registration order.</td><td><span class="code-inline">0</span></td></tr>
             <tr><td><span class="code-inline">once</span></td><td>Remove the handler before its first run, so it never runs twice. <span class="code-inline">bus.once()</span> sets this for you.</td><td><span class="code-inline">false</span></td></tr>
-            <tr><td><span class="code-inline">timeoutMs</span></td><td>If the handler takes longer than this, its run fails with <span class="code-inline">EventTimeoutError</span>.</td><td>no timeout</td></tr>
+            <tr><td><span class="code-inline">timeoutMs</span></td><td>If the handler takes longer than this, its run fails with <span class="code-inline">EventTimeoutError</span>. The handler is <em>not</em> stopped and <span class="code-inline">context.signal</span> is <em>not</em> aborted: the work carries on in the background after the publish has already reported the timeout.</td><td>no timeout</td></tr>
             <tr><td><span class="code-inline">enabled</span></td><td>A disabled handler stays registered but is skipped.</td><td><span class="code-inline">true</span></td></tr>
             <tr><td><span class="code-inline">description</span></td><td>Free text, useful when listing handlers.</td><td>none</td></tr>
           </tbody>
@@ -329,6 +329,11 @@ handlers left: 1</div>
         <p class="mb-3 text-sm text-black/70">
           <code>bus.onAny(handler)</code> is shorthand for <code>bus.on("*", handler)</code>. <code>bus.off(subscription)</code> is the same as <code>subscription.unsubscribe()</code> and returns <code>true</code> if the subscription was still active. To detach several handlers together, put their subscriptions in a <code>createEventSubscriptionGroup()</code> and call <code>unsubscribe()</code> on the group.
         </p>
+
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out: timeouts do not cancel</strong>
+          <p class="mt-1"><code>timeoutMs</code> only stops the bus from waiting. <code>context.signal</code> fires when the <code>signal</code> you passed to the publish call is aborted, never because a handler timed out. A handler that must give up at its deadline has to track the time itself, for example with <code>AbortSignal.timeout(ms)</code> passed to the work it starts.</p>
+        </div>
 
         <div class="callout callout-warning">
           <strong class="text-zudo-yellow">Common mistake</strong>
@@ -557,7 +562,7 @@ took about 30x ms
         <p class="mb-4 leading-relaxed">
           <strong>Middleware</strong> is a function that wraps the dispatch of every published event. It receives a <code>context</code> (holding the event) and a <code>next</code> function. Whatever it does before calling <code>next()</code> happens before the handlers; whatever it does after happens after them. It is the place for logging, timing, validation, and anything else that should apply to all events without repeating it in each handler.
         </p>
-        <p class="mb-3">Middleware only exists on the bus, not on a bare emitter. You can add it in three places: bus options, <code>bus.use()</code>, or the options of one publish call.</p>
+        <p class="mb-3">Middleware only exists on the bus, not on a bare emitter. You can add it in three places: bus options, <code>bus.use()</code>, or the options of one publish call. <code>bus.use()</code> takes a plain middleware function (or a <code>{ handle }</code> object) only; see the warning below the built-in helpers.</p>
         <div class="code-block"><span class="kw">import</span> { <span class="fn">createEventBus</span>, <span class="fn">timingEventMiddleware</span>, <span class="fn">validateEventMiddleware</span> } <span class="kw">from</span> <span class="str">"@zudojs/events"</span>;
 
 <span class="kw">const</span> bus = <span class="fn">createEventBus</span>({
@@ -607,6 +612,13 @@ timing: file.saved 0.2 ms</div>
           </tbody>
         </table>
 
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out: helpers do not go through <code>bus.use()</code></strong>
+          <p class="mt-1">Every helper above returns an already-registered middleware record (<code>RegisteredEventMiddleware</code>), not a middleware function. The <code>middleware</code> array in <code>createEventBus()</code> options and in one publish call's options accepts those records. <code>bus.use()</code> does not: <code>bus.use(validateEventMiddleware(check))</code> throws <code>TypeError: Invalid event middleware.</code> To add a helper after the bus exists, pass its function and settings separately:</p>
+        </div>
+        <div class="code-block mb-4"><span class="kw">const</span> validator = <span class="fn">validateEventMiddleware</span>((event) =&gt; event.payload !== <span class="kw">null</span>, { priority: <span class="num">100</span> });
+<span class="kw">const</span> remove = bus.<span class="fn">use</span>(validator.middleware, { id: validator.id, priority: validator.priority });</div>
+
         <div class="callout callout-note">
           <strong class="text-zudo-blue">In plain words</strong>
           <p class="mt-1">If a middleware returns without calling <code>next()</code>, nothing further runs and the publish result has <code>shortCircuited: true</code> and <code>handled: false</code>. If a middleware throws, the publish rejects with <code>EventMiddlewareError</code>. Handler failures are never relabelled as middleware errors.</p>
@@ -636,7 +648,7 @@ timing: file.saved 0.2 ms</div>
             <tr><td><span class="code-inline">normalizeEventType(type)</span></td><td>Trims, lower-cases and validates a type name.</td><td><span class="code-inline">tryNormalizeEventType</span> returns <span class="code-inline">undefined</span> instead of throwing.</td></tr>
             <tr><td><span class="code-inline">matchesEventType(type, pattern)</span></td><td>Tests a type against an exact name, <span class="code-inline">ns.*</span> or <span class="code-inline">*</span>.</td><td>Expects normalized input.</td></tr>
             <tr><td><span class="code-inline">createEventSubscriptionGroup()</span></td><td>Collects subscriptions to cancel together.</td><td><span class="code-inline">group.add(sub)</span>, <span class="code-inline">group.unsubscribe()</span>.</td></tr>
-            <tr><td><span class="code-inline">beforeEvent</span> · <span class="code-inline">afterEvent</span> · <span class="code-inline">aroundEvent</span> · <span class="code-inline">validateEventMiddleware</span> · <span class="code-inline">timingEventMiddleware</span> · <span class="code-inline">stateEventMiddleware</span> · <span class="code-inline">createEventMiddleware</span></td><td>Middleware builders.</td><td>See <a href="#middleware" class="text-zudo-blue underline">Middleware</a>.</td></tr>
+            <tr><td><span class="code-inline">beforeEvent</span> · <span class="code-inline">afterEvent</span> · <span class="code-inline">aroundEvent</span> · <span class="code-inline">validateEventMiddleware</span> · <span class="code-inline">timingEventMiddleware</span> · <span class="code-inline">stateEventMiddleware</span> · <span class="code-inline">createEventMiddleware</span></td><td>Middleware builders.</td><td>Return a <span class="code-inline">RegisteredEventMiddleware</span>. Accepted by the <span class="code-inline">middleware</span> option of the bus and of a publish call, not by <span class="code-inline">bus.use()</span>. See <a href="#middleware" class="text-zudo-blue underline">Middleware</a>.</td></tr>
           </tbody>
         </table>
 
@@ -685,9 +697,9 @@ timing: file.saved 0.2 ms</div>
           <tbody>
             <tr><td><span class="code-inline">InvalidEventError</span></td><td>Bad type name, id or timestamp; or a non-event passed to <span class="code-inline">publish()</span>.</td><td></td></tr>
             <tr><td><span class="code-inline">EventHandlerError</span></td><td>A handler threw.</td><td><span class="code-inline">handlerId</span>, <span class="code-inline">cause</span>.</td></tr>
-            <tr><td><span class="code-inline">EventTimeoutError</span></td><td>A handler exceeded its <span class="code-inline">timeoutMs</span>.</td><td>Arrives wrapped in an <span class="code-inline">EventHandlerError</span>.</td></tr>
+            <tr><td><span class="code-inline">EventTimeoutError</span></td><td>A handler exceeded its <span class="code-inline">timeoutMs</span>.</td><td>Arrives wrapped in an <span class="code-inline">EventHandlerError</span>. The handler keeps running; its <span class="code-inline">context.signal</span> is not aborted.</td></tr>
             <tr><td><span class="code-inline">EventMiddlewareError</span></td><td>A middleware threw, or validation failed.</td><td><span class="code-inline">middlewareId</span>.</td></tr>
-            <tr><td><span class="code-inline">EventDispatchAbortedError</span></td><td>The <span class="code-inline">signal</span> you passed was aborted.</td><td><span class="code-inline">results</span> and <span class="code-inline">errors</span> gathered so far.</td></tr>
+            <tr><td><span class="code-inline">EventDispatchAbortedError</span></td><td>The <span class="code-inline">signal</span> you passed was aborted.</td><td><span class="code-inline">results</span> and <span class="code-inline">errors</span> gathered so far. Checked before each handler starts: an abort that lands while the last handler runs is not reported, and the publish resolves normally.</td></tr>
             <tr><td><span class="code-inline">EventTypeNotFoundError</span></td><td>Publishing an unregistered type with <span class="code-inline">requireRegistration: true</span>.</td><td></td></tr>
             <tr><td><span class="code-inline">DuplicateEventHandlerError</span> · <span class="code-inline">DuplicateEventDefinitionError</span></td><td>Reusing a handler <span class="code-inline">id</span> or registering a type twice.</td><td></td></tr>
             <tr><td><span class="code-inline">EventListenerLimitExceededError</span></td><td>Registering past <span class="code-inline">maxHandlersPerPattern</span> / <span class="code-inline">maxListeners</span> with <span class="code-inline">enforceHandlerLimit: true</span>.</td><td><span class="code-inline">pattern</span>, <span class="code-inline">count</span>, <span class="code-inline">limit</span>. Never raised under the default warn-only behaviour.</td></tr>

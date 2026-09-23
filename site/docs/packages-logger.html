@@ -229,7 +229,7 @@ yarn add @zudojs/logger</div>
             <tbody>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono text-sm">@zudojs/errors</td>
-                <td class="p-3">1.1.0</td>
+                <td class="p-3">Same release (<code>workspace:*</code>)</td>
                 <td class="p-3">Error hierarchy (LoggingError, LoggerTransportError, LoggerFormatterError, etc.)</td>
               </tr>
               <tr>
@@ -442,8 +442,8 @@ yarn add @zudojs/logger</div>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">transports</td>
                 <td class="p-3">LoggerTransportLike[]</td>
-                <td class="p-3">[]</td>
-                <td class="p-3">Destinations for formatted log entries. When the list is empty, a console transport is used</td>
+                <td class="p-3">[] (writes to the console)</td>
+                <td class="p-3">Destinations for formatted log entries. An empty or missing list does not silence the logger: it writes through a console transport. To discard output, pass a transport that does nothing, or call <code>disable()</code></td>
               </tr>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">enabled</td>
@@ -613,7 +613,7 @@ scoped.<span class="fn">info</span>(<span class="str">"Fetching user"</span>);
       <section id="log-context" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">LOG CONTEXT</h2>
         <p class="mb-4">
-          Context propagates correlation identifiers and metadata through the log pipeline. Use <code>AsyncLocalStorage</code>-compatible storage to propagate context across async boundaries.
+          A <em>context</em> is a set of correlation identifiers (request id, trace id, user id…) plus metadata that you want on every entry while handling one piece of work. Build one with <code>createLoggerContext</code> and attach it with <code>logger.withContext(context)</code>, which returns a scoped logger; every entry that logger writes carries the context.
         </p>
 
         <h3 class="text-lg font-bold mb-3">Interface: LoggerContext</h3>
@@ -642,13 +642,20 @@ scoped.<span class="fn">info</span>(<span class="str">"Fetching user"</span>);
   <span class="kw">readonly</span> [key: <span class="tp">string</span>]: <span class="tp">unknown</span>;
 }</div>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: LoggerContextStorage</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">LoggerContextStorage</span> {
-  <span class="fn">get</span>(): <span class="tp">LoggerContext</span> | <span class="tp">undefined</span>;
-  <span class="fn">set</span>(context: <span class="tp">LoggerContext</span>): <span class="tp">void</span>;
-  <span class="fn">run</span>&lt;<span class="tp">T</span>&gt;(context: <span class="tp">LoggerContext</span>, callback: () =&gt; <span class="tp">T</span>): <span class="tp">T</span>;
-  <span class="fn">with</span>&lt;<span class="tp">T</span>&gt;(context: <span class="tp">LoggerContext</span>, callback: () =&gt; <span class="tp">T</span>): <span class="tp">T</span>;
-  <span class="fn">clear</span>(): <span class="tp">void</span>;
+        <h3 class="text-lg font-bold mb-3 mt-6">Interface: LoggerContextOptions</h3>
+        <div class="code-block"><span class="kw">interface</span> <span class="tp">LoggerContextOptions</span> {
+  <span class="kw">readonly</span> parent?: <span class="tp">LoggerContext</span>;       <span class="cm">// start from another context's identifiers and metadata</span>
+  <span class="kw">readonly</span> correlationId?: <span class="tp">string</span>;
+  <span class="kw">readonly</span> requestId?: <span class="tp">string</span>;
+  <span class="kw">readonly</span> traceId?: <span class="tp">string</span>;
+  <span class="kw">readonly</span> spanId?: <span class="tp">string</span>;
+  <span class="kw">readonly</span> userId?: <span class="tp">string</span>;
+  <span class="kw">readonly</span> tenantId?: <span class="tp">string</span>;
+  <span class="kw">readonly</span> sessionId?: <span class="tp">string</span>;
+  <span class="kw">readonly</span> jobId?: <span class="tp">string</span>;
+  <span class="kw">readonly</span> moduleId?: <span class="tp">string</span>;
+  <span class="kw">readonly</span> operationId?: <span class="tp">string</span>;
+  <span class="kw">readonly</span> metadata?: <span class="tp">LoggerContextData</span>;
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Context Functions</h3>
@@ -663,23 +670,15 @@ scoped.<span class="fn">info</span>(<span class="str">"Fetching user"</span>);
             <tbody>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">createLoggerContext(options?)</td>
-                <td class="p-3">Creates a frozen LoggerContext from identifiers and metadata</td>
+                <td class="p-3">Creates a frozen <code>LoggerContext</code> from <code>LoggerContextOptions</code>; <code>parent</code> values are inherited and overridden</td>
               </tr>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">mergeLoggerContexts(base, override)</td>
                 <td class="p-3">Merges two contexts (override identifiers and metadata win)</td>
               </tr>
               <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">withLoggerContext(context, metadata)</td>
-                <td class="p-3">Extends a context with additional metadata</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">withLoggerIdentifiers(context, identifiers)</td>
-                <td class="p-3">Extends a context with additional identifiers</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">createLoggerContextStorage()</td>
-                <td class="p-3">Creates a stack-based context storage for propagation</td>
+                <td class="p-3 font-mono">withLoggerContext(logger, context, callback)</td>
+                <td class="p-3">Calls <code>callback(scoped)</code> with <code>logger.withContext(context)</code> and returns its result</td>
               </tr>
               <tr>
                 <td class="p-3 font-mono">isLoggerContext(value)</td>
@@ -688,6 +687,15 @@ scoped.<span class="fn">info</span>(<span class="str">"Fetching user"</span>);
             </tbody>
           </table>
         </div>
+
+        <div class="code-block mt-4"><span class="kw">import</span> { <span class="fn">createLogger</span>, <span class="fn">createLoggerContext</span>, <span class="fn">withLoggerContext</span> } <span class="kw">from</span> <span class="str">"@zudojs/logger"</span>;
+
+<span class="kw">const</span> logger = <span class="fn">createLogger</span>({ name: <span class="str">"api"</span> });
+<span class="kw">const</span> context = <span class="fn">createLoggerContext</span>({ requestId: <span class="str">"req_1"</span>, userId: <span class="str">"u_7"</span> });
+
+<span class="fn">withLoggerContext</span>(logger, context, (scoped) =&gt; {
+  scoped.<span class="fn">info</span>(<span class="str">"Fetching orders"</span>); <span class="cm">// carries requestId and userId</span>
+});</div>
       </section>
 
       <!-- Log Entry -->

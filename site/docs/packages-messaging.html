@@ -372,6 +372,16 @@ console.<span class="fn">log</span>(nobody.duration &gt;= <span class="num">0</s
           <strong class="text-zudo-yellow">Watch out:</strong> A handler that is already running is not interrupted. Long handlers should check <code>context.signal.aborted</code> between steps and stop themselves. A timed-out dispatch comes back with <code>result.error instanceof MessageTimeoutError</code>.
         </div>
 
+        <div class="callout callout-danger">
+          <strong class="text-zudo-red">Cancelling does not always fail the dispatch:</strong> if you abort your own <code>signal</code> while the <em>last</em> handler is running, and that handler ignores the signal and returns normally, the dispatch comes back with <code>success: true</code> and the handler's value. There is no later handler left to skip, so nothing records the abort. (A <code>timeout</code> is different: it still fails with <code>MessageTimeoutError</code>.) If a cancelled dispatch must never look successful, have handlers call <code>context.signal.throwIfAborted()</code> after each <code>await</code>; the dispatch then fails with a <code>MessageHandlerError</code> whose cause is the abort.
+        </div>
+
+        <div class="code-block mb-4">bus.<span class="fn">on</span>(<span class="str">"report.build"</span>, <span class="kw">async</span> (message, context) =&gt; {
+  <span class="kw">const</span> rows = <span class="kw">await</span> <span class="fn">loadRows</span>(context.signal);
+  context.signal.<span class="fn">throwIfAborted</span>();
+  <span class="kw">return</span> <span class="fn">render</span>(rows);
+}, { id: <span class="str">"build-report"</span> });</div>
+
         <div class="callout callout-note">
           <strong class="text-zudo-blue">Changed in v1.1.0:</strong> <code>result.handlerResults</code> is a snapshot taken when the dispatch settles, so it stops changing once you have awaited the dispatch. Previously it was the live array the dispatcher was still writing into: a handler that kept running past a timeout could push a <code>success: true</code> record into the result of a dispatch that had already failed with <code>MessageTimeoutError</code>. Audit records and metrics derived from <code>handlerResults</code> are now stable.
         </div>
@@ -458,6 +468,10 @@ bus.<span class="fn">on</span>(<span class="str">"order.paid"</span>, <span clas
 <span class="cmt">// caused by:   msg:…  (the same id — order.placed caused order.paid)</span></div>
         <div class="callout callout-note">
           <strong class="text-zudo-blue">In plain words:</strong> Handlers receive the same context as middleware: <code>DispatchOptions.context</code> headers, state and id overrides, plus anything middleware put into <code>context.state</code>.
+        </div>
+
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out: put the correlation id on the message.</strong> <code>bus.send(input, { context: { correlationId } })</code> sets <code>context.correlationId</code> for that one dispatch only. It is not written to the message, so <code>message.correlationId</code> stays <code>undefined</code>, and <code>createDerivedMessage(message, …)</code> in the handler starts a new chain whose correlation id is the new message's own id. To carry a request id through follow-up messages, put it in the input: <code>bus.send({ type, payload, correlationId: toCorrelationId("req-abc") })</code>.
         </div>
       </section>
 
@@ -594,7 +608,7 @@ dispatcher.<span class="fn">dispose</span>(); <span class="cmt">// later dispatc
         </div>
 
         <h3 class="text-lg font-bold mb-3">Errors</h3>
-        <p class="mb-3 text-sm">All error classes live in <code class="bg-black/5 px-1">@zudojs/errors</code> and are re-exported here. Only the first four are raised by this package; the rest are exported so your own code and other packages can share one hierarchy.</p>
+        <p class="mb-3 text-sm">All error classes live in <code class="bg-black/5 px-1">@zudojs/errors</code> and are re-exported here. Only the first five in the table are raised by this package, plus the base <code class="bg-black/5 px-1">MessageError</code> when a bus created with <code class="bg-black/5 px-1">allowMultipleHandlers: false</code> refuses a second handler. The rest are exported so your own code and other packages can share one hierarchy.</p>
         <div class="overflow-x-auto mb-6">
           <table class="doc-table">
             <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
@@ -602,8 +616,9 @@ dispatcher.<span class="fn">dispose</span>(); <span class="cmt">// later dispatc
               <tr><td><code>MessageHandlerError</code></td><td>A handler threw.</td><td>Appears in <code>result.error</code>; has <code>handlerId</code>, <code>cause</code>.</td></tr>
               <tr><td><code>DuplicateMessageHandlerError</code></td><td>Handler id already registered.</td><td>Thrown by <code>on()</code> / <code>addHandler()</code>.</td></tr>
               <tr><td><code>MessageBusDisposedError</code></td><td>Bus used after <code>dispose()</code>.</td><td>Rejects the dispatch promise.</td></tr>
-              <tr><td><code>MessageDispatchAbortedError</code></td><td>Signal aborted before or between handlers.</td><td>Rejects if aborted up front; otherwise returned as <code>result.error</code>.</td></tr>
-              <tr><td><code>MessageError</code>, <code>MessageDispatchError</code>, <code>InvalidMessageError</code>, <code>MessageTypeNotFoundError</code>, <code>MessageHandlerNotFoundError</code>, <code>MessageTimeoutError</code>, <code>MessageMiddlewareError</code>, <code>MessageValidationError</code></td><td>Shared hierarchy for messaging errors.</td><td>Not thrown by this package itself.</td></tr>
+              <tr><td><code>MessageDispatchAbortedError</code></td><td>Signal aborted before or between handlers.</td><td>Rejects if aborted up front; otherwise returned as <code>result.error</code>. Not reported if the abort lands while the last handler runs.</td></tr>
+              <tr><td><code>MessageTimeoutError</code></td><td>A dispatch ran past its <code>timeout</code> or <code>defaultTimeout</code>.</td><td>Returned as <code>result.error</code>, even when the last handler finishes later.</td></tr>
+              <tr><td><code>MessageError</code>, <code>MessageDispatchError</code>, <code>InvalidMessageError</code>, <code>MessageTypeNotFoundError</code>, <code>MessageHandlerNotFoundError</code>, <code>MessageMiddlewareError</code>, <code>MessageValidationError</code></td><td>Shared hierarchy for messaging errors.</td><td>Not thrown by this package itself, apart from <code>MessageError</code> as described above.</td></tr>
             </tbody>
           </table>
         </div>
@@ -623,7 +638,10 @@ dispatcher.<span class="fn">dispose</span>(); <span class="cmt">// later dispatc
             <strong>Passing a plain string as <code>correlationId</code></strong> → TypeScript rejects it because the type is branded. → Wrap it: <code>toCorrelationId("req-abc")</code>.
           </li>
           <li class="border-l-4 border-zudo-red pl-4">
-            <strong>Expecting a timeout to stop a running handler</strong> → the timer only aborts a signal; the handler keeps going; the dispatch result carries a <code>MessageTimeoutError</code>. → Check <code>context.signal.aborted</code> inside long handlers.
+            <strong>Expecting a timeout to stop a running handler</strong> → the timer only aborts a signal; the handler keeps going; the dispatch result carries a <code>MessageTimeoutError</code>. → Check <code>context.signal.aborted</code> inside long handlers, or call <code>context.signal.throwIfAborted()</code> after each <code>await</code>.
+          </li>
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Passing the correlation id only in <code>DispatchOptions.context</code></strong> → the handler sees it on <code>context.correlationId</code>, but it is not on the message, so <code>createDerivedMessage</code> starts a new chain. → Set <code>correlationId</code> on the message input itself.
           </li>
           <li class="border-l-4 border-zudo-red pl-4">
             <strong>Expecting <code>result.value</code> to always be a single value</strong> → with two or more handlers it is an array in priority order, and with none it is <code>[]</code>. → Check <code>result.handlerResults.length</code> when the handler count can vary.
