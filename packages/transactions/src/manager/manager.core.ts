@@ -21,6 +21,8 @@ import { getDefaultContext } from "../context/context.core.js";
 import { internals } from "../transaction/transaction.internal.js";
 import { isTerminal } from "../transaction/transactionStateMachine.js";
 import { TransactionRollbackError } from "../transactionErrors/transactionError.types.js";
+import { getTransactionHandle } from "../context/context.handle.js";
+import { raceSignal } from "../utils/utils.signal.js";
 import { commitTransaction, rollbackTransaction } from "./manager.commit.js";
 import {
   resolvePropagation,
@@ -135,6 +137,12 @@ export function createTransactionManager(options: TransactionManagerOptions) {
      * Only a transaction this call opened is completed here: joining an
      * enclosing transaction must not commit it, and a failure inside a
      * participant marks the enclosing transaction rollback-only instead.
+     *
+     * When the transaction times out, `transaction.signal` aborts and this
+     * stops waiting for the callback: the transaction is rolled back and
+     * the call rejects with `TransactionTimeoutError`. An error raised
+     * after a successful commit (for example by an `afterCommit` hook) is
+     * rethrown without attempting a rollback.
      */
     async run<T>(
       callback: (transaction: Transaction) => Promise<T>,
@@ -161,10 +169,14 @@ export function createTransactionManager(options: TransactionManagerOptions) {
 
         const body = async (): Promise<T> => {
           try {
-            const result = await callback(transaction);
+            const result = await raceSignal(
+              callback(transaction),
+              transaction.signal,
+            );
             await this.commit(transaction);
             return result;
           } catch (error) {
+            if (transaction.state === "committed") throw error;
             try {
               await this.rollback(transaction, error);
             } catch (rollbackError) {
@@ -214,6 +226,16 @@ export function createTransactionManager(options: TransactionManagerOptions) {
     /** The transaction in scope for the current async execution, if any. */
     getCurrent(): Transaction | undefined {
       return context.get();
+    },
+
+    /**
+     * The adapter handle (what `adapter.begin()` returned) of the
+     * transaction in scope for the current async execution, or `undefined`
+     * outside a transaction. See `getTransactionHandle`.
+     */
+    getCurrentHandle<THandle = unknown>(): THandle | undefined {
+      const current = context.get();
+      return current ? getTransactionHandle<THandle>(current) : undefined;
     },
   };
 }

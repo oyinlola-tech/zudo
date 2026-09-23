@@ -53,6 +53,9 @@ export function createParticipant(parent: Transaction): Transaction {
     get timedOut(): boolean {
       return parent.timedOut;
     },
+    get signal(): AbortSignal {
+      return parent.signal;
+    },
 
     /** No-op: the transaction is committed by whoever opened it. */
     async commit(): Promise<void> {},

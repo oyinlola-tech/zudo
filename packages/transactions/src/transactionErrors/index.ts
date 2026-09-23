@@ -12,6 +12,7 @@ export {
   TransactionTimeoutError,
   TransactionCommitError,
   TransactionRollbackError,
+  TransactionRollbackOnlyError,
   TransactionAdapterError,
   TransactionPropagationError,
   TransactionIsolationError,

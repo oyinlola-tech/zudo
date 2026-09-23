@@ -20,6 +20,7 @@ import {
   SavepointError,
   TransactionCommitError,
   TransactionRollbackError,
+  TransactionRollbackOnlyError,
   TransactionStateError,
   TransactionTimeoutError,
 } from "../transactionErrors/transactionError.types.js";
@@ -101,7 +102,9 @@ async function adapterRollback(
  * is a programming error, not a no-op.
  *
  * @throws {TransactionTimeoutError} when the transaction outlived its timeout.
- * @throws {TransactionRollbackError} when the transaction is rollback-only.
+ * @throws {TransactionRollbackOnlyError} when the transaction is rollback-only
+ *   (a `TransactionRollbackError` subclass): the commit was refused and the
+ *   transaction rolled back.
  * @throws {TransactionStateError} when the transaction cannot be committed.
  * @throws {TransactionCommitError} when the adapter refuses the commit.
  */
@@ -130,19 +133,16 @@ export async function commitTransaction(
     await rollbackTransaction(transaction, adapter, reason, hooks, emit);
 
     // A timeout is a distinct failure from a caller marking the transaction
-    // rollback-only, and the timed-out case used to be indistinguishable
-    // because both raised TransactionRollbackError.
+    // rollback-only. `timed_out` was already emitted by the timer when the
+    // timeout fired; emitting it again here reported one timeout twice.
     if (transaction.timedOut) {
-      emit(TRANSACTION_EVENTS.TIMED_OUT, transaction, reason);
       throw new TransactionTimeoutError(
         transaction.id,
         transaction.options.timeout ?? 0,
       );
     }
 
-    throw new TransactionRollbackError(transaction.id, {
-      originalError: reason,
-    });
+    throw new TransactionRollbackOnlyError(transaction.id, reason);
   }
 
   if (hooks?.beforeCommit) await hooks.beforeCommit({ transaction });
@@ -189,6 +189,12 @@ export async function commitTransaction(
 /**
  * Rollback a transaction with hooks and adapter coordination.
  *
+ * Rolling back a transaction that is already rolled back or failed is a
+ * no-op; a committed transaction cannot be undone, so asking to roll it
+ * back is a programming error (the same rule `Transaction.rollback()`
+ * enforces) rather than a silent no-op.
+ *
+ * @throws {TransactionStateError} when the transaction is already committed.
  * @throws {TransactionRollbackError} when the adapter refuses the rollback.
  */
 export async function rollbackTransaction(
@@ -203,11 +209,11 @@ export async function rollbackTransaction(
     return;
   }
 
-  if (
-    transaction.state === "committed" ||
-    transaction.state === "rolled_back" ||
-    transaction.state === "failed"
-  ) {
+  if (transaction.state === "committed") {
+    throw new TransactionStateError(transaction.state, "rollback");
+  }
+
+  if (transaction.state === "rolled_back" || transaction.state === "failed") {
     return;
   }
 

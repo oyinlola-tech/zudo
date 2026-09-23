@@ -9,3 +9,4 @@ export {
   isModifiable,
   summarizeTransaction,
 } from "./utils.helper.js";
+export { raceSignal } from "./utils.signal.js";

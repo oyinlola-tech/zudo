@@ -47,6 +47,47 @@ await manager.run(handler, {
 });
 ```
 
+## Reaching the adapter handle
+
+Whatever your adapter's `begin()` returned (typically a database client or
+connection bound to the transaction) is available inside the transaction:
+
+```typescript
+import { currentTransactionHandle, getTransactionHandle } from "@zudojs/transactions";
+
+await manager.run(async (transaction) => {
+  const tx = getTransactionHandle<PoolClient>(transaction);
+  // or, anywhere below this call in the same async flow:
+  const same = manager.getCurrentHandle<PoolClient>();
+  const alsoSame = currentTransactionHandle<PoolClient>(); // default context only
+  await tx!.query("INSERT ...");
+});
+```
+
+A savepoint resolves to its connection's handle and a participant to the
+joined transaction's. Outside a transaction, or in a non-transactional scope
+(`supports`/`not_supported`/`never` with nothing to join), the result is
+`undefined`. Use the handle to issue work; commit and roll back through the
+manager, not the handle.
+
+## Timeouts
+
+With `timeout`, the transaction's `signal` aborts when it runs out, with a
+`TransactionTimeoutError` as `signal.reason`. `run()` then stops waiting for
+the callback, rolls back, and rejects with that error. JavaScript cannot stop
+the callback itself, so pass the signal to anything cancellable:
+
+```typescript
+await manager.run(
+  async (transaction) => {
+    await fetch(url, { signal: transaction.signal });
+  },
+  { timeout: 5_000 },
+);
+```
+
+`timed_out` is emitted once, when the timeout fires.
+
 ## Propagation
 
 | Mode            | Transaction in progress      | None in progress         |
@@ -81,7 +122,8 @@ the transaction.
 | Condition                              | Error                          |
 | -------------------------------------- | ------------------------------ |
 | Transaction outlived its `timeout`      | `TransactionTimeoutError`      |
-| Marked rollback-only, then committed    | `TransactionRollbackError`     |
+| Marked rollback-only, then committed    | `TransactionRollbackOnlyError` (a `TransactionRollbackError`): "commit refused: transaction marked rollback-only" |
+| Rolling back a committed transaction    | `TransactionStateError`        |
 | Adapter lacks the requested isolation   | `TransactionIsolationError`    |
 | Adapter lacks another requested feature | `TransactionCapabilityError`   |
 | Savepoint create/rollback/release fails | `SavepointError`               |
@@ -108,6 +150,9 @@ the transaction.
   back and `commit()` rejects. A rollback can never be reported as a commit.
 - Committing a transaction that is not active throws rather than silently
   doing nothing. Only an already-committed transaction is a no-op.
+- Rolling back a committed transaction throws `TransactionStateError`: the
+  commit cannot be undone, and pretending otherwise hid bugs. Rolling back a
+  transaction that is already rolled back (or failed) is still a no-op.
 - A `nested` transaction rolls back to its savepoint, never to the connection.
   Savepoints are always created on the connection, including when the
   enclosing scope is itself a savepoint or a participant.

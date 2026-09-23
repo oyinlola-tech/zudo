@@ -77,9 +77,23 @@ export interface Transaction {
   readonly metadata: ReadonlyMap<string, unknown>;
   /** Whether a timeout was detected. */
   readonly timedOut: boolean;
+  /**
+   * Aborted when the transaction outlives its `timeout`, with a
+   * `TransactionTimeoutError` as `signal.reason`. Pass it to cancellable
+   * work (queries, `fetch`, timers) so a timed-out callback stops instead
+   * of running on. `run()` also stops waiting for the callback, rolls back
+   * and rejects with that error. A participant exposes the signal of the
+   * transaction it joined; a savepoint's signal also aborts with its
+   * parent's. Never aborts when no timeout is set.
+   */
+  readonly signal: AbortSignal;
   /** Commit the transaction. */
   commit(): Promise<void>;
-  /** Rollback the transaction. */
+  /**
+   * Rollback the transaction. Idempotent once rolled back or failed; throws
+   * `TransactionStateError` on a committed transaction, which can no
+   * longer be undone.
+   */
   rollback(reason?: unknown): Promise<void>;
   /** Mark the transaction as rollback-only (prevents commit). */
   markRollbackOnly(reason?: unknown): void;

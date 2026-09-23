@@ -13,7 +13,9 @@ import type {
 } from "../transactionTypes/transactionState.js";
 import {
   TransactionRollbackError,
+  TransactionRollbackOnlyError,
   TransactionStateError,
+  TransactionTimeoutError,
 } from "../transactionErrors/transactionError.types.js";
 import {
   canTransition,
@@ -67,6 +69,10 @@ export function createTransaction(
   const afterRollbackCallbacks: Array<() => Promise<void>> = [];
   let callbackErrors: unknown[] = [];
   let handle: unknown;
+  const controller = new AbortController();
+  const signal = parent
+    ? AbortSignal.any([controller.signal, parent.signal])
+    : controller.signal;
 
   const transition = createTransitionFunction(
     () => state,
@@ -108,6 +114,9 @@ export function createTransaction(
     get timedOut(): boolean {
       return timedOut;
     },
+    get signal(): AbortSignal {
+      return signal;
+    },
 
     /**
      * Mark the transaction committed and run its after-commit callbacks.
@@ -121,9 +130,7 @@ export function createTransaction(
         throw new TransactionStateError(state, "commit");
       }
       if (rollbackOnly) {
-        throw new TransactionRollbackError(id, {
-          originalError: rollbackOnlyReason ?? "marked rollback-only",
-        });
+        throw new TransactionRollbackOnlyError(id, rollbackOnlyReason);
       }
 
       transition("committing");
@@ -186,6 +193,7 @@ export function createTransaction(
     _transition: transition,
     _markTimedOut: (): void => {
       timedOut = true;
+      controller.abort(new TransactionTimeoutError(id, frozenOptions.timeout ?? 0));
     },
     _getRollbackOnlyReason: (): unknown => rollbackOnlyReason,
     _drainCallbackErrors: (): unknown[] => callbackErrors.splice(0),
