@@ -4,7 +4,7 @@ description: Coordinate transactions across many functions with @zudojs/transact
 minutes: 45
 youNeed: The Databases with @zudojs/database lesson
 youBuild: A task service whose functions share one transaction, send emails only after commit, and retry on conflicts
-keywords: zudojs transactions, transaction manager, unit of work, AsyncLocalStorage, propagation, participant, savepoint, nested transaction, requires_new, afterCommit, rollback-only, TransactionRollbackError, retry, serialization failure, transaction timeout, isolation level
+keywords: zudojs transactions, transaction manager, unit of work, AsyncLocalStorage, propagation, participant, savepoint, nested transaction, requires_new, afterCommit, rollback-only, TransactionRollbackOnlyError, getCurrentHandle, AbortSignal, retry, serialization failure, transaction timeout, isolation level
 tier: advanced
 ---
 <section>
@@ -225,6 +225,9 @@ await manager.run(async (tx) => {
 console.log("tasks:", await count("tasks"), "activity:", await count("activity"));
 </example>
 <output>
+outside run: undefined
+the adapter's handle? true
+tasks: 1 activity: 1
 </output>
 <p>Here the handle is the PGlite instance, because that is what this adapter's <code>begin()</code> returns. An adapter for a pool (for example <code>pg</code>'s <code>Pool</code>) would take a client from the pool in <code>begin()</code> and return it, and <code>db()</code> would give each transaction its own client. The participant <code>recordActivity</code> got the root's handle, so both inserts ran on the same connection. Use the handle for queries only: commit and roll back always through the manager.</p>
 </section>
@@ -517,7 +520,7 @@ title is required - calls: 1
 <section>
 <h2 id="timeouts">Timeouts and read-only transactions</h2>
 <p>An open transaction holds locks, and others wait for them. A transaction that runs too long slows everyone down. <code>timeout</code> puts a limit on it. When time runs out, the manager rolls back and rejects at once with <code>TransactionTimeoutError</code>, even if your callback is still busy.</p>
-<p>JavaScript cannot stop a function from the outside, so the manager also gives you a way to stop it yourself: <code>tx.signal</code>, an <code>AbortSignal</code> that fires when the transaction times out. You met <code>AbortSignal</code> with <code>fetch</code>; <code>fetch</code>, timers from <code>node:timers/promises</code> and many libraries accept one and stop early when it fires:</p>
+<p>JavaScript cannot stop a function from the outside, so the manager also gives you a way to stop it yourself: <code>tx.signal</code>, an <strong>AbortSignal</strong> that fires when the transaction times out. An <code>AbortSignal</code> is the standard JavaScript object for saying "stop, nobody needs this any more". It has an <code>aborted</code> flag, and <code>fetch</code>, the timers in <code>node:timers/promises</code> and many libraries accept one and stop early when it fires:</p>
 <example file="timeout.ts" project="tx" browser="no">
 import { setTimeout as sleep } from "node:timers/promises";
 import { TransactionTimeoutError } from "@zudojs/transactions";

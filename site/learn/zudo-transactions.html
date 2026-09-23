@@ -9,7 +9,7 @@
   <meta name="description" content="Coordinate transactions across many functions with @zudojs/transactions, with context that follows your code through AsyncLocalStorage, rollbacks, savepoints, after-commit hooks, retries, timeouts and rollback-only state, against real PostgreSQL.">
   <!-- seo:start -->
   <!-- seo:end -->
-  <meta name="keywords" content="zudojs transactions, transaction manager, unit of work, AsyncLocalStorage, propagation, participant, savepoint, nested transaction, requires_new, afterCommit, rollback-only, TransactionRollbackError, retry, serialization failure, transaction timeout, isolation level">
+  <meta name="keywords" content="zudojs transactions, transaction manager, unit of work, AsyncLocalStorage, propagation, participant, savepoint, nested transaction, requires_new, afterCommit, rollback-only, TransactionRollbackOnlyError, getCurrentHandle, AbortSignal, retry, serialization failure, transaction timeout, isolation level">
   <meta name="author" content="Oluwayemi Oyinlola Michael">
 
   <link rel="icon" type="image/svg+xml" href="/assets/zudo-favicon.svg">
@@ -520,7 +520,9 @@ await manager.run(async (tx) => {
   await recordActivity("created Buy milk");
 });
 console.log("tasks:", await count("tasks"), "activity:", await count("activity"));</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx handle.ts</code></div><pre class="lx-no-copy"></pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx handle.ts</code></div><pre class="lx-no-copy">outside run: undefined
+the adapter's handle? true
+tasks: 1 activity: 1</pre></div>
 </figure>
 <p>Here the handle is the PGlite instance, because that is what this adapter's <code>begin()</code> returns. An adapter for a pool (for example <code>pg</code>'s <code>Pool</code>) would take a client from the pool in <code>begin()</code> and return it, and <code>db()</code> would give each transaction its own client. The participant <code>recordActivity</code> got the root's handle, so both inserts ran on the same connection. Use the handle for queries only: commit and roll back always through the manager.</p>
 </section>
@@ -980,7 +982,7 @@ title is required - calls: 1</pre></div>
 <section>
 <h2 id="timeouts">Timeouts and read-only transactions</h2>
 <p>An open transaction holds locks, and others wait for them. A transaction that runs too long slows everyone down. <code>timeout</code> puts a limit on it. When time runs out, the manager rolls back and rejects at once with <code>TransactionTimeoutError</code>, even if your callback is still busy.</p>
-<p>JavaScript cannot stop a function from the outside, so the manager also gives you a way to stop it yourself: <code>tx.signal</code>, an <code>AbortSignal</code> that fires when the transaction times out. You met <code>AbortSignal</code> with <code>fetch</code>; <code>fetch</code>, timers from <code>node:timers/promises</code> and many libraries accept one and stop early when it fires:</p>
+<p>JavaScript cannot stop a function from the outside, so the manager also gives you a way to stop it yourself: <code>tx.signal</code>, an <strong>AbortSignal</strong> that fires when the transaction times out. An <code>AbortSignal</code> is the standard JavaScript object for saying "stop, nobody needs this any more". It has an <code>aborted</code> flag, and <code>fetch</code>, the timers in <code>node:timers/promises</code> and many libraries accept one and stop early when it fires:</p>
 <figure class="lx-example" data-index="12" data-file="timeout.ts" data-project="tx">
 <figcaption class="lx-bar"><span class="lx-file">timeout.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> setTimeout <span class="t-kw">as</span> sleep <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"node:timers/promises"</span><span class="t-pn">;</span>
