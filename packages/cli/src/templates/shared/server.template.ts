@@ -14,6 +14,12 @@
  * 500. On SIGINT/SIGTERM integrations drain, HTTP stops, then the runtime
  * stops. `tests/generatedProject.typecheck.test.ts` type-checks the output
  * against the current `@zudojs/*` sources.
+ *
+ * The signal listeners stay registered (`process.on`, not `once`) for the
+ * whole shutdown. Under `tsx watch`, Ctrl+C delivers SIGINT twice (from the
+ * terminal and forwarded by the watcher); with `once` the second signal
+ * found no listener and Node's default action killed the process before
+ * the runtime had stopped or logged anything.
  */
 
 import { MARKERS, renderMarkerBlock } from "../../wiring/index.js";
@@ -118,9 +124,13 @@ console.log(\`Listening on http://\${config.host}:\${server.address?.port ?? con
 
 let stopping = false;
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.once(signal, () => {
-    if (stopping) return;
+  process.on(signal, () => {
+    if (stopping) {
+      console.log(\`Received \${signal} again: already shutting down.\`);
+      return;
+    }
     stopping = true;
+    console.log(\`Received \${signal}: shutting down.\`);
     void drainIntegrations(integrations)
       .then(() => server.stop())
       .then(() => runtime.stop())

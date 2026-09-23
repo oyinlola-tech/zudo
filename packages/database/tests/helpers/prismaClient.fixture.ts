@@ -19,14 +19,17 @@ type JsPromise<T> = runtime.Types.Utils.JsPromise<T>;
 type PrismaPromise<T> = runtime.Types.Public.PrismaPromise<T>;
 type TransactionIsolationLevel =
   "ReadUncommitted" | "ReadCommitted" | "RepeatableRead" | "Serializable";
+type QueryEvent = { timestamp: Date; query: string; params: string; duration: number; target: string };
+type LogEvent = { timestamp: Date; message: string; target: string };
+type LogLevel = "info" | "query" | "warn" | "error";
 type TransactionOptions = {
   maxWait?: number;
   timeout?: number;
   isolationLevel?: TransactionIsolationLevel;
 };
 
-export interface PrismaClient {
-  $on(eventType: "query", callback: (event: runtime.Types.Public.Args<never, never>) => void): PrismaClient;
+export interface PrismaClient<in LogOpts extends LogLevel = never> {
+  $on<V extends LogOpts>(eventType: V, callback: (event: V extends "query" ? QueryEvent : LogEvent) => void): PrismaClient;
   $connect(): JsPromise<void>;
   $disconnect(): JsPromise<void>;
   $executeRaw<T = unknown>(query: TemplateStringsArray | runtime.Sql, ...values: unknown[]): PrismaPromise<number>;

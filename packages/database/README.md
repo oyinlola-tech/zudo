@@ -81,6 +81,42 @@ repository passes (`RepositoryDelegateOperations`).
 `adapter` (in which case it constructs the `PrismaClient` for you). It throws a
 `DatabaseError` if neither is supplied.
 
+### Typed transaction clients
+
+The transaction client handed to `transaction()` callbacks is inferred from the
+`prisma` instance you pass, so model delegates keep the types of your generated
+client. This works with Prisma 7's `prisma-client` generator (client generated
+into your application, e.g. `src/generated/prisma`) and with the legacy
+`prisma-client-js` generator alike; the package's published types never import
+`@prisma/client`, so they compile with `skipLibCheck: false`.
+
+```typescript
+import { PrismaClient } from "./generated/prisma/client.js";
+
+const client = createDatabaseClient({ prisma: new PrismaClient({ adapter }) });
+
+await client.transaction(async (tx) => {
+  await tx.user.create({ data: { email: "bob@example.com", name: "Bob" } }); // fully typed
+});
+```
+
+`withTransaction`, `withTransactionRetry`, `TransactionManager`,
+`DatabaseUnitOfWork`, the `Database` facade, the lock manager and the
+migration and seed runners all take the type from the client they wrap.
+
+When the concrete client type is unknown (`new DatabaseClient(options)`,
+`createDatabaseClient({ adapter })`, `getDatabase()`), callbacks receive
+`DatabaseTransactionContext`: the raw-query surface (`$queryRaw`,
+`$executeRaw`, `$queryRawUnsafe`, `$executeRawUnsafe`) without model
+delegates. Pass the client type to opt in, for example
+`createDatabaseClient<PrismaClient>({ adapter })`. `TransactionClientOf<typeof
+prisma>` names the inferred type if you need to annotate it.
+
+The adapter-only form constructs `PrismaClient` from `@prisma/client` at
+runtime, which only exists with the `prisma-client-js` generator. With the
+`prisma-client` generator, construct the client yourself and pass it as
+`prisma`.
+
 ## Querying
 
 ```typescript

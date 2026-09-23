@@ -25,6 +25,7 @@ import {
   createLockManager,
 } from "../src/index.js";
 import type { UserDelegate } from "./helpers/prismaClientUserDelegate.fixture.js";
+import type { PrismaClient as GeneratedPrismaClient } from "./helpers/prismaClient.fixture.js";
 
 interface User {
   id: string;
@@ -66,6 +67,15 @@ await withTransaction(client, async (tx) => {
 });
 
 await client.disconnect();
+
+// Typed transaction clients. `GeneratedPrismaClient` stands in for the
+// `prisma-client` generator's `./generated/prisma/client.js` export.
+declare const generatedPrisma: GeneratedPrismaClient;
+const typedClient = createDatabaseClient({ prisma: generatedPrisma });
+
+await typedClient.transaction(async (tx) => {
+  await tx.user.create({ data: { email: "bob@example.com", name: "Bob" } }); // fully typed
+});
 
 const query = createQueryBuilder<"email" | "createdAt" | "role">()
   .where("role", "admin")

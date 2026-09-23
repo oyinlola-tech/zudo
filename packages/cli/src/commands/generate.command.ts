@@ -13,7 +13,10 @@ import { generateModule } from "../generators/module/module.generator.js";
 import type { ModuleRegistration } from "../generators/module/module.registration.js";
 import { generateCommand } from "../generators/command/command.generator.js";
 import { generateQuery } from "../generators/query/query.generator.js";
-import { generateMiddleware } from "../generators/middleware/middleware.generator.js";
+import {
+  generateMiddleware,
+  type MiddlewareRegistration,
+} from "../generators/middleware/middleware.generator.js";
 import { generateEvent } from "../generators/event/event.generator.js";
 import { generateJob } from "../generators/job/job.generator.js";
 import { generateModel } from "../generators/model/model.generator.js";
@@ -48,6 +51,7 @@ interface GenerateOptions {
   readonly module?: string;
   readonly dryRun: boolean;
   readonly onModuleRegistered?: (registration: ModuleRegistration) => void;
+  readonly onMiddlewareRegistered?: (registration: MiddlewareRegistration) => void;
   readonly architecture?: string;
 }
 
@@ -295,6 +299,17 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
             .join("\n")}`,
         );
       },
+      onMiddlewareRegistered: (registration) => {
+        if (registration.registered) {
+          context.logger.info(`Registered in the middleware pipeline of ${registration.serverFile}.`);
+          return;
+        }
+        context.logger.warn(
+          `Could not register the middleware automatically (the zudojs:server-imports or zudojs:server-middleware markers are missing). Add:\n${registration.manualSteps
+            .map((step) => `  ${step}`)
+            .join("\n")}`,
+        );
+      },
     },
     cwd,
   );
@@ -366,7 +381,10 @@ async function runSchematic(
         );
 
       case "middleware":
-        return await generateMiddleware({ name, basePath, dryRun }, cwd);
+        return await generateMiddleware(
+          { name, basePath, dryRun, onRegistered: options.onMiddlewareRegistered },
+          cwd,
+        );
 
       case "event":
         return await generateEvent({ name, basePath, dryRun }, cwd);
