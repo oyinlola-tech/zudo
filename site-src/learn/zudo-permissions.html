@@ -398,14 +398,64 @@ for (const raw of ['{"title":"x","roles":["admin"]}', '{"title":"x","id":"linus"
 
 <section>
 <h2 id="policies">Escalation 4: a policy that says yes</h2>
-<p>A <strong>policy</strong> is a named function that runs on every check for the permissions it lists. It returns a decision. It is tempting to use one for a restriction like "tasks can only be changed during office hours". This is how the package's own documentation has shown it:</p>
-<example file="policy-mistake.ts" project="perm">
+<p>A <strong>policy</strong> is a named function that runs on every check for the permissions it lists. It returns a decision. Policies are good for a restriction like "tasks can only be changed during office hours". By default a policy is a <strong>constraint</strong>: its "no" refuses the request, but its "yes" only means "no objection". The user's roles and rules must still grant the permission:</p>
+<example file="policy.ts" project="perm">
+import { createPermissionActor, createPermissionEngine, isOwner } from "@zudojs/permissions";
+import type { PermissionPolicy } from "@zudojs/permissions";
+
+const officeHours: PermissionPolicy = {
+  name: "office-hours",
+  permissions: ["task:create", "task:update", "task:delete"],
+  cacheable: false,
+  evaluate: (ctx) => {
+    const hour = ctx.metadata?.get("hour");
+    return typeof hour === "number" && hour >= 9 && hour < 17
+      ? { allowed: true }
+      : { allowed: false, reason: "outside_office_hours" };
+  },
+};
+
+const engine = createPermissionEngine({
+  roles: [{ name: "member", permissions: ["task:read"], rules: [
+    { name: "own-tasks", effect: "allow", resource: "task", action: "delete", condition: isOwner("userId") },
+  ] }],
+  policies: [officeHours],
+});
+
+const guest = createPermissionActor("guest-17");
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const adasTask = { id: 1, userId: "ada" };
+console.log("guest 10:00", await engine.can(guest, "task:delete", adasTask, { metadata: { hour: 10 } }));
+console.log("ada   10:00", await engine.check(ada, "task:delete", adasTask, { metadata: { hour: 10 } }));
+console.log("ada   20:00", await engine.check(ada, "task:delete", adasTask, { metadata: { hour: 20 } }));
+console.log("ada   no hour", await engine.can(ada, "task:delete", adasTask));
+</example>
+<output>
+guest 10:00 false
+ada   10:00 {
+  allowed: true,
+  reason: 'role_permission',
+  matchedPermission: 'task:delete',
+  policy: 'office-hours'
+}
+ada   20:00 {
+  allowed: false,
+  reason: 'outside_office_hours',
+  policy: 'office-hours',
+  publicReason: 'Access denied'
+}
+ada   no hour false
+</output>
+<p>The guest has no role that grants <code>task:delete</code>, so office hours change nothing for them. Ada may delete her own task at 10:00, because her <code>own-tasks</code> rule grants it and the policy has no objection. At 20:00 the policy refuses, and the decision names it. With no hour at all the policy also says no: missing data means no. The hour comes from your server's clock, which you pass in as metadata. That also makes the rule easy to test, as you just saw.</p>
+<p>A policy can also <em>grant</em> access on its own, if you write <code>effect: "grant"</code>. That is where the escalation hides. Here is the same office-hours policy with that one extra line:</p>
+<example file="policy-grant.ts" project="perm">
 import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
 
 const engine = createPermissionEngine({
   roles: [{ name: "member", permissions: ["task:read"] }],
   policies: [{
     name: "office-hours",
+    effect: "grant",
     permissions: ["task:*"],
     cacheable: false,
     evaluate: (ctx) => {
@@ -418,49 +468,12 @@ const engine = createPermissionEngine({
 });
 
 const guest = createPermissionActor("guest-17");
-console.log("10:00", await engine.check(guest, "task:delete", { id: 3 }, { metadata: { hour: 10 } }));
-console.log("20:00", (await engine.check(guest, "task:delete", { id: 3 }, { metadata: { hour: 20 } })).allowed);
+console.log("BAD 10:00", await engine.check(guest, "task:delete", { id: 3 }, { metadata: { hour: 10 } }));
 </example>
 <output>
-10:00 { allowed: true, reason: 'policy_allow', policy: 'office-hours' }
-20:00 false
+BAD 10:00 { allowed: true, reason: 'policy_allow', policy: 'office-hours' }
 </output>
-<p>A guest with <strong>no roles at all</strong> may delete any task, as long as it is office hours. The reason is how the engine combines answers: a policy that returns <code>{ allowed: true }</code> <em>grants</em> access, even when no role did. A policy cannot say "I have no objection". It can only say yes or no.</p>
-<p>So use policies only for rules that should be able to grant access on their own. Write a <em>restriction</em> as a deny rule, which can only ever take access away:</p>
-<example file="policy-fixed.ts" project="perm">
-import { createPermissionActor, createPermissionEngine, isOwner } from "@zudojs/permissions";
-
-const engine = createPermissionEngine({
-  roles: [{ name: "member", permissions: ["task:read"], rules: [
-    { effect: "allow", resource: "task", action: "delete", condition: isOwner("userId") },
-  ] }],
-  rules: [{
-    name: "office-hours",
-    effect: "deny",
-    resource: "task",
-    action: ["create", "update", "delete"],
-    condition: (ctx) => {
-      const hour = ctx.metadata?.get("hour");
-      return typeof hour !== "number" || hour < 9 || hour >= 17;
-    },
-  }],
-});
-
-const guest = createPermissionActor("guest-17");
-const ada = createPermissionActor("ada", { roles: ["member"] });
-const adasTask = { id: 1, userId: "ada" };
-console.log("guest 10:00", await engine.can(guest, "task:delete", adasTask, { metadata: { hour: 10 } }));
-console.log("ada   10:00", await engine.can(ada, "task:delete", adasTask, { metadata: { hour: 10 } }));
-console.log("ada   20:00", await engine.can(ada, "task:delete", adasTask, { metadata: { hour: 20 } }));
-console.log("ada   no hour", await engine.can(ada, "task:delete", adasTask));
-</example>
-<output>
-guest 10:00 false
-ada   10:00 true
-ada   20:00 false
-ada   no hour false
-</output>
-<p>Now the guest gets nothing, Ada can delete her own task during office hours, and outside office hours nobody can. If the hour is missing, the condition says "deny": missing data means no. The hour comes from your server's clock, which you pass in as metadata. That also makes the rule easy to test, as you just saw.</p>
+<p>A guest with <strong>no roles at all</strong> may now delete any task, as long as it is office hours. A granting policy's "yes" is a real grant, even when no role gave the permission. So keep the default for restrictions, and use <code>effect: "grant"</code> only for a policy that proves the right by itself, such as "the actor owns this resource". (Before @zudojs/permissions 1.4.0 every policy granted like this, and the package's own README taught the office-hours example this way.)</p>
 </section>
 
 <section>
@@ -693,7 +706,7 @@ grace: true
 <li>Wildcards like <code>*:read</code> grant more than you think, including permissions you add later. Malformed patterns are rejected at startup.</li>
 <li>Rules with conditions, such as <code>isOwner("userId")</code>, check the actual resource. Test that the owner passes <em>and</em> that someone else is refused.</li>
 <li>Missing data must mean no. Deny rules win over allows, and a condition that throws can only make the answer no.</li>
-<li>A policy that returns <code>allowed: true</code> grants access by itself. Write restrictions as deny rules.</li>
+<li>A policy is a constraint by default: it can refuse, but its "yes" grants nothing. <code>effect: "grant"</code> makes its "yes" a grant, so use it only for a policy that proves the right by itself.</li>
 <li>The actor's id and roles come from the verified token and your database, never from the request body, a header or the query string.</li>
 <li>Send <code>publicReason</code> to clients; keep <code>reason</code> and <code>explain</code> steps for your logs.</li>
 </ul>
