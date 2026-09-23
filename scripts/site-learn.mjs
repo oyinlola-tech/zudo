@@ -6,7 +6,10 @@
  *   pnpm site:learn:check            build, then run every example in Node (npm packages,
  *                                    tsx, tsc) and in the browser terminal, and check the
  *                                    terminal's Node-style formatter against util.inspect
- *   node scripts/site-learn.mjs --node|--browser|--inspect [--only <slug>[,<slug>…]]
+ *   node scripts/site-learn.mjs --node|--browser|--inspect|--quiz [--only <slug>[,<slug>…]]
+ *
+ * Lesson tests live in site-src/learn/quiz/<slug>.html (see scripts/learn/quiz.mjs);
+ * --quiz checks them in Node and in the browser terminal (--check includes it).
  *
  * Lesson sources live in site-src/learn (see scripts/learn/source.mjs for the tags).
  * The generated pages are committed, because Vercel never runs this script.
@@ -22,6 +25,8 @@ import { format } from "node:util";
 
 import { checkBrowser } from "./learn/check-browser.mjs";
 import { checkNode } from "./learn/check-node.mjs";
+import { checkQuizNode } from "./learn/check-quiz.mjs";
+import { quizJson, readQuizzes } from "./learn/quiz.mjs";
 import { indexPage, lessonPage } from "./learn/page.mjs";
 import { headings, loadHighlighter, readCourse, renderBody } from "./learn/source.mjs";
 
@@ -46,15 +51,18 @@ function writePage(file, html) {
 function build() {
   const { course, lessons } = readCourse(ROOT);
   const highlight = loadHighlighter(ROOT);
-  mkdirSync(OUT, { recursive: true });
+  const quizzes = readQuizzes(ROOT, lessons);
+  mkdirSync(join(OUT, "quiz"), { recursive: true });
+  for (const [slug, quiz] of quizzes) writeFileSync(join(OUT, "quiz", slug + ".json"), JSON.stringify(quizJson(quiz)));
   for (const lesson of lessons) {
+    lesson.hasQuiz = quizzes.has(lesson.slug);
     const html = lessonPage({ course, lessons, lesson, bodyHtml: renderBody(lesson, highlight), toc: headings(lesson) });
     writePage(join(OUT, lesson.slug + ".html"), html);
   }
   course.index.bodyHtml = renderBody({ body: readFileSync(join(ROOT, "site-src", "learn", "index.html"), "utf8") }, highlight);
   writePage(join(OUT, "index.html"), indexPage({ course, lessons }));
   updateSearchIndex(lessons);
-  console.log(`site/learn: ${lessons.length} lessons + index`);
+  console.log(`site/learn: ${lessons.length} lessons + index, ${quizzes.size} tests`);
   return lessons;
 }
 
@@ -110,8 +118,17 @@ function report(name, results) {
 }
 
 const lessons = build();
+const wantQuiz = wantAll || args.includes("--quiz");
+const quizzes = new Map([...readQuizzes(ROOT, lessons)].filter(([slug]) => !only || only.includes(slug)));
 let failures = 0;
 if (wantAll || args.includes("--inspect")) failures += report("formatter vs util.inspect", checkInspect());
 if (wantAll || args.includes("--node")) failures += report("examples in Node", checkNode(lessons, { only, root: ROOT }));
-if (wantAll || args.includes("--browser")) failures += report("examples in the browser terminal", await checkBrowser(ROOT, lessons, { only }));
+if (wantQuiz) failures += report("tests in Node", await checkQuizNode(quizzes, { lessons, root: ROOT }));
+const wantBrowser = wantAll || args.includes("--browser");
+if (wantBrowser || wantQuiz) {
+  failures += report(
+    wantBrowser ? "examples and tests in the browser terminal" : "tests in the browser terminal",
+    await checkBrowser(ROOT, lessons, { only, quizzes: wantQuiz ? quizzes : null, examples: wantBrowser }),
+  );
+}
 process.exitCode = failures ? 1 : 0;

@@ -111,7 +111,8 @@ function renderExample(ex, highlight, index) {
   let html =
     `<figure class="lx-example" data-index="${index}" data-file="${escapeAttr(ex.file)}"` +
     (ex.project ? ` data-project="${escapeAttr(ex.project)}"` : "") +
-    `>\n<figcaption class="lx-bar"><span class="lx-file">${escapeHtml(ex.file)}</span>${action}</figcaption>\n` +
+    `>\n<figcaption class="lx-bar"><span class="lx-file">${escapeHtml(ex.file)}</span>` +
+    `<button type="button" class="lx-edit" data-index="${index}" title="Open in the editor: change it, save it in this browser and run it">Edit</button>${action}</figcaption>\n` +
     `<pre class="lx-code"><code>${code}</code></pre>\n` +
     `<script type="text/plain" class="lx-src">${src}</script>\n`;
   if (ex.expected !== null) {

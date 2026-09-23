@@ -36,6 +36,7 @@ function head({ title, description, path, keywords }) {
   <link rel="stylesheet" href="/css/docs.css">
   <link rel="stylesheet" href="/css/playground.css">
   <link rel="stylesheet" href="/css/learn.css">
+  <link rel="stylesheet" href="/css/ide.css">
   <link rel="stylesheet" href="/css/tailwind.css">
 </head>
 <body class="bg-zudo-white text-zudo-black">
@@ -69,6 +70,8 @@ function foot() {
   <script src="/js/components.js" defer></script>
   <script src="/js/playground.js" defer></script>
   <script src="/js/learn.js" defer></script>
+  <script src="/js/quiz.js" defer></script>
+  <script src="/js/ide.js" defer></script>
 
   <div id="zudo-footer"></div>
 </body>
@@ -107,13 +110,22 @@ ${sidebar(course, lessons, lesson.slug)}
           ${m.youNeed ? `<li><strong>You need:</strong> ${escapeHtml(m.youNeed)}</li>` : ""}
           ${m.youBuild ? `<li><strong>You build:</strong> ${escapeHtml(m.youBuild)}</li>` : ""}
         </ul>
+        <div class="lx-hero-actions">
+          <button type="button" class="lx-open-ide">Open the editor</button>
+          ${lesson.hasQuiz ? `<a class="lx-hero-test" href="#test">Test yourself</a>` : ""}
+        </div>
       </header>
 
       <div class="lx-body">
 ${bodyHtml.trim()}
       </div>
 
-      <div class="lx-finish">
+${lesson.hasQuiz ? `      <section class="lx-quiz" data-quiz="/learn/quiz/${lesson.slug}.json" data-lesson="${lesson.slug}" aria-labelledby="test">
+        <h2 id="test">Test yourself</h2>
+        <p class="lx-quiz-lead">Five questions, picked at random from this lesson's question bank. Some ask you to choose an answer, some to predict what code prints, and some to write code and run it in the terminal. Get 4 of 5 right to pass. If you don't, read the explanations and try again: you get 5 different questions.</p>
+        <div class="lx-quiz-body"><noscript><p>The test needs JavaScript.</p></noscript></div>
+      </section>
+` : ""}      <div class="lx-finish">
         <button type="button" class="lx-done" data-lesson="${lesson.slug}">Mark this lesson as done</button>
       </div>
 
@@ -125,7 +137,7 @@ ${bodyHtml.trim()}
 
     <aside class="doc-toc" aria-label="On this page">
       <div class="p-4 text-xs font-bold uppercase text-black/60 tracking-wider">On this page</div>
-${toc.map((h) => `      <a href="#${h.id}" class="toc-link">${h.text}</a>`).join("\n")}
+${toc.map((h) => `      <a href="#${h.id}" class="toc-link">${h.text}</a>`).join("\n")}${lesson.hasQuiz ? `\n      <a href="#test" class="toc-link">Test yourself</a>` : ""}
     </aside>
 
   </div>

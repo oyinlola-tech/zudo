@@ -19,7 +19,7 @@ import { extractExamples } from "./source.mjs";
 
 /* What `npm install -D typescript tsx @types/node` gives a learner today. */
 const TOOLING = { typescript: "latest", tsx: "latest", "@types/node": "latest" };
-const DEFAULT_TSCONFIG = {
+export const DEFAULT_TSCONFIG = {
   compilerOptions: {
     target: "ES2024",
     module: "NodeNext",
@@ -114,7 +114,7 @@ function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function ensureDeps(lessons, log, root) {
+export function ensureDeps(lessons, log, root) {
   const deps = allDependencies(lessons, root);
   const pkg = { name: "zudo-learn-check", private: true, type: "module", dependencies: deps, devDependencies: TOOLING };
   const day = new Date().toISOString().slice(0, 10);

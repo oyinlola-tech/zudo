@@ -10,6 +10,7 @@ import { join } from "node:path";
 
 import { launchBrowser } from "./cdp.mjs";
 import { applyMasks, normalize } from "./check-node.mjs";
+import { checkQuizBrowser } from "./check-quiz.mjs";
 import { extractExamples } from "./source.mjs";
 
 async function startServer(root) {
@@ -29,12 +30,12 @@ async function startServer(root) {
   return { url: `http://127.0.0.1:${port}`, stop: () => proc.kill() };
 }
 
-export async function checkBrowser(root, lessons, { log = console.log, only = null } = {}) {
+export async function checkBrowser(root, lessons, { log = console.log, only = null, quizzes = null, examples = true } = {}) {
   const server = await startServer(root);
   const browser = await launchBrowser();
   const results = [];
   try {
-    for (const lesson of lessons) {
+    for (const lesson of examples ? lessons : []) {
       if (only && !only.includes(lesson.slug)) continue;
       browser.consoleErrors.length = 0;
       await browser.goto(`${server.url}/learn/${lesson.slug}`);
@@ -54,6 +55,11 @@ export async function checkBrowser(root, lessons, { log = console.log, only = nu
       if (browser.consoleErrors.length) {
         results.push({ label: `${lesson.slug} page errors`, ok: false, detail: browser.consoleErrors.join("\n") });
       }
+    }
+    if (quizzes && quizzes.size) {
+      browser.consoleErrors.length = 0;
+      results.push(...(await checkQuizBrowser(quizzes, browser, server.url)));
+      if (browser.consoleErrors.length) results.push({ label: "test pages: page errors", ok: false, detail: browser.consoleErrors.join("\n") });
     }
   } finally {
     await browser.close();
