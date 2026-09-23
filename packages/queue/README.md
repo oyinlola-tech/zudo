@@ -165,6 +165,32 @@ queue.events?.on("job:completed", ({ job, result }) => {
 });
 ```
 
+`job:failed` fires on **every** failed attempt, not only the last, and a
+processor failure reports `job.state === "failed"` on a retryable attempt
+and on the final one alike, with `job.attempt` still counting the attempts
+before this one. What follows tells them apart:
+
+| Attempt | `job:failed` `job.state` | Then |
+|---------|--------------------------|------|
+| Retryable (attempts left) | `"failed"` | `job:retrying` (`"retrying"`); after the backoff the job is `"waiting"` again |
+| Final (attempts exhausted) | `"failed"` | `job:dead-lettered` (`"dead_letter"`) |
+| Stalled, reclaimed | `"active"` (as found), `JobStalledError` | the job is `"waiting"` again |
+| Stalled `maxStalledCount` times | `"dead_letter"`, `JobStalledError` | `job:dead-lettered` |
+
+To alert only on dead letters, subscribe to `job:dead-lettered`. It fires once
+per job, when the job enters the dead-letter store, with the entry's `error`
+(`JobMaxAttemptsError`, or `JobStalledError` for a stalled job) and `reason`
+(the last attempt's error message, or `"Stalled N time(s)."`):
+
+```typescript
+queue.events?.on("job:dead-lettered", ({ job, error, reason }) => {
+  alerts.page(`${job.name} ${job.id} dead-lettered: ${reason}`, error);
+});
+```
+
+It fires even if a custom `deadLetterStore.add()` rejects, in step with
+`getStats().deadLettered`. Before 1.5.0 there was no dead-letter event.
+
 ## Workers, timeouts and context
 
 **One consumer at a time.** `queue.process()` registers a processor and, by

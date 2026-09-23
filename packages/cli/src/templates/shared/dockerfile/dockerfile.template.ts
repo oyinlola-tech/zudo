@@ -9,31 +9,10 @@
  * used to run as root and ship the whole dev toolchain.
  */
 
-/** The dependency install command for a package manager inside a Dockerfile. */
-export function dockerInstallCommand(packageManager: string): string {
-  // No lockfile is generated, so never `npm ci`; bare node images need
-  // corepack for pnpm/yarn; bun is not available there, so npm is used.
-  switch (packageManager) {
-    case "pnpm":
-      return "corepack enable && pnpm install";
-    case "yarn":
-      return "corepack enable && yarn install";
-    default:
-      return "npm install";
-  }
-}
-
-/** Removes dev dependencies after the build (scripts off: prisma is a dev tool). */
-function dockerPruneCommand(packageManager: string): string | undefined {
-  switch (packageManager) {
-    case "pnpm":
-      return "pnpm prune --prod --ignore-scripts";
-    case "yarn":
-      return undefined;
-    default:
-      return "npm prune --omit=dev --ignore-scripts";
-  }
-}
+import {
+  lockedInstallSteps,
+  workspaceMemberInstallSteps,
+} from "./dockerfile.install.js";
 
 function runnerFor(packageManager: string): string {
   return packageManager === "npm" || packageManager === "bun" ? "npm" : packageManager;
@@ -59,6 +38,10 @@ CMD ["node", "${dist}/server.js"]
  * project root; `appPath` is the app's directory (`.` for a single-app
  * project). pnpm's `pnpm-workspace.yaml` is copied for its build-script
  * allow-list, without which pnpm 11 refuses to install.
+ *
+ * An app at the project root copies its lockfile and installs frozen (see
+ * `dockerfile.install.ts`); an app inside a workspace cannot use the
+ * workspace lockfile on its own, and its Dockerfile says so.
  */
 export function renderAppPackageDockerfile(options: {
   readonly appPath: string;
@@ -70,19 +53,22 @@ export function renderAppPackageDockerfile(options: {
   const app = options.appPath.replace(/^\.\/?/, "").replace(/\/$/, "");
   const at = (file: string): string => (app === "" ? file : `${app}/${file}`);
   const pm = options.packageManager;
-  const prune = dockerPruneCommand(pm);
+  const steps = app === "" ? lockedInstallSteps(pm) : workspaceMemberInstallSteps(pm);
+  const manifests = app === ""
+    ? [`COPY ${["package.json", ...steps.files].join(" ")} ./`]
+    : [`COPY ${at("package.json")} ./`, ...steps.files.map((file) => `COPY ${file} ./`)];
   const lines = [
     "# syntax=docker/dockerfile:1",
     "FROM node:24-alpine AS build",
     "WORKDIR /app",
-    `COPY ${at("package.json")} ./`,
-    ...(pm === "pnpm" ? ["COPY pnpm-workspace.yaml ./"] : []),
+    ...steps.comment,
+    ...manifests,
     ...(options.prisma ? [`COPY ${at("prisma.config.ts")} ./`, `COPY ${at("prisma")} ./prisma`] : []),
-    `RUN ${dockerInstallCommand(pm)}`,
+    `RUN ${steps.install}`,
     `COPY ${at("tsconfig.json")} ./`,
     `COPY ${at("src")} ./src`,
     `RUN ${runnerFor(pm)} run build`,
-    ...(prune === undefined ? [] : [`RUN ${prune}`]),
+    ...(steps.prune === undefined ? [] : [`RUN ${steps.prune}`]),
     "",
   ];
   return `${lines.join("\n")}\n${runtimeStage(options.port, "dist", "/app")}`;
@@ -103,13 +89,16 @@ export function renderWorkspaceAppDockerfile(options: {
   const build =
     dir === "" ? `${runner} run build` : `cd ${dir} && ${runner} run build`;
   const dist = dir === "" ? "dist" : `${dir}/dist`;
+  // The whole workspace is copied, lockfile included, so it installs frozen.
+  const steps = lockedInstallSteps(options.packageManager);
   // pnpm links workspace dependencies through the root node_modules, so
   // the runtime stage takes the whole built workspace.
   return `# syntax=docker/dockerfile:1
 FROM node:24-alpine AS build
 WORKDIR /app
+${steps.comment.join("\n")}
 COPY . .
-RUN ${dockerInstallCommand(options.packageManager)}
+RUN ${steps.install}
 RUN ${build}
 
 FROM node:24-alpine AS runtime

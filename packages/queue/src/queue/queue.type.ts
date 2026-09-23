@@ -276,8 +276,20 @@ export type QueueEventMap = {
   "job:started": { job: Job };
   "job:progress": { job: Job; progress: number };
   "job:completed": { job: Job; result: unknown };
+  /**
+   * An attempt failed. Fires on every failed attempt, retryable or final;
+   * `job.state` is `"failed"` for a processor failure either way. Use
+   * `job:retrying` or `job:dead-lettered` to tell the two apart.
+   */
   "job:failed": { job: Job; error: Error };
   "job:retrying": { job: Job; attempt: number };
+  /**
+   * The job was moved to the dead-letter store (attempts exhausted, or
+   * stalled `maxStalledCount` times). Fires once per job, after the
+   * `job:failed` for its last attempt; `job.state` is `"dead_letter"` and
+   * `error` / `reason` are the dead-letter entry's.
+   */
+  "job:dead-lettered": { job: Job; error: Error; reason?: string };
   /** A running job was aborted from outside — a drain, a close, a cancel. */
   "job:cancelled": { job: Job };
   "worker:started": { workerId: string };

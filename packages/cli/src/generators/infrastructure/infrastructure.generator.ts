@@ -11,7 +11,7 @@ import { resolveMicroserviceServices } from "../../templates/microservice/micros
 import {
   renderAppPackageDockerfile,
   renderWorkspaceAppDockerfile,
-} from "../../templates/shared/dockerfile.template.js";
+} from "../../templates/shared/dockerfile/index.js";
 
 export interface InfrastructureOptions {
   readonly projectName: string;

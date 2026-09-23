@@ -711,17 +711,23 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
         });
         this.jobs.set(job.id, deadLettered);
 
+        const reason = `Stalled ${count} time(s).`;
         void this.deadLetterStore
           .add({
             job: deadLettered,
             deadLetterAt: new Date(),
             error,
             attempts: deadLettered.attempt,
-            reason: `Stalled ${count} time(s).`,
+            reason,
           })
           .catch(() => {});
 
         this.emitter.emit("job:failed", { job: deadLettered, error });
+        this.emitter.emit("job:dead-lettered", {
+          job: deadLettered,
+          error,
+          reason,
+        });
         this.recordSettled(deadLettered);
         continue;
       }

@@ -11,7 +11,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { renderAppPackageDockerfile } from "../../templates/shared/dockerfile.template.js";
+import { renderAppPackageDockerfile } from "../../templates/shared/dockerfile/index.js";
 import { writeFile } from "../../utils/utils.fileSystem.js";
 import type { ProjectRecipeContext } from "../recipe.type.js";
 

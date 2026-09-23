@@ -280,13 +280,17 @@ describe("InfrastructureGenerator", () => {
     expect(compose).toContain("DATABASE_URL=sqlite:");
   });
 
-  it("uses corepack for pnpm and plain npm install for npm", async () => {
+  it("uses corepack for pnpm and installs from the copied lockfile", async () => {
     const pnpmFiles = await generatedFiles({ packageManager: "pnpm" });
-    expect(pnpmFiles["Dockerfile"]).toContain("corepack enable && pnpm install");
+    expect(pnpmFiles["Dockerfile"]).toContain(
+      "corepack enable && if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; else pnpm install; fi",
+    );
 
+    // `COPY . .` brings the lockfile along; without one it falls back.
     const npmFiles = await generatedFiles({ packageManager: "npm" });
-    expect(npmFiles["Dockerfile"]).toContain("RUN npm install\n");
-    expect(npmFiles["Dockerfile"]).not.toContain("--frozen-lockfile");
+    expect(npmFiles["Dockerfile"]).toContain(
+      "RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi\n",
+    );
   });
 
   it("rejects invalid service names", async () => {

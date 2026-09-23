@@ -340,7 +340,7 @@ describe("CLI-STATE-05", () => {
     );
 
     expect(
-      existsSync(join(root, "src", "services", "billing", "billing.service.ts")),
+      existsSync(join(root, "src", "services", "billing.service.ts")),
     ).toBe(true);
     expect(existsSync(join(root, "src", "src"))).toBe(false);
     expect(existsSync(join(nested, "src"))).toBe(false);
@@ -572,7 +572,9 @@ describe("CLI-SURF-05", () => {
       runGenerateCommand(
         context(root, { schematic: "service", name: "billing" }),
       ),
-    ).rejects.toThrow(/ENOTDIR|not a directory/i);
+      // src/services is a file: mkdir reports EEXIST, a write through it
+      // ENOTDIR. Either way the cause is rendered, not just "Failed to …".
+    ).rejects.toThrow(/ENOTDIR|EEXIST|not a directory|file already exists/i);
   });
 });
 

@@ -9,7 +9,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { renderAppPackageDockerfile } from "../../templates/shared/dockerfile.template.js";
+import { renderAppPackageDockerfile } from "../../templates/shared/dockerfile/index.js";
 import type { ProjectRecipe } from "../recipe.type.js";
 import { renderComposeFile, usesPostgres } from "./docker.compose.js";
 

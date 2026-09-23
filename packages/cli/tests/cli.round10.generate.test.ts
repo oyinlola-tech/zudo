@@ -62,14 +62,14 @@ describe("tooling/CLI-03", () => {
     const cwd = await monolithProject();
     const values = { schematic: "service", name: "billing" };
     await runGenerateCommand(context(cwd, values));
-    // A generated service nests under `src/services/`, the directory the
-    // monolith template scaffolds and exports a barrel for. It used to land in
-    // `src/<name>/`, which left two conventions in one project.
-    const file = join(cwd, "src/services/billing/billing.service.ts");
+    // A generated service is `src/services/<name>.service.ts`, the file the
+    // resource schematics and the container wiring use. It used to land in
+    // `src/services/<name>/`, a second convention in one project.
+    const file = join(cwd, "src/services/billing.service.ts");
     appendFileSync(file, "// USER EDIT\n");
 
     await expect(runGenerateCommand(context(cwd, values))).rejects.toThrow(
-      /Refusing to overwrite existing files:[\s\S]*billing\.service\.ts[\s\S]*--force/,
+      /already exists:[\s\S]*billing\.service\.ts[\s\S]*--force/,
     );
     expect(readFileSync(file, "utf-8")).toContain("// USER EDIT");
 

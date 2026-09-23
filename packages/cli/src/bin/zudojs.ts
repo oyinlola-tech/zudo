@@ -203,7 +203,8 @@ app.register(
       {
         name: "service",
         short: "s",
-        description: "The service name (for CQRS commands/queries)",
+        description:
+          "Microservice projects: the app to generate into (gateway or a service name). Elsewhere: a folder grouping CQRS commands/queries",
         type: "string",
       },
       {

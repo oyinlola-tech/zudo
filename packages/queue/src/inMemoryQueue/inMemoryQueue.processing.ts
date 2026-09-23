@@ -297,5 +297,10 @@ export async function handleJobFailure<TData>(
     { error: maxAttemptsError.message },
   );
   jobs.set(job.id, deadLetterJob);
+  emitter.emit("job:dead-lettered", {
+    job: deadLetterJob,
+    error: maxAttemptsError,
+    reason: errorMessage,
+  });
   deps.onSettled?.(deadLetterJob);
 }
