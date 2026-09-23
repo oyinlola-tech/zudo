@@ -111,7 +111,7 @@ export class JSONSerializer implements Serializer<unknown, string> {
       const json = opts.pretty
         ? JSON.stringify(transformed, null, opts.indent ?? 2)
         : JSON.stringify(transformed);
-      assertByteSize(json, maxSize);
+      assertByteSize(json, maxSize, "output");
       return json;
     }
 
@@ -126,7 +126,7 @@ export class JSONSerializer implements Serializer<unknown, string> {
     const json = opts.pretty
       ? JSON.stringify(value, null, opts.indent ?? 2)
       : JSON.stringify(value);
-    assertByteSize(json, maxSize);
+    assertByteSize(json, maxSize, "output");
     return json;
   }
 
@@ -138,7 +138,7 @@ export class JSONSerializer implements Serializer<unknown, string> {
     // the string handed to `deserialize` arrives from a queue, an RPC peer, or
     // a request body.
     const maxSize = opts.maxSize ?? SerializationLimits.MAX_SIZE;
-    assertByteSize(value, maxSize);
+    assertByteSize(value, maxSize, "input");
 
     const parsed = this.parse(value);
 

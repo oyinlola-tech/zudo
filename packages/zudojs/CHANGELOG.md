@@ -1,5 +1,12 @@
 # zudojs
 
+## 1.0.4
+
+### Patch Changes
+
+- Updated dependencies []:
+  - zudojs-cli@2.1.3
+
 ## 1.0.3
 
 ### Patch Changes

@@ -1,5 +1,12 @@
 # @zudojs/middleware
 
+## 1.1.2
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.3.2
+
 ## 1.1.1
 
 ### Patch Changes

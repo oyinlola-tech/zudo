@@ -1,5 +1,14 @@
 # @zudojs/messaging
 
+## 1.2.3
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.3.2
+  - @zudojs/constants@1.1.4
+  - @zudojs/middleware@1.1.2
+
 ## 1.2.2
 
 ### Patch Changes

@@ -1,5 +1,12 @@
 # @zudojs/transactions
 
+## 1.2.2
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.3.2
+
 ## 1.2.1
 
 ### Patch Changes

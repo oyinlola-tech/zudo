@@ -16,9 +16,12 @@ export {
   UnsupportedSerializationFormatError,
   SerializerNotFoundError,
   CircularReferenceError,
-  SerializationDepthError,
-  SerializationPayloadTooLargeError,
   InvalidSerializedDataError,
   TransformerError,
   TransformerNotFoundError,
 } from "./serializationError.types.js";
+
+export {
+  SerializationDepthError,
+  SerializationPayloadTooLargeError,
+} from "./serializationError.limits.js";

@@ -1,5 +1,16 @@
 # @zudojs/rpc
 
+## 1.4.3
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.3.2
+  - @zudojs/serialization@1.2.3
+  - @zudojs/constants@1.1.4
+  - @zudojs/schema@1.2.3
+  - @zudojs/security@1.3.3
+
 ## 1.4.2
 
 ### Patch Changes

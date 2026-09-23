@@ -19,7 +19,8 @@
  * whole shutdown. Under `tsx watch`, Ctrl+C delivers SIGINT twice (from the
  * terminal and forwarded by the watcher); with `once` the second signal
  * found no listener and Node's default action killed the process before
- * the runtime had stopped or logged anything.
+ * the runtime had stopped or logged anything. "Listening on" is logged once
+ * the listeners are in place, so a signal sent after it is always handled.
  */
 
 import { MARKERS, renderMarkerBlock } from "../../wiring/index.js";
@@ -120,7 +121,6 @@ const server = createHttpServer({
 });
 
 await server.start();
-console.log(\`Listening on http://\${config.host}:\${server.address?.port ?? config.port}\`);
 
 let stopping = false;
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
@@ -143,5 +143,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
       });
   });
 }
+
+console.log(\`Listening on http://\${config.host}:\${server.address?.port ?? config.port}\`);
 `;
 }

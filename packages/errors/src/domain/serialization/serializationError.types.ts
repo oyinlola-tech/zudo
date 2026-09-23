@@ -86,63 +86,6 @@ export class CircularReferenceError extends SerializationError {
   }
 }
 
-/**
- * Error thrown when maximum serialization depth is exceeded.
- *
- * By default over-deep data is a server-side data bug, so this is an
- * internal (500) error. Code that checks UNTRUSTED input (for example
- * `assertDepthWithinLimit` in `@zudojs/validation`) passes
- * `{ statusCode: 400, expose: true }`: too-deep client input is a client
- * error. The message holds only the two numbers, so it is safe to expose.
- */
-export class SerializationDepthError extends SerializationError {
-  public override readonly depth: number;
-  public override readonly maxDepth: number;
-  /** @deprecated Use `maxDepth`. */
-  public readonly maxDepthValue: number;
-
-  constructor(
-    depth: number,
-    maxDepth: number,
-    options: { readonly statusCode?: number; readonly expose?: boolean } = {},
-  ) {
-    super(`Maximum serialization depth exceeded: ${depth} > ${maxDepth}`, {
-      code: ErrorCode.MAX_DEPTH_EXCEEDED,
-      depth,
-      maxDepth,
-      statusCode: options.statusCode ?? 500,
-      expose: options.expose ?? false,
-    });
-    this.depth = depth;
-    this.maxDepth = maxDepth;
-    this.maxDepthValue = maxDepth;
-  }
-}
-
-/** Error thrown when a serialized payload exceeds the size limit. */
-export class SerializationPayloadTooLargeError extends SerializationError {
-  public override readonly size: number;
-  public override readonly maxSize: number;
-  /** @deprecated Use `size`. */
-  public readonly payloadSize: number;
-  /** @deprecated Use `maxSize`. */
-  public readonly maxSizeValue: number;
-
-  constructor(size: number, maxSize: number) {
-    super(`Serialized payload too large: ${size} bytes (max: ${maxSize})`, {
-      code: ErrorCode.PAYLOAD_TOO_LARGE,
-      size,
-      maxSize,
-      statusCode: 413,
-      expose: false,
-    });
-    this.size = size;
-    this.maxSize = maxSize;
-    this.payloadSize = size;
-    this.maxSizeValue = maxSize;
-  }
-}
-
 /** Error thrown when serialized data is invalid or malformed. */
 export class InvalidSerializedDataError extends SerializationError {
   constructor(

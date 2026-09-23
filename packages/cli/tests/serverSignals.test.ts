@@ -58,6 +58,9 @@ describe("generated server signal handlers", () => {
       expect(source, path).not.toContain("process.once(");
       expect(source, path).toContain("process.on(signal, () => {");
       expect(source, path).toMatch(/if \(stopping\) \{\n\s+console\.log\(`Received \$\{signal\} again: already shutting down\.`\);/);
+      expect(source.indexOf("process.on(signal"), `${path}: listeners before "Listening on"`).toBeLessThan(
+        source.indexOf("console.log(`Listening on"),
+      );
     }
   });
 

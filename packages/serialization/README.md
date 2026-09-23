@@ -143,6 +143,11 @@ Failures throw `@zudojs/errors` serialization classes: `SerializationPayloadTooL
 or malformed tags under `strict`), `TransformerError` and `SerializeError` (for
 example an invalid `Date`). All extend `SerializationError`.
 
+An oversized string passed to `deserialize` is untrusted input, so its
+`SerializationPayloadTooLargeError` is an exposed 413 whose message names only
+the two sizes. Oversized output from `serialize` was built by the server, so
+it is an unexposed 500 that public error responses do not describe.
+
 ### Serialized errors
 
 Stack traces are **not** serialized unless you ask, because a serialized error

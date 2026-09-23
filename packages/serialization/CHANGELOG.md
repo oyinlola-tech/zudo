@@ -1,5 +1,23 @@
 # @zudojs/serialization
 
+## 1.2.3
+
+### Patch Changes
+
+- Fix graceful shutdown under `tsx watch`, make `generate middleware` produce a middleware the pipeline accepts, and answer an oversized request body with its 413.
+
+  - **zudojs-cli: generated `src/server.ts` survives a second Ctrl+C.** The SIGINT/SIGTERM handlers were registered with `process.once`, so the `if (stopping) return` guard could never run. Under `npm run dev` (`tsx watch`), Ctrl+C delivers SIGINT twice. The second signal found no listener, and Node killed the process mid-shutdown before any graceful-shutdown log appeared. The handlers now use `process.on`. A repeated signal logs `Received SIGINT again: already shutting down.` while integrations drain, HTTP stops and the runtime stops. "Listening on …" is now logged after the handlers are registered. Every generated app uses this template: monolith, modular monolith, and the microservice gateway and services.
+  - **zudojs-cli: `generate middleware <name>` writes an `HttpMiddleware` and registers it.** The schematic wrote `(ctx: unknown, next: () => Promise<void>) => Promise<void>`. Adding it to the pipeline failed tsc with TS2322, and it dropped the response `next()` produced. It now writes a function returning `HttpMiddleware` from `@zudojs/http` that returns `next()`'s response, and exports it from the `middlewares/index.ts` barrel. It also adds it to `src/server.ts` between the `zudojs:server-imports` and `zudojs:server-middleware` markers, so it runs after the security headers, CORS and rate limit and before routing. When the markers are missing, `server.ts` is left unchanged and the command prints the two lines to add by hand.
+  - **@zudojs/errors: `SerializationPayloadTooLargeError` is an exposed 413 by default.** It was a 413 with `expose: false`, so `serializePublicError` answered an oversized request body with "An unexpected error occurred.". Its message holds only the two sizes, so it is now exposed. Like `SerializationDepthError`, it takes a third `{ statusCode?, expose? }` argument for a payload the server built itself.
+  - **@zudojs/serialization: `serialize` keeps oversized output hidden.** `deserialize` bounds untrusted input, so an oversized string gets the exposed 413. The output of `serialize` was built by the server, so it now throws an unexposed 500 (`{ statusCode: 500, expose: false }`). `assertSizeWithinLimit` in `@zudojs/validation` guards untrusted input and now throws the exposed 413 without any change of its own.
+
+  `@zudojs/serialization`: a too-deep payload found while restoring types in `deserialize` (`preserveTypes`) is now an exposed 400 (`UNTRUSTED_DEPTH_ERROR`) instead of a hidden 500, matching the parse-level depth guard.
+
+- Updated dependencies []:
+  - @zudojs/errors@1.3.2
+  - @zudojs/constants@1.1.4
+  - @zudojs/validation@1.1.2
+
 ## 1.2.2
 
 ### Patch Changes

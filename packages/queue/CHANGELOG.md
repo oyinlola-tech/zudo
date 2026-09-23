@@ -1,5 +1,14 @@
 # @zudojs/queue
 
+## 1.5.1
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.3.2
+  - @zudojs/serialization@1.2.3
+  - @zudojs/constants@1.1.4
+
 ## 1.5.0
 
 ### Minor Changes

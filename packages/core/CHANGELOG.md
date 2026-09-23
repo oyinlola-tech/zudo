@@ -1,5 +1,13 @@
 # @zudojs/core
 
+## 1.2.4
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.3.2
+  - @zudojs/constants@1.1.4
+
 ## 1.2.3
 
 ### Patch Changes

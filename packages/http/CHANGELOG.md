@@ -1,5 +1,17 @@
 # @zudojs/http
 
+## 1.4.4
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.3.2
+  - @zudojs/crypto@1.3.3
+  - @zudojs/logger@1.4.3
+  - @zudojs/middleware@1.1.2
+  - @zudojs/openapi@1.5.2
+  - @zudojs/security@1.3.3
+
 ## 1.4.3
 
 ### Patch Changes

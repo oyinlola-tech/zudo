@@ -11,6 +11,7 @@ import {
   TransformerError,
   isSerializationError,
 } from "@zudojs/errors";
+import { UNTRUSTED_DEPTH_ERROR } from "@zudojs/validation";
 import { SerializationLimits, SerializationTags } from "@zudojs/constants";
 import { isPlainObject } from "@zudojs/types";
 import type { DeserializeOptions } from "../serializerTypes/index.js";
@@ -43,7 +44,14 @@ export function restoreValue(
 ): unknown {
   if (value === null || typeof value !== "object") return value;
   if (depth >= walk.maxDepth) {
-    throw new SerializationDepthError(depth + 1, walk.maxDepth);
+    // The restore walk only runs in `deserialize`, on untrusted input, so a
+    // too-deep payload is the client's fault: an exposed 400, not a hidden
+    // 500 (the serialize-side walk keeps the server-error default).
+    throw new SerializationDepthError(
+      depth + 1,
+      walk.maxDepth,
+      UNTRUSTED_DEPTH_ERROR,
+    );
   }
   if (Array.isArray(value)) {
     return value.map((item) => restoreValue(walk, item, depth + 1));

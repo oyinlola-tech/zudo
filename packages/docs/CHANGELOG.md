@@ -1,5 +1,12 @@
 # @zudojs/docs
 
+## 1.0.6
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.3.2
+
 ## 1.0.5
 
 ### Patch Changes

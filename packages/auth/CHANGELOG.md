@@ -1,5 +1,15 @@
 # @zudojs/auth
 
+## 1.3.3
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.3.2
+  - @zudojs/constants@1.1.4
+  - @zudojs/crypto@1.3.3
+  - @zudojs/permissions@1.4.3
+
 ## 1.3.2
 
 ### Patch Changes

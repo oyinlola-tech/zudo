@@ -13,12 +13,31 @@ export function byteLength(value: string): number {
 }
 
 /**
- * Throws `SerializationPayloadTooLargeError` when a JSON string is larger
- * than `maxSize` bytes.
+ * Error options for an oversized payload the server built itself (the
+ * output of `serialize`): an internal error that is never shown to the
+ * client. Oversized input to `deserialize` keeps the error's default, an
+ * exposed 413.
  */
-export function assertByteSize(json: string, maxSize: number): void {
+export const SERVER_BUILT_PAYLOAD_ERROR = Object.freeze({
+  statusCode: 500,
+  expose: false,
+});
+
+/**
+ * Throws `SerializationPayloadTooLargeError` when a JSON string is larger
+ * than `maxSize` bytes. `origin` says whose payload it is: `"input"`
+ * (untrusted, an exposed 413) or `"output"` (server-built, an unexposed 500).
+ */
+export function assertByteSize(
+  json: string,
+  maxSize: number,
+  origin: "input" | "output",
+): void {
   const size = byteLength(json);
-  if (size > maxSize) throw new SerializationPayloadTooLargeError(size, maxSize);
+  if (size <= maxSize) return;
+  throw origin === "output"
+    ? new SerializationPayloadTooLargeError(size, maxSize, SERVER_BUILT_PAYLOAD_ERROR)
+    : new SerializationPayloadTooLargeError(size, maxSize);
 }
 
 /**

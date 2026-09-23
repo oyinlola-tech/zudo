@@ -1,5 +1,13 @@
 # @zudojs/permissions
 
+## 1.4.3
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.3.2
+  - @zudojs/middleware@1.1.2
+
 ## 1.4.2
 
 ### Patch Changes
