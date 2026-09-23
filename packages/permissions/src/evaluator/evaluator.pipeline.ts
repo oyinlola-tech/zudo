@@ -16,7 +16,9 @@ import type {
   RoleResolver,
   RuleCombiningAlgorithm,
   AuthorizationOptions,
+  PolicyEffect,
 } from "../permissionTypes/index.js";
+import { policyGrants } from "../policy/policyEffect.js";
 import { resolveRolePermissions } from "../role/roleHierarchy.js";
 import {
   matches,
@@ -53,6 +55,8 @@ export interface EvaluatorOptions {
   readonly rules?: readonly PermissionRule[];
   /** Default timeout for async policy evaluation (ms). */
   readonly policyTimeout?: number;
+  /** Effect of a policy that sets none. Default: `"constrain"`. */
+  readonly defaultPolicyEffect?: PolicyEffect;
   /** How competing rules combine. Default: `"deny-overrides"`. */
   readonly algorithm?: RuleCombiningAlgorithm;
   /** Decision cache. */
@@ -278,6 +282,13 @@ export interface PolicyOutcome {
   /** Whether every policy that ran allows the result to be cached. */
   readonly cacheable: boolean;
   readonly evaluated: readonly string[];
+  /**
+   * Whether the allow may grant on its own: every applicable policy allowed
+   * and at least one of them has the `"grant"` effect. `false` for a denial,
+   * and for an allow from constraining policies only, which then needs a
+   * role, permission or rule to grant.
+   */
+  readonly grants: boolean;
 }
 
 /**
@@ -294,7 +305,7 @@ export async function evaluatePolicies(
   authOptions?: AuthorizationOptions,
 ): Promise<PolicyOutcome> {
   if (policies.length === 0) {
-    return { decision: null, cacheable: true, evaluated: [] };
+    return { decision: null, cacheable: true, evaluated: [], grants: false };
   }
 
   const permissionStr = `${context.permission.resource}:${context.permission.action}`;
@@ -302,7 +313,7 @@ export async function evaluatePolicies(
   const denyOnly = narrowerPolicies(policies, applicable, permissionStr);
 
   if (applicable.length === 0 && denyOnly.length === 0) {
-    return { decision: null, cacheable: true, evaluated: [] };
+    return { decision: null, cacheable: true, evaluated: [], grants: false };
   }
 
   // The per-call timeout wins, but the engine-level default is what makes a
@@ -333,6 +344,7 @@ export async function evaluatePolicies(
           }),
           cacheable,
           evaluated,
+          grants: false,
         };
       }
     } catch (error) {
@@ -351,22 +363,28 @@ export async function evaluatePolicies(
         }),
         cacheable: false,
         evaluated,
+        grants: false,
       };
     }
   }
 
   if (applicable.length === 0) {
-    return { decision: null, cacheable, evaluated };
+    return { decision: null, cacheable, evaluated, grants: false };
   }
+
+  const grants = applicable.some((policy) =>
+    policyGrants(policy, options.defaultPolicyEffect),
+  );
 
   return {
     decision: Object.freeze({
       allowed: true,
-      reason: "policy_allow",
+      reason: grants ? "policy_allow" : "policy_pass",
       policy: applicable.map((policy) => policy.name).join(","),
     }),
     cacheable,
     evaluated,
+    grants,
   };
 }
 

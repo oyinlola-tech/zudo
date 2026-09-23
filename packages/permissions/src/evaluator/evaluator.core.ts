@@ -269,7 +269,12 @@ export async function evaluate(
     }
   }
 
-  const decision = combine(ruleResult, outcome.decision, permissionStr);
+  const decision = combine(
+    ruleResult,
+    outcome.decision,
+    outcome.grants,
+    permissionStr,
+  );
 
   /* ── Cache write ─────────────────────────────────────────────────────── */
 
@@ -291,17 +296,21 @@ export async function evaluate(
 /**
  * Combine the rule outcome with the policy outcome.
  *
- * A denying policy always wins. An allowing policy can grant access the rules
- * did not, which is what makes a policy an ABAC escape hatch rather than a
- * filter — but it can never override a denial, and that includes a denial
- * the *rules* produced. "The rules did not allow" covers two cases: no rule
- * matched, and a deny rule matched. Treating them alike let an allowing
- * policy for `post:*` cancel a `deny post:update` rule — the exact inversion
- * of `deny-overrides`.
+ * A denying policy always wins. An allowing policy is, by default, only an
+ * extra condition: the actor's roles, permissions or rules must still grant
+ * the permission. It used to grant on its own, so a "business-hours" policy
+ * handed `task:delete` to an actor with no roles at all. Only a policy with
+ * `effect: "grant"` (or an engine with `defaultPolicyEffect: "grant"`) can
+ * grant access the rules did not — and even then it never overrides a
+ * denial, including one the *rules* produced. "The rules did not allow"
+ * covers two cases: no rule matched, and a deny rule matched. Treating them
+ * alike let an allowing policy for `post:*` cancel a `deny post:update` rule
+ * — the exact inversion of `deny-overrides`.
  */
 function combine(
   ruleResult: RuleEvaluation,
   policyDecision: PermissionDecision | null,
+  policyGrants: boolean,
   permissionStr: string,
 ): PermissionDecision {
   if (policyDecision && !policyDecision.allowed) return policyDecision;
@@ -326,7 +335,7 @@ function combine(
     });
   }
 
-  if (policyDecision?.allowed) return policyDecision;
+  if (policyDecision?.allowed && policyGrants) return policyDecision;
 
   return denied("no_matching_rule");
 }

@@ -155,31 +155,69 @@ caller would set the header to the resource's tenant and pass.
 
 ## Policies
 
-A policy is a named, prioritised hook that runs alongside the rules.
+A policy is a named, prioritised hook that runs alongside the rules. By
+default it is an **extra condition on top of RBAC/ABAC**: it can take access
+away, never hand it out.
 
 ```typescript
 const engine = createPermissionEngine({
-  roles,
+  roles: [{ name: "staff", permissions: ["task:*"] }],
   policyTimeout: 250,
   policies: [
     {
       name: "business-hours",
-      permissions: ["post:*"], // wildcards work here too
+      permissions: ["task:*"], // wildcards work here too
       priority: 10, // higher runs first
       cacheable: false, // depends on the clock, so never cache it
-      evaluate: (context) =>
+      evaluate: () =>
         isBusinessHours()
-          ? { allowed: true }
+          ? { allowed: true } // "no objection" — the role still has to grant
           : { allowed: false, reason: "outside_business_hours" },
+    },
+  ],
+});
+
+await engine.can(staff, "task:delete"); // true in hours, false after
+await engine.can(guest, "task:delete"); // false: no role grants it
+```
+
+> **Warning — a policy's `allowed: true` is not a grant.** Before 1.4 it was:
+> an allowing policy granted the permission even to an actor with no roles, so
+> the "business-hours" policy above handed `task:delete` to everyone during
+> office hours. A policy now only constrains, unless it opts in with
+> `effect: "grant"`.
+
+Policies run highest priority first and stop at the first denial. A policy
+that throws, or exceeds `policyTimeout`, denies. A denying policy always wins.
+An allowing policy grants nothing by itself: the actor's roles, direct
+permissions or rules must still grant the permission.
+
+### Policies that grant
+
+A policy that establishes the right on its own — ownership is the usual one —
+says so with `effect: "grant"`:
+
+```typescript
+const engine = createPermissionEngine({
+  roles,
+  policies: [
+    {
+      name: "author-can-edit",
+      permissions: ["post:update"],
+      effect: "grant", // an allow here grants, even with no role
+      evaluate: ({ actor, resource }) => ({
+        allowed: (resource as { authorId?: string })?.authorId === actor.id,
+      }),
     },
   ],
 });
 ```
 
-Policies run highest priority first and stop at the first denial. A policy
-that throws, or exceeds `policyTimeout`, denies. A denying policy always wins;
-an allowing one can grant access the rules did not decide, but never overrides
-a denial — from another policy or from a deny rule that applied.
+A granting policy still never overrides a denial — from another policy, an
+explicit deny, or a deny rule that applied. Only the exact value `"grant"`
+grants; a typo constrains. `createPermissionEngine({ defaultPolicyEffect:
+"grant" })` restores the pre-1.4 behaviour for every policy that sets no
+`effect` — prefer marking the individual policies.
 
 `policyTimeout: 0` means "expire immediately", not "no timeout" — omit it to
 disable.
@@ -428,7 +466,11 @@ const guard = authorize(engine, "post:update", {
 - The guard extracts the actor itself when one is not already in state, so it
   works without a separate actor middleware.
 - No actor → **401** with `WWW-Authenticate`. Actor but not permitted →
-  **403**.
+  **403**. The refusal is a `GuardResponse` (`createGuardResponse` from
+  `@zudojs/middleware`), which `@zudojs/http` sends with that status, body and
+  headers. It used to be a plain `{ status, body, headers }` object, which a
+  route middleware's return ignored: the handler did not run, but the client
+  got `200`.
 - The 403 body carries `decision.publicReason`, never the internal reason:
   `policy_error:<name>` names your policies and does not belong in a
   response. Pass `deniedResponse` to shape the body — it receives the real
@@ -444,7 +486,18 @@ const guard = authorize(engine, "post:update", {
 
 The middleware composes with the real `@zudojs/http` pipeline without
 depending on it: the HTTP types are mirrored structurally (headers, params and
-query may be plain objects, as `@zudojs/http` provides them, or maps).
+query may be plain objects, as `@zudojs/http` provides them, or maps), and
+`HttpMiddleware` is assignable to `@zudojs/http`'s own `HttpMiddleware` — pass
+a guard straight to a route, no `as never`:
+
+```typescript
+router.put("/posts/:id", updatePost, { middleware: [guard] });
+```
+
+A middleware of your own typed as this package's `HttpMiddleware` answers a
+refusal with `createGuardResponse({ status, body })`; returning a plain
+`{ status, body, headers }` object is no longer typed, because
+`@zudojs/http` never sent it as a response.
 
 ## Errors
 

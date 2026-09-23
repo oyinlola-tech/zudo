@@ -23,12 +23,11 @@ type RealContext = Parameters<RealMiddleware>[0];
 
 // Compile-time: the real request context satisfies the local mirror. This
 // is the direction that matters — the guard reads what http hands it. The
-// return direction needs a cast: http's declared result type omits the plain
-// `{ status, headers, body }` objects its pipeline accepts at runtime.
+// return direction needs no cast either: a refusal is a `GuardResponse`,
+// which http's result type includes.
 const mirrorAcceptsReal = (context: RealContext): HttpMiddlewareContext =>
   context;
-const asReal = (middleware: HttpMiddleware): RealMiddleware =>
-  middleware as unknown as RealMiddleware;
+const asReal = (middleware: HttpMiddleware): RealMiddleware => middleware;
 
 const engine = createPermissionEngine({
   roles: [{ name: "editor", permissions: ["post:update"] }],

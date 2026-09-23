@@ -56,9 +56,28 @@ export interface PermissionCache {
   clear?(): Promise<void>;
 }
 
+/**
+ * What an allowing policy means.
+ *
+ * - `"constrain"` (the default): the policy is an extra condition on top of
+ *   RBAC/ABAC. Its allow means "no objection"; the actor's roles, direct
+ *   permissions or rules must still grant the permission. Its deny denies.
+ * - `"grant"`: the policy is an independent grant. Its allow grants the
+ *   permission even when no role or rule does — an ownership check, say.
+ *   Use it only for a policy that establishes the right on its own.
+ */
+export type PolicyEffect = "constrain" | "grant";
+
 /** A named authorization policy. */
 export interface PermissionPolicyDefinition {
   readonly name: string;
+  /**
+   * Whether this policy's allow can grant a permission the actor's roles do
+   * not include. Default: the engine's `defaultPolicyEffect`, which is
+   * `"constrain"` — a policy only ever narrows access. Any value other than
+   * `"grant"` constrains.
+   */
+  readonly effect?: PolicyEffect;
   /**
    * Permissions this policy applies to. Wildcards are honoured, so
    * `["post:*"]` covers `post:update` — the same matching grants use.

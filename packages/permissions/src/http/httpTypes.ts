@@ -7,15 +7,32 @@
  * @module http/httpTypes
  */
 
-/** HTTP middleware signature from @zudojs/http. */
-export type HttpMiddleware = (
-  context: HttpMiddlewareContext,
-  next: () => Promise<HttpResponseContext>,
-) =>
+import type { GuardResponse } from "@zudojs/middleware";
+
+/**
+ * What a permission middleware returns: nothing, a web `Response`, a
+ * `GuardResponse` refusing the request, or whatever `next()` produced.
+ */
+export type HttpMiddlewareOutcome<Downstream> =
   | void
   | Response
-  | HttpResponseContext
-  | Promise<void | Response | HttpResponseContext>;
+  | GuardResponse
+  | Downstream;
+
+/**
+ * HTTP middleware signature, structurally assignable to `@zudojs/http`'s
+ * `HttpMiddleware` without a cast.
+ *
+ * Generic over what `next()` resolves to, so a middleware hands back the
+ * real pipeline's response unchanged. A refusal is a `GuardResponse`
+ * (`createGuardResponse` from `@zudojs/middleware`), which `@zudojs/http`
+ * sends with its own status; a plain `{ status, body, headers }` object is
+ * not a response.
+ */
+export type HttpMiddleware = <Downstream extends HttpResponseContext>(
+  context: HttpMiddlewareContext,
+  next: () => Promise<Downstream>,
+) => HttpMiddlewareOutcome<Downstream> | Promise<HttpMiddlewareOutcome<Downstream>>;
 
 /** HTTP middleware context from @zudojs/http. */
 export interface HttpMiddlewareContext {

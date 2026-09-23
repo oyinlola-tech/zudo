@@ -10,6 +10,7 @@ import type {
   ExplainResult,
   PermissionRule,
   PermissionPolicyDefinition,
+  PolicyEffect,
   PermissionCache,
   PermissionResolver,
   RoleResolver,
@@ -86,6 +87,16 @@ export interface PermissionEngineOptions {
   readonly rules?: readonly PermissionRule[];
   /** Default timeout for async policy evaluation (ms). */
   readonly policyTimeout?: number;
+  /**
+   * Effect of a policy that sets no `effect` of its own. Default:
+   * `"constrain"` — an allowing policy is an extra condition and cannot
+   * grant a permission the actor's roles, permissions or rules do not.
+   *
+   * `"grant"` restores the behaviour before 1.4, where every allowing policy
+   * was an independent grant. Prefer `effect: "grant"` on the individual
+   * policies that really establish the right on their own.
+   */
+  readonly defaultPolicyEffect?: PolicyEffect;
   /** How competing rules combine. Default: `"deny-overrides"`. */
   readonly algorithm?: RuleCombiningAlgorithm;
   /** Caches decisions. Create one with `createMemoryPermissionCache()`. */
@@ -352,6 +363,7 @@ export function createPermissionEngine(
     },
     rules: options?.rules,
     policyTimeout: options?.policyTimeout,
+    defaultPolicyEffect: options?.defaultPolicyEffect,
     algorithm: options?.algorithm,
     cache: options?.cache,
     cacheTtlMs: options?.cacheTtlMs,

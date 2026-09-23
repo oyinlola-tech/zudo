@@ -43,6 +43,7 @@ export {
 export type {
   HttpRequestBag,
   HttpMiddleware,
+  HttpMiddlewareOutcome,
   HttpMiddlewareContext,
   HttpRequestContext,
   HttpResponseContext,

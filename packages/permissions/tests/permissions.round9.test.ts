@@ -63,13 +63,14 @@ describe("PERMISSIONS-R9-01: an allowing policy cannot override a deny rule", ()
     expect(decision.reason).toBe("rule_deny");
   });
 
-  it("still lets a policy grant what no rule decided", async () => {
+  it("still lets a grant policy grant what no rule decided", async () => {
     const engine = createPermissionEngine({
       roles: [{ name: "reader", permissions: ["post:read"] }],
       policies: [
         {
           name: "open-door",
           permissions: ["post:update"],
+          effect: "grant",
           evaluate: () => ({ allowed: true }),
         },
       ],

@@ -26,6 +26,7 @@ export {
   type RoleResolver,
   type PermissionCache,
   type PermissionPolicyDefinition,
+  type PolicyEffect,
   type ExplainStep,
   type ExplainResult,
   type AuthorizationOptions,

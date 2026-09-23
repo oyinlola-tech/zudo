@@ -4,6 +4,8 @@
  * @module http/httpHelpers
  */
 
+import { createGuardResponse, type GuardResponse } from "@zudojs/middleware";
+
 import type { PermissionDecision } from "../permissionTypes/index.js";
 
 /** Options for creating denied responses. */
@@ -19,12 +21,12 @@ export interface DeniedResponseOptions {
   readonly authenticateChallenge?: string;
 }
 
-/** A framework-agnostic response. */
-export interface PermissionHttpResponse {
-  readonly status: number;
-  readonly body: unknown;
-  readonly headers: Readonly<Record<string, string>>;
-}
+/**
+ * A framework-agnostic response: a `GuardResponse` from `@zudojs/middleware`,
+ * which `@zudojs/http` sends with its own status. It still has the
+ * `status`, `body` and `headers` fields this type always had.
+ */
+export type PermissionHttpResponse = GuardResponse;
 
 const JSON_HEADERS = { "content-type": "application/json" } as const;
 
@@ -46,11 +48,7 @@ export function createForbiddenResponse(
         message: decision.publicReason ?? "Access denied",
       };
 
-  return Object.freeze({
-    status: 403,
-    body,
-    headers: JSON_HEADERS,
-  });
+  return createGuardResponse({ status: 403, body, headers: JSON_HEADERS });
 }
 
 /**
@@ -66,13 +64,13 @@ export function createUnauthorizedResponse(
     ? options.unauthenticatedResponse()
     : { error: "Unauthorized", message: "Authentication required" };
 
-  return Object.freeze({
+  return createGuardResponse({
     status: 401,
     body,
-    headers: Object.freeze({
+    headers: {
       ...JSON_HEADERS,
       "www-authenticate": options?.authenticateChallenge ?? "Bearer",
-    }),
+    },
   });
 }
 
@@ -83,9 +81,5 @@ export function createJsonResponse(
   status: number,
   body: unknown,
 ): PermissionHttpResponse {
-  return Object.freeze({
-    status,
-    body,
-    headers: JSON_HEADERS,
-  });
+  return createGuardResponse({ status, body, headers: JSON_HEADERS });
 }
