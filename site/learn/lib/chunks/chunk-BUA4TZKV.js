@@ -1,2 +1,0 @@
-/* @zudojs browser build for the Learn terminal. MIT licensed. */
-import{Ch as t,Eh as n}from"./chunk-P7OYFBSP.js";import{a as r}from"./chunk-L2LNWS7V.js";var p=100;function x(o,a,h){let i=h?.maxDepth??p;if(o.length>i)throw new n(i);return o.length===0?a:async d=>{let l=-1;async function s(e){if(e<=l)throw new t(`middleware[${e-1}]`);if(e>i)throw new n(i);if(l=e,e<o.length){let M=o[e];return M(d,()=>s(e+1))}return a(d)}return r(s,"dispatch"),s(0)}}r(x,"compose");export{x as a};
