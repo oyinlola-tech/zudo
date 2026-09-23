@@ -12,7 +12,7 @@ import type { LogMetadata } from "../../loggerEntry/loggerEntry.type.js";
 import type { LoggerContext } from "../../loggerContext/loggerContext.core.js";
 
 import type {
-  ChildLoggerOptions,
+  ChildLoggerOptionsInput,
   LogOptions,
 } from "../../loggerOptions/loggerOptions.type.js";
 
@@ -43,7 +43,12 @@ export interface Logger {
 
   log(level: LoggerLevel, message: string, options?: LogOptions): void;
 
-  child(options?: ChildLoggerOptions): Logger;
+  /**
+   * Creates a child logger. `level` may be a name (`"debug"`); an
+   * implementation declared with `ChildLoggerOptions` still satisfies this
+   * interface and can resolve a name with `resolveLoggerLevel()`.
+   */
+  child(options?: ChildLoggerOptionsInput): Logger;
 
   withContext(context: LoggerContext): Logger;
 

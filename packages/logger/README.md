@@ -34,13 +34,56 @@ await logger.flush(); // drain in-flight writes before exit
 (5). A logger emits every message at or below its configured level;
 `level` defaults to `info`.
 
+Wherever a level is configured (the `level` option, `setLevel()` and
+`child({ level })`) it may be the enum value or its name in any case:
+
+```typescript
+createLogger({ level: "error" });            // same as LoggerLevel.ERROR
+logger.setLevel("DEBUG");
+logger.child({ level: LoggerLevel.TRACE });
+createLogger({ level: process.env.LOG_LEVEL as LoggerLevelName });
+```
+
+The type is `LoggerLevelLike` (`LoggerLevel | LoggerLevelName | Uppercase<LoggerLevelName>`);
+`"warning"` and `"information"` are accepted as aliases at runtime, and
+`resolveLoggerLevel(value)` converts one to the enum. An unknown name
+throws (`InvalidLoggerLevelError` from the options and `child`,
+`LoggerConfigurationError` from `setLevel`) rather than leaving a logger
+that silently emits nothing. A custom `Logger` implementation keeps
+compiling (`ChildLoggerOptions.level` is still the enum; `child()` accepts
+`ChildLoggerOptionsInput`), but may now be handed a name in `setLevel()` or
+`child()`: pass it through `resolveLoggerLevel()`.
+
 ## Transports
 
 A transport is either a `{ name, enabled, write, flush?, close? }`
 object or a `(entry, context) => void | Promise<void>` function. When no
 transport is configured the logger writes to the console.
 
-Built in: `createConsoleLoggerTransport`, and the composites
+### What a transport receives
+
+`entry.message` is the message exactly as it was logged. The logger's
+formatter renders the whole record into `entry.formatted`:
+
+- a text formatter (the default): the line with timestamp, level, logger
+  name, message, metadata and, if enabled, the stack;
+- the JSON formatter: its JSON string;
+- an object formatter such as `createStructuredLoggerFormatter()`: its
+  record is merged over the entry, and `entry.formatted` is that record as
+  one line of JSON (cycles become `"[Circular]"`, BigInt a string).
+
+A transport that prints text should print `entry.formatted ?? entry.message`
+(or call `formatTransportLine(entry)`, which falls back to the entry as one
+JSON line); one that ships records can ignore `formatted`.
+
+> **Changed in this release.** A string formatter's output used to replace
+> `entry.message`, so a custom transport printing `entry.message` got the
+> formatted line and could not recover the raw message. It now receives
+> the raw message; switch such a transport to
+> `entry.formatted ?? entry.message` to keep printing the formatted line.
+
+Built in: `createConsoleLoggerTransport` (prints one line per record:
+`entry.formatted`, or the entry as JSON), and the composites
 `createMultiLoggerTransport`, `createConditionalLoggerTransport` and
 `createBufferedLoggerTransport`. File and HTTP transports are not
 included — implement the `LoggerTransport` interface for those.
@@ -164,10 +207,17 @@ tag of text output. Colour codes are emitted only around the fixed level
 name, never around user-supplied text.
 
 A formatter returns either a string or an object
-(`LoggerFormattedOutput`). A string becomes the payload's `message`; an
-object is merged OVER the entry, so `createStructuredLoggerFormatter()`
-hands the transport its structured record (with an ISO-string
-`timestamp` and serialized metadata) rather than the raw entry.
+(`LoggerFormattedOutput`). A string becomes the payload's `formatted`
+line (`message` stays the raw message); an object is merged OVER the
+entry, so `createStructuredLoggerFormatter()` hands the transport its
+structured record (with an ISO-string `timestamp` and serialized
+metadata) rather than the raw entry, and `formatted` is the record as one
+JSON line. See "What a transport receives".
+
+`includeStackTrace: false` on the text formatter leaves every stack out:
+an entry's error prints as `error={"name":"Error","message":"..."}`, and
+an `Error` inside metadata is serialized without its stack, so no frame
+(and no absolute file path) reaches the log.
 
 ## Use Cases
 

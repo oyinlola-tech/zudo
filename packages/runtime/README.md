@@ -57,7 +57,9 @@ Every module's `onInitialize` runs while `runtime.state` is
 `initialized` to `starting`, and every `onReady` runs under `starting`.
 `start()` resolves in `running`. A failure in any phase ends in `failed`,
 which is still stoppable. `created` may go straight to `stopped` (a
-`stop()` before `start()`).
+`stop()` before `start()`). Only `stopped` is terminal:
+`isTerminalState("failed")` is `false`, because `stop()` moves a failed
+runtime on to `stopped`.
 
 ## Startup failures
 
@@ -67,6 +69,22 @@ are stopped and destroyed in reverse) and the state becomes `failed`.
 module threw rather than re-throwing it: the original is `error.cause`,
 `error.phase` is `"initialize"` (an `onInitialize` threw) or `"start"` (an
 `onReady` threw), and `error.failedModuleId` names the module.
+
+Two subclasses of `RuntimeStartError` narrow it down:
+
+- `RuntimeInitializationError` — the failure was in the initialize phase
+  (an `onInitialize` threw, or the configuration manager failed to load).
+- `RuntimeRollbackError` — startup failed AND the rollback that followed
+  failed, so a module may still hold resources. `phase`,
+  `failedModuleId` and `cause` still describe the startup failure;
+  `originalError` is the error `start()` would otherwise have thrown, and
+  `rollbackError` is what failed during rollback (an `AggregateError`
+  when several modules failed). Call `stop()` to retry the release.
+
+A shutdown triggered by `SIGTERM`, `SIGINT` or a fatal error has no caller
+to reject; if it fails, the runtime logs a `RuntimeSignalError` (with the
+failure as `cause`) as the `error` field of its "Shutdown handler
+failed." entry.
 
 ```typescript
 import { RuntimeStartError } from "@zudojs/runtime";

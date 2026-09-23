@@ -17,7 +17,7 @@ import type {
 import { createLoggerContext } from "../../loggerContext/loggerContext.core.js";
 
 import type {
-  ChildLoggerOptions,
+  ChildLoggerOptionsInput,
   LogOptions,
 } from "../../loggerOptions/loggerOptions.type.js";
 
@@ -79,7 +79,7 @@ export class ContextLogger implements Logger {
     this.run(() => this.logger.log(level, message, options));
   }
 
-  child(options?: ChildLoggerOptions): Logger {
+  child(options?: ChildLoggerOptionsInput): Logger {
     return new ContextLogger(
       this.logger.child(options),
       this.context,

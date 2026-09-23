@@ -68,10 +68,11 @@ describe("structured formatter on the console transport", () => {
 
   it("prints a raw entry written straight to the transport as one JSON line", () => {
     const lines = captureConsole();
-    const transport = createConsoleLoggerTransport();
+    const transport = createConsoleLoggerTransport().transport;
     const entry = createLoggerEntry({ level: LoggerLevel.WARN, message: "direct" });
 
-    void transport.transport.write?.(entry, {});
+    if (typeof transport === "function") throw new Error("expected an object transport");
+    void transport.write(entry, {});
 
     expect(JSON.parse(String(lines[0]))).toMatchObject({ level: "warn", message: "direct" });
   });

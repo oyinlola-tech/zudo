@@ -39,6 +39,17 @@ export interface LoggerOptions {
 export interface ChildLoggerOptions {
   readonly name?: string;
   readonly metadata?: LoggerContextData;
+  readonly level?: LoggerLevel;
+}
+
+/**
+ * What `Logger.child()` accepts: `ChildLoggerOptions` whose `level` may also
+ * be a name (`"debug"`, `"DEBUG"`). `ChildLoggerOptions` itself keeps the
+ * enum, so a custom logger that reads `options.level` still compiles; one
+ * that may be handed a name should pass it through `resolveLoggerLevel()`.
+ */
+export interface ChildLoggerOptionsInput
+  extends Omit<ChildLoggerOptions, "level"> {
   /** Threshold: `LoggerLevel.DEBUG`, or a name such as `"debug"`. */
   readonly level?: LoggerLevelLike;
 }
@@ -168,7 +179,7 @@ export function mergeLoggerOptions(
 /** Creates options for a child logger. */
 export function createChildLoggerOptions(
   parent: LoggerConfiguration,
-  options: ChildLoggerOptions = {},
+  options: ChildLoggerOptionsInput = {},
 ): LoggerOptions {
   return {
     name: options.name ?? parent.name,

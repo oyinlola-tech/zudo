@@ -12,7 +12,7 @@ import { createTextLoggerFormatter } from "../../loggerFormatter/loggerFormatter
 
 import { createConsoleLoggerTransport } from "../../loggerTransport/loggerTransport.registry.js";
 
-import type { ChildLoggerOptions } from "../../loggerOptions/loggerOptions.type.js";
+import type { ChildLoggerOptionsInput } from "../../loggerOptions/loggerOptions.type.js";
 
 import type { Logger } from "../core/loggerCore.type.js";
 
@@ -23,7 +23,7 @@ import { createLogger } from "../core/loggerCore.core.js";
  */
 export function createChildLogger(
   parent: Logger,
-  options: ChildLoggerOptions = {},
+  options: ChildLoggerOptionsInput = {},
 ): Logger {
   return parent.child(options);
 }

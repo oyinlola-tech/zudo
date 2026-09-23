@@ -4,7 +4,7 @@
 
 import type { LoggerContext } from "../../../loggerContext/loggerContext.core.js";
 
-import type { ChildLoggerOptions } from "../../../loggerOptions/loggerOptions.type.js";
+import type { ChildLoggerOptionsInput } from "../../../loggerOptions/loggerOptions.type.js";
 
 import { createChildLoggerOptions } from "../../../loggerOptions/loggerOptions.type.js";
 
@@ -19,7 +19,7 @@ import type { ZudojsLoggerContext } from "../../core/loggerCore.core.js";
  */
 export function childLogger(
   ctx: ZudojsLoggerContext,
-  options: ChildLoggerOptions = {},
+  options: ChildLoggerOptionsInput = {},
 ): Logger {
   ctx.assertActive();
 

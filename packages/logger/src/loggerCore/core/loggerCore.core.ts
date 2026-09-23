@@ -17,7 +17,7 @@ import type {
 import { createLoggerContextStorage } from "../../loggerContext/loggerContextStorage.js";
 
 import type {
-  ChildLoggerOptions,
+  ChildLoggerOptionsInput,
   LoggerConfiguration,
   LoggerOptions,
   LogOptions,
@@ -144,7 +144,7 @@ export class ZudojsLogger implements Logger, ZudojsLoggerContext {
     logAtLevel(this, level, message, options);
   }
 
-  child(options: ChildLoggerOptions = {}): Logger {
+  child(options: ChildLoggerOptionsInput = {}): Logger {
     return childLogger(this, options);
   }
   withContext(context: LoggerContext): Logger {

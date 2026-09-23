@@ -2,7 +2,7 @@ import type { Logger } from "../loggerCore/core/loggerCore.type.js";
 import { createLogger } from "../loggerCore/core/loggerCore.core.js";
 import type {
   LoggerOptions,
-  ChildLoggerOptions,
+  ChildLoggerOptionsInput,
 } from "../loggerOptions/loggerOptions.type.js";
 
 /**
@@ -64,7 +64,7 @@ export class LoggerFactory {
   }
 
   /** Creates a child logger from an existing logger. */
-  child(parent: Logger, options: ChildLoggerOptions = {}): Logger {
+  child(parent: Logger, options: ChildLoggerOptionsInput = {}): Logger {
     return parent.child(options);
   }
 

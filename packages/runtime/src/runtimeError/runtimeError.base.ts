@@ -204,7 +204,10 @@ export class RuntimeDependencyError extends RuntimeError {
 export class RuntimeSignalError extends RuntimeError {
   public readonly signal: string;
 
-  public constructor(signal: string, options: { readonly cause?: unknown } = {}) {
+  public constructor(
+    signal: string,
+    options: { readonly cause?: unknown } = {},
+  ) {
     const detail =
       options.cause === undefined
         ? undefined
