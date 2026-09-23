@@ -14,6 +14,7 @@ import type {
   Observability,
   ObservabilityConfig,
   PropagationManager,
+  RedactionConfig,
   SpanProcessor,
   Tracer,
 } from "../types.js";
@@ -53,7 +54,7 @@ interface TelemetryPipeline {
   readonly metricReader: PeriodicMetricReader;
   readonly config: ObservabilityConfig;
   readonly sampler: ObservabilityConfig["sampler"];
-  /** Redacts span attributes, when `config.redaction` is set. */
+  /** Redacts span attributes, unless `config.redaction` is `false`. */
   readonly redactAttribute?: (key: string, value: unknown) => unknown;
 }
 
@@ -134,10 +135,15 @@ export class DefaultObservability implements Observability {
    * when the caller went on to exit.
    */
   async flush(): Promise<void> {
-    await this.drain();
+    await this.drain(true);
   }
 
-  private async drain(): Promise<void> {
+  /**
+   * Drains the log and span buffers, and — when `includeMetrics` — exports a
+   * metric snapshot. Shutdown passes `false`: the reader's own `shutdown()`
+   * exports the final snapshot, and collecting here as well sent it twice.
+   */
+  private async drain(includeMetrics: boolean): Promise<void> {
     const tasks: Promise<unknown>[] = [];
     if (this.pipeline.logProcessor) {
       tasks.push(this.pipeline.logProcessor.flush());
@@ -145,7 +151,7 @@ export class DefaultObservability implements Observability {
     for (const processor of this.pipeline.processors) {
       if (processor.forceFlush) tasks.push(processor.forceFlush());
     }
-    tasks.push(this.pipeline.metricReader.collect());
+    if (includeMetrics) tasks.push(this.pipeline.metricReader.collect());
     await this.reportFailures(await Promise.allSettled(tasks), "flush");
   }
 
@@ -175,8 +181,9 @@ export class DefaultObservability implements Observability {
 
   private async performShutdown(): Promise<void> {
     // Drain first: whatever is still queued should reach the backend before
-    // the exporters close.
-    await this.drain();
+    // the exporters close. Metrics are left to the reader's shutdown, which
+    // exports the final snapshot exactly once.
+    await this.drain(false);
 
     const steps: Promise<unknown>[] = [];
     steps.push(this.pipeline.metricReader.shutdown());
@@ -268,10 +275,10 @@ function buildPipeline(config: ObservabilityConfig): TelemetryPipeline {
 
   // Redaction is applied by the logger, so every transport and exporter
   // downstream sees redacted records — configuring it and not wiring it here
-  // is what made the "credentials are never logged" promise untrue.
-  const redactor = config.redaction
-    ? createStructureRedactor(config.redaction)
-    : undefined;
+  // is what made the "credentials are never logged" promise untrue. It is on
+  // unless the caller opts out with `redaction: false`, as in @zudojs/logger.
+  const redaction = resolveRedaction(config);
+  const redactor = redaction ? createStructureRedactor(redaction) : undefined;
 
   const logger = new StructuredLogger({
     name: config.serviceName,
@@ -347,8 +354,8 @@ function buildPipeline(config: ObservabilityConfig): TelemetryPipeline {
   });
   metricReader.start();
 
-  const redactAttribute = config.redaction
-    ? buildAttributeRedactor(config.redaction)
+  const redactAttribute = redaction
+    ? buildAttributeRedactor(redaction)
     : undefined;
 
   return {
@@ -365,6 +372,17 @@ function buildPipeline(config: ObservabilityConfig): TelemetryPipeline {
 }
 
 /**
+ * The redaction rules in force: the caller's, the defaults when none were
+ * given, or none at all for an explicit `redaction: false`.
+ */
+function resolveRedaction(
+  config: ObservabilityConfig,
+): RedactionConfig | undefined {
+  if (config.redaction === false) return undefined;
+  return config.redaction ?? {};
+}
+
+/**
  * Builds the span-attribute redactor.
  *
  * A sensitive key replaces its whole value; anything else is still walked, so
@@ -372,7 +390,7 @@ function buildPipeline(config: ObservabilityConfig): TelemetryPipeline {
  * too.
  */
 function buildAttributeRedactor(
-  redaction: NonNullable<ObservabilityConfig["redaction"]>,
+  redaction: RedactionConfig,
 ): (key: string, value: unknown) => unknown {
   const leaf = createRedactor(redaction);
   const deep = createStructureRedactor(redaction);

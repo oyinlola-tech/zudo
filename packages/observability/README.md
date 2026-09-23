@@ -33,8 +33,7 @@ const obs = createObservability({
   environment: "production",
   logLevel: LogLevel.INFO,
 
-  // Opt in to redaction — see "Redaction" below.
-  redaction: {},
+  // Redaction is on by default — see "Redaction" below.
 
   // Sample 10% of traces. The decision is derived from the trace ID, so a
   // trace is never sampled in half across services.
@@ -82,8 +81,17 @@ Never pass a raw level number between the two; convert with
 
 ## Redaction
 
-Redaction is off unless you configure it, and on once you do. The logger
-applies it to every record before any transport sees it, and the tracer
+Redaction is **on by default**, as it is in `@zudojs/logger`: with no
+`redaction` option, every name the logger's default matcher redacts
+(`DEFAULT_LOGGER_SECRET_FIELDS` — password, passphrase, secret, token, jwt,
+bearer, auth, authorization, cookie, session, sid, credential, api key,
+private key, client secret, card number, cvv, ssn, pin, otp and more) is
+redacted here too, along with this package's own `DEFAULT_SENSITIVE_FIELDS`.
+Pass a config to change the rules, or `redaction: false` to turn it off.
+Before 1.2 redaction was off unless configured, so a `password` field was
+exported in the clear.
+
+The logger applies it to every record before any transport sees it, and the tracer
 applies it to every span attribute and span event attribute before any
 processor or exporter sees it — a `Bearer` token attached to a span is
 redacted the same way one written to a log field is.
@@ -92,7 +100,7 @@ redacted the same way one written to a log field is.
 const obs = createObservability({
   serviceName: "api",
   redaction: {
-    // Defaults cover passwords, tokens, cookies, keys and card numbers.
+    // Setting `fields` replaces the default list (and the logger's rules).
     fields: ["password", "token", "ssn"],
     patterns: [/^x-.*-secret$/i],
     // "contains" (the default) matches on word boundaries: "userPassword"
@@ -118,6 +126,10 @@ being flattened to `{}`.
 
 `redactObject`, `redactValue` and `createStructureRedactor` are exported for
 use outside the logger.
+
+```typescript
+createObservability({ serviceName: "api", redaction: false }); // opt out
+```
 
 ## Metrics
 
@@ -165,8 +177,9 @@ name as two types is rejected wholesale by OTLP and Prometheus.
 
 Metrics are exported by a `PeriodicMetricReader`, which the facade starts for
 you when a `metricExporter` is configured. `metricExportIntervalMs: 0`
-disables the periodic export while still collecting a final snapshot on
-`flush()` and `shutdown()`:
+disables the periodic export while still collecting a snapshot on `flush()`
+and a final one on `shutdown()`. `shutdown()` exports that final snapshot
+exactly once (before 1.2 it was exported twice):
 
 ```typescript
 const obs = createObservability({

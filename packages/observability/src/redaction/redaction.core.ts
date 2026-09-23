@@ -17,7 +17,16 @@
  *     `x-api-key` are caught, not just the exact names in the list.
  */
 
+import { createDefaultSecretFieldMatcher } from "@zudojs/logger";
+
 import type { RedactionConfig } from "../types.js";
+
+/**
+ * @zudojs/logger's default secret-name matcher. The default rules here
+ * include it, so a field the logger redacts is never exported in the clear
+ * by this package.
+ */
+const isLoggerSecretField = createDefaultSecretFieldMatcher();
 
 /** Default sensitive field names, matched case-insensitively. */
 export const DEFAULT_SENSITIVE_FIELDS: readonly string[] = [
@@ -114,9 +123,13 @@ function compile(config?: RedactionConfig): CompiledRedaction {
     fields.map((field) => field.replace(/[^a-z0-9]/g, "")).filter(Boolean),
   );
 
+  const withLoggerDefaults =
+    config?.fields === undefined && matchMode === "contains";
+
   const isSensitive = (key: string): boolean => {
     const lower = key.toLowerCase();
     if (exact.has(lower)) return true;
+    if (withLoggerDefaults && isLoggerSecretField(key)) return true;
     if (matchMode === "contains") {
       for (const candidate of wordJoins(key)) {
         if (normalizedFields.has(candidate)) return true;

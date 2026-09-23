@@ -16,7 +16,7 @@
  * const obs = createObservability({
  *   serviceName: "my-api",
  *   logLevel: LogLevel.INFO,
- *   redaction: {},                 // opt in to redaction
+ *   // Redaction is on by default; `redaction: false` turns it off.
  *   sampler: createProbabilitySampler(0.1),
  * });
  *

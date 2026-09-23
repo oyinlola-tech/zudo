@@ -122,12 +122,13 @@ describe("span redaction", () => {
     expect(event?.attributes?.["attempt"]).toBe(1);
   });
 
-  it("leaves attributes alone when no redaction is configured", async () => {
+  it("leaves attributes alone when redaction is turned off", async () => {
     const exporter = recordingSpanExporter();
     const obs = createObservability({
       serviceName: "svc",
       useConsoleExporters: false,
       spanExporter: exporter,
+      redaction: false,
     });
     const span = obs.tracer.startSpan("op");
     span.setAttribute("token", "plain");

@@ -63,7 +63,8 @@ export type RedactionMatchMode = "exact" | "contains";
 export interface RedactionConfig {
   /**
    * Field names to redact (case-insensitive). Defaults to a built-in list
-   * covering passwords, tokens, cookies, keys and card numbers.
+   * covering passwords, tokens, cookies, keys and card numbers, plus every
+   * name @zudojs/logger's default matcher redacts. Setting it replaces both.
    */
   readonly fields?: readonly string[];
   /**
@@ -118,9 +119,13 @@ export interface ObservabilityConfig {
   readonly processors?: readonly SpanProcessor[];
   /**
    * Redacts sensitive fields from log contexts *and* from span attributes and
-   * span event attributes. Omit it and neither is redacted.
+   * span event attributes.
+   *
+   * On by default: omitting it applies the default rules, which include
+   * every name @zudojs/logger redacts. Pass a config to change the rules, or
+   * `false` to turn redaction off.
    */
-  readonly redaction?: RedactionConfig;
+  readonly redaction?: RedactionConfig | false;
   /**
    * Metrics registry tuning: the series cap that bounds cardinality, and the
    * histogram bucket boundaries. Without this the defaults were unreachable
