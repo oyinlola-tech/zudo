@@ -125,12 +125,12 @@
 </question>
 
 <question id="http-error-code" type="choice">
-<q>You throw <code>new HttpError(415, "Send JSON")</code> from a route. What does the lesson advise?</q>
-<option>Use status 500 instead, since it is an error</option>
-<option correct>Also give it a <code>code</code> of your own, such as <code>{ code: "UNSUPPORTED_MEDIA_TYPE" }</code>; without one it reports the vague default code</option>
-<option>Catch it in the same route and return a plain object</option>
-<option>Never throw from a route; return <code>null</code> instead</option>
-<explain><p>Without a code, <code>HttpError</code> reports <code>ERR_OPERATION_FAILED</code>, which tells a client nothing. A clear code lets clients react to the exact problem.</p></explain>
+<q>A route throws <code>new HttpError(415, "Send JSON")</code>, with no third argument. What <code>code</code> does the client get in the JSON body?</q>
+<option><code>ERR_OPERATION_FAILED</code>, a general default code</option>
+<option correct><code>UNSUPPORTED_MEDIA_TYPE</code>, picked from the status 415</option>
+<option>No <code>code</code> at all; you must always pass one yourself</option>
+<option><code>"415"</code>, the status written as text</option>
+<explain><p><code>HttpError</code> picks its <code>code</code> from the status, so 415 becomes <code>UNSUPPORTED_MEDIA_TYPE</code>. You only pass <code>{ code: "..." }</code> as a third argument when you want a code of your own.</p></explain>
 </question>
 
 <question id="create-201" type="choice">
@@ -449,7 +449,7 @@ import { badRequest, createHttpServer, createNodeHttpAdapter, createResponseCont
 function readJson(request) {
   const type = request.getHeader("content-type") ?? "";
   if (!type.startsWith("application/json")) {
-    throw new HttpError(415, "Send JSON", { code: "UNSUPPORTED_MEDIA_TYPE" });
+    throw new HttpError(415, "Send JSON with Content-Type: application/json");
   }
   try {
     return JSON.parse(new TextDecoder().decode(request.body));
@@ -471,14 +471,14 @@ const json = { "content-type": "application/json" };
 const a = await fetch(url, { method: "POST", headers: json, body: '{"title":"Buy milk"}' });
 const b = await fetch(url, { method: "POST", headers: json, body: '{"title": ' });
 const c = await fetch(url, { method: "POST", headers: { "content-type": "text/plain" }, body: "Buy milk" });
-console.log(a.status, b.status, c.status);
+console.log(a.status, b.status, c.status, (await c.json()).code);
 await server.stop();
 </code>
-<option correct>201 400 415</option>
-<option>201 500 415</option>
-<option>201 400 400</option>
-<option>201 500 500</option>
-<explain><p>Good JSON is created (201). Broken JSON is caught and becomes <code>badRequest</code> (400), not a 500. A body that is not JSON is refused with 415 before any parsing.</p></explain>
+<option correct>201 400 415 UNSUPPORTED_MEDIA_TYPE</option>
+<option>201 500 415 UNSUPPORTED_MEDIA_TYPE</option>
+<option>201 400 415 ERR_OPERATION_FAILED</option>
+<option>201 500 500 undefined</option>
+<explain><p>Good JSON is created (201). Broken JSON is caught and becomes <code>badRequest</code> (400), not a 500. A body that is not JSON is refused with 415 before any parsing, and <code>HttpError</code> picks the code <code>UNSUPPORTED_MEDIA_TYPE</code> from that status by itself.</p></explain>
 </question>
 
 <question id="out-http-error-code" type="output">

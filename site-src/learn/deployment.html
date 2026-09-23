@@ -30,54 +30,95 @@ $ npm install pg
 $ npm install -D @types/pg
 …
 </shell>
-<p>Then add three small files and changes. First, one connection pool for the whole process. It refuses to start without <code>DATABASE_URL</code>, and it has the limits you chose in <a href="/learn/production-engineering">Production engineering</a>:</p>
+<p>Then add a few small files and changes. First, a function that creates a connection pool with the limits you chose in <a href="/learn/production-engineering">Production engineering</a>. It refuses to start without a database address:</p>
 <example file="src/databases/pool.ts" project="deploy" browser="no">
 import pg from "pg";
 
-const connectionString = process.env["DATABASE_URL"];
-if (!connectionString) throw new Error("DATABASE_URL is not set");
-
-/** One connection pool per process, shared by every module. */
-export const pool = new pg.Pool({
-  connectionString,
-  max: 10,
-  connectionTimeoutMillis: 2_000,
-  statement_timeout: 5_000,
-});
+/** A connection pool with production limits. Refuses to start without a URL. */
+export function createPool(connectionString: string | undefined): pg.Pool {
+  if (!connectionString) throw new Error("DATABASE_URL is not set");
+  return new pg.Pool({
+    connectionString,
+    max: 10,
+    connectionTimeoutMillis: 2_000,
+    statement_timeout: 5_000,
+  });
+}
 </example>
-<p>Second, a readiness check in <code>src/app.ts</code>, next to the one the CLI generated, and a <code>/ready</code> route in <code>src/server.ts</code>. Close the pool after the runtime has stopped, and trust forwarded headers only from the proxy you will add later:</p>
-<example file="src/app.ts (part)" browser="no">
-runtime.registerReadinessCheck("database", async () => {
-  await pool.query("SELECT 1");
-  return true;
-});
+<p>Second, make the database an <strong>integration</strong>. You saw the empty <code>src/integrations/</code> folder in <a href="/learn/zudo-create-project#tour">the tour of the project</a>: an integration starts with the app, stops after everything else, and reports its health to <code>/health</code>. The generated <code>src/configs/index.ts</code> already reads <code>DATABASE_URL</code> into <code>config.database.url</code>:</p>
+<example file="src/integrations/postgres.ts" browser="no" check="skip">
+import type pg from "pg";
+
+import { createPool } from "../databases/pool.js";
+import type { Integration } from "./integration.js";
+
+let pool: pg.Pool | undefined;
+
+/** The shared pool, for repositories. Only valid while the app runs. */
+export function db(): pg.Pool {
+  if (pool === undefined) throw new Error("The postgres integration has not started");
+  return pool;
+}
+
+export const postgres: Integration = {
+  name: "postgres",
+  async start({ config, logger }) {
+    pool = createPool(config.database.url);
+    pool.on("error", (error) => logger.warn("idle database connection lost", { error: error.message }));
+    await pool.query("SELECT 1");
+  },
+  async health() {
+    await db().query("SELECT 1");
+    return true;
+  },
+  async stop() {
+    await pool?.end();
+    pool = undefined;
+  },
+};
+</example>
+<ul>
+<li><code>start</code> creates the pool and runs <code>SELECT 1</code>, so the app refuses to start when the database is unreachable, instead of failing on the first customer's request.</li>
+<li><code>pool.on("error", …)</code> matters more than it looks. When the database restarts, <code>pg</code> reports the broken idle connections as an <code>error</code> event. Without a listener, Node.js treats that as an uncaught error and the whole app stops. With it, the app logs a warning and opens new connections when the database is back.</li>
+<li><code>health</code> is what <code>/health</code> reports as <code>"postgres": "up"</code> or <code>"down"</code>.</li>
+</ul>
+<p>Register it in <code>src/integrations/index.ts</code>, between the markers the CLI left there:</p>
+<example file="src/integrations/index.ts (part)" browser="no">
+// zudojs:integration-imports:start
+import { postgres } from "./postgres.js";
+// zudojs:integration-imports:end
+
+export const integrations: readonly Integration[] = [
+  // zudojs:integrations:start
+  postgres,
+  // zudojs:integrations:end
+];
+</example>
+<p>Third, trust forwarded headers only from the proxy you will add later. Add a <code>trustProxy</code> setting to <code>src/configs/index.ts</code>, and pass it to the adapter in <code>src/server.ts</code>. An empty value means "trust no proxy":</p>
+<example file="src/configs/index.ts (part)" browser="no">
+    // zudojs:config:start
+    database: Object.freeze({ url: text(config, "database_url", "") }),
+    trustProxy: text(config, "trust_proxy", ""),
+    // zudojs:config:end
 </example>
 <example file="src/server.ts (part)" browser="no">
-adapter: createNodeHttpAdapter({
-  host: process.env["HOST"] ?? "0.0.0.0",
-  port: resolvePort(),
-  trustProxy: process.env["TRUST_PROXY"] ?? false,
-}),
-handler: async (request: HttpRequestContext) => {
-  if (request.path === "/ready") {
-    await runtime.runReadinessChecks();
-    if (!runtime.ready) return createResponseContext({ status: 503 }).json({ status: "not ready" });
-    return { status: "ready" };
-  }
-  // … /health and the 404 as before
-},
-
-// in the SIGTERM handler:
-void server.stop().then(() => runtime.stop()).then(() => pool.end())
+  adapter: createNodeHttpAdapter({
+    server: httpServer,
+    host: config.host,
+    port: config.port,
+    trustProxy: config.trustProxy || false,
+  }),
 </example>
-<p>Third, a migration script. A <strong>migration</strong> is a numbered change to the database structure. The script applies the ones that have not run yet and records them in a <code>schema_migrations</code> table. The advisory lock makes two copies of the script, started at the same moment by two servers, wait for each other instead of both creating the table:</p>
+<p>You do not need to touch the shutdown code: on <code>SIGTERM</code> the generated <code>src/server.ts</code> stops the HTTP server, then the runtime, which stops the integrations last and so closes the pool.</p>
+<p>Last, a migration script. A <strong>migration</strong> is a numbered change to the database structure. The script applies the ones that have not run yet and records them in a <code>schema_migrations</code> table. The advisory lock makes two copies of the script, started at the same moment by two servers, wait for each other instead of both creating the table:</p>
 <example file="src/migrate.ts" project="deploy" browser="no">
-import { pool } from "./databases/pool.js";
+import { createPool } from "./databases/pool.js";
 
 const migrations = [
   { id: 1, sql: "CREATE TABLE tasks (id SERIAL PRIMARY KEY, title TEXT NOT NULL, done BOOLEAN NOT NULL DEFAULT false)" },
 ];
 
+const pool = createPool(process.env["DATABASE_URL"]);
 const client = await pool.connect();
 try {
   await client.query("BEGIN");
@@ -109,8 +150,9 @@ $ npm run build
 > task-api@0.1.0 build
 > tsc
 
-$ ls dist/*.js dist/databases
+$ ls dist/*.js dist/databases dist/integrations
 dist/app.js
+dist/container.js
 dist/index.js
 dist/migrate.js
 dist/server.js
@@ -118,6 +160,11 @@ dist/server.js
 dist/databases:
 index.js
 pool.js
+
+dist/integrations:
+index.js
+integration.js
+postgres.js
 </shell>
 <p>On the server you install only the packages the app needs to run. <code>npm ci</code> installs exactly the versions in <code>package-lock.json</code>, and <code>--omit=dev</code> leaves out TypeScript, tsx and Vitest. Then you start the compiled server with the production settings:</p>
 <pre class="lx-json">npm ci --omit=dev
@@ -213,6 +260,7 @@ CMD ["node", "dist/server.js"]</pre>
 <li><code>HEALTHCHECK</code> asks <code>/health</code> every 10 seconds, so <code>docker ps</code> shows whether the app is healthy.</li>
 <li><code>CMD</code> uses the list form, so <code>node</code> itself receives <code>SIGTERM</code> and can shut down gracefully.</li>
 </ul>
+<tip><code>zudojs add docker</code> writes a similar multi-stage <code>Dockerfile</code>, a <code>.dockerignore</code> and a <code>compose.yaml</code> for you. This lesson writes its own so you understand every line. It also uses <code>npm ci</code> with <code>package-lock.json</code>, so the image gets exactly the versions you tested; the 2.1.0 CLI's file runs <code>npm install</code> without the lock file.</tip>
 <p>A <code>.dockerignore</code> file keeps local files out of the image. Above all, <code>.env</code> with your secrets must never be copied in:</p>
 <pre class="lx-json"># .dockerignore
 node_modules
@@ -224,54 +272,57 @@ tests</pre>
 <shell>
 $ docker build -t task-api:1.0.0 .
 #1 [internal] load build definition from Dockerfile
-#1 transferring dockerfile: 610B done
-#1 DONE 0.0s
+#1 transferring dockerfile: 623B 0.0s done
+#1 DONE 0.1s
 …
-#8 [stage-1 4/5] RUN npm ci --omit=dev && npm cache clean --force
-#8 25.95
-#8 25.95 added 30 packages, and audited 31 packages in 25s
+#9 [stage-1 4/5] RUN npm ci --omit=dev && npm cache clean --force
+#9 48.08
+#9 48.08 added 31 packages, and audited 32 packages in 46s
 …
-#8 25.95 found 0 vulnerabilities
+#9 48.09 found 0 vulnerabilities
 …
-#8 DONE 27.4s
+#9 DONE 49.6s
 
-#9 [build 4/7] RUN npm ci
-#9 37.53
-#9 37.53 added 85 packages, and audited 86 packages in 36s
+#8 [build 4/7] RUN npm ci
+#8 60.51
+#8 60.51 added 81 packages, and audited 82 packages in 59s
 …
-#9 DONE 38.1s
+#8 DONE 60.9s
 …
 #12 [build 7/7] RUN npm run build
-#12 0.933
-#12 0.933 > task-api@0.1.0 build
-#12 0.933 > tsc
-#12 0.933
-#12 DONE 7.3s
+#12 0.737
+#12 0.737 > task-api@0.1.0 build
+#12 0.737 > tsc
+#12 0.737
+#12 DONE 1.5s
 
 #13 [stage-1 5/5] COPY --from=build /app/dist ./dist
-#13 DONE 0.3s
+#13 DONE 0.2s
 
 #14 exporting to image
 …
 #14 naming to docker.io/library/task-api:1.0.0 0.0s done
-#14 DONE 2.1s
+#14 DONE 1.5s
 $ docker images task-api
 IMAGE            ID             DISK USAGE   CONTENT SIZE   EXTRA
-task-api:1.0.0   f55e976d8484        183MB             0B   U
+task-api:1.0.0   59ebb5d3dd0c        184MB             0B
 </shell>
-<p>The production stage installed 30 packages, the build stage 85: the other 55 are development tools that never reach the final image. Now run it:</p>
+<p>The production stage installed 31 packages, the build stage 81: the other 50 are development tools that never reach the final image. Now run it:</p>
 <shell>
 $ docker run --rm task-api:1.0.0
-file:///app/dist/databases/pool.js:4
-    throw new Error("DATABASE_URL is not set");
-          ^
-
-Error: DATABASE_URL is not set
-    at file:///app/dist/databases/pool.js:4:11
+2026-09-23T17:45:14.777Z [ERROR] [task-api] Module "integrations" failed during initialization. error={"name":"Error","message":"DATABASE_URL is not set",…}
+2026-09-23T17:45:14.785Z [ERROR] [task-api] Runtime failed to start. errorMessage="Module \"integrations\" failed during initialization."
+2026-09-23T17:45:14.786Z [INFO] [task-api] Rolling back module startup.
+2026-09-23T17:45:14.787Z [INFO] [task-api] Module rollback complete. failedModules=[]
+…
+RuntimeInitializationError: Module "integrations" failed during initialization.
+    at runStartup (file:///app/node_modules/@zudojs/runtime/dist/startup/startup.core.js:68:15) {
+  cause: Error: DATABASE_URL is not set
+      at createPool (file:///app/dist/databases/pool.js:5:15)
 …
 Node.js v24.21.0
 </shell>
-<p>That failure is the configuration check from the previous lesson, doing its job: without a database the app refuses to start, with a clear message. The container needs a database next to it, and that is what Docker Compose is for.</p>
+<p>That failure is your <code>createPool</code> check doing its job: the postgres integration could not start, so the runtime undid the start-up and the app stopped, with the reason in the <code>cause</code>. The container needs a database next to it, and that is what Docker Compose is for.</p>
 </section>
 
 <section>
@@ -372,41 +423,43 @@ $ docker compose up -d
  Container task-api-proxy-1 Started
 $ docker compose ps --format 'table {{.Name}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
 NAME               IMAGE            STATUS                            PORTS
-task-api-app-1     task-api:1.0.0   Up 7 seconds (health: starting)   3000/tcp
-task-api-db-1      postgres:17      Up 42 seconds (healthy)           5432/tcp
-task-api-proxy-1   caddy:2-alpine   Up 7 seconds                      443/tcp, 2019/tcp, 443/udp, 0.0.0.0:8080->80/tcp, [::]:8080->80/tcp
-task-api-redis-1   redis:8-alpine   Up 41 seconds (healthy)           6379/tcp
-$ curl -i http://localhost:8080/ready
+task-api-app-1     task-api:1.0.0   Up 8 seconds (health: starting)   3000/tcp
+task-api-db-1      postgres:17      Up About a minute (healthy)       5432/tcp
+task-api-proxy-1   caddy:2-alpine   Up 8 seconds                      443/tcp, 2019/tcp, 443/udp, 0.0.0.0:8080->80/tcp, [::]:8080->80/tcp
+task-api-redis-1   redis:8-alpine   Up About a minute (healthy)       6379/tcp
+$ curl -i http://localhost:8080/health
 HTTP/1.1 200 OK
-Content-Length: 18
+Content-Length: 81
+Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
 Content-Type: application/json
-Date: Wed, 23 Sep 2026 14:05:17 GMT
+…
 Via: 1.1 Caddy
+X-Content-Type-Options: nosniff
+…
 
-{"status":"ready"}
+{"status":"ok","checks":{"postgres":"up"},"timestamp":"2026-09-23T17:47:11.474Z"}
 $ docker compose exec redis redis-cli ping
 PONG
 </shell>
-<p>The request went to Caddy on port 8080 (the <code>Via: 1.1 Caddy</code> header), which passed it to the app, which checked the database and answered <code>ready</code>. Running the migrations a second time is safe: the script prints only <code>database is up to date</code>.</p>
+<p>The request went to Caddy on port 8080 (the <code>Via: 1.1 Caddy</code> header), which passed it to the app. The app asked the postgres integration, which answered <code>up</code>. The security headers from the app came through the proxy unchanged. Running the migrations a second time is safe: the script prints only <code>database is up to date</code>.</p>
 <h3>See the readiness check work</h3>
 <p>Stop the database and ask again:</p>
 <shell>
 $ docker compose stop db
  Container task-api-db-1 Stopping
  Container task-api-db-1 Stopped
-$ curl -i http://localhost:8080/ready
+$ curl -i http://localhost:8080/health
 HTTP/1.1 503 Service Unavailable
 …
-{"status":"not ready"}
-$ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/health
-200
+{"status":"unavailable","checks":{"postgres":"down"},"timestamp":"2026-09-23T17:48:48.033Z"}
 $ docker compose start db
  Container task-api-db-1 Starting
  Container task-api-db-1 Started
-$ curl http://localhost:8080/ready
-{"status":"ready"}
+$ curl http://localhost:8080/health
+{"status":"ok","checks":{"postgres":"up"},"timestamp":"2026-09-23T17:48:55.064Z"}
 </shell>
-<p>Exactly as planned in the previous lesson: without its database the app is <em>alive</em> (200) but <em>not ready</em> (503), so nothing restarts it, and it recovers by itself when the database is back.</p>
+<p>Exactly as planned in the previous lesson: the generated <code>/health</code> is a readiness check. Without its database the app answers 503 and says which part is down, but it keeps running, logs one warning (you will see it in <a href="#logs">the logs</a> below), and recovers by itself when the database is back. Docker marks the container <code>unhealthy</code> after three failed checks but does not restart it; Kubernetes would stop sending it traffic.</p>
+<note>When this lesson's example was first run without the <code>pool.on("error", …)</code> line, stopping the database crashed the app: the proxy answered <code>502 Bad Gateway</code>, and <code>restart: unless-stopped</code> restarted the app over and over until the database was back. One missing listener turned a database restart into an outage.</note>
 </section>
 
 <section>
@@ -438,7 +491,7 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 }</pre>
-<warn title="TRUST ONLY YOUR OWN PROXY">Behind a proxy, every request reaches the app from the proxy's address, and the real client address is in the <code>X-Forwarded-For</code> header. Anyone can send that header, so the app must believe it only when it comes from your proxy. That is what <code>trustProxy</code> on the adapter does: <code>"loopback"</code> when nginx runs on the same machine, <code>"private"</code> inside Docker. Never set it to <code>true</code> on an app that is also reachable directly, or an attacker can pick their own IP address and walk around your per-IP rate limit.</warn>
+<warn title="TRUST ONLY YOUR OWN PROXY">Behind a proxy, every request reaches the app from the proxy's address, and the real client address is in the <code>X-Forwarded-For</code> header. Anyone can send that header, so the app must believe it only when it comes from your proxy. That is what <code>trustProxy</code> on the adapter does: <code>"loopback"</code> when nginx runs on the same machine, <code>"private"</code> inside Docker. Never set it to <code>"all"</code> on an app that is also reachable directly, or an attacker can pick their own IP address and walk around your per-IP rate limit.</warn>
 </section>
 
 <section>
@@ -446,17 +499,17 @@ server {
 <p>The app writes its logs to standard output, and the platform keeps them. With Compose:</p>
 <shell>
 $ docker compose logs app --tail 3
-app-1  |   }
-app-1  | }
-app-1  | Listening on port 3000
+app-1  | 2026-09-23T17:48:30.225Z [INFO] [task-api] Runtime is ready. runtimeId=rt_c17db7ea3c694c5d812f61ae9be12a4b environment=production
+app-1  | Listening on http://0.0.0.0:3000
+app-1  | 2026-09-23T17:48:45.394Z [WARN] [task-api] idle database connection lost error="terminating connection due to administrator command"
 $ docker compose stop app
  Container task-api-app-1 Stopping
  Container task-api-app-1 Stopped
 $ docker compose logs app | grep -i "shutdown"
-app-1  |   message: '2026-09-23T14:06:59.947Z [INFO] [task-api] Initiating graceful shutdown. timeoutMs=30000',
-app-1  |   message: '2026-09-23T14:06:59.953Z [INFO] [task-api] Graceful shutdown complete.',
+app-1  | 2026-09-23T17:49:04.437Z [INFO] [task-api] Initiating graceful shutdown. timeoutMs=30000
+app-1  | 2026-09-23T17:49:04.445Z [INFO] [task-api] Graceful shutdown complete.
 </shell>
-<p><code>docker compose stop</code> sent <code>SIGTERM</code>, and the logs show the graceful shutdown from the previous lesson taking 6 milliseconds. Add <code>-f</code> to follow logs live. Under systemd the same is <code>journalctl -u task-api</code>. Docker keeps logs in files that grow forever by default; limit them with the <code>logging</code> option (<code>max-size: "10m"</code>, <code>max-file: "3"</code>) or ship them to a log service, as the production lesson recommends.</p>
+<p><code>docker compose stop</code> sent <code>SIGTERM</code>, and the logs show the graceful shutdown from the previous lesson taking 8 milliseconds. Add <code>-f</code> to follow logs live. Under systemd the same is <code>journalctl -u task-api</code>. Docker keeps logs in files that grow forever by default; limit them with the <code>logging</code> option (<code>max-size: "10m"</code>, <code>max-file: "3"</code>) or ship them to a log service, as the production lesson recommends.</p>
 </section>
 
 <section>
@@ -467,7 +520,7 @@ app-1  |   message: '2026-09-23T14:06:59.953Z [INFO] [task-api] Graceful shutdow
 <li><strong>Build</strong> the new image with a new tag, such as <code>task-api:1.1.0</code>. Keep the old image so you can go back.</li>
 <li><strong>Migrate</strong> the database with the new image, before the new app starts.</li>
 <li><strong>Replace</strong> the app container. The old one gets <code>SIGTERM</code> and finishes its requests.</li>
-<li><strong>Check</strong> <code>/ready</code>, the logs and your dashboard for a few minutes.</li>
+<li><strong>Check</strong> <code>/health</code>, the logs and your dashboard for a few minutes.</li>
 </ol>
 <shell>
 $ docker compose build app
@@ -478,8 +531,8 @@ database is up to date
 $ docker compose up -d app
 …
  Container task-api-app-1 Started
-$ curl http://localhost:8080/ready
-{"status":"ready"}
+$ curl http://localhost:8080/health
+{"status":"ok","checks":{"postgres":"up"},"timestamp":"2026-09-23T17:49:26.911Z"}
 </shell>
 <h3>Migrations that do not break the running app</h3>
 <p>Between step 3 and step 4, the <em>old</em> app runs against the <em>new</em> database. So every migration must work with both versions. Split breaking changes into two deployments, called <strong>expand and contract</strong>:</p>
@@ -500,7 +553,7 @@ INSERT 0 2
 $ mkdir -p backups
 $ docker compose exec -T db pg_dump -U taskapi -d taskapi --format=custom > backups/taskapi-2026-09-23.dump
 $ ls -lh backups
--rw-rw-r-- 1 you you 3.7K Sep 23 15:05 taskapi-2026-09-23.dump
+-rw-rw-r-- 1 you you 3.7K Sep 23 18:49 taskapi-2026-09-23.dump
 $ docker compose exec -T db createdb -U taskapi restore_check
 $ docker compose exec -T db pg_restore -U taskapi -d restore_check < backups/taskapi-2026-09-23.dump
 $ docker compose exec db psql -U taskapi -d restore_check -c "SELECT id, title, done FROM tasks"
@@ -529,17 +582,17 @@ $ docker compose down --volumes
  Container task-api-proxy-1 Stopping
  Container task-api-proxy-1 Stopped
 …
- Container task-api-db-1 Removed
  Container task-api-redis-1 Removed
- Volume task-api_pgdata Removing
- Network task-api_default Removing
+ Container task-api-db-1 Removed
  Volume task-api_redisdata Removing
- Volume task-api_pgdata Removed
+ Network task-api_default Removing
+ Volume task-api_pgdata Removing
  Volume task-api_redisdata Removed
+ Volume task-api_pgdata Removed
  Network task-api_default Removed
 $ docker image rm task-api:1.0.0
 Untagged: task-api:1.0.0
-Deleted: sha256:f55e976d84840a3ba4ddcdcb66961cc8ab7553e23d4e813e96f2c74aa5cf7401
+Deleted: sha256:90feffb7effdc7af96a374c1a6bee299066727e5d0a179e83e4532ffb0b2f828
 </shell>
 <p>On a real server, never run <code>down --volumes</code>: it deletes your production data.</p>
 </section>
@@ -574,13 +627,13 @@ Deleted: sha256:f55e976d84840a3ba4ddcdcb66961cc8ab7553e23d4e813e96f2c74aa5cf7401
       - "3000:3000"
     environment:
       DATABASE_URL: postgres://admin:admin123@db:5432/taskapi
-      TRUST_PROXY: "true"</pre>
+      TRUST_PROXY: all</pre>
 <solution>
 <ul>
 <li><code>task-api:latest</code>: you cannot tell which version runs or go back to the previous one. Use version tags.</li>
 <li><code>ports: "3000:3000"</code> publishes the app directly to the internet, around the proxy and its HTTPS.</li>
 <li>The password is written in the file, it is weak, and <code>admin</code> suggests a database superuser. Use <code>${POSTGRES_PASSWORD:?…}</code> from <code>.env</code>, a random value, and a user that owns only this database.</li>
-<li><code>TRUST_PROXY: "true"</code> together with a published port lets any client fake its IP address with <code>X-Forwarded-For</code>. Trust only the proxy's network.</li>
+<li><code>TRUST_PROXY: all</code> together with a published port lets any client fake its IP address with <code>X-Forwarded-For</code>. Trust only the proxy's network.</li>
 </ul>
 </solution>
 </exercise>

@@ -17,12 +17,12 @@
 </question>
 
 <question id="safe-config" type="choice">
-<q>Which <code>createObservability</code> call follows the lesson's advice for a real service?</q>
+<q>Which <code>createObservability</code> call must you <strong>never</strong> use in production?</q>
 <option><code>createObservability({ serviceName: "task-api" })</code></option>
-<option correct><code>createObservability({ serviceName: "task-api", redaction: {} })</code></option>
-<option><code>createObservability({ serviceName: "task-api", redaction: false })</code></option>
-<option><code>createObservability({ redaction: {} })</code> with no service name</option>
-<explain><p>The lesson says: always pass <code>redaction: {}</code>, so secret fields such as <code>password</code> are hidden with the default field list. Being explicit keeps you safe whatever the default is. The service name tells the monitoring system which service sent the data.</p></explain>
+<option><code>createObservability({ serviceName: "task-api", environment: "production" })</code></option>
+<option correct><code>createObservability({ serviceName: "task-api", redaction: false })</code></option>
+<option><code>createObservability({ serviceName: "task-api", useConsoleExporters: false })</code></option>
+<explain><p>Secret redaction is on by default, so fields such as <code>password</code> become <code>[REDACTED]</code>. <code>redaction: false</code> switches that off and sends secrets to every exporter. The other calls keep the safe default.</p></explain>
 </question>
 
 <question id="redaction-output" type="output">
@@ -39,7 +39,6 @@ const printLogs = {
 
 const obs = createObservability({
   serviceName: "task-api",
-  redaction: {},
   useConsoleExporters: false,
   logExporter: printLogs,
 });
@@ -50,7 +49,7 @@ await obs.shutdown();
 <option>info login {"userId":"ada","password":"hunter2"}</option>
 <option>info login {"userId":"ada"}</option>
 <option>info login {"userId":"[REDACTED]","password":"[REDACTED]"}</option>
-<explain><p>With <code>redaction: {}</code>, fields with secret names like <code>password</code> are replaced before any exporter sees them. In this logger the metadata is called <code>context</code>.</p></explain>
+<explain><p>Redaction is on by default: fields with secret names like <code>password</code> are replaced before any exporter sees them. In this logger the metadata is called <code>context</code>.</p></explain>
 </question>
 
 <question id="shutdown-why" type="choice">
@@ -74,7 +73,7 @@ const printLogs = {
   async shutdown() {},
 };
 
-const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false, logExporter: printLogs });
+const obs = createObservability({ serviceName: "task-api", useConsoleExporters: false, logExporter: printLogs });
 obs.logger.info("server started");
 console.log("still running");
 await obs.shutdown();
@@ -102,7 +101,7 @@ still running</option>
 <code file="counter.js" browser="no">
 import { createObservability } from "@zudojs/observability";
 
-const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false });
+const obs = createObservability({ serviceName: "task-api", useConsoleExporters: false });
 obs.metrics.counter("tasks.created").increment();
 obs.metrics.counter("tasks.created").increment(2);
 obs.metrics.counter("tasks.created", { priority: "high" }).increment();
@@ -121,7 +120,7 @@ await obs.shutdown();
 <code file="counter-negative.js" browser="no">
 import { createObservability, MetricValueError } from "@zudojs/observability";
 
-const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false });
+const obs = createObservability({ serviceName: "task-api", useConsoleExporters: false });
 const openTasks = obs.metrics.counter("tasks.open");
 openTasks.increment(5);
 try {
@@ -146,7 +145,7 @@ await obs.shutdown();
 <code file="gauge.js" browser="no">
 import { createObservability } from "@zudojs/observability";
 
-const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false });
+const obs = createObservability({ serviceName: "task-api", useConsoleExporters: false });
 const waiting = obs.metrics.gauge("queue.waiting", { queue: "email" });
 waiting.setValue(12);
 waiting.decrement(2);
@@ -166,7 +165,7 @@ await obs.shutdown();
 <code file="histogram.js" browser="no">
 import { createObservability } from "@zudojs/observability";
 
-const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false });
+const obs = createObservability({ serviceName: "task-api", useConsoleExporters: false });
 const latency = obs.metrics.histogram("http.duration_ms", { route: "/tasks" });
 for (const ms of [10, 20, 30, 940]) latency.record(ms);
 const { count, min, max, mean } = latency.getValue();
@@ -211,7 +210,7 @@ await obs.shutdown();
 <q>Which label is a good idea on a <code>tasks.created</code> counter?</q>
 <option><code>{ title }</code></option>
 <option><code>{ taskId }</code></option>
-<option correct><code>{ priority }</code> with the values low, medium and high</option>
+<option correct><code>{ priority }</code> with the values low, normal and high</option>
 <option><code>{ createdAt }</code></option>
 <explain><p>A priority has three possible values, so it makes three series at most. A title, an id or a time can take endless values, and each one would become a new series.</p></explain>
 </question>
@@ -221,7 +220,7 @@ await obs.shutdown();
 <code file="series.js" browser="no">
 import { createObservability } from "@zudojs/observability";
 
-const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false });
+const obs = createObservability({ serviceName: "task-api", useConsoleExporters: false });
 for (const priority of ["low", "high", "low", "low"]) {
   obs.metrics.counter("tasks.created", { priority }).increment();
 }
@@ -265,7 +264,7 @@ await obs.shutdown();
 <code file="withspan-return.js" browser="no">
 import { createObservability, withSpan } from "@zudojs/observability";
 
-const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false });
+const obs = createObservability({ serviceName: "task-api", useConsoleExporters: false });
 const count = await withSpan(obs.tracer, "db.count", async (span) => {
   span.setAttribute("db.table", "tasks");
   return 42;
@@ -292,7 +291,7 @@ const printSpans = {
   async shutdown() {},
 };
 
-const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false, spanExporter: printSpans });
+const obs = createObservability({ serviceName: "task-api", useConsoleExporters: false, spanExporter: printSpans });
 await withSpan(obs.tracer, "POST /tasks", async () => {
   await withSpan(obs.tracer, "db.insert", async () => {
     throw new Error("duplicate key");
@@ -320,7 +319,7 @@ failed: duplicate key</option>
 <code file="nested.js" browser="no">
 import { createObservability, withSpan } from "@zudojs/observability";
 
-const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false });
+const obs = createObservability({ serviceName: "task-api", useConsoleExporters: false });
 await withSpan(obs.tracer, "GET /tasks", async (request) => {
   await withSpan(obs.tracer, "db.query", async (query) => {
     console.log(query.context.traceId === request.context.traceId);
@@ -363,7 +362,7 @@ true</option>
 <code file="propagation.js" browser="no">
 import { createObservability, createPropagationContext, getCurrentContext } from "@zudojs/observability";
 
-const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false });
+const obs = createObservability({ serviceName: "task-api", useConsoleExporters: false });
 const context = createPropagationContext({ requestId: "req-1", traceId: "4bf92f3577b34da6a3ce929d0e0e4736" });
 
 function whoAmI() {
@@ -392,7 +391,7 @@ outside: none</option>
 <code file="parallel.js" browser="no">
 import { createObservability, createPropagationContext, getCurrentContext } from "@zudojs/observability";
 
-const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false });
+const obs = createObservability({ serviceName: "task-api", useConsoleExporters: false });
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function loadTasks(userId) {
@@ -429,7 +428,7 @@ const printLogs = {
   async shutdown() {},
 };
 
-const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false, logExporter: printLogs });
+const obs = createObservability({ serviceName: "task-api", useConsoleExporters: false, logExporter: printLogs });
 const context = createPropagationContext({ traceId: "4bf92f3577b34da6a3ce929d0e0e4736" });
 await obs.propagation.run(context, async () => obs.logger.info("tasks loaded"));
 obs.logger.info("outside any request");
@@ -584,7 +583,6 @@ import { createObservability, createParentBasedSampler, createProbabilitySampler
 
 const obs = createObservability({
   serviceName: "task-api",
-  redaction: {},
   useConsoleExporters: false,
   sampler: createParentBasedSampler({ root: createProbabilitySampler(0.1) }),
 });

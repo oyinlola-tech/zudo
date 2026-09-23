@@ -9,7 +9,7 @@
   <meta name="description" content="Test the Task API with Vitest and @zudojs/testing. Control time with a test clock, replace services with mocks and recording buses, wire fakes through a test container, clean up in the right order, and run integration tests against a real HTTP server.">
   <!-- seo:start -->
   <!-- seo:end -->
-  <meta name="keywords" content="zudojs testing, vitest, createTestClock, createMockFn, createSpyLogger, createTestEventBus, createTestQueue, createTestContainer, createCleanupManager, integration test, structural assertions">
+  <meta name="keywords" content="zudojs testing, vitest, createTestClock, createMockFn, createSpyLogger, createTestEventBus, createTestQueue, createTestContainer, createCleanupManager, createHttpTestClient, integration test, structural assertions">
   <meta name="author" content="Oluwayemi Oyinlola Michael">
 
   <link rel="icon" type="image/svg+xml" href="/assets/zudo-favicon.svg">
@@ -171,7 +171,7 @@
 <figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Terminal on your computer</span></figcaption>
 <pre class="lx-shell-body" data-copy="npm install -D vitest @zudojs/testing"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>npm install -D vitest @zudojs/testing</span>
 <span class="lx-res"></span>
-<span class="lx-res">added 44 packages, and audited 63 packages in 9s</span>
+<span class="lx-res">added 43 packages, and audited 60 packages in 17s</span>
 <span class="lx-res"></span>
 <span class="lx-res">13 packages are looking for funding</span>
 <span class="lx-res">  run `npm fund` for details</span>
@@ -301,7 +301,7 @@ console.log(clock.now.toISOString(), clock.timestamp);</script>
 
 <section>
 <h2 id="doubles">Mocks, spy logger and a recording event bus</h2>
-<p>Now give the service three doubles and look at what they recorded. <code>createMockFn()</code> is a fake function that records every call; <code>mockResolvedValue(v)</code> makes it return a promise of <code>v</code>. <code>createSpyLogger(name)</code> is a complete logger that prints nothing and remembers every line in <code>calls</code>. <code>createTestEventBus()</code> is a real event bus from <code>@zudojs/events</code> whose <code>publish</code> also records each event in <code>published</code>.</p>
+<p>Now give the service three doubles and look at what they recorded. <code>createMockFn()</code> is a fake function that records every call; <code>mockResolvedValue(v)</code> makes it return a promise of <code>v</code>. <code>createSpyLogger(name)</code> is a complete logger that prints nothing and remembers every line in <code>calls</code>. <code>createTestEventBus()</code> is a real event bus from <code>@zudojs/events</code> that also records each event in <code>published</code>.</p>
 <figure class="lx-example" data-index="2" data-file="doubles.ts" data-project="tt">
 <figcaption class="lx-bar"><span class="lx-file">doubles.ts</span><button type="button" class="lx-edit" data-index="2" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createMockFn<span class="t-pn">,</span> createSpyLogger<span class="t-pn">,</span> createTestClock<span class="t-pn">,</span> createTestEventBus <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/testing"</span><span class="t-pn">;</span>
@@ -350,7 +350,7 @@ log lines: [ 'info task created {"taskId":1}', 'info task created {"taskId":2}' 
 events: [ 'task.created', 'task.created' ]</pre></div>
 </figure>
 <p>Two days later, only "Buy milk" (due after one day) is overdue. One e-mail went out, with the exact address and subject. No time passed, no e-mail was sent, nothing was printed by the logger. Two more doubles: <code>createStub&lt;T&gt;(overrides)</code> makes an object whose methods do nothing unless you write them, and <code>createSpyMethod(object, "name")</code> records the calls of a real object's method until you call <code>restore()</code>.</p>
-<div class="callout callout-warning"><p class="lx-callout-label">THE RECORDING SITS ON THE WRAPPER</p>The test event bus records only what goes through <em>its own</em> <code>publish</code>, which takes <code>{ type, payload }</code> like <code>publishEvent</code>. An event published straight on <code>events.bus</code> reaches the handlers, but is <strong>not</strong> in <code>published</code>. Give your code the wrapper, as above. The same is true for <code>createTestMessageBus</code> (<code>send</code>) and <code>createTestQueue</code> (<code>add</code>).</div>
+<p>The recording happens inside the bus itself. Whether your code calls <code>publish</code>, <code>publishEvent</code> or <code>emit</code>, and whether it got the double or its <code>bus</code> property, every event lands in <code>published</code>. You can pass the double anywhere an <code>EventBus</code> is expected. <code>createTestMessageBus</code> records every <code>send</code> and <code>dispatch</code> the same way, and <code>createTestQueue</code> every <code>add</code>.</p>
 </section>
 
 <section>
@@ -455,14 +455,13 @@ await config.dispose();</script>
 
 <section>
 <h2 id="app">A test application and cleanup</h2>
-<p>Tests start things that must be stopped: servers, queues, timers, database connections. If a test forgets one, the next test fails for no clear reason, or Vitest never exits. A <strong>cleanup manager</strong> is a list of "undo" functions. <code>dispose()</code> runs them all in <strong>reverse</strong> order, last started, first stopped, and reports every one that failed. <code>createTestApplication</code> bundles a container, a logger, a clock and a cleanup manager, with the container and logger cleanups already registered. Pass your own spy logger and clock: by default it uses a real logger that prints, and a clock set to the real time.</p>
+<p>Tests start things that must be stopped: servers, queues, timers, database connections. If a test forgets one, the next test fails for no clear reason, or Vitest never exits. A <strong>cleanup manager</strong> is a list of "undo" functions. <code>dispose()</code> runs them all in <strong>reverse</strong> order, last started, first stopped, and reports every one that failed. <code>createTestApplication</code> bundles a container, a logger, a clock and a cleanup manager, with the container and logger cleanups already registered. It is quiet and repeatable by default: the logger is a spy logger that prints nothing (read <code>app.logger.calls</code>), and the clock starts at 1 January 2026, 00:00 UTC, on every run. Here the clock starts on a date of your choice:</p>
 <figure class="lx-example" data-index="5" data-file="app-context.ts" data-project="tt">
 <figcaption class="lx-bar"><span class="lx-file">app-context.ts</span><button type="button" class="lx-edit" data-index="5" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createQueueName <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/queue"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> createSpyLogger<span class="t-pn">,</span> createTestApplication<span class="t-pn">,</span> createTestClock<span class="t-pn">,</span> createTestQueue <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/testing"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> createTestApplication<span class="t-pn">,</span> createTestClock<span class="t-pn">,</span> createTestQueue <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/testing"</span><span class="t-pn">;</span>
 
-<span class="t-kw">const</span> logger <span class="t-op">=</span> <span class="t-fn">createSpyLogger</span><span class="t-pn">(</span><span class="t-str">"task-api"</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">const</span> app <span class="t-op">=</span> <span class="t-fn">createTestApplication</span><span class="t-pn">(</span><span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"task-api"</span><span class="t-pn">,</span> logger<span class="t-pn">,</span> clock<span class="t-op">:</span> <span class="t-fn">createTestClock</span><span class="t-pn">(</span><span class="t-str">"2026-10-01T09:00:00Z"</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> app <span class="t-op">=</span> <span class="t-fn">createTestApplication</span><span class="t-pn">(</span><span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"task-api"</span><span class="t-pn">,</span> clock<span class="t-op">:</span> <span class="t-fn">createTestClock</span><span class="t-pn">(</span><span class="t-str">"2026-10-01T09:00:00Z"</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> reminders <span class="t-op">=</span> createTestQueue<span class="t-op">&lt;</span><span class="t-pn">{</span> taskId<span class="t-op">:</span> <span class="t-ty">number</span> <span class="t-pn">}</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-fn">createQueueName</span><span class="t-pn">(</span><span class="t-str">"reminders"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 app<span class="t-pn">.</span><span class="t-prop">cleanup</span><span class="t-pn">.</span><span class="t-fn">register</span><span class="t-pn">(</span><span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
   <span class="t-kw">await</span> reminders<span class="t-pn">.</span><span class="t-fn">close</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -477,10 +476,9 @@ console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"disposed:"</span><span class="t-pn">,</span> app<span class="t-pn">.</span><span class="t-prop">cleanup</span><span class="t-pn">.</span><span class="t-prop">disposed</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { createQueueName } from "@zudojs/queue";
-import { createSpyLogger, createTestApplication, createTestClock, createTestQueue } from "@zudojs/testing";
+import { createTestApplication, createTestClock, createTestQueue } from "@zudojs/testing";
 
-const logger = createSpyLogger("task-api");
-const app = createTestApplication({ name: "task-api", logger, clock: createTestClock("2026-10-01T09:00:00Z") });
+const app = createTestApplication({ name: "task-api", clock: createTestClock("2026-10-01T09:00:00Z") });
 const reminders = createTestQueue<{ taskId: number }>(createQueueName("reminders"));
 app.cleanup.register(async () => {
   await reminders.close();
@@ -552,15 +550,15 @@ rejected with ConflictError</pre></div>
 
 <section>
 <h2 id="http">Integration tests over real HTTP</h2>
-<p>A <strong>unit test</strong> checks one piece with fakes around it. An <strong>integration test</strong> checks that the pieces work together: here, the real router, the real JSON parsing, the real error mapping and the real service. Only the clock, the mailer and the bus stay fake. This is the Task API's <code>POST /tasks</code> route:</p>
+<p>A <strong>unit test</strong> checks one piece with fakes around it. An <strong>integration test</strong> checks that the pieces work together: here, the real router, the real JSON parsing, the real error mapping and the real service. Only the clock, the mailer and the bus stay fake. This is the Task API's <code>POST /tasks</code> route. The function only builds the router, so a test can decide how to serve it:</p>
 <figure class="lx-example" data-index="7" data-file="http-app.ts" data-project="tt">
 <figcaption class="lx-bar"><span class="lx-file">http-app.ts</span><button type="button" class="lx-edit" data-index="7" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> isConflictError <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> createHttpServer<span class="t-pn">,</span> createNodeHttpAdapter<span class="t-pn">,</span> createResponseContext<span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpRequestContext</span><span class="t-pn">,</span> <span class="t-ty">HttpServer</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> createResponseContext<span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpRouter</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> createTaskService <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./task-service.js"</span><span class="t-pn">;</span>
 
-<span class="t-kw">export</span> <span class="t-kw">async</span> <span class="t-kw">function</span> <span class="t-fn">startTaskApi</span><span class="t-pn">(</span>tasks<span class="t-op">:</span> <span class="t-ty">ReturnType</span><span class="t-op">&lt;</span><span class="t-kw">typeof</span> createTaskService<span class="t-op">&gt;</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Promise</span><span class="t-op">&lt;</span><span class="t-ty">HttpServer</span><span class="t-op">&gt;</span> <span class="t-pn">{</span>
+<span class="t-kw">export</span> <span class="t-kw">function</span> <span class="t-fn">createTaskRouter</span><span class="t-pn">(</span>tasks<span class="t-op">:</span> <span class="t-ty">ReturnType</span><span class="t-op">&lt;</span><span class="t-kw">typeof</span> createTaskService<span class="t-op">&gt;</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">HttpRouter</span> <span class="t-pn">{</span>
   <span class="t-kw">const</span> router <span class="t-op">=</span> <span class="t-fn">createRouter</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
   router<span class="t-pn">.</span><span class="t-fn">post</span><span class="t-pn">(</span><span class="t-str">"/tasks"</span><span class="t-pn">,</span> <span class="t-kw">async</span> <span class="t-pn">(</span>ctx<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
     <span class="t-kw">let</span> body<span class="t-op">:</span> <span class="t-pn">{</span> title<span class="t-op">?:</span> <span class="t-ty">unknown</span> <span class="t-pn">}</span><span class="t-pn">;</span>
@@ -579,19 +577,15 @@ rejected with ConflictError</pre></div>
       <span class="t-kw">throw</span> error<span class="t-pn">;</span>
     <span class="t-pn">}</span>
   <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">const</span> server <span class="t-op">=</span> <span class="t-fn">createHttpServer</span><span class="t-pn">(</span><span class="t-pn">{</span>
-    adapter<span class="t-op">:</span> <span class="t-fn">createNodeHttpAdapter</span><span class="t-pn">(</span><span class="t-pn">{</span> host<span class="t-op">:</span> <span class="t-str">"127.0.0.1"</span><span class="t-pn">,</span> port<span class="t-op">:</span> <span class="t-num">0</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
-    handler<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span>request<span class="t-op">:</span> <span class="t-ty">HttpRequestContext</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-kw">await</span> router<span class="t-pn">.</span><span class="t-fn">dispatch</span><span class="t-pn">(</span>request<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">response</span><span class="t-pn">,</span>
-  <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">return</span> server<span class="t-pn">.</span><span class="t-fn">start</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-kw">return</span> router<span class="t-pn">;</span>
 <span class="t-pn">}</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { isConflictError } from "@zudojs/errors";
-import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
-import type { HttpRequestContext, HttpServer } from "@zudojs/http";
+import { createResponseContext, createRouter } from "@zudojs/http";
+import type { HttpRouter } from "@zudojs/http";
 import type { createTaskService } from "./task-service.js";
 
-export async function startTaskApi(tasks: ReturnType<typeof createTaskService>): Promise<HttpServer> {
+export function createTaskRouter(tasks: ReturnType<typeof createTaskService>): HttpRouter {
   const router = createRouter();
   router.post("/tasks", async (ctx) => {
     let body: { title?: unknown };
@@ -610,30 +604,105 @@ export async function startTaskApi(tasks: ReturnType<typeof createTaskService>):
       throw error;
     }
   });
-  const server = createHttpServer({
-    adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
-    handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
-  });
-  return server.start();
+  return router;
 }</script>
 </figure>
-<p>The integration test is the last test in the suite below. It starts this server on port 0 (any free port), sends real requests with <code>fetch</code>, and wraps each answer with <code>createHTTPResponse(status, body, headers)</code> so that the HTTP assertions, such as <code>assertCreated</code> and <code>assertResponseBodyContains</code>, can check it. The 409 it expects comes from a <code>ConflictError</code> thrown deep in the service and mapped to a status by the route. Only an integration test checks that whole chain.</p>
-<div class="callout callout-note"><p class="lx-callout-label">NOTE</p>A ready-made HTTP test client, <code>createHttpTestClient</code>, is coming to <code>@zudojs/testing</code>. It starts your router on a free port, sends requests in a chain such as <code>.post("/tasks").send(body).expect(201)</code>, and keeps cookies. The docs page already describes it, but it is not in version 1.1.2 on npm. Until then, <code>fetch</code> plus <code>createHTTPResponse</code> does the job.</div>
+<p><code>createHttpTestClient(target)</code> sends real HTTP requests to your app. Give it the router, and it starts a real server on a free port the first time you send a request. You build each request in a chain: the method and path, then <code>.send(body)</code>, <code>.set(header, value)</code> or <code>.auth(token)</code>, then what you expect. <code>.expect(status)</code>, <code>.expect(header, pattern)</code> and <code>.expectJson(part)</code> throw when the answer is different. The request is sent when you <code>await</code> the chain:</p>
+<figure class="lx-example" data-index="8" data-file="http-client.ts" data-project="tt">
+<figcaption class="lx-bar"><span class="lx-file">http-client.ts</span><button type="button" class="lx-edit" data-index="8" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createCleanupManager<span class="t-pn">,</span> createHttpTestClient<span class="t-pn">,</span> createMockFn<span class="t-pn">,</span> createSpyLogger<span class="t-pn">,</span> createTestClock<span class="t-pn">,</span> createTestEventBus <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/testing"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> createTaskRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./http-app.js"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> createTaskService <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./task-service.js"</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> clock <span class="t-op">=</span> <span class="t-fn">createTestClock</span><span class="t-pn">(</span><span class="t-str">"2026-10-01T09:00:00Z"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> tasks <span class="t-op">=</span> <span class="t-fn">createTaskService</span><span class="t-pn">(</span><span class="t-pn">{</span>
+  now<span class="t-op">:</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> clock<span class="t-pn">.</span><span class="t-prop">now</span><span class="t-pn">,</span> logger<span class="t-op">:</span> <span class="t-fn">createSpyLogger</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span> events<span class="t-op">:</span> <span class="t-fn">createTestEventBus</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span>
+  mailer<span class="t-op">:</span> <span class="t-pn">{</span> send<span class="t-op">:</span> createMockFn<span class="t-op">&lt;</span><span class="t-pn">[</span><span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-ty">string</span><span class="t-pn">]</span><span class="t-pn">,</span> <span class="t-ty">Promise</span><span class="t-op">&lt;</span><span class="t-kw">void</span><span class="t-op">&gt;&gt;</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">,</span> maxOpenTasks<span class="t-op">:</span> <span class="t-num">2</span><span class="t-pn">,</span>
+<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> cleanup <span class="t-op">=</span> <span class="t-fn">createCleanupManager</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> client <span class="t-op">=</span> <span class="t-fn">createHttpTestClient</span><span class="t-pn">(</span><span class="t-fn">createTaskRouter</span><span class="t-pn">(</span>tasks<span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-pn">{</span> cleanup <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> created <span class="t-op">=</span> <span class="t-kw">await</span> client<span class="t-pn">.</span><span class="t-fn">post</span><span class="t-pn">(</span><span class="t-str">"/tasks"</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">send</span><span class="t-pn">(</span><span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"Buy milk"</span> <span class="t-pn">}</span><span class="t-pn">)</span>
+  <span class="t-pn">.</span><span class="t-fn">expect</span><span class="t-pn">(</span><span class="t-num">201</span><span class="t-pn">)</span>
+  <span class="t-pn">.</span><span class="t-fn">expect</span><span class="t-pn">(</span><span class="t-str">"content-type"</span><span class="t-pn">,</span> <span class="t-op">/</span>json<span class="t-op">/</span><span class="t-pn">)</span>
+  <span class="t-pn">.</span><span class="t-fn">expectJson</span><span class="t-pn">(</span><span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-num">1</span><span class="t-pn">,</span> title<span class="t-op">:</span> <span class="t-str">"Buy milk"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>created<span class="t-pn">.</span><span class="t-prop">status</span><span class="t-pn">,</span> created<span class="t-pn">.</span><span class="t-prop">body</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">await</span> client<span class="t-pn">.</span><span class="t-fn">post</span><span class="t-pn">(</span><span class="t-str">"/tasks"</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">send</span><span class="t-pn">(</span><span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"x"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">expect</span><span class="t-pn">(</span><span class="t-num">422</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">await</span> client<span class="t-pn">.</span><span class="t-fn">post</span><span class="t-pn">(</span><span class="t-str">"/tasks"</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">send</span><span class="t-pn">(</span><span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"Walk the dog"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">expect</span><span class="t-pn">(</span><span class="t-num">201</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> full <span class="t-op">=</span> <span class="t-kw">await</span> client<span class="t-pn">.</span><span class="t-fn">post</span><span class="t-pn">(</span><span class="t-str">"/tasks"</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">send</span><span class="t-pn">(</span><span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"Call Ada"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">expect</span><span class="t-pn">(</span><span class="t-num">409</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>full<span class="t-pn">.</span><span class="t-prop">status</span><span class="t-pn">,</span> full<span class="t-pn">.</span><span class="t-prop">body</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">try</span> <span class="t-pn">{</span>
+  <span class="t-kw">await</span> client<span class="t-pn">.</span><span class="t-fn">post</span><span class="t-pn">(</span><span class="t-str">"/tasks"</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">send</span><span class="t-pn">(</span><span class="t-str">"not json"</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">expect</span><span class="t-pn">(</span><span class="t-num">201</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-pn">}</span> <span class="t-kw">catch</span> <span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-pn">{</span>
+  <span class="t-kw">if</span> <span class="t-pn">(</span>error <span class="t-kw">instanceof</span> <span class="t-ty">Error</span><span class="t-pn">)</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>error<span class="t-pn">.</span><span class="t-prop">name</span><span class="t-pn">,</span> <span class="t-str">"-"</span><span class="t-pn">,</span> error<span class="t-pn">.</span><span class="t-prop">message</span><span class="t-pn">.</span><span class="t-fn">trimEnd</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-pn">}</span>
+<span class="t-kw">await</span> cleanup<span class="t-pn">.</span><span class="t-fn">dispose</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"client closed:"</span><span class="t-pn">,</span> client<span class="t-pn">.</span><span class="t-prop">closed</span><span class="t-pn">)</span><span class="t-pn">;</span>
+</code></pre>
+<script type="text/plain" class="lx-src">import { createCleanupManager, createHttpTestClient, createMockFn, createSpyLogger, createTestClock, createTestEventBus } from "@zudojs/testing";
+import { createTaskRouter } from "./http-app.js";
+import { createTaskService } from "./task-service.js";
+
+const clock = createTestClock("2026-10-01T09:00:00Z");
+const tasks = createTaskService({
+  now: () => clock.now, logger: createSpyLogger(), events: createTestEventBus(),
+  mailer: { send: createMockFn<[string, string], Promise<void>>() }, maxOpenTasks: 2,
+});
+const cleanup = createCleanupManager();
+const client = createHttpTestClient(createTaskRouter(tasks), { cleanup });
+
+const created = await client.post("/tasks").send({ title: "Buy milk" })
+  .expect(201)
+  .expect("content-type", /json/)
+  .expectJson({ id: 1, title: "Buy milk" });
+console.log(created.status, created.body);
+
+await client.post("/tasks").send({ title: "x" }).expect(422);
+await client.post("/tasks").send({ title: "Walk the dog" }).expect(201);
+const full = await client.post("/tasks").send({ title: "Call Ada" }).expect(409);
+console.log(full.status, full.body);
+
+try {
+  await client.post("/tasks").send("not json").expect(201);
+} catch (error) {
+  if (error instanceof Error) console.log(error.name, "-", error.message.trimEnd());
+}
+await cleanup.dispose();
+console.log("client closed:", client.closed);</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx http-client.ts</code></div><pre class="lx-no-copy">201 { id: 1, title: 'Buy milk', dueAt: '2026-10-02T09:00:00.000Z' }
+409 { error: 'You already have 2 open tasks.' }
+AssertionError - Expected status 201, got 400.
+  request:  POST /tasks
+  response: 400 Bad Request
+  body:     {"error":"The body is not JSON"}
+
+400 !== 201
+client closed: true</pre></div>
+</figure>
+<ul>
+<li><code>.expectJson({ id: 1, title: "Buy milk" })</code> checks only the fields you list. The <code>dueAt</code> in the body is allowed.</li>
+<li>The 409 comes from a <code>ConflictError</code> thrown deep in the service and mapped to a status by the route. Only an integration test checks that whole chain.</li>
+<li>The last request expected 201 on purpose, to show what a failure looks like: the request, the status and the body, so you see at once what went wrong. <code>.send("not json")</code> sent plain text, and the route answered 400.</li>
+<li><code>{ cleanup }</code> registered the client with the cleanup manager, so <code>dispose()</code> stopped the server it started. The client also keeps cookies between requests, like a browser, which you will want for sign-in tests.</li>
+</ul>
+<p>Every answer is a <code>TestHTTPResponse</code>, so the assertions of the next section, such as <code>assertResponseBodyContains</code>, accept it too.</p>
 </section>
 
 <section>
 <h2 id="vitest">Put it together in Vitest</h2>
 <p>Now turn the examples into a test suite. Every test gets fresh doubles in <code>beforeEach</code>, so no test can see another test's tasks or clock. <code>afterEach</code> disposes the cleanup manager, so every server and bus is closed, even when a test fails in the middle:</p>
-<figure class="lx-example" data-index="8" data-file="tasks.test.ts" data-project="tt">
-<figcaption class="lx-bar"><span class="lx-file">tasks.test.ts</span><button type="button" class="lx-edit" data-index="8" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
+<figure class="lx-example" data-index="9" data-file="tasks.test.ts" data-project="tt">
+<figcaption class="lx-bar"><span class="lx-file">tasks.test.ts</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> afterEach<span class="t-pn">,</span> beforeEach<span class="t-pn">,</span> describe<span class="t-pn">,</span> expect<span class="t-pn">,</span> it <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"vitest"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> isConflictError <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/errors"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span>
-  assertCreated<span class="t-pn">,</span> assertEventPublished<span class="t-pn">,</span> assertRejects<span class="t-pn">,</span> assertResponseBodyContains<span class="t-pn">,</span> assertResponseStatus<span class="t-pn">,</span>
-  createCleanupManager<span class="t-pn">,</span> createHTTPResponse<span class="t-pn">,</span> createMockFn<span class="t-pn">,</span> createSpyLogger<span class="t-pn">,</span> createTestClock<span class="t-pn">,</span> createTestEventBus<span class="t-pn">,</span>
+  assertEventPublished<span class="t-pn">,</span> assertRejects<span class="t-pn">,</span> createCleanupManager<span class="t-pn">,</span> createHttpTestClient<span class="t-pn">,</span> createMockFn<span class="t-pn">,</span>
+  createSpyLogger<span class="t-pn">,</span> createTestClock<span class="t-pn">,</span> createTestEventBus<span class="t-pn">,</span>
 <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/testing"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">CleanupManager</span><span class="t-pn">,</span> <span class="t-ty">MockFn</span><span class="t-pn">,</span> <span class="t-ty">TestClock</span><span class="t-pn">,</span> <span class="t-ty">TestEventBus</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/testing"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> startTaskApi <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./http-app.js"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> createTaskRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./http-app.js"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createTaskService <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./task-service.js"</span><span class="t-pn">;</span>
 
 <span class="t-kw">let</span> clock<span class="t-op">:</span> <span class="t-ty">TestClock</span><span class="t-pn">;</span>
@@ -677,31 +746,22 @@ export async function startTaskApi(tasks: ReturnType<typeof createTaskService>):
 
 <span class="t-fn">describe</span><span class="t-pn">(</span><span class="t-str">"POST /tasks"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
   <span class="t-fn">it</span><span class="t-pn">(</span><span class="t-str">"answers 201, 422 and 409"</span><span class="t-pn">,</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
-    <span class="t-kw">const</span> server <span class="t-op">=</span> <span class="t-kw">await</span> <span class="t-fn">startTaskApi</span><span class="t-pn">(</span>tasks<span class="t-pn">)</span><span class="t-pn">;</span>
-    cleanup<span class="t-pn">.</span><span class="t-fn">register</span><span class="t-pn">(</span><span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span> <span class="t-kw">await</span> server<span class="t-pn">.</span><span class="t-fn">stop</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-str">"server"</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">const</span> post <span class="t-op">=</span> <span class="t-kw">async</span> <span class="t-pn">(</span>body<span class="t-op">:</span> <span class="t-ty">unknown</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
-      <span class="t-kw">const</span> response <span class="t-op">=</span> <span class="t-kw">await</span> <span class="t-fn">fetch</span><span class="t-pn">(</span><span class="t-tpl">`http://127.0.0.1:<span class="t-op">${</span><span class="t-prop">server.address?.port</span><span class="t-op">}</span>/tasks`</span><span class="t-pn">,</span> <span class="t-pn">{</span>
-        method<span class="t-op">:</span> <span class="t-str">"POST"</span><span class="t-pn">,</span> headers<span class="t-op">:</span> <span class="t-pn">{</span> <span class="t-str">"content-type"</span><span class="t-op">:</span> <span class="t-str">"application/json"</span> <span class="t-pn">}</span><span class="t-pn">,</span> body<span class="t-op">:</span> <span class="t-cn">JSON</span><span class="t-pn">.</span><span class="t-fn">stringify</span><span class="t-pn">(</span>body<span class="t-pn">)</span><span class="t-pn">,</span>
-      <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-      <span class="t-kw">return</span> <span class="t-fn">createHTTPResponse</span><span class="t-pn">(</span>response<span class="t-pn">.</span><span class="t-prop">status</span><span class="t-pn">,</span> <span class="t-kw">await</span> response<span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span> response<span class="t-pn">.</span><span class="t-prop">headers</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-pn">}</span><span class="t-pn">;</span>
-    <span class="t-kw">const</span> created <span class="t-op">=</span> <span class="t-kw">await</span> <span class="t-fn">post</span><span class="t-pn">(</span><span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"Buy milk"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-fn">assertCreated</span><span class="t-pn">(</span>created<span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-fn">assertResponseBodyContains</span><span class="t-pn">(</span>created<span class="t-pn">,</span> <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-num">1</span><span class="t-pn">,</span> title<span class="t-op">:</span> <span class="t-str">"Buy milk"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-fn">assertResponseStatus</span><span class="t-pn">(</span><span class="t-kw">await</span> <span class="t-fn">post</span><span class="t-pn">(</span><span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"x"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-num">422</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">await</span> <span class="t-fn">post</span><span class="t-pn">(</span><span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"Walk the dog"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-fn">assertResponseStatus</span><span class="t-pn">(</span><span class="t-kw">await</span> <span class="t-fn">post</span><span class="t-pn">(</span><span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"Call Ada"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-num">409</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">const</span> client <span class="t-op">=</span> <span class="t-fn">createHttpTestClient</span><span class="t-pn">(</span><span class="t-fn">createTaskRouter</span><span class="t-pn">(</span>tasks<span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-pn">{</span> cleanup <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">await</span> client<span class="t-pn">.</span><span class="t-fn">post</span><span class="t-pn">(</span><span class="t-str">"/tasks"</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">send</span><span class="t-pn">(</span><span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"Buy milk"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">expect</span><span class="t-pn">(</span><span class="t-num">201</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">expectJson</span><span class="t-pn">(</span><span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-num">1</span><span class="t-pn">,</span> title<span class="t-op">:</span> <span class="t-str">"Buy milk"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">await</span> client<span class="t-pn">.</span><span class="t-fn">post</span><span class="t-pn">(</span><span class="t-str">"/tasks"</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">send</span><span class="t-pn">(</span><span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"x"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">expect</span><span class="t-pn">(</span><span class="t-num">422</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">await</span> client<span class="t-pn">.</span><span class="t-fn">post</span><span class="t-pn">(</span><span class="t-str">"/tasks"</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">send</span><span class="t-pn">(</span><span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"Walk the dog"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">expect</span><span class="t-pn">(</span><span class="t-num">201</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">await</span> client<span class="t-pn">.</span><span class="t-fn">post</span><span class="t-pn">(</span><span class="t-str">"/tasks"</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">send</span><span class="t-pn">(</span><span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"Call Ada"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">expect</span><span class="t-pn">(</span><span class="t-num">409</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isConflictError } from "@zudojs/errors";
 import {
-  assertCreated, assertEventPublished, assertRejects, assertResponseBodyContains, assertResponseStatus,
-  createCleanupManager, createHTTPResponse, createMockFn, createSpyLogger, createTestClock, createTestEventBus,
+  assertEventPublished, assertRejects, createCleanupManager, createHttpTestClient, createMockFn,
+  createSpyLogger, createTestClock, createTestEventBus,
 } from "@zudojs/testing";
 import type { CleanupManager, MockFn, TestClock, TestEventBus } from "@zudojs/testing";
-import { startTaskApi } from "./http-app.js";
+import { createTaskRouter } from "./http-app.js";
 import { createTaskService } from "./task-service.js";
 
 let clock: TestClock;
@@ -745,20 +805,11 @@ describe("task service", () => {
 
 describe("POST /tasks", () => {
   it("answers 201, 422 and 409", async () => {
-    const server = await startTaskApi(tasks);
-    cleanup.register(async () => { await server.stop(); }, "server");
-    const post = async (body: unknown) => {
-      const response = await fetch(`http://127.0.0.1:${server.address?.port}/tasks`, {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
-      });
-      return createHTTPResponse(response.status, await response.json(), response.headers);
-    };
-    const created = await post({ title: "Buy milk" });
-    assertCreated(created);
-    assertResponseBodyContains(created, { id: 1, title: "Buy milk" });
-    assertResponseStatus(await post({ title: "x" }), 422);
-    await post({ title: "Walk the dog" });
-    assertResponseStatus(await post({ title: "Call Ada" }), 409);
+    const client = createHttpTestClient(createTaskRouter(tasks), { cleanup });
+    await client.post("/tasks").send({ title: "Buy milk" }).expect(201).expectJson({ id: 1, title: "Buy milk" });
+    await client.post("/tasks").send({ title: "x" }).expect(422);
+    await client.post("/tasks").send({ title: "Walk the dog" }).expect(201);
+    await client.post("/tasks").send({ title: "Call Ada" }).expect(409);
   });
 });</script>
 </figure>
@@ -767,15 +818,15 @@ describe("POST /tasks", () => {
 <span class="lx-res"></span>
 <span class="lx-res"> RUN  v5.0.1 ~/task-api</span>
 <span class="lx-res"></span>
-<span class="lx-res"> ✓ tasks.test.ts &gt; task service &gt; publishes task.created 21ms</span>
-<span class="lx-res"> ✓ tasks.test.ts &gt; task service &gt; reminds only about overdue tasks 8ms</span>
-<span class="lx-res"> ✓ tasks.test.ts &gt; task service &gt; refuses a third open task 4ms</span>
-<span class="lx-res"> ✓ tasks.test.ts &gt; POST /tasks &gt; answers 201, 422 and 409 173ms</span>
+<span class="lx-res"> ✓ tasks.test.ts &gt; task service &gt; publishes task.created 11ms</span>
+<span class="lx-res"> ✓ tasks.test.ts &gt; task service &gt; reminds only about overdue tasks 4ms</span>
+<span class="lx-res"> ✓ tasks.test.ts &gt; task service &gt; refuses a third open task 2ms</span>
+<span class="lx-res"> ✓ tasks.test.ts &gt; POST /tasks &gt; answers 201, 422 and 409 114ms</span>
 <span class="lx-res"></span>
 <span class="lx-res"> Test Files  1 passed (1)</span>
 <span class="lx-res">      Tests  4 passed (4)</span>
-<span class="lx-res">   Start at  15:30:06</span>
-<span class="lx-res">   Duration  2.16s (import 79%, tests 12%, transform 8%)</span></pre></figure>
+<span class="lx-res">   Start at  18:49:37</span>
+<span class="lx-res">   Duration  2.13s (import 83%, transform 9%, tests 8%, worker 1%)</span></pre></figure>
 <p>Two days of fake time and a real HTTP server, in a fraction of a second of test time. Now check that the tests can fail. Change <code>clock.add({ days: 2 })</code> to <code>clock.add({ hours: 12 })</code> and run again:</p>
 <figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Terminal on your computer</span></figcaption>
 <pre class="lx-shell-body" data-copy="npx vitest run"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>npx vitest run</span>
@@ -794,8 +845,8 @@ describe("POST /tasks", () => {
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A mailer that fails</h3><p>What should <code>remind</code> do when the mail server is down? Make the mock fail with <code>mockRejectedValue</code>, and check with <code>assertRejects</code> that <code>remind</code> passes the error on. Print how many times the mailer was called.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="9" data-file="failing-mailer.ts" data-project="tt">
-<figcaption class="lx-bar"><span class="lx-file">failing-mailer.ts</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A mailer that fails</h3><p>What should <code>remind</code> do when the mail server is down? Make the mock fail with <code>mockRejectedValue</code>, and check with <code>assertRejects</code> that <code>remind</code> passes the error on. Print how many times the mailer was called.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="10" data-file="failing-mailer.ts" data-project="tt">
+<figcaption class="lx-bar"><span class="lx-file">failing-mailer.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> assertRejects<span class="t-pn">,</span> createMockFn<span class="t-pn">,</span> createSpyLogger<span class="t-pn">,</span> createTestClock<span class="t-pn">,</span> createTestEventBus <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/testing"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createTaskService <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./task-service.js"</span><span class="t-pn">;</span>
 
@@ -826,8 +877,8 @@ events.dispose();</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx failing-mailer.ts</code></div><pre class="lx-no-copy">SMTP server unreachable - mailer calls: 1</pre></div>
 </figure>
 <p>This test documents today's behaviour: the first failure stops the loop. If you decide later that <code>remind</code> should try every task and report the failures, change the test first and watch it fail.</p></details></div>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Messages you did not send</h3><p>Use <code>createTestMessageBus</code>. Send an <code>email.send</code> message through the wrapper, then check with <code>assertMessageDispatched</code> that it was sent and with <code>assertMessageNotDispatched</code> that no <code>sms.send</code> was.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="10" data-file="messages.ts" data-project="tt">
-<figcaption class="lx-bar"><span class="lx-file">messages.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Messages you did not send</h3><p>Use <code>createTestMessageBus</code>. Send an <code>email.send</code> message, then check with <code>assertMessageDispatched</code> that it was sent and with <code>assertMessageNotDispatched</code> that no <code>sms.send</code> was.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="11" data-file="messages.ts" data-project="tt">
+<figcaption class="lx-bar"><span class="lx-file">messages.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> assertMessageDispatched<span class="t-pn">,</span> assertMessageNotDispatched<span class="t-pn">,</span> createTestMessageBus <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/testing"</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> messages <span class="t-op">=</span> <span class="t-fn">createTestMessageBus</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -854,9 +905,9 @@ messages.dispose();</script>
 <h2 id="recap">Recap</h2>
 <ul>
 <li>Pass time, logging, events and mail into your code, so a test can replace each one. <code>createTestClock</code> moves time instantly. <code>createMockFn</code>, <code>createSpyLogger</code>, <code>createStub</code> and <code>createSpyMethod</code> replace and record.</li>
-<li>The test event bus, message bus and queue record only calls through their own <code>publish</code>, <code>send</code> and <code>add</code>.</li>
+<li>The test event bus, message bus and queue are the real thing, and record every event, message and job, however your code sends it.</li>
 <li><code>createTestContainer</code> and <code>createTestConfigManager</code> let tests use the app's real wiring with fakes at the edges. A cleanup manager stops everything in reverse order, even after a failure.</li>
-<li>Structural assertions compare content, sets and dates included. Integration tests start the real server on port 0 and check real answers.</li>
+<li>Structural assertions compare content, sets and dates included. <code>createHttpTestClient</code> serves your router on a free port and checks real answers with <code>.expect(…)</code> chains.</li>
 </ul>
 <p>Next, you make the Task API tell you what it is doing in production, with structured logs.</p>
 </section>

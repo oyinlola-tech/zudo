@@ -4,7 +4,7 @@ description: Test the Task API with Vitest and @zudojs/testing. Control time wit
 minutes: 45
 youNeed: The testing basics lesson, and the Task API with its events, queue and HTTP routes
 youBuild: A Vitest suite for the Task API with unit tests on fake time and fake services, and an integration test over real HTTP
-keywords: zudojs testing, vitest, createTestClock, createMockFn, createSpyLogger, createTestEventBus, createTestQueue, createTestContainer, createCleanupManager, integration test, structural assertions
+keywords: zudojs testing, vitest, createTestClock, createMockFn, createSpyLogger, createTestEventBus, createTestQueue, createTestContainer, createCleanupManager, createHttpTestClient, integration test, structural assertions
 tier: core
 ---
 <section>
@@ -13,7 +13,7 @@ tier: core
 <shell title="Terminal on your computer">
 $ npm install -D vitest @zudojs/testing
 
-added 44 packages, and audited 63 packages in 9s
+added 43 packages, and audited 60 packages in 17s
 
 13 packages are looking for funding
   run `npm fund` for details
@@ -94,7 +94,7 @@ console.log(clock.now.toISOString(), clock.timestamp);
 
 <section>
 <h2 id="doubles">Mocks, spy logger and a recording event bus</h2>
-<p>Now give the service three doubles and look at what they recorded. <code>createMockFn()</code> is a fake function that records every call; <code>mockResolvedValue(v)</code> makes it return a promise of <code>v</code>. <code>createSpyLogger(name)</code> is a complete logger that prints nothing and remembers every line in <code>calls</code>. <code>createTestEventBus()</code> is a real event bus from <code>@zudojs/events</code> whose <code>publish</code> also records each event in <code>published</code>.</p>
+<p>Now give the service three doubles and look at what they recorded. <code>createMockFn()</code> is a fake function that records every call; <code>mockResolvedValue(v)</code> makes it return a promise of <code>v</code>. <code>createSpyLogger(name)</code> is a complete logger that prints nothing and remembers every line in <code>calls</code>. <code>createTestEventBus()</code> is a real event bus from <code>@zudojs/events</code> that also records each event in <code>published</code>.</p>
 <example file="doubles.ts" project="tt" browser="no">
 import { createMockFn, createSpyLogger, createTestClock, createTestEventBus } from "@zudojs/testing";
 import { createTaskService } from "./task-service.js";
@@ -124,7 +124,7 @@ log lines: [ 'info task created {"taskId":1}', 'info task created {"taskId":2}' 
 events: [ 'task.created', 'task.created' ]
 </output>
 <p>Two days later, only "Buy milk" (due after one day) is overdue. One e-mail went out, with the exact address and subject. No time passed, no e-mail was sent, nothing was printed by the logger. Two more doubles: <code>createStub&lt;T&gt;(overrides)</code> makes an object whose methods do nothing unless you write them, and <code>createSpyMethod(object, "name")</code> records the calls of a real object's method until you call <code>restore()</code>.</p>
-<warn title="THE RECORDING SITS ON THE WRAPPER">The test event bus records only what goes through <em>its own</em> <code>publish</code>, which takes <code>{ type, payload }</code> like <code>publishEvent</code>. An event published straight on <code>events.bus</code> reaches the handlers, but is <strong>not</strong> in <code>published</code>. Give your code the wrapper, as above. The same is true for <code>createTestMessageBus</code> (<code>send</code>) and <code>createTestQueue</code> (<code>add</code>).</warn>
+<p>The recording happens inside the bus itself. Whether your code calls <code>publish</code>, <code>publishEvent</code> or <code>emit</code>, and whether it got the double or its <code>bus</code> property, every event lands in <code>published</code>. You can pass the double anywhere an <code>EventBus</code> is expected. <code>createTestMessageBus</code> records every <code>send</code> and <code>dispatch</code> the same way, and <code>createTestQueue</code> every <code>add</code>.</p>
 </section>
 
 <section>
@@ -185,13 +185,12 @@ ConflictError - You already have 1 open tasks.
 
 <section>
 <h2 id="app">A test application and cleanup</h2>
-<p>Tests start things that must be stopped: servers, queues, timers, database connections. If a test forgets one, the next test fails for no clear reason, or Vitest never exits. A <strong>cleanup manager</strong> is a list of "undo" functions. <code>dispose()</code> runs them all in <strong>reverse</strong> order, last started, first stopped, and reports every one that failed. <code>createTestApplication</code> bundles a container, a logger, a clock and a cleanup manager, with the container and logger cleanups already registered. Pass your own spy logger and clock: by default it uses a real logger that prints, and a clock set to the real time.</p>
+<p>Tests start things that must be stopped: servers, queues, timers, database connections. If a test forgets one, the next test fails for no clear reason, or Vitest never exits. A <strong>cleanup manager</strong> is a list of "undo" functions. <code>dispose()</code> runs them all in <strong>reverse</strong> order, last started, first stopped, and reports every one that failed. <code>createTestApplication</code> bundles a container, a logger, a clock and a cleanup manager, with the container and logger cleanups already registered. It is quiet and repeatable by default: the logger is a spy logger that prints nothing (read <code>app.logger.calls</code>), and the clock starts at 1 January 2026, 00:00 UTC, on every run. Here the clock starts on a date of your choice:</p>
 <example file="app-context.ts" project="tt" browser="no">
 import { createQueueName } from "@zudojs/queue";
-import { createSpyLogger, createTestApplication, createTestClock, createTestQueue } from "@zudojs/testing";
+import { createTestApplication, createTestClock, createTestQueue } from "@zudojs/testing";
 
-const logger = createSpyLogger("task-api");
-const app = createTestApplication({ name: "task-api", logger, clock: createTestClock("2026-10-01T09:00:00Z") });
+const app = createTestApplication({ name: "task-api", clock: createTestClock("2026-10-01T09:00:00Z") });
 const reminders = createTestQueue<{ taskId: number }>(createQueueName("reminders"));
 app.cleanup.register(async () => {
   await reminders.close();
@@ -250,14 +249,14 @@ rejected with ConflictError
 
 <section>
 <h2 id="http">Integration tests over real HTTP</h2>
-<p>A <strong>unit test</strong> checks one piece with fakes around it. An <strong>integration test</strong> checks that the pieces work together: here, the real router, the real JSON parsing, the real error mapping and the real service. Only the clock, the mailer and the bus stay fake. This is the Task API's <code>POST /tasks</code> route:</p>
+<p>A <strong>unit test</strong> checks one piece with fakes around it. An <strong>integration test</strong> checks that the pieces work together: here, the real router, the real JSON parsing, the real error mapping and the real service. Only the clock, the mailer and the bus stay fake. This is the Task API's <code>POST /tasks</code> route. The function only builds the router, so a test can decide how to serve it:</p>
 <example file="http-app.ts" project="tt" browser="no">
 import { isConflictError } from "@zudojs/errors";
-import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
-import type { HttpRequestContext, HttpServer } from "@zudojs/http";
+import { createResponseContext, createRouter } from "@zudojs/http";
+import type { HttpRouter } from "@zudojs/http";
 import type { createTaskService } from "./task-service.js";
 
-export async function startTaskApi(tasks: ReturnType<typeof createTaskService>): Promise<HttpServer> {
+export function createTaskRouter(tasks: ReturnType<typeof createTaskService>): HttpRouter {
   const router = createRouter();
   router.post("/tasks", async (ctx) => {
     let body: { title?: unknown };
@@ -276,15 +275,60 @@ export async function startTaskApi(tasks: ReturnType<typeof createTaskService>):
       throw error;
     }
   });
-  const server = createHttpServer({
-    adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
-    handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
-  });
-  return server.start();
+  return router;
 }
 </example>
-<p>The integration test is the last test in the suite below. It starts this server on port 0 (any free port), sends real requests with <code>fetch</code>, and wraps each answer with <code>createHTTPResponse(status, body, headers)</code> so that the HTTP assertions, such as <code>assertCreated</code> and <code>assertResponseBodyContains</code>, can check it. The 409 it expects comes from a <code>ConflictError</code> thrown deep in the service and mapped to a status by the route. Only an integration test checks that whole chain.</p>
-<note>A ready-made HTTP test client, <code>createHttpTestClient</code>, is coming to <code>@zudojs/testing</code>. It starts your router on a free port, sends requests in a chain such as <code>.post("/tasks").send(body).expect(201)</code>, and keeps cookies. The docs page already describes it, but it is not in version 1.1.2 on npm. Until then, <code>fetch</code> plus <code>createHTTPResponse</code> does the job.</note>
+<p><code>createHttpTestClient(target)</code> sends real HTTP requests to your app. Give it the router, and it starts a real server on a free port the first time you send a request. You build each request in a chain: the method and path, then <code>.send(body)</code>, <code>.set(header, value)</code> or <code>.auth(token)</code>, then what you expect. <code>.expect(status)</code>, <code>.expect(header, pattern)</code> and <code>.expectJson(part)</code> throw when the answer is different. The request is sent when you <code>await</code> the chain:</p>
+<example file="http-client.ts" project="tt" browser="no">
+import { createCleanupManager, createHttpTestClient, createMockFn, createSpyLogger, createTestClock, createTestEventBus } from "@zudojs/testing";
+import { createTaskRouter } from "./http-app.js";
+import { createTaskService } from "./task-service.js";
+
+const clock = createTestClock("2026-10-01T09:00:00Z");
+const tasks = createTaskService({
+  now: () => clock.now, logger: createSpyLogger(), events: createTestEventBus(),
+  mailer: { send: createMockFn<[string, string], Promise<void>>() }, maxOpenTasks: 2,
+});
+const cleanup = createCleanupManager();
+const client = createHttpTestClient(createTaskRouter(tasks), { cleanup });
+
+const created = await client.post("/tasks").send({ title: "Buy milk" })
+  .expect(201)
+  .expect("content-type", /json/)
+  .expectJson({ id: 1, title: "Buy milk" });
+console.log(created.status, created.body);
+
+await client.post("/tasks").send({ title: "x" }).expect(422);
+await client.post("/tasks").send({ title: "Walk the dog" }).expect(201);
+const full = await client.post("/tasks").send({ title: "Call Ada" }).expect(409);
+console.log(full.status, full.body);
+
+try {
+  await client.post("/tasks").send("not json").expect(201);
+} catch (error) {
+  if (error instanceof Error) console.log(error.name, "-", error.message.trimEnd());
+}
+await cleanup.dispose();
+console.log("client closed:", client.closed);
+</example>
+<output>
+201 { id: 1, title: 'Buy milk', dueAt: '2026-10-02T09:00:00.000Z' }
+409 { error: 'You already have 2 open tasks.' }
+AssertionError - Expected status 201, got 400.
+  request:  POST /tasks
+  response: 400 Bad Request
+  body:     {"error":"The body is not JSON"}
+
+400 !== 201
+client closed: true
+</output>
+<ul>
+<li><code>.expectJson({ id: 1, title: "Buy milk" })</code> checks only the fields you list. The <code>dueAt</code> in the body is allowed.</li>
+<li>The 409 comes from a <code>ConflictError</code> thrown deep in the service and mapped to a status by the route. Only an integration test checks that whole chain.</li>
+<li>The last request expected 201 on purpose, to show what a failure looks like: the request, the status and the body, so you see at once what went wrong. <code>.send("not json")</code> sent plain text, and the route answered 400.</li>
+<li><code>{ cleanup }</code> registered the client with the cleanup manager, so <code>dispose()</code> stopped the server it started. The client also keeps cookies between requests, like a browser, which you will want for sign-in tests.</li>
+</ul>
+<p>Every answer is a <code>TestHTTPResponse</code>, so the assertions of the next section, such as <code>assertResponseBodyContains</code>, accept it too.</p>
 </section>
 
 <section>
@@ -294,11 +338,11 @@ export async function startTaskApi(tasks: ReturnType<typeof createTaskService>):
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isConflictError } from "@zudojs/errors";
 import {
-  assertCreated, assertEventPublished, assertRejects, assertResponseBodyContains, assertResponseStatus,
-  createCleanupManager, createHTTPResponse, createMockFn, createSpyLogger, createTestClock, createTestEventBus,
+  assertEventPublished, assertRejects, createCleanupManager, createHttpTestClient, createMockFn,
+  createSpyLogger, createTestClock, createTestEventBus,
 } from "@zudojs/testing";
 import type { CleanupManager, MockFn, TestClock, TestEventBus } from "@zudojs/testing";
-import { startTaskApi } from "./http-app.js";
+import { createTaskRouter } from "./http-app.js";
 import { createTaskService } from "./task-service.js";
 
 let clock: TestClock;
@@ -342,20 +386,11 @@ describe("task service", () => {
 
 describe("POST /tasks", () => {
   it("answers 201, 422 and 409", async () => {
-    const server = await startTaskApi(tasks);
-    cleanup.register(async () => { await server.stop(); }, "server");
-    const post = async (body: unknown) => {
-      const response = await fetch(`http://127.0.0.1:${server.address?.port}/tasks`, {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
-      });
-      return createHTTPResponse(response.status, await response.json(), response.headers);
-    };
-    const created = await post({ title: "Buy milk" });
-    assertCreated(created);
-    assertResponseBodyContains(created, { id: 1, title: "Buy milk" });
-    assertResponseStatus(await post({ title: "x" }), 422);
-    await post({ title: "Walk the dog" });
-    assertResponseStatus(await post({ title: "Call Ada" }), 409);
+    const client = createHttpTestClient(createTaskRouter(tasks), { cleanup });
+    await client.post("/tasks").send({ title: "Buy milk" }).expect(201).expectJson({ id: 1, title: "Buy milk" });
+    await client.post("/tasks").send({ title: "x" }).expect(422);
+    await client.post("/tasks").send({ title: "Walk the dog" }).expect(201);
+    await client.post("/tasks").send({ title: "Call Ada" }).expect(409);
   });
 });
 </file>
@@ -364,15 +399,15 @@ $ npx vitest run --reporter=verbose
 
  RUN  v5.0.1 ~/task-api
 
- ✓ tasks.test.ts > task service > publishes task.created 21ms
- ✓ tasks.test.ts > task service > reminds only about overdue tasks 8ms
- ✓ tasks.test.ts > task service > refuses a third open task 4ms
- ✓ tasks.test.ts > POST /tasks > answers 201, 422 and 409 173ms
+ ✓ tasks.test.ts > task service > publishes task.created 11ms
+ ✓ tasks.test.ts > task service > reminds only about overdue tasks 4ms
+ ✓ tasks.test.ts > task service > refuses a third open task 2ms
+ ✓ tasks.test.ts > POST /tasks > answers 201, 422 and 409 114ms
 
  Test Files  1 passed (1)
       Tests  4 passed (4)
-   Start at  15:30:06
-   Duration  2.16s (import 79%, tests 12%, transform 8%)
+   Start at  18:49:37
+   Duration  2.13s (import 83%, transform 9%, tests 8%, worker 1%)
 </shell>
 <p>Two days of fake time and a real HTTP server, in a fraction of a second of test time. Now check that the tests can fail. Change <code>clock.add({ days: 2 })</code> to <code>clock.add({ hours: 12 })</code> and run again:</p>
 <shell title="Terminal on your computer">
@@ -418,7 +453,7 @@ SMTP server unreachable - mailer calls: 1
 </solution>
 </exercise>
 <exercise title="Messages you did not send">
-<p>Use <code>createTestMessageBus</code>. Send an <code>email.send</code> message through the wrapper, then check with <code>assertMessageDispatched</code> that it was sent and with <code>assertMessageNotDispatched</code> that no <code>sms.send</code> was.</p>
+<p>Use <code>createTestMessageBus</code>. Send an <code>email.send</code> message, then check with <code>assertMessageDispatched</code> that it was sent and with <code>assertMessageNotDispatched</code> that no <code>sms.send</code> was.</p>
 <solution>
 <example file="messages.ts" project="tt" browser="no">
 import { assertMessageDispatched, assertMessageNotDispatched, createTestMessageBus } from "@zudojs/testing";
@@ -442,9 +477,9 @@ messages.dispose();
 <h2 id="recap">Recap</h2>
 <ul>
 <li>Pass time, logging, events and mail into your code, so a test can replace each one. <code>createTestClock</code> moves time instantly. <code>createMockFn</code>, <code>createSpyLogger</code>, <code>createStub</code> and <code>createSpyMethod</code> replace and record.</li>
-<li>The test event bus, message bus and queue record only calls through their own <code>publish</code>, <code>send</code> and <code>add</code>.</li>
+<li>The test event bus, message bus and queue are the real thing, and record every event, message and job, however your code sends it.</li>
 <li><code>createTestContainer</code> and <code>createTestConfigManager</code> let tests use the app's real wiring with fakes at the edges. A cleanup manager stops everything in reverse order, even after a failure.</li>
-<li>Structural assertions compare content, sets and dates included. Integration tests start the real server on port 0 and check real answers.</li>
+<li>Structural assertions compare content, sets and dates included. <code>createHttpTestClient</code> serves your router on a free port and checks real answers with <code>.expect(…)</code> chains.</li>
 </ul>
 <p>Next, you make the Task API tell you what it is doing in production, with structured logs.</p>
 </section>

@@ -94,7 +94,7 @@
 <option correct>Wrap the object: <code>schema.refine(schema.object({ … }), (value) =&gt; …, "message")</code></option>
 <option>Check it in every route by hand</option>
 <option>It cannot be done with a schema</option>
-<explain><p>A field-level rule only sees its own field. <code>.transform()</code> and <code>.refine()</code> exist as methods on string and number schemas; for objects, use the wrapper functions <code>schema.refine(inner, check, message)</code> and <code>schema.transform(inner, fn)</code>.</p></explain>
+<explain><p>A field-level rule only sees its own field. <code>.transform()</code> and <code>.refine()</code> exist as methods on every simple schema (strings, numbers, booleans, enums, coerce schemas); for objects, use the wrapper functions <code>schema.refine(inner, check, message)</code> and <code>schema.transform(inner, fn)</code>.</p></explain>
 </question>
 
 <question id="refine-pure" type="choice">
@@ -116,12 +116,12 @@
 </question>
 
 <question id="update-no-defaults" type="choice">
-<q>Why does the lesson write the <code>PATCH</code> update schema by hand, <strong>without defaults</strong>?</q>
-<option>Because defaults make parsing slower</option>
-<option correct>An update must not invent values: a default like <code>priority: "normal"</code> could reset a stored <code>high</code> priority the client never mentioned</option>
-<option>Because <code>PATCH</code> requests have no body</option>
-<option>Because defaults only work with <code>safeParse</code></option>
-<explain><p>Defaults describe <em>creating</em> a task. An update should change only the fields the client sent, so its schema lists the changeable fields, all optional, with no defaults.</p></explain>
+<q><code>NewTaskSchema</code> has <code>priority: schema.default(…, "normal")</code>. For a <code>PATCH</code>, the lesson uses <code>NewTaskSchema.partial()</code>. What does <code>NewTaskSchema.partial().parse({ title: "Walk the dog" })</code> give, and why is that right?</q>
+<option><code>{ title: 'Walk the dog', priority: 'normal' }</code>: the default fills the gap, so the task stays complete</option>
+<option correct><code>{ title: 'Walk the dog' }</code>: only the fields the client sent, so a stored <code>high</code> priority is not reset</option>
+<option><code>{ title: 'Walk the dog', priority: undefined }</code>: every listed key is kept, set to <code>undefined</code></option>
+<option>It throws, because <code>priority</code> is missing</option>
+<explain><p><code>partial()</code> makes every field optional and applies no defaults. Defaults describe <em>creating</em> a task; an update must not invent values, or it would quietly reset a <code>high</code> priority to <code>normal</code>.</p></explain>
 </question>
 
 <question id="strip-vs-strict" type="choice">
@@ -148,7 +148,7 @@
 <option><code>return { ...task, ...body } as StoredTask;</code></option>
 <option correct><code>const changes = UpdateTaskSchema.parse(body); return { ...task, title: changes.title ?? task.title, done: changes.done ?? task.done };</code></option>
 <option><code>Object.assign(task, JSON.parse(body));</code></option>
-<explain><p>Parse first, then copy each known field. Only the listed fields can change, and a field the client did not send keeps its stored value. <code>as StoredTask</code> only hides the problem from TypeScript.</p></explain>
+<explain><p>Parse first, then copy each known field. Only the listed fields can change, and a field the client did not send keeps its stored value. The other options copy the <em>raw</em> body, and <code>as StoredTask</code> only hides the problem from TypeScript.</p></explain>
 </question>
 
 <question id="response-allowlist" type="choice">
@@ -528,19 +528,19 @@ for (const [label, body] of bodies) {
     assertDepthWithinLimit(body, 10);
     console.log(label, "-> passed");
   } catch (error) {
-    console.log(label, "->", error.name);
+    console.log(label, "->", error.name, error.statusCode);
   }
 }
 </code>
 <option correct>normal -> passed
-too deep -> SerializationDepthError</option>
+too deep -> SerializationDepthError 400</option>
 <option>normal -> passed
-too deep -> passed</option>
+too deep -> SerializationDepthError 500</option>
 <option>normal -> passed
-too deep -> RangeError</option>
-<option>normal -> SerializationDepthError
-too deep -> SerializationDepthError</option>
-<explain><p>An array nested 500 levels deep passes the limit of 10, so the guard stops it before any schema has to walk it. A normal task is only a few levels deep.</p></explain>
+too deep -> RangeError undefined</option>
+<option>normal -> SerializationDepthError 400
+too deep -> SerializationDepthError 400</option>
+<explain><p>An array nested 500 levels deep passes the limit of 10, so the guard stops it before any schema has to walk it. A normal task is only a few levels deep. The error carries status 400: a too-deep body is the client's mistake.</p></explain>
 </question>
 
 <question id="out-size-guard" type="output">
@@ -674,33 +674,41 @@ console.log(TagList.parse(" Home, URGENT,,errands "));
 <explain><p>The transform runs after the string checks pass, and its return value (an array) becomes the schema's output.</p></explain>
 </question>
 
-<question id="code-real-date" type="code" file="real-date.js">
-<q><p>Finish <code>isRealDate</code>: build the date with <code>new Date(Date.UTC(year, month - 1, day))</code> and return <code>true</code> only when its <code>toISOString().slice(0, 10)</code> equals the text (so 30 February, which rolls over to March, is refused). The program should print <code>true false false</code>.</p></q>
+<question id="code-weekday" type="code" file="weekday.js">
+<q><p>The team does not work at weekends. Finish <code>isWeekday</code>: build the date with <code>new Date(`${text}T00:00:00Z`)</code> and return <code>true</code> unless <code>getUTCDay()</code> is 0 (Sunday) or 6 (Saturday). <code>.date()</code> already refuses dates that do not exist. The program should print <code>ok</code>, <code>Due dates must be on a weekday</code> and <code>Invalid date format</code> on three lines.</p></q>
 <starter>
 import { schema } from "@zudojs/schema";
 
-function isRealDate(text) {
-  const [year, month, day] = text.split("-").map(Number);
+function isWeekday(text) {
   // your code here
 }
 
-const DueDate = schema.string().max(10).refine(isRealDate, "Must be a real calendar date");
-console.log(DueDate.safeParse("2026-10-01").success, DueDate.safeParse("2026-02-30").success, DueDate.safeParse("2026-13-45").success);
+const DueDate = schema.string().date().refine(isWeekday, "Due dates must be on a weekday");
+for (const text of ["2026-10-01", "2026-10-03", "2026-02-30"]) {
+  const result = DueDate.safeParse(text);
+  console.log(result.success ? "ok" : result.issues[0].message);
+}
 </starter>
 <solution>
 import { schema } from "@zudojs/schema";
 
-function isRealDate(text) {
-  const [year, month, day] = text.split("-").map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === text;
+function isWeekday(text) {
+  const day = new Date(`${text}T00:00:00Z`).getUTCDay();
+  return day !== 0 && day !== 6;
 }
 
-const DueDate = schema.string().max(10).refine(isRealDate, "Must be a real calendar date");
-console.log(DueDate.safeParse("2026-10-01").success, DueDate.safeParse("2026-02-30").success, DueDate.safeParse("2026-13-45").success);
+const DueDate = schema.string().date().refine(isWeekday, "Due dates must be on a weekday");
+for (const text of ["2026-10-01", "2026-10-03", "2026-02-30"]) {
+  const result = DueDate.safeParse(text);
+  console.log(result.success ? "ok" : result.issues[0].message);
+}
 </solution>
-<expected>true false false</expected>
-<explain><p>JavaScript rolls impossible dates over: 30 February becomes 2 March, and month 13 becomes next January. Comparing the result with the original text catches that. A refinement returns <code>true</code> when the value is fine.</p></explain>
+<expected>
+ok
+Due dates must be on a weekday
+Invalid date format
+</expected>
+<explain><p>A refinement returns <code>true</code> when the value is fine. 3 October 2026 is a real date but a Saturday, so your rule refuses it. 30 February never reaches your rule: <code>.date()</code> checks that the date exists and refuses it first.</p></explain>
 </question>
 
 <question id="code-object-refine" type="code" file="password-match.js">
@@ -772,61 +780,103 @@ true
 <explain><p>Without <code>.strict()</code>, <code>ownerId</code> would be quietly stripped (safe, but silent). <code>.strict()</code> rejects it, so the client learns about its mistake.</p></explain>
 </question>
 
-<question id="code-apply-changes" type="code" file="apply-changes.js">
-<q><p>Finish <code>applyChanges</code> the safe way: copy only <code>title</code> and <code>done</code>, each with <code>??</code> so a field the client did not send keeps its stored value. Never spread <code>changes</code>. The program should print <code>{ id: 1, ownerId: 7, title: 'Buy milk', done: true }</code>.</p></q>
+<question id="code-merge-changes" type="code" file="merge-changes.js">
+<q><p>Finish <code>applyUpdate</code>: parse <code>body</code> with <code>UpdateTask</code>, then return the stored task with the <em>parsed</em> changes spread over it. A body with an unknown key must throw. The program should print <code>{ id: 1, ownerId: 7, title: 'Buy milk', done: true }</code> and then <code>SchemaError</code>.</p></q>
 <starter>
-function applyChanges(task, changes) {
+import { schema } from "@zudojs/schema";
+
+const UpdateTask = schema
+  .object({ title: schema.string().trim().min(3).max(100), done: schema.boolean() })
+  .partial()
+  .strict();
+
+function applyUpdate(task, body) {
   // your code here
 }
 
 const stored = { id: 1, ownerId: 7, title: "Buy milk", done: false };
-const changes = { title: undefined, done: true, ownerId: 1 };
-console.log(applyChanges(stored, changes));
+console.log(applyUpdate(stored, { done: true }));
+try {
+  applyUpdate(stored, { done: true, ownerId: 1 });
+  console.log("accepted");
+} catch (error) {
+  console.log(error.name);
+}
 </starter>
 <solution>
-function applyChanges(task, changes) {
-  return {
-    ...task,
-    title: changes.title ?? task.title,
-    done: changes.done ?? task.done,
-  };
+import { schema } from "@zudojs/schema";
+
+const UpdateTask = schema
+  .object({ title: schema.string().trim().min(3).max(100), done: schema.boolean() })
+  .partial()
+  .strict();
+
+function applyUpdate(task, body) {
+  const changes = UpdateTask.parse(body);
+  return { ...task, ...changes };
 }
 
 const stored = { id: 1, ownerId: 7, title: "Buy milk", done: false };
-const changes = { title: undefined, done: true, ownerId: 1 };
-console.log(applyChanges(stored, changes));
-</solution>
-<expected>{ id: 1, ownerId: 7, title: 'Buy milk', done: true }</expected>
-<explain><p>Copying each known field means <code>ownerId</code> can never change (no mass assignment), and <code>?? task.title</code> keeps the stored title when the change is <code>undefined</code>. <code>{ ...task, ...changes }</code> would both lose the title and hand the task to user 1.</p></explain>
-</question>
-
-<question id="code-drop-undefined" type="code" file="drop-undefined.js">
-<q><p>Finish <code>sentOnly</code>: return a copy of <code>changes</code> without the keys whose value is <code>undefined</code>. Use <code>Object.entries</code>, <code>filter</code> and <code>Object.fromEntries</code>. The program should print <code>{ done: true }</code> and then <code>{ id: 1, title: 'Buy milk', done: true }</code>.</p></q>
-<starter>
-function sentOnly(changes) {
-  // your code here
+console.log(applyUpdate(stored, { done: true }));
+try {
+  applyUpdate(stored, { done: true, ownerId: 1 });
+  console.log("accepted");
+} catch (error) {
+  console.log(error.name);
 }
-
-const stored = { id: 1, title: "Buy milk", done: false };
-const sent = sentOnly({ title: undefined, done: true });
-console.log(sent);
-console.log({ ...stored, ...sent });
-</starter>
-<solution>
-function sentOnly(changes) {
-  return Object.fromEntries(Object.entries(changes).filter(([, value]) => value !== undefined));
-}
-
-const stored = { id: 1, title: "Buy milk", done: false };
-const sent = sentOnly({ title: undefined, done: true });
-console.log(sent);
-console.log({ ...stored, ...sent });
 </solution>
 <expected>
-{ done: true }
-{ id: 1, title: 'Buy milk', done: true }
+{ id: 1, ownerId: 7, title: 'Buy milk', done: true }
+SchemaError
 </expected>
-<explain><p>A key set to <code>undefined</code> still overwrites when you spread it. Dropping those keys first keeps the stored title. Only do this with <em>parsed</em> changes, never with a raw body.</p></explain>
+<explain><p>The parsed changes only hold allowed fields, and only the ones the client sent, so spreading them keeps the stored title and can never touch <code>ownerId</code>. Spreading the <em>raw</em> body instead would be mass assignment.</p></explain>
+</question>
+
+<question id="code-update-schema" type="code" file="update-schema.js">
+<q><p>Write <code>UpdateTaskSchema</code> the way the lesson does: <code>NewTaskSchema.partial().strict()</code>, wrapped with <code>schema.refine</code> so an empty object fails with the message <code>Send at least one field to change</code>. The program should print <code>{"done":true}</code>, <code>Unknown key: id</code> and <code>Send at least one field to change</code> on three lines.</p></q>
+<starter>
+import { schema } from "@zudojs/schema";
+
+const NewTaskSchema = schema.object({
+  title: schema.string().trim().min(3).max(100),
+  done: schema.default(schema.boolean(), false),
+  priority: schema.default(schema.enum(["low", "normal", "high"]), "normal"),
+});
+
+// your code here
+const UpdateTaskSchema = NewTaskSchema;
+
+for (const body of [{ done: true }, { title: "Walk", id: 1 }, {}]) {
+  const result = UpdateTaskSchema.safeParse(body);
+  console.log(result.success ? JSON.stringify(result.data) : result.issues.map((issue) => issue.message).join("; "));
+}
+</starter>
+<solution>
+import { schema } from "@zudojs/schema";
+
+const NewTaskSchema = schema.object({
+  title: schema.string().trim().min(3).max(100),
+  done: schema.default(schema.boolean(), false),
+  priority: schema.default(schema.enum(["low", "normal", "high"]), "normal"),
+});
+
+const UpdateTaskSchema = schema.refine(
+  NewTaskSchema.partial().strict(),
+  (changes) => Object.keys(changes).length > 0,
+  "Send at least one field to change",
+);
+
+for (const body of [{ done: true }, { title: "Walk", id: 1 }, {}]) {
+  const result = UpdateTaskSchema.safeParse(body);
+  console.log(result.success ? JSON.stringify(result.data) : result.issues.map((issue) => issue.message).join("; "));
+}
+</solution>
+<expected>
+{"done":true}
+Unknown key: id
+Send at least one field to change
+</expected>
+<explain><p><code>partial()</code> keeps only the fields that were sent and adds no defaults, so <code>{ done: true }</code> stays exactly that. <code>.strict()</code> refuses <code>id</code>, and the refinement refuses an update that changes nothing.</p></explain>
 </question>
 
 <question id="code-response-schema" type="code" file="response-schema.js">
@@ -857,7 +907,7 @@ console.log(TaskResponse.parse(stored));
 </question>
 
 <question id="code-body-guards" type="code" file="body-guards.js">
-<q><p>Finish <code>checkBody</code>: run <code>assertDepthWithinLimit(body, 10)</code> and <code>assertSizeWithinLimit(body, 16384)</code>. Return <code>"ok"</code> when both pass, <code>400</code> when the error's <code>name</code> is <code>SerializationDepthError</code> (a too-deep body is the client's mistake), and the error's <code>statusCode</code> otherwise. The program should print <code>ok 400 413</code>.</p></q>
+<q><p>Finish <code>checkBody</code>: run <code>assertDepthWithinLimit(body, 10)</code> and <code>assertSizeWithinLimit(body, 16384)</code>. Return <code>"ok"</code> when both pass, and the error's <code>statusCode</code> when one throws. The program should print <code>ok 400 413</code>.</p></q>
 <starter>
 import { assertDepthWithinLimit, assertSizeWithinLimit } from "@zudojs/validation";
 
@@ -877,7 +927,7 @@ function checkBody(body) {
     assertSizeWithinLimit(body, 16384);
     return "ok";
   } catch (error) {
-    return error.name === "SerializationDepthError" ? 400 : error.statusCode;
+    return error.statusCode;
   }
 }
 
@@ -885,5 +935,5 @@ const deep = JSON.parse("[".repeat(100) + "]".repeat(100));
 console.log(checkBody({ title: "Buy milk" }), checkBody(deep), checkBody({ title: "x".repeat(50_000) }));
 </solution>
 <expected>ok 400 413</expected>
-<explain><p>The guards are cheap and stop as soon as a limit is passed, before any schema walks the body. A too-deep body and a too-large body are both the client's fault, so they get 4xx answers.</p></explain>
+<explain><p>The guards are cheap and stop as soon as a limit is passed, before any schema walks the body. Their errors already carry the right status: 400 for a too-deep body and 413 for a too-large one, so you need no special cases.</p></explain>
 </question>

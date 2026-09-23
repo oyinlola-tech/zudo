@@ -291,6 +291,8 @@ export class UserRepository {
 </example>
 <p>The two user routes. Log-in answers with the <strong>same</strong> message whether the e-mail is unknown or the password is wrong, so it does not tell a stranger which e-mails have accounts:</p>
 <example file="src/routes/users.ts" project="wiring" browser="no" check="skip">
+import { randomUUID } from "node:crypto";
+
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { createToken } from "../auth/token.js";
 import { HttpError } from "../http/errors.js";
@@ -299,6 +301,9 @@ import type { UserRepository } from "../repositories/users.js";
 import { parseCredentials } from "../validation/bodies.js";
 
 export function addUserRoutes(router: Router, users: UserRepository, secret: string): void {
+  // A hash of a random password nobody knows, checked when the e-mail is unknown.
+  const dummyHash = hashPassword(randomUUID());
+
   router.add("POST", "/users", async (request) => {
     const { email, password } = parseCredentials(request.body);
     const user = await users.create(email, await hashPassword(password));
@@ -308,13 +313,15 @@ export function addUserRoutes(router: Router, users: UserRepository, secret: str
   router.add("POST", "/sessions", async (request) => {
     const { email, password } = parseCredentials(request.body);
     const user = await users.findByEmail(email);
-    if (user === undefined || !(await verifyPassword(password, user.passwordHash))) {
+    const passwordOk = await verifyPassword(password, user?.passwordHash ?? (await dummyHash));
+    if (user === undefined || !passwordOk) {
       throw new HttpError(401, "bad_credentials", "Wrong e-mail or password");
     }
     return { status: 200, body: { token: createToken(user.id, secret) } };
   });
 }
 </example>
+<p>The same message is not enough on its own. scrypt is slow on purpose, so if an unknown e-mail skipped it, that answer would come back much faster, and an attacker could time the replies to learn which e-mails have accounts. So when no user is found, the route still checks the password against <code>dummyHash</code>: both paths run one scrypt and take the same time.</p>
 <p>A protected route calls one guard. It reads the <code>Authorization: Bearer &lt;token&gt;</code> header, and either returns the user id or throws <strong>401 Unauthorized</strong>:</p>
 <example file="src/http/auth.ts" project="wiring" browser="no" check="skip">
 import { readToken } from "../auth/token.js";

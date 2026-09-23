@@ -735,16 +735,16 @@ true false
 <explain><p>A <code>role</code>, <code>roles</code>, <code>userId</code> or <code>isAdmin</code> field is never on the list of fields a normal update accepts. Changing roles is a separate, admin-only action.</p></explain>
 </question>
 
-<question id="pm-restriction-deny" type="choice">
-<q>You need the restriction "tasks can only be changed during office hours". How does the lesson say to write it?</q>
-<option>As a new role called <code>office-hours</code></option>
-<option correct>As a deny rule that applies outside office hours, which can only ever take access away</option>
-<option>As a check in the client</option>
-<option>As a wildcard permission</option>
-<explain><p>A restriction must never be able to grant access by itself. A deny rule can only say no, so it cannot accidentally let in someone no role allowed.</p></explain>
+<question id="pm-restriction-policy" type="choice">
+<q>You need the restriction "tasks can only be changed during office hours". How does the lesson write it?</q>
+<option>As a policy with <code>effect: "grant"</code>, so members can work during office hours</option>
+<option correct>As a policy with the default effect: a constraint whose "no" refuses, while its "yes" only means "no objection"</option>
+<option>As a new role called <code>office-hours</code> that every member gets</option>
+<option>As a check in the client, which hides the buttons after 17:00</option>
+<explain><p>A restriction must never grant access by itself. A constraining policy can only take access away: the user's roles and rules must still grant the permission. With <code>effect: "grant"</code>, a guest with no roles could delete any task during office hours.</p></explain>
 </question>
 
-<question id="pm-office-deny" type="output">
+<question id="pm-office-policy" type="output">
 <q>What does this print?</q>
 <code file="office-hours.js">
 import { createPermissionActor, createPermissionEngine, isOwner } from "@zudojs/permissions";
@@ -753,14 +753,15 @@ const engine = createPermissionEngine({
   roles: [{ name: "member", permissions: ["task:read"], rules: [
     { effect: "allow", resource: "task", action: "delete", condition: isOwner("userId") },
   ] }],
-  rules: [{
+  policies: [{
     name: "office-hours",
-    effect: "deny",
-    resource: "task",
-    action: ["create", "update", "delete"],
-    condition: (ctx) => {
+    permissions: ["task:create", "task:update", "task:delete"],
+    cacheable: false,
+    evaluate: (ctx) => {
       const hour = ctx.metadata?.get("hour");
-      return typeof hour !== "number" || hour < 9 || hour >= 17;
+      return typeof hour === "number" && hour >= 9 && hour < 17
+        ? { allowed: true }
+        : { allowed: false, reason: "outside_office_hours" };
     },
   }],
 });
@@ -788,7 +789,7 @@ true</option>
 false
 false
 false</option>
-<explain><p>The guest has no role, so the deny rule gives it nothing. Ada may delete her own task at 10:00 but not at 20:00. With no hour at all, the condition says "deny": missing data means no.</p></explain>
+<explain><p>The policy has no <code>effect</code>, so it is a constraint: its "yes" grants nothing, and the guest, who has no role, is still refused. Ada may delete her own task at 10:00 but not at 20:00. With no hour at all, the policy says no: missing data means no.</p></explain>
 </question>
 
 <question id="code-pm-office" type="code" file="office-code.js">

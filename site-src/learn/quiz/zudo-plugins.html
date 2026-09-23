@@ -533,26 +533,22 @@ false</option>
 <explain><p>After <code>stop</code>, the plugin is disposed, and a disposed plugin cannot move back to installing. The second start throws a <code>PluginStateError</code>.</p></explain>
 </question>
 
-<question id="hub-catches" type="choice">
-<q>Why does the Task API's event hub wrap each handler call in <code>try/catch</code>?</q>
-<option>To make handlers run faster</option>
-<option correct>So a broken plugin handler cannot break the request that emitted the event</option>
-<option>So errors are sent to the client</option>
-<option>Because <code>emit</code> must return a value</option>
-<explain><p>The request that completes a task should not fail because a plugin's audit or Slack handler threw. The hub catches the error and reports it to <code>onError</code>, where the host logs it.</p></explain>
+<question id="bus-catches" type="choice">
+<q>The host passes an event bus from <code>@zudojs/events</code> as <code>context.events</code>. A plugin's <code>task.completed</code> handler throws when the Task API publishes the event with <code>publishEvent</code>. What happens?</q>
+<option>The error goes up to the request, which answers 500</option>
+<option correct>The bus catches it: the publish still finishes, <code>failed</code> counts it, <code>errors</code> holds it, and the other handlers still run</option>
+<option>The plugin manager stops every plugin and rolls back</option>
+<option>The error is ignored completely and nothing records it</option>
+<explain><p>A broken plugin handler must not break the request that published the event. The bus catches the error, and the result's <code>failed</code> and <code>errors</code> tell the host what to log.</p></explain>
 </question>
 
 <question id="audit-plugin-output" type="output">
 <q>The host offers events and a logger to its plugins. What does this print?</q>
 <code file="audit.js" browser="no">
+import { createEventBus } from "@zudojs/events";
 import { createPluginContext, PluginManager } from "@zudojs/plugins";
 
-const handlers = new Map();
-const events = {
-  on: (name, handler) => handlers.set(name, [...(handlers.get(name) ?? []), handler]),
-  off: (name, handler) => handlers.set(name, (handlers.get(name) ?? []).filter((h) => h !== handler)),
-  emit: (name, payload) => (handlers.get(name) ?? []).forEach((h) => h(payload)),
-};
+const events = createEventBus();
 const logger = { info: (message, meta) => console.log(message, meta), warn() {}, error() {} };
 
 const manager = new PluginManager();
@@ -566,9 +562,9 @@ manager.register({
 });
 const context = createPluginContext({ name: "task-api" }, { logger, events });
 await manager.start(context);
-events.emit("task.completed", { taskId: 7 });
+await events.publishEvent({ type: "task.completed", payload: { taskId: 7 } });
 await manager.stop(context);
-events.emit("task.completed", { taskId: 8 });
+await events.publishEvent({ type: "task.completed", payload: { taskId: 8 } });
 console.log("done");
 </code>
 <option correct>audit: task completed { taskId: 7 }
@@ -757,57 +753,46 @@ console.log(
 <explain><p>Compare the numbers, not the strings: <code>"1.10.0" &lt; "1.9.0"</code> as text. A different major version is refused, because it may have changed the interface.</p></explain>
 </question>
 
-<question id="code-event-hub" type="code" file="event-hub.js">
-<q><p>Finish <code>emit</code> in the event hub: call every handler for <code>name</code> with the payload, and when a handler throws, call <code>onError(error, name)</code> and go on with the next handler. The program should print:</p>
-<pre>handler failed: task.completed - boom
-audit: task 7</pre></q>
+<question id="code-publish-event" type="code" file="publish-event.js">
+<q><p>Finish <code>completeTask(taskId)</code>: publish a <code>task.completed</code> event with the payload <code>{ taskId }</code> using <code>events.publishEvent</code>, and return the text <code>"&lt;handlerCount&gt; handlers, &lt;failed&gt; failed"</code> from its result. One handler throws; the bus must catch it. The program should print:</p>
+<pre>audit: task 7
+2 handlers, 1 failed
+task 7 is done</pre></q>
 <starter>
-function createEventHub(onError) {
-  const handlers = new Map();
-  return {
-    on(name, handler) {
-      handlers.set(name, [...(handlers.get(name) ?? []), handler]);
-    },
-    emit(name, payload) {
-      // your code here
-    },
-  };
+import { createEventBus } from "@zudojs/events";
+
+const events = createEventBus();
+events.on("task.completed", () => { throw new Error("slack is down"); });
+events.on("task.completed", (event) => console.log("audit: task", event.payload.taskId));
+
+async function completeTask(taskId) {
+  // your code here
 }
 
-const hub = createEventHub((error, name) => console.log("handler failed:", name, "-", error.message));
-hub.on("task.completed", () => { throw new Error("boom"); });
-hub.on("task.completed", (event) => console.log("audit: task", event.taskId));
-hub.emit("task.completed", { taskId: 7 });
+console.log(await completeTask(7));
+console.log("task 7 is done");
 </starter>
 <solution>
-function createEventHub(onError) {
-  const handlers = new Map();
-  return {
-    on(name, handler) {
-      handlers.set(name, [...(handlers.get(name) ?? []), handler]);
-    },
-    emit(name, payload) {
-      for (const handler of handlers.get(name) ?? []) {
-        try {
-          handler(payload);
-        } catch (error) {
-          onError(error, name);
-        }
-      }
-    },
-  };
+import { createEventBus } from "@zudojs/events";
+
+const events = createEventBus();
+events.on("task.completed", () => { throw new Error("slack is down"); });
+events.on("task.completed", (event) => console.log("audit: task", event.payload.taskId));
+
+async function completeTask(taskId) {
+  const result = await events.publishEvent({ type: "task.completed", payload: { taskId } });
+  return `${result.handlerCount} handlers, ${result.failed} failed`;
 }
 
-const hub = createEventHub((error, name) => console.log("handler failed:", name, "-", error.message));
-hub.on("task.completed", () => { throw new Error("boom"); });
-hub.on("task.completed", (event) => console.log("audit: task", event.taskId));
-hub.emit("task.completed", { taskId: 7 });
+console.log(await completeTask(7));
+console.log("task 7 is done");
 </solution>
 <expected>
-handler failed: task.completed - boom
 audit: task 7
+2 handlers, 1 failed
+task 7 is done
 </expected>
-<explain><p>The <code>try/catch</code> goes around each handler call, inside the loop. One broken plugin handler is reported and the others still run, and the code that emitted the event is not broken.</p></explain>
+<explain><p>You need no <code>try/catch</code>: the bus catches the throwing handler, still runs the audit handler, and reports the failure in <code>failed</code> (and the error in <code>errors</code>). The task is completed anyway. Handed to plugins through <code>context.events</code>, a handler receives just the payload.</p></explain>
 </question>
 
 <question id="code-cleanup-list" type="code" file="cleanup-list.js">
