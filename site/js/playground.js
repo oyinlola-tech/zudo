@@ -767,7 +767,8 @@
       var exportsList = [];
       var body = rewriteModules(virtualFiles[name], exportsList);
       moduleCache[name] = compile(body + '\nreturn { ' + exportsList.join(', ') + ' };').then(function (js) {
-        return new Function(js + '\nreturn __zudo_main__();')();
+        var t = currentTimers || makeTimers();
+        return Function.apply(null, TIMER_PARAMS.concat([js + '\nreturn __zudo_main__();'])).apply(null, timerArgs(t));
       });
     }
     return moduleCache[name];
@@ -1206,6 +1207,79 @@
       .slice(0, 4);
   }
 
+  /* Node keeps running while timers are pending; so does a run here. The
+     code gets its own setTimeout/setInterval, and the run ends once none are
+     left (or after RUN_LIMIT_MS, like a script someone had to stop). */
+  var RUN_LIMIT_MS = 15000;
+  var currentTimers = null;
+
+  function makeTimers() {
+    var pending = {};
+    var count = 0;
+    var failure = null;
+    var waiter = null;
+    function settle() {
+      if (!waiter) return;
+      if (failure || count === 0) { var w = waiter; waiter = null; w(); }
+    }
+    function later() { window.setTimeout(settle, 0); }
+    function guard(fn, args) {
+      try { if (typeof fn === 'function') fn.apply(null, args); }
+      catch (e) { if (!failure) failure = e; }
+    }
+    var api = {
+      setTimeout: function (fn, ms) {
+        var args = Array.prototype.slice.call(arguments, 2);
+        var id = window.setTimeout(function () {
+          if (pending[id]) { delete pending[id]; count--; }
+          guard(fn, args);
+          later();
+        }, ms);
+        pending[id] = true; count++;
+        return id;
+      },
+      clearTimeout: function (id) {
+        if (pending[id]) { delete pending[id]; count--; }
+        window.clearTimeout(id);
+        later();
+      },
+      setInterval: function (fn, ms) {
+        var args = Array.prototype.slice.call(arguments, 2);
+        var id = window.setInterval(function () { guard(fn, args); later(); }, ms);
+        pending[id] = 'interval'; count++;
+        return id;
+      },
+      clearInterval: function (id) {
+        if (pending[id]) { delete pending[id]; count--; }
+        window.clearInterval(id);
+        later();
+      },
+      fail: function (e) { if (!failure) failure = e; later(); },
+      /* Resolves with { error } or { timedOut } once nothing is pending. */
+      idle: function () {
+        return new Promise(function (resolve) {
+          var limit = window.setTimeout(function () {
+            waiter = null;
+            api.stop();
+            resolve({ timedOut: true });
+          }, RUN_LIMIT_MS);
+          waiter = function () { window.clearTimeout(limit); resolve({ error: failure }); };
+          later();
+        });
+      },
+      stop: function () {
+        Object.keys(pending).forEach(function (id) {
+          if (pending[id] === 'interval') window.clearInterval(+id); else window.clearTimeout(+id);
+        });
+        pending = {}; count = 0;
+      },
+    };
+    return api;
+  }
+
+  var TIMER_PARAMS = ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'];
+  function timerArgs(t) { return [t.setTimeout, t.clearTimeout, t.setInterval, t.clearInterval]; }
+
   function run() {
     if (running) return runPromise || Promise.resolve();
     var src = ta.value;
@@ -1228,17 +1302,31 @@
       session = makeSession();
       var fn;
       try {
-        fn = new Function(js + '\nreturn __zudo_main__();');
+        fn = Function.apply(null, TIMER_PARAMS.concat([js + '\nreturn __zudo_main__();']));
       } catch (e) {
         throw Object.assign(e, { __phase: 'compile' });
       }
+      var timers = makeTimers();
+      currentTimers = timers;
+      var onRejection = function (ev) { ev.preventDefault(); timers.fail(ev.reason); };
+      window.addEventListener('unhandledrejection', onRejection);
       var start = performance.now();
-      return Promise.resolve().then(fn).then(function (result) {
-        var ms = (performance.now() - start).toFixed(2);
-        if (result !== undefined) line('ret', inspect(result), '←');
-        line('ok', 'done in ' + ms + 'ms', '✓');
-        setState('ready', 'Ready');
-      });
+      var finish = function () { window.removeEventListener('unhandledrejection', onRejection); currentTimers = null; };
+      return Promise.resolve().then(function () { return fn.apply(null, timerArgs(timers)); }).then(function (result) {
+        return timers.idle().then(function (state) {
+          finish();
+          if (state.error) throw state.error;
+          var ms = (performance.now() - start).toFixed(2);
+          if (result !== undefined) line('ret', inspect(result), '←');
+          if (state.timedOut) {
+            line('warn', 'Stopped after ' + (RUN_LIMIT_MS / 1000) + 's: timers were still running. Did you forget clearInterval?', '▲');
+            setState('ready', 'Stopped');
+            return;
+          }
+          line('ok', 'done in ' + ms + 'ms', '✓');
+          setState('ready', 'Ready');
+        });
+      }, function (err) { timers.stop(); finish(); throw err; });
     }).catch(function (err) {
       if (sysLine) sysLine.remove();
       if (err && err.message === 'Could not load the TypeScript compiler') {

@@ -1,0 +1,255 @@
+---
+title: Describing data with types
+description: Annotate variables and functions, describe a task with type aliases and interfaces, and use optional, readonly and literal types to make wrong data impossible to write.
+minutes: 30
+youNeed: The ts-tasks project from lesson 6
+youBuild: A fully typed task module
+keywords: typescript types, type annotations, interface, type alias, optional properties, readonly, literal types, union types, type inference
+---
+<section>
+<h2 id="annotations">Annotations and inference</h2>
+<p>An <strong>annotation</strong> is a colon and a type after a name. You can annotate variables, parameters and return values:</p>
+<example file="annotate.ts" project="types">
+const title: string = "Buy milk";
+const priority: number = 2;
+const done: boolean = false;
+
+function label(title: string, priority: number): string {
+  return `${title} (P${priority})`;
+}
+
+console.log(label(title, priority), done);
+</example>
+<output>
+Buy milk (P2) false
+</output>
+<p>Most of the time you do not need to write the type of a variable, because TypeScript works it out from the value. That is <strong>type inference</strong>:</p>
+<example file="infer.ts" project="types">
+const title = "Buy milk";     // TypeScript knows: a string
+let count = 0;                // a number
+const tags = ["home", "shop"]; // an array of strings
+
+count = count + tags.length;
+console.log(title, count);
+</example>
+<output>
+Buy milk 2
+</output>
+<p>The rule of thumb: <strong>always annotate function parameters</strong>, because TypeScript cannot guess what callers will pass. Let it infer the rest. Annotate a return type when you want the compiler to check that the function really returns what you promised.</p>
+</section>
+
+<section>
+<h2 id="object-types">Describing a task</h2>
+<p>You met a <strong>type alias</strong> in lesson 6: <code>type Task = { ... }</code>. An <strong>interface</strong> does the same job for objects, with slightly different syntax. ZudoJS uses interfaces for most public shapes, so you will see both.</p>
+<example file="task.ts" project="types">
+export interface Task {
+  readonly id: number;
+  title: string;
+  done: boolean;
+  dueDate?: string;
+}
+
+export const example: Task = { id: 1, title: "Buy milk", done: false };
+</example>
+<p>Two new marks:</p>
+<ul>
+<li><code>readonly id</code>: once a task exists, nobody may change its id.</li>
+<li><code>dueDate?</code>: the question mark makes the property <strong>optional</strong>. A task may have a due date or not. Its type is <code>string | undefined</code>.</li>
+</ul>
+<p>Now the compiler guards the task for you:</p>
+<example file="guard.ts" project="types" check="tsc-error" browser="no">
+import type { Task } from "./task.js";
+
+const task: Task = { id: 1, title: "Buy milk", done: false };
+
+task.id = 2;
+task.done = "yes";
+const other: Task = { id: 2, title: "Call Ada" };
+</example>
+<output kind="tsc">
+guard.ts:5:6 - error TS2540: Cannot assign to 'id' because it is a read-only property.
+
+5 task.id = 2;
+       ~~
+
+guard.ts:6:1 - error TS2322: Type 'string' is not assignable to type 'boolean'.
+
+6 task.done = "yes";
+  ~~~~~~~~~
+
+guard.ts:7:7 - error TS2741: Property 'done' is missing in type '{ id: number; title: string; }' but required in type 'Task'.
+
+7 const other: Task = { id: 2, title: "Call Ada" };
+        ~~~~~
+
+  task.ts:4:3 - 'done' is declared here.
+    4   done: boolean;
+        ~~~~
+
+
+Found 3 errors in the same file, starting at: guard.ts:5
+</output>
+<p>Three mistakes, three errors: changing a <code>readonly</code> id, putting a string where a boolean belongs, and leaving out a required property.</p>
+<p>Notice <code>import type</code>: <code>Task</code> is only a type, so it is imported with <code>import type</code>, as your <code>tsconfig.json</code> requires. Also notice that the import path is <code>"./task.js"</code>, even though the file is <code>task.ts</code>. With Node.js modules, you always write the name of the JavaScript file it will run as.</p>
+</section>
+
+<section>
+<h2 id="optional">Working with optional values</h2>
+<p>An optional property might be <code>undefined</code>, and the compiler will not let you forget it:</p>
+<example file="optional.ts" project="types">
+import type { Task } from "./task.js";
+
+function dueLabel(task: Task): string {
+  if (task.dueDate === undefined) {
+    return "no due date";
+  }
+  return `due ${task.dueDate.slice(0, 10)}`;
+}
+
+console.log(dueLabel({ id: 1, title: "Buy milk", done: false }));
+console.log(dueLabel({ id: 2, title: "File taxes", done: false, dueDate: "2026-04-30T12:00:00Z" }));
+const call: Task = { id: 3, title: "Call Ada", done: false };
+console.log(call.dueDate?.length);
+console.log(call.dueDate ?? "whenever you like");
+</example>
+<output>
+no due date
+due 2026-04-30
+undefined
+whenever you like
+</output>
+<p>Inside the <code>if</code>, TypeScript knows the date is missing, and after it, TypeScript knows it is a string, so <code>.slice</code> is allowed. Two shortcuts help with optional values:</p>
+<ul>
+<li><code>value?.length</code> (optional chaining) gives <code>undefined</code> instead of crashing when <code>value</code> is missing.</li>
+<li><code>a ?? b</code> (nullish coalescing) gives <code>b</code> only when <code>a</code> is <code>null</code> or <code>undefined</code>.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="literals">Only these values allowed</h2>
+<p>A task that is <code>done: true</code> or <code>false</code> is too simple. Real teams want <em>todo</em>, <em>doing</em> and <em>done</em>. A <strong>literal type</strong> is a type with exactly one value, and a <strong>union</strong> (<code>|</code>) combines several. Together they say "only one of these strings":</p>
+<example file="status.ts" project="types">
+type Status = "todo" | "doing" | "done";
+
+interface Task {
+  readonly id: number;
+  title: string;
+  status: Status;
+}
+
+function advance(task: Task): Task {
+  const next: Record<Status, Status> = { todo: "doing", doing: "done", done: "done" };
+  return { ...task, status: next[task.status] };
+}
+
+let task: Task = { id: 1, title: "Write report", status: "todo" };
+task = advance(task);
+console.log(task.status);
+task = advance(advance(task));
+console.log(task.status);
+</example>
+<output>
+doing
+done
+</output>
+<p><code>Record&lt;Status, Status&gt;</code> means "an object with a key for every status, and a status as each value". If you add a fourth status to the union later, the compiler will point at this object until you handle it. That is how types keep a growing codebase honest.</p>
+<example file="typo.ts" project="types" check="tsc-error" browser="no">
+type Status = "todo" | "doing" | "done";
+
+const status: Status = "finished";
+</example>
+<output kind="tsc">
+typo.ts:3:7 - error TS2322: Type '"finished"' is not assignable to type 'Status'.
+
+3 const status: Status = "finished";
+        ~~~~~~
+
+
+Found 1 error in typo.ts:3
+</output>
+</section>
+
+<section>
+<h2 id="functions">Typing functions</h2>
+<p>A function's type lists its parameters and its return type. Here is the start of a typed task store, similar to the one from lesson 5, now in TypeScript:</p>
+<example file="store.ts" project="types">
+import type { Task } from "./task.js";
+
+const tasks: Task[] = [];
+let nextId = 1;
+
+export function addTask(title: string, dueDate?: string): Task {
+  const task: Task = { id: nextId, title, done: false };
+  if (dueDate !== undefined) {
+    task.dueDate = dueDate;
+  }
+  nextId += 1;
+  tasks.push(task);
+  return task;
+}
+
+export function findTask(id: number): Task | undefined {
+  return tasks.find((task) => task.id === id);
+}
+
+addTask("Buy milk");
+addTask("File taxes", "2026-04-30");
+console.log(findTask(2));
+console.log(findTask(9));
+</example>
+<output>
+{ id: 2, title: 'File taxes', done: false, dueDate: '2026-04-30' }
+undefined
+</output>
+<ul>
+<li><code>Task[]</code> means "an array of tasks".</li>
+<li><code>dueDate?: string</code> makes the parameter optional.</li>
+<li><code>Task | undefined</code> is honest: the task might not exist. Every caller now has to deal with that case, and the compiler checks that they do.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Add a priority">
+<p>Add a <code>priority</code> property to a task that can only be <code>"low"</code>, <code>"normal"</code> or <code>"high"</code>. Write <code>sortByPriority(tasks)</code> that returns a new array with high-priority tasks first. Check it with <code>tsc</code> and run it.</p>
+<solution>
+<example file="priority.ts" project="priority">
+type Priority = "low" | "normal" | "high";
+
+interface Task {
+  readonly id: number;
+  title: string;
+  priority: Priority;
+}
+
+const rank: Record<Priority, number> = { high: 0, normal: 1, low: 2 };
+
+function sortByPriority(tasks: Task[]): Task[] {
+  return [...tasks].sort((a, b) => rank[a.priority] - rank[b.priority]);
+}
+
+const tasks: Task[] = [
+  { id: 1, title: "Water plants", priority: "low" },
+  { id: 2, title: "Fix login bug", priority: "high" },
+  { id: 3, title: "Write report", priority: "normal" },
+];
+
+console.log(sortByPriority(tasks).map((t) => t.title));
+</example>
+<output>
+[ 'Fix login bug', 'Write report', 'Water plants' ]
+</output>
+<p><code>[...tasks]</code> copies the array first, because <code>sort</code> changes the array it is called on.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Annotate parameters; let TypeScript infer the rest.</li>
+<li><code>interface</code> and <code>type</code> describe objects. <code>readonly</code> blocks changes, <code>?</code> marks optional properties.</li>
+<li>Literal types and unions (<code>"todo" | "doing" | "done"</code>) make invalid values impossible to write.</li>
+<li><code>Task | undefined</code> forces every caller to handle "not found".</li>
+</ul>
+</section>

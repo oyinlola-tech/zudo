@@ -1,0 +1,234 @@
+---
+title: Unions, narrowing and generics
+description: Handle values that can be one of several types, write functions that work for any type with generics, and discover the one thing types cannot do for a backend.
+minutes: 30
+youNeed: Lessons 6 and 7
+youBuild: A typed Result helper and a generic repository
+keywords: typescript narrowing, discriminated union, generics, unknown vs any, Result type, Promise type, JSON.parse any
+---
+<section>
+<h2 id="narrowing">Narrowing a union</h2>
+<p>A value with a union type, such as <code>string | number</code>, could be either. Before you use it, you check which one it is. TypeScript follows your checks and <strong>narrows</strong> the type inside each branch:</p>
+<example file="narrow.ts" project="gen">
+function parseId(raw: string | number): number {
+  if (typeof raw === "number") {
+    return raw;
+  }
+  return Number.parseInt(raw, 10);
+}
+
+console.log(parseId(7));
+console.log(parseId("42"));
+console.log(parseId("abc"));
+</example>
+<output>
+7
+42
+NaN
+</output>
+<p>Inside the <code>if</code>, <code>raw</code> is a <code>number</code>. After it, TypeScript knows it can only be a <code>string</code>. The last line shows why a backend cannot stop there: <code>"abc"</code> is a string, so the types are happy, and yet the result is <code>NaN</code>, "not a number". You will fix that properly in lesson 9.</p>
+</section>
+
+<section>
+<h2 id="discriminated">Results instead of surprises</h2>
+<p>Many ZudoJS functions do not throw when something goes wrong. They return an object that says whether it worked. The trick is a property, here <code>ok</code>, whose literal value tells the two shapes apart. That is a <strong>discriminated union</strong>:</p>
+<example file="result.ts" project="gen">
+type Result =
+  | { ok: true; value: number }
+  | { ok: false; error: string };
+
+function parsePort(raw: string): Result {
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return { ok: false, error: `"${raw}" is not a valid port` };
+  }
+  return { ok: true, value: port };
+}
+
+for (const input of ["3000", "99999", "http"]) {
+  const result = parsePort(input);
+  if (result.ok) {
+    console.log("port", result.value);
+  } else {
+    console.log("error:", result.error);
+  }
+}
+</example>
+<output>
+port 3000
+error: "99999" is not a valid port
+error: "http" is not a valid port
+</output>
+<p>After <code>if (result.ok)</code>, TypeScript knows <code>result</code> has a <code>value</code>. In the <code>else</code> branch it knows it has an <code>error</code>. Try to read <code>result.value</code> in the <code>else</code> branch and <code>tsc</code> refuses. You cannot forget the failure case.</p>
+</section>
+
+<section>
+<h2 id="generics">Generics: one function, any type</h2>
+<p>That <code>Result</code> only works for numbers. You want the same shape for tasks, users, anything. A <strong>generic</strong> type takes a type as a parameter, written in angle brackets:</p>
+<example file="generic.ts" project="gen">
+type Result<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: string };
+
+function first<T>(items: T[]): Result<T> {
+  if (items.length === 0) {
+    return { ok: false, error: "the list is empty" };
+  }
+  return { ok: true, value: items[0]! };
+}
+
+const title = first(["Buy milk", "Call Ada"]);
+const count = first([3, 1, 2]);
+const none = first<string>([]);
+
+if (title.ok) console.log(title.value.toUpperCase());
+if (count.ok) console.log(count.value + 1);
+if (!none.ok) console.log(none.error);
+</example>
+<output>
+BUY MILK
+4
+the list is empty
+</output>
+<p><code>T</code> is a placeholder. When you call <code>first(["Buy milk", ...])</code>, TypeScript sees an array of strings, so <code>T</code> becomes <code>string</code> and <code>title.value</code> is a string. For <code>[3, 1, 2]</code>, <code>T</code> is <code>number</code>. With an empty array there is nothing to infer from, so you pass the type yourself: <code>first&lt;string&gt;([])</code>.</p>
+<p>The <code>!</code> in <code>items[0]!</code> tells TypeScript "I checked, this is not undefined". Use it only right after a check like the <code>length</code> test above.</p>
+<p>You have already used generic types without noticing: <code>Task[]</code> is short for <code>Array&lt;Task&gt;</code>, and an <code>async</code> function that returns a task returns a <code>Promise&lt;Task&gt;</code>.</p>
+</section>
+
+<section>
+<h2 id="repository">A generic repository</h2>
+<p>Here is a pattern ZudoJS uses everywhere: a <strong>repository</strong>, the one place that stores and finds one kind of record. Written once with a generic, it works for tasks, users or anything with an <code>id</code>:</p>
+<example file="repository.ts" project="gen">
+interface Entity {
+  readonly id: number;
+}
+
+class MemoryRepository<T extends Entity> {
+  private readonly items = new Map<number, T>();
+
+  async save(item: T): Promise<T> {
+    this.items.set(item.id, item);
+    return item;
+  }
+
+  async findById(id: number): Promise<T | undefined> {
+    return this.items.get(id);
+  }
+
+  async findAll(): Promise<T[]> {
+    return [...this.items.values()];
+  }
+}
+
+interface Task extends Entity {
+  title: string;
+  done: boolean;
+}
+
+const tasks = new MemoryRepository<Task>();
+await tasks.save({ id: 1, title: "Buy milk", done: false });
+await tasks.save({ id: 2, title: "Call Ada", done: true });
+
+console.log(await tasks.findById(2));
+console.log((await tasks.findAll()).length);
+</example>
+<output>
+{ id: 2, title: 'Call Ada', done: true }
+2
+</output>
+<ul>
+<li><code>T extends Entity</code> means "any type, as long as it has an <code>id</code>". Without that rule, <code>item.id</code> would be an error.</li>
+<li><code>private readonly items</code> can only be used inside the class, and never replaced. A <code>Map</code> is a built-in key-to-value store.</li>
+<li>The methods are <code>async</code> even though a <code>Map</code> answers instantly, because a real database will not. Swapping this class for a database later will not change any code that uses it.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="unknown">unknown, any, and the gap types cannot close</h2>
+<p>TypeScript has two "I don't know" types:</p>
+<ul>
+<li><code>any</code> switches type checking off. Anything goes, nothing is checked. Avoid it.</li>
+<li><code>unknown</code> means "could be anything, so prove what it is before you use it". The compiler refuses to let you use it until you narrow it.</li>
+</ul>
+<example file="unknown.ts" project="gen" check="tsc-error" browser="no">
+const body: unknown = JSON.parse('{"title":"Buy milk"}');
+
+console.log(body.title);
+</example>
+<output kind="tsc">
+unknown.ts:3:13 - error TS18046: 'body' is of type 'unknown'.
+
+3 console.log(body.title);
+              ~~~~
+
+
+Found 1 error in unknown.ts:3
+</output>
+<p>To use it, you would have to check first: <code>typeof body === "object"</code>, then that it has a <code>title</code>, then that the title is a string. That is tedious to write by hand for every request, which is exactly the problem the next section shows.</p>
+<p>Now the problem that matters most for a backend. <code>JSON.parse</code> is declared to return <code>any</code>, so you can put its result straight into a typed variable, and the compiler believes you:</p>
+<example file="gap.ts" project="gen">
+interface Task {
+  title: string;
+  done: boolean;
+}
+
+const requestBody = '{"title": 42, "done": "sometimes"}';
+const task: Task = JSON.parse(requestBody);
+
+console.log(typeof task.title, typeof task.done);
+
+try {
+  console.log(task.title.toUpperCase());
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+number string
+TypeError: task.title.toUpperCase is not a function
+</output>
+<p>This file passes <code>tsc</code> with no errors, then fails when it runs. Without the <code>try</code>, the program would crash. The types said <code>title</code> was a string. The data said otherwise, and the data won, because types are removed before the code runs (lesson 6).</p>
+<p>Every request that reaches your API is text like <code>requestBody</code>, sent by someone else. TypeScript cannot check it. Something has to check it <strong>while the program runs</strong>, and turn it into a value that really matches the type. That is the first job ZudoJS will do for you, in the next lesson.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A generic findOrFail">
+<p>Write a generic function <code>findOrFail&lt;T extends { id: number }&gt;(items: T[], id: number): Result&lt;T&gt;</code> that returns the item, or an error <code>"Item 7 not found"</code>. Try it with tasks.</p>
+<solution>
+<example file="find-or-fail.ts" project="practice">
+type Result<T> = { ok: true; value: T } | { ok: false; error: string };
+
+function findOrFail<T extends { id: number }>(items: T[], id: number): Result<T> {
+  const item = items.find((i) => i.id === id);
+  return item ? { ok: true, value: item } : { ok: false, error: `Item ${id} not found` };
+}
+
+const tasks = [
+  { id: 1, title: "Buy milk" },
+  { id: 2, title: "Call Ada" },
+];
+
+const found = findOrFail(tasks, 2);
+const missing = findOrFail(tasks, 7);
+console.log(found.ok && found.value.title);
+console.log(!missing.ok && missing.error);
+</example>
+<output>
+Call Ada
+Item 7 not found
+</output>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Check a union's type with <code>typeof</code> or a shared literal property, and TypeScript narrows it for you.</li>
+<li>A discriminated union like <code>{ ok: true; value } | { ok: false; error }</code> makes failure impossible to ignore.</li>
+<li>Generics (<code>&lt;T&gt;</code>) let one function or class work for many types. <code>T extends Entity</code> sets rules for <code>T</code>.</li>
+<li>Prefer <code>unknown</code> to <code>any</code>. And remember: data from outside your program is never checked by types. You need a runtime check.</li>
+</ul>
+<p>You now know enough TypeScript to read and write ZudoJS code. Time to install it.</p>
+</section>
