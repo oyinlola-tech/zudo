@@ -222,6 +222,7 @@
      Syntax highlighter
      ====================================================================== */
 
+  /* highlight:start */
   var KEYWORDS = 'abstract|as|async|await|break|case|catch|class|const|continue|debugger|declare|default|delete|do|else|enum|export|extends|finally|for|from|function|get|if|implements|import|in|instanceof|interface|is|keyof|let|namespace|new|of|override|private|protected|public|readonly|return|satisfies|set|static|super|switch|this|throw|try|type|typeof|var|void|while|with|yield';
   var TYPES = 'string|number|boolean|unknown|any|never|void|object|symbol|bigint|null|undefined';
 
@@ -271,57 +272,352 @@
     if (last < src.length) out += escapeHtml(src.slice(last));
     return out + '\n';
   }
+  /* highlight:end */
 
   /* ======================================================================
      Value inspector for console output
      ====================================================================== */
 
-  function inspect(v, depth, seen) {
-    depth = depth || 0;
-    seen = seen || [];
-    var t = typeof v;
-    if (v === null) return 'null';
-    if (t === 'undefined') return 'undefined';
-    if (t === 'string') return depth === 0 ? v : JSON.stringify(v);
-    if (t === 'number' || t === 'boolean') return String(v);
-    if (t === 'bigint') return v + 'n';
-    if (t === 'symbol') return v.toString();
-    if (t === 'function') return 'ƒ ' + (v.name || '') + '()';
-    if (v instanceof Error) return (v.name || 'Error') + ': ' + v.message;
-    if (v instanceof Date) return isNaN(v) ? 'Invalid Date' : v.toISOString();
-    if (v instanceof RegExp) return v.toString();
-    if (v instanceof Promise) return 'Promise {…}';
-    if (seen.indexOf(v) !== -1) return '[Circular]';
-    if (depth > 3) return Array.isArray(v) ? '[…]' : '{…}';
-    seen = seen.concat([v]);
-    var pad = new Array(depth + 2).join('  ');
-    var padEnd = new Array(depth + 1).join('  ');
-    var items;
-    if (v instanceof Map) {
-      items = [];
-      v.forEach(function (val, key) { items.push(pad + inspect(key, depth + 1, seen) + ' => ' + inspect(val, depth + 1, seen)); });
-      return items.length ? 'Map(' + v.size + ') {\n' + items.join(',\n') + '\n' + padEnd + '}' : 'Map(0) {}';
+  /* node-inspect:start
+     A port of the parts of Node's util.inspect that console.log uses, so the
+     browser terminal prints values exactly as `node file.js` does. Checked
+     against util.inspect by scripts/site-learn-check.mjs --inspect. */
+
+  var INSPECT_DEFAULTS = { depth: 2, breakLength: 80, compact: 3, maxArrayLength: 100 };
+  var META = ['\\x00', '\\x01', '\\x02', '\\x03', '\\x04', '\\x05', '\\x06', '\\x07', '\\b', '\\t', '\\n', '\\x0B', '\\f', '\\r',
+    '\\x0E', '\\x0F', '\\x10', '\\x11', '\\x12', '\\x13', '\\x14', '\\x15', '\\x16', '\\x17', '\\x18', '\\x19', '\\x1A', '\\x1B',
+    '\\x1C', '\\x1D', '\\x1E', '\\x1F'];
+
+  function strEscape(str) {
+    var quote = "'";
+    if (str.indexOf("'") !== -1) {
+      if (str.indexOf('"') === -1) quote = '"';
+      else if (str.indexOf('`') === -1 && str.indexOf('${') === -1) quote = '`';
     }
-    if (v instanceof Set) {
-      items = [];
-      v.forEach(function (val) { items.push(pad + inspect(val, depth + 1, seen)); });
-      return items.length ? 'Set(' + v.size + ') {\n' + items.join(',\n') + '\n' + padEnd + '}' : 'Set(0) {}';
+    var out = '';
+    for (var i = 0; i < str.length; i++) {
+      var c = str.charCodeAt(i);
+      var ch = str[i];
+      if (ch === quote || ch === '\\') out += '\\' + ch;
+      else if (c < 32) out += META[c];
+      else if (c === 127) out += '\\x7F';
+      else out += ch;
     }
-    if (Array.isArray(v)) {
-      if (!v.length) return '[]';
-      var simple = v.every(function (x) { return x === null || ['string', 'number', 'boolean', 'undefined'].indexOf(typeof x) !== -1; });
-      if (simple && v.length <= 12) return '[' + v.map(function (x) { return inspect(x, depth + 1, seen); }).join(', ') + ']';
-      return '[\n' + v.map(function (x) { return pad + inspect(x, depth + 1, seen); }).join(',\n') + '\n' + padEnd + ']';
-    }
-    var keys = Object.keys(v);
-    var ctor = v.constructor && v.constructor.name && v.constructor.name !== 'Object' ? v.constructor.name + ' ' : '';
-    if (!keys.length) return ctor + '{}';
-    items = keys.map(function (k) {
-      var key = /^[A-Za-z_$][\w$]*$/.test(k) ? k : JSON.stringify(k);
-      return pad + key + ': ' + inspect(v[k], depth + 1, seen);
-    });
-    return ctor + '{\n' + items.join(',\n') + '\n' + padEnd + '}';
+    return quote + out + quote;
   }
+
+  function repeat(s, n) { return new Array(n + 1).join(s); }
+
+  function formatKey(key) {
+    if (typeof key === 'symbol') return key.toString();
+    return /^[a-zA-Z_][a-zA-Z_0-9]*$/.test(key) ? key : strEscape(key);
+  }
+
+  function ctorName(v) {
+    var proto = Object.getPrototypeOf(v);
+    if (proto === null) return null;
+    var c = proto.constructor;
+    return c && typeof c === 'function' && c.name ? c.name : 'Object';
+  }
+
+  function fnBase(v) {
+    var src = '';
+    try { src = Function.prototype.toString.call(v); } catch (e) {}
+    if (/^class\b/.test(src)) {
+      var ext = Object.getPrototypeOf(v);
+      return '[class ' + (v.name || '(anonymous)') + (ext && ext.name ? ' extends ' + ext.name : '') + ']';
+    }
+    var kind = 'Function';
+    var tag = v[Symbol.toStringTag];
+    if (tag === 'AsyncFunction') kind = 'AsyncFunction';
+    else if (tag === 'GeneratorFunction') kind = 'GeneratorFunction';
+    else if (tag === 'AsyncGeneratorFunction') kind = 'AsyncGeneratorFunction';
+    return '[' + kind + (v.name ? ': ' + v.name : ' (anonymous)') + ']';
+  }
+
+  function isBelowBreakLength(ctx, output, start, base) {
+    var total = output.length + start;
+    if (total + output.length > ctx.breakLength) return false;
+    for (var i = 0; i < output.length; i++) {
+      total += output[i].length;
+      if (total > ctx.breakLength) return false;
+    }
+    return base === '' || base.indexOf('\n') === -1;
+  }
+
+  function groupArrayElements(ctx, output, value) {
+    var totalLength = 0, maxLength = 0, i = 0;
+    var outputLength = output.length;
+    if (ctx.extraItems) outputLength--;
+    var separatorSpace = 2;
+    var dataLen = new Array(outputLength);
+    for (; i < outputLength; i++) {
+      var len = output[i].length;
+      dataLen[i] = len;
+      totalLength += len + separatorSpace;
+      if (maxLength < len) maxLength = len;
+    }
+    var actualMax = maxLength + separatorSpace;
+    if (actualMax * 3 + ctx.indentationLvl < ctx.breakLength &&
+        (totalLength / actualMax > 5 || maxLength <= 6)) {
+      var averageBias = Math.sqrt(actualMax - totalLength / output.length);
+      var biasedMax = Math.max(actualMax - 3 - averageBias, 1);
+      var columns = Math.min(
+        Math.round(Math.sqrt(2.5 * biasedMax * outputLength) / biasedMax),
+        Math.floor((ctx.breakLength - ctx.indentationLvl) / actualMax),
+        ctx.compact * 4,
+        15
+      );
+      if (columns <= 1) return output;
+      var tmp = [];
+      var maxLineLength = [];
+      for (var c = 0; c < columns; c++) {
+        var lineLength = 0;
+        for (var j = c; j < output.length; j += columns) if (dataLen[j] > lineLength) lineLength = dataLen[j];
+        maxLineLength.push(lineLength + separatorSpace);
+      }
+      var padStart = true;
+      if (value !== undefined) {
+        for (var k = 0; k < output.length; k++) {
+          if (typeof value[k] !== 'number' && typeof value[k] !== 'bigint') { padStart = false; break; }
+        }
+      }
+      for (var r = 0; r < outputLength; r += columns) {
+        var max = Math.min(r + columns, outputLength);
+        var str = '';
+        var m = r;
+        for (; m < max - 1; m++) {
+          var cell = output[m] + ', ';
+          var width = maxLineLength[m - r];
+          str += padStart ? repeat(' ', Math.max(0, width - cell.length)) + cell : cell + repeat(' ', Math.max(0, width - cell.length));
+        }
+        if (padStart) {
+          var w = maxLineLength[m - r] - separatorSpace;
+          str += repeat(' ', Math.max(0, w - output[m].length)) + output[m];
+        } else {
+          str += output[m];
+        }
+        tmp.push(str);
+      }
+      if (ctx.extraItems) tmp.push(output[outputLength]);
+      output = tmp;
+    }
+    return output;
+  }
+
+  function reduceToSingleString(ctx, output, base, braces, isArrayType, recurseTimes, value) {
+    var entries = output.length;
+    if (isArrayType && entries > 6) output = groupArrayElements(ctx, output, value);
+    if (ctx.currentDepth - recurseTimes < ctx.compact && entries === output.length) {
+      var start = output.length + ctx.indentationLvl + braces[0].length + base.length + 10;
+      if (isBelowBreakLength(ctx, output, start, base)) {
+        var joined = output.join(', ');
+        if (joined.indexOf('\n') === -1) {
+          return (base ? base + ' ' : '') + braces[0] + ' ' + joined + ' ' + braces[1];
+        }
+      }
+    }
+    var indentation = '\n' + repeat(' ', ctx.indentationLvl);
+    return (base ? base + ' ' : '') + braces[0] + indentation + '  ' + output.join(',' + indentation + '  ') + indentation + braces[1];
+  }
+
+  function formatPrimitive(ctx, v) {
+    var t = typeof v;
+    if (t === 'string') {
+      if (v.length > 16 && v.length > ctx.breakLength - ctx.indentationLvl - 4 && v.indexOf('\n') !== -1 && v.indexOf('\n') < v.length - 1) {
+        var parts = v.split(/(?<=\n)/);
+        return parts.map(strEscape).join(' +\n' + repeat(' ', ctx.indentationLvl + 2));
+      }
+      return strEscape(v);
+    }
+    if (t === 'number') return Object.is(v, -0) ? '-0' : String(v);
+    if (t === 'bigint') return v + 'n';
+    if (t === 'boolean') return String(v);
+    if (t === 'undefined') return 'undefined';
+    return v.toString();
+  }
+
+  function formatProperty(ctx, obj, key, recurseTimes, isArrayEntry) {
+    var desc = Object.getOwnPropertyDescriptor(obj, key) || { value: obj[key], enumerable: true };
+    var str;
+    if (desc.value !== undefined || !('get' in desc || 'set' in desc)) {
+      ctx.indentationLvl += 2;
+      str = formatValue(ctx, desc.value, recurseTimes);
+      ctx.indentationLvl -= 2;
+    } else if (desc.get !== undefined) {
+      str = desc.set !== undefined ? '[Getter/Setter]' : '[Getter]';
+    } else {
+      str = desc.set !== undefined ? '[Setter]' : 'undefined';
+    }
+    if (isArrayEntry) return str;
+    return formatKey(key) + ': ' + str;
+  }
+
+  function formatValue(ctx, v, recurseTimes) {
+    if (v === null) return 'null';
+    if (typeof v !== 'object' && typeof v !== 'function') return formatPrimitive(ctx, v);
+    if (ctx.seen.indexOf(v) !== -1) return '[Circular *1]';
+    return formatRaw(ctx, v, recurseTimes);
+  }
+
+  function ownKeys(v) {
+    var keys = Object.keys(v);
+    var syms = Object.getOwnPropertySymbols(v).filter(function (s) {
+      var d = Object.getOwnPropertyDescriptor(v, s);
+      return d && d.enumerable;
+    });
+    return keys.concat(syms);
+  }
+
+  function formatRaw(ctx, v, recurseTimes) {
+    var name = ctorName(v);
+    var keys, braces, base = '', isArrayType = false, formatter = null, noEntries = false;
+    var prefix = name === null ? '[Object: null prototype] ' : '';
+
+    if (Array.isArray(v)) {
+      keys = Object.keys(v).filter(function (k) { return !/^(0|[1-9]\d*)$/.test(k); });
+      braces = [(name !== 'Array' ? prefix + (name || '') + '(' + v.length + ') ' : '') + '[', ']'];
+      if (v.length === 0 && keys.length === 0) return braces[0] + ']';
+      isArrayType = true;
+      formatter = function () {
+        var out = [];
+        var n = Math.min(v.length, ctx.maxArrayLength);
+        for (var i = 0; i < n; i++) out.push(i in v ? formatProperty(ctx, v, i, recurseTimes, true) : '<1 empty item>');
+        if (v.length > n) { ctx.extraItems = true; out.push('... ' + (v.length - n) + ' more item' + (v.length - n > 1 ? 's' : '')); }
+        return out;
+      };
+    } else if (ArrayBuffer.isView(v) && !(v instanceof DataView)) {
+      keys = [];
+      braces = [name + '(' + v.length + ') [', ']'];
+      if (v.length === 0) return braces[0] + ']';
+      isArrayType = true;
+      formatter = function () {
+        var out = [];
+        for (var i = 0; i < Math.min(v.length, ctx.maxArrayLength); i++) out.push(formatPrimitive(ctx, v[i]));
+        return out;
+      };
+    } else if (v instanceof Map) {
+      keys = Object.keys(v);
+      braces = [prefix + name + '(' + v.size + ') {', '}'];
+      if (v.size === 0 && keys.length === 0) return braces[0] + '}';
+      formatter = function () {
+        var out = [];
+        ctx.indentationLvl += 2;
+        v.forEach(function (val, k) {
+          out.push(formatValue(ctx, k, recurseTimes) + ' => ' + formatValue(ctx, val, recurseTimes));
+        });
+        ctx.indentationLvl -= 2;
+        return out;
+      };
+    } else if (v instanceof Set) {
+      keys = Object.keys(v);
+      braces = [prefix + name + '(' + v.size + ') {', '}'];
+      if (v.size === 0 && keys.length === 0) return braces[0] + '}';
+      formatter = function () {
+        var out = [];
+        ctx.indentationLvl += 2;
+        v.forEach(function (val) { out.push(formatValue(ctx, val, recurseTimes)); });
+        ctx.indentationLvl -= 2;
+        return out;
+      };
+    } else {
+      keys = ownKeys(v);
+      if (typeof v === 'function') {
+        base = fnBase(v);
+        keys = keys.filter(function (k) { return k !== 'prototype'; });
+        if (keys.length === 0) return base;
+        braces = ['{', '}'];
+      } else if (v instanceof Error) {
+        var stackless = '[' + (v.name || 'Error') + (v.message ? ': ' + v.message : '') + ']';
+        keys = keys.filter(function (k) { return k !== 'stack' && k !== 'message'; });
+        base = stackless;
+        if (keys.length === 0) return base;
+        braces = ['{', '}'];
+      } else if (v instanceof Date) {
+        base = isNaN(v.getTime()) ? 'Invalid Date' : v.toISOString();
+        if (keys.length === 0) return base;
+        braces = ['{', '}'];
+      } else if (v instanceof RegExp) {
+        base = RegExp.prototype.toString.call(v);
+        if (keys.length === 0) return base;
+        braces = ['{', '}'];
+      } else if (typeof Promise !== 'undefined' && v instanceof Promise) {
+        base = 'Promise';
+        braces = ['Promise {', '}'];
+        base = '';
+        formatter = function () { return ['<pending>']; };
+        noEntries = true;
+      } else {
+        var tag = v[Symbol.toStringTag];
+        var label = name === null ? '[Object: null prototype]' : (name === 'Object' ? '' : name);
+        if (typeof tag === 'string' && tag !== '' && tag !== name) label = (label ? label + ' ' : 'Object ') + '[' + tag + ']';
+        braces = [(label ? label + ' ' : '') + '{', '}'];
+        if (keys.length === 0) return (label ? label + ' ' : '') + '{}';
+      }
+    }
+
+    if (recurseTimes > ctx.depth) {
+      if (Array.isArray(v)) return '[Array]';
+      return '[' + (name === null ? 'Object: null prototype' : name) + ']';
+    }
+
+    recurseTimes += 1;
+    ctx.seen.push(v);
+    ctx.currentDepth = recurseTimes;
+    var output = formatter ? formatter() : [];
+    for (var i = 0; i < keys.length && !noEntries; i++) output.push(formatProperty(ctx, v, keys[i], recurseTimes, false));
+    ctx.seen.pop();
+    var res = reduceToSingleString(ctx, output, base, braces, isArrayType, recurseTimes, v);
+    ctx.extraItems = false;
+    return res;
+  }
+
+  function inspect(v) {
+    var ctx = {
+      seen: [], indentationLvl: 0, currentDepth: 0, extraItems: false,
+      depth: INSPECT_DEFAULTS.depth, breakLength: INSPECT_DEFAULTS.breakLength,
+      compact: INSPECT_DEFAULTS.compact, maxArrayLength: INSPECT_DEFAULTS.maxArrayLength,
+    };
+    return formatValue(ctx, v, 0);
+  }
+
+  /* console.log(a, b, …): strings print raw, %s/%d/%i/%f/%j/%o/%O/%c/%% are honoured. */
+  function formatArgs(args) {
+    if (!args.length) return '';
+    var first = args[0];
+    var rest = 1;
+    var out = '';
+    if (typeof first === 'string' && args.length > 1 && first.indexOf('%') !== -1) {
+      var i = 0;
+      while (i < first.length) {
+        if (first[i] === '%' && i + 1 < first.length) {
+          var f = first[i + 1];
+          if (f === '%') { out += '%'; i += 2; continue; }
+          if ('sdifjoOc'.indexOf(f) !== -1) {
+            if (rest >= args.length) { out += '%' + f; i += 2; continue; }
+            var a = args[rest++];
+            if (f === 's') out += typeof a === 'string' ? a : (typeof a === 'bigint' ? a + 'n' : (typeof a === 'object' && a !== null ? inspect(a) : String(a)));
+            else if (f === 'd' || f === 'i') out += typeof a === 'bigint' ? a + 'n' : (typeof a === 'object' ? 'NaN' : String(f === 'i' ? parseInt(a, 10) : Number(a)));
+            else if (f === 'f') out += String(parseFloat(a));
+            else if (f === 'j') { try { out += JSON.stringify(a); } catch (e) { out += '[Circular]'; } }
+            else if (f === 'o' || f === 'O') out += inspect(a);
+            i += 2;
+            continue;
+          }
+        }
+        out += first[i];
+        i++;
+      }
+    } else {
+      out = typeof first === 'string' ? first : inspect(first);
+    }
+    for (; rest < args.length; rest++) {
+      var v = args[rest];
+      out += ' ' + (typeof v === 'string' ? v : inspect(v));
+    }
+    return out;
+  }
+  /* node-inspect:end */
 
   /* ======================================================================
      Console capture (installed once; routed to the active run session)
@@ -372,6 +668,130 @@
       return out.code;
     });
   }
+
+  /* ======================================================================
+     Modules: import/export inside the browser terminal
+       @zudojs/<pkg>  → the browser build under /learn/lib (manifest.json)
+       ./file.js      → another file registered by the page (registerFiles)
+       node:*, npm    → a clear "run this on your computer" message
+     Rewrites keep every line where it was, so error line numbers still match.
+     ====================================================================== */
+
+  var LIB_BASE = '/learn/lib/';
+  var NODE_BUILTINS = /^(node:|(assert|buffer|child_process|cluster|crypto|dgram|dns|events|fs|http|http2|https|net|os|path|perf_hooks|process|querystring|readline|stream|string_decoder|timers|tls|tty|url|util|v8|vm|worker_threads|zlib)(\/|$))/;
+  var manifestPromise = null;
+  var virtualFiles = {};
+  var moduleCache = {};
+
+  function hintError(message, hint) {
+    var e = new Error(message);
+    e.name = 'ModuleNotAvailable';
+    e.__zudoHint = hint;
+    return e;
+  }
+
+  function loadManifest() {
+    if (!manifestPromise) {
+      manifestPromise = fetch(LIB_BASE + 'manifest.json').then(function (r) {
+        if (!r.ok) throw new Error('manifest ' + r.status);
+        return r.json();
+      }).catch(function (e) {
+        manifestPromise = null;
+        throw hintError('Could not load the Zudo packages for the browser terminal.', 'Check your connection and run again.');
+      });
+    }
+    return manifestPromise;
+  }
+
+  function keepLines(match, text) {
+    var n = (match.match(/\n/g) || []).length;
+    return text + new Array(n + 1).join('\n');
+  }
+
+  function rewriteModules(src, exportsList) {
+    var out = src
+      .replace(/^([ \t]*)import\s+type\s[\s\S]*?\sfrom\s*(['"])[^'"\n]+\2[ \t]*;?/gm, function (m) { return keepLines(m, ''); })
+      .replace(/^([ \t]*)import\s+(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\*\s*as\s+([A-Za-z_$][\w$]*)|(\{[\s\S]*?\}))?\s*from\s*(['"])([^'"\n]+)\5[ \t]*;?/gm,
+        function (m, indent, def, ns, named, q, spec) {
+          var target = '__zudo_import__(' + JSON.stringify(spec) + ')';
+          var bindings = [];
+          var stmts = [];
+          if (named) {
+            named.slice(1, -1).split(',').forEach(function (part) {
+              part = part.trim();
+              if (!part || /^type\s/.test(part)) return;
+              bindings.push(part.replace(/\s+as\s+/, ': '));
+            });
+          }
+          if (def) bindings.unshift('default: ' + def);
+          if (ns) stmts.push('const ' + ns + ' = await ' + target + ';');
+          if (bindings.length) stmts.push('const { ' + bindings.join(', ') + ' } = await ' + target + ';');
+          return keepLines(m, stmts.length ? indent + stmts.join(' ') : '');
+        })
+      .replace(/^([ \t]*)import\s*(['"])([^'"\n]+)\2[ \t]*;?/gm, function (m, indent, q, spec) {
+        return indent + 'await __zudo_import__(' + JSON.stringify(spec) + ');';
+      });
+    out = out.replace(/^([ \t]*)export\s*(type\s*)?\{([^}]*)\}(\s*from\s*(['"])[^'"\n]+\5)?[ \t]*;?/gm, function (m, indent, typeOnly, names, from) {
+      if (!from && !typeOnly && exportsList) {
+        names.split(',').forEach(function (p) {
+          p = p.trim();
+          if (!p || /^type\s/.test(p)) return;
+          var parts = p.split(/\s+as\s+/);
+          exportsList.push(parts[1] ? parts[1] + ': ' + parts[0] : parts[0]);
+        });
+      }
+      return keepLines(m, '');
+    });
+    out = out.replace(/^([ \t]*)export\s+(?:declare\s+)?((?:async\s+)?function\*?|abstract\s+class|class|const|let|var|enum|interface|type)\s+([A-Za-z_$][\w$]*)/gm,
+      function (m, indent, kind, name) {
+        if (exportsList && !/^(interface|type)$/.test(kind)) exportsList.push(name);
+        return indent + kind + ' ' + name;
+      });
+    out = out.replace(/^([ \t]*)export\s+default\s+/gm, function (m, indent) {
+      if (exportsList) exportsList.push('default: __zudo_default__');
+      return indent + 'const __zudo_default__ = ';
+    });
+    return out;
+  }
+
+  function importVirtual(spec) {
+    var name = spec.replace(/^\.\//, '');
+    if (virtualFiles[name] === undefined && /\.js$/.test(name) && virtualFiles[name.replace(/\.js$/, '.ts')] !== undefined) {
+      name = name.replace(/\.js$/, '.ts');
+    }
+    if (virtualFiles[name] === undefined) {
+      return Promise.reject(hintError('Cannot find the file "' + spec + '".',
+        'The browser terminal only knows the files shown on this page. On your computer, make sure ' + spec + ' sits next to the file you run.'));
+    }
+    if (!moduleCache[name]) {
+      var exportsList = [];
+      var body = rewriteModules(virtualFiles[name], exportsList);
+      moduleCache[name] = compile(body + '\nreturn { ' + exportsList.join(', ') + ' };').then(function (js) {
+        return new Function(js + '\nreturn __zudo_main__();')();
+      });
+    }
+    return moduleCache[name];
+  }
+
+  window.__zudo_import__ = function (spec) {
+    if (spec.charAt(0) === '.') return importVirtual(spec);
+    if (NODE_BUILTINS.test(spec)) {
+      return Promise.reject(hintError('"' + spec + '" is part of Node.js, so it does not exist in the browser.',
+        'Run this example on your computer with Node.js. The lesson shows the command and the output you should see.'));
+    }
+    return loadManifest().then(function (m) {
+      var entry = m.packages[spec];
+      if (!entry) {
+        if (/^@zudojs\//.test(spec)) {
+          throw hintError(spec + ' needs Node.js, so it does not run in the browser terminal.',
+            'Install it on your computer with: npm install ' + spec);
+        }
+        throw hintError('The browser terminal cannot load "' + spec + '".',
+          'Only @zudojs packages are available here. Install it on your computer with: npm install ' + spec);
+      }
+      return import(LIB_BASE + entry.file);
+    });
+  };
 
   /* ======================================================================
      UI
@@ -696,7 +1116,10 @@
     var counts = {};
     var depth = 0;
     var pad = function () { return new Array(depth + 1).join('  '); };
-    var fmt = function (args) { return pad() + args.map(function (a) { return inspect(a); }).join(' '); };
+    var fmt = function (args) {
+      var p = pad();
+      return formatArgs(args).split('\n').map(function (l) { return p + l; }).join('\n');
+    };
     return {
       handle: function (m, args) {
         switch (m) {
@@ -735,6 +1158,7 @@
   /* ---------- run ---------- */
 
   var running = false;
+  var runPromise = null;
 
   // User line N lives at wrapped line N+1 (our async wrapper) and at
   // eval line N+3 once new Function() adds its own two-line prologue.
@@ -783,27 +1207,22 @@
   }
 
   function run() {
-    if (running) return;
+    if (running) return runPromise || Promise.resolve();
     var src = ta.value;
     store(LS.code, src);
 
     clearTerm();
-    line('cmd', 'zudo run ' + (fileEl.textContent || 'playground.ts'), '$');
+    var file = fileEl.textContent || 'playground.ts';
+    line('cmd', (/\.(m?js)$/.test(file) ? 'node ' : 'npx tsx ') + file, '$');
 
-    if (/^\s*(import|export)\s/m.test(src)) {
-      line('error', 'import/export statements are not available here.', '✗');
-      line('sys', 'The playground runs plain TypeScript in your browser. Packages such as @zudojs/core run in Node.js. Define what you need inline and try again.');
-      setState('error', 'Failed');
-      return;
-    }
-
+    moduleCache = {};
     running = true;
     runBtn.disabled = true;
     setState('busy', window.Babel ? 'Compiling' : 'Loading compiler');
     var sysLine = window.Babel ? null : line('sys', 'Loading the TypeScript compiler (first run only)…');
 
     var t0 = performance.now();
-    compile(src).then(function (js) {
+    runPromise = compile(rewriteModules(src, null)).then(function (js) {
       if (sysLine) sysLine.remove();
       setState('busy', 'Running');
       session = makeSession();
@@ -824,6 +1243,9 @@
       if (sysLine) sysLine.remove();
       if (err && err.message === 'Could not load the TypeScript compiler') {
         line('error', 'Could not load the TypeScript compiler. Check your connection and run again.', '✗');
+      } else if (err && err.__zudoHint) {
+        line('error', err.message, '✗');
+        line('sys', err.__zudoHint);
       } else if (err && (err.code === 'BABEL_PARSE_ERROR' || err.__phase === 'compile' || (err instanceof SyntaxError))) {
         syntaxErrorReport(err, src);
       } else {
@@ -835,7 +1257,25 @@
     }).then(function () {
       running = false;
       runBtn.disabled = false;
+      runPromise = null;
     });
+    return runPromise;
+  }
+
+  /* Lines the last run printed, without the command, timing and system lines. */
+  function output() {
+    return Array.prototype.map.call(term.querySelectorAll('.pg-line'), function (d) {
+      return { kind: d.className.replace(/^.*pg-line-/, ''), text: d.lastChild.textContent };
+    }).filter(function (l) { return ['cmd', 'ok', 'sys', 'ret'].indexOf(l.kind) === -1; });
+  }
+
+  function exec(code, name) {
+    load(code, name);
+    return Promise.resolve(run()).then(output);
+  }
+
+  function registerFiles(files) {
+    Object.keys(files || {}).forEach(function (k) { virtualFiles[k] = files[k]; });
   }
 
   /* ---------- panel controls ---------- */
@@ -862,14 +1302,20 @@
   function loadExample(ex, force) {
     currentExample = ex;
     examplesSel.value = ex.id;
-    fileEl.textContent = ex.file;
+    setFile(ex.file);
     store(LS.example, ex.id);
     setCode(ex.code, false);
     if (force) toast('Loaded ' + ex.name);
   }
 
+  function setFile(name) {
+    fileEl.textContent = name;
+    var lang = panel.querySelector('.pg-lang');
+    if (lang) lang.textContent = /\.(m?js)$/.test(name) ? 'JS' : 'TS';
+  }
+
   function load(code, name) {
-    fileEl.textContent = name || 'snippet.ts';
+    setFile(name || 'snippet.ts');
     setCode(code, true);
     open();
   }
@@ -985,7 +1431,11 @@
       open();
     });
 
-    window.ZudoPlayground = { open: open, close: close, toggle: toggle, load: load, run: run, examples: EXAMPLES };
+    window.ZudoPlayground = {
+      open: open, close: close, toggle: toggle, load: load, run: run, examples: EXAMPLES,
+      exec: exec, output: output, registerFiles: registerFiles, highlight: highlight, inspect: inspect,
+    };
+    document.dispatchEvent(new CustomEvent('zudo:playground-ready'));
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
