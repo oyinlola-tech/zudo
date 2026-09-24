@@ -1,0 +1,727 @@
+---
+title: Union types in depth
+description: Model real states with literal and discriminated unions, return typed results instead of throwing, combine shapes with intersections, and avoid the common union mistakes.
+minutes: 50
+youNeed: Interfaces, unions and literal types, and Type inference in depth
+youBuild: A loan-approval workflow where impossible states cannot be written, every state change is a checked function, and failures come back as typed results
+keywords: typescript union types, literal types, discriminated union, tagged union, modelling state, impossible states, result type, exhaustive check, assertNever, intersection types, union mistakes, state machine types
+objectives: Explain a union as a set of values and predict which operations it allows | Replace boolean-and-optional-field soup with a discriminated union | Write state transition functions that only accept the right state | Return failures as a typed result union and handle every case | Make switches exhaustive with never, assertNever or a Record | Recognise and fix the common union mistakes
+---
+<section>
+<h2 id="problem">A loan that was approved and rejected</h2>
+<p>A microfinance app lets customers ask for small loans. The first version describes a loan request with two flags and some optional fields, which is how many real codebases start:</p>
+<example file="loan-v1.ts" project="problem">
+interface LoanRequest {
+  id: number;
+  amount: number;
+  approved: boolean;
+  rejected: boolean;
+  approvedBy?: string;
+  rejectionReason?: string;
+}
+
+function describe(loan: LoanRequest): string {
+  if (loan.approved) return `#${loan.id}: approved by ${loan.approvedBy}`;
+  if (loan.rejected) return `#${loan.id}: rejected (${loan.rejectionReason})`;
+  return `#${loan.id}: waiting for review`;
+}
+
+const loans: LoanRequest[] = [
+  { id: 1, amount: 50000, approved: true, rejected: false, approvedBy: "Ngozi" },
+  { id: 2, amount: 80000, approved: true, rejected: true, rejectionReason: "income too low" },
+  { id: 3, amount: 20000, approved: false, rejected: false, approvedBy: "Tunde" },
+];
+
+for (const loan of loans) console.log(describe(loan));
+</example>
+<output>
+</output>
+<p>This file passes <code>tsc</code> with no errors, and it is full of nonsense. Loan 2 is approved <em>and</em> rejected, and has no approver. Loan 3 is waiting for review but already has an approver. The type allowed all of it.</p>
+<p>Count what the type permits: two booleans give four combinations, and each optional field may be there or not, which doubles it twice more: sixteen shapes. The business has exactly three states: pending, approved, rejected. Thirteen of the sixteen are bugs waiting to happen, and every function that reads a loan has to guess which ones are real. This lesson replaces that with <strong>union types</strong> that allow the three real states and nothing else. You met unions, literal types and discriminated unions in <a href="/learn/ts-objects#unions">Interfaces, unions and literal types</a>; this lesson goes much deeper.</p>
+</section>
+
+<section>
+<h2 id="sets">Types are sets of values</h2>
+<p>The clearest way to think about a type is as a <strong>set</strong>: the collection of all values that belong to it.</p>
+<ul>
+<li><code>string</code> is the set of every possible string: infinitely many.</li>
+<li>The literal type <code>"approved"</code> is a set with exactly one value in it.</li>
+<li><code>boolean</code> is the set with two values, <code>true</code> and <code>false</code>. TypeScript treats it as the union <code>true | false</code> when narrowing.</li>
+<li>A <strong>union</strong> <code>A | B</code> is every value that is in <code>A</code> <em>or</em> in <code>B</code>: the two sets put together.</li>
+<li><code>never</code> is the empty set: no value belongs to it. That is why nothing can be assigned to it.</li>
+</ul>
+<p>Two rules follow directly, and explain most union errors you will ever see.</p>
+<p><strong>Rule 1: you can only do what is valid for every member.</strong> A value of type <code>number | string</code> might be either, so only operations that work on both are allowed without a check:</p>
+<example file="amount.ts" project="sets" check="tsc-error">
+function formatAmount(amount: number | string): string {
+  return `₦${amount.toFixed(2)}`;
+}
+</example>
+<output kind="tsc">
+</output>
+<p><strong>Rule 2: a member fits the union, but the union does not fit a member.</strong> <code>"approved"</code> can go where <code>"pending" | "approved"</code> is expected, because it is in the set. A <code>"pending" | "approved"</code> cannot go where only <code>"approved"</code> is expected, because it might be <code>"pending"</code>. To get from the wide type to the narrow one, you check the value, which is <strong>narrowing</strong>:</p>
+<example file="amount.ts" project="sets">
+function formatAmount(amount: number | string): string {
+  const value = typeof amount === "number" ? amount : Number(amount.replace(/,/g, ""));
+  return `₦${value.toFixed(2)}`;
+}
+
+console.log(formatAmount(2500), formatAmount("12,000"));
+</example>
+<output>
+</output>
+<p>After <code>typeof amount === "number"</code>, the true branch sees <code>number</code> and the false branch sees what is left, <code>string</code>. <a href="/learn/ts-narrowing">Narrowing</a> covers every way to do this; this lesson uses the simplest ones.</p>
+</section>
+
+<section>
+<h2 id="states">Modelling states with a discriminated union</h2>
+<reason title="Before you write the type">
+<p>You are about to model a loan request properly. Answer these first, without code:</p>
+<ol>
+<li>Which states can a loan request be in?</li>
+<li>What data exists in <em>every</em> state, and what data exists only in one state?</li>
+<li>Which moves between states are allowed? Can a rejected loan be approved later?</li>
+<li>Who may set each piece of data? What should never come from the customer's request?</li>
+</ol>
+<answer>
+<ol>
+<li>Three for now: <code>pending</code> (waiting for review), <code>approved</code> and <code>rejected</code>. A fourth, <code>disbursed</code> (money sent), comes later in this lesson.</li>
+<li>Every state has an id, the customer and the amount. Only an approved loan has an approver and an approval date. Only a rejected loan has a reason. So those fields belong to their state, not to the loan in general.</li>
+<li>Pending can become approved or rejected. Approved can become disbursed. Rejected is final: the customer must apply again. Nothing ever goes back to pending.</li>
+<li>The customer supplies the amount. The status, the approver and the reason are set by staff through your code, never taken from the request body. Types will help you keep that rule, but only runtime checks can enforce it on incoming data.</li>
+</ol>
+</answer>
+</reason>
+<p>Each answer maps straight onto code. One interface per state, each with a <code>status</code> property holding a different literal, and a union of the three:</p>
+<example file="loan.types.ts" project="loans">
+interface LoanBase {
+  readonly id: number;
+  readonly customer: string;
+  readonly amount: number;
+}
+
+export interface PendingLoan extends LoanBase {
+  readonly status: "pending";
+}
+
+export interface ApprovedLoan extends LoanBase {
+  readonly status: "approved";
+  readonly approvedBy: string;
+  readonly approvedOn: string;
+}
+
+export interface RejectedLoan extends LoanBase {
+  readonly status: "rejected";
+  readonly reason: string;
+}
+
+export type LoanRequest = PendingLoan | ApprovedLoan | RejectedLoan;
+</example>
+<p>This is a <strong>discriminated union</strong> (also called a <strong>tagged union</strong>): a union of object types that all have one property, the <strong>discriminant</strong>, whose type is a different literal in each member. The discriminant must be a literal type (<code>"pending"</code>, not <code>string</code>), and it must exist in every member.</p>
+<p>Now the compiler refuses every nonsense loan from the opening example:</p>
+<example file="bad.ts" project="loans" check="tsc-error">
+import type { LoanRequest } from "./loan.types.js";
+
+const approvedNoApprover: LoanRequest = { id: 2, customer: "Bola", amount: 80000, status: "approved" };
+const pendingWithApprover: LoanRequest = { id: 3, customer: "Chidi", amount: 20000, status: "pending", approvedBy: "Tunde" };
+const unknownStatus: LoanRequest = { id: 4, customer: "Ada", amount: 5000, status: "approvd" };
+</example>
+<output kind="tsc">
+</output>
+<p>Read the messages: TypeScript used the <code>status</code> to pick the member you meant, then checked the rest against that member alone. A missing approver, an approver on a pending loan and a misspelt status are all caught where the object is written.</p>
+<p>Reading a loan is now honest, too. After you check the discriminant, only that member's fields are available:</p>
+<example file="describe.ts" project="loans">
+import type { LoanRequest } from "./loan.types.js";
+
+export function describe(loan: LoanRequest): string {
+  switch (loan.status) {
+    case "pending":
+      return `#${loan.id} ${loan.customer}: ₦${loan.amount} waiting for review`;
+    case "approved":
+      return `#${loan.id} ${loan.customer}: approved by ${loan.approvedBy} on ${loan.approvedOn}`;
+    case "rejected":
+      return `#${loan.id} ${loan.customer}: rejected (${loan.reason})`;
+  }
+}
+
+const loans: LoanRequest[] = [
+  { id: 1, customer: "Ada", amount: 50000, status: "approved", approvedBy: "Ngozi", approvedOn: "2026-09-01" },
+  { id: 2, customer: "Bola", amount: 80000, status: "rejected", reason: "income too low" },
+  { id: 3, customer: "Chidi", amount: 20000, status: "pending" },
+];
+
+for (const loan of loans) console.log(describe(loan));
+</example>
+<output>
+</output>
+<p>Sixteen possible shapes became exactly three. Each function that reads a loan no longer guesses; it asks the discriminant and the compiler tells it what it has.</p>
+</section>
+
+<section>
+<h2 id="transitions">State changes as checked functions</h2>
+<p>A union describes which states exist. The allowed <em>moves</em> between states can be typed too. Write one function per move, and make its parameter the one state it may start from:</p>
+<example file="transitions.ts" project="loans">
+import type { ApprovedLoan, PendingLoan, RejectedLoan } from "./loan.types.js";
+
+export function approve(loan: PendingLoan, officer: string, today: string): ApprovedLoan {
+  return { id: loan.id, customer: loan.customer, amount: loan.amount, status: "approved", approvedBy: officer, approvedOn: today };
+}
+
+export function reject(loan: PendingLoan, reason: string): RejectedLoan {
+  return { id: loan.id, customer: loan.customer, amount: loan.amount, status: "rejected", reason };
+}
+
+const request: PendingLoan = { id: 7, customer: "Emeka", amount: 35000, status: "pending" };
+const approved = approve(request, "Ngozi", "2026-09-24");
+console.log(approved.status, approved.approvedBy);
+</example>
+<output>
+</output>
+<p><code>approve</code> takes a <code>PendingLoan</code> and returns an <code>ApprovedLoan</code>. Try to approve a loan that was already rejected, or reject it twice:</p>
+<example file="wrong-move.ts" project="loans" check="tsc-error">
+import type { LoanRequest } from "./loan.types.js";
+import { approve, reject } from "./transitions.js";
+
+function review(loan: LoanRequest) {
+  const rejected = reject(loan, "missing documents");
+  return approve(rejected, "Ngozi", "2026-09-24");
+}
+</example>
+<output kind="tsc">
+</output>
+<p>Two illegal moves, two errors. The first says a general <code>LoanRequest</code> might not be pending, so you must check its status before rejecting. The second says a rejected loan can never be approved. Your business rules from the reasoning step are now part of the types. This pattern is sometimes called a <strong>type-level state machine</strong>: a state machine is a set of states plus the allowed moves between them, and here the compiler checks both.</p>
+<note>The transition functions build a <em>new</em> object instead of changing <code>loan.status</code>. Every property is <code>readonly</code>, so they have to. Changing the status in place would leave the object half in one state and half in another: a pending loan with <code>status: "approved"</code> but no approver.</note>
+</section>
+
+<section>
+<h2 id="exhaustive">Exhaustive checks, three ways</h2>
+<p>An <strong>exhaustive</strong> check is code that handles every member of a union, where the compiler complains if a member is added and not handled. You saw the <code>never</code> trick in <a href="/learn/ts-types#void-never">Basic types</a>. The business now adds a fourth state: <code>disbursed</code>, when the money has been sent. Here are three ways to make sure no function forgets it.</p>
+<h3>1. A return type and no default</h3>
+<p><code>describe</code> above has no <code>default</code>. TypeScript sees that the three cases each return, so the function can never reach its end. Add a member, and the end becomes reachable:</p>
+<example file="loan4.ts" project="exhaustive" check="tsc-error">
+type Loan =
+  | { status: "pending"; amount: number }
+  | { status: "approved"; amount: number; approvedBy: string }
+  | { status: "rejected"; amount: number; reason: string }
+  | { status: "disbursed"; amount: number; reference: string };
+
+function describe(loan: Loan): string {
+  switch (loan.status) {
+    case "pending":
+      return `₦${loan.amount} waiting`;
+    case "approved":
+      return `approved by ${loan.approvedBy}`;
+    case "rejected":
+      return `rejected: ${loan.reason}`;
+  }
+}
+</example>
+<output kind="tsc">
+</output>
+<p>It works, but the error points at the return type, not at the missing case, and it only works when every case returns.</p>
+<h3>2. An assertNever helper</h3>
+<p>A small function whose parameter is <code>never</code> makes the intent obvious, points at the right line, and also fails loudly at runtime if bad data ever gets through (for example a status from the database that your code does not know yet):</p>
+<example file="never.ts" project="exhaustive" check="tsc-error">
+type Loan =
+  | { status: "pending"; amount: number }
+  | { status: "approved"; amount: number; approvedBy: string }
+  | { status: "rejected"; amount: number; reason: string }
+  | { status: "disbursed"; amount: number; reference: string };
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled value: ${JSON.stringify(value)}`);
+}
+
+function fee(loan: Loan): number {
+  switch (loan.status) {
+    case "pending":
+    case "rejected":
+      return 0;
+    case "approved":
+      return Math.round(loan.amount * 0.01);
+    default:
+      return assertNever(loan);
+  }
+}
+</example>
+<output kind="tsc">
+</output>
+<p>The error names the exact member that was forgotten, <code>"disbursed"</code>, on the line of the <code>default</code>. Here is the fixed version, with the runtime safety net shown working on a value that bypassed the types:</p>
+<example file="never.ts" project="exhaustive">
+type Loan =
+  | { status: "pending"; amount: number }
+  | { status: "approved"; amount: number; approvedBy: string }
+  | { status: "rejected"; amount: number; reason: string }
+  | { status: "disbursed"; amount: number; reference: string };
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled value: ${JSON.stringify(value)}`);
+}
+
+function fee(loan: Loan): number {
+  switch (loan.status) {
+    case "pending":
+    case "rejected":
+      return 0;
+    case "approved":
+    case "disbursed":
+      return Math.round(loan.amount * 0.01);
+    default:
+      return assertNever(loan);
+  }
+}
+
+console.log(fee({ status: "approved", amount: 50000, approvedBy: "Ngozi" }));
+console.log(fee({ status: "disbursed", amount: 80000, reference: "TRF-1188" }));
+
+const fromOldDatabase = JSON.parse('{"status": "on-hold", "amount": 1000}');
+try {
+  fee(fromOldDatabase);
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+</output>
+<p><code>JSON.parse</code> returns <code>any</code>, so the <code>"on-hold"</code> loan slipped past the compiler, exactly the kind of outside data that <a href="/learn/ts-runtime#gap">TypeScript and JavaScript together</a> warns about. The helper turned a silent wrong answer into a clear error.</p>
+<h3>3. A Record lookup</h3>
+<p>When each member just maps to a value, a <code>Record</code> keyed by the union is shorter than a <code>switch</code> and just as exhaustive: every key is required.</p>
+<example file="labels.ts" project="exhaustive" check="tsc-error">
+type LoanStatus = "pending" | "approved" | "rejected" | "disbursed";
+
+const badgeColour: Record<LoanStatus, string> = {
+  pending: "amber",
+  approved: "green",
+  rejected: "red",
+};
+</example>
+<output kind="tsc">
+</output>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Technique</th><th>Best for</th><th>Runtime safety net</th></tr></thead>
+<tbody>
+<tr><td>Return type, no <code>default</code></td><td>Short switches where every case returns</td><td>No</td></tr>
+<tr><td><code>assertNever</code> in <code>default</code></td><td>Any switch, especially over data from outside</td><td>Yes, it throws</td></tr>
+<tr><td><code>Record&lt;Union, Value&gt;</code></td><td>Mapping each member to a value (labels, colours, handlers)</td><td>No, a missing key reads as <code>undefined</code></td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="result">Results instead of exceptions</h2>
+<p>A transfer can fail in several expected ways: not enough money, over the daily limit, a frozen account. If the function <code>throw</code>s, nothing in its type says so. The caller has to remember to use <code>try</code>, and <code>catch</code> gives them an <code>unknown</code> error to guess about. A union makes failure part of the return type:</p>
+<example file="transfer.ts" project="result">
+interface Account {
+  id: string;
+  balance: number;
+  frozen: boolean;
+}
+
+type TransferError =
+  | { code: "insufficient-funds"; balance: number; requested: number }
+  | { code: "over-daily-limit"; limit: number }
+  | { code: "account-frozen" };
+
+type TransferResult =
+  | { ok: true; newBalance: number; reference: string }
+  | { ok: false; error: TransferError };
+
+const DAILY_LIMIT = 200000;
+
+function transfer(from: Account, amount: number, reference: string): TransferResult {
+  if (from.frozen) return { ok: false, error: { code: "account-frozen" } };
+  if (amount > DAILY_LIMIT) return { ok: false, error: { code: "over-daily-limit", limit: DAILY_LIMIT } };
+  if (amount > from.balance) {
+    return { ok: false, error: { code: "insufficient-funds", balance: from.balance, requested: amount } };
+  }
+  return { ok: true, newBalance: from.balance - amount, reference };
+}
+
+function message(error: TransferError): string {
+  switch (error.code) {
+    case "insufficient-funds":
+      return `You have ₦${error.balance}, but tried to send ₦${error.requested}.`;
+    case "over-daily-limit":
+      return `Transfers are limited to ₦${error.limit} per day.`;
+    case "account-frozen":
+      return "This account is frozen. Please contact support.";
+  }
+}
+
+const ada: Account = { id: "ACC-1", balance: 30000, frozen: false };
+for (const amount of [12000, 45000, 250000]) {
+  const result = transfer(ada, amount, `TRF-${amount}`);
+  console.log(result.ok ? `sent, balance now ₦${result.newBalance} (${result.reference})` : message(result.error));
+}
+</example>
+<output>
+</output>
+<p>Two unions work together here. <code>TransferResult</code> is discriminated by <code>ok</code> (the literal types <code>true</code> and <code>false</code>), and <code>TransferError</code> by <code>code</code>. Each error carries exactly the data needed to explain it: the insufficient-funds case has the balance, the limit case has the limit. Because <code>message</code> is exhaustive over <code>code</code>, adding a fourth error kind makes the compiler list every place that must explain it to the customer.</p>
+<p>Use exceptions for things the caller cannot reasonably handle (the database is down, a bug), and result unions for outcomes that are part of the business: a declined transfer is not a crash. <a href="/learn/ts-generics#result">Generics</a> turns this into one reusable <code>Result&lt;T, E&gt;</code> type, and <a href="/learn/ts-errors">Typed error handling</a> builds a whole error system on it.</p>
+</section>
+
+<section>
+<h2 id="intersections">Intersections in depth</h2>
+<p>An <strong>intersection</strong> <code>A &amp; B</code> is the other set operation: values that are in <code>A</code> <em>and</em> in <code>B</code>. For object types that means an object with all the properties of both, which is why <a href="/learn/ts-objects#extending">Interfaces, unions and literal types</a> used it to add timestamps to a user.</p>
+<h3>Intersecting with a union</h3>
+<p>Intersection spreads over each member of a union, like multiplication over addition: <code>(A | B) &amp; C</code> is the same as <code>(A &amp; C) | (B &amp; C)</code>. That lets you add shared fields to every state at once, and keep the union discriminated:</p>
+<example file="audited.ts" project="intersect">
+type Loan =
+  | { status: "pending"; amount: number }
+  | { status: "approved"; amount: number; approvedBy: string };
+
+type Audit = { createdAt: string; createdBy: string };
+
+type AuditedLoan = Loan & Audit;
+
+function trail(loan: AuditedLoan): string {
+  const who = loan.status === "approved" ? `, approved by ${loan.approvedBy}` : "";
+  return `created ${loan.createdAt} by ${loan.createdBy}${who}`;
+}
+
+console.log(trail({ status: "pending", amount: 9000, createdAt: "2026-09-20", createdBy: "app" }));
+console.log(trail({ status: "approved", amount: 9000, approvedBy: "Ngozi", createdAt: "2026-09-20", createdBy: "app" }));
+</example>
+<output>
+</output>
+<h3>When an intersection is empty</h3>
+<p>Because an intersection keeps only the values in <em>both</em> sets, two types that share no values intersect to <code>never</code>. <code>string &amp; number</code> is <code>never</code>. For objects, the clash happens property by property:</p>
+<example file="clash.ts" project="intersect" check="tsc-error">
+type WithNumericId = { id: number; amount: number };
+type WithTextId = { id: string };
+
+const record: WithNumericId & WithTextId = { id: 7, amount: 5000 };
+</example>
+<output kind="tsc">
+</output>
+<p><code>id</code> must be a number and a string at the same time, so its type is <code>never</code> and no value fits. When two object types disagree on a discriminant, such as <code>{ status: "pending" } &amp; { status: "approved" }</code>, TypeScript reduces the whole object type to <code>never</code>. If you ever see <code>never</code> where you expected an object, look for two intersected types that disagree.</p>
+<p>Interfaces offer <code>extends</code> for the same job, and it reports such a clash where the interface is declared instead of where a value is written. <a href="/learn/ts-aliases-interfaces">Type aliases and interfaces</a>, next, compares the two properly.</p>
+</section>
+
+<section>
+<h2 id="mistakes">Common union mistakes</h2>
+<h3>1. Checking a field that only one member has</h3>
+<p>With the old boolean model, <code>if (loan.approvedBy)</code> was how you checked approval. With a union, that property only exists on one member, so you cannot even read it until you have narrowed:</p>
+<example file="field-check.ts" project="mistakes" check="tsc-error">
+type Loan =
+  | { status: "pending"; amount: number }
+  | { status: "approved"; amount: number; approvedBy: string };
+
+function approver(loan: Loan): string {
+  if (loan.approvedBy) return loan.approvedBy;
+  return "nobody yet";
+}
+</example>
+<output kind="tsc">
+</output>
+<p>Check the discriminant, <code>loan.status === "approved"</code>, which is exactly what it is for. (<code>"approvedBy" in loan</code> would also narrow, but the discriminant says what you mean.)</p>
+<h3>2. Adding string to a literal union</h3>
+<p>Someone wants to allow "other" statuses, and writes <code>| string</code>. Every literal is already a string, so the union collapses to plain <code>string</code>, and every check disappears:</p>
+<example file="collapse.ts" project="mistakes" check="tsc-error">
+type Status = "pending" | "approved" | "rejected" | string;
+
+const typo: Status = "aproved";
+const probe: never = typo;
+</example>
+<output kind="tsc">
+</output>
+<p>Only the probe complains, and it shows the type is now just <code>string</code>: <code>"aproved"</code> compiled. If you really need open-ended values, model them as their own member: <code>{ status: "other"; label: string }</code>.</p>
+<h3>3. An else branch that swallows new members</h3>
+<p>An <code>if</code>/<code>else</code> chain is not exhaustive. The final <code>else</code> quietly takes every member you did not name, including ones added later:</p>
+<example file="else.ts" project="mistakes">
+type LoanStatus = "pending" | "approved" | "rejected" | "cancelled";
+
+function canReapply(status: LoanStatus): boolean {
+  if (status === "pending") return false;
+  else if (status === "approved") return false;
+  else return true;
+}
+
+console.log("rejected:", canReapply("rejected"));
+console.log("cancelled:", canReapply("cancelled"));
+</example>
+<output>
+</output>
+<p>When <code>"cancelled"</code> was added, it compiled without a word, and landed in the <code>else</code> that was written for rejected loans. Maybe that is right; maybe a cancelled loan should be reapplied through a different form. Nobody decided. With a <code>switch</code> and <code>assertNever</code>, the compiler would have forced that decision.</p>
+<h3>4. A discriminant that widened</h3>
+<p>Build a union member in a separate variable, and its discriminant widens to <code>string</code>, as you learned in <a href="/learn/ts-inference#widening">Type inference in depth</a>. The fix is the same: annotate the variable with the member type or the union.</p>
+<h3>5. Changing the discriminant in place</h3>
+<p>Writing <code>loan.status = "approved"</code> on a pending loan gives you an "approved" loan with no approver. Mark discriminants <code>readonly</code> (as <code>loan.types.ts</code> does) and move between states with functions that build a complete new object.</p>
+</section>
+
+<section>
+<h2 id="build">Build: the loan workflow</h2>
+<p>Put the pieces together. The types, with the fourth state added:</p>
+<example file="types.ts" project="workflow">
+interface Base {
+  readonly id: number;
+  readonly customer: string;
+  readonly amount: number;
+}
+
+export type Loan =
+  | (Base & { readonly status: "pending" })
+  | (Base & { readonly status: "approved"; readonly approvedBy: string })
+  | (Base & { readonly status: "rejected"; readonly reason: string })
+  | (Base & { readonly status: "disbursed"; readonly approvedBy: string; readonly reference: string });
+
+export type Pending = Extract<Loan, { status: "pending" }>;
+export type Approved = Extract<Loan, { status: "approved" }>;
+
+export type ReviewError =
+  | { code: "not-pending"; status: Loan["status"] }
+  | { code: "over-officer-limit"; limit: number };
+
+export type ReviewResult = { ok: true; loan: Loan } | { ok: false; error: ReviewError };
+
+export function assertNever(value: never): never {
+  throw new Error(`Unhandled value: ${JSON.stringify(value)}`);
+}
+</example>
+<p>Two new tools appear here, both explained properly in <a href="/learn/ts-advanced">Advanced and utility types</a>. <code>Extract&lt;Loan, { status: "pending" }&gt;</code> picks the members of a union that fit a shape, so <code>Pending</code> is the pending member without repeating it. <code>Loan["status"]</code> reads the type of a property: here, the union of all four statuses. Now the workflow:</p>
+<example file="workflow.ts" project="workflow">
+import { assertNever, type Approved, type Loan, type Pending, type ReviewResult } from "./types.js";
+
+const OFFICER_LIMIT = 100000;
+
+export function review(loan: Loan, officer: string, decision: "approve" | "reject", reason = ""): ReviewResult {
+  if (loan.status !== "pending") return { ok: false, error: { code: "not-pending", status: loan.status } };
+  if (decision === "reject") return { ok: true, loan: { ...base(loan), status: "rejected", reason } };
+  if (loan.amount > OFFICER_LIMIT) return { ok: false, error: { code: "over-officer-limit", limit: OFFICER_LIMIT } };
+  return { ok: true, loan: { ...base(loan), status: "approved", approvedBy: officer } };
+}
+
+export function disburse(loan: Approved, reference: string): Loan {
+  return { ...base(loan), status: "disbursed", approvedBy: loan.approvedBy, reference };
+}
+
+function base(loan: Pending | Approved) {
+  return { id: loan.id, customer: loan.customer, amount: loan.amount };
+}
+
+export function describe(loan: Loan): string {
+  switch (loan.status) {
+    case "pending":
+      return `#${loan.id} ${loan.customer} ₦${loan.amount}: pending`;
+    case "approved":
+      return `#${loan.id} ${loan.customer} ₦${loan.amount}: approved by ${loan.approvedBy}`;
+    case "rejected":
+      return `#${loan.id} ${loan.customer} ₦${loan.amount}: rejected (${loan.reason})`;
+    case "disbursed":
+      return `#${loan.id} ${loan.customer} ₦${loan.amount}: paid out, ref ${loan.reference}`;
+    default:
+      return assertNever(loan);
+  }
+}
+</example>
+<p>And a run through the whole flow, including the failures:</p>
+<example file="main.ts" project="workflow">
+import type { Loan } from "./types.js";
+import { describe, disburse, review } from "./workflow.js";
+
+const small: Loan = { id: 1, customer: "Ada", amount: 45000, status: "pending" };
+const large: Loan = { id: 2, customer: "Bola", amount: 250000, status: "pending" };
+
+const first = review(small, "Ngozi", "approve");
+if (first.ok) {
+  console.log(describe(first.loan));
+  if (first.loan.status === "approved") console.log(describe(disburse(first.loan, "TRF-5521")));
+
+  const again = review(first.loan, "Tunde", "reject", "changed my mind");
+  if (!again.ok) console.log("second review refused:", again.error);
+}
+
+const second = review(large, "Ngozi", "approve");
+console.log(second.ok ? describe(second.loan) : second.error);
+
+const declined = review(large, "Ngozi", "reject", "income too low");
+if (declined.ok) console.log(describe(declined.loan));
+</example>
+<output>
+</output>
+<p>Notice what the types enforce: <code>disburse</code> only accepts an approved loan, so <code>main.ts</code> has to check <code>status === "approved"</code> first. <code>review</code> may be called with any loan, because a reviewer might click on anything, so it checks at runtime and returns a typed error instead. Both styles are useful: typed parameters where the caller already knows the state, result unions where the state comes from data.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing union code</h2>
+<p>Union code has a natural test plan: <strong>one test per member, plus one per transition, plus one per error</strong>. A table of cases keeps it short:</p>
+<example file="fee.test.ts" project="testing">
+type Loan =
+  | { status: "pending"; amount: number }
+  | { status: "approved"; amount: number }
+  | { status: "rejected"; amount: number; reason: string };
+
+function fee(loan: Loan): number {
+  switch (loan.status) {
+    case "pending":
+    case "rejected":
+      return 0;
+    case "approved":
+      return Math.round(loan.amount * 0.01);
+  }
+}
+
+const cases: [label: string, loan: Loan, expected: number][] = [
+  ["pending pays nothing", { status: "pending", amount: 50000 }, 0],
+  ["approved pays 1%", { status: "approved", amount: 50000 }, 500],
+  ["approved rounds", { status: "approved", amount: 12345 }, 123],
+  ["rejected pays nothing", { status: "rejected", amount: 50000, reason: "no income" }, 0],
+];
+
+for (const [label, loan, expected] of cases) {
+  const actual = fee(loan);
+  console.log(`${actual === expected ? "PASS" : "FAIL"} ${label}: ${actual}`);
+}
+</example>
+<output>
+</output>
+<p>The type <code>Loan</code> also makes the test data honest: you cannot write a test case for a state that cannot exist. For the rules that must stay illegal, add type tests with <code>// @ts-expect-error</code> (from <a href="/learn/ts-compiler#testing">What the TypeScript compiler does</a>), for example that an approved loan without an approver does not compile. With Vitest, which you met in <a href="/learn/testing-basics">Testing basics</a>, the same table becomes <code>it.each(cases)</code>.</p>
+</section>
+
+<section>
+<h2 id="production">In production</h2>
+<ul>
+<li><strong>Discriminated unions travel well as JSON.</strong> The discriminant is an ordinary property, so an API can return <code>{ "status": "rejected", "reason": "…" }</code> and a TypeScript client can switch on it.</li>
+<li><strong>Incoming unions must be checked at runtime.</strong> A request body claiming <code>"status": "approved"</code> proves nothing. Validate the discriminant first, then the fields of that member (<a href="/learn/ts-validation">Runtime validation</a>), and never let a client set a status your staff should set.</li>
+<li><strong>Databases store unions as a status column plus nullable columns.</strong> Convert each row into the right member in one function, and add a database <code>CHECK</code> constraint so an approved row must have an approver (<a href="/learn/sql-advanced">Advanced SQL</a>).</li>
+<li><strong>Adding a member is a breaking change</strong> for every exhaustive switch, including in other teams' clients. That is the point: it forces a decision everywhere. Announce it like any API change.</li>
+<li><strong>Pick one discriminant name per codebase</strong> (<code>status</code> for lifecycles, <code>kind</code> or <code>code</code> for categories) so readers know where to look.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Add a cancelled state">
+<p>Customers may cancel a loan while it is pending. Add a <code>cancelled</code> member with a <code>cancelledOn</code> date, a <code>cancel(loan)</code> transition that only accepts pending loans, and handle it in an exhaustive <code>describe</code>.</p>
+<solution>
+<example file="cancel.ts" project="ex-cancel">
+type Loan =
+  | { readonly status: "pending"; readonly id: number }
+  | { readonly status: "approved"; readonly id: number; readonly approvedBy: string }
+  | { readonly status: "cancelled"; readonly id: number; readonly cancelledOn: string };
+
+type Pending = Extract<Loan, { status: "pending" }>;
+type Cancelled = Extract<Loan, { status: "cancelled" }>;
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled value: ${JSON.stringify(value)}`);
+}
+
+function cancel(loan: Pending, today: string): Cancelled {
+  return { status: "cancelled", id: loan.id, cancelledOn: today };
+}
+
+function describe(loan: Loan): string {
+  switch (loan.status) {
+    case "pending":
+      return `#${loan.id} pending`;
+    case "approved":
+      return `#${loan.id} approved by ${loan.approvedBy}`;
+    case "cancelled":
+      return `#${loan.id} cancelled on ${loan.cancelledOn}`;
+    default:
+      return assertNever(loan);
+  }
+}
+
+const loan: Pending = { status: "pending", id: 9 };
+console.log(describe(loan));
+console.log(describe(cancel(loan, "2026-09-24")));
+</example>
+<output>
+</output>
+<p>Because <code>cancel</code> takes a <code>Pending</code>, cancelling an approved loan does not compile. Before adding the case, the <code>default</code> branch reported <code>"cancelled"</code> as unhandled.</p>
+</solution>
+</exercise>
+<exercise title="Card payment results">
+<p>A card payment can succeed (with an authorisation code), be declined by the bank (with a decline reason: <code>"insufficient-funds"</code>, <code>"expired-card"</code> or <code>"suspected-fraud"</code>), or need a one-time password first. Model <code>PaymentResult</code> as a discriminated union and write <code>nextStep(result)</code>, using a <code>Record</code> for the decline messages.</p>
+<solution>
+<example file="payment.ts" project="ex-payment">
+type DeclineReason = "insufficient-funds" | "expired-card" | "suspected-fraud";
+
+type PaymentResult =
+  | { kind: "success"; authCode: string }
+  | { kind: "declined"; reason: DeclineReason }
+  | { kind: "otp-required"; sentTo: string };
+
+const declineMessage: Record<DeclineReason, string> = {
+  "insufficient-funds": "Your bank declined the payment: not enough funds.",
+  "expired-card": "This card has expired. Please use another card.",
+  "suspected-fraud": "Your bank blocked this payment. Please call them.",
+};
+
+function nextStep(result: PaymentResult): string {
+  switch (result.kind) {
+    case "success":
+      return `Paid (auth ${result.authCode}).`;
+    case "declined":
+      return declineMessage[result.reason];
+    case "otp-required":
+      return `Enter the code sent to ${result.sentTo}.`;
+  }
+}
+
+console.log(nextStep({ kind: "success", authCode: "A81F2" }));
+console.log(nextStep({ kind: "declined", reason: "expired-card" }));
+console.log(nextStep({ kind: "otp-required", sentTo: "080****5521" }));
+</example>
+<output>
+</output>
+<p>Two unions again: one for the outcome, one for the reason. The <code>Record</code> guarantees a message for every reason, and the <code>switch</code> is exhaustive because every case returns and the return type is <code>string</code>.</p>
+</solution>
+</exercise>
+<exercise title="Fix the booking type">
+<p>A hotel booking is typed like this. List what is wrong, then rewrite it as a discriminated union with the states <code>held</code> (expires at a time), <code>confirmed</code> (paid, with a payment reference) and <code>checked-in</code> (with a room number).</p>
+<pre><code>interface Booking {
+  id: number;
+  status: string;
+  paid?: boolean;
+  paymentRef?: string;
+  holdExpiresAt?: string;
+  room?: number;
+}</code></pre>
+<solution>
+<p>What is wrong: <code>status: string</code> allows any text and gives no narrowing; <code>paid</code> duplicates the status (a confirmed booking with <code>paid: false</code>?); and each optional field belongs to one state, but the type allows any mix, such as a room number on a held booking.</p>
+<example file="booking.ts" project="ex-booking">
+type Booking =
+  | { status: "held"; id: number; holdExpiresAt: string }
+  | { status: "confirmed"; id: number; paymentRef: string }
+  | { status: "checked-in"; id: number; paymentRef: string; room: number };
+
+function summary(booking: Booking): string {
+  switch (booking.status) {
+    case "held":
+      return `#${booking.id} held until ${booking.holdExpiresAt}`;
+    case "confirmed":
+      return `#${booking.id} confirmed, paid (${booking.paymentRef})`;
+    case "checked-in":
+      return `#${booking.id} in room ${booking.room}`;
+  }
+}
+
+const bookings: Booking[] = [
+  { status: "held", id: 1, holdExpiresAt: "18:00" },
+  { status: "checked-in", id: 2, paymentRef: "PAY-771", room: 304 },
+];
+for (const b of bookings) console.log(summary(b));
+</example>
+<output>
+</output>
+<p>The <code>paid</code> flag disappeared: "paid" is simply what <code>confirmed</code> and <code>checked-in</code> mean. When a boolean can be derived from the state, it should not be stored next to it.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A type is a set of values. A union is the set of values in any member; you may only use what every member supports until you narrow.</li>
+<li>Booleans plus optional fields allow far more shapes than your business has. A discriminated union, one member per state with a literal discriminant, allows exactly the real ones.</li>
+<li>Type each state change as a function from one member to another, and build new objects instead of changing the discriminant.</li>
+<li>Make switches exhaustive with a return type, an <code>assertNever</code> default (which also protects at runtime), or a <code>Record</code> keyed by the union.</li>
+<li>Return expected failures as a result union with typed error codes; keep exceptions for the unexpected.</li>
+<li>An intersection keeps what is in both types; it spreads over unions, and conflicting properties become <code>never</code>.</li>
+<li>Watch for: reading fields before narrowing, <code>| string</code> collapsing a literal union, <code>else</code> branches swallowing new members, widened discriminants, and in-place status changes.</li>
+</ul>
+<p>Next: <a href="/learn/ts-aliases-interfaces">Type aliases and interfaces</a>, the two ways to name these types, and the real differences between them.</p>
+</section>

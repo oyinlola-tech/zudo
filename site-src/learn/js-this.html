@@ -1,0 +1,833 @@
+---
+title: this in depth
+description: Predict the value of this in every kind of call, fix lost this with call, apply, bind and arrow functions, and build your own bind and bindAll to see how they work.
+minutes: 50
+youNeed: this, prototypes and classes, Closures in depth, and the JavaScript fundamentals course
+youBuild: A bind function written from scratch and a bindAll helper that makes a payment service safe to pass around as callbacks
+keywords: javascript this, this binding, call site, strict mode this undefined, globalThis, call apply bind, bound function, partial application, arrow function this, lexical this, callback loses this, class field arrow function, bind in constructor, event handler this, currentTarget, EventEmitter this
+objectives: State the rule that decides this for any call and apply it to method calls, plain calls, constructors and callbacks | Explain how strict mode changes this and why modules and classes behave differently from old scripts | Use call, apply and bind, including partial application, and predict what cannot be rebound | Choose between arrow functions, bound methods, arrow class fields and wrapper callbacks | Predict this inside DOM and EventEmitter handlers | Implement bind and bindAll yourself
+---
+<section>
+<h2 id="problem">The worker that lost its gateway</h2>
+<p>A shop processes payments in a background job runner. The runner is generic: it takes a list of jobs and a handler function, and calls the handler for each job. The payment logic lives in a class, as you learned in <a href="/learn/js-classes">this, prototypes and classes</a>:</p>
+<example file="problem.js">
+class PaymentService {
+  constructor(gateway) {
+    this.gateway = gateway;
+    this.processed = 0;
+  }
+
+  charge(job) {
+    this.processed += 1;
+    return this.gateway.charge(job.orderId, job.amountKobo);
+  }
+}
+
+function runJobs(jobs, handler) {
+  const results = [];
+  for (const job of jobs) {
+    try {
+      results.push(handler(job));
+    } catch (error) {
+      results.push(`failed: ${error.message}`);
+    }
+  }
+  return results;
+}
+
+const gateway = { charge: (orderId, kobo) => `charged ₦${kobo / 100} for ${orderId}` };
+const payments = new PaymentService(gateway);
+const jobs = [{ orderId: "ORD-7", amountKobo: 1170000 }, { orderId: "ORD-8", amountKobo: 500000 }];
+
+console.log(payments.charge(jobs[0]));
+console.log(runJobs(jobs, payments.charge));
+</example>
+<output>
+charged ₦11700 for ORD-7
+[
+  "failed: Cannot read properties of undefined (reading 'processed')",
+  "failed: Cannot read properties of undefined (reading 'processed')"
+]
+</output>
+<p>The same method works when called as <code>payments.charge(job)</code> and fails when the runner calls it. Nothing about the method changed; only the <em>way it was called</em> changed. The earlier lesson showed you this problem and two quick fixes. This lesson gives you the complete rule, so you can predict <code>this</code> in any situation you meet: plain calls in old and new code, <code>call</code>, <code>apply</code> and <code>bind</code>, arrow functions, class fields, DOM events and Node.js event emitters. At the end you write <code>bind</code> yourself and a <code>bindAll</code> helper that makes the payment service safe to hand to any runner.</p>
+</section>
+
+<section>
+<h2 id="rule">One rule: this is decided by the call</h2>
+<p>Inside a normal function (anything written with <code>function</code> or as a method, but not an arrow function), <code>this</code> is an extra, hidden parameter. Like any parameter, it gets its value <strong>when the function is called</strong>, from the way it is called. Where the function was written, and which object it was first attached to, do not matter. The place in the code where a call happens is called the <strong>call site</strong>, and this table covers every kind of call site:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>How the function is called</th><th>Value of <code>this</code></th></tr></thead>
+<tbody>
+<tr><td><code>obj.method()</code>, <code>obj["method"]()</code>, <code>obj.method?.()</code></td><td><code>obj</code>, the object before the last dot or bracket</td></tr>
+<tr><td><code>fn()</code>, a plain call</td><td><code>undefined</code> in strict mode; <code>globalThis</code> in old non-strict code</td></tr>
+<tr><td><code>new Fn()</code></td><td>The brand new object being created</td></tr>
+<tr><td><code>fn.call(x, a, b)</code>, <code>fn.apply(x, [a, b])</code></td><td><code>x</code></td></tr>
+<tr><td><code>bound()</code>, where <code>bound = fn.bind(x)</code></td><td><code>x</code>, always</td></tr>
+<tr><td>A callback: <code>other(fn)</code></td><td>Whatever <code>other</code> does when it calls <code>fn</code>, usually a plain call</td></tr>
+<tr><td>An arrow function, called any way at all</td><td>The <code>this</code> of the code around the arrow</td></tr>
+</tbody>
+</table></div>
+<p>Here is one function called in six of those ways:</p>
+<example file="call-sites.js">
+function whoAmI() {
+  return this === undefined ? "undefined" : this.name;
+}
+
+const shop = { name: "shop", whoAmI, branch: { name: "branch", whoAmI } };
+const courier = { name: "courier" };
+
+console.log(shop.whoAmI());
+console.log(shop.branch.whoAmI());
+console.log(shop["whoAmI"]());
+console.log(whoAmI());
+console.log(whoAmI.call(courier));
+
+const detached = shop.whoAmI;
+console.log(detached());
+</example>
+<output>
+shop
+branch
+shop
+undefined
+courier
+undefined
+</output>
+<p>The same function object gave four different answers. <code>shop.branch.whoAmI()</code> gives <code>branch</code>: only the object directly before the method name counts, not the whole chain. And <code>detached</code> is the very same function as <code>shop.whoAmI</code>, but called without a dot, so it gets nothing. Keep the table in mind: the rest of this lesson is each row in detail.</p>
+</section>
+
+<section>
+<h2 id="default">Plain calls and strict mode</h2>
+<p>What a plain call gives depends on whether the function runs in <strong>strict mode</strong>, the stricter set of JavaScript rules that turns silent mistakes into errors. Code is strict when it is inside an ES module (every file in this course), inside a <code>class</code>, or in a file or function that starts with the line <code>"use strict"</code>. Old browser scripts and CommonJS files without that line are <strong>sloppy mode</strong>, the informal name for non-strict code.</p>
+<ul>
+<li>In strict mode, a plain call gets <code>this = undefined</code>. Reading <code>this.name</code> then throws a <code>TypeError</code> right away.</li>
+<li>In sloppy mode, a plain call gets <code>this = globalThis</code>, the global object (<code>window</code> in a browser, <code>global</code> in Node.js). Reading <code>this.name</code> quietly reads a global, and <em>writing</em> <code>this.x = …</code> quietly creates a global variable.</li>
+</ul>
+<p>Every example here runs in strict mode, so to see sloppy mode this example uses the <code>Function</code> constructor, which builds a function from a string of code and always makes a sloppy one:</p>
+<example file="strict.js">
+function strictWho() {
+  return this;
+}
+const sloppyWho = new Function("return this;");
+
+console.log(strictWho());
+console.log(sloppyWho() === globalThis);
+
+const sloppyCounter = new Function("this.visits = (this.visits || 0) + 1; return this.visits;");
+sloppyCounter();
+sloppyCounter();
+console.log("globalThis.visits:", globalThis.visits);
+delete globalThis.visits;
+
+function strictType() {
+  return typeof this;
+}
+const sloppyType = new Function("return typeof this;");
+console.log(strictType.call("NGN"), sloppyType.call("NGN"));
+console.log(strictType.call(null), sloppyType.call(null));
+</example>
+<output>
+undefined
+true
+globalThis.visits: 2
+string object
+object object
+</output>
+<p>Three differences to take away:</p>
+<ol>
+<li>A plain call in sloppy mode reaches the global object. <code>sloppyCounter</code> meant to count something on an object, and instead created a global variable called <code>visits</code> that every other piece of code can see and break. In strict mode the same code throws on the first line, which is what you want.</li>
+<li>In sloppy mode, a primitive <code>this</code> such as the string <code>"NGN"</code> is wrapped into an object (a <code>String</code> object). Strict mode passes it as it is.</li>
+<li>In sloppy mode, <code>null</code> or <code>undefined</code> as <code>this</code> is replaced with the global object (<code>typeof</code> says <code>"object"</code> for both lines here, but for different reasons: strict mode really got <code>null</code>).</li>
+</ol>
+<p>You will write strict code, but you will read and call sloppy code: older libraries, CommonJS files, snippets pasted into a browser console. When a <code>this</code> bug behaves differently in two places, check which mode each one runs in.</p>
+<note>At the top level of a file, outside any function, <code>this</code> is <code>undefined</code> in an ES module, and <code>module.exports</code> (an empty object at first) in a CommonJS file. <a href="/learn/js-module-systems">Module systems</a> covers the difference.</note>
+</section>
+
+<section>
+<h2 id="implicit">Method calls</h2>
+<p>A call written as <code>something.method()</code> sets <code>this</code> to <code>something</code>. That is called <strong>implicit binding</strong>: nothing says "this" out loud, the dot does it. Because the value comes from the call, one function can serve many objects. That is how methods are shared through prototypes, and it also lets you <strong>borrow</strong> a method by putting it on another object:</p>
+<example file="implicit.js">
+const naira = {
+  code: "NGN",
+  symbol: "₦",
+  format(kobo) {
+    return `${this.symbol}${(kobo / 100).toFixed(2)} ${this.code}`;
+  },
+};
+
+const cedi = { code: "GHS", symbol: "GH₵", format: naira.format };
+
+console.log(naira.format(150000));
+console.log(cedi.format(150000));
+console.log(naira.format === cedi.format);
+
+const formats = { primary: naira };
+console.log(formats.primary.format(99));
+console.log(formats.primary?.format?.(99));
+</example>
+<output>
+₦1500.00 NGN
+GH₵1500.00 GHS
+true
+₦0.99 NGN
+₦0.99 NGN
+</output>
+<p><code>cedi.format</code> is the same function as <code>naira.format</code>, yet it used the cedi's symbol and code, because it was called on <code>cedi</code>. Optional chaining (<code>?.</code>) keeps the object too: <code>formats.primary?.format?.(99)</code> is still a method call on <code>formats.primary</code>.</p>
+<h3>Getters and setters</h3>
+<p>Getters and setters (<a href="/learn/js-objects-deep#accessors">Objects in depth</a>) follow the same rule: <code>this</code> is the object the property was read on. That includes reading through the prototype chain: if the getter lives on a prototype, <code>this</code> is still the object you started from, which is why one getter on a class prototype can serve every instance.</p>
+</section>
+
+<section>
+<h2 id="losing">How this gets lost</h2>
+<p>Implicit binding only lasts for the call written with the dot. The moment the function is taken away from its object and called some other way, the binding is gone. That happens in more places than it looks:</p>
+<example file="losing.js">
+class Basket {
+  constructor() {
+    this.items = [];
+  }
+  add(sku) {
+    this.items.push(sku);
+    return this.items.length;
+  }
+}
+
+function attempt(label, run) {
+  try {
+    console.log(`${label}: ${run()}`);
+  } catch (error) {
+    console.log(`${label}: ${error.message}`);
+  }
+}
+
+const basket = new Basket();
+
+attempt("method call", () => basket.add("RICE-5"));
+attempt("stored in a variable", () => {
+  const add = basket.add;
+  return add("OIL-1");
+});
+attempt("destructured", () => {
+  const { add } = basket;
+  return add("OIL-1");
+});
+attempt("passed as a callback", () => ["SALT", "SUGAR"].map(basket.add));
+attempt("thisArg of map", () => ["SALT", "SUGAR"].map(basket.add, basket));
+attempt("wrapper arrow", () => ["BEANS"].map((sku) => basket.add(sku)));
+console.log(basket.items);
+</example>
+<output>
+method call: 1
+stored in a variable: Cannot read properties of undefined (reading 'items')
+destructured: Cannot read properties of undefined (reading 'items')
+passed as a callback: Cannot read properties of undefined (reading 'items')
+thisArg of map: 2,3
+wrapper arrow: 4
+[ 'RICE-5', 'SALT', 'SUGAR', 'BEANS' ]
+</output>
+<ul>
+<li><strong>Stored in a variable</strong> and <strong>destructured</strong>: <code>const { add } = basket</code> is only a shorter way to write <code>const add = basket.add</code>. The function is copied out; the object is not.</li>
+<li><strong>Passed as a callback</strong>: <code>map</code> receives the function only. It calls it as a plain function.</li>
+<li><strong>thisArg</strong>: <code>map</code>, <code>filter</code>, <code>forEach</code>, <code>find</code>, <code>some</code> and <code>every</code> accept a second argument that they use as <code>this</code> for the callback. It works, but few people know it, so wrapper arrows are clearer.</li>
+<li><strong>Wrapper arrow</strong>: <code>(sku) =&gt; basket.add(sku)</code> puts the dot back. This is the fix you will write most often.</li>
+</ul>
+<p>Timers, event emitters, routers and job runners all receive functions, not objects. Each decides how to call your function, so a method passed to any of them has lost its <code>this</code> unless you do something about it. (Timers are a special case: in Node.js, <code>setTimeout</code> calls your function with its own timer object as <code>this</code>, and browsers pass <code>window</code>. Neither is your object.)</p>
+</section>
+
+<section>
+<h2 id="explicit">call, apply and bind</h2>
+<p>Every function has three methods that set <code>this</code> on purpose, called <strong>explicit binding</strong>:</p>
+<ul>
+<li><code>fn.call(thisValue, arg1, arg2)</code> calls <code>fn</code> now, with the given <code>this</code> and arguments.</li>
+<li><code>fn.apply(thisValue, [arg1, arg2])</code> does the same, but takes the arguments as one array.</li>
+<li><code>fn.bind(thisValue, arg1)</code> does <em>not</em> call anything. It returns a new <strong>bound function</strong> that, whenever it is called, calls <code>fn</code> with that <code>this</code> and those first arguments, followed by any new ones.</li>
+</ul>
+<example file="explicit.js">
+function describeTransfer(amountKobo, note) {
+  return `${this.owner} sends ₦${amountKobo / 100} (${note})`;
+}
+
+const ada = { owner: "Ada" };
+const chidi = { owner: "Chidi" };
+
+console.log(describeTransfer.call(ada, 500000, "rent"));
+console.log(describeTransfer.apply(chidi, [20000, "lunch"]));
+
+const adaSends = describeTransfer.bind(ada);
+console.log(adaSends(150000, "school fees"));
+
+const adaSendsRent = describeTransfer.bind(ada, 500000);
+console.log(adaSendsRent("October rent"));
+
+console.log(adaSends.name, adaSends.length, adaSendsRent.length);
+</example>
+<output>
+Ada sends ₦5000 (rent)
+Chidi sends ₦200 (lunch)
+Ada sends ₦1500 (school fees)
+Ada sends ₦5000 (October rent)
+bound describeTransfer 2 1
+</output>
+<p><code>adaSendsRent</code> fixes both <code>this</code> and the first argument: that is <strong>partial application</strong> again, the same idea as the factories in <a href="/learn/js-closures#factories">Closures in depth</a>, done by <code>bind</code>. The bound function's <code>name</code> starts with <code>"bound "</code>, which helps when you read stack traces, and its <code>length</code> (the number of parameters it expects) shrinks by the arguments already fixed.</p>
+<h3>Where apply still appears</h3>
+<p><code>apply</code> used to be the only way to call a function with an array of arguments. Spread replaced most of those uses, but you will read both:</p>
+<example file="apply.js">
+const pricesKobo = [850000, 320000, 20000];
+
+console.log(Math.max.apply(null, pricesKobo));
+console.log(Math.max(...pricesKobo));
+
+function logWithPrefix(prefix) {
+  const rest = Array.prototype.slice.call(arguments, 1);
+  return `${prefix} ${rest.join(" ")}`;
+}
+console.log(logWithPrefix("[orders]", "ORD-7", "shipped"));
+</example>
+<output>
+850000
+850000
+[orders] ORD-7 shipped
+</output>
+<p><code>Math.max</code> does not use <code>this</code>, so old code passes <code>null</code>. The second pattern is <strong>method borrowing</strong>: <code>arguments</code> (the old hidden list of all arguments) is not a real array, so old code borrowed <code>slice</code> from <code>Array.prototype</code> and ran it with <code>arguments</code> as <code>this</code>. Today you would write a rest parameter, <code>(prefix, ...rest)</code>.</p>
+<h3>A bound function cannot be rebound</h3>
+<p>Binding is permanent. Once a function is bound, <code>call</code>, <code>apply</code>, a method call and even another <code>bind</code> cannot change its <code>this</code>:</p>
+<example file="bind-permanent.js">
+function owner() {
+  return this.owner;
+}
+
+const ada = { owner: "Ada" };
+const chidi = { owner: "Chidi" };
+
+const adaOwner = owner.bind(ada);
+chidi.adaOwner = adaOwner;
+
+console.log(adaOwner());
+console.log(adaOwner.call(chidi));
+console.log(chidi.adaOwner());
+console.log(adaOwner.bind(chidi)());
+</example>
+<output>
+Ada
+Ada
+Ada
+Ada
+</output>
+<p>The bound function ignores whatever <code>this</code> it is called with and always calls the original with <code>ada</code>. That is its whole purpose, and also a trap: if a library calls your bound callback with a <code>this</code> it expects you to use, you will not see it. The only call that overrides a binding is <code>new</code>, which always creates a new object; constructing a bound function is rare, and <a href="/learn/js-prototypes">Prototypes in depth</a> explains what <code>new</code> does.</p>
+</section>
+
+<section>
+<h2 id="arrows">Arrow functions: this from outside</h2>
+<p>An arrow function has no <code>this</code> of its own. Inside an arrow, <code>this</code> is looked up like any other variable, in the surrounding code, the same way closures find variables (<a href="/learn/js-closures#environments">Closures in depth</a>). That is called <strong>lexical this</strong>. It has two consequences, one helpful and one harmful:</p>
+<example file="arrows.js">
+const report = {
+  branch: "Lagos",
+  orders: [{ id: "ORD-7", kobo: 1170000 }, { id: "ORD-8", kobo: 500000 }],
+
+  linesWithArrow() {
+    return this.orders.map((order) => `${this.branch}: ${order.id}`);
+  },
+
+  linesWithFunction() {
+    return this.orders.map(function (order) {
+      return `${this?.branch}: ${order.id}`;
+    });
+  },
+
+  linesOldStyle() {
+    const self = this;
+    return this.orders.map(function (order) {
+      return `${self.branch}: ${order.id}`;
+    });
+  },
+
+  arrowMethod: () => typeof this,
+};
+
+console.log(report.linesWithArrow());
+console.log(report.linesWithFunction());
+console.log(report.linesOldStyle());
+console.log(report.arrowMethod());
+
+const arrow = () => typeof this;
+console.log(arrow.call(report), arrow.bind(report)());
+</example>
+<output>
+[ 'Lagos: ORD-7', 'Lagos: ORD-8' ]
+[ 'undefined: ORD-7', 'undefined: ORD-8' ]
+[ 'Lagos: ORD-7', 'Lagos: ORD-8' ]
+undefined
+undefined undefined
+</output>
+<ul>
+<li><strong>Helpful</strong>: inside <code>linesWithArrow</code>, the arrow callback uses the method's <code>this</code>, which is <code>report</code>. A callback inside a method is exactly where arrows belong.</li>
+<li>A <code>function</code> callback in the same place gets its own <code>this</code>, from <code>map</code>'s plain call: <code>undefined</code>. Before arrows existed, code saved the outer value in a variable, usually called <code>self</code> or <code>that</code>. You will see <code>linesOldStyle</code> in older code; it is a closure over <code>self</code>.</li>
+<li><strong>Harmful</strong>: <code>arrowMethod</code> is an arrow written directly in the object literal. The code around it is the module, where <code>this</code> is <code>undefined</code>. An object literal does not create a <code>this</code>; only functions do. Never write methods as arrows in object literals.</li>
+<li>Explicit binding has no effect on an arrow: <code>call</code> and <code>bind</code> cannot give it a <code>this</code>, because it never looks for one of its own.</li>
+</ul>
+<p>Arrow functions also have no <code>arguments</code> of their own and cannot be called with <code>new</code>. The practical rule: <strong>methods with method syntax, callbacks with arrows.</strong></p>
+</section>
+
+<section>
+<h2 id="classes">this in classes</h2>
+<p>Class bodies are always strict, and class methods live on the prototype, so a detached class method always gets <code>this = undefined</code>. There are three standard ways to make a class method safe to hand out as a callback:</p>
+<example file="class-handlers.js">
+class Checkout {
+  constructor(label) {
+    this.label = label;
+    this.boundPay = this.pay.bind(this);
+  }
+  pay(orderId) {
+    return `${this.label} paid ${orderId}`;
+  }
+  refund = (orderId) => `${this.label} refunded ${orderId}`;
+}
+
+const lagos = new Checkout("Lagos till");
+const abuja = new Checkout("Abuja till");
+const orders = ["ORD-7"];
+
+console.log(orders.map((id) => lagos.pay(id)));
+console.log(orders.map(lagos.boundPay));
+console.log(orders.map(lagos.refund));
+
+console.log(Object.keys(lagos));
+console.log(lagos.pay === abuja.pay, lagos.refund === abuja.refund);
+console.log(typeof Checkout.prototype.pay, typeof Checkout.prototype.refund);
+</example>
+<output>
+[ 'Lagos till paid ORD-7' ]
+[ 'Lagos till paid ORD-7' ]
+[ 'Lagos till refunded ORD-7' ]
+[ 'refund', 'label', 'boundPay' ]
+true false
+function undefined
+</output>
+<ol>
+<li><strong>Wrap at the call site</strong>: <code>(id) =&gt; lagos.pay(id)</code>. Nothing changes in the class. Clear, and you see the object at the point where it matters.</li>
+<li><strong>Bind in the constructor</strong>: <code>this.boundPay = this.pay.bind(this)</code>. Each instance gets its own bound copy, stored as an own property.</li>
+<li><strong>Arrow function class field</strong>: <code>refund = (orderId) =&gt; …</code>. A <strong>class field</strong> is a property that every new instance gets, set up just before the constructor body runs (look at the order in <code>Object.keys</code>: <code>refund</code> comes before <code>label</code>). An arrow in a field takes <code>this</code> from that setup, which is the new instance, so it is bound for life.</li>
+</ol>
+<p>The last two lines show the price of options 2 and 3: they create a new function <em>per instance</em> (<code>lagos.refund !== abuja.refund</code>), and the arrow field is not on the prototype at all. That has consequences beyond memory:</p>
+<example file="field-override.js">
+class Checkout {
+  pay(orderId) {
+    return `paid ${orderId}`;
+  }
+  refund = (orderId) => `refunded ${orderId}`;
+}
+
+class AuditedCheckout extends Checkout {
+  pay(orderId) {
+    return `${super.pay(orderId)} (audited)`;
+  }
+  refund = (orderId) => `${super.refund?.(orderId) ?? "no parent refund"} (audited)`;
+}
+
+const till = new AuditedCheckout();
+console.log(till.pay("ORD-7"));
+console.log(till.refund("ORD-7"));
+</example>
+<output>
+paid ORD-7 (audited)
+no parent refund (audited)
+</output>
+<p><code>super.pay</code> looks on the parent's prototype and finds <code>pay</code>. <code>super.refund</code> finds nothing, because the parent's arrow <code>refund</code> is an own property of each instance, and the child's field replaced it on the same instance. Arrow fields cannot be extended with <code>super</code>, and tools that replace methods on the prototype (such as test spies) do not see them.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Approach</th><th>Per-instance cost</th><th>Works with <code>super</code> and prototype spies</th><th>Use when</th></tr></thead>
+<tbody>
+<tr><td>Wrapper arrow at the call site</td><td>None (one small arrow where you pass it)</td><td>Yes</td><td>Default choice</td></tr>
+<tr><td><code>bind</code> in the constructor</td><td>One function per bound method</td><td>Yes (the original stays on the prototype)</td><td>A method is passed around in many places</td></tr>
+<tr><td>Arrow class field</td><td>One function per field</td><td>No</td><td>Small classes that are never extended, such as UI handlers</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="events">this in event handlers</h2>
+<p>An event system is a function that calls your listener, so it decides <code>this</code>. The two you will meet most follow the same convention: a listener written with <code>function</code> gets the object the listener was registered on.</p>
+<h3>In the browser</h3>
+<p>For <code>element.addEventListener("click", listener)</code>, the browser calls a <code>function</code> listener with <code>this</code> set to <code>element</code>, the same value as <code>event.currentTarget</code>. An arrow listener keeps the <code>this</code> of the surrounding code instead:</p>
+<file name="index.html" project="dom-this">
+<!doctype html>
+<html>
+<body>
+  <ul id="cart">
+    <li><button id="remove-rice">Remove rice</button></li>
+    <li><button id="remove-oil">Remove oil</button></li>
+  </ul>
+</body>
+</html>
+</file>
+<example file="handlers.js" project="dom-this" runtime="dom">
+const rice = document.getElementById("remove-rice");
+const cart = document.getElementById("cart");
+
+rice.addEventListener("click", function (event) {
+  console.log("function:", this.id, this === event.currentTarget);
+});
+rice.addEventListener("click", (event) => {
+  console.log("arrow:", this, event.currentTarget.id);
+});
+
+cart.addEventListener("click", function (event) {
+  console.log("delegated: this is", this.id, "but the click was on", event.target.id);
+});
+
+rice.click();
+document.getElementById("remove-oil").click();
+</example>
+<output>
+function: remove-rice true
+arrow: undefined remove-rice
+delegated: this is cart but the click was on remove-rice
+delegated: this is cart but the click was on remove-oil
+</output>
+<p>The last two lines show the trap with <strong>event delegation</strong> (one listener on a parent for all its children): <code>this</code> is the element that has the listener, the list, not the button that was clicked. Code that reads <code>event.target</code> and <code>event.currentTarget</code> says exactly what it means, and works the same in <code>function</code> and arrow listeners. Prefer them over <code>this</code> in handlers.</p>
+<h3>In Node.js</h3>
+<p>Node's <code>EventEmitter</code>, which many Node.js APIs are built on, calls a <code>function</code> listener with <code>this</code> set to the emitter:</p>
+<example file="emitter.js" browser="no">
+import { EventEmitter } from "node:events";
+
+const orders = new EventEmitter();
+orders.name = "order events";
+
+orders.on("paid", function (orderId) {
+  console.log(`function: ${this.name} got ${orderId}`);
+});
+orders.on("paid", (orderId) => {
+  console.log(`arrow: this is ${this}, got ${orderId}`);
+});
+
+orders.emit("paid", "ORD-7");
+</example>
+<output>
+function: order events got ORD-7
+arrow: this is undefined, got ORD-7
+</output>
+<p>If your listener is a method of your own class, neither of these is your object. Register it with a wrapper, <code>orders.on("paid", (id) =&gt; mailer.sendReceipt(id))</code>, so the call inside has its dot back.</p>
+</section>
+
+<section>
+<h2 id="precedence">When several rules apply</h2>
+<p>A call can match more than one row of the table: a bound function stored on an object and called as a method, say. The rules have a fixed order of strength:</p>
+<ol>
+<li>An <strong>arrow function</strong> ignores all of them and uses the outer <code>this</code>.</li>
+<li><code>new</code> wins over everything else: the new object.</li>
+<li>A <strong>bound</strong> function uses its bound value, whatever the call looks like.</li>
+<li><code>call</code> and <code>apply</code> use their first argument.</li>
+<li>A <strong>method call</strong> uses the object before the dot.</li>
+<li>A <strong>plain call</strong> gets <code>undefined</code> (strict) or <code>globalThis</code> (sloppy).</li>
+</ol>
+<example file="precedence.js">
+function label() {
+  return this?.name ?? "nobody";
+}
+
+const shop = { name: "shop" };
+const bank = { name: "bank" };
+
+shop.label = label;
+shop.boundToBank = label.bind(bank);
+
+console.log(shop.label());
+console.log(shop.label.call(bank));
+console.log(shop.boundToBank());
+console.log(shop.boundToBank.call(shop));
+
+function Account(owner) {
+  this.owner = owner;
+}
+const BoundAccount = Account.bind(bank);
+const made = new BoundAccount("Ada");
+console.log(made.owner, bank.owner);
+</example>
+<output>
+shop
+bank
+bank
+bank
+Ada undefined
+</output>
+<p>The last line shows <code>new</code> beating <code>bind</code>: the constructor ran with a fresh object, and <code>bank</code> was not touched. You will rarely combine rules like this on purpose, but when a <code>this</code> bug confuses you, find the call site and walk down this list.</p>
+</section>
+
+<section>
+<h2 id="reason">Before you build: a helper that binds everything</h2>
+<reason title="Design bind and bindAll">
+<p>You will write <code>myBind(fn, thisValue, ...fixedArgs)</code> and then <code>bindAll(instance)</code>, which replaces every method of an instance with a bound copy so that <code>runJobs(jobs, payments.charge)</code> works. Before writing them, decide:</p>
+<ul>
+<li>How can <code>myBind</code> call <code>fn</code> with a chosen <code>this</code> without using <code>bind</code>? And how does the returned function remember <code>fn</code>, <code>thisValue</code> and the fixed arguments?</li>
+<li>Where do a class instance's methods actually live? Does <code>Object.keys(instance)</code> list them?</li>
+<li>What about methods inherited from a parent class?</li>
+<li>Which names on a prototype must <em>not</em> be bound?</li>
+<li>A getter such as <code>get total()</code> is also on the prototype. What happens if the helper reads it while looking for methods?</li>
+</ul>
+<answer>
+<ul>
+<li><strong>myBind</strong>: <code>fn.apply(thisValue, args)</code> (or <code>call</code>) calls with a chosen <code>this</code>. A closure remembers <code>fn</code>, <code>thisValue</code> and <code>fixedArgs</code>; the returned arrow combines the fixed arguments with the new ones. An arrow is right for the returned function, because it must ignore its own call-site <code>this</code>.</li>
+<li><strong>Where methods live</strong>: on the prototype, <code>Object.getPrototypeOf(instance)</code>, as non-enumerable properties. <code>Object.keys(instance)</code> lists only own enumerable data such as <code>gateway</code>. Use <code>Object.getOwnPropertyNames(prototype)</code>.</li>
+<li><strong>Inheritance</strong>: walk up the prototype chain with <code>Object.getPrototypeOf</code> until you reach <code>Object.prototype</code>, and stop there, because binding <code>toString</code> and friends onto every instance is pointless. A child's method must win over the parent's method of the same name, so skip names you have already bound.</li>
+<li><strong>Not bound</strong>: <code>constructor</code>, and anything that is not a function.</li>
+<li><strong>Getters</strong>: reading <code>prototype[name]</code> runs a getter with the prototype as <code>this</code>, which can throw or give nonsense. Read the <em>descriptor</em> with <code>Object.getOwnPropertyDescriptor</code> and only bind when it has a function <code>value</code>.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="build">Build: bind and bindAll</h2>
+<example file="binding.js" project="bind">
+export function myBind(fn, thisValue, ...fixedArgs) {
+  if (typeof fn !== "function") throw new TypeError("myBind needs a function");
+  const bound = (...laterArgs) => fn.apply(thisValue, [...fixedArgs, ...laterArgs]);
+  Object.defineProperty(bound, "name", { value: `bound ${fn.name}` });
+  return bound;
+}
+
+export function bindAll(instance) {
+  const seen = new Set();
+  let proto = Object.getPrototypeOf(instance);
+  while (proto !== null && proto !== Object.prototype) {
+    for (const name of Object.getOwnPropertyNames(proto)) {
+      if (name === "constructor" || seen.has(name)) continue;
+      seen.add(name);
+      const descriptor = Object.getOwnPropertyDescriptor(proto, name);
+      if (typeof descriptor.value === "function") {
+        instance[name] = descriptor.value.bind(instance);
+      }
+    }
+    proto = Object.getPrototypeOf(proto);
+  }
+  return instance;
+}
+</example>
+<p><code>myBind</code> is a closure (it remembers <code>fn</code>, <code>thisValue</code> and <code>fixedArgs</code>) around <code>apply</code>. Because <code>bound</code> is an arrow, calling it as a method or with <code>call</code> cannot change what it passes on, which is exactly the "cannot be rebound" behaviour of the real <code>bind</code>. (The real one also supports <code>new</code>; this version does not, because arrows cannot be constructed.) <code>bindAll</code> walks the prototype chain as the reasoning block planned. The <code>seen</code> set makes sure a child's method is bound instead of the parent's version it overrides.</p>
+<example file="main.js" project="bind">
+import { bindAll, myBind } from "./binding.js";
+
+class PaymentService {
+  constructor(gateway) {
+    this.gateway = gateway;
+    this.processed = 0;
+  }
+  charge(job) {
+    this.processed += 1;
+    return this.gateway.charge(job.orderId, job.amountKobo);
+  }
+  get summary() {
+    return `${this.processed} processed`;
+  }
+}
+
+class RetryingPaymentService extends PaymentService {
+  charge(job) {
+    return `${super.charge(job)} (with retry)`;
+  }
+  refund(job) {
+    return `refunded ${job.orderId}`;
+  }
+}
+
+function runJobs(jobs, handler) {
+  return jobs.map((job) => handler(job));
+}
+
+const gateway = { charge: (orderId, kobo) => `charged ₦${kobo / 100} for ${orderId}` };
+const jobs = [{ orderId: "ORD-7", amountKobo: 1170000 }, { orderId: "ORD-8", amountKobo: 500000 }];
+
+const payments = bindAll(new RetryingPaymentService(gateway));
+console.log(runJobs(jobs, payments.charge));
+console.log(runJobs(jobs, payments.refund));
+console.log(payments.summary, Object.keys(payments));
+
+function fee(percent, amountKobo) {
+  return `${this.bank}: ₦${(amountKobo * percent) / 10000}`;
+}
+const gtFee = myBind(fee, { bank: "GTBank" }, 0.5);
+console.log(gtFee(1000000), gtFee.name);
+console.log(gtFee.call({ bank: "Other" }, 1000000));
+</example>
+<output>
+[
+  'charged ₦11700 for ORD-7 (with retry)',
+  'charged ₦5000 for ORD-8 (with retry)'
+]
+[ 'refunded ORD-7', 'refunded ORD-8' ]
+2 processed [ 'gateway', 'processed', 'charge', 'refund' ]
+GTBank: ₦50 bound fee
+GTBank: ₦50
+</output>
+<p>The runner gets plain functions and calls them without a dot, and everything works: <code>charge</code> is the child's version (with retry), it still reaches the parent's through <code>super</code>, and the <code>summary</code> getter was left alone and still counts correctly.</p>
+<h3>Testing the behaviour</h3>
+<example file="binding.test.js" project="bind">
+import { bindAll, myBind } from "./binding.js";
+
+function check(label, actual, expected) {
+  console.log(`${Object.is(actual, expected) ? "PASS" : "FAIL"} ${label} -> ${actual}`);
+}
+
+function whoAmI(greeting = "hi") {
+  return `${greeting} ${this?.name}`;
+}
+const ada = { name: "Ada" };
+const bound = myBind(whoAmI, ada);
+
+check("uses the bound this", bound(), "hi Ada");
+check("ignores call", bound.call({ name: "Chidi" }), "hi Ada");
+check("ignores method call", { name: "Chidi", bound }.bound(), "hi Ada");
+check("passes arguments", bound("hello"), "hello Ada");
+check("fixes leading arguments", myBind(whoAmI, ada, "welcome")(), "welcome Ada");
+check("names the function", bound.name, "bound whoAmI");
+
+class Counter {
+  count = 0;
+  increment() {
+    this.count += 1;
+    return this.count;
+  }
+  get double() {
+    return this.count * 2;
+  }
+}
+const counter = bindAll(new Counter());
+const { increment } = counter;
+increment();
+increment();
+check("detached method works", counter.count, 2);
+check("getter still a getter", counter.double, 4);
+check("instance holds its own bound copy", Counter.prototype.increment === increment, false);
+check("other instances unaffected", Object.hasOwn(new Counter(), "increment"), false);
+</example>
+<output>
+PASS uses the bound this -> hi Ada
+PASS ignores call -> hi Ada
+PASS ignores method call -> hi Ada
+PASS passes arguments -> hello Ada
+PASS fixes leading arguments -> welcome Ada
+PASS names the function -> bound whoAmI
+PASS detached method works -> 2
+PASS getter still a getter -> 4
+PASS instance holds its own bound copy -> false
+PASS other instances unaffected -> false
+</output>
+<h3>In production</h3>
+<ul>
+<li><strong>Prefer the simplest fix.</strong> A wrapper arrow where you pass the callback is explicit and costs nothing. Reach for <code>bind</code> or <code>bindAll</code> when the same object's methods are handed out in many places, for example registering a whole controller's methods as routes.</li>
+<li><strong>Or avoid <code>this</code> entirely.</strong> A service built by a factory function with closures (<a href="/learn/js-closures#private-state">Closures in depth</a>) has nothing to lose. Many backend codebases use classes for structure and dependency injection, and wrappers or factories at the edges.</li>
+<li><strong>Know what binding costs.</strong> <code>bindAll</code> adds one function per method per instance. For a few long-lived services that is nothing; for a million short-lived objects it is real memory.</li>
+<li><strong>Strict mode everywhere.</strong> A lost <code>this</code> in sloppy code reads and writes globals silently. ES modules, which ZudoJS projects use, are strict automatically; a CommonJS file needs <code>"use strict"</code> at the top.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Predict and fix a timer">
+<p>This notifier should print the customer's name after a short delay, but it prints something else. Predict the output, explain it with the call-site rule, and fix it without changing the class.</p>
+<example file="timer-bug.js">
+class Notifier {
+  constructor(customer) {
+    this.customer = customer;
+  }
+  remind() {
+    console.log(`Reminder for ${this?.customer}`);
+  }
+}
+
+const notifier = new Notifier("Ada");
+setTimeout(notifier.remind, 0);
+</example>
+<output>
+Reminder for undefined
+</output>
+<solution>
+<p><code>setTimeout</code> receives only the function and calls it itself, so <code>this</code> is not <code>notifier</code>. (In Node.js it is the timer object, which has no <code>customer</code>; in a browser it is <code>window</code>.) Give the call its dot back with a wrapper, or bind:</p>
+<example file="timer-fix.js">
+class Notifier {
+  constructor(customer) {
+    this.customer = customer;
+  }
+  remind() {
+    console.log(`Reminder for ${this.customer}`);
+  }
+}
+
+const notifier = new Notifier("Ada");
+setTimeout(() => notifier.remind(), 0);
+setTimeout(notifier.remind.bind(notifier), 0);
+</example>
+<output>
+Reminder for Ada
+Reminder for Ada
+</output>
+</solution>
+</exercise>
+<exercise title="Borrow a method">
+<p>A <code>receipt</code> object has a <code>total()</code> method that adds up <code>this.lines</code>. A plain object <code>{ lines: [500, 1500] }</code> from an old API has no methods. Without copying the method onto it, use <code>call</code> to compute its total, then use <code>bind</code> to make a reusable <code>oldApiTotal</code> function.</p>
+<solution>
+<example file="borrow.js">
+const receipt = {
+  lines: [850000, 320000],
+  total() {
+    return this.lines.reduce((sum, kobo) => sum + kobo, 0);
+  },
+};
+
+const fromOldApi = { lines: [500, 1500] };
+console.log(receipt.total.call(fromOldApi));
+
+const oldApiTotal = receipt.total.bind(fromOldApi);
+fromOldApi.lines.push(250);
+console.log(oldApiTotal(), receipt.total());
+</example>
+<output>
+2000
+2250 1170000
+</output>
+<p><code>bind</code> fixes <em>which object</em> is used, not a copy of it, so the bound function sees the line added later. <code>receipt.total()</code> still uses <code>receipt</code>: borrowing never changes the original method.</p>
+</solution>
+</exercise>
+<exercise title="Callbacks inside a method">
+<p>Finish <code>priceList()</code> so it returns lines like <code>"Rice 5kg: ₦8500.00"</code> using <code>this.format</code> for each product. Write it once with an arrow callback and once with a <code>function</code> callback plus <code>map</code>'s <code>thisArg</code>.</p>
+<solution>
+<example file="price-list.js">
+const shop = {
+  symbol: "₦",
+  products: [{ name: "Rice 5kg", kobo: 850000 }, { name: "Oil 1L", kobo: 320000 }],
+  format(kobo) {
+    return `${this.symbol}${(kobo / 100).toFixed(2)}`;
+  },
+  priceList() {
+    return this.products.map((p) => `${p.name}: ${this.format(p.kobo)}`);
+  },
+  priceListThisArg() {
+    return this.products.map(function (p) {
+      return `${p.name}: ${this.format(p.kobo)}`;
+    }, this);
+  },
+};
+
+console.log(shop.priceList());
+console.log(shop.priceListThisArg());
+</example>
+<output>
+[ 'Rice 5kg: ₦8500.00', 'Oil 1L: ₦3200.00' ]
+[ 'Rice 5kg: ₦8500.00', 'Oil 1L: ₦3200.00' ]
+</output>
+<p>Both work. The arrow version is the one most teams prefer, because a reader sees at once that <code>this</code> is the method's <code>this</code>; the <code>thisArg</code> version depends on a second argument that is easy to miss.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li><code>this</code> is a hidden parameter set by the call, not by where the function is written. Find the call site.</li>
+<li>Method call: the object before the last dot. Plain call: <code>undefined</code> in strict code, <code>globalThis</code> in sloppy code. <code>new</code>: the new object.</li>
+<li>Storing, destructuring or passing a method as a callback detaches it. Fix it with a wrapper arrow, <code>bind</code>, or a <code>thisArg</code>.</li>
+<li><code>call</code> and <code>apply</code> call now with a chosen <code>this</code>; <code>bind</code> returns a permanently bound function and can fix leading arguments too. Only <code>new</code> overrides a binding.</li>
+<li>Arrow functions use the surrounding <code>this</code> and cannot be rebound: perfect callbacks inside methods, wrong as methods in object literals.</li>
+<li>In classes, choose between wrappers at the call site, <code>bind</code> in the constructor, and arrow fields; arrow fields are per instance and invisible to <code>super</code>.</li>
+<li>DOM and <code>EventEmitter</code> call <code>function</code> listeners with the object they are registered on; prefer <code>event.currentTarget</code> and <code>event.target</code>.</li>
+</ul>
+<p>Next: <a href="/learn/js-prototypes">Prototypes in depth</a>, where you follow the prototype chain step by step and see exactly what <code>new</code> and <code>class</code> do.</p>
+</section>

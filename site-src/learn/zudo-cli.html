@@ -1,0 +1,803 @@
+---
+title: The ZudoJS CLI in depth
+description: Use every command and option of the zudojs CLI, learn how it finds your project and names and wires generated files, and read its errors before they cost you time.
+minutes: 50
+youNeed: "Create the Task API project"
+youBuild: A shop-api practice project with generated resources, a module, middleware and features, plus your own small project CLI built on zudojs-cli
+keywords: zudojs cli, zudojs generate, schematics, dry-run, force, project detection, manifest.json, code generation, markers, zudojs add, zudojs doctor, zudojs info, zudojs dev, zudojs build, modular monolith, microservice, createCLI, exit codes
+objectives: List every command and option the published CLI has and pick the right one | Explain how the CLI finds a project and decides where generated files go | Predict the files a schematic writes and the names it derives from yours | Read the CLI's validation and generation errors and fix what they point at | Replace generated stubs with real code and keep the wiring markers intact
+---
+<section>
+<h2 id="why">The problem: eight files and two edits</h2>
+<p>Your shop needs a <code>/api/v1/products</code> endpoint. In the Task API project from <a href="/learn/zudo-create-project">Create the Task API project</a>, the example resource shows what that takes: a DTO file with the schemas, a repository, a service, a controller, a routes file and a test. That is six new files. Then two existing files must change: <code>src/routes/index.ts</code> must call the new routes function, and <code>src/container.ts</code> must build the new controller. Forget either edit and the code compiles, the tests pass, and every request to <code>/api/v1/products</code> answers 404.</p>
+<p>Now multiply that by a team. One developer calls the file <code>productController.ts</code>, another <code>products-controller.ts</code>, a third puts it in <code>src/http/</code>. Six months later nobody can guess where anything lives.</p>
+<p>A code generator solves three problems at once:</p>
+<ul>
+<li><strong>Speed</strong>: one command instead of eight careful edits.</li>
+<li><strong>Consistency</strong>: every project names and places files the same way, so you can open any ZudoJS project and find the products controller.</li>
+<li><strong>Correctness</strong>: the generated code compiles, its tests pass, and the wiring edits are made for you.</li>
+</ul>
+<p>The previous lesson installed the CLI and tried each command once. This lesson goes through what each command really does, the rules it follows, and what it prints when something is wrong. The shell outputs below come from <code>zudojs-cli</code> 2.1.3 on Node.js 24; if yours is newer, run <code>zudojs --help</code> to see what changed.</p>
+<p>To follow along, create a practice project next to <code>task-api</code>. Generating into it is safe, because you will throw it away:</p>
+<shell title="Terminal on your computer">
+$ zudojs create shop-api --package-manager npm --capabilities ""
+…
+└  Project created successfully.
+$ cd shop-api
+</shell>
+</section>
+
+<section>
+<h2 id="map">Every command and option</h2>
+<p><code>zudojs --help</code> lists seven commands. <code>zudojs help &lt;command&gt;</code> (or <code>zudojs &lt;command&gt; --help</code>) prints the options of one. This table is all of them, taken from the help of every command:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Command (alias)</th><th>Arguments</th><th>Options</th></tr></thead>
+<tbody>
+<tr><td><code>create</code> (<code>new</code>)</td><td><code>[project-name]</code></td><td><code>-t, --type</code> backend, frontend, fullstack · <code>-a, --architecture</code> monolith, modular-monolith, microservice · <code>-p, --package-manager</code> npm, pnpm, yarn, bun · <code>-d, --database</code> postgresql, mysql, sqlite · <code>--api</code> rest, graphql, rpc · <code>-f, --frontend</code> react, next, vue, nuxt, angular, svelte, sveltekit, astro, vanilla, flutter, react-native · <code>-F, --frontend-architecture</code> zudojs-standard, feature-based, minimal, framework-default · <code>-l, --language</code> typescript, javascript · <code>--no-install</code> · <code>--no-git</code> · <code>--services</code> (microservices only) · <code>--capabilities</code> cqrs, events, messaging, queue, observability, openapi, database, security</td></tr>
+<tr><td><code>dev</code> (<code>d</code>)</td><td>none</td><td><code>--frontend-only</code> · <code>--backend-only</code> · <code>-p, --port</code></td></tr>
+<tr><td><code>build</code> (<code>b</code>)</td><td>none</td><td>none</td></tr>
+<tr><td><code>generate</code> (<code>g</code>)</td><td><code>&lt;schematic&gt; &lt;name&gt;</code></td><td><code>-s, --service</code> · <code>-m, --module</code> · <code>--dry-run</code> · <code>--force</code></td></tr>
+<tr><td><code>add</code></td><td><code>&lt;feature&gt;</code></td><td><code>-s, --service</code> · <code>--skip-install</code></td></tr>
+<tr><td><code>doctor</code></td><td>none</td><td>none</td></tr>
+<tr><td><code>info</code></td><td>none</td><td>none</td></tr>
+</tbody>
+</table></div>
+<p>Every command also takes <code>-h, --help</code>, and <code>zudojs -v</code> prints the version. Some defaults matter: <code>--package-manager</code> defaults to <code>pnpm</code>, <code>--database</code> to <code>postgresql</code>, <code>--architecture</code> to <code>monolith</code> and <code>--type</code> to <code>backend</code>.</p>
+<p>The CLI checks every value before it writes anything:</p>
+<shell title="Terminal on your computer">
+$ zudojs create shop --architecture serverless --no-install --no-git
+Invalid architecture: serverless. Valid: monolith, modular-monolith, microservice
+$ zudojs create shop --package-manager deno --no-install --no-git
+Invalid package manager: deno. Valid: pnpm, npm, yarn, bun
+$ zudojs create "My Shop" --package-manager npm --no-install --no-git
+Project name must start with a letter or digit and contain only alphanumeric characters, hyphens, and underscores.
+$ zudojs create ../escape --package-manager npm --no-install --no-git
+Project name must not contain path separators or '..'.
+$ zudojs create task-api --package-manager npm --no-install --no-git
+Directory "task-api" already exists in ~/code
+$ zudojs create shop --language javascript --package-manager npm --no-install --no-git
+Backend projects are generated in TypeScript only; --language javascript is not supported for --type backend.
+</shell>
+<p>The last one is worth knowing: <code>--language javascript</code> is listed in the help, but it only applies to frontend projects. A backend is always TypeScript.</p>
+<h3>Exit codes</h3>
+<p>A command also reports success or failure with its <strong>exit code</strong>, the number a program hands back to the shell when it ends (<code>echo $?</code> prints the last one on macOS and Linux). Scripts and CI pipelines read it, not the text. These are the codes the CLI used in the runs for this lesson:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Code</th><th>When</th><th>Example</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>Success, including runs that only print warnings</td><td><code>zudojs doctor</code> with warnings, <code>zudojs generate … --dry-run</code></td></tr>
+<tr><td>1</td><td>The command ran and failed</td><td>an invalid option value, a name that already exists, a failed <code>tsc</code> in <code>zudojs build</code>, not inside a project</td></tr>
+<tr><td>2</td><td>The command line itself is incomplete</td><td><code>zudojs generate resource</code> without a name</td></tr>
+<tr><td>3</td><td>The command does not exist</td><td><code>zudojs deploy</code></td></tr>
+</tbody>
+</table></div>
+<p>There is no <code>deploy</code> command, no <code>test</code> command and no <code>migrate</code> command. Those jobs belong to your npm scripts (<code>npm test</code>) and, once you add a database, to the <code>db:*</code> scripts the CLI writes into <code>package.json</code>.</p>
+</section>
+
+<section>
+<h2 id="detection">How the CLI finds your project</h2>
+<p><code>create</code> works anywhere. Every other command except <code>info</code> needs a project, and it has to find one from the folder you are in.</p>
+<reason title="Where am I?">
+<p>Before reading how it works, think about what the CLI should do in each case. You run <code>zudojs generate resource products</code>:</p>
+<ol>
+<li>inside <code>shop-api/src/routes</code>, a folder deep inside the project;</li>
+<li>inside a Node.js project that has a <code>package.json</code> but was never made with ZudoJS;</li>
+<li>inside <code>shop-api</code> after someone deleted <code>.zudojs/manifest.json</code>;</li>
+<li>inside one service of a microservice project.</li>
+</ol>
+<p>Which of these should work? Which should refuse? What could go wrong if the CLI guessed?</p>
+<answer>
+<ol>
+<li>It should work. People run commands from wherever their terminal happens to be, so the CLI must walk up the folders until it finds the project root, and write files relative to that root, not to the current folder.</li>
+<li>It must refuse. A bare <code>package.json</code> only proves "some JavaScript project". Earlier versions of the CLI did accept it, and <code>zudojs build</code> then climbed to an unrelated parent folder and ran <em>its</em> build script. Guessing here runs someone else's code.</li>
+<li>It can still work if something else records the project. The <code>zudojs</code> block in <code>package.json</code> holds the project type and architecture too, so the manifest is not the only record.</li>
+<li>Either answer is defensible, but it must be predictable: the service folder has its own <code>package.json</code> with a <code>zudojs</code> block, so the walk stops there first, and the CLI treats that one service as the project.</li>
+</ol>
+</answer>
+</reason>
+<p>The rule the CLI uses: starting in the current folder and moving up one parent at a time, the first folder that contains one of these is the project root:</p>
+<ul>
+<li><code>.zudojs/manifest.json</code>, written by <code>create</code>;</li>
+<li><code>zudojs.config.ts</code> or <code>zudojs.config.js</code>, from older versions of the CLI;</li>
+<li>a <code>package.json</code> with a <code>zudojs</code> block.</li>
+</ul>
+<p>Here is the same walk in a few lines of Node.js, run against a throwaway folder tree:</p>
+<example file="find-root.ts" browser="no">
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, relative } from "node:path";
+
+// A throwaway folder tree: code/shop-api is a ZudoJS project, code/notes is not.
+const root = mkdtempSync(join(tmpdir(), "cli-"));
+const shop = join(root, "code", "shop-api");
+mkdirSync(join(shop, ".zudojs"), { recursive: true });
+mkdirSync(join(shop, "src", "routes"), { recursive: true });
+writeFileSync(join(shop, ".zudojs", "manifest.json"), JSON.stringify({ architecture: "monolith" }));
+mkdirSync(join(root, "code", "notes"), { recursive: true });
+writeFileSync(join(root, "code", "notes", "package.json"), JSON.stringify({ name: "notes" }));
+
+function isZudoProject(dir: string): boolean {
+  if (existsSync(join(dir, ".zudojs", "manifest.json"))) return true;
+  if (existsSync(join(dir, "zudojs.config.ts")) || existsSync(join(dir, "zudojs.config.js"))) return true;
+  const file = join(dir, "package.json");
+  if (!existsSync(file)) return false;
+  const pkg = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+  return "zudojs" in pkg;
+}
+
+function findProjectRoot(start: string): string | null {
+  let dir = start;
+  while (true) {
+    if (isZudoProject(dir)) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return null; // reached the top of the disk
+    dir = parent;
+  }
+}
+
+for (const start of [join(shop, "src", "routes"), shop, join(root, "code", "notes")]) {
+  const found = findProjectRoot(start);
+  const label = relative(root, start).padEnd(27);
+  console.log(label, "->", found === null ? "not a ZudoJS project" : relative(root, found));
+}
+rmSync(root, { recursive: true, force: true });
+</example>
+<output>
+code/shop-api/src/routes    -> code/shop-api
+code/shop-api               -> code/shop-api
+code/notes                  -> not a ZudoJS project
+</output>
+<p><code>dirname</code> returns the parent folder, and the parent of the top folder is itself, which is how the loop knows to stop. The real CLI prints the root it found whenever it is not the folder you are in:</p>
+<shell title="Terminal on your computer">
+$ cd src/routes
+$ zudojs generate dto coupons --dry-run
+Detected architecture: monolith
+Project root: ~/code/shop-api
+Dry run: 1 file would be written or updated (nothing written):
+  - src/dtos/coupons.dto.ts
+$ cd /tmp
+$ zudojs generate resource orders
+This command must be run inside a Zudojs project directory.
+$ zudojs info
+Zudojs CLI
+  Version: 2.1.3
+  Node.js: v24.19.0
+
+Not in a Zudojs project directory.
+Run `zudojs create <project-name>` to create a new project.
+</shell>
+<p><code>info</code> is the one command that still answers outside a project: it prints the CLI part and says there is no project.</p>
+<h3>Architecture detection</h3>
+<p>Once it has the root, the CLI needs the <strong>architecture</strong>, because it decides where files go. It reads the architecture the project recorded: first the manifest, then an old <code>zudojs.config</code> file, then the <code>zudojs</code> block of <code>package.json</code>. Every command that generates prints the answer on its first line, <code>Detected architecture: monolith</code>. Delete the manifest and the <code>package.json</code> block still answers; <code>zudojs doctor</code> then reports where it found the project:</p>
+<shell title="Terminal on your computer">
+$ rm -r .zudojs
+$ zudojs doctor
+…
+✔ Zudojs project: backend (monolith) from package.json#zudojs
+…
+</shell>
+<p>Only when nothing records an architecture does the CLI guess from the folders: an <code>apps/gateway</code> folder next to a <code>pnpm-workspace.yaml</code> means microservices, a <code>src/modules</code> folder means modular monolith, anything else is a monolith. That guess is wrong for a monolith made by <code>create</code>, which has a <code>src/modules</code> folder too. So commit <code>.zudojs/manifest.json</code> and the <code>zudojs</code> block, and never edit them by hand.</p>
+<p>The microservice case from the reasoning block really behaves as predicted. From inside a service, the CLI stops at the service's own <code>package.json</code> and treats the service as a monolith:</p>
+<shell title="Terminal on your computer">
+$ cd shop-ms/apps/services/orders/src
+$ zudojs generate event order-paid --dry-run
+Detected architecture: monolith
+Project root: ~/code/shop-ms/apps/services/orders
+Dry run: 1 file would be generated (nothing written):
+  - src/events/order-paid.event.ts
+</shell>
+<p>The file lands in the right service either way. From the top of a microservice project, use <code>--service orders</code> instead, as shown <a href="#targets">below</a>.</p>
+</section>
+
+<section>
+<h2 id="schematics">Generate: the fourteen schematics</h2>
+<p>A <strong>schematic</strong> is one kind of thing the generator can write. <code>--dry-run</code> lists the files without writing them, so it is the fastest way to learn what each schematic does. This table is what the fourteen schematics wrote in a monolith for the name <code>orders</code>:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Schematic</th><th>Files it writes (new)</th><th>Files it edits</th></tr></thead>
+<tbody>
+<tr><td><code>resource</code></td><td>dto, repository, service, controller, routes, <code>tests/orders.test.ts</code></td><td><code>src/routes/index.ts</code>, <code>src/container.ts</code></td></tr>
+<tr><td><code>route</code></td><td>dto, repository, service, controller, routes</td><td><code>src/routes/index.ts</code>, <code>src/container.ts</code></td></tr>
+<tr><td><code>controller</code></td><td>dto, repository, service, controller</td><td>none</td></tr>
+<tr><td><code>service</code></td><td>dto, repository, service</td><td>none</td></tr>
+<tr><td><code>repository</code></td><td>dto, repository</td><td>none</td></tr>
+<tr><td><code>dto</code></td><td><code>src/dtos/orders.dto.ts</code></td><td>none</td></tr>
+<tr><td><code>module</code></td><td><code>src/modules/orders/</code>: the module class, a <code>features/</code> folder and a <code>routes/index.ts</code></td><td><code>src/modules/index.ts</code>, <code>src/routes/index.ts</code>, <code>src/app.ts</code></td></tr>
+<tr><td><code>middleware</code></td><td><code>src/middlewares/orders.middleware.ts</code></td><td><code>src/middlewares/index.ts</code>, <code>src/server.ts</code></td></tr>
+<tr><td><code>command</code></td><td><code>src/commands/orders/</code>: command, handler, index</td><td><code>package.json</code> (adds <code>@zudojs/cqrs</code>)</td></tr>
+<tr><td><code>query</code></td><td><code>src/queries/orders/</code>: query, handler, index</td><td><code>package.json</code> (adds <code>@zudojs/cqrs</code>)</td></tr>
+<tr><td><code>event</code></td><td><code>src/events/orders.event.ts</code></td><td>none</td></tr>
+<tr><td><code>job</code></td><td><code>src/jobs/orders.job.ts</code></td><td>none</td></tr>
+<tr><td><code>model</code></td><td><code>src/models/orders.model.ts</code></td><td>none</td></tr>
+<tr><td><code>validator</code></td><td><code>src/validators/orders.validator.ts</code></td><td>none</td></tr>
+</tbody>
+</table></div>
+<p>Two patterns are worth seeing in that table:</p>
+<ul>
+<li>The layered schematics <strong>cascade</strong>. A controller is useless without a service, a service without a repository, a repository without the DTO types it stores. So <code>generate controller</code> writes the whole chain below it. Only <code>route</code> and <code>resource</code> also wire the result into the app; the others leave it for you to connect.</li>
+<li><code>module</code> and the dry run disagree slightly: the dry run listed seven files, the real run eight. The eighth is <code>src/app.ts</code>, where the new module is added to the runtime's list. Treat <code>--dry-run</code> as a close preview, not a contract, and look at <code>git diff</code> after the real run.</li>
+</ul>
+<h3>What the small schematics write</h3>
+<p>The resource files are complete and tested; you will trace them line by line in the <a href="/learn/zudo-project-anatomy">next lesson</a>. The small schematics write <strong>stubs</strong>: starting points that compile but do nothing useful yet. Here is exactly what four of them wrote:</p>
+<file name="src/events/order-placed.event.ts">
+/**
+ * order-placed event.
+ */
+
+export interface OrderPlacedEvent {
+  readonly type: "order-placed";
+  readonly timestamp: Date;
+}
+</file>
+<file name="src/jobs/send-invoice.job.ts">
+/**
+ * send-invoice job.
+ */
+
+export async function sendInvoiceJob() {
+  // Job implementation
+}
+</file>
+<file name="src/models/invoice.model.ts">
+/**
+ * invoice model.
+ */
+
+export interface InvoiceModel {
+  readonly id: string;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+</file>
+<file name="src/validators/payment.validator.ts">
+/**
+ * payment validator.
+ */
+
+export function validatePayment(input: unknown): boolean {
+  return true;
+}
+</file>
+<p>The event, job and model stubs are harmless: an interface and an empty function. The validator stub is not. It accepts <strong>everything</strong>, and a function named <code>validatePayment</code> that is wired into a payment route looks finished to the next person who reads it. Fill it in before anything calls it. With <code>@zudojs/schema</code>, which the project already has:</p>
+<example file="payment.validator.ts">
+import { schema } from "@zudojs/schema";
+
+// What `zudojs generate validator payment` writes:
+export function validatePaymentStub(input: unknown): boolean {
+  return true;
+}
+
+// What it should become before anything depends on it:
+const PaymentSchema = schema.object({
+  orderId: schema.string().min(1),
+  amountKobo: schema.number().int().min(1),
+  currency: schema.enum(["NGN", "USD"] as const),
+});
+
+export function validatePayment(input: unknown): boolean {
+  return PaymentSchema.safeParse(input).success;
+}
+
+const good = { orderId: "ord_19", amountKobo: 250_000, currency: "NGN" };
+const bad = { orderId: "", amountKobo: -500, currency: "BTC" };
+console.log("stub:", validatePaymentStub(good), validatePaymentStub(bad), validatePaymentStub("DROP TABLE"));
+console.log("real:", validatePayment(good), validatePayment(bad), validatePayment("DROP TABLE"));
+const result = PaymentSchema.safeParse(bad);
+if (!result.success) for (const issue of result.issues) console.log(`  ${issue.path.join(".")}: ${issue.message}`);
+</example>
+<output>
+stub: true true true
+real: true false false
+  orderId: String must be at least 1 character
+  amountKobo: Expected >= 1, received -500
+  currency: Expected one of "NGN", "USD"
+</output>
+<p>The amount is in <strong>kobo</strong>, the smallest unit of the naira (₦2,500 is 250,000 kobo), so it can be a whole number with no rounding errors. A test that calls <code>validatePayment</code> with bad input, like the last line, is the cheapest way to prove a stub has been replaced.</p>
+<p>The <code>middleware</code> stub is different: it is already registered in <code>src/server.ts</code> and passes every request straight through. Filling it in changes every request at once. Here it writes one audit line per request. <code>next()</code> runs the rest of the pipeline and resolves to the response:</p>
+<example file="audit.ts" browser="no">
+import { HttpMiddlewarePipeline, createResponseContext, createRouter } from "@zudojs/http";
+import type { HttpMiddleware } from "@zudojs/http";
+import { createHttpTestClient } from "@zudojs/testing";
+
+// src/middlewares/audit.middleware.ts, filled in: one line per request.
+export function auditMiddleware(): HttpMiddleware {
+  return async (context, next) => {
+    const response = await next();
+    console.log(`audit ${context.request.method} ${context.request.path} -> ${response.status}`);
+    return response;
+  };
+}
+
+const router = createRouter();
+router.get("/api/v1/orders", async () => createResponseContext({ status: 200 }).json([]));
+
+const dispatch: HttpMiddleware = async (context) =>
+  (await router.dispatch(context.request, { signal: context.signal })).response;
+
+const pipeline = new HttpMiddlewarePipeline({ middlewares: [auditMiddleware(), dispatch] });
+const client = createHttpTestClient(pipeline);
+await client.get("/api/v1/orders").expect(200);
+await client.get("/api/v1/payments").expect(404);
+await client.close();
+</example>
+<output>
+audit GET /api/v1/orders -> 200
+audit GET /api/v1/payments -> 404
+</output>
+<p>The audit line comes <em>after</em> <code>await next()</code>, so it knows the status, and it sees 404s too. The <a href="/learn/zudo-middleware">middleware lesson</a> covers the pipeline properly.</p>
+</section>
+
+<section>
+<h2 id="names">How your name becomes file and class names</h2>
+<p>You type one name; the generator needs a file name, class names, a type name and a URL. It derives them all with fixed rules, and refuses names that would produce broken code. The real CLI gave these answers:</p>
+<shell title="Terminal on your computer">
+$ zudojs generate resource OrderItems --dry-run
+Detected architecture: monolith
+Dry run: 8 files would be written or updated (nothing written):
+  - src/dtos/order-items.dto.ts
+  …
+$ zudojs generate resource 2fa --dry-run
+Invalid resource name: "2fa". It must start with a letter: the name becomes a TypeScript class name, and "2fa" is not a valid identifier. Try "two-factor-auth" instead of "2fa".
+$ zudojs generate resource records --dry-run
+Detected architecture: monolith
+Invalid resource name: "records". "Record" would shadow a JavaScript global; choose another name (for example "records-items").
+$ zudojs generate resource ../admin --dry-run
+Invalid resource name: "../admin". Use a plain name such as "users"; paths are not allowed.
+</shell>
+<p>This function applies the same rules, so you can predict the names before you run anything:</p>
+<example file="names.js">
+const RESERVED = new Set(["Array", "Date", "Error", "Map", "Object", "Promise", "Record", "Request", "Response", "Set", "String", "URL"]);
+
+function normalizeName(name) {
+  return name
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")     // orderItems -> order-Items
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")  // HTTPServer -> HTTP-Server
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")               // anything else becomes a dash
+    .replace(/^-+|-+$/g, "");                    // no dash at either end
+}
+
+const toPascal = (slug) => slug.split("-").map((p) => p[0].toUpperCase() + p.slice(1)).join("");
+
+function singularize(slug) {
+  if (/ies$/.test(slug) && slug.length > 4) return slug.slice(0, -3) + "y";
+  if (/(ses|xes|zes|ches|shes)$/.test(slug)) return slug.slice(0, -2);
+  if (/[^s]s$/.test(slug)) return slug.slice(0, -1);
+  return slug;
+}
+
+function resourceNames(raw) {
+  if (/[\\/]|\.\./.test(raw)) throw new Error(`"${raw}": paths are not allowed`);
+  const slug = normalizeName(raw);
+  if (slug === "") throw new Error(`"${raw}": needs at least one letter or digit`);
+  if (/^[0-9]/.test(slug)) throw new Error(`"${raw}": must start with a letter`);
+  const entity = toPascal(singularize(slug));
+  if (RESERVED.has(entity)) throw new Error(`"${raw}": ${entity} would shadow a JavaScript global`);
+  return `${slug}.controller.ts  ${toPascal(slug)}Controller  type ${entity}  /api/v1/${slug}`;
+}
+
+for (const raw of ["products", "OrderItems", "Order_Items", "Bad Name!", "categories", "boxes", "2fa", "records", "../admin"]) {
+  try {
+    console.log(resourceNames(raw));
+  } catch (error) {
+    console.log("refused", error.message);
+  }
+}
+</example>
+<output>
+products.controller.ts  ProductsController  type Product  /api/v1/products
+order-items.controller.ts  OrderItemsController  type OrderItem  /api/v1/order-items
+order-items.controller.ts  OrderItemsController  type OrderItem  /api/v1/order-items
+bad-name.controller.ts  BadNameController  type BadName  /api/v1/bad-name
+categories.controller.ts  CategoriesController  type Category  /api/v1/categories
+boxes.controller.ts  BoxesController  type Box  /api/v1/boxes
+refused "2fa": must start with a letter
+refused "records": Record would shadow a JavaScript global
+refused "../admin": paths are not allowed
+</output>
+<p>What to take from it:</p>
+<ul>
+<li>File names and URLs are <strong>kebab-case</strong> (<code>order-items</code>), classes are <strong>PascalCase</strong> (<code>OrderItemsController</code>). <code>OrderItems</code>, <code>Order_Items</code> and <code>order-items</code> all produce the same files, so the second one collides with the first.</li>
+<li>Name resources in the <strong>plural</strong>. The single record type is the singular: <code>categories</code> gives <code>Category</code>, <code>boxes</code> gives <code>Box</code>. The singular rule is simple English, so an irregular word like <code>people</code> stays <code>People</code>.</li>
+<li><code>records</code> is refused because its record type would be called <code>Record</code>, which would hide TypeScript's built-in <code>Record&lt;K, V&gt;</code> in the generated files and break them.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="wiring">How generated code is wired in: markers</h2>
+<p>Writing new files is easy. Editing <em>your</em> files safely is the hard part: the generator must add one line to <code>src/routes/index.ts</code> without disturbing anything you wrote there. It does that with <strong>markers</strong>, pairs of comments that fence off the part of a file the CLI owns:</p>
+<example file="src/routes/index.ts (part)" check="skip">
+export function registerRoutes(router: HttpRouter, deps: AppDependencies): void {
+  registerHealthRoutes(router, deps.health);
+  // zudojs:routes:start
+  registerExamplesRoutes(router, deps.examplesController);
+  // zudojs:routes:end
+}
+</example>
+<p>A generated project has markers in <code>src/server.ts</code> (<code>server-imports</code>, <code>server-mounts</code>, <code>server-middleware</code>), <code>src/routes/index.ts</code> (<code>route-imports</code>, <code>routes</code>), <code>src/container.ts</code> (<code>container-imports</code>, <code>container</code>), <code>src/configs/index.ts</code> (<code>config</code>) and <code>src/integrations/index.ts</code> (<code>integration-imports</code>, <code>integrations</code>). The insertion works like this:</p>
+<example file="markers.js">
+function insertBetweenMarkers(source, name, line) {
+  const start = `// zudojs:${name}:start`;
+  const end = `// zudojs:${name}:end`;
+  const startAt = source.indexOf(start);
+  const endAt = source.indexOf(end);
+  if (startAt === -1 || endAt === -1 || endAt < startAt) return { status: "missing-markers", source };
+  const between = source.slice(startAt + start.length, endAt);
+  if (between.split("\n").some((existing) => existing.trim() === line.trim())) return { status: "present", source };
+  const lineStart = source.lastIndexOf("\n", endAt) + 1;
+  const indent = source.slice(lineStart, endAt);
+  return { status: "inserted", source: source.slice(0, lineStart) + indent + line.trim() + "\n" + source.slice(lineStart) };
+}
+
+let routes = `export function registerRoutes(router, deps) {
+  registerHealthRoutes(router, deps.health);
+  // zudojs:routes:start
+  registerExamplesRoutes(router, deps.examplesController);
+  // zudojs:routes:end
+}`;
+
+const line = "registerProductsRoutes(router, deps.productsController);";
+let result = insertBetweenMarkers(routes, "routes", line);
+console.log(result.status);
+routes = result.source;
+console.log(routes);
+
+result = insertBetweenMarkers(routes, "routes", line);
+console.log(result.status);
+
+const edited = routes.replace("  // zudojs:routes:end\n", "");
+console.log(insertBetweenMarkers(edited, "routes", "registerOrdersRoutes(router, deps.ordersController);").status);
+</example>
+<output>
+inserted
+export function registerRoutes(router, deps) {
+  registerHealthRoutes(router, deps.health);
+  // zudojs:routes:start
+  registerExamplesRoutes(router, deps.examplesController);
+  registerProductsRoutes(router, deps.productsController);
+  // zudojs:routes:end
+}
+present
+missing-markers
+</output>
+<p>Three properties make this safe:</p>
+<ul>
+<li>The new line goes just before the end marker, with the marker's indentation, so the file stays tidy.</li>
+<li>It is <strong>idempotent</strong>: doing it twice has the same effect as doing it once. The second call finds the line already there and changes nothing. That is why <code>generate … --force</code> can rewrite a resource's own files without registering its routes twice.</li>
+<li>If the markers are gone, it does not guess where the line belongs.</li>
+</ul>
+<p>The last case is a real trap. Delete the <code>routes</code> markers from <code>src/routes/index.ts</code> (say, while tidying up) and generate a resource:</p>
+<shell title="Terminal on your computer">
+$ zudojs generate resource orders
+Detected architecture: monolith
+Generated 8 files:
+  - src/dtos/orders.dto.ts
+  - src/repositories/orders.repository.ts
+  - src/services/orders.service.ts
+  - src/controllers/orders.controller.ts
+  - src/routes/orders.routes.ts
+  - tests/orders.test.ts
+  - src/routes/index.ts
+  - src/container.ts
+Warning: Finish by hand:
+  - src/routes/index.ts: add "registerOrdersRoutes(router, deps.ordersController);" between "// zudojs:routes:start" and "// zudojs:routes:end" (the markers are missing, so the file was left unchanged)
+$ echo $?
+0
+</shell>
+<p>The exit code is 0, <code>src/routes/index.ts</code> is still in the "Generated" list, <code>npm run typecheck</code> passes and <code>tests/orders.test.ts</code> passes, because the test builds its own router. Yet the running server answers 404 on <code>/api/v1/orders</code>. Only the warning tells you. Two habits prevent it: keep your own code outside the markers and never delete them, and read the last lines of every <code>generate</code> run.</p>
+</section>
+
+<section>
+<h2 id="targets">Modules and services: where files go</h2>
+<p>In a monolith every resource lives in the shared <code>src/</code> folders. The other two architectures add a target option:</p>
+<ul>
+<li><code>--module billing</code> (<code>-m</code>) puts the files inside <code>src/modules/billing/</code> and registers the routes in that module's <code>routes/index.ts</code>. The module must exist first.</li>
+<li><code>--service payments</code> (<code>-s</code>) in a microservice project puts the files in <code>apps/services/payments/</code>. Without it, files go to <code>apps/gateway/</code>.</li>
+</ul>
+<shell title="Terminal on your computer (shop-mm: a modular monolith)">
+$ zudojs generate module billing
+Detected architecture: modular-monolith
+Generated 8 files:
+  - src/modules/billing/billing.module.ts
+  - src/modules/billing/index.ts
+  - src/modules/index.ts
+  - src/modules/billing/features/billing.feature.ts
+  - src/modules/billing/features/index.ts
+  - src/modules/billing/routes/index.ts
+  - src/app.ts
+  - src/routes/index.ts
+$ zudojs generate resource payments --module billing
+Detected architecture: modular-monolith
+Generated 8 files:
+  - src/modules/billing/dtos/payments.dto.ts
+  - src/modules/billing/repositories/payments.repository.ts
+  - src/modules/billing/services/payments.service.ts
+  - src/modules/billing/controllers/payments.controller.ts
+  - src/modules/billing/routes/payments.routes.ts
+  - tests/payments.test.ts
+  - src/modules/billing/routes/index.ts
+  - src/container.ts
+$ zudojs generate resource payments --module shipping
+Detected architecture: modular-monolith
+Module "shipping" does not exist at src/modules/shipping. Create it first: zudojs generate module shipping
+</shell>
+<p>Two behaviours in a modular monolith are easy to trip over:</p>
+<ul>
+<li><strong>Tests are not grouped by module.</strong> The test still goes to <code>tests/payments.test.ts</code>. A <code>payments</code> resource in a second module collides with it and is refused with "already exists", even though its source files would not collide.</li>
+<li><strong><code>service</code> means "module" here.</strong> <code>zudojs generate service refunds --module billing</code> prints <code>Mapping "service" → "module" for modular-monolith architecture.</code> and creates a whole new module called <code>refunds</code>, ignoring <code>--module billing</code>. To get a service inside <code>billing</code>, generate a <code>resource</code> or <code>controller</code> there and delete what you do not need.</li>
+</ul>
+<p>In a microservice project, a service name that does not exist is refused the same way: <code>No app at apps/services/billing. Pass --service with an existing service (or omit it for the gateway).</code></p>
+</section>
+
+<section>
+<h2 id="errors">Generation errors and the two safety options</h2>
+<p>Here are the generator's refusals in one place, each from a real run in <code>shop-api</code>:</p>
+<shell title="Terminal on your computer">
+$ zudojs generate resource products
+Detected architecture: monolith
+resource "products" already exists:
+  - src/dtos/products.dto.ts
+  - src/repositories/products.repository.ts
+  - src/services/products.service.ts
+  - src/controllers/products.controller.ts
+  - src/routes/products.routes.ts
+  - tests/products.test.ts
+Choose another name, or re-run with --force to regenerate these files.
+$ zudojs generate resource
+Missing required argument "name".
+Run "zudojs generate --help" for usage.
+$ zudojs generate widget orders
+Schematic name is required. Available: resource, service, module, command, query, controller, repository, middleware, event, job, route, model, dto, validator
+$ zudojs add payments
+Unknown feature: "payments". Available: database, redis, websockets, email, docker, queue, messaging, openapi, observability, cache, storage, scheduler
+</shell>
+<p>The third message is misleading: you did give a schematic name, just not a valid one. Read the list that follows it, not the first sentence.</p>
+<p>The two options that control writing:</p>
+<ul>
+<li><code>--dry-run</code> writes nothing and lists what would change. Use it every time you are unsure about a name or a target.</li>
+<li><code>--force</code> overwrites the schematic's own files. It regenerated the six products files above and left the wiring alone (the lines were already there). Everything you changed in those six files is lost, so commit first, then compare with <code>git diff</code> afterwards.</li>
+</ul>
+<warn title="THE GENERATOR CHECKS ITS OWN FILES FIRST">A refused <code>generate</code> writes nothing: the "already exists" check runs before any file is touched. A <em>successful</em> generate changes several files at once, so start from a clean <code>git status</code>. If the result is not what you wanted, <code>git checkout -- .</code> and <code>git clean -fd</code> put the project back.</warn>
+</section>
+
+<section>
+<h2 id="templates">Templates follow the project</h2>
+<p>The generator's templates are built into the CLI, and it chooses between them based on what the project already has. After <code>zudojs add database</code>, the same <code>generate resource</code> writes a Prisma repository and a database model instead of only an in-memory one, and tells you the step it cannot do for you:</p>
+<shell title="Terminal on your computer">
+$ zudojs add database --skip-install
+Adding feature: database — PostgreSQL via Prisma 7 (prisma/schema.prisma, src/integrations/database.ts, db:* scripts)
+Created:
+  - prisma/schema.prisma
+  - prisma.config.ts
+  - src/integrations/database.ts
+Updated:
+  - src/integrations/index.ts
+  - package.json
+  - .gitignore
+Feature "database" added successfully.
+Next: Set DATABASE_URL in .env, then run the db:migrate script after adding models.
+Next: Resources generated from now on use Prisma; existing ones keep their in-memory repository until you swap it in src/container.ts.
+$ zudojs generate resource coupons
+Detected architecture: monolith
+Generated 10 files:
+  - src/dtos/coupons.dto.ts
+  - src/repositories/coupons.repository.ts
+  - src/repositories/coupons.prisma.repository.ts
+  - src/services/coupons.service.ts
+  - src/controllers/coupons.controller.ts
+  - src/routes/coupons.routes.ts
+  - tests/coupons.test.ts
+  - prisma/schema.prisma
+  - src/routes/index.ts
+  - src/container.ts
+Warning: Finish by hand:
+  - Run "prisma migrate dev --name add-coupons" (the Coupon model was added to prisma/schema.prisma).
+</shell>
+<p><code>src/container.ts</code> now builds <code>new PrismaCouponsRepository()</code> for coupons, while <code>products</code> keeps its in-memory repository. The service and controller did not change at all: they only know the <code>CouponsRepository</code> interface. That is the layering from <a href="/learn/backend-architecture">Backend architecture</a> paying off. Running <code>zudojs add database</code> a second time is safe: it reports the files under <code>Kept (already present):</code> and only updates <code>package.json</code>.</p>
+<p><code>create</code>'s <code>--capabilities</code> work the same way at creation time. With <code>--capabilities cqrs,events,openapi</code>, the project gets <code>@zudojs/cqrs</code> and <code>@zudojs/openapi</code> in <code>package.json</code>, one <code>mountOpenAPI(…)</code> line in <code>src/server.ts</code>, and the three names in the manifest and in <code>zudojs.features</code>.</p>
+<h3>No custom templates, but your own commands</h3>
+<p>The published CLI has no way to add your own schematics or replace its templates: there is no templates folder it reads and no plugin option. When your team wants a generator the CLI does not have, you have two honest options. Generate the closest schematic and edit it, or write a small command-line tool of your own. The <code>zudojs-cli</code> package exports the framework the CLI itself is built with. Install it in your project (<code>npm install zudojs-cli</code>) and describe your commands as objects:</p>
+<file name="scripts/shop.mjs">
+import { createCLI } from "zudojs-cli";
+
+const cli = createCLI({ name: "shop", version: "0.1.0", description: "Shop maintenance commands" });
+
+cli.register({
+  name: "refund",
+  description: "Refund an order",
+  arguments: [{ name: "orderId", required: true }],
+  options: [{ name: "amount", short: "a", type: "number", description: "Amount in naira" }],
+  execute(ctx) {
+    console.log(`Refunding order ${ctx.args[0]} for ₦${ctx.values.amount ?? "full amount"}`);
+  },
+});
+
+process.exitCode = await cli.run(process.argv.slice(2));
+</file>
+<shell title="Terminal on your computer">
+$ node scripts/shop.mjs refund ord_17 --amount 2500
+Refunding order ord_17 for ₦2500
+$ node scripts/shop.mjs refund
+Missing required argument "orderId".
+Run "shop refund --help" for usage.
+$ echo $?
+2
+$ node scripts/shop.mjs help refund
+Usage:
+  shop refund <orderId> [options]
+
+Description:
+  Refund an order
+
+Arguments:
+  <orderId>
+
+Options:
+  -a, --amount <number>  Amount in naira
+  -h, --help             Show help for this command.
+</shell>
+<p>You get the same help layout, argument checking and exit codes as <code>zudojs</code> itself, for free. <code>cli.run</code> resolves to the exit code instead of exiting, so you decide when the process ends.</p>
+</section>
+
+<section>
+<h2 id="run">dev, build, doctor, info and add</h2>
+<p>These commands mostly hand work to the project's own scripts. Knowing that tells you where to look when one fails.</p>
+<ul>
+<li><strong><code>zudojs dev</code></strong> prints the project type and architecture, then runs <code>npm run dev</code> (your package manager's version of it). <code>-p 4100</code> passes the port on as the <code>PORT</code> setting: the server then said <code>Listening on http://0.0.0.0:4100</code>. <code>--frontend-only</code> and <code>--backend-only</code> matter only in full-stack projects; in a backend project, <code>--frontend-only</code> prints <code>Warning: No development servers to start.</code> and still exits with 0.</li>
+<li><strong><code>zudojs build</code></strong> runs <code>npm run build</code>, which is <code>tsc</code>, and passes its failure on:</li>
+</ul>
+<shell title="Terminal on your computer">
+$ zudojs build
+Building project at: ~/code/shop-api
+
+> shop-api@0.1.0 build
+> tsc
+
+src/broken.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.
+Build failed: Command "npm run build" exited with code 2
+$ echo $?
+1
+</shell>
+<ul>
+<li><strong><code>zudojs doctor</code></strong> runs ten checks: Node.js version, git, the package manager, the project record, the lock file, <code>node_modules</code>, <code>tsconfig.json</code>, the <code>@zudojs</code> dependencies, whether every feature has its package, and whether the manifest and <code>package.json</code> agree on capabilities. A ✔ is fine, a ⚠ is a warning (exit 0), a ✖ is an error (exit 1).</li>
+</ul>
+<shell title="Terminal on your computer">
+$ zudojs doctor
+Zudojs Doctor - Project Diagnostics
+
+✔ Node.js version: Node.js v24.19.0 (meets minimum v24)
+✔ Git: git version 2.53.0
+✔ Package manager (npm): 11.19.0
+✔ Zudojs project: backend (monolith) from .zudojs/manifest.json
+✔ Package manager: npm (lock file present)
+✔ Dependencies installed: node_modules present
+✔ TypeScript configuration: tsconfig.json found in every app
+✔ Zudojs dependencies: 13 Zudojs package(s) declared
+✔ Features: Every declared feature has its package
+⚠ Capabilities: "openapi" is in .zudojs/manifest.json but in no app's zudojs.features
+
+Warnings:
+  ⚠ Capabilities: "openapi" is in .zudojs/manifest.json but in no app's zudojs.features
+
+All checks passed!
+</shell>
+<p>That warning came from editing the manifest by hand. The last check is a plain comparison of two lists:</p>
+<example file="capabilities.js">
+const manifest = {
+  version: "2.1.3",
+  projectType: "backend",
+  architecture: "monolith",
+  backend: { architecture: "monolith", api: "rest" },
+  workspace: { packageManager: "npm" },
+  capabilities: ["cqrs", "openapi", "events"],
+};
+const packageJson = {
+  zudojs: { projectType: "backend", architecture: "monolith", features: ["cqrs", "openapi"] },
+  dependencies: { "@zudojs/cqrs": "^1.2.0", "@zudojs/http": "^1.4.4" },
+};
+
+function compareCapabilities(manifest, pkg) {
+  const recorded = new Set(manifest.capabilities);
+  const declared = new Set(pkg.zudojs.features);
+  const onlyInManifest = [...recorded].filter((c) => !declared.has(c));
+  const onlyInPackage = [...declared].filter((c) => !recorded.has(c));
+  if (onlyInManifest.length === 0 && onlyInPackage.length === 0) return "same capabilities";
+  return `differ: manifest only [${onlyInManifest}], package.json only [${onlyInPackage}]`;
+}
+
+console.log(compareCapabilities(manifest, packageJson));
+packageJson.zudojs.features.push("events");
+console.log(compareCapabilities(manifest, packageJson));
+console.log("architecture agrees:", manifest.architecture === packageJson.zudojs.architecture);
+</example>
+<output>
+differ: manifest only [events], package.json only []
+same capabilities
+architecture agrees: true
+</output>
+<p>Two records of the same fact can drift apart, so something must compare them. <code>zudojs add</code> updates both, which is one more reason to add features with the CLI rather than by hand.</p>
+<ul>
+<li><strong><code>zudojs info</code></strong> prints the CLI version, the project's name, type, architecture, package manager, capabilities (and services, in a microservice project), and every <code>@zudojs</code> dependency with its version range. Paste it into a bug report.</li>
+<li><strong><code>zudojs add &lt;feature&gt;</code></strong> writes the feature's code, registers it between markers, adds its settings to <code>src/configs/index.ts</code> and <code>.env.example</code>, records it, and installs the packages unless you pass <code>--skip-install</code>. In a microservice project, <code>--service orders</code> adds it to one service: <code>zudojs add redis -s orders</code> created <code>apps/services/orders/src/integrations/redis.ts</code> and updated that service's config and <code>.env.example</code>.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="production">The CLI in a team and in CI</h2>
+<ul>
+<li><strong>Pin the version in scripts.</strong> <code>npx zudojs@2.1.3 generate …</code> gives everyone the same templates. <code>npx zudojs@latest</code> in a CI job means a new CLI release can change what your pipeline generates without any change in your repository.</li>
+<li><strong>Commit the records.</strong> <code>.zudojs/manifest.json</code> and the <code>zudojs</code> block in <code>package.json</code> are how every later command understands the project.</li>
+<li><strong>Review generated code like any other code.</strong> Generate on a clean working tree, read <code>git diff</code>, and look for stubs (<code>validator</code>, <code>job</code>) and in-memory repositories before they reach production. An in-memory repository forgets everything on restart, and every copy of your app has its own data.</li>
+<li><strong>Trust exit codes in CI, not text.</strong> A CI step that runs <code>zudojs build</code> fails correctly on code 1. A step that greps the output for "success" does not.</li>
+<li><strong>Test what the generator cannot see.</strong> The generated test builds its own router, so it passes even when the wiring is missing. One test that starts the whole app and requests each route catches a lost marker; the <a href="/learn/zudo-project-anatomy">next lesson</a> builds exactly that.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Predict a dry run">
+<p>Without running it, write down the files <code>zudojs generate controller invoices --dry-run</code> lists in a monolith, and which existing files it edits. Then run it.</p>
+<solution>
+<shell title="Terminal on your computer">
+$ zudojs generate controller invoices --dry-run
+Detected architecture: monolith
+Dry run: 4 files would be written or updated (nothing written):
+  - src/dtos/invoices.dto.ts
+  - src/repositories/invoices.repository.ts
+  - src/services/invoices.service.ts
+  - src/controllers/invoices.controller.ts
+</shell>
+<p>The controller cascades down to the DTO, and it edits nothing: no routes file is written and <code>src/container.ts</code> is not touched, so nothing serves it yet. For a reachable endpoint, generate a <code>resource</code> or a <code>route</code>.</p>
+</solution>
+</exercise>
+<exercise title="Warn about irregular plurals">
+<p>The singular rule turns <code>people</code> into the type <code>People</code> and <code>news</code> into <code>New</code>. Add a check to <code>resourceNames</code> that refuses a name when its singular does not look right, using a small list of irregular words, and suggests a better name.</p>
+<solution>
+<example file="irregular.js">
+const IRREGULAR = new Map([["people", "persons"], ["news", "news-items"], ["children", "child-records"]]);
+
+function checkPlural(slug) {
+  const better = IRREGULAR.get(slug);
+  if (better) throw new Error(`"${slug}" has an irregular plural; try "${better}"`);
+  return slug;
+}
+
+for (const name of ["customers", "people", "news"]) {
+  try {
+    console.log("ok", checkPlural(name));
+  } catch (error) {
+    console.log("refused", error.message);
+  }
+}
+</example>
+<output>
+ok customers
+refused "people" has an irregular plural; try "persons"
+refused "news" has an irregular plural; try "news-items"
+</output>
+<p>Refusing with a suggestion is the same style the CLI uses for <code>2fa</code> and <code>records</code>: the error tells you what to type next.</p>
+</solution>
+</exercise>
+<exercise title="A resource that answers 404">
+<p>A teammate says: "I generated <code>resource shipments</code>, the tests pass, but <code>curl http://localhost:3000/api/v1/shipments</code> gives 404." List the two most likely causes and how to check each.</p>
+<solution>
+<ul>
+<li><strong>The wiring was not written.</strong> Check the end of the generate output for <code>Warning: Finish by hand</code>, then open <code>src/routes/index.ts</code> and look for <code>registerShipmentsRoutes</code> between the <code>routes</code> markers, and for <code>shipmentsController</code> in <code>src/container.ts</code>. If the markers are gone, restore them and add the lines the warning printed.</li>
+<li><strong>The running server is old.</strong> With <code>npm start</code>, the server runs <code>dist/</code>, compiled before the resource existed. Run <code>npm run build</code> again, or use <code>npm run dev</code>, which restarts on every save.</li>
+</ul>
+<p>The tests pass in both cases because <code>tests/shipments.test.ts</code> registers the routes on its own router.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>The CLI has seven commands. <code>create</code> validates every option before writing; <code>dev</code> and <code>build</code> run your npm scripts; <code>doctor</code> checks ten things; <code>info</code> describes the CLI and the project; <code>add</code> plugs in features; <code>generate</code> writes code from fourteen schematics.</li>
+<li>Exit codes: 0 success (warnings included), 1 failure, 2 incomplete command line, 3 unknown command.</li>
+<li>The CLI walks up from the current folder to the first folder with a manifest, a <code>zudojs.config</code> file or a <code>zudojs</code> block in <code>package.json</code>, and reads the architecture from there.</li>
+<li>Names become kebab-case files and PascalCase classes; resources are plural, their record types singular; names that would break the code are refused.</li>
+<li>Generated wiring goes between <code>// zudojs:…</code> markers, idempotently. Missing markers produce a warning, not a failure, so read the end of every run.</li>
+<li>Stubs such as the validator compile but do nothing; replace them before anything depends on them. There are no custom templates, but <code>zudojs-cli</code> lets you build your own commands.</li>
+</ul>
+<p>Next, <a href="/learn/zudo-project-anatomy">Anatomy of a ZudoJS project</a> opens the files <code>create</code> and <code>generate resource</code> wrote and follows one request from <code>src/server.ts</code> all the way to the repository and back.</p>
+</section>

@@ -49,9 +49,21 @@ console.log(result.order.join("\n"));
 console.log(`dependency checks: ${result.checks}, stuck: ${result.stuck}`);
 
 packages["@shop/db"].push("@shop/users");
-console.log("after db starts using users:", naiveOrder(packages));
+const broken = naiveOrder(packages);
+console.log(`after db starts using users: built ${broken.order.join(", ")}, stuck: ${broken.stuck}`);
 </example>
 <output>
+@shop/config
+@shop/logger
+@shop/money
+@shop/db
+@shop/catalog
+@shop/users
+@shop/orders
+@shop/auth
+@shop/api
+dependency checks: 48, stuck: false
+after db starts using users: built @shop/config, @shop/logger, @shop/money, stuck: true
 </output>
 <p>It finds a correct order, and it notices the loop the last line created: <code>db</code> needs <code>users</code>, which needs <code>db</code>, so neither can ever be built. But it is wasteful. Each round rechecks every unbuilt package, and in the worst case (a long chain listed in reverse) only one package gets built per round: O(V) rounds of O(V + E) work, where V is the number of packages and E the number of dependency links. And when it gets stuck, it cannot say <em>which</em> packages form the loop.</p>
 <p>The shape of this data is a <strong>graph</strong>. This lesson gives you the vocabulary, two ways to store a graph, and <strong>topological sort</strong>: an O(V + E) algorithm that finds a build order, finds which packages can be built in parallel, and names the loop when there is one.</p>
@@ -69,18 +81,17 @@ console.log("after db starts using users:", naiveOrder(packages));
 <li>An undirected graph is <strong>connected</strong> if there is a path between every pair of vertices.</li>
 <li>A graph is <strong>sparse</strong> when it has far fewer edges than the maximum possible (every vertex linked to every other: about V² edges), and <strong>dense</strong> when it is close to that maximum. Real graphs are almost always sparse: a city has a few roads out, not roads to every other city.</li>
 </ul>
-<p>Here is the package graph drawn with an arrow from each package to the packages it uses:</p>
+<p>Here is the package graph, written as one line per package with arrows to the packages it uses:</p>
 <pre>
-api ──► auth ──► users ──► db ──► config
- │        └──────────────────┬──► config
- │                           │
- ├──► orders ──► catalog ──► db ──► logger
- │      │   └──► money       └──► money
- │      ├──► users
- │      └──► money
- └──► logger
+api      ──► auth, orders, logger
+orders   ──► catalog, users, money
+auth     ──► users, config
+catalog  ──► db, money
+users    ──► db
+db       ──► config, logger
+config, logger, money use nothing
 </pre>
-<p>Drawings of real graphs get messy fast, which is one reason to learn to think about them as data.</p>
+<p>Drawn as boxes and arrows, even these nine packages become a tangle of crossing lines, which is one reason to think about graphs as data. And that list <em>is</em> already the most common way to store a graph, as the next section shows.</p>
 
 <reason title="Choosing the model">
 <p>A delivery app needs a map of a city to plan routes for riders. Before any code: what should a vertex be? What should an edge be? Directed or undirected? Weighted, and by what? Can the weights change during the day? What else in the app could be a graph?</p>
@@ -136,6 +147,21 @@ for (const [v, e] of [[5, 5], [1000, 3000], [100000, 300000]]) {
 }
 </example>
 <output>
+matrix:
+Lagos      0 128 312   0   0
+Ibadan   128   0   0 640   0
+Benin    312   0   0 480   0
+Abuja      0 640 480   0 430
+Kano       0   0   0 430   0
+list:
+Lagos   Ibadan 128, Benin 312
+Ibadan  Lagos 128, Abuja 640
+Benin   Lagos 312, Abuja 480
+Abuja   Ibadan 640, Benin 480, Kano 430
+Kano    Abuja 430
+5 cities, 5 roads: matrix 25 cells, list 15 entries
+1000 cities, 3000 roads: matrix 1000000 cells, list 7000 entries
+100000 cities, 300000 roads: matrix 10000000000 cells, list 700000 entries
 </output>
 <p>The distances are approximate road distances in km. For 5 cities the matrix is fine. For 100,000 junctions it would need 10 billion cells, almost all zero; the list needs 700,000 entries (each undirected road is stored twice, once from each end).</p>
 <div class="lx-table-wrap"><table>
@@ -235,6 +261,11 @@ try {
 }
 </example>
 <output>
+6 cities, 6 roads
+from Benin: Lagos, Abuja, Enugu
+Abuja to Benin: 480 km
+Lagos-Benin-Abuja-Kano: 1222 km
+no road from Lagos to Kano
 </output>
 <p>Checking a planned trip is easy. <em>Finding</em> the shortest trip is a search problem, with its own lesson: <a href="/learn/dsa-graph-search">Graph search</a> covers breadth-first search and Dijkstra's algorithm on exactly this kind of weighted graph.</p>
 </section>
@@ -266,6 +297,9 @@ const mutual = follows.neighbours("Ada").filter((other) => follows.hasEdge(other
 console.log("Ada's mutual follows:", mutual.join(", "));
 </example>
 <output>
+Ada follows: Tunde, Chioma
+Tunde's followers: Ada, Chioma, Emeka
+Ada's mutual follows: Tunde
 </output>
 <p>The mutual-follow check is O(out-degree), because each <code>hasEdge</code> is an O(1) <code>Map</code> lookup. With neighbour <em>arrays</em> it would be O(out-degree × degree), a difference you would feel for an account with a million followers.</p>
 </section>
@@ -316,6 +350,9 @@ console.log("visits without a visited set:", walkWithoutMemory(deps, "layer0"));
 console.log("reachable with a visited set:", reachable(deps, "layer0").size);
 </example>
 <output>
+packages: 61 links: 80
+visits without a visited set: 4194301
+reachable with a visited set: 61
 </output>
 <p>Without memory the walk made millions of visits to a 61-package graph, and each extra layer doubles it. With the visited set every vertex is pushed once and every edge is looked at once: O(V + E). In a graph with a cycle, the walk without memory would never end at all. <strong>Every graph walk needs a visited set.</strong></p>
 <p>This is a <strong>depth-first</strong> walk (it uses a stack). With a queue it would be <strong>breadth-first</strong>, visiting vertices in order of distance from the start. <a href="/learn/dsa-graph-search">Graph search</a> builds both properly, with paths, shortest routes and connected components.</p>
@@ -400,6 +437,17 @@ console.log("blocked:", blocked.length === 0 ? "none" : blocked.join(", "));
 console.log("not in the monorepo:", unknown.join(", "));
 </example>
 <output>
+1. @shop/config
+2. @shop/logger
+3. @shop/money
+4. @shop/db
+5. @shop/catalog
+6. @shop/users
+7. @shop/orders
+8. @shop/auth
+9. @shop/api
+blocked: none
+not in the monorepo: @shop/api -> express
 </output>
 <p><code>express</code> is reported, not ordered: it comes from npm. Now break the graph the same way as at the start:</p>
 <example file="install-cycle.js" project="graph">
@@ -419,6 +467,8 @@ console.log("can build:", order.join(", "));
 console.log("blocked:", blocked.join(", "));
 </example>
 <output>
+can build: @shop/config, @shop/money
+blocked: @shop/api, @shop/orders, @shop/users, @shop/db
 </output>
 <p>Kahn's algorithm tells you <em>which</em> packages are blocked, but not which of them form the loop: <code>orders</code> and <code>api</code> are only blocked because they depend on it. The depth-first version below finds the loop itself.</p>
 
@@ -463,6 +513,11 @@ stages(dependencyGraph(packages).needs).forEach((stage, i) => {
 });
 </example>
 <output>
+stage 1: @shop/config, @shop/logger, @shop/money
+stage 2: @shop/db
+stage 3: @shop/catalog, @shop/users
+stage 4: @shop/orders, @shop/auth
+stage 5: @shop/api
 </output>
 <p>Nine packages, five stages. If every build takes a minute, the parallel build takes five minutes instead of nine. The number of stages is the length of the longest dependency chain (here config → db → users → auth or orders → api), which is called the <strong>critical path</strong>: no amount of parallel workers can beat it.</p>
 
@@ -512,6 +567,8 @@ try {
 }
 </example>
 <output>
+@shop/config, @shop/db, @shop/users, @shop/money, @shop/orders, @shop/auth, @shop/api
+dependency cycle: @shop/users -> @shop/db -> @shop/auth -> @shop/users
 </output>
 <p>The order differs from Kahn's, and both are correct: remember that topological order is usually not unique. The cycle message names the exact loop, which is what a developer needs. The <code>?? []</code> treats unknown packages (external ones) as having no dependencies here; the recursion depth is the longest dependency chain, which is small for packages but could overflow the stack for a huge generated graph, where Kahn's loop is the safer choice.</p>
 <div class="lx-table-wrap"><table>
@@ -552,6 +609,9 @@ try {
 }
 </example>
 <output>
+start: config  then  logger + cache  then  database  then  queue + http
+stop:  http + queue  then  database  then  cache + logger  then  config
+LifecycleDependencyError: Circular lifecycle dependency detected: config -> http -> database -> config.
 </output>
 <p>Here <code>addEdge(from, to)</code> means "from depends on to", the "uses" direction. <code>validate()</code> reports the loop as a path, like the depth-first version. In an application you rarely call these yourself: you register components with <code>dependsOn</code> and the lifecycle manager orders them, which <a href="/learn/zudo-runtime">the runtime lesson</a> shows.</p>
 </section>
@@ -591,25 +651,49 @@ function randomDag(size, density) {
   return { needs, names };
 }
 
+function reaches(needs, from, to) {
+  const seen = new Set([from]);
+  const stack = [from];
+  while (stack.length > 0) {
+    for (const next of needs.get(stack.pop())) {
+      if (next === to) return true;
+      if (!seen.has(next)) {
+        seen.add(next);
+        stack.push(next);
+      }
+    }
+  }
+  return false;
+}
+
 check("empty graph", topoSort(new Map()).order.length === 0);
 check("self-dependency is blocked", topoSort(new Map([["a", ["a"]]])).blocked.join() === "a");
 
 let dagFailures = 0;
 let cycleFailures = 0;
+let cyclesMade = 0;
 for (let round = 0; round < 300; round++) {
   const { needs, names } = randomDag(2 + Math.floor(random() * 30), random() * 0.3);
   const { order, blocked } = topoSort(needs);
   if (!isTopological(needs, order) || blocked.length > 0) dagFailures++;
-  needs.get(names[names.length - 1]).push(names[0]);
-  const withCycle = topoSort(needs);
-  if (needs.get(names[0]).length > 0 && withCycle.blocked.length === 0) cycleFailures++;
+  const first = names[0];
+  const last = names[names.length - 1];
+  const makesCycle = reaches(needs, first, last);
+  needs.get(last).push(first);
+  const caught = topoSort(needs).blocked.length > 0;
+  if (caught !== makesCycle) cycleFailures++;
+  if (makesCycle) cyclesMade++;
 }
 check("300 random DAGs are ordered correctly", dagFailures === 0);
-check("adding a back edge is always caught", cycleFailures === 0);
+check(`a back edge is rejected exactly when it closes a cycle (${cyclesMade} of 300 did)`, cycleFailures === 0);
 </example>
 <output>
+PASS empty graph
+PASS self-dependency is blocked
+PASS 300 random DAGs are ordered correctly
+PASS a back edge is rejected exactly when it closes a cycle (137 of 300 did)
 </output>
-<p>The back-edge test closes a loop from the last vertex in the shuffled order to the first. That only creates a cycle when a path from the first to the last already exists, so the test only demands a rejection when the first vertex has outgoing edges at all. That is a weak condition, and a good exercise is to make it exact with the <code>reachable</code> function from earlier: a cycle exists exactly when the last vertex is reachable from the first. Writing the property precisely is often the hardest part of property-based testing.</p>
+<p>The second half of the loop adds one edge from the last vertex in the shuffled order back to the first. That creates a cycle only if there was already a path from the first to the last, so the test first works out, with a reachability walk like the one earlier, whether a cycle <em>should</em> appear, and then demands that the sort agrees: a rejection when it should, a clean order when it should not. Stating the property precisely, rather than "it probably makes a cycle", is often the hardest part of property-based testing. A looser version, "expect a rejection whenever the first vertex has any outgoing edges", sounds plausible and fails on some of these random graphs: an edge out of the first vertex does not mean a path to the last one.</p>
 </section>
 
 <section>
@@ -654,6 +738,8 @@ function suggestions(graph, person) {
 for (const [name, count] of suggestions(friends, "Ada")) console.log(`${name}: ${count} mutual friends`);
 </example>
 <output>
+Bola: 3 mutual friends
+Yusuf: 2 mutual friends
 </output>
 <p>For each of Ada's d friends you look at their friends: the sum of their degrees, then a sort of the candidates. Tunde and Chioma are skipped because they are already Ada's friends. This is why social networks can suggest friends instantly even with a billion users: the work depends on the neighbourhood, not on the size of the graph.</p>
 </solution>
@@ -698,6 +784,8 @@ console.log("rebuild after money changes:", affectedBy("@shop/money").join(", ")
 console.log("rebuild after auth changes:", affectedBy("@shop/auth").join(", "));
 </example>
 <output>
+rebuild after money changes: @shop/orders, @shop/catalog, @shop/invoices, @shop/api
+rebuild after auth changes: @shop/api
 </output>
 <p>Reversing takes O(V + E) and the walk is O(V + E) at most. <code>@shop/users</code> and <code>@shop/db</code> are untouched by a money change, so a CI system that knows this graph can skip their tests. Monorepo tools call this "affected" or "dependents" filtering.</p>
 </solution>
@@ -745,6 +833,9 @@ try {
 }
 </example>
 <output>
+javascript -> recursion -> hash maps -> trees -> heaps -> graphs -> tries
+at least 4 weeks
+impossible plan, stuck on: javascript, recursion, trees, hash maps, heaps, graphs, tries
 </output>
 <p>The week of each lesson is one more than the latest week among its prerequisites, computed in topological order so the prerequisites are always known first. That is the longest path in the DAG, the critical path from the parallel-stages section, and it takes O(V + E) because the order is topological. Finding the longest path in a graph <em>with</em> cycles is a much harder problem; DAGs make it easy.</p>
 </solution>
