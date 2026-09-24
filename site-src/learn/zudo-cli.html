@@ -175,7 +175,28 @@ $ zudojs doctor
 ✔ Zudojs project: backend (monolith) from package.json#zudojs
 …
 </shell>
-<p>Only when nothing records an architecture does the CLI guess from the folders: an <code>apps/gateway</code> folder next to a <code>pnpm-workspace.yaml</code> means microservices, a <code>src/modules</code> folder means modular monolith, anything else is a monolith. That guess is wrong for a monolith made by <code>create</code>, which has a <code>src/modules</code> folder too. So commit <code>.zudojs/manifest.json</code> and the <code>zudojs</code> block, and never edit them by hand.</p>
+<p>Only when nothing records an architecture does the CLI guess from the folders: an <code>apps/gateway</code> folder next to a <code>pnpm-workspace.yaml</code> means microservices, a <code>src/modules</code> folder means modular monolith, anything else is a monolith. <code>has</code> below stands for "this path exists in the project":</p>
+<example file="detect.js">
+function detectArchitecture(recorded, has) {
+  if (["monolith", "modular-monolith", "microservice"].includes(recorded)) return `${recorded} (recorded)`;
+  if (has("pnpm-workspace.yaml") && has("apps/gateway")) return "microservice (guessed)";
+  if (has("src/modules")) return "modular-monolith (guessed)";
+  return "monolith (guessed)";
+}
+
+const monolithFolders = new Set(["src/modules", "src/routes", "src/services"]);
+const has = (path) => monolithFolders.has(path);
+
+console.log(detectArchitecture("monolith", has));
+console.log(detectArchitecture(undefined, has));
+console.log(detectArchitecture(undefined, () => false));
+</example>
+<output>
+monolith (recorded)
+modular-monolith (guessed)
+monolith (guessed)
+</output>
+<p>The second line is the trap: a monolith made by <code>create</code> has a <code>src/modules</code> folder too, so without its record it is guessed wrong, and generated files would go to module folders. So commit <code>.zudojs/manifest.json</code> and the <code>zudojs</code> block, and never edit them by hand.</p>
 <p>The microservice case from the reasoning block really behaves as predicted. From inside a service, the CLI stops at the service's own <code>package.json</code> and treats the service as a monolith:</p>
 <shell title="Terminal on your computer">
 $ cd shop-ms/apps/services/orders/src
@@ -556,6 +577,37 @@ Unknown feature: "payments". Available: database, redis, websockets, email, dock
 <li><code>--dry-run</code> writes nothing and lists what would change. Use it every time you are unsure about a name or a target.</li>
 <li><code>--force</code> overwrites the schematic's own files. It regenerated the six products files above and left the wiring alone (the lines were already there). Everything you changed in those six files is lost, so commit first, then compare with <code>git diff</code> afterwards.</li>
 </ul>
+<p>The order of the steps is what makes a refusal safe: the generator first works out the full list of files (the <strong>plan</strong>), checks the whole plan against the disk, and only then writes. Here is that order with a <code>Map</code> standing in for the disk:</p>
+<example file="plan.js">
+const disk = new Map([["src/dtos/products.dto.ts", "// yours, edited by hand"]]);
+
+function planResource(slug) {
+  return [`src/dtos/${slug}.dto.ts`, `src/services/${slug}.service.ts`, `src/controllers/${slug}.controller.ts`];
+}
+
+function generate(slug, { dryRun = false, force = false } = {}) {
+  const plan = planResource(slug);
+  const clashes = plan.filter((path) => disk.has(path));
+  if (clashes.length > 0 && !force) {
+    return `refused, "${slug}" already exists: ${clashes.join(", ")} (nothing written)`;
+  }
+  if (dryRun) return `dry run: ${plan.length} files would be written`;
+  for (const path of plan) disk.set(path, `// generated ${slug}`);
+  return `wrote ${plan.length} files`;
+}
+
+console.log(generate("orders", { dryRun: true }), "| files on disk:", disk.size);
+console.log(generate("orders"), "| files on disk:", disk.size);
+console.log(generate("products"), "| files on disk:", disk.size);
+console.log(generate("products", { force: true }), "|", disk.get("src/dtos/products.dto.ts"));
+</example>
+<output>
+dry run: 3 files would be written | files on disk: 1
+wrote 3 files | files on disk: 4
+refused, "products" already exists: src/dtos/products.dto.ts (nothing written) | files on disk: 4
+wrote 3 files | // generated products
+</output>
+<p>Had it checked each file just before writing it, a clash on the third file would leave two new files behind and a half-generated resource. The last line shows the cost of <code>--force</code>: your hand-edited DTO is gone.</p>
 <warn title="THE GENERATOR CHECKS ITS OWN FILES FIRST">A refused <code>generate</code> writes nothing: the "already exists" check runs before any file is touched. A <em>successful</em> generate changes several files at once, so start from a clean <code>git status</code>. If the result is not what you wanted, <code>git restore .</code> undoes the edits to files git already tracks, and <code>git clean -fd</code> deletes the new files. It deletes <em>every</em> untracked file, so check <code>git status</code> first.</warn>
 </section>
 
@@ -730,6 +782,35 @@ architecture agrees: true
 <li><strong>Trust exit codes in CI, not text.</strong> A CI step that runs <code>zudojs build</code> fails correctly on code 1. A step that greps the output for "success" does not.</li>
 <li><strong>Test what the generator cannot see.</strong> The generated test builds its own router, so it passes even when the wiring is missing. One test that starts the whole app and requests each route catches a lost marker; the <a href="/learn/zudo-project-anatomy">next lesson</a> builds exactly that.</li>
 </ul>
+<p>A CI pipeline is a list of commands that stops at the first non-zero exit code. Here each "command" is a tiny Node.js process that exits with the code shown, the way the real ones did in this lesson:</p>
+<example file="ci-steps.ts" browser="no">
+import { spawnSync } from "node:child_process";
+
+// Each step stands in for a real command; the number is the exit code it ends with.
+const steps: Array<[string, number]> = [
+  ["zudojs doctor", 0],
+  ["npm run typecheck", 0],
+  ["zudojs build", 1],
+  ["npm test", 0],
+];
+
+for (const [name, code] of steps) {
+  const run = spawnSync(process.execPath, ["-e", `process.exit(${code})`]);
+  console.log(`${name.padEnd(18)} exit ${run.status}`);
+  if (run.status !== 0) {
+    console.log(`stopping: "${name}" failed, later steps are skipped`);
+    process.exitCode = 1;
+    break;
+  }
+}
+</example>
+<output>
+zudojs doctor      exit 0
+npm run typecheck  exit 0
+zudojs build       exit 1
+stopping: "zudojs build" failed, later steps are skipped
+</output>
+<p><code>process.execPath</code> is the path of the running <code>node</code> program, and <code>spawnSync</code> waits for the child and reports its <code>status</code>, the exit code. Setting <code>process.exitCode = 1</code> makes the whole script fail too, so whatever runs it (GitHub Actions, a shell script) sees the failure. The <a href="/learn/deployment">deployment lesson</a> builds a real pipeline.</p>
 </section>
 
 <section>
