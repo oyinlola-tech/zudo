@@ -8,13 +8,13 @@ v1.0.0
 
 # Architecture Overview
 
-39 small packages, stacked in six tiers, with dependencies that only ever point downward.
+40 small packages, stacked in six tiers, with dependencies that only ever point downward.
 
-39 PACKAGES SIX TIERS NO CYCLES
+40 PACKAGES SIX TIERS NO CYCLES
 
 ## Overview
 
-Zudo is not one big library. It is 39 separate npm packages under the `@zudojs` name, and you install only the ones you use.
+Zudo is not one big library. It is 40 separate npm packages, and you install only the ones you use. Thirty-eight live under the `@zudojs` scope; the other two are the `zudojs-cli` command-line tool and the `zudojs` launcher that installs it.
 
 Each package owns one job. `@zudojs/errors` owns error classes. `@zudojs/container` owns dependency lookup. `@zudojs/http` owns HTTP. Nothing tries to own two jobs at once.
 
@@ -34,44 +34,50 @@ Three packages carry most of the weight in a normal application:
 
 ## The Six Tiers
 
-A package's tier is decided by its longest chain of `@zudojs` dependencies. Tier 0 packages depend on no other Zudo package at all. A tier 3 package sits three steps above the bottom.
+A package's tier is decided by its longest chain of dependencies on other Zudo packages. Tier 0 packages depend on no other Zudo package at all. A tier 3 package sits three steps above the bottom.
 
 These lists come from the `dependencies` and `peerDependencies` fields in each package's own `package.json`, so they are checkable rather than aspirational.
 
 ```ts
-TIER 5  auth
-         depends on permissions, which depends on http
+TIER 5  api · testing
+         assemble many packages; api → queue → serialization
+         → validation → constants → errors is the longest chain
        ▲
-TIER 4  permissions · tenancy · testing
-         glue packages that sit on top of http
+TIER 4  cache · queue · rpc · storage · zudojs
+         services built on serialization, and the launcher
        ▲
-TIER 3  adapters · api · cache · cli · cqrs
-         http · queue · rpc · runtime · storage
-         transports and application services
+TIER 3  auth · auth-oauth · cli · cqrs · http
+         runtime · serialization
+         transports, auth, orchestration, data translation
        ▲
-TIER 2  core · crypto · events · lifecycle · messaging
-         plugins · scheduler · schema · security · serialization
-         framework machinery
+TIER 2  config · core · crypto · database · events
+         lifecycle · messaging · observability · openapi
+         permissions · scheduler · schema · security
+         tenancy · validation
+         framework machinery, one step above the blocks
        ▲
-TIER 1  config · constants · container · database · docs
-         feature-flags · logger · middleware · observability
-         openapi · transactions · validation
-         single-purpose building blocks
+TIER 1  adapters · constants · container · docs
+         feature-flags · logger · middleware · plugins
+         transactions
+         single-purpose building blocks on errors and types
        ▲
-TIER 0  errors · types · auth-oauth
-         no @zudojs dependencies whatsoever
+TIER 0  errors · types
+         no Zudo dependencies whatsoever
 ```
 
-Two details in that diagram surprise people, so they are worth saying out loud.
+Three details in that diagram surprise people, so they are worth saying out loud.
 
-- `@zudojs/core` is a tier 2 package, not a top-level one. It depends on `errors` and `constants` and nothing else. `http`, `runtime` and `cli` all sit *above* it.
-- `@zudojs/auth-oauth` is at tier 0 with `errors` and `types`. It uses Node built-ins only and pulls in no Zudo package, so you can install it by itself.
+- `@zudojs/core` is a tier 2 package, not a top-level one. It depends on `errors` and `constants` and nothing else. `runtime` and `cli` build on it and sit *above* it. `http` sits above it too, without depending on it at all.
+- `@zudojs/auth-oauth` is at tier 3, although it declares only two Zudo dependencies: `errors` and `security`. `security` is tier 2, so everything that uses it lands at tier 3 or higher. The length of the list does not set the tier; the depth under it does.
+- `@zudojs/auth` is tier 3 as well, not the top. The top belongs to `api` and `testing`, which reach five hops down through `serialization`, `validation` and `constants` to `errors`.
 
 > TIP
 >
 >
 >
 > Tiers are a consequence of the code, not a label attached to it. If you add a dependency, the tier moves. The [Dependency Direction](https://zudojs.oyinlola.site/docs/architecture-dependency-direction.md) page shows how to recompute the whole table yourself.
+
+The tiers on [All Packages](https://zudojs.oyinlola.site/docs/packages.md#layer-legend) are a different measure. They come from `scripts/package-tiers.js`, five hand-set tiers (0 to 4) that the architecture tests enforce as a ceiling: a package may depend only on packages at the same or a lower tier there. The diagram above is the computed depth of the dependency graph, where every hop counts. The ceiling allows dependencies within a tier, so the numbers differ: `api` is tier 2 there and tier 5 here. Both are correct.
 
 ## Four Principles
 
@@ -214,7 +220,7 @@ The state machine behind startup and shutdown, plus signal handling.](https://zu
 
 The boundary to the outside world, and an honest list of what exists today.](https://zudojs.oyinlola.site/docs/architecture-adapters.md) [### Dependency Direction →
 
-The full 39-package graph and a script that verifies it.](https://zudojs.oyinlola.site/docs/architecture-dependency-direction.md)
+The full 40-package graph and a script that verifies it.](https://zudojs.oyinlola.site/docs/architecture-dependency-direction.md)
 
 Package references for the packages named on this page:
 
@@ -222,4 +228,4 @@ Package references for the packages named on this page:
 - [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md) — requests, responses, routing, the Node adapter.
 - [@zudojs/runtime](https://zudojs.oyinlola.site/docs/packages-runtime.md) — the standalone runtime with readiness and health checks.
 - [@zudojs/adapters](https://zudojs.oyinlola.site/docs/packages-adapters.md) — adapter contracts, registry, capabilities.
-- [All 39 packages](https://zudojs.oyinlola.site/docs/packages.md) — the complete index.
+- [All packages](https://zudojs.oyinlola.site/docs/packages.md) — the complete index.

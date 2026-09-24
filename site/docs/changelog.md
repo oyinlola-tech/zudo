@@ -10,6 +10,68 @@ September 2026
 
 What changed in each release, package by package. These notes are generated from the packages’ own `CHANGELOG.md` files, so they describe what shipped, not what was planned.
 
+## WHAT’S NEW — SEPTEMBER 2026 RELEASE
+
+A release for all 40 packages: every `@zudojs/*` package, `zudojs-cli` **2.1.0** and the `zudojs` installer package each have a new version. The theme is making the documented path work end to end: a new CLI project comes wired and passes its own tests, one API operation is served over four transports, RPC ships its transports, OpenAPI is generated from the routes you actually registered, and a test client drives the real app over HTTP. Much of it came from writing the [Learn](https://zudojs.oyinlola.site/learn) course against the published packages, where each lesson’s example had to run as written. Several fixes close insecure defaults or change behaviour; they are listed at the end of this section and marked in the package notes below. Highlights:
+
+New projects come wired — and the command is now `zudo`
+
+`npm install -g zudojs` installs the CLI with two commands on your PATH, `zudojs` and the shorter `zudo`; `new` is an alias of `create`, and running it with no arguments in a terminal opens a numbered menu. A generated project’s `src/server.ts` now builds a router, serves `/openapi.json` and `/docs`, applies security headers, closed-by-default CORS and rate limiting, and shuts down in order, with typed env config, a composition root, an example CRUD resource and a test that drives it over HTTP. `zudojs generate resource <name>` writes the DTO, repository, service, controller, routes and test in one go, and `zudojs add` writes real, compiling integrations (`database` with Prisma 7, `redis`, `websockets`, `email`, `docker` and more). Generated projects depend on the `@zudojs/*` ranges this CLI build was tested with ([zudojs-cli](https://zudojs.oyinlola.site/docs/packages-cli.md)).
+
+One API operation, four transports
+
+An operation defined once with `defineOperation` is now served over HTTP (`createApiFetchHandler`), RPC (`registerApiRpcProcedures`), queues (`bindApiQueue`) and the command line (`runApiCli`), all through the same executor, interceptors and schema validation, with one client-safe error shape, `APIWireError`. `toOpenAPIRouteDescriptors` documents the same operations in one call, and inline `defineOperation({ input, handler })` now infers the handler’s input from the schema ([@zudojs/api](https://zudojs.oyinlola.site/docs/packages-api.md)).
+
+RPC ships its transports
+
+`createRPCMemoryTransport(server)` connects a client in the same process, `createRPCHttpTransport({ url })` calls a remote server with `fetch`, and `createRPCFetchHandler(server)` is a web-standard handler any HTTP server can mount — it bounds request bodies and never sends stack traces. The client rebuilds typed errors from the wire, so a caller can `catch` an `RPCValidationError` or `RPCForbiddenError` as such ([@zudojs/rpc](https://zudojs.oyinlola.site/docs/packages-rpc.md)).
+
+OpenAPI generated from your routes
+
+Routes in `@zudojs/http` take an `openapi` option, and `mountOpenAPI(router, options)` serves `/openapi.json` and a docs page built from the routes the router actually registered — path templates, parameter patterns and optional segments included, hidden routes left out. `@zudojs/openapi` gains the transport-neutral `createOpenAPIDocumentFromRoutes`, and `mountFetchHandler` mounts any web-standard `(Request) => Response` handler on a router ([@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md), [@zudojs/openapi](https://zudojs.oyinlola.site/docs/packages-openapi.md)).
+
+Test the real app over HTTP
+
+`createHttpTestClient(target)` is a supertest-style client: point it at a URL, a Node server, a fetch handler or an `@zudojs/http` router, then chain `.get("/users").expect(200).expectJson({ ... })`. The recording doubles now record every call path, so `createTestEventBus().bus.publishEvent(...)` is no longer silently missed, and `createTestApplication()` is silent with a fixed clock by default ([@zudojs/testing](https://zudojs.oyinlola.site/docs/packages-testing.md)).
+
+### Security fixes
+
+Authorization that means what it says
+
+A permission policy that allowed used to grant the permission on its own, so a “business hours” policy handed `task:delete` to an actor with no roles. A policy is now an extra condition on top of roles and rules unless it declares `effect: "grant"` ([@zudojs/permissions](https://zudojs.oyinlola.site/docs/packages-permissions.md)). Guards that refused a request — `authorize()`, the tenancy guards — stopped the handler but the client still saw `200`, because `@zudojs/http` ignored the plain `{ status, body }` object they returned. The new guard-response contract (`createGuardResponse` in [@zudojs/middleware](https://zudojs.oyinlola.site/docs/packages-middleware.md)) lets a framework-neutral guard return a real `401` or `403`, and the router sends it. In `@zudojs/api`, interceptors now run *before* input validation: an anonymous caller used to get a `422` describing your schema instead of a `401`, and an interceptor that replaced the input bypassed validation altogether.
+
+Safer defaults
+
+A feature flag that is switched off now serves its off value (`false` for a boolean flag) instead of `defaultValue`, so a kill switch on a flag defaulting to `true` actually kills it ([@zudojs/feature-flags](https://zudojs.oyinlola.site/docs/packages-feature-flags.md)). `@zudojs/observability` redacts `password`, `token`, `authorization` and the rest from log contexts and span attributes by default ([@zudojs/observability](https://zudojs.oyinlola.site/docs/packages-observability.md)). `login()` normalizes the identifier before looking the user up ([@zudojs/auth](https://zudojs.oyinlola.site/docs/packages-auth.md)), and cookie `Domain` and `Path` values are validated before they reach a header ([@zudojs/security](https://zudojs.oyinlola.site/docs/packages-security.md)).
+
+Hostile input refused at the edge
+
+The RPC server and every API binding refuse a `__proto__`, `constructor` or `prototype` key anywhere in their input, using the new `findUnsafeKey()` from `@zudojs/security`. `createApiFetchHandler` answers `415` to a non-JSON body route even when the body is empty, so a cross-site HTML form cannot trigger an operation. `mountFetchHandler`’s `origin` option now pins the origin instead of letting the client’s `Host` header choose it, and a router group’s OpenAPI defaults no longer publish routes marked hidden. Input nested too deep is a `400` the client can see rather than a hidden `500` ([@zudojs/validation](https://zudojs.oyinlola.site/docs/packages-validation.md)).
+
+### Behaviour changes to act on
+
+Each of these changes what existing code sees. Most fix a bug that made a failure look like success, but code written against the old behaviour will notice. The full entries are in the package notes below.
+
+| Package | What changed | What to do |
+| --- | --- | --- |
+| [`permissions`](https://zudojs.oyinlola.site/docs/packages-permissions.md) | A policy no longer grants without `effect: "grant"`; an allow only means “no objection”. | Add `effect: "grant"` to policies that establish a right on their own (an ownership check), or pass `defaultPolicyEffect: "grant"`. |
+| [`feature-flags`](https://zudojs.oyinlola.site/docs/packages-feature-flags.md) | A flag that is off serves `offValue` (default `false` for booleans), not `defaultValue`. Environment-provider keys are normalised (`FEATURE_NEW_CHECKOUT` → `new-checkout`). | Declare `offValue` if a killed flag must stay on; `keyFormat: "preserve"` for the old keys. |
+| [`observability`](https://zudojs.oyinlola.site/docs/packages-observability.md) | Redaction is on by default. | Pass `redaction: false` only if you really need raw values exported. |
+| [`queue`](https://zudojs.oyinlola.site/docs/packages-queue.md), [`scheduler`](https://zudojs.oyinlola.site/docs/packages-scheduler.md) | Pending jobs, a started `Worker` and a started scheduler keep the Node.js process alive. The queue’s default serializer preserves types (a `Date` stays a `Date`), and a delayed job no longer jumps the line. | Call `stop()` / `close()` at shutdown, or pass `keepAlive: false`; `preserveTypes: false` for plain JSON payloads. |
+| [`rpc`](https://zudojs.oyinlola.site/docs/packages-rpc.md) | `error.code` on every client error is the wire code (`RPC_TIMEOUT`, not `ERR_RPC_TIMEOUT`), and exposed errors keep their meaning (`RPC_NOT_FOUND`, `RPC_CONFLICT` …) instead of `RPC_INTERNAL_ERROR`. | Match on the `RPC_*` codes; `instanceof` checks are unchanged. |
+| [`storage`](https://zudojs.oyinlola.site/docs/packages-storage.md) | Lock acquire timeouts are `409` and connection/pool timeouts `503` (both were `504`). `create()`/`update()` skip `undefined` properties instead of writing `NULL`. | Update status-code checks; send `null` explicitly to clear a column. |
+| [`http`](https://zudojs.oyinlola.site/docs/packages-http.md) | An error thrown in the middleware pipeline propagates unwrapped, so code after `await next()` runs only if it catches. | Check `instanceof` directly instead of unwrapping `.cause` / `.errors`. |
+| [`logger`](https://zudojs.oyinlola.site/docs/packages-logger.md) | `entry.message` is the raw message; the formatted line is in `entry.formatted`. An unknown level name throws. | Custom transports print `entry.formatted ?? entry.message` (or use `formatTransportLine`). |
+| [`auth`](https://zudojs.oyinlola.site/docs/packages-auth.md) | `ERR_ACCOUNT_LOCKED`, `ERR_ACCOUNT_DEACTIVATED` and `ERR_TOKEN_REVOKED` replace `ERR_FORBIDDEN`; a revoked token is `401`, not `403`. | Update clients that match on codes or statuses; use `normalizeLoginIdentifier()` at registration. |
+| [`api`](https://zudojs.oyinlola.site/docs/packages-api.md) | Interceptors run before validation, so `context.input` is the raw input. | Don’t trust `context.input`’s shape inside an interceptor. |
+| [`openapi`](https://zudojs.oyinlola.site/docs/packages-openapi.md) | No invented `200`: an operation with no documented responses gets `default` “Undocumented response” and a warning. | Declare the responses each route returns, then regenerate checked-in specs. |
+| [`testing`](https://zudojs.oyinlola.site/docs/packages-testing.md) | `createTestApplication()` logs to a silent spy and pins its clock to 2026-01-01. | Pass `logger`, `clock` or `startTime` if a test relied on output or wall-clock time. |
+| [`cqrs`](https://zudojs.oyinlola.site/docs/packages-cqrs.md), [`events`](https://zudojs.oyinlola.site/docs/packages-events.md), [`messaging`](https://zudojs.oyinlola.site/docs/packages-messaging.md), [`transactions`](https://zudojs.oyinlola.site/docs/packages-transactions.md) | Failures that used to look like success now throw: `unwrapCommandResult`/`unwrapQueryResult` on a failure, an abort during the last handler, committing a rollback-only transaction (`TransactionRollbackOnlyError`), rolling back a committed one. | Handle the new errors where you relied on the old silent result. |
+| [`config`](https://zudojs.oyinlola.site/docs/packages-config.md), [`container`](https://zudojs.oyinlola.site/docs/packages-container.md), [`runtime`](https://zudojs.oyinlola.site/docs/packages-runtime.md) | NUMBER/BOOLEAN schemas coerce env strings and `validate` runs after `transform`; auto-registration refuses classes with required constructor parameters; `start()` enters every state and `failed` is no longer terminal. | `coerce: false` for strict config; register such classes with an `inject` list. |
+| [`schema`](https://zudojs.oyinlola.site/docs/packages-schema.md), [`validation`](https://zudojs.oyinlola.site/docs/packages-validation.md), [`database`](https://zudojs.oyinlola.site/docs/packages-database.md), [`cache`](https://zudojs.oyinlola.site/docs/packages-cache.md) | Absent optional keys stay absent and `partial()` no longer applies defaults; impossible dates are rejected; too-deep input and bad pagination cursors are `400`s; an invalid cache tag is `ERR_INVALID_INPUT`. | Check code that expected an own `undefined` key or a default in an update schema. |
+
+> **Upgrading:** read the table above first — the permissions, feature-flag and observability rows change what your application allows, serves and exports, and the queue and scheduler rows change when a script exits. Projects created by an earlier CLI depend on `^1.0.0`, so `pnpm update` (or `npm update`) picks these releases up. To get the new CLI, run `npm install -g zudojs`; a project it creates depends on a caret range of the exact versions it was built against (for example `^1.4.0` for `@zudojs/http`), so it can never resolve to a release that lacks the APIs its generated code uses. Full notes: [per-package notes](#packages).
+
 ## WHAT’S NEW — ZUDOJS-CLI 2.0.0 (SEPTEMBER 2026)
 
 A release for one package. `zudojs-cli` was audited on its own — 55 findings, all fixed, each with a regression test that fails against the unfixed code — and ships as **2.0.0**, the first major in the ecosystem. It is a major because several commands now refuse where they previously proceeded, and an interrupted run now exits 130 instead of 0. In every case the old behaviour was a bug that could make a broken run look successful: a project with no `node_modules` reported as created, another project’s build reported as yours, a cancelled scaffold that finished anyway. A script or CI job written against the old behaviour will notice. No other package changed in this release; the rest of the monorepo is as described in the round 11 notes below.
@@ -108,49 +170,57 @@ The package pages on this site were corrected wherever they contradicted the sou
 
 | Package | Version | Notes |
 | --- | --- | --- |
-| `@zudojs/adapters` | `1.2.0` | [Jump to notes](#pkg-adapters) |
-| `@zudojs/api` | `1.1.1` | [Jump to notes](#pkg-api) |
-| `@zudojs/auth` | `1.2.1` | [Jump to notes](#pkg-auth) |
-| `@zudojs/auth-oauth` | `1.2.1` | [Jump to notes](#pkg-auth-oauth) |
-| `@zudojs/cache` | `1.1.1` | [Jump to notes](#pkg-cache) |
-| `zudojs-cli` | `2.0.1` | [Jump to notes](#pkg-cli) |
-| `@zudojs/config` | `1.2.0` | [Jump to notes](#pkg-config) |
-| `@zudojs/constants` | `1.1.1` | [Jump to notes](#pkg-constants) |
-| `@zudojs/container` | `1.1.2` | [Jump to notes](#pkg-container) |
-| `@zudojs/core` | `1.2.1` | [Jump to notes](#pkg-core) |
-| `@zudojs/cqrs` | `1.1.1` | [Jump to notes](#pkg-cqrs) |
-| `@zudojs/crypto` | `1.3.0` | [Jump to notes](#pkg-crypto) |
-| `@zudojs/database` | `1.2.1` | [Jump to notes](#pkg-database) |
-| `@zudojs/docs` | `1.0.3` | [Jump to notes](#pkg-docs) |
-| `@zudojs/errors` | `1.2.0` | [Jump to notes](#pkg-errors) |
-| `@zudojs/events` | `1.2.0` | [Jump to notes](#pkg-events) |
-| `@zudojs/feature-flags` | `1.3.0` | [Jump to notes](#pkg-feature-flags) |
-| `@zudojs/http` | `1.3.0` | [Jump to notes](#pkg-http) |
-| `@zudojs/lifecycle` | `1.2.0` | [Jump to notes](#pkg-lifecycle) |
-| `@zudojs/logger` | `1.3.0` | [Jump to notes](#pkg-logger) |
-| `@zudojs/messaging` | `1.1.0` | [Jump to notes](#pkg-messaging) |
-| `@zudojs/middleware` | `1.0.3` | [Jump to notes](#pkg-middleware) |
-| `@zudojs/observability` | `1.1.1` | [Jump to notes](#pkg-observability) |
-| `@zudojs/openapi` | `1.4.0` | [Jump to notes](#pkg-openapi) |
-| `@zudojs/permissions` | `1.3.0` | [Jump to notes](#pkg-permissions) |
-| `@zudojs/plugins` | `1.2.1` | [Jump to notes](#pkg-plugins) |
-| `@zudojs/queue` | `1.3.0` | [Jump to notes](#pkg-queue) |
-| `@zudojs/rpc` | `1.3.0` | [Jump to notes](#pkg-rpc) |
-| `@zudojs/runtime` | `1.2.1` | [Jump to notes](#pkg-runtime) |
-| `@zudojs/scheduler` | `1.1.2` | [Jump to notes](#pkg-scheduler) |
-| `@zudojs/schema` | `1.1.1` | [Jump to notes](#pkg-schema) |
-| `@zudojs/security` | `1.2.0` | [Jump to notes](#pkg-security) |
-| `@zudojs/serialization` | `1.1.1` | [Jump to notes](#pkg-serialization) |
-| `@zudojs/storage` | `1.1.2` | [Jump to notes](#pkg-storage) |
-| `@zudojs/tenancy` | `1.2.1` | [Jump to notes](#pkg-tenancy) |
-| `@zudojs/testing` | `1.1.2` | [Jump to notes](#pkg-testing) |
-| `@zudojs/transactions` | `1.1.2` | [Jump to notes](#pkg-transactions) |
-| `@zudojs/types` | `1.1.1` | [Jump to notes](#pkg-types) |
-| `@zudojs/validation` | `1.0.3` | [Jump to notes](#pkg-validation) |
+| `@zudojs/adapters` | `1.2.1` | [Jump to notes](#pkg-adapters) |
+| `@zudojs/api` | `1.2.0` | [Jump to notes](#pkg-api) |
+| `@zudojs/auth` | `1.3.0` | [Jump to notes](#pkg-auth) |
+| `@zudojs/auth-oauth` | `1.2.2` | [Jump to notes](#pkg-auth-oauth) |
+| `@zudojs/cache` | `1.2.0` | [Jump to notes](#pkg-cache) |
+| `zudojs-cli` | `2.1.0` | [Jump to notes](#pkg-cli) |
+| `@zudojs/config` | `1.3.0` | [Jump to notes](#pkg-config) |
+| `@zudojs/constants` | `1.1.2` | [Jump to notes](#pkg-constants) |
+| `@zudojs/container` | `1.2.0` | [Jump to notes](#pkg-container) |
+| `@zudojs/core` | `1.2.2` | [Jump to notes](#pkg-core) |
+| `@zudojs/cqrs` | `1.2.0` | [Jump to notes](#pkg-cqrs) |
+| `@zudojs/crypto` | `1.3.1` | [Jump to notes](#pkg-crypto) |
+| `@zudojs/database` | `1.3.0` | [Jump to notes](#pkg-database) |
+| `@zudojs/docs` | `1.0.4` | [Jump to notes](#pkg-docs) |
+| `@zudojs/errors` | `1.3.0` | [Jump to notes](#pkg-errors) |
+| `@zudojs/events` | `1.3.0` | [Jump to notes](#pkg-events) |
+| `@zudojs/feature-flags` | `1.4.0` | [Jump to notes](#pkg-feature-flags) |
+| `@zudojs/http` | `1.4.0` | [Jump to notes](#pkg-http) |
+| `@zudojs/lifecycle` | `1.2.1` | [Jump to notes](#pkg-lifecycle) |
+| `@zudojs/logger` | `1.4.0` | [Jump to notes](#pkg-logger) |
+| `@zudojs/messaging` | `1.2.0` | [Jump to notes](#pkg-messaging) |
+| `@zudojs/middleware` | `1.1.0` | [Jump to notes](#pkg-middleware) |
+| `@zudojs/observability` | `1.2.0` | [Jump to notes](#pkg-observability) |
+| `@zudojs/openapi` | `1.5.0` | [Jump to notes](#pkg-openapi) |
+| `@zudojs/permissions` | `1.4.0` | [Jump to notes](#pkg-permissions) |
+| `@zudojs/plugins` | `1.3.0` | [Jump to notes](#pkg-plugins) |
+| `@zudojs/queue` | `1.4.0` | [Jump to notes](#pkg-queue) |
+| `@zudojs/rpc` | `1.4.0` | [Jump to notes](#pkg-rpc) |
+| `@zudojs/runtime` | `1.3.0` | [Jump to notes](#pkg-runtime) |
+| `@zudojs/scheduler` | `1.2.0` | [Jump to notes](#pkg-scheduler) |
+| `@zudojs/schema` | `1.2.0` | [Jump to notes](#pkg-schema) |
+| `@zudojs/security` | `1.3.0` | [Jump to notes](#pkg-security) |
+| `@zudojs/serialization` | `1.2.0` | [Jump to notes](#pkg-serialization) |
+| `@zudojs/storage` | `1.2.0` | [Jump to notes](#pkg-storage) |
+| `@zudojs/tenancy` | `1.3.0` | [Jump to notes](#pkg-tenancy) |
+| `@zudojs/testing` | `1.2.0` | [Jump to notes](#pkg-testing) |
+| `@zudojs/transactions` | `1.2.0` | [Jump to notes](#pkg-transactions) |
+| `@zudojs/types` | `1.2.0` | [Jump to notes](#pkg-types) |
+| `@zudojs/validation` | `1.1.0` | [Jump to notes](#pkg-validation) |
+| `zudojs` | `1.0.1` | [Jump to notes](#pkg-zudojs) |
 
-### `@zudojs/adapters` v1.2.0
+### `@zudojs/adapters` v1.2.1
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-adapters.md)
+
+v1.2.1 — Patch Changes
+
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+- Republished against `@zudojs/errors@1.3.0`.
+
+Previous release — v1.2.0
 
 Minor Changes
 
@@ -165,33 +235,74 @@ Minor Changes
     - New `providerCooloffMs` option (default 5,000 ms; `0` restores the old behaviour) leaves a failing flag provider alone for that window instead of re-running `getAll()` and `get(key)` on every single evaluation during an outage. A successful call closes the window immediately and `refresh()` always probes.
     - `CLIParser({ stopAtFirstArgument: true })` no longer reports the first positional token as the command. The token now appears only in `args`; previously it appeared in both `commands`/`command` and `args`.
 
-### `@zudojs/api` v1.1.1
+### `@zudojs/api` v1.2.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-api.md)
+
+v1.2.0 — Minor Changes
+
+- One operation, four transports, all through the same executor, interceptors and schema validation, with one client-safe error shape (`APIWireError`):
+    - HTTP: `createApiFetchHandler(operations)`, a web-standard fetch handler. Routes come from `metadata.http` (`{ method, path: "/users/:id" }`) and default to `POST /<name>`.
+    - RPC: `registerApiRpcProcedures(server, operations)`. Queues: `bindApiQueue(queue, operations)`. CLI: `runApiCli(operations, argv)`, which parses `--field value` and `--json` and returns a sysexits-style exit code.
+    - `describeApiRoutes` returns the structural `APIOperationRoute` contract, and `toOpenAPIRouteDescriptors(operations, { basePath })` feeds `@zudojs/openapi`'s `createOpenAPIDocumentFromRoutes`, success and error envelopes included. Both fetch handlers mount on `@zudojs/http` with `mountFetchHandler(router, "/api", handler)`. `TransportContextKey` tells an interceptor which binding a call came through.
+- **Security, behaviour change:** `APIExecutor` runs the interceptors *before* input validation; validation is the innermost step, immediately before the handler. Before, an anonymous call with invalid input got a `422` describing the schema instead of the `401` its authentication interceptor would have returned, logging/metrics/rate-limit interceptors never saw invalid calls, and an interceptor that replaced `context.input` bypassed the schema. `context.input` is now the input as the caller sent it, and a replacement is validated before the handler runs.
+- The handler's `context.signal` aborts when the operation times out (reason: the `504` `APITimeoutError`) or the caller aborts (reason: `OPERATION_CANCELLED`). Every handler now receives a signal, even when the caller supplied none; before, the executor stopped waiting but the handler kept running.
+- `defineOperation` infers the handler's `input` from the `input` schema (Standard Schema output type, or a `safeParse` schema's `data`), so inline `registry.register(defineOperation({ input: TodoInput, handler: async (input) => input.title }))` compiles. New types `InferAPISchemaOutput`, `APIInputSchema`, `DefineOperationWithSchemaOptions`.
+- Hardening: every binding refuses `__proto__` / `constructor` / `prototype` keys in its input (400 over HTTP, a validation error elsewhere); the RPC binding no longer sends the message of an `expose: false` error; `createApiFetchHandler` answers `415` to a body route called with a non-JSON content type even when the body is empty, so a cross-site HTML form cannot trigger an input-less operation.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.1.1
 
 Patch Changes
 
 - No source changes in this release. Republished against `@zudojs/errors@1.2.0`.
 
-### `@zudojs/auth` v1.2.1
+### `@zudojs/auth` v1.3.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-auth.md)
+
+v1.3.0 — Minor Changes
+
+- `AccountLockedError` (423) and `AuthRateLimitError` (429) carry `retryAfterSeconds` and a `Retry-After` header, which `@zudojs/http` copies onto the response; for a lockout it is the time left on the lock.
+- **Behaviour change for clients that match codes:** `AccountLockedError` is `ERR_ACCOUNT_LOCKED`, `AccountDeactivatedError` is `ERR_ACCOUNT_DEACTIVATED` and `TokenRevokedError` is `ERR_TOKEN_REVOKED`; all three used to be `ERR_FORBIDDEN`. **`TokenRevokedError` is now `401` instead of `403`**, since the client has to authenticate again.
+- Security: `login()` normalizes the identifier before `findUser()` sees it (NFKC, trim, and lower-case for an email address). Use the new `normalizeLoginIdentifier()` at registration so both sides agree; `normalizeIdentifier: false` passes the raw string.
+- New `createSessionForUser(userId, { method, ... })` issues a session for a user authenticated outside `login()`, such as an OAuth callback. It is off by default: `method` must be listed in the new `externalSessionMethods` option.
+- `needsRehash()` returns `false` for a hash made with `@zudojs/crypto`'s own `hashPassword()` defaults, which it used to flag on every login.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.2.1
 
 Patch Changes
 
 - No source changes in this release. Republished against `@zudojs/errors@1.2.0`, `@zudojs/permissions@1.3.0`, `@zudojs/crypto@1.3.0`, `@zudojs/constants@1.1.1`.
 
-### `@zudojs/auth-oauth` v1.2.1
+### `@zudojs/auth-oauth` v1.2.2
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-auth-oauth.md)
+
+v1.2.2 — Patch Changes
+
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+- Republished against `@zudojs/errors@1.3.0`, `@zudojs/security@1.3.0`.
+
+Previous release — v1.2.1
 
 Patch Changes
 
 - No source changes in this release. Republished against `@zudojs/errors@1.2.0`, `@zudojs/security@1.2.0`.
 
-### `@zudojs/cache` v1.1.1
+### `@zudojs/cache` v1.2.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-cache.md)
+
+v1.2.0 — Minor Changes
+
+- **Behaviour change:** an invalid tag (`tags: [""]`, over-long, or containing NUL) throws `ERR_INVALID_INPUT`, the same code as an invalid key, instead of `CACHE_OPERATION_FAILED`.
+- `getStats().errors` counts rejected input: an invalid key, namespace, pattern or tag now counts and emits `cache.error`. `failSilently` still never hides invalid input.
+- `ttl()` returns whole milliseconds, rounded down (it returned values like `9999.52…`). The README no longer mentions a `CACHE_INVALID_KEY` code that was never thrown.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.1.1
 
 Patch Changes
 
@@ -201,9 +312,21 @@ Patch Changes
     - `toPrismaInclude` no longer treats a relation or `select` field whose name happens to be an `Object.prototype` member (`toString`, `valueOf`, `constructor`, `__proto__`, …) as a duplicate or silently drops it. Such names are now handled as ordinary keys.
     - `getOrSet` in the database cache no longer poisons a key permanently when the loader throws synchronously rather than returning a rejected promise. The failed load is evicted from the in-flight map and the next call invokes the loader again, as it already did for asynchronous failures.
 
-### `zudojs-cli` v2.0.1
+### `zudojs-cli` v2.1.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-cli.md)
+
+v2.1.0 — Minor Changes
+
+- **Projects work out of the box.** `src/server.ts` builds a router (`registerRoutes`), serves `/openapi.json` and `/docs` when the openapi capability is on, applies `@zudojs/security` headers, closed-by-default CORS and rate limiting, and shuts down integrations → HTTP → runtime. Typed env config in `src/configs`, a composition root in `src/container.ts`, an example `/api/v1/examples` CRUD resource and a `createHttpTestClient` test. Same wiring in modular-monolith modules and every microservice app.
+- **`zudojs generate resource <name>`** writes a DTO, repository (in-memory, or Prisma when the app has it), service, controller, CRUD routes with OpenAPI metadata and a test, registered between `// zudojs:*` markers. `route`, `controller`, `repository` and `dto` write their layer plus any missing lower ones; `--force` rewrites.
+- **`zudojs add`** writes real integrations: `database` (alias `postgres`/`prisma`; Prisma 7), `redis`, `websockets`, `email`, `docker`, plus `queue`, `scheduler`, `cache`, `messaging`, `observability`, `storage`, `openapi`. `docs` and `security` are refused with an explanation.
+- Generators add the `@zudojs/*` packages they import to the owning `package.json`, and camelCase names keep their word boundaries (`createBook` → `create-book`).
+- **`zudo` is an alias binary**, `new` is an alias of `create`, and running with no arguments in a terminal opens a numbered menu (never in CI or pipes). The `zudojs` npm package installs the CLI: `npm install -g zudojs`.
+- Parser fixes: only the first word selects a command; options before the command, `--port=` and non-finite numbers are usage errors (exit 2); unknown commands exit 3 with "did you mean"; `--__proto__`-style options are refused.
+- `@zudojs/*` ranges in generated projects match this CLI build, and frontend fallbacks move to current majors (Vite 8, React 19.3, Next 16, Nuxt 4, Astro 7, Angular 22, SvelteKit 2.70); backends get TypeScript 7, Vitest 5 and @types/node 26.
+
+Previous release — v2.0.1
 
 Patch Changes — 2.0.1
 
@@ -247,9 +370,20 @@ Previously — v1.2.1 (round 11)
     - New `providerCooloffMs` option (default 5,000 ms; `0` restores the old behaviour) leaves a failing flag provider alone for that window instead of re-running `getAll()` and `get(key)` on every single evaluation during an outage. A successful call closes the window immediately and `refresh()` always probes.
     - `CLIParser({ stopAtFirstArgument: true })` no longer reports the first positional token as the command. The token now appears only in `args`; previously it appeared in both `commands`/`command` and `args`.
 
-### `@zudojs/config` v1.2.0
+### `@zudojs/config` v1.3.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-config.md)
+
+v1.3.0 — Minor Changes
+
+- **Behaviour change:** NUMBER and BOOLEAN schemas accept values from environment variables. String input is coerced before the type check, strictly and in decimal (`"8080"` passes; `"80a"`, `"0x1F90"` and `""` do not); booleans accept `true`/`false`, `1`/`0`, `yes`/`no`, `y`/`n`, `on`/`off`. Set the new schema option `coerce: false` for the old strict behaviour.
+- **Behaviour change:** `validate` receives the final value. The order is coerce, type check, constraints, `transform`, then `validate`, which matches its `(value: T)` signature.
+- A typed getter called with a fallback returns `T` instead of `T | undefined`, and `get(key, fallback)` is a new overload (its literal fallback is widened through `ConfigWiden<T>`).
+- `ScopedConfigResolver` and `ConfigManager` gain `requiredString`, `requiredNumber`, `requiredBoolean` and `requiredDate`. `resolve()` and `resolveResult()` take a `TypedConfigSchema<T>`, so each type accepts exactly the constraints the validator enforces.
+- `store.getByPrefix("db.")` and `getObjectByPrefix("db.")` ignore the trailing dot; they returned nothing before.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.2.0
 
 Minor Changes
 
@@ -268,17 +402,33 @@ Minor Changes
     - `createLoggerManagerFromLogger(logger)` now registers the logger with the manager's factory, so `manager.flush()` / `manager.close()` actually reach it and `manager.size` / `getAll()` report it. `LoggerManager.adopt(logger)` and `LoggerFactory.register(logger, name?)` are new public methods.
     - Errors are now typed where they were generic: a transport write exceeding `transportTimeout` raises `LoggerTimeoutError` (with `transportName` and `timeout`), other write failures `LoggerTransportError` with `transportName` set, formatter failures `LoggerFormatterError` with `formatterName` set, a closed `LoggerManager` `LoggerDisposedError` instead of a bare `Error`, an unknown level `InvalidLoggerLevelError`, an invalid entry timestamp `InvalidLoggerEntryError`, an unresolved string formatter id `LoggerFormatterNotFoundError`, and a write to a closed buffered transport `LoggerTransportClosedError`. Code matching on `RangeError` or on error message text from these paths needs updating.
 
-### `@zudojs/constants` v1.1.1
+### `@zudojs/constants` v1.1.2
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-constants.md)
+
+v1.1.2 — Patch Changes
+
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+- Republished against `@zudojs/errors@1.3.0`.
+
+Previous release — v1.1.1
 
 Patch Changes
 
 - No source changes in this release. Republished against `@zudojs/errors@1.2.0`.
 
-### `@zudojs/container` v1.1.2
+### `@zudojs/container` v1.2.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-container.md)
+
+v1.2.0 — Minor Changes
+
+- `registerFactory`, `factoryProvider` and `provideFactory` infer the factory's parameter types from the `inject` list (new `InjectedDependencies<Deps>` and `InjectedFactory<T, Deps>`). **Behaviour change:** a factory that declares more parameters than its inject list supplies is a compile error.
+- **Behaviour change:** `autoRegisterClasses` only auto-registers a class whose constructor has no required parameters. `resolve(NeedsDep)` used to build it silently with `dep = undefined`; it now throws `RegistrationNotFoundError` explaining how to register it.
+- Error messages and default registration names show a symbol token by its description (`MissingService`, not `Symbol(MissingService)`).
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.1.2
 
 Patch Changes
 
@@ -297,25 +447,46 @@ Patch Changes
     - `LifecycleManager` with `continueOnFailure: true` no longer initializes or readies a module whose declared dependency failed. It previously consulted only the failure count, so `api` with `dependencies: ["db"]` had both `onInitialize` and `onReady` invoked — and appeared in `start().succeeded` — after `db` failed to come up. Such a module is now skipped, reported in `initialize().failed` with the blocking dependency named, and the skip cascades to its own dependents. Modules independent of the failure still continue, and `continueOnFailure: false` (the default, and what `createRuntime()` uses) is unaffected.
     - Runtime option validation and `RuntimeRegistry.register()` / `require()` now throw `RuntimeError` / `RuntimeStateError` rather than a bare `Error`. Messages are unchanged.
 
-### `@zudojs/core` v1.2.1
+### `@zudojs/core` v1.2.2
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-core.md)
+
+v1.2.2 — Patch Changes
+
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+- Republished against `@zudojs/errors@1.3.0`, `@zudojs/constants@1.1.2`.
+
+Previous release — v1.2.1
 
 Patch Changes
 
 - No source changes in this release. Republished against `@zudojs/errors@1.2.0`, `@zudojs/constants@1.1.1`.
 
-### `@zudojs/cqrs` v1.1.1
+### `@zudojs/cqrs` v1.2.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-cqrs.md)
+
+v1.2.0 — Minor Changes
+
+- **Behaviour change:** `unwrapCommandResult()` throws `CommandFailedError` for a result whose status is `"failure"`, and `unwrapQueryResult()` throws `QueryFailedError`, instead of returning the failure payload as if it were the value. The payload is on `error.failure` and `error.cause`; both errors are re-exported.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.1.1
 
 Patch Changes
 
 - No source changes in this release. Republished against `@zudojs/errors@1.2.0`, `@zudojs/events@1.2.0`, `@zudojs/middleware@1.0.3`.
 
-### `@zudojs/crypto` v1.3.0
+### `@zudojs/crypto` v1.3.1
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-crypto.md)
+
+v1.3.1 — Patch Changes
+
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+- Republished against `@zudojs/errors@1.3.0`, `@zudojs/constants@1.1.2`.
+
+Previous release — v1.3.0
 
 Minor Changes
 
@@ -340,9 +511,20 @@ Minor Changes
     - `setDefaultCryptoProvider` checks that all twelve provider methods are functions and that every capability flag is a boolean, so installing a partial object fails at the call that installs it instead of throwing a `TypeError` from inside whichever operation reached the missing method first. A rejected provider is not installed.
     - New exports: `assertProviderCapability`, `assertCryptoProvider`, `assertRandomCapability`, `assertHashCapability`, `assertHmacCapability`, `assertPasswordHashingCapability` and `CRYPTO_PROVIDER_METHODS`, for anyone writing their own provider or wrapper.
 
-### `@zudojs/database` v1.2.1
+### `@zudojs/database` v1.3.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-database.md)
+
+v1.3.0 — Minor Changes
+
+- Caller errors pass through transactions: a `@zudojs/errors` `BaseError` that is not a `DatabaseError` (`NotFoundError`, `ValidationError` …) still rolls back, but is rethrown as the same instance instead of being wrapped in a `500` `DatabaseError`. New `isNonDatabaseBaseError(error)`.
+- **Behaviour change:** a missing, forged, tampered or malformed cursor throws a `400` `ValidationError` (one issue on `cursor`) instead of a `TypeError` that surfaced as a `500`.
+- `paginateCursor` sets `meta.previousCursor` and accepts it to page backward. New `getKeysetDirection`, `keysetFetchSort`, `reverseKeysetSort`, `KEYSET_BACKWARD_KEY`.
+- The reconnect back-off wait keeps a script alive, and `disconnect()` / `destroy()` cancel an in-progress reconnect.
+- `PrismaClientLike` accepts a real Prisma 7 client generated into the application, without an `as unknown as` cast.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.2.1
 
 Patch Changes
 
@@ -352,9 +534,16 @@ Patch Changes
     - `toPrismaInclude` no longer treats a relation or `select` field whose name happens to be an `Object.prototype` member (`toString`, `valueOf`, `constructor`, `__proto__`, …) as a duplicate or silently drops it. Such names are now handled as ordinary keys.
     - `getOrSet` in the database cache no longer poisons a key permanently when the loader throws synchronously rather than returning a rejected promise. The failed load is evicted from the in-flight map and the next call invokes the loader again, as it already did for asynchronous failures.
 
-### `@zudojs/docs` v1.0.3
+### `@zudojs/docs` v1.0.4
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-docs.md)
+
+v1.0.4 — Patch Changes
+
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+- Republished against `@zudojs/errors@1.3.0`.
+
+Previous release — v1.0.3
 
 Patch Changes
 
@@ -369,9 +558,23 @@ Patch Changes
     - New `providerCooloffMs` option (default 5,000 ms; `0` restores the old behaviour) leaves a failing flag provider alone for that window instead of re-running `getAll()` and `get(key)` on every single evaluation during an outage. A successful call closes the window immediately and `refresh()` always probes.
     - `CLIParser({ stopAtFirstArgument: true })` no longer reports the first positional token as the command. The token now appears only in `args`; previously it appeared in both `commands`/`command` and `args`.
 
-### `@zudojs/errors` v1.2.0
+### `@zudojs/errors` v1.3.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-errors.md)
+
+v1.3.0 — Minor Changes
+
+- New error classes:
+    - `CommandFailedError` and `QueryFailedError` (codes `ERR_COMMAND_FAILED`, `ERR_QUERY_FAILED`), thrown by `@zudojs/cqrs`'s `unwrapCommandResult()` / `unwrapQueryResult()`.
+    - `EventBusStoppedError`, moved here from `@zudojs/events`; `EventBusDisposedError`'s code is now `ERR_EVENT_BUS_DISPOSED` (was `ERR_LIFECYCLE_DISPOSED`).
+    - `TransactionRollbackOnlyError extends TransactionRollbackError`, for a commit refused because the transaction was marked rollback-only. `TransactionRollbackError` accepts an optional `message`.
+- New codes `ErrorCode.TOKEN_REVOKED`, `ACCOUNT_LOCKED` and `ACCOUNT_DEACTIVATED`, used by `@zudojs/auth`, plus `COMMAND_FAILED` and `QUERY_FAILED`.
+- `SerializationDepthError` takes an optional third argument `{ statusCode?, expose? }`; without it it is still an unexposed `500`. `@zudojs/validation`'s depth guards now pass `400` / `expose: true`.
+- `SchemaError` is generic (`SchemaError<TIssue = unknown>`, likewise `SchemaErrorOptions` and `createSchemaError`); the default keeps existing code unchanged.
+- `RPCError` declares a readonly `details` and accepts it as an option.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.2.0
 
 Minor Changes
 
@@ -400,9 +603,20 @@ Patch Changes
     - The envelope trust boundary (`assertValidEnvelope`, `unwrapEnvelope`, `deserializeFromEnvelope`) throws `InvalidSerializedDataError` instead of a bare `Error`, a full `TransformerRegistry` throws `TransformerError`, and `unwrapSchemaResult` throws `SchemaError` carrying the recorded issues. Code that catches `Error` is unaffected; code that wants to turn hostile input into a 400 can now tell it apart from an internal bug.
     - `Schema.safeParse`'s documentation no longer claims it never throws: a callback defect or a `RangeError` from stack exhaustion is still deliberately allowed to escape rather than being laundered into a validation issue.
 
-### `@zudojs/events` v1.2.0
+### `@zudojs/events` v1.3.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-events.md)
+
+v1.3.0 — Minor Changes
+
+- **Behaviour change:** in sequential dispatch, aborting the publish `signal` while the last or only handler runs rejects with `EventDispatchAbortedError`; it used to resolve with `handled: true`.
+- A handler's `timeoutMs` aborts the `context.signal` that handler received, with the `EventTimeoutError` as the reason.
+- `bus.use()` accepts registered middleware from `createEventMiddleware()` and helpers such as `validateEventMiddleware()`.
+- `EventBusStoppedError` and `EventBusDisposedError` come from `@zudojs/errors` and are re-exported, so `instanceof` works from either import. `EventBusDisposedError`'s code is `ERR_EVENT_BUS_DISPOSED`.
+- `EventPublishResult.errors` and `EventEmitResult.errors` are typed `readonly EventHandlerError[]`.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.2.0
 
 Minor Changes
 
@@ -420,9 +634,17 @@ Minor Changes
     - `DispatchResult.handlerResults` is now a snapshot taken when the dispatch settles. A handler still running after a timeout can no longer push a `success: true` record into the result of a dispatch that already failed with `MessageTimeoutError`, so audit records and metrics derived from `handlerResults` are stable once you have awaited the dispatch.
     - The `Dispatcher` interface now declares `dispose()`, `getRegistry()` and `listMiddleware()`, all of which `DefaultDispatcher` already implemented. `createDispatcher().dispose()` compiles without a cast.
 
-### `@zudojs/feature-flags` v1.3.0
+### `@zudojs/feature-flags` v1.4.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-feature-flags.md)
+
+v1.4.0 — Minor Changes
+
+- **Behaviour change (security): the kill switch fails closed.** A flag that is off — `enabled: false`, `state: "disabled"` (not honoured at all before), a draft, archived, expired, or blocked by a dependency — serves its new optional `offValue`; without one, `false` for a boolean flag, or `defaultValue` for other types. Before, a killed flag with `defaultValue: true` stayed on. Declare `offValue: true` if you relied on that.
+- **Behaviour change:** `createEnvironmentProvider` normalises keys, so `FEATURE_NEW_CHECKOUT=true` is the flag `new-checkout`. `get("NEW_CHECKOUT")` still works; pass `keyFormat: "preserve"` for the old spelling.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.3.0
 
 Minor Changes
 
@@ -437,9 +659,22 @@ Minor Changes
     - New `providerCooloffMs` option (default 5,000 ms; `0` restores the old behaviour) leaves a failing flag provider alone for that window instead of re-running `getAll()` and `get(key)` on every single evaluation during an outage. A successful call closes the window immediately and `refresh()` always probes.
     - `CLIParser({ stopAtFirstArgument: true })` no longer reports the first positional token as the command. The token now appears only in `args`; previously it appeared in both `commands`/`command` and `args`.
 
-### `@zudojs/http` v1.3.0
+### `@zudojs/http` v1.4.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-http.md)
+
+v1.4.0 — Minor Changes
+
+- **Guard responses are honoured.** The router, `HttpMiddlewarePipeline` and `RouteDispatcher` send a `@zudojs/middleware` guard response with its status, headers and JSON body. A route middleware that returned a plain `{ status, body, headers }` object used to be ignored, so `authorize()` and the tenancy guards refused requests that clients saw as `200`. New helpers `applyGuardResponse` and `guardResponseToContext`; `@zudojs/http` now depends on `@zudojs/middleware`.
+- **OpenAPI from routes.** Routes take an `openapi` option, and `generateOpenAPIDocument(router, options)`, `createRouterOpenAPI` and `mountOpenAPI` (serves `/openapi.json`, optional YAML and a docs page at `/docs`) build the document from the routes the router actually registered. `mountFetchHandler(router, basePath, handler)` serves a web-standard `(Request) => Response` handler; `toWebRequest` is exported on its own.
+- `request.id` reuses an incoming `x-request-id` of 1–128 characters of `[A-Za-z0-9._:-]` (opt out with `trustRequestId: false`; `resolveIncomingRequestId()` is exported), and the request guard's default `requestIdPattern` matches that rule.
+- `HttpClient` retries a timed-out request for methods in `retryMethods` (default `GET`, `HEAD`, `OPTIONS`) under the new `retryOnTimeout`, with full-jitter backoff; `jitter: false` waits exactly the delay.
+- Route handlers may return a plain JSON value (sent as `200`); route params are set before route middleware runs; `createRateLimitMiddleware`'s `429` is JSON and always has `Retry-After`; `createHttpServer` takes typed `HttpServerOptions`; `new HttpError(415, msg)` gets its code from the status (new `defaultErrorCode(status)`).
+- **Behaviour change:** an error thrown in the middleware pipeline propagates as the error that was thrown, not wrapped in `HttpMiddlewareError` / `HttpMiddlewarePipelineError`, so `instanceof NotFoundError` works in an outer middleware and in `errorHandler`.
+- Fixes: `RequestContextInit.signal` is honoured (the Node adapter aborts it on client disconnect); multiple `Set-Cookie` headers from a returned `Response` are no longer folded into one; a streamed body is cancelled when the client disconnects. Security review: `mountFetchHandler`'s `origin` option pins the origin instead of trusting `Host`, and a group's `openapi` defaults no longer publish hidden routes.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.3.0
 
 Minor Changes
 
@@ -506,9 +741,16 @@ createHTTPRequest(req, { trustProxy: "10.0.0.0/8" });
     - `negotiateEncoding()` falls back to `identity` when the client names only codings the server does not have, unless `identity;q=0` or a `*;q=0` excludes it.
     - New helpers are exported alongside the existing ones: `normalizeRoutePattern`, `normalizeMatchPath`, `splitRoutePattern`, `hasTrailingSlash` and `compareSegmentSpecificity`. `normalizePath` keeps its current request-path behaviour.
 
-### `@zudojs/lifecycle` v1.2.0
+### `@zudojs/lifecycle` v1.2.1
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-lifecycle.md)
+
+v1.2.1 — Patch Changes
+
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+- Republished against `@zudojs/errors@1.3.0`, `@zudojs/constants@1.1.2`.
+
+Previous release — v1.2.0
 
 Minor Changes
 
@@ -527,9 +769,20 @@ Minor Changes
     - `LifecycleManager` with `continueOnFailure: true` no longer initializes or readies a module whose declared dependency failed. It previously consulted only the failure count, so `api` with `dependencies: ["db"]` had both `onInitialize` and `onReady` invoked — and appeared in `start().succeeded` — after `db` failed to come up. Such a module is now skipped, reported in `initialize().failed` with the blocking dependency named, and the skip cascades to its own dependents. Modules independent of the failure still continue, and `continueOnFailure: false` (the default, and what `createRuntime()` uses) is unaffected.
     - Runtime option validation and `RuntimeRegistry.register()` / `require()` now throw `RuntimeError` / `RuntimeStateError` rather than a bare `Error`. Messages are unchanged.
 
-### `@zudojs/logger` v1.3.0
+### `@zudojs/logger` v1.4.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-logger.md)
+
+v1.4.0 — Minor Changes
+
+- `entry.message` is again the raw message a transport receives; the formatter's rendering is in the new `entry.formatted`. **Custom transports that printed `entry.message` to get the formatted line should print `entry.formatted ?? entry.message`**, or use the new `formatTransportLine(entry)`.
+- The console transport prints the formatted line instead of a record object; with `createStructuredLoggerFormatter()` it prints one JSON line per record (new `toJsonLogLine(record)`).
+- Level names are accepted in any case wherever a level is configured: `createLogger({ level: "error" })`, `setLevel("DEBUG")`, `child({ level: "trace" })` (type `LoggerLevelLike`, new `resolveLoggerLevel()`). An unknown level now throws instead of silently disabling output.
+- An `Error` passed as the second argument of a level method (`logger.error("failed", err)`) is logged as the entry's error with its stack instead of being dropped.
+- `createTextLoggerFormatter({ includeStackTrace: false })` hides stacks everywhere, including an `Error` inside metadata.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.3.0
 
 Minor Changes
 
@@ -548,9 +801,17 @@ Minor Changes
     - `createLoggerManagerFromLogger(logger)` now registers the logger with the manager's factory, so `manager.flush()` / `manager.close()` actually reach it and `manager.size` / `getAll()` report it. `LoggerManager.adopt(logger)` and `LoggerFactory.register(logger, name?)` are new public methods.
     - Errors are now typed where they were generic: a transport write exceeding `transportTimeout` raises `LoggerTimeoutError` (with `transportName` and `timeout`), other write failures `LoggerTransportError` with `transportName` set, formatter failures `LoggerFormatterError` with `formatterName` set, a closed `LoggerManager` `LoggerDisposedError` instead of a bare `Error`, an unknown level `InvalidLoggerLevelError`, an invalid entry timestamp `InvalidLoggerEntryError`, an unresolved string formatter id `LoggerFormatterNotFoundError`, and a write to a closed buffered transport `LoggerTransportClosedError`. Code matching on `RangeError` or on error message text from these paths needs updating.
 
-### `@zudojs/messaging` v1.1.0
+### `@zudojs/messaging` v1.2.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-messaging.md)
+
+v1.2.0 — Minor Changes
+
+- **Behaviour change:** an abort during the last or only handler fails the dispatch with `MessageDispatchAbortedError` (`success: false`); it used to report `success: true`.
+- `send(input, { context: { correlationId, causationId } })` puts those identifiers on the message it builds, so `createDerivedMessage` continues the chain.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.1.0
 
 Minor Changes
 
@@ -568,17 +829,32 @@ Minor Changes
     - `DispatchResult.handlerResults` is now a snapshot taken when the dispatch settles. A handler still running after a timeout can no longer push a `success: true` record into the result of a dispatch that already failed with `MessageTimeoutError`, so audit records and metrics derived from `handlerResults` are stable once you have awaited the dispatch.
     - The `Dispatcher` interface now declares `dispose()`, `getRegistry()` and `listMiddleware()`, all of which `DefaultDispatcher` already implemented. `createDispatcher().dispose()` compiles without a cast.
 
-### `@zudojs/middleware` v1.0.3
+### `@zudojs/middleware` v1.1.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-middleware.md)
+
+v1.1.0 — Minor Changes
+
+- New guard-response contract: `createGuardResponse({ status, body?, headers? })`, `isGuardResponse()`, the `GuardResponse` type and the `GUARD_RESPONSE` brand (`Symbol.for("zudojs.middleware.guardResponse")`). A structured body gets `content-type: application/json` by default, and a status outside 100–599 throws `RangeError`. It lets a framework-neutral guard refuse a request with a real `401`/`403` that `@zudojs/http` sends as-is; before, a guard that returned a plain `{ status, body, headers }` object stopped the handler but the client still saw `200`.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.0.3
 
 Patch Changes
 
 - No source changes in this release. Republished against `@zudojs/errors@1.2.0`.
 
-### `@zudojs/observability` v1.1.1
+### `@zudojs/observability` v1.2.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-observability.md)
+
+v1.2.0 — Minor Changes
+
+- **Behaviour change (security): redaction is on by default.** Without a `redaction` option, log contexts and span attributes are redacted, so `password`, `token`, `authorization` and the rest are no longer exported in the clear. The default rules reuse `@zudojs/logger`'s secret-field matcher. Pass `redaction: false` to turn it off.
+- `shutdown()` exports the final metric snapshot once instead of twice.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.1.1
 
 Patch Changes
 
@@ -589,9 +865,17 @@ Patch Changes
     - **`@zudojs/observability`** — queue-overflow reports from the batch log and span processors are rate limited. A stalled exporter used to make every subsequent `logger.info()` synchronously allocate an `Error` and re-enter the configured `onError` — usually writing to the sink that was already failing. The first drop is still reported immediately; after that, at most one report per minute, each carrying the running total.
     - **`@zudojs/observability`** — a span attribute named `__proto__` is now recorded instead of silently vanishing, on both span attributes and event attributes. Storing it by plain assignment invoked the prototype setter, which dropped the attribute and replaced the bag's prototype; the injected prototype then let unlimited further attributes past the `maxAttributes` cap. Inherited names such as `toString` are counted against the cap too.
 
-### `@zudojs/openapi` v1.4.0
+### `@zudojs/openapi` v1.5.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-openapi.md)
+
+v1.5.0 — Minor Changes
+
+- Transport-neutral `createOpenAPIDocumentFromRoutes(routes, options)` / `createOpenAPIManagerFromRoutes` over the structural `OpenAPIRouteDescriptor`, plus `OpenAPIManager.setRoutes()` and `routeWarnings()`. Route metadata accepts `@zudojs/schema` or raw schemas for `params`, `query`, `headers`, `cookies`, `body` and response `schema`. Every path template slot is documented even when undeclared, and `security: []` is no longer dropped.
+- **Behaviour change:** a route with no documented responses no longer gets an invented `"200": { description: "OK" }`. It gets a spec-valid `default` response described as "Undocumented response" (`UNDOCUMENTED_RESPONSE_DESCRIPTION`) and a warning, sent to `routeWarnings()`, `onSchemaWarning` and the new `onRouteWarning` option. Declare the responses an operation returns to silence it.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.4.0
 
 Minor Changes
 
@@ -602,9 +886,18 @@ Minor Changes
     - **`@zudojs/observability`** — queue-overflow reports from the batch log and span processors are rate limited. A stalled exporter used to make every subsequent `logger.info()` synchronously allocate an `Error` and re-enter the configured `onError` — usually writing to the sink that was already failing. The first drop is still reported immediately; after that, at most one report per minute, each carrying the running total.
     - **`@zudojs/observability`** — a span attribute named `__proto__` is now recorded instead of silently vanishing, on both span attributes and event attributes. Storing it by plain assignment invoked the prototype setter, which dropped the attribute and replaced the bag's prototype; the injected prototype then let unlimited further attributes past the `maxAttributes` cap. Inherited names such as `toString` are counted against the cap too.
 
-### `@zudojs/permissions` v1.3.0
+### `@zudojs/permissions` v1.4.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-permissions.md)
+
+v1.4.0 — Minor Changes
+
+- **Security, behaviour change: a policy's allow is no longer a grant.** A policy is by default an extra condition on top of RBAC/ABAC (`effect: "constrain"`): it can deny, but the actor's roles, permissions or rules must still grant the permission. A policy that establishes the right on its own opts in with `effect: "grant"`; `createPermissionEngine({ defaultPolicyEffect: "grant" })` restores the old behaviour. **If you relied on a policy to grant access, those checks now deny until you add `effect: "grant"`.** New `PolicyEffect`, `policyGrants`, `DEFAULT_POLICY_EFFECT`.
+- `createForbiddenResponse`, `createUnauthorizedResponse` and `createJsonResponse` — and so `authorize()` and the require-permission middleware — return `@zudojs/middleware` guard responses, which `@zudojs/http` now sends with their real status instead of `200`. `PermissionHttpResponse` is an alias of `GuardResponse`.
+- The mirrored `HttpMiddleware` types are generic over what `next()` returns, so every guard fits a route's `middleware` list without `as never`. New `HttpMiddlewareOutcome`.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.3.0
 
 Minor Changes
 
@@ -629,17 +922,36 @@ Minor Changes
     - `setDefaultCryptoProvider` checks that all twelve provider methods are functions and that every capability flag is a boolean, so installing a partial object fails at the call that installs it instead of throwing a `TypeError` from inside whichever operation reached the missing method first. A rejected provider is not installed.
     - New exports: `assertProviderCapability`, `assertCryptoProvider`, `assertRandomCapability`, `assertHashCapability`, `assertHmacCapability`, `assertPasswordHashingCapability` and `CRYPTO_PROVIDER_METHODS`, for anyone writing their own provider or wrapper.
 
-### `@zudojs/plugins` v1.2.1
+### `@zudojs/plugins` v1.3.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-plugins.md)
+
+v1.3.0 — Minor Changes
+
+- An async `PluginEvents.emit` that rejects is contained and reported like a synchronous throw instead of becoming an `unhandledRejection` after `start()` resolves.
+- An `@zudojs/events` `EventBus` is accepted by `new PluginManager({ events })` and `createPluginContext(meta, { events })`, adapted by the new `toPluginEvents()`. New `isPluginEventBus`, `PluginEventBus`, `PluginEventSource`.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.2.1
 
 Patch Changes
 
 - No source changes in this release. Republished against `@zudojs/errors@1.2.0`.
 
-### `@zudojs/queue` v1.3.0
+### `@zudojs/queue` v1.4.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-queue.md)
+
+v1.4.0 — Minor Changes
+
+- **Behaviour change: process lifetime.** Pending work keeps the Node.js process alive, and a started `Worker` keeps it alive until `stop()`. An idle, paused or closed queue never does. Pass `keepAlive: false` (on `QueueOptions` and `WorkerOptions`) for the old unreferenced timers.
+- **Behaviour change: payloads.** The default `JsonSerializer` preserves types, so a `Date` reaches the processor as a `Date`; `BigInt`, `Map`, `Set`, `Uint8Array` and `Error` round-trip too. Pass `preserveTypes: false` for plain JSON.
+- **Behaviour change: ordering.** Within a priority, a job is ordered by when it became runnable, so a delayed job no longer jumps ahead of jobs already waiting.
+- Work no longer waits for the next poll: `add()` and every other event that makes a job runnable wake the poller at once. New optional `Queue.onJobReady(listener)`, which a `Worker` subscribes to on `start()`. `pollInterval` is honoured on every poll.
+- New 1-based `JobContext.attemptNumber`. `PassthroughSerializer` really passes payloads through, and `queue.events` works without configuration.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.3.0
 
 Minor Changes
 
@@ -657,9 +969,20 @@ Minor Changes
     - A schedule whose job has been unregistered is retired and reported through `onError` with a `SchedulerJobNotFoundError`, instead of re-arming its timer forever while dispatching nothing and still reporting itself as active.
     - `handle.resume()` on a schedule that is already active is a no-op. It used to recompute the next fire time from now, so a supervisor calling it idempotently could postpone an hourly job indefinitely. Resuming a paused schedule is unchanged.
 
-### `@zudojs/rpc` v1.3.0
+### `@zudojs/rpc` v1.4.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-rpc.md)
+
+v1.4.0 — Minor Changes
+
+- **Transports ship in the package.** `createRPCMemoryTransport(server)` connects a client in the same process; `createRPCHttpTransport({ url })` calls a remote server with `fetch`; `createRPCFetchHandler(server)` is a web-standard `(Request) => Promise<Response>` handler that bounds bodies, answers every failure with an RPC error frame and never sends stack traces.
+- The client rebuilds typed errors from the wire (`RPCValidationError`, `RPCProcedureNotFoundError`, `RPCAuthenticationError`, `RPCForbiddenError` …) and keeps the wire `code` and `details`. `mapRPCError` exposes the server's mapping.
+- **`error.code` is always the wire code.** `RPC_TIMEOUT`, `RPC_CANCELLED` and `RPC_UNAVAILABLE` used to come back with class codes (`ERR_RPC_TIMEOUT` …). A `@zudojs/errors` error thrown with `expose: true` reaches the caller under the matching code (new `RPC_NOT_FOUND` 404 and `RPC_CONFLICT` 409, plus `RPC_VALIDATION_ERROR`, `RPC_UNAUTHENTICATED`, `RPC_FORBIDDEN`, `RPC_RATE_LIMITED` …) instead of `RPC_INTERNAL_ERROR`.
+- Security: the server refuses (`RPC_INVALID_REQUEST`) a frame whose `payload` or `metadata` holds a `__proto__`, `constructor` or `prototype` key at any depth. A caller that disconnects or aborts cancels the procedure (`RPC_CANCELLED`) instead of letting it run to its timeout.
+- The client deadline and `retry()` backoff timers keep a script alive until the call settles (Node used to exit with code 13 first); `createRPCHttpTransport` clamps an over-long timeout to the timer range.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.3.0
 
 Minor Changes
 
@@ -670,9 +993,19 @@ Minor Changes
     - **`@zudojs/observability`** — queue-overflow reports from the batch log and span processors are rate limited. A stalled exporter used to make every subsequent `logger.info()` synchronously allocate an `Error` and re-enter the configured `onError` — usually writing to the sink that was already failing. The first drop is still reported immediately; after that, at most one report per minute, each carrying the running total.
     - **`@zudojs/observability`** — a span attribute named `__proto__` is now recorded instead of silently vanishing, on both span attributes and event attributes. Storing it by plain assignment invoked the prototype setter, which dropped the attribute and replaced the bag's prototype; the injected prototype then let unlimited further attributes past the `maxAttributes` cap. Inherited names such as `toString` are counted against the cap too.
 
-### `@zudojs/runtime` v1.2.1
+### `@zudojs/runtime` v1.3.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-runtime.md)
+
+v1.3.0 — Minor Changes
+
+- **Behaviour change:** `start()` passes through every state in order (`created → initializing → initialized → starting → running`), and publishes `runtime.initialized` and `runtime.starting`.
+- `RuntimeInitializationError`, `RuntimeRollbackError` and `RuntimeSignalError` are now thrown or logged where they apply; the first two extend `RuntimeStartError`.
+- **Behaviour change:** `failed` is no longer terminal; `TERMINAL_STATES` is `["stopped"]`.
+- New `disposeContainerOnStop: true` makes `stop()` dispose the container; `createTestRuntime` does so by default.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.2.1
 
 Patch Changes
 
@@ -691,9 +1024,17 @@ Patch Changes
     - `LifecycleManager` with `continueOnFailure: true` no longer initializes or readies a module whose declared dependency failed. It previously consulted only the failure count, so `api` with `dependencies: ["db"]` had both `onInitialize` and `onReady` invoked — and appeared in `start().succeeded` — after `db` failed to come up. Such a module is now skipped, reported in `initialize().failed` with the blocking dependency named, and the skip cascades to its own dependents. Modules independent of the failure still continue, and `continueOnFailure: false` (the default, and what `createRuntime()` uses) is unaffected.
     - Runtime option validation and `RuntimeRegistry.register()` / `require()` now throw `RuntimeError` / `RuntimeStateError` rather than a bare `Error`. Messages are unchanged.
 
-### `@zudojs/scheduler` v1.1.2
+### `@zudojs/scheduler` v1.2.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-scheduler.md)
+
+v1.2.0 — Minor Changes
+
+- **Behaviour change: process lifetime.** A started scheduler keeps the Node.js process alive until `stop()`; a script that only ran a scheduler used to exit 0 with nothing run. `SchedulerOptions.keepAlive: false` restores the old behaviour.
+- `stop()` is idempotent; `Clock` is exported from the package root; `CronParseError` messages are no longer garbled; `getExecutions()` records the real attempt; new `JobContext.attemptNumber`.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.1.2
 
 Patch Changes
 
@@ -711,9 +1052,21 @@ Patch Changes
     - A schedule whose job has been unregistered is retired and reported through `onError` with a `SchedulerJobNotFoundError`, instead of re-arming its timer forever while dispatching nothing and still reporting itself as active.
     - `handle.resume()` on a schedule that is already active is a no-op. It used to recompute the next fire time from now, so a supervisor calling it idempotently could postpone an hourly job indefinitely. Resuming a paused schedule is unchanged.
 
-### `@zudojs/schema` v1.1.1
+### `@zudojs/schema` v1.2.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-schema.md)
+
+v1.2.0 — Minor Changes
+
+- `string().url()` still accepts only `http`/`https` by default and now takes `url({ protocols: ["postgres", "redis"] })` or `{ protocols: "any" }`.
+- `date()`, `datetime()` and `time()` validate real values: `"2026-02-30"`, `"2026-13-45"` and `"2026-02-30T25:61:00Z"` used to pass.
+- An optional key absent from the input stays absent from the parsed object (it came back as an own key set to `undefined`); the inferred type makes it an optional property (new `ObjectShapeOutput`).
+- `partial()` no longer applies `.default()` to absent keys, so an update schema no longer resets every defaulted field the caller left out.
+- Every primitive has `.optional()`, `.nullable()`, `.default()`, `.refine()` and `.transform()` through the new `ModifiableSchema` base class; `schema.boolean().optional()` was a type error.
+- `SchemaInput` of a transform is its input type; `TransformSchema<TIn, TOut>` extends `Schema<TOut, TIn>`. New `isSchemaValidationError(error)` guard, and count messages use the singular for one.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.1.1
 
 Patch Changes
 
@@ -726,9 +1079,18 @@ Patch Changes
     - The envelope trust boundary (`assertValidEnvelope`, `unwrapEnvelope`, `deserializeFromEnvelope`) throws `InvalidSerializedDataError` instead of a bare `Error`, a full `TransformerRegistry` throws `TransformerError`, and `unwrapSchemaResult` throws `SchemaError` carrying the recorded issues. Code that catches `Error` is unaffected; code that wants to turn hostile input into a 400 can now tell it apart from an internal bug.
     - `Schema.safeParse`'s documentation no longer claims it never throws: a callback defect or a `RangeError` from stack exhaustion is still deliberately allowed to escape rather than being laundered into a validation issue.
 
-### `@zudojs/security` v1.2.0
+### `@zudojs/security` v1.3.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-security.md)
+
+v1.3.0 — Minor Changes
+
+- **Behaviour change (security):** `serializeCookie` / `createSecureCookie` validate `Domain` as a hostname and `Path` as free of control characters, `;` and `,`; anything else throws `ValidationError`.
+- The CSRF checks return `false` for a non-string token, a request with no method, or a malformed header or cookie bag, instead of throwing a `TypeError`.
+- New `findUnsafeKey(value)` returns the first `__proto__`, `constructor` or `prototype` key anywhere in decoded data; `@zudojs/rpc` and `@zudojs/api` use it to refuse prototype-polluting input.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.2.0
 
 Minor Changes
 
@@ -753,9 +1115,19 @@ Minor Changes
     - `setDefaultCryptoProvider` checks that all twelve provider methods are functions and that every capability flag is a boolean, so installing a partial object fails at the call that installs it instead of throwing a `TypeError` from inside whichever operation reached the missing method first. A rejected provider is not installed.
     - New exports: `assertProviderCapability`, `assertCryptoProvider`, `assertRandomCapability`, `assertHashCapability`, `assertHmacCapability`, `assertPasswordHashingCapability` and `CRYPTO_PROVIDER_METHODS`, for anyone writing their own provider or wrapper.
 
-### `@zudojs/serialization` v1.1.1
+### `@zudojs/serialization` v1.2.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-serialization.md)
+
+v1.2.0 — Minor Changes
+
+- A custom `transformers` registry keeps the built-in transformers (Date, BigInt, Map, Set, Buffer, Error) behind it instead of silently replacing them; `builtins: false` uses only yours. New `createBuiltinTransformers()`.
+- A transformer's `serialize` may return just the value, which is wrapped as `{ $type, $value }` for you.
+- With `preserveTypes`, a value no transformer handles that JSON would write as `{}` throws `SerializeError` naming the type instead of losing its contents.
+- **Behaviour change:** a depth failure from `JSONSerializer` is a `400` `SerializationDepthError`, via `@zudojs/validation`'s guards.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.1.1
 
 Patch Changes
 
@@ -768,25 +1140,53 @@ Patch Changes
     - The envelope trust boundary (`assertValidEnvelope`, `unwrapEnvelope`, `deserializeFromEnvelope`) throws `InvalidSerializedDataError` instead of a bare `Error`, a full `TransformerRegistry` throws `TransformerError`, and `unwrapSchemaResult` throws `SchemaError` carrying the recorded issues. Code that catches `Error` is unaffected; code that wants to turn hostile input into a 400 can now tell it apart from an internal bug.
     - `Schema.safeParse`'s documentation no longer claims it never throws: a callback defect or a `RangeError` from stack exhaustion is still deliberately allowed to escape rather than being laundered into a validation issue.
 
-### `@zudojs/storage` v1.1.2
+### `@zudojs/storage` v1.2.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-storage.md)
+
+v1.2.0 — Minor Changes
+
+- **Behaviour change:** `STORAGE_LOCK_ACQUIRE_TIMEOUT` is `409` (it was `504`), and `STORAGE_CONNECTION_ACQUIRE_TIMEOUT` / `STORAGE_CONNECTION_TIMEOUT` are `503`. Error codes are unchanged.
+- **Behaviour change:** `BaseRepository.create()` and `update()` leave a property whose value is `undefined` out of the SQL instead of writing `NULL`; an explicit `null` still writes `NULL`.
+- **Behaviour change:** `StorageLifecycleManager.drain()` and `shutdown()` visit components one at a time in reverse registration order.
+- New `writableColumns`, `filterableColumns` and `sortableColumns` options, each defaulting to `columns`.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.1.2
 
 Patch Changes
 
 - No source changes in this release. Republished against `@zudojs/errors@1.2.0`, `@zudojs/types@1.1.1`, `@zudojs/serialization@1.1.1`, `@zudojs/constants@1.1.1`.
 
-### `@zudojs/tenancy` v1.2.1
+### `@zudojs/tenancy` v1.3.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-tenancy.md)
+
+v1.3.0 — Minor Changes
+
+- The tenant middleware (`createResolveTenantMiddleware`, `createRequireTenantMiddleware`, `createTenantGuardMiddleware`) and the helpers `createBadRequest`, `createUnauthorized`, `createForbidden`, `createNotFound`, `createJsonErrorResponse` return `@zudojs/middleware` guard responses, which `@zudojs/http` now sends with their real status instead of `200`. New `createJsonResponse(status, body)`.
+- `createResolverChain([...])` infers its context from the resolvers (new `ResolverChainContext`), and the mirrored `HttpMiddleware` types fit a route's `middleware` list without `as never`.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.2.1
 
 Patch Changes
 
 - No source changes in this release. Republished against `@zudojs/errors@1.2.0`, `@zudojs/constants@1.1.1`.
 
-### `@zudojs/testing` v1.1.2
+### `@zudojs/testing` v1.2.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-testing.md)
+
+v1.2.0 — Minor Changes
+
+- New `createHttpTestClient(target)`, a supertest-style client that drives a real app over HTTP: a base URL, a Node server or listener, a web fetch handler, or an `@zudojs/http` server, adapter, router or pipeline. Fluent `.get/.post/…`, `.set`, `.query`, `.send`, `.auth`, a cookie jar, and chained `.expect(status)`, `.expectJson(partial)`, `.expectText()`.
+- The recording doubles record every path: `createTestEventBus().bus` is the double itself, and `createTestMessageBus()` / `createTestQueue()` record calls made on the underlying bus or queue too. Before, those calls ran but recorded nothing.
+- **Behaviour change:** `createTestApplication()` is quiet and deterministic by default: a silent `createSpyLogger(name)` and a clock pinned at `DEFAULT_TEST_APPLICATION_TIME` (2026-01-01T00:00:00.000Z). Pass `logger`, `clock` or `startTime` to opt back in.
+- `createTestQueue().queue` forwards `onJobReady`, so a Worker on a test queue wakes as soon as a job is added. `InMemoryTestStorage.set()` rejects a `NaN` TTL.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.1.2
 
 Patch Changes
 
@@ -801,18 +1201,35 @@ Patch Changes
     - New `providerCooloffMs` option (default 5,000 ms; `0` restores the old behaviour) leaves a failing flag provider alone for that window instead of re-running `getAll()` and `get(key)` on every single evaluation during an outage. A successful call closes the window immediately and `refresh()` always probes.
     - `CLIParser({ stopAtFirstArgument: true })` no longer reports the first positional token as the command. The token now appears only in `args`; previously it appeared in both `commands`/`command` and `args`.
 
-### `@zudojs/transactions` v1.1.2
+### `@zudojs/transactions` v1.2.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-transactions.md)
+
+v1.2.0 — Minor Changes
+
+- **Behaviour change:** committing a rollback-only transaction throws `TransactionRollbackOnlyError` (a `TransactionRollbackError` subclass) instead of the misleading "rollback failed".
+- **Behaviour change:** `manager.rollback()` on a committed transaction throws `TransactionStateError` instead of silently doing nothing.
+- `Transaction.signal` aborts with a `TransactionTimeoutError` on timeout, and `run()` stops waiting, rolls back and rejects. New `raceSignal` and adapter handle accessors `getTransactionHandle`, `currentTransactionHandle`, `manager.getCurrentHandle()`.
+- `timed_out` is emitted once per timeout.
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.1.2
 
 Patch Changes
 
 - No source changes in this release. Republished against `@zudojs/errors@1.2.0`.
 
-### `@zudojs/types` v1.1.1
+### `@zudojs/types` v1.2.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-types.md)
 
+v1.2.0 — Minor Changes
+
+- New `formatCount(count, singular, plural?)`, which `@zudojs/schema` and `@zudojs/validation` use so messages read "at least 1 character" rather than "1 characters".
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.1.1
+
 Patch Changes
 
 - Hardens the type and error primitives against untrusted input, and makes a handful of failure paths report the error a caller can actually act on.
@@ -824,10 +1241,18 @@ Patch Changes
     - The envelope trust boundary (`assertValidEnvelope`, `unwrapEnvelope`, `deserializeFromEnvelope`) throws `InvalidSerializedDataError` instead of a bare `Error`, a full `TransformerRegistry` throws `TransformerError`, and `unwrapSchemaResult` throws `SchemaError` carrying the recorded issues. Code that catches `Error` is unaffected; code that wants to turn hostile input into a 400 can now tell it apart from an internal bug.
     - `Schema.safeParse`'s documentation no longer claims it never throws: a callback defect or a `RangeError` from stack exhaustion is still deliberately allowed to escape rather than being laundered into a validation issue.
 
-### `@zudojs/validation` v1.0.3
+### `@zudojs/validation` v1.1.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-validation.md)
 
+v1.1.0 — Minor Changes
+
+- **Behaviour change:** `assertDepthWithinLimit` and `assertNoCircularReference` throw `SerializationDepthError` with `statusCode: 400` and `expose: true`, so a request body nested too deep is a client error instead of a hidden `500`. The message contains only the observed depth and the limit. New `UNTRUSTED_DEPTH_ERROR` constant.
+- Length and count messages use the singular for one ("at least 1 item").
+- The npm `homepage` now links to this package's documentation page on zudojs.oyinlola.site instead of the GitHub README. Development toolchain updated to Vitest 5.0.1 and @types/node 26.6.2; no runtime changes.
+
+Previous release — v1.0.3
+
 Patch Changes
 
 - Hardens the type and error primitives against untrusted input, and makes a handful of failure paths report the error a caller can actually act on.
@@ -838,3 +1263,11 @@ Patch Changes
     - A `$type` tag arriving from the wire is checked against `SerializationLimits.MAX_TYPE_TAG_LENGTH` before it is looked up, and is clipped before being quoted into an error message, so an over-long tag can no longer flood a log line.
     - The envelope trust boundary (`assertValidEnvelope`, `unwrapEnvelope`, `deserializeFromEnvelope`) throws `InvalidSerializedDataError` instead of a bare `Error`, a full `TransformerRegistry` throws `TransformerError`, and `unwrapSchemaResult` throws `SchemaError` carrying the recorded issues. Code that catches `Error` is unaffected; code that wants to turn hostile input into a 400 can now tell it apart from an internal bug.
     - `Schema.safeParse`'s documentation no longer claims it never throws: a callback defect or a `RangeError` from stack exhaustion is still deliberately allowed to escape rather than being laundered into a validation issue.
+
+### `zudojs` v1.0.1
+
+[Package documentation](https://zudojs.oyinlola.site/docs/packages-cli.md)
+
+v1.0.1 — Patch Changes
+
+- The `zudojs` package is the short way to install the CLI: `npm install -g zudojs` puts both the `zudojs` and the shorter `zudo` command on your PATH, and runs `zudojs-cli`. This release depends on `zudojs-cli@2.1.0`.
