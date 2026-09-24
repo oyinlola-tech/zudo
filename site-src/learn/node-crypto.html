@@ -1,0 +1,760 @@
+---
+title: Cryptography with node:crypto
+description: Use node:crypto correctly: unguessable tokens, hashes and HMAC webhook signatures, timing-safe comparison, scrypt password hashing and AES-256-GCM encryption.
+minutes: 55
+youNeed: Files, paths and your computer, Streams and buffers, and Events, processes and workers
+youBuild: An account security toolkit that hashes passwords, issues reset tokens, verifies signed payment webhooks and encrypts bank account numbers
+keywords: node crypto, randomBytes randomInt randomUUID, sha256 hash, hmac webhook signature, timingSafeEqual, timing attack, scrypt password hashing, salt, argon2id, aes-256-gcm, authentication tag, nonce reuse, base64url, encryption vs hashing
+objectives: Choose between a hash, an HMAC, a password hash and encryption for a given security goal | Generate unguessable tokens and codes and store only their hashes | Verify an HMAC-signed webhook over the raw body with timingSafeEqual and reject replays | Hash and verify passwords with scrypt, a random salt and a self-describing stored format | Encrypt and decrypt with AES-256-GCM, bind data with AAD and detect tampering
+---
+<section>
+<h2 id="problem">A shop with four secrets to protect</h2>
+<p>Your shop's server holds things attackers want. Think about what happens when something goes wrong:</p>
+<ol>
+<li><strong>Passwords.</strong> One day a backup of the users table leaks. If the passwords are readable, or easy to recover, every customer who reuses a password is exposed on every other site too.</li>
+<li><strong>Payment notifications.</strong> The payment provider calls your server with <em>"charge.success, ₦45,000, order 1042"</em>, and your code marks the order paid and ships it. Anyone on the internet can send the same request. How do you know it came from the provider?</li>
+<li><strong>Bank account numbers.</strong> To pay out sellers you must store their account numbers and read them back later. A leaked backup must not reveal them.</li>
+<li><strong>Tokens.</strong> A password-reset link contains a token. If an attacker can guess tokens, they can take over accounts without knowing any password.</li>
+</ol>
+<p>Each problem needs a different cryptographic tool, and using the wrong one is a classic, serious bug: passwords stored with a fast hash, webhook signatures compared with <code>===</code>, "encryption" that is really base64. <a href="/learn/node-apis#crypto">Files, paths and your computer</a> introduced <code>randomUUID</code>, <code>randomBytes</code> and SHA-256. This lesson goes through every tool in <code>node:crypto</code> that a backend developer needs, shows how each one fails when misused, and ends with a small toolkit that handles all four problems.</p>
+<p>Almost every example needs Node.js; the browser version of <code>crypto</code> is different (you will meet it at the end). Run them with <code>node file.js</code>.</p>
+</section>
+
+<section>
+<h2 id="vocabulary">The words and the map</h2>
+<p>A few terms come up again and again:</p>
+<ul>
+<li>A <strong>key</strong> is a secret random value, usually 32 bytes, known only to the parties that should be able to read or sign something.</li>
+<li>A <strong>hash function</strong> turns any input into a fixed-length fingerprint (a <strong>digest</strong>). It has no key and cannot be reversed.</li>
+<li>A <strong>MAC</strong> (message authentication code) is a fingerprint made <em>with a key</em>. Only someone with the key can make a valid one. <strong>HMAC</strong> is the standard way to build one from a hash.</li>
+<li>A <strong>cipher</strong> encrypts: it turns <strong>plaintext</strong> into <strong>ciphertext</strong> with a key, and back again.</li>
+<li>A <strong>salt</strong> and a <strong>nonce</strong> (also called IV, initialisation vector) are random values that are <em>not</em> secret. They make every result unique even when the input repeats.</li>
+</ul>
+<p>And the map you will fill in during this lesson:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>You need to…</th><th>Use</th><th>Not</th></tr></thead>
+<tbody>
+<tr><td>make an id, token or code nobody can guess</td><td><code>randomBytes</code>, <code>randomInt</code>, <code>randomUUID</code></td><td><code>Math.random()</code></td></tr>
+<tr><td>check a file or value has not changed by accident</td><td>SHA-256 hash</td><td>MD5, SHA-1</td></tr>
+<tr><td>prove a message came from someone who knows a shared key</td><td>HMAC-SHA256, compared with <code>timingSafeEqual</code></td><td><code>sha256(secret + message)</code>, <code>===</code></td></tr>
+<tr><td>store a password</td><td>scrypt or Argon2id with a random salt</td><td>SHA-256, encryption</td></tr>
+<tr><td>store data you must read back later</td><td>AES-256-GCM with a random nonce</td><td>base64, hashing</td></tr>
+</tbody>
+</table></div>
+<p>Cryptographic functions work on bytes, so their results are <code>Buffer</code>s (from <a href="/learn/node-streams#buffers">Streams and buffers</a>). To store or send bytes as text you <strong>encode</strong> them. Encoding is not encryption: anyone can decode it.</p>
+<example file="encodings.js" browser="no">
+import { randomBytes } from "node:crypto";
+
+const key = randomBytes(32);
+console.log("bytes:     ", key.length);
+console.log("hex:       ", key.toString("hex").length, "characters");
+console.log("base64:    ", key.toString("base64").length, "characters");
+console.log("base64url: ", key.toString("base64url").length, "characters");
+
+const secretNote = Buffer.from("PIN 4821").toString("base64");
+console.log("'encrypted' with base64:", secretNote, "->", Buffer.from(secretNote, "base64").toString());
+</example>
+<output>
+bytes:      32
+hex:        64 characters
+base64:     44 characters
+base64url:  43 characters
+'encrypted' with base64: UElOIDQ4MjE= -> PIN 4821
+</output>
+<p><strong>base64url</strong> is base64 with <code>-</code> and <code>_</code> instead of <code>+</code> and <code>/</code>, and no <code>=</code> padding, so it can go into URLs and file names unchanged. It is the right choice for tokens in links.</p>
+</section>
+
+<section>
+<h2 id="random">Unguessable values</h2>
+<p><code>Math.random()</code> is built for games and simulations. Its numbers come from a formula with a small internal state, and after seeing enough outputs an attacker can predict the next ones. <code>node:crypto</code>'s functions take randomness from the operating system's <strong>cryptographically secure</strong> generator, which is designed so that no amount of past output helps predict the future.</p>
+<h3>Codes and dice: randomInt</h3>
+<p>A six-digit code for confirming a phone number looks easy: take a random byte and use <code>% 10</code> for each digit. But that is subtly unfair. There are 256 possible byte values, and 256 is not a multiple of 10:</p>
+<example file="modulo-bias.js">
+const counts = Array(10).fill(0);
+for (let byte = 0; byte < 256; byte++) counts[byte % 10]++;
+console.log(counts.map((count, digit) => `${digit}:${count}`).join(" "));
+</example>
+<output>
+0:26 1:26 2:26 3:26 4:26 5:26 6:25 7:25 8:25 9:25
+</output>
+<p>Digits 0 to 5 come up 26 times in 256, digits 6 to 9 only 25 times. This <strong>modulo bias</strong> makes some codes more likely than others, which helps an attacker who is guessing. <code>randomInt(min, max)</code> avoids it (it throws away values that would cause bias and draws again), and returns a whole number from <code>min</code> up to but not including <code>max</code>:</p>
+<example file="codes.js" browser="no">
+import { randomInt, randomUUID, randomBytes } from "node:crypto";
+
+const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+console.log("six digits:", /^\d{6}$/.test(code));
+
+const die = randomInt(1, 7);
+console.log("die roll between 1 and 6:", die >= 1 && die <= 6);
+
+const orderId = randomUUID();
+console.log("uuid v4:", /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(orderId));
+
+const resetToken = randomBytes(32).toString("base64url");
+console.log("reset token length:", resetToken.length, "url-safe:", /^[A-Za-z0-9_-]+$/.test(resetToken));
+</example>
+<output>
+six digits: true
+die roll between 1 and 6: true
+uuid v4: true
+reset token length: 43 url-safe: true
+</output>
+<ul>
+<li>A 6-digit code has only 1,000,000 possibilities. That is fine for a code that expires in 10 minutes and allows 5 attempts, and hopeless for anything long-lived. Rate limiting is what makes short codes safe.</li>
+<li>A UUID v4 has 122 random bits. Good for ids, but ids often appear in URLs and logs, so do not use them as secrets.</li>
+<li>32 random bytes are 256 bits: guessing is impossible in practice. Use this size for session ids, API keys and reset tokens.</li>
+</ul>
+
+<h3>Store the hash of a token, not the token</h3>
+<p>If your database holds valid reset tokens and it leaks, the attacker can use them. So store only a SHA-256 hash of each token. The user's e-mail link holds the token itself; when it comes back, you hash it again and look the hash up.</p>
+<example file="reset-token.js" browser="no">
+import { createHash, randomBytes } from "node:crypto";
+
+const sha256 = (text) => createHash("sha256").update(text).digest("hex");
+const resets = new Map();
+
+function createReset(userId, now) {
+  const token = randomBytes(32).toString("base64url");
+  resets.set(sha256(token), { userId, expiresAt: now + 15 * 60_000 });
+  return token;
+}
+
+function useReset(token, now) {
+  const key = sha256(token);
+  const entry = resets.get(key);
+  resets.delete(key);
+  if (!entry || entry.expiresAt < now) return null;
+  return entry.userId;
+}
+
+const now = Date.UTC(2026, 8, 24, 9, 0);
+const link = createReset("user-17", now);
+console.log("stored values contain the token:", [...resets.keys()].includes(link));
+console.log("first use:", useReset(link, now + 60_000));
+console.log("second use:", useReset(link, now + 120_000));
+console.log("expired:", useReset(createReset("user-18", now), now + 16 * 60_000));
+</example>
+<output>
+stored values contain the token: false
+first use: user-17
+second use: null
+expired: null
+</output>
+<p>A fast hash like SHA-256 is fine here, even though you will soon see it is wrong for passwords. The difference is the input: a token has 256 random bits, so there is nothing to guess, however fast the hash. A password chosen by a person might be one of a few million common ones. The token is also deleted on first use and expires, so a stolen link stops working quickly.</p>
+</section>
+
+<section>
+<h2 id="hashes">Hashes in depth</h2>
+<p>A cryptographic hash promises three things: the same input always gives the same digest; you cannot find an input for a given digest (it is <strong>one-way</strong>); and you cannot find two inputs with the same digest (it is <strong>collision resistant</strong>). A tiny change in the input changes about half the output bits, so similar inputs give completely different digests. <code>crypto.hash</code> is a one-call shortcut for small inputs:</p>
+<example file="hash-props.js" browser="no">
+import { hash } from "node:crypto";
+
+const a = hash("sha256", "Invoice INV-1042: ₦45,000");
+const b = hash("sha256", "Invoice INV-1042: ₦45,001");
+
+let differentBits = 0;
+for (let i = 0; i < a.length; i += 2) {
+  let x = parseInt(a.slice(i, i + 2), 16) ^ parseInt(b.slice(i, i + 2), 16);
+  while (x) {
+    differentBits += x & 1;
+    x >>= 1;
+  }
+}
+console.log(a);
+console.log(b);
+console.log(`${differentBits} of 256 bits differ`);
+console.log("sha512 length:", hash("sha512", "x").length, "hex characters");
+</example>
+<output>
+a4f32f85a2a935a8bc1f34ed9ab21972048d0aed0364e0e1819c8b3f17bb20a0
+1b3ddaba0434a7ac12c18af7ea870f09f867e288c97f533cdefb73c0ba39cf51
+154 of 256 bits differ
+sha512 length: 128 hex characters
+</output>
+<p>MD5 and SHA-1 still appear in old code and tutorials. Both are <strong>broken</strong>: researchers can create two different files with the same MD5 or SHA-1 digest. Never use them for security. SHA-256 and SHA-512 are the standard choices today.</p>
+
+<h3>Hashing a file with a stream</h3>
+<p>Downloads often publish a SHA-256 <strong>checksum</strong> so you can check the file arrived intact. <code>createHash</code> returns a stream you can pipe into, so even a file of many gigabytes is hashed with constant memory:</p>
+<example file="checksum.js" browser="no">
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { appendFile, rm, writeFile } from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
+
+await writeFile("invoices.csv", "id,amount\nINV-1042,45000\nINV-1043,12500\n");
+
+async function sha256File(path) {
+  const hasher = createHash("sha256");
+  await pipeline(createReadStream(path), hasher);
+  return hasher.digest("hex");
+}
+
+const published = "c419272338b2c9a1c9659a8c89cac88ad5e2b94f391c3f3f4060e8c854083a43";
+console.log("intact file matches:", (await sha256File("invoices.csv")) === published);
+
+await appendFile("invoices.csv", "INV-1044,1\n");
+console.log("changed file matches:", (await sha256File("invoices.csv")) === published);
+await rm("invoices.csv");
+</example>
+<output>
+intact file matches: true
+changed file matches: false
+</output>
+<p>One extra line was enough to change the digest completely. A checksum protects against <em>accidents</em> such as a broken download. It does not protect against an <em>attacker</em> who can change both the file and the published checksum. For that you need a key, which brings us to HMAC.</p>
+</section>
+
+<section>
+<h2 id="hmac">HMAC: signing a webhook</h2>
+<p>A <strong>webhook</strong> is an HTTP request another service sends to your server when something happens, such as a payment succeeding. Payment providers (Paystack, Flutterwave, Stripe and others) solve the "anyone can send it" problem the same way. When you set up the webhook, the provider gives you a <strong>signing secret</strong>. For every notification it computes an HMAC of the request body with that secret and puts it in a header. Your server computes the same HMAC over the body it received. If they match, the sender knew the secret, and the body was not changed on the way.</p>
+<p>HMAC is a standard (RFC 2104), so its results can be checked against published test values. Here is the standard one for HMAC-SHA256:</p>
+<example file="hmac-standard.js" browser="no">
+import { createHmac } from "node:crypto";
+
+const mac = createHmac("sha256", "key").update("The quick brown fox jumps over the lazy dog").digest("hex");
+console.log(mac);
+console.log(mac === "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8");
+</example>
+<output>
+f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8
+true
+</output>
+<warn title="NOT sha256(secret + message)">Why not just hash the secret and the message together? Because SHA-256 has a weakness called <strong>length extension</strong>: from <code>sha256(secret + message)</code> an attacker can compute a valid digest for <code>message + extra</code> without knowing the secret. HMAC was designed to prevent exactly that. Use <code>createHmac</code>, never a home-made combination.</warn>
+
+<reason title="Before you trust a payment notification">
+<p>Your endpoint receives <code>POST /webhooks/payments</code> with a JSON body and an <code>x-signature</code> header. If it is genuine, your code marks the order paid and ships goods worth real money. Think through what can go wrong before you write the check:</p>
+<ul>
+<li>Who can send a request to this URL?</li>
+<li>Which exact bytes did the provider sign: the JSON object, or the text of the body?</li>
+<li>The signature is a secret-dependent string. How should you compare it with yours?</li>
+<li>Can the same genuine request arrive twice? What if an attacker records one and sends it again next week?</li>
+</ul>
+<answer>
+<p><strong>Anyone</strong> can send a request; the URL is not a secret. Only the HMAC proves origin.</p>
+<p>The provider signed the <strong>raw bytes</strong> of the body. If you parse the JSON and turn it back into text, spacing and key order can change, and the HMAC no longer matches, even for a genuine request. Verify first, on the raw body, then parse.</p>
+<p>Compare with <code>timingSafeEqual</code>, not <code>===</code>, for reasons explained in the next section.</p>
+<p>Yes, it can arrive twice: providers <strong>retry</strong> when your server was slow or returned an error. And a recorded request replayed later still has a valid signature. So remember which event ids you have processed and ignore repeats (this is called <strong>idempotency</strong>), and reject signatures whose timestamp is too old, when the provider signs a timestamp.</p>
+</answer>
+</reason>
+<p>The next example shows the raw-body trap. The same data, parsed and turned back into JSON with different spacing, no longer matches:</p>
+<example file="raw-body.js" browser="no">
+import { createHmac, randomBytes } from "node:crypto";
+
+const secret = randomBytes(32);
+const sign = (body) => createHmac("sha512", secret).update(body).digest("hex");
+
+const rawBody = '{"event":"charge.success","data":{"reference":"ORD-1042","amount":4500000}}';
+const header = sign(rawBody);
+
+console.log("raw body verifies:       ", sign(rawBody) === header);
+const reserialized = JSON.stringify(JSON.parse(rawBody), null, 2);
+console.log("re-serialized verifies:  ", sign(reserialized) === header);
+
+const tampered = rawBody.replace("4500000", "4500");
+console.log("changed amount verifies: ", sign(tampered) === header);
+</example>
+<output>
+raw body verifies:        true
+re-serialized verifies:   false
+changed amount verifies:  false
+</output>
+<p>This is why web frameworks give webhook routes access to the raw body. In a plain <code>node:http</code> server (<a href="/learn/node-http#body">Reading a request body</a>) you already have it: collect the chunks into a <code>Buffer</code> and verify that before calling <code>JSON.parse</code>. The comparisons above use <code>===</code> only to show which inputs match; your real check needs the next section.</p>
+</section>
+
+<section>
+<h2 id="timing">Timing attacks and timingSafeEqual</h2>
+<p><code>===</code> on two strings stops at the first character that differs. Comparing a wrong guess that starts with the right character takes a tiny bit longer than comparing one that starts wrong. Over a network, one comparison's difference is far smaller than the noise, but an attacker can send millions of requests and average them. Here the time is replaced by a count of the steps taken, which is what the time is made of:</p>
+<example file="leaky-compare.js">
+function leakyEqual(expected, guess) {
+  let steps = 0;
+  for (let i = 0; i < expected.length; i++) {
+    steps++;
+    if (expected[i] !== guess[i]) return { equal: false, steps };
+  }
+  return { equal: guess.length === expected.length, steps };
+}
+
+const signature = "7f3a9c";
+for (const guess of ["000000", "700000", "7f0000", "7f3000", "7f3a9c"]) {
+  console.log(guess, leakyEqual(signature, guess));
+}
+</example>
+<output>
+000000 { equal: false, steps: 1 }
+700000 { equal: false, steps: 2 }
+7f0000 { equal: false, steps: 3 }
+7f3000 { equal: false, steps: 4 }
+7f3a9c { equal: true, steps: 6 }
+</output>
+<p>Each correct character makes the comparison one step longer. That lets an attacker find the signature one character at a time: 16 tries per hex character instead of 16<sup>64</sup> for the whole thing. This is a <strong>timing attack</strong>.</p>
+<p><code>timingSafeEqual(a, b)</code> compares two buffers in <strong>constant time</strong>: it always looks at every byte, so the time says nothing about where they differ. It requires both buffers to have the same length and throws otherwise, so check the length first (the length of a signature is not a secret):</p>
+<example file="safe-compare.js" browser="no">
+import { timingSafeEqual } from "node:crypto";
+
+function safeEqualHex(expectedHex, receivedHex) {
+  const expected = Buffer.from(expectedHex, "hex");
+  const received = Buffer.from(receivedHex, "hex");
+  if (expected.length !== received.length) return false;
+  return timingSafeEqual(expected, received);
+}
+
+console.log(safeEqualHex("7f3a9c", "7f3a9c"));
+console.log(safeEqualHex("7f3a9c", "7f3a9d"));
+console.log(safeEqualHex("7f3a9c", "7f3a"));
+
+try {
+  timingSafeEqual(Buffer.from("7f3a9c"), Buffer.from("7f3a"));
+} catch (error) {
+  console.log(error.code);
+}
+</example>
+<output>
+true
+false
+false
+ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH
+</output>
+<p>Use a constant-time comparison for anything secret-dependent that an attacker can make you compare over and over: signatures, API keys, reset-token hashes. Note that <code>Buffer.from(text, "hex")</code> silently stops at the first character that is not hex, so a header like <code>"zz"</code> becomes an empty buffer. The length check turns that into a clean <code>false</code>.</p>
+</section>
+
+<section>
+<h2 id="passwords">Passwords: slow on purpose</h2>
+<p>You cannot store a password encrypted, because whoever has the key (your server, and anyone who breaks into it) could decrypt all of them. You store a hash and, at login, hash the attempt and compare. But not with SHA-256. Look at what an attacker does with a leaked table:</p>
+<example file="fast-hash.js" browser="no">
+import { hash } from "node:crypto";
+
+const leaked = [
+  { email: "ada@example.com", hash: hash("sha256", "password123") },
+  { email: "bola@example.com", hash: hash("sha256", "iloveyou") },
+  { email: "chidi@example.com", hash: hash("sha256", "password123") },
+];
+
+const commonPasswords = ["123456", "password", "iloveyou", "qwerty", "password123"];
+const lookup = new Map(commonPasswords.map((pw) => [hash("sha256", pw), pw]));
+
+for (const user of leaked) {
+  console.log(user.email, "->", lookup.get(user.hash) ?? "not cracked");
+}
+
+let tries = 0;
+const start = performance.now();
+while (performance.now() - start < 200) hash("sha256", "guess" + tries++);
+console.log("more than 100,000 guesses per second on one core:", tries * 5 > 100_000);
+</example>
+<output>
+ada@example.com -> password123
+bola@example.com -> iloveyou
+chidi@example.com -> password123
+more than 100,000 guesses per second on one core: true
+</output>
+<p>Two weaknesses show up:</p>
+<ul>
+<li><strong>No salt.</strong> Ada and Chidi have the same hash, so cracking one cracks both, and a precomputed table of common passwords (a <strong>rainbow table</strong>) cracks everyone at once.</li>
+<li><strong>Too fast.</strong> One laptop core does hundreds of thousands of SHA-256 hashes per second; a graphics card does billions. Every common password falls in seconds.</li>
+</ul>
+<p>A <strong>password hashing function</strong> fixes both. It takes a random <strong>salt</strong> per user, stored next to the hash, so equal passwords get different hashes and precomputed tables are useless. And it is deliberately <strong>slow and memory-hungry</strong>, tuned so one login takes tens of milliseconds for you but makes billions of guesses unaffordable. Node.js has <strong>scrypt</strong> built in.</p>
+
+<h3>Hashing and verifying with scrypt</h3>
+<p>scrypt's cost is set by three numbers: <code>N</code> (CPU and memory cost, a power of 2), <code>r</code> (block size) and <code>p</code> (parallelism). Memory use is about <code>128 × N × r</code> bytes. The security guidance from OWASP (a well-known web security organisation) recommends at least N = 2<sup>17</sup>, r = 8, p = 1, which needs 128 MiB. That is above Node.js's default memory limit for scrypt, so you must raise <code>maxmem</code>:</p>
+<example file="scrypt-maxmem.js" browser="no">
+import { scryptSync } from "node:crypto";
+
+try {
+  scryptSync("password123", "salt", 64, { N: 2 ** 17, r: 8, p: 1 });
+} catch (error) {
+  console.log(error.code);
+}
+
+const ok = scryptSync("password123", "salt", 64, { N: 2 ** 17, r: 8, p: 1, maxmem: 256 * 1024 * 1024 });
+console.log("derived", ok.length, "bytes");
+</example>
+<output>
+ERR_CRYPTO_INVALID_SCRYPT_PARAMS
+derived 64 bytes
+</output>
+<p>Now a pair of functions you can actually use. The stored value is <strong>self-describing</strong>: it records the algorithm and the parameters next to the salt and hash, so you can raise the cost later and still verify old hashes.</p>
+<example file="passwords.js" project="pw" browser="no">
+import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
+import { promisify } from "node:util";
+
+const scryptAsync = promisify(scrypt);
+export const PARAMS = { N: 2 ** 17, r: 8, p: 1 };
+const KEY_LENGTH = 32;
+
+function options({ N, r, p }) {
+  return { N, r, p, maxmem: 256 * N * r };
+}
+
+export async function hashPassword(password) {
+  const salt = randomBytes(16);
+  const key = await scryptAsync(password.normalize("NFKC"), salt, KEY_LENGTH, options(PARAMS));
+  const { N, r, p } = PARAMS;
+  return `scrypt$${N}$${r}$${p}$${salt.toString("base64url")}$${key.toString("base64url")}`;
+}
+
+export async function verifyPassword(password, stored) {
+  const [name, N, r, p, salt, key] = stored.split("$");
+  if (name !== "scrypt") throw new Error(`unknown password hash format: ${name}`);
+  const expected = Buffer.from(key, "base64url");
+  const params = { N: Number(N), r: Number(r), p: Number(p) };
+  const actual = await scryptAsync(password.normalize("NFKC"), Buffer.from(salt, "base64url"), expected.length, options(params));
+  return timingSafeEqual(actual, expected);
+}
+</example>
+<example file="login.js" project="pw" browser="no">
+import { hashPassword, verifyPassword } from "./passwords.js";
+
+const ada = await hashPassword("correct horse battery staple");
+const chidi = await hashPassword("correct horse battery staple");
+
+console.log(ada.split("$").slice(0, 4).join("$"), "…");
+console.log("same password, same stored value:", ada === chidi);
+console.log("right password:", await verifyPassword("correct horse battery staple", ada));
+console.log("wrong password:", await verifyPassword("correct horse battery stapler", ada));
+</example>
+<output>
+scrypt$131072$8$1 …
+same password, same stored value: false
+right password: true
+wrong password: false
+</output>
+<ul>
+<li>The same password gives different stored values, because each has its own salt. The salt is not secret; its job is only to be unique.</li>
+<li><code>verifyPassword</code> reads the parameters from the stored value, not from <code>PARAMS</code>. When you raise the cost next year, old hashes still verify, and you can re-hash a user's password with the new cost right after a successful login, the only time you have the plain password.</li>
+<li>Use the <strong>async</strong> <code>scrypt</code>, not <code>scryptSync</code>, in a server. The async version runs on Node.js's internal thread pool, the way file reads do, so the event loop keeps serving other requests during the hundreds of milliseconds it takes. <code>scryptSync</code> would block the whole server for every login, the problem you solved with workers in <a href="/learn/node-events-processes#workers">the previous lesson</a>.</li>
+</ul>
+<h3>Normalizing the password</h3>
+<p>Why <code>normalize("NFKC")</code>? In Unicode, "é" can be stored as one character or as "e" plus a combining accent. They look identical, but they are different bytes, so they hash differently. A user who registered on a phone and logs in on a laptop could be locked out:</p>
+<example file="normalize.js" browser="no">
+import { hash } from "node:crypto";
+
+const phone = "café-2026";
+const laptop = "café-2026";
+
+console.log(phone === laptop, phone.length, laptop.length);
+console.log("same hash:", hash("sha256", phone) === hash("sha256", laptop));
+console.log("same after normalize:", hash("sha256", phone.normalize("NFKC")) === hash("sha256", laptop.normalize("NFKC")));
+</example>
+<output>
+false 9 10
+same hash: false
+same after normalize: true
+</output>
+<note>OWASP's first choice today is <strong>Argon2id</strong>, a newer password hash that won the Password Hashing Competition. Node.js 24.7 and later include it as <code>crypto.argon2()</code>; before that it needed a package. bcrypt is older but still acceptable. scrypt with the parameters above is a sound, built-in choice. Whatever you pick, the rules are the same: a unique salt per password, a cost tuned so a hash takes around a hundred milliseconds on your server, and a stored format that records the parameters.</note>
+<p>A few rules around the hash matter as much as the hash itself. Answer a failed login with the same message whether the e-mail exists or not ("invalid e-mail or password"). Limit login attempts per account and per IP address. And put a sensible maximum length on passwords (say 1,000 characters), so nobody can make your server hash a 10 MB password. <a href="/learn/sec-authentication">Authentication security</a> covers these in depth, and <a href="/learn/zudo-auth">ZudoJS authentication</a> packages them.</p>
+</section>
+
+<section>
+<h2 id="encryption">Encryption with AES-256-GCM</h2>
+<p>Bank account numbers for seller payouts must be read back, so a hash is no use. You need <strong>encryption</strong>. The standard choice is <strong>AES-256-GCM</strong>:</p>
+<ul>
+<li><strong>AES</strong> is the cipher, the most widely used and studied in the world. <strong>256</strong> is the key size in bits: a 32-byte key.</li>
+<li><strong>GCM</strong> is the mode. It encrypts and also produces an <strong>authentication tag</strong>, a 16-byte MAC over the ciphertext. When you decrypt, a changed ciphertext or tag is detected and rejected. Encryption that includes this check is called <strong>authenticated encryption</strong>, and it is the only kind you should use.</li>
+<li>Every encryption needs a fresh 12-byte <strong>nonce</strong> (the IV). It is not secret and is stored with the ciphertext, but it must <em>never</em> repeat with the same key.</li>
+</ul>
+<example file="vault.js" project="vault" browser="no">
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+
+export function loadKey(base64) {
+  const key = Buffer.from(base64 ?? "", "base64");
+  if (key.length !== 32) throw new Error(`encryption key must be 32 bytes, got ${key.length}`);
+  return key;
+}
+
+export function encrypt(key, plaintext, context) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  cipher.setAAD(Buffer.from(context));
+  const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return ["v1", iv, tag, ciphertext].map((part) => (typeof part === "string" ? part : part.toString("base64url"))).join(".");
+}
+
+export function decrypt(key, sealed, context) {
+  const [version, iv, tag, ciphertext] = sealed.split(".");
+  if (version !== "v1") throw new Error(`unknown format ${version}`);
+  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "base64url"));
+  decipher.setAAD(Buffer.from(context));
+  decipher.setAuthTag(Buffer.from(tag, "base64url"));
+  return Buffer.concat([decipher.update(Buffer.from(ciphertext, "base64url")), decipher.final()]).toString("utf8");
+}
+</example>
+<p>The <code>context</code> is <strong>AAD</strong> (additional authenticated data): text that is not encrypted, but is covered by the tag. Here it is the seller's id, which binds the ciphertext to its owner. Now use it, including the ways it should fail:</p>
+<example file="payouts.js" project="vault" browser="no">
+import { randomBytes } from "node:crypto";
+import { decrypt, encrypt, loadKey } from "./vault.js";
+
+const key = loadKey(randomBytes(32).toString("base64"));
+
+const sealed = encrypt(key, "0123456789 GTBank", "seller:17");
+console.log("parts:", sealed.split(".").length, "contains the number:", sealed.includes("0123456789"));
+console.log("again, different:", encrypt(key, "0123456789 GTBank", "seller:17") !== sealed);
+console.log("decrypted:", decrypt(key, sealed, "seller:17"));
+
+const bytes = Buffer.from(sealed.split(".")[3], "base64url");
+bytes[0] ^= 1;
+const tampered = sealed.split(".").slice(0, 3).concat(bytes.toString("base64url")).join(".");
+
+const attempts = [
+  ["one flipped bit", () => decrypt(key, tampered, "seller:17")],
+  ["copied to another seller", () => decrypt(key, sealed, "seller:18")],
+  ["wrong key", () => decrypt(loadKey(randomBytes(32).toString("base64")), sealed, "seller:17")],
+  ["key from a bad env var", () => loadKey("c2hvcnQ=")],
+];
+for (const [label, attempt] of attempts) {
+  try {
+    attempt();
+    console.log(label, "-> decrypted?!");
+  } catch (error) {
+    console.log(label, "->", error.message);
+  }
+}
+</example>
+<output>
+parts: 4 contains the number: false
+again, different: true
+decrypted: 0123456789 GTBank
+one flipped bit -> Unsupported state or unable to authenticate data
+copied to another seller -> Unsupported state or unable to authenticate data
+wrong key -> Unsupported state or unable to authenticate data
+key from a bad env var -> encryption key must be 32 bytes, got 5
+</output>
+<ul>
+<li>The same plaintext encrypted twice gives different results, thanks to the random nonce. An attacker cannot even tell that two sellers use the same bank account.</li>
+<li>One flipped bit, a ciphertext copied into another seller's row, and the wrong key all fail in <code>decipher.final()</code> with the same message. GCM does not tell you <em>why</em>; it only guarantees you never get silently wrong data.</li>
+<li>In production, the key comes from an environment variable or a secret manager, as base64: <code>loadKey(process.env.PAYOUT_KEY)</code>. <code>loadKey</code> refuses to start with a missing or short key, the same "fail at startup" rule as in <a href="/learn/node-runtime#env">What Node.js is</a>. Make a key with <code>node -p "crypto.randomBytes(32).toString('base64')"</code>.</li>
+<li>The <code>v1.</code> prefix is a version. When you rotate keys, a <code>v2</code> can mean "new key", and old values still decrypt with the old key until they are re-encrypted.</li>
+</ul>
+
+<h3>Never reuse a nonce</h3>
+<p>Why does the nonce matter so much? GCM encrypts by combining the plaintext with a stream of pseudo-random bytes made from the key and the nonce, using XOR (<code>^</code>, from <a href="/learn/js-operators">Operators</a>). Same key and same nonce means the same stream. Then XOR-ing two ciphertexts cancels the stream out, and whoever knows one message learns the other, without the key:</p>
+<example file="nonce-reuse.js" browser="no">
+import { createCipheriv, randomBytes } from "node:crypto";
+
+const key = randomBytes(32);
+const fixedIv = Buffer.alloc(12);
+
+function badEncrypt(text) {
+  const cipher = createCipheriv("aes-256-gcm", key, fixedIv);
+  return Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
+}
+
+const knownToAttacker = "PAY NGN 50000 TO ACCOUNT 0123456789";
+const secret = "PAY NGN 90000 TO ACCOUNT 9876543210";
+const c1 = badEncrypt(knownToAttacker);
+const c2 = badEncrypt(secret);
+
+const recovered = Buffer.alloc(c2.length);
+for (let i = 0; i < c2.length; i++) recovered[i] = c1[i] ^ c2[i] ^ knownToAttacker.charCodeAt(i);
+console.log(recovered.toString("utf8"));
+</example>
+<output>
+PAY NGN 90000 TO ACCOUNT 9876543210
+</output>
+<p>Worse, a repeated nonce also lets an attacker forge authentication tags. A random 12-byte nonce per message is safe for billions of messages with one key. A counter, a timestamp or a fixed value is not.</p>
+</section>
+
+<section>
+<h2 id="build">Build: an account security toolkit</h2>
+<p>Now put the pieces behind one small module, the way a real service would. It handles all four problems from the start of the lesson: passwords, webhooks, bank account numbers and reset tokens. The webhook signature follows the pattern many providers use: the header carries a timestamp and an HMAC of <code>timestamp.body</code>, so an old request cannot be replayed:</p>
+<example file="security.js" project="toolkit" browser="no">
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+
+export function signWebhook(secret, body, timestamp) {
+  const mac = createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
+  return `t=${timestamp},v1=${mac}`;
+}
+
+export function verifyWebhook(secret, rawBody, header, nowSeconds, seenIds, toleranceSeconds = 300) {
+  const parts = Object.fromEntries((header ?? "").split(",").map((kv) => kv.split("=")));
+  const timestamp = Number(parts.t);
+  if (!Number.isInteger(timestamp) || !parts.v1) return "rejected: malformed header";
+  if (Math.abs(nowSeconds - timestamp) > toleranceSeconds) return "rejected: too old";
+
+  const expected = createHmac("sha256", secret).update(`${timestamp}.${rawBody}`).digest();
+  const received = Buffer.from(parts.v1, "hex");
+  if (received.length !== expected.length || !timingSafeEqual(received, expected)) return "rejected: bad signature";
+
+  const event = JSON.parse(rawBody);
+  if (seenIds.has(event.id)) return `ignored: ${event.id} already processed`;
+  seenIds.add(event.id);
+  return `accepted: ${event.type} ${event.id}`;
+}
+
+export function newResetToken() {
+  const token = randomBytes(32).toString("base64url");
+  return { token, stored: createHash("sha256").update(token).digest("hex") };
+}
+</example>
+<example file="demo.js" project="toolkit" browser="no">
+import { randomBytes } from "node:crypto";
+import { signWebhook, verifyWebhook, newResetToken } from "./security.js";
+
+const secret = randomBytes(32);
+const seen = new Set();
+const now = 1_790_000_000;
+const body = JSON.stringify({ id: "evt_1042", type: "charge.success", amount: 4_500_000 });
+const header = signWebhook(secret, body, now);
+
+const cases = [
+  ["genuine", body, header, now + 5],
+  ["provider retry", body, header, now + 30],
+  ["replayed next week", body, header, now + 7 * 24 * 3600],
+  ["amount changed", body.replace("4500000", "4500"), header, now + 5],
+  ["forged with a guessed secret", body, signWebhook("password", body, now), now + 5],
+  ["no header", body, undefined, now + 5],
+];
+for (const [label, rawBody, sig, at] of cases) {
+  console.log(label.padEnd(29), verifyWebhook(secret, rawBody, sig, at, seen));
+}
+
+const { token, stored } = newResetToken();
+console.log("reset link token is 43 characters:", token.length === 43, "stored hash is 64 hex:", /^[0-9a-f]{64}$/.test(stored));
+</example>
+<output>
+genuine                       accepted: charge.success evt_1042
+provider retry                ignored: evt_1042 already processed
+replayed next week            rejected: too old
+amount changed                rejected: bad signature
+forged with a guessed secret  rejected: bad signature
+no header                     rejected: malformed header
+reset link token is 43 characters: true stored hash is 64 hex: true
+</output>
+<p>Each rejection has its own line of defence:</p>
+<ul>
+<li>The <strong>retry</strong> had a perfectly valid signature. Only the <code>seenIds</code> set stopped it from shipping the order twice. In a real service that set is a database table with a unique index on the event id.</li>
+<li>The <strong>replay</strong> was also correctly signed, a week ago. The signed timestamp made it detectable. The tolerance (5 minutes here) allows for small clock differences between servers.</li>
+<li>Changing the amount, or signing with a guessed secret, produced a different HMAC, compared in constant time.</li>
+<li>The malformed-header check comes first, so garbage input never reaches <code>JSON.parse</code>. The order matters: verify, <em>then</em> parse, <em>then</em> act.</li>
+</ul>
+<p>With <code>passwords.js</code> and <code>vault.js</code> from above, you now have all four tools. <a href="/learn/zudo-crypto">ZudoJS crypto</a> offers the same building blocks as a package, and <a href="/learn/sec-crypto">Applied cryptography</a> in the security course goes further, into key management and signatures with public keys.</p>
+</section>
+
+<section>
+<h2 id="failures">Failure cases, testing and production</h2>
+<h3>The mistakes that cause real breaches</h3>
+<ul>
+<li>Passwords stored with SHA-256, MD5 or no salt. Use scrypt or Argon2id.</li>
+<li>Secrets compared with <code>===</code>. Use <code>timingSafeEqual</code> after a length check.</li>
+<li>Tokens made with <code>Math.random()</code> or from the time. Use <code>randomBytes</code>.</li>
+<li>Encryption without authentication (AES-CBC or AES-CTR on their own), or with a repeated nonce. Use AES-256-GCM with a random nonce per message.</li>
+<li>Webhooks verified on re-serialized JSON, or not at all, or processed twice.</li>
+<li>Keys in the source code or in Git. Load them from the environment, and never log them.</li>
+<li>Home-made algorithms. You are not expected to invent cryptography; nobody is. Combine the standard pieces exactly as shown, or use a well-reviewed library.</li>
+</ul>
+<h3>Testing cryptographic code</h3>
+<p>You cannot eyeball whether encryption "looks random", so test behaviour instead:</p>
+<ul>
+<li><strong>Known answers.</strong> Standards publish test vectors, like the HMAC one above. Your HMAC wrapper must reproduce them.</li>
+<li><strong>Round trips.</strong> <code>decrypt(encrypt(x)) === x</code> for many inputs, including empty strings and emoji.</li>
+<li><strong>Every rejection.</strong> For each check you wrote (tampered data, wrong key, wrong context, old timestamp, repeated event, wrong length), a test that it fails. The <code>payouts.js</code> and <code>demo.js</code> examples are exactly that.</li>
+<li><strong>Uniqueness.</strong> Two encryptions of the same value differ; two hashes of the same password differ.</li>
+<li><strong>Speed of password hashing in tests.</strong> The real cost makes tests slow. Pass lower parameters in tests only, and assert in a separate test that production uses the real ones.</li>
+</ul>
+<h3>Production concerns</h3>
+<ul>
+<li><strong>Key management.</strong> Keep keys in a secret manager or the platform's environment settings, with access limited to the services that need them. Plan rotation from day one: a version prefix and the ability to decrypt with the previous key.</li>
+<li><strong>Re-hash passwords</strong> when you raise the cost, at the next successful login.</li>
+<li><strong>Capacity.</strong> Each login costs about 100 ms of CPU and 128 MiB of memory with the parameters above. Node.js's thread pool runs 4 of these at a time by default (the <code>UV_THREADPOOL_SIZE</code> environment variable changes it), so rate-limit login attempts and measure how many your server can handle.</li>
+<li><strong>Logging.</strong> Never log passwords, tokens, keys, signatures or decrypted data. Log the event id and the result instead.</li>
+<li><strong>The browser.</strong> Browsers have their own <code>crypto</code>: <code>crypto.getRandomValues()</code>, <code>crypto.randomUUID()</code> and the <strong>Web Crypto API</strong> in <code>crypto.subtle</code>, whose functions return promises. Node.js has the same API as <code>globalThis.crypto</code>, which helps when code must run in both. The test for this lesson uses it.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Re-hash when the cost goes up">
+<p>Add a <code>needsRehash(stored)</code> function to the password module that returns <code>true</code> when a stored scrypt value used different parameters than the current <code>PARAMS</code>. Show it on a hash made with <code>N = 2 ** 15</code> and one made with the current parameters.</p>
+<solution>
+<example file="rehash.js" project="pw" browser="no">
+import { PARAMS, hashPassword } from "./passwords.js";
+
+function needsRehash(stored) {
+  const [, N, r, p] = stored.split("$").map(Number);
+  return N !== PARAMS.N || r !== PARAMS.r || p !== PARAMS.p;
+}
+
+const old = "scrypt$32768$8$1$c2FsdHNhbHRzYWx0c2FsdA$aGFzaGhhc2hoYXNoaGFzaGhhc2hoYXNoaGFzaGhhc2g";
+console.log("old cost:", needsRehash(old));
+console.log("current cost:", needsRehash(await hashPassword("correct horse battery staple")));
+</example>
+<output>
+old cost: true
+current cost: false
+</output>
+<p>At login: <code>if (await verifyPassword(pw, stored) &amp;&amp; needsRehash(stored)) save(await hashPassword(pw))</code>. Over time every active user moves to the new cost, without anyone having to reset a password.</p>
+</solution>
+</exercise>
+<exercise title="Verify a Paystack-style webhook">
+<p>Some providers sign the raw body alone with HMAC-SHA512 and send the hex digest in a header, with no timestamp. Write <code>verifySha512(secret, rawBody, headerHex)</code> with a constant-time comparison, test it on a genuine body, a changed body and an empty header, and explain what protects you from replays in this scheme.</p>
+<solution>
+<example file="sha512-webhook.js" browser="no">
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+
+function verifySha512(secret, rawBody, headerHex) {
+  const expected = createHmac("sha512", secret).update(rawBody).digest();
+  const received = Buffer.from(headerHex ?? "", "hex");
+  return received.length === expected.length && timingSafeEqual(received, expected);
+}
+
+const secret = randomBytes(32);
+const body = '{"event":"charge.success","data":{"reference":"ORD-1042","amount":4500000}}';
+const header = createHmac("sha512", secret).update(body).digest("hex");
+
+console.log("genuine:", verifySha512(secret, body, header));
+console.log("changed:", verifySha512(secret, body.replace("ORD-1042", "ORD-1043"), header));
+console.log("empty header:", verifySha512(secret, body, ""));
+</example>
+<output>
+genuine: true
+changed: false
+empty header: false
+</output>
+<p>Without a signed timestamp, a recorded request stays valid forever. The only protection is idempotency: store each processed <code>reference</code> (or event id) with a unique constraint, and treat a repeat as "already done". Some providers also publish the IP addresses their webhooks come from, which is a useful extra filter.</p>
+</solution>
+</exercise>
+<exercise title="Rotate an encryption key">
+<p>Write <code>decryptAny(keys, sealed, context)</code> that takes a map of key versions (<code>{ v1: oldKey, v2: newKey }</code>) and picks the key by the prefix, and <code>reencrypt</code> that moves a value from <code>v1</code> to <code>v2</code>. Use <code>encrypt</code> and <code>decrypt</code> from <code>vault.js</code>, replacing the <code>v1</code> label.</p>
+<solution>
+<example file="rotate.js" project="vault" browser="no">
+import { randomBytes } from "node:crypto";
+import { decrypt, encrypt } from "./vault.js";
+
+const keys = { v1: randomBytes(32), v2: randomBytes(32) };
+const CURRENT = "v2";
+
+function seal(plaintext, context) {
+  return encrypt(keys[CURRENT], plaintext, context).replace(/^v1\./, `${CURRENT}.`);
+}
+
+function decryptAny(sealed, context) {
+  const [version] = sealed.split(".");
+  if (!keys[version]) throw new Error(`no key for ${version}`);
+  return decrypt(keys[version], sealed.replace(/^v\d+\./, "v1."), context);
+}
+
+const old = encrypt(keys.v1, "0123456789 GTBank", "seller:17");
+const moved = seal(decryptAny(old, "seller:17"), "seller:17");
+console.log(old.split(".")[0], "->", moved.split(".")[0]);
+console.log(decryptAny(moved, "seller:17"));
+</example>
+<output>
+v1 -> v2
+0123456789 GTBank
+</output>
+<p>Rotation is: add the new key, write everything new with it, re-encrypt old values in a background job, and only remove the old key when no <code>v1</code> values remain. In a real module the version would be a parameter of <code>encrypt</code> rather than a string replacement.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Unguessable values come from <code>randomBytes</code> (32 bytes for tokens), <code>randomInt</code> (codes, without modulo bias) and <code>randomUUID</code> (ids). Store hashes of tokens, not the tokens.</li>
+<li>SHA-256 fingerprints data and detects accidental changes. MD5 and SHA-1 are broken.</li>
+<li>HMAC proves a message came from someone with the key. Verify webhooks on the raw body, compare with <code>timingSafeEqual</code> after a length check, reject old timestamps and ignore repeated event ids.</li>
+<li>Passwords need a slow, salted, memory-hard hash: scrypt with N = 2<sup>17</sup>, r = 8, p = 1 (raise <code>maxmem</code>), or Argon2id. Use the async version and a self-describing stored format.</li>
+<li>Data you must read back needs AES-256-GCM: a 32-byte key from the environment, a fresh 12-byte nonce every time, the tag checked on decrypt, and AAD to bind the data to its owner. A repeated nonce breaks it.</li>
+<li>Encoding (hex, base64) is not encryption, and hashing is not encryption.</li>
+</ul>
+<p>Next, <a href="/learn/npm-packages">npm and packages</a> brings other people's code into your project, and the lesson after it looks at how the npm ecosystem stays trustworthy, which uses the hashes and signatures you have just learned.</p>
+</section>

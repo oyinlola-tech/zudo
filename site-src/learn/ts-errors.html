@@ -28,7 +28,25 @@ export async function handleCharge(cardToken: string, kobo: number) {
   }
 }
 </example>
-<output kind="tsc"></output>
+<output kind="tsc">
+charge.ts:13:9 - error TS18046: 'error' is of type 'unknown'.
+
+13     if (error.code === "card_declined") return { status: 402, body: { error: error.reason } };
+           ~~~~~
+
+charge.ts:13:78 - error TS18046: 'error' is of type 'unknown'.
+
+13     if (error.code === "card_declined") return { status: 402, body: { error: error.reason } };
+                                                                                ~~~~~
+
+charge.ts:14:42 - error TS18046: 'error' is of type 'unknown'.
+
+14     return { status: 500, body: { error: error.message } };
+                                            ~~~~~
+
+
+Found 3 errors in the same file, starting at: charge.ts:13
+</output>
 <p>With <code>strict</code> on, TypeScript refuses every property access on <code>error</code>. It is not being fussy. Look at what <code>chargeCard</code> really throws: an object, <code>null</code> and a string, and none of them is an <code>Error</code>. The flag behind this check is <code>useUnknownInCatchVariables</code>, part of <code>strict</code> since TypeScript 4.4. Turn it off, and the old behaviour comes back: the catch variable is <code>any</code>, and everything compiles:</p>
 <file name="tsconfig.json" project="loose">
 {
@@ -72,7 +90,12 @@ for (const [token, kobo] of requests) {
   }
 }
 </example>
-<output></output>
+<output>
+{ status: 201, body: { id: 'PAY-1001' } }
+{ status: 402, body: { error: 'insufficient_funds' } }
+{ status: 500, body: { error: undefined } }
+handler crashed: TypeError: Cannot read properties of null (reading 'code')
+</output>
 <p>Two of the four requests go wrong, and the compiler said nothing. The over-limit charge answers <code>500</code> with <code>error: undefined</code>, because a string has no <code>message</code>, so the client learns nothing and neither do your logs. The broken token is worse: <code>null.code</code> throws a <code>TypeError</code> <em>inside the catch block</em>, so the error handler itself crashes. Your process now depends on a promise in someone else's documentation.</p>
 <p>This lesson is about writing error handling that the compiler can check: narrowing what was thrown, designing error classes that carry typed data, deciding when to return failures instead of throwing them, and the extra traps that come with <code>async</code>. You already know <code>try</code>/<code>catch</code> and error classes from <a href="/learn/js-errors">Errors</a>, <code>instanceof</code> narrowing from <a href="/learn/ts-narrowing#in-instanceof">Narrowing</a>, and <code>Result</code> from <a href="/learn/ts-unions#result">Unions</a> and <a href="/learn/ts-generic-design#result">Generic API design</a>. Here they come together.</p>
 </section>
@@ -103,7 +126,14 @@ for (const attempt of attempts) {
   }
 }
 </example>
-<output></output>
+<output>
+RangeError: toFixed() digits argument must be between 0 and 100
+RangeError: Invalid array length
+not an Error: string "provider timeout"
+not an Error: object {"status":429,"retryAfter":30}
+not an Error: number 404
+not an Error: object null
+</output>
 <p>Two built-in failures are real <code>RangeError</code>s. The other four are what old libraries, hand-rolled SDKs and hurried code really throw. A <code>catch</code> can receive any of them, from any line inside the <code>try</code>, including lines deep inside functions you did not write.</p>
 <p>Could TypeScript know what each function throws? Java tries this with <em>checked exceptions</em>: every method lists what it can throw. TypeScript deliberately has no <code>throws</code> clause. Almost any line can throw something (a <code>RangeError</code> from a bad argument, a stack overflow, a bug in a dependency), JavaScript libraries never declared it, and a list that is wrong is worse than no list. So the only honest type for a caught value is <code>unknown</code>: "it could be anything, prove what it is before you use it". That is the same rule you apply to request bodies in <a href="/learn/ts-special-types#unknown">Special types</a>.</p>
 <p>You may write the type yourself, but only <code>unknown</code> or <code>any</code>. A <code>catch</code> cannot promise a more specific type, because nothing checks it:</p>
@@ -114,7 +144,15 @@ try {
   console.log(error.message);
 }
 </example>
-<output kind="tsc"></output>
+<output kind="tsc">
+annotated-catch.ts:3:17 - error TS1196: Catch clause variable type annotation must be 'any' or 'unknown' if specified.
+
+3 } catch (error: Error) {
+                  ~~~~~
+
+
+Found 1 error in annotated-catch.ts:3
+</output>
 <warn title="DO NOT FIX IT WITH ANY">You will see <code>catch (error: any)</code> and <code>(error as Error).message</code> in real code. Both switch the check off and bring back the crash from the first section. <code>as Error</code> is exactly the kind of assertion that <a href="/learn/ts-assertions">Type assertions</a> warns about: it compiles for <code>null</code>.</warn>
 </section>
 
@@ -136,7 +174,10 @@ function formatKobo(kobo: number, decimals: number): string {
 console.log(formatKobo(1234567, 2));
 console.log(formatKobo(1234567, 500));
 </example>
-<output></output>
+<output>
+₦12345.67
+₦12345.67
+</output>
 <h3>2. A guard for errors that carry a code</h3>
 <p>Node.js errors from the file system and the network are <code>Error</code> objects with an extra <code>code</code> property such as <code>"ENOENT"</code> (file not found) or <code>"ECONNREFUSED"</code>. The <code>Error</code> type does not declare <code>code</code>, so you check for it with <code>in</code> and <code>typeof</code>. A type guard packages the check:</p>
 <example file="report.ts" project="narrow" browser="no">
@@ -157,7 +198,9 @@ async function loadSettlementReport(date: string): Promise<string> {
 
 console.log(await loadSettlementReport("2026-09-24"));
 </example>
-<output></output>
+<output>
+(no settlement report yet)
+</output>
 <p>After <code>"code" in error</code>, TypeScript knows <code>error</code> has a <code>code</code> property of type <code>unknown</code>, so the <code>typeof</code> check that follows is allowed and narrows it to <code>string</code>. A missing report is an expected situation, so it becomes a normal answer. A permission error or a full disk is not, so it is re-thrown.</p>
 <h3>3. Normalizing: turn anything into an Error</h3>
 <p>Code that logs or reports errors wants one shape: a message, a name and a stack. A <strong>normalizer</strong> converts any thrown value into an <code>Error</code>, and keeps the original in <code>cause</code> so nothing is lost:</p>
@@ -180,9 +223,16 @@ for (const thrown of ["provider timeout", { status: 429 }, null, undefined, 10n]
   console.log(error.message, "| cause kept:", error.cause === thrown);
 }
 </example>
-<output></output>
+<output>
+true
+Non-error thrown: provider timeout | cause kept: true
+Non-error thrown: {"status":429} | cause kept: true
+Non-error thrown: null | cause kept: true
+Non-error thrown: undefined | cause kept: true
+Non-error thrown: 10 | cause kept: true
+</output>
 <p>A real <code>Error</code> passes through untouched, so its stack trace still points at the line that failed. <code>JSON.stringify</code> gives a readable message for objects, but it returns <code>undefined</code> for <code>undefined</code> and throws for a <code>bigint</code>, hence the <code>??</code> and the inner <code>try</code>. <code>catch</code> without a variable, as here, is allowed when you do not need the value.</p>
-<note title="ERROR.ISERROR">Node.js 24 and current browsers also have <code>Error.isError(value)</code>, which, unlike <code>instanceof</code>, recognises errors created in another realm (an iframe or a <code>vm</code> context). Its types are in the <code>esnext</code> library, so with <code>"target": "ES2024"</code> you need <code>"lib": ["ESNext"]</code> to use it.</note>
+<note title="ERROR.ISERROR">Node.js 24 and recent versions of Chrome and Firefox also have <code>Error.isError(value)</code>, which, unlike <code>instanceof</code>, recognises errors created in another realm (an iframe or a <code>vm</code> context). Its types are in the <code>esnext</code> library, so with <code>"target": "ES2024"</code> you need <code>"lib": ["ESNext"]</code> to use it.</note>
 </section>
 
 <section>
@@ -208,7 +258,11 @@ for (const error of [new PlainError("a"), new NamedFromClass("b"), new Insuffici
   console.log(String(error), "| instanceof Error:", error instanceof Error);
 }
 </example>
-<output></output>
+<output>
+Error: a | instanceof Error: true
+NamedFromClass: b | instanceof Error: true
+InsufficientFundsError: c | instanceof Error: true
+</output>
 <p><code>new.target.name</code> reads the class name at runtime. It works, but a minifier (a build tool that shortens code for the browser) renames classes to things like <code>e</code>, and then your logs say <code>e: c</code>. A string literal survives any build. The <code>override</code> keyword says "this replaces a member of the base class"; it is required when the <code>noImplicitOverride</code> flag from <a href="/learn/ts-tsconfig">tsconfig in depth</a> is on, and harmless when it is off. And because the field is <code>readonly</code> with a literal value, its type is the literal <code>"InsufficientFundsError"</code>, not <code>string</code>.</p>
 <p>Older tutorials also add <code>Object.setPrototypeOf(this, new.target.prototype)</code> to every constructor. That was a workaround for compiling to ES5, where <code>instanceof</code> broke for subclasses of <code>Error</code>. TypeScript 7 no longer compiles to ES5 at all, so you can leave it out.</p>
 <h3>Typed data and a literal code</h3>
@@ -247,7 +301,25 @@ const code: "card_declined" = error.code;
 const cause: string = error.cause;
 error.shortByKobo = 0;
 </example>
-<output kind="tsc"></output>
+<output kind="tsc">
+reveal.ts:4:7 - error TS2322: Type '"insufficient_funds"' is not assignable to type '"card_declined"'.
+
+4 const code: "card_declined" = error.code;
+        ~~~~
+
+reveal.ts:5:7 - error TS2322: Type 'unknown' is not assignable to type 'string'.
+
+5 const cause: string = error.cause;
+        ~~~~~
+
+reveal.ts:6:7 - error TS2540: Cannot assign to 'shortByKobo' because it is a read-only property.
+
+6 error.shortByKobo = 0;
+        ~~~~~~~~~~~
+
+
+Found 3 errors in the same file, starting at: reveal.ts:4
+</output>
 <p>The code is the literal <code>"insufficient_funds"</code>, the <code>cause</code> is <code>unknown</code> (anything may be a cause, so you narrow it like a caught value), and the data cannot be changed after the error is created.</p>
 <h3>cause: keeping the original failure</h3>
 <p>When a low-level failure becomes a domain error, pass the original as <code>cause</code>. The new error says what it means for <em>your</em> code; the cause says what actually happened. A small function walks the chain for your logs:</p>
@@ -278,7 +350,10 @@ try {
   console.log(causeChain(error).join("\n  caused by "));
 }
 </example>
-<output></output>
+<output>
+ProviderUnavailableError: CardHub is unavailable
+  caused by Error: connect ECONNREFUSED 10.0.0.7:443
+</output>
 <p>The limit of 10 protects the loop from a cause chain that points back to itself. Wrapping this way is the core rule of <a href="/learn/js-error-design">Designing error handling</a>: translate errors at layer boundaries, and never throw away the original.</p>
 <h3>Where instanceof stops working</h3>
 <p><code>instanceof</code> checks the prototype chain of one object in one JavaScript realm. An error that crosses a boundary (a worker thread, a job queue, an HTTP response, a second copy of your package in <code>node_modules</code>) arrives without its class:</p>
@@ -293,17 +368,23 @@ console.log(original instanceof InsufficientFundsError, cloned instanceof Insuff
 console.log(cloned.name, cloned.message);
 console.log(fromQueue);
 </example>
-<output></output>
+<output>
+true false
+Error insufficient funds: short by 250000 kobo
+{
+  name: 'InsufficientFundsError',
+  code: 'insufficient_funds',
+  shortByKobo: 250000
+}
+</output>
 <p><code>structuredClone</code>, which worker threads and message channels use, keeps the message but turns the error into a plain <code>Error</code>: the class, the custom name and the extra fields are gone. <code>JSON.stringify</code> does the opposite: it keeps the own enumerable fields and drops <code>message</code> and <code>stack</code>, which are not enumerable. The <code>code</code> string survives JSON, which is why it, and not the class, is the part of an error you should rely on at a boundary. Inside one process, <code>instanceof</code> is fine.</p>
 </section>
 
 <section>
 <h2 id="error-unions">Error classes as a discriminated union</h2>
-<p>TypeScript compares classes by their shape, not their name. That has a surprising consequence for error classes that add nothing to <code>Error</code>:</p>
+<p>TypeScript compares classes by their shape, not their name (it is <strong>structurally typed</strong>). That has a surprising consequence for error classes that add nothing to <code>Error</code>:</p>
 <example file="structural.ts" project="structural">
-class CardExpiredError extends Error {
-  override readonly name = "CardExpiredError";
-}
+class CardExpiredError extends Error {}
 
 function askForNewCard(error: CardExpiredError): string {
   return `Please add a new card (${error.message})`;
@@ -311,8 +392,10 @@ function askForNewCard(error: CardExpiredError): string {
 
 console.log(askForNewCard(new Error("database connection lost")));
 </example>
-<output></output>
-<p>This compiles, because a plain <code>Error</code> has every property <code>CardExpiredError</code> declares, and <code>name</code> is only <code>string</code> on the plain <code>Error</code>... except that it does not compile if the literal were checked. In fact the literal <code>name</code> field is not enough protection here, because <code>Error</code>'s <code>name</code> is a writable <code>string</code> and TypeScript's check allows it. The reliable fix is a field the other classes do not have with the same literal: the <code>code</code>. Once every class carries a <code>readonly code</code> with its own literal, the classes form a <strong>discriminated union</strong>, exactly like the object unions in <a href="/learn/ts-unions#states">Unions</a>, and a <code>switch</code> on <code>code</code> narrows to the class:</p>
+<output>
+Please add a new card (database connection lost)
+</output>
+<p>This compiles. <code>CardExpiredError</code> declares no member that a plain <code>Error</code> lacks, so to the type checker they are the same type, and a database failure is cheerfully reported to the customer as an expired card. Any member with its own literal type tells the classes apart: the literal <code>name</code> from the previous section already does, and so does a <code>code</code>. The <code>code</code> is the one to build on, because it is meant for machines and survives JSON. Once every class carries a <code>readonly code</code> with its own literal, the classes form a <strong>discriminated union</strong>, exactly like the object unions in <a href="/learn/ts-unions#states">Unions</a>, and a <code>switch</code> on <code>code</code> narrows to the class:</p>
 <example file="failures.ts" project="union">
 export class CardDeclinedError extends Error {
   override readonly name = "CardDeclinedError";
@@ -348,8 +431,7 @@ export type ChargeFailure = CardDeclinedError | InsufficientFundsError | Provide
 export type ChargeFailureCode = ChargeFailure["code"];
 </example>
 <p><code>ChargeFailure["code"]</code> is an <strong>indexed access type</strong>: the type of the <code>code</code> property of every member, <code>"card_declined" | "insufficient_funds" | "provider_unavailable"</code>. <a href="/learn/ts-type-operators">Type operators</a> covers these in depth. Now a function that explains each failure to a customer:</p>
-<example file="explain.ts" project="union">
-import { CardDeclinedError, InsufficientFundsError, ProviderUnavailableError } from "./failures.js";
+<file name="explain.ts" project="union">
 import type { ChargeFailure } from "./failures.js";
 
 export function customerMessage(failure: ChargeFailure): string {
@@ -366,12 +448,20 @@ export function customerMessage(failure: ChargeFailure): string {
     }
   }
 }
+</file>
+<example file="explain-demo.ts" project="union">
+import { CardDeclinedError, InsufficientFundsError, ProviderUnavailableError } from "./failures.js";
+import { customerMessage } from "./explain.js";
 
 console.log(customerMessage(new CardDeclinedError("do_not_honor")));
 console.log(customerMessage(new InsufficientFundsError(250_050)));
 console.log(customerMessage(new ProviderUnavailableError(30)));
 </example>
-<output></output>
+<output>
+Your bank declined the card (do_not_honor).
+You need ₦2500.50 more.
+Payments are busy. Try again in 30 seconds.
+</output>
 <p>Inside each <code>case</code>, <code>failure</code> is the matching class, so <code>failure.declineCode</code> only compiles in the declined branch. The <code>never</code> in the <code>default</code> is the exhaustiveness check from <a href="/learn/ts-unions#exhaustive">Unions</a>. Add a fourth failure to the union and forget to explain it:</p>
 <example file="explain-fraud.ts" project="union" check="tsc-error">
 import { CardDeclinedError, InsufficientFundsError, ProviderUnavailableError } from "./failures.js";
@@ -398,7 +488,15 @@ function customerMessage(failure: ChargeFailure): string {
   }
 }
 </example>
-<output kind="tsc"></output>
+<output kind="tsc">
+explain-fraud.ts:19:13 - error TS2322: Type 'FraudSuspectedError' is not assignable to type 'never'.
+
+19       const unhandled: never = failure;
+               ~~~~~~~~~
+
+
+Found 1 error in explain-fraud.ts:19
+</output>
 <p>The compiler names the class you forgot. That is the whole point of typed errors: when the list of failures grows, every place that must react to them is found for you.</p>
 </section>
 
@@ -440,7 +538,10 @@ const broken = attempt(() => JSON.parse("{oops") as unknown);
 console.log(parsed.ok, broken.ok ? "" : broken.error.name);
 console.log(unwrap(parsed));
 </example>
-<output></output>
+<output>
+true SyntaxError
+{ event: 'charge.success', kobo: 500000 }
+</output>
 <p>The error side of <code>attempt</code> is only <code>Error</code>: when you catch, you cannot know more. The precise unions come from functions that <em>create</em> their failures on purpose. Here is a wallet that returns them:</p>
 <example file="wallet.ts" project="union">
 import { CardDeclinedError, InsufficientFundsError } from "./failures.js";
@@ -465,7 +566,11 @@ for (const [wallet, kobo] of [[ada, 400_000], [ada, 1_500_000], [{ ...ada, froze
   console.log(result.ok ? `new balance ${result.value.balanceKobo}` : customerMessage(result.error));
 }
 </example>
-<output></output>
+<output>
+new balance 600000
+You need ₦5000.00 more.
+Your bank declined the card (account_frozen).
+</output>
 <p><code>customerMessage</code> accepts all three failures, and the wallet returns two of them; a narrower union always fits a wider one. The errors in this <code>Result</code> are classes, not plain objects, so they carry a stack trace and can be thrown later with <code>unwrap</code>. Plain objects, as in <a href="/learn/ts-unions#result">Unions</a>, are lighter and serialize cleanly. Both are sound; pick one style per codebase so nobody has to guess.</p>
 </section>
 
@@ -490,8 +595,15 @@ try {
   console.log("crashed:", String(error));
 }
 </example>
-<output></output>
-<p>The error handler crashed on a string, the same bug as the first section, and not one warning. Annotate the parameter yourself; <code>unknown</code> is always accepted:</p>
+<output>
+crashed: TypeError: Cannot read properties of undefined (reading 'toUpperCase')
+</output>
+<p>The error handler crashed on a string, the same bug as the first section, and not one warning. Annotate the parameter yourself; <code>unknown</code> is always accepted. The fix uses the short <code>toError</code> from the Result section, in its own file:</p>
+<file name="to-error.ts" project="async">
+export function toError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(`Non-error thrown: ${String(value)}`, { cause: value });
+}
+</file>
 <example file="rate-fixed.ts" project="async">
 import { toError } from "./to-error.js";
 
@@ -506,13 +618,11 @@ const rate = await fetchExchangeRate("GHS").catch((reason: unknown) => {
 });
 console.log(rate);
 </example>
-<output></output>
-<file name="to-error.ts" project="async">
-export function toError(value: unknown): Error {
-  return value instanceof Error ? value : new Error(`Non-error thrown: ${String(value)}`, { cause: value });
-}
-</file>
-<p>(The <code>toError</code> file shown after the example is the short version from the Result section.) The same <code>any</code> appears in the second argument of <code>.then(onFulfilled, onRejected)</code>, in <code>Promise.reject</code> and in the <code>errors</code> array of an <code>AggregateError</code> from <code>Promise.any</code>. Treat all of them as <code>unknown</code>.</p>
+<output>
+lookup failed: Non-error thrown: no rate for GHS
+0
+</output>
+<p>The same <code>any</code> appears in the second argument of <code>.then(onFulfilled, onRejected)</code>, in <code>Promise.reject</code> and in the <code>errors</code> array of an <code>AggregateError</code> from <code>Promise.any</code>. Treat all of them as <code>unknown</code>.</p>
 <h3>Trap 2: return without await inside try</h3>
 <p>Inside a <code>try</code>, <code>return somePromise</code> and <code>return await somePromise</code> are different. Without <code>await</code>, the function returns the promise <em>before</em> it settles, the <code>try</code> block is already finished when it rejects, and the <code>catch</code> never runs:</p>
 <example file="return-await.ts" project="async">
@@ -544,7 +654,10 @@ try {
   console.log("escaped the try:", error instanceof Error ? error.message : error);
 }
 </example>
-<output></output>
+<output>
+handled: not found
+escaped the try: payment PAY-404 not found
+</output>
 <p>Both functions have the same type, <code>(paymentId: string) =&gt; Promise&lt;string&gt;</code>, so the compiler sees no difference. Rule: inside <code>try</code>, always <code>return await</code>.</p>
 <h3>Trap 3: floating promises</h3>
 <p>A promise that nobody awaits is called a <strong>floating promise</strong>. If it rejects, no <code>catch</code> anywhere can see it, and Node.js reports an <em>unhandled rejection</em>, which by default crashes the process. TypeScript allows a call to an async function as a statement without complaint:</p>
@@ -568,7 +681,10 @@ try {
   console.log("this never runs");
 }
 </example>
-<output></output>
+<output>
+PAY-1001 complete
+unhandled rejection: mail server refused ada@example.com
+</output>
 <p>The payment "completed", the <code>try</code> saw nothing, and the rejection surfaced later on its own. The compiler cannot catch this; a linter can. The <code>@typescript-eslint/no-floating-promises</code> rule reports every unawaited promise, and you then choose explicitly: <code>await</code> it, or, for fire-and-forget work, attach a handler and mark the intent with <code>void</code>: <code>void sendReceiptEmail(to).catch(logError)</code>.</p>
 <p>One more difference to keep in mind: <code>Promise&lt;T&gt;</code> has one type parameter, for the value. There is no way to write the type of a rejection. When the caller must handle an expected async failure, return it: <code>Promise&lt;Result&lt;Receipt, ChargeFailure&gt;&gt;</code>. The next lesson, <a href="/learn/ts-async">Async TypeScript</a>, covers promise types in depth.</p>
 </section>
@@ -766,7 +882,15 @@ for (const request of requests) {
   console.log(response.status, JSON.stringify(response.body), "headers" in response ? JSON.stringify(response.headers) : "");
 }
 </example>
-<output></output>
+<output>
+201 {"paymentId":"PAY-1005"}
+400 {"error":{"code":"validation_failed","message":"invalid charge request: kobo must be a positive whole number; cardToken is not a card token","details":{"issues":["kobo must be a positive whole number","cardToken is not a card token"]}}} {}
+402 {"error":{"code":"card_declined","message":"card declined: do_not_honor","details":{"declineCode":"do_not_honor"}}} {}
+409 {"error":{"code":"duplicate_charge","message":"this idempotency key was already used for PAY-0999","details":{"paymentId":"PAY-0999"}}} {}
+503 {"error":{"code":"provider_unavailable","message":"the card provider is unavailable","details":{"retryAfterSeconds":30}}} {"retry-after":"30"}
+500 {"error":{"code":"internal_error","message":"Something went wrong. It has been logged."}} {}
+500 {"error":{"code":"internal_error","message":"Something went wrong. It has been logged."}} {}
+</output>
 <p>Seven requests, and every one gets a deliberate answer. The client sees both validation problems at once, the decline code, the existing payment for a replayed key, and when to retry. The database error and the object the SDK threw both become a 500 with a neutral message. Their real details are still on <code>error.cause</code>, for the log, which the next section tests. In this handler a <code>throw</code> inside the <code>try</code> is simply the fastest way to reach <code>toErrorResponse</code>; in a larger service, <code>validate</code> and the idempotency check would return <code>Result</code>s and the handler would map them, exactly as the wallet did.</p>
 <h3>How this compares with @zudojs/errors</h3>
 <p>You have just built, in miniature, what <code>@zudojs/errors</code> provides for a whole application. Its <code>BaseError</code> carries a <code>code</code>, a <code>statusCode</code>, an <code>expose</code> flag and a <code>cause</code>; <code>normalizeToBaseError</code> is your <code>toPaymentError</code>, and <code>serializePublicError</code> is your <code>toErrorResponse</code>:</p>
@@ -780,7 +904,16 @@ const unexpected = normalizeToBaseError({ reason: "sdk exploded" });
 console.log(unexpected.statusCode, unexpected.code, unexpected.expose);
 console.log(serializePublicError(unexpected));
 </example>
-<output></output>
+<output>
+NotFoundError 404 ERR_RESOURCE_NOT_FOUND true true
+500 ERR_INTERNAL_ERROR false
+{
+  code: 'ERR_INTERNAL_ERROR',
+  message: 'An unexpected error occurred.',
+  category: 'system',
+  statusCode: 500
+}
+</output>
 <p>One difference is a deliberate trade-off. In <code>@zudojs/errors</code>, <code>code</code> is typed <code>ErrorCode | string</code>, an open set, because a framework cannot know every code your application will invent. So you narrow its errors with <code>instanceof</code> or its guards such as <code>isNotFoundError</code>, not with an exhaustive <code>switch</code>. Your own closed union gives stronger checks inside one service; the framework's open one lets many packages add codes. <a href="/learn/zudo-errors">Errors in ZudoJS</a> shows how to build on it.</p>
 </section>
 
@@ -815,7 +948,16 @@ const wrapped = toPaymentError("boom");
 console.log("cause kept:", wrapped instanceof InternalError && wrapped.cause === "boom");
 console.log(`${failures} failures`);
 </example>
-<output></output>
+<output>
+PASS declined card -> 402 card_declined
+PASS provider down -> 503 provider_unavailable
+PASS plain Error -> 500 internal_error
+PASS string -> 500 internal_error
+PASS null -> 500 internal_error
+PASS undefined -> 500 internal_error
+cause kept: true
+0 failures
+</output>
 <h3>Type-level tests: code that must not compile</h3>
 <p>The exhaustiveness promises ("a new code needs a status", "a handler cannot read <code>declineCode</code> on the wrong error") are compile-time behaviour, so test them at compile time. A <code>// @ts-expect-error</code> comment says "the next line must be a type error". If the line ever compiles, <code>tsc</code> reports the comment itself as unused, and the test fails:</p>
 <example file="types.test.ts" project="payments">
@@ -834,7 +976,9 @@ const declined: PaymentError = new CardDeclinedError("do_not_honor");
 const internal: PaymentError = new InternalError("x");
 console.log(declined.code, internal.code, typeof incomplete, typeof onlyDeclined);
 </example>
-<output></output>
+<output>
+card_declined internal_error object function
+</output>
 <p>This file runs, and it also passes <code>tsc</code>, which is the real test: both expected errors happened. The same idea, with more helpers, is how libraries test their types; <a href="/learn/ts-testing">Testing TypeScript</a> covers <code>expectTypeOf</code> and friends.</p>
 </section>
 
@@ -871,7 +1015,13 @@ console.log(messageOf({ message: "card expired", code: 54 }));
 console.log(messageOf({ message: 42 }));
 console.log(messageOf(null));
 </example>
-<output></output>
+<output>
+amount out of range
+gateway timeout
+card expired
+unknown error
+unknown error
+</output>
 <p>Each check narrows a little more: <code>typeof value === "object"</code> still allows <code>null</code>, so it is ruled out; <code>"message" in value</code> adds a <code>message: unknown</code> property; <code>typeof value.message === "string"</code> finishes the job. <code>{ message: 42 }</code> falls through, because a number is not a message you should show.</p>
 </solution>
 </exercise>
@@ -918,13 +1068,15 @@ function details(error: PaymentError): Record<string, unknown> {
 const error = new RefundWindowClosedError("2026-09-01");
 console.log(STATUS[error.code], error.message, details(error));
 </example>
-<output></output>
+<output>
+422 refunds for this payment closed on 2026-09-01 { closedOn: '2026-09-01' }
+</output>
 <p>You add the class and add it to the <code>PaymentError</code> union. From then on, the compiler does the searching: <code>STATUS</code> fails to satisfy the <code>Record</code> until it has <code>refund_window_closed</code>, and <code>details</code> fails with "Function lacks ending return statement" until it has the new <code>case</code>. If you forget to add the class to the union, <code>toPaymentError</code> turns it into a 500 at runtime, and the table test catches that once you add a row for it.</p>
 </solution>
 </exercise>
 <exercise title="Find the escaping rejection">
 <p>This function is meant to return <code>"refund queued"</code> or <code>"refund failed: …"</code>, but a failing refund escapes it. Find the two lines that let it escape, and fix them.</p>
-<example file="refund-queue.ts" project="ex-escape">
+<example file="refund-queue.ts" project="ex-escape" browser="no">
 async function queueRefund(paymentId: string): Promise<void> {
   if (paymentId.startsWith("PAY-X")) throw new Error(`cannot refund ${paymentId}`);
 }
@@ -941,7 +1093,10 @@ async function requestRefund(paymentId: string): Promise<string> {
 process.on("unhandledRejection", (reason) => console.log("escaped:", String(reason)));
 console.log(await requestRefund("PAY-X1"));
 </example>
-<output></output>
+<output>
+refund queued
+escaped: Error: cannot refund PAY-X1
+</output>
 <solution>
 <example file="refund-queue.ts" project="ex-escape">
 async function queueRefund(paymentId: string): Promise<void> {
@@ -960,7 +1115,10 @@ async function requestRefund(paymentId: string): Promise<string> {
 console.log(await requestRefund("PAY-X1"));
 console.log(await requestRefund("PAY-1001"));
 </example>
-<output></output>
+<output>
+refund failed: cannot refund PAY-X1
+refund queued
+</output>
 <p><code>queueRefund(paymentId)</code> was a floating promise, so the <code>try</code> finished before it rejected; <code>await</code> brings the rejection back into the <code>try</code>. The second fix is quieter: <code>`${error}`</code> compiles on an <code>unknown</code> (template literals accept anything) but prints <code>Error: …</code> for errors and <code>[object Object]</code> for plain objects. Narrow first, then format.</p>
 </solution>
 </exercise>

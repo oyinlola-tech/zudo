@@ -1,0 +1,492 @@
+---
+title: Binary search on the answer
+description: Use binary search beyond sorted arrays: find the smallest truck capacity, the first failing build and items in rotated lists by halving a range of answers.
+minutes: 55
+youNeed: Big O and complexity, Linear and binary search, and The two pointers pattern
+youBuild: A truck capacity planner, a build bisector, a rotated-log search and a loan repayment finder, all built on one tested firstTrue function
+keywords: binary search on answer, binary search pattern, monotonic predicate, first true binary search, minimum capacity to ship packages, git bisect, first bad version, search rotated sorted array, find minimum rotated array, lower bound, feasibility check, javascript algorithms
+objectives: Recognise problems whose yes/no answers switch from false to true exactly once as a number grows | Write one firstTrue function with a clear invariant and reuse it for bounds, capacities and versions | Solve minimum-capacity and first-failing-build problems with O(log range) feasibility checks | Search a rotated sorted array in O(log n) by deciding which half is sorted | Choose correct search bounds, and test a search on the answer against a linear scan of all answers
+---
+<section>
+<h2 id="problem">The problem: how big a truck?</h2>
+<p>A distribution company must move a warehouse's backlog of parcels to a hub within 5 days. The parcels sit on a conveyor in a fixed order and must be loaded in that order (the ones at the front block the rest). Each day the truck takes parcels from the front of the line until the next one would exceed its capacity, then drives to the hub. Trucks are rented by capacity, in kilograms, and bigger ones cost more. The operations manager asks: <em>"What is the smallest capacity that ships everything within 5 days?"</em></p>
+<p>This does not look like searching. There is no sorted array and no target value to find. Yet binary search, which you wrote in <a href="/learn/dsa-searching">Linear and binary search</a>, is exactly the tool, once you see what is being searched: not the parcels, but the <em>possible answers</em>.</p>
+<reason title="Before you code: what can the answer be?">
+<ul>
+<li>What is the smallest capacity that could possibly work, before you even think about days?</li>
+<li>What capacity certainly ships everything in one day?</li>
+<li>If a capacity of 120 kg ships everything in 5 days, does 121 kg? Does 119 kg?</li>
+<li>Given one capacity, how would you check whether it works? How long does that check take?</li>
+</ul>
+<answer>
+<p><strong>At least the heaviest parcel.</strong> A truck smaller than that can never carry it, so the answer is at least <code>max(weights)</code>.</p>
+<p><strong>The total weight</strong> ships everything in one day, so the answer is at most <code>sum(weights)</code>. The answer lies somewhere between these two numbers.</p>
+<p><strong>121 kg certainly works:</strong> a bigger truck can always carry what a smaller one carried each day, so it needs no more days. 119 kg may or may not. This one-way property is the key: once a capacity works, every bigger capacity works too.</p>
+<p><strong>The check</strong> simulates the loading: walk the parcels once, starting a new day whenever the next parcel does not fit, and count the days. One pass over <code>n</code> parcels: O(n).</p>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="naive">A naive solution: try every capacity</h2>
+<p>With a check in hand, the first working solution tries capacities from the smallest possible upwards and stops at the first one that works:</p>
+<example file="naive-capacity.js">
+function daysNeeded(weights, capacity) {
+  let days = 1;
+  let load = 0;
+  for (const w of weights) {
+    if (load + w > capacity) {  // this parcel starts the next day
+      days++;
+      load = 0;
+    }
+    load += w;
+  }
+  return days;
+}
+
+function minCapacityNaive(weights, maxDays) {
+  let capacity = Math.max(...weights);
+  while (daysNeeded(weights, capacity) > maxDays) capacity++;
+  return capacity;
+}
+
+const parcels = [30, 25, 40, 10, 35, 20, 45, 15, 30, 25]; // kg, in conveyor order
+console.log(minCapacityNaive(parcels, 5), daysNeeded(parcels, 60), daysNeeded(parcels, 59));
+console.log(minCapacityNaive(parcels, 1), minCapacityNaive(parcels, 10));
+</example>
+<output>
+60 5 6
+275 45
+</output>
+<p>It works: 60 kg is the smallest capacity that ships these ten parcels in 5 days, and 59 kg needs 6. With one day allowed the answer is the total, and with ten days (one parcel a day) it is the heaviest parcel, exactly the two ends from the reason block.</p>
+</section>
+
+<section>
+<h2 id="whats-wrong">What is wrong with it: count the operations</h2>
+<p>The real backlog is thousands of parcels, and the number of candidate capacities grows with the total weight. Count how many parcels the naive search simulates loading, over all the capacities it tries:</p>
+<example file="naive-capacity-count.js">
+function daysNeeded(weights, capacity, counter) {
+  let days = 1;
+  let load = 0;
+  for (const w of weights) {
+    counter.loads++;
+    if (load + w > capacity) {
+      days++;
+      load = 0;
+    }
+    load += w;
+  }
+  return days;
+}
+
+function minCapacityNaive(weights, maxDays, counter) {
+  let capacity = Math.max(...weights);
+  counter.checks++;
+  while (daysNeeded(weights, capacity, counter) > maxDays) {
+    capacity++;
+    counter.checks++;
+  }
+  return capacity;
+}
+
+for (const n of [100, 1000, 10000]) {
+  const weights = Array.from({ length: n }, (_, i) => 1 + ((i * 37) % 50)); // 1 to 50 kg
+  const counter = { checks: 0, loads: 0 };
+  const capacity = minCapacityNaive(weights, 5, counter);
+  console.log(`n=${String(n).padEnd(6)} capacity=${String(capacity).padEnd(6)} checks=${String(counter.checks).padEnd(6)} parcel loads=${counter.loads}`);
+}
+</example>
+<output>
+n=100    capacity=524    checks=475    parcel loads=47500
+n=1000   capacity=5100   checks=5051   parcel loads=5051000
+n=10000  capacity=51000  checks=50951  parcel loads=509510000
+</output>
+<p>The number of checks grows with the answer (roughly <code>total weight / days</code>), and each check walks all <code>n</code> parcels. Both grow with <code>n</code>, so the work grows like <code>n²</code>: 10,000 parcels already cost about half a billion simulated loads. The waste is that each failed check teaches you more than "not this capacity": it teaches you "not this one, <em>and not any smaller one</em>". Stepping up by 1 kg throws that away.</p>
+</section>
+
+<section>
+<h2 id="pattern">The pattern: find where false turns into true</h2>
+<p>Write the check's answer for every capacity in order and you get a very particular shape:</p>
+<pre>
+capacity:   45    50    55    59    60    61    65    70   ...  275
+days:        8     8     6     6     5     5     5     5   ...    1
+works?      no    no    no    no    YES   YES   YES   YES  ...  YES
+                                   ^
+                        the first yes is the answer
+</pre>
+<p>A yes/no function whose answers, over an ordered range, go <em>false, false, …, false, true, true, …, true</em> and switch exactly once is called a <strong>monotonic predicate</strong> ("predicate" means a function that returns true or false; "monotonic" means it only ever changes in one direction). Binary search does not need a sorted array. It needs exactly this: a range where one test at the middle tells you which half the switch point is in.</p>
+<ul>
+<li>If the middle is <strong>true</strong>, the first true is the middle or somewhere to its left.</li>
+<li>If the middle is <strong>false</strong>, the first true is somewhere to its right.</li>
+</ul>
+<p>Every problem in this lesson is solved by one small function, <code>firstTrue(lo, hi, test)</code>: the smallest number in <code>lo</code> to <code>hi</code> for which <code>test</code> is true. It uses the half-open style of <code>lowerBound</code> in <a href="/learn/dsa-searching#bounds">Linear and binary search</a>, with <code>hi</code> one past the last candidate, and returns <code>hi</code> itself if no candidate passes:</p>
+<file name="first-true.js" project="bs">
+export function firstTrue(lo, hi, test, counter = { checks: 0 }) {
+  // Invariant: every number below lo is false; every number from hi on is true (or past the end).
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    counter.checks++;
+    if (test(mid)) hi = mid;     // mid is true: the first true is mid or before it
+    else lo = mid + 1;           // mid is false: the first true is after it
+  }
+  return lo;                     // lo === hi: the first true, or the original hi if none
+}
+</file>
+<p>The invariant is what makes it correct. At the start nothing is known, so it holds trivially: there is nothing below <code>lo</code> in the range and nothing from <code>hi</code> on. Each step keeps it: a true middle becomes the new <code>hi</code>, a false middle moves <code>lo</code> past it. Each step also shrinks the range, because <code>mid</code> is strictly below <code>hi</code>. When <code>lo</code> meets <code>hi</code>, the invariant says everything below is false and everything from there on is true: that point is the switch.</p>
+<p>The lower bound from the searching lesson is the special case where the test is "is this item at least the target?":</p>
+<example file="lower-bound.js" project="bs">
+import { firstTrue } from "./first-true.js";
+
+const orderIds = [1004, 1011, 1011, 1011, 1015, 1020];
+const lowerBound = (items, target) => firstTrue(0, items.length, (i) => items[i] >= target);
+const upperBound = (items, target) => firstTrue(0, items.length, (i) => items[i] > target);
+
+console.log(lowerBound(orderIds, 1011), upperBound(orderIds, 1011), upperBound(orderIds, 1011) - lowerBound(orderIds, 1011));
+console.log(lowerBound(orderIds, 1000), lowerBound(orderIds, 1013), lowerBound(orderIds, 9999));
+</example>
+<output>
+1 4 3
+0 4 6
+</output>
+<p>The first and last position of 1011 are 1 and 3 (upper bound minus one), it appears 3 times, a new id 1013 would be inserted at position 4, and 9999 would go past the end (6). One function, many questions.</p>
+<h3>How to recognise it</h3>
+<ul>
+<li>The question asks for the <strong>minimum</strong> (or maximum) value such that something is possible: the smallest capacity, the lowest speed, the fewest servers, the largest loan.</li>
+<li>You can write a <strong>check</strong> for one candidate answer ("can it be done with this capacity?") much more easily than you can compute the answer directly.</li>
+<li>The check is <strong>monotonic</strong>: if a value works, every bigger (or every smaller) value works too.</li>
+<li>Something is <strong>ordered in time</strong> and changes once: the first bad version, the first day stock ran out, the first log line after a timestamp.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="improved">The improved solution</h2>
+<p>Search capacities from <code>max(weights)</code> to <code>sum(weights)</code> with the loading simulation as the test. Because <code>firstTrue</code> treats <code>hi</code> as exclusive, pass <code>sum + 1</code>:</p>
+<file name="capacity.js" project="bs">
+import { firstTrue } from "./first-true.js";
+
+export function daysNeeded(weights, capacity, counter = { loads: 0 }) {
+  let days = 1;
+  let load = 0;
+  for (const w of weights) {
+    counter.loads++;
+    if (load + w > capacity) {
+      days++;
+      load = 0;
+    }
+    load += w;
+  }
+  return days;
+}
+
+export function minCapacity(weights, maxDays, counter = { checks: 0, loads: 0 }) {
+  if (weights.length === 0) return 0;
+  if (!Number.isInteger(maxDays) || maxDays < 1) throw new RangeError("maxDays must be a positive integer");
+  const heaviest = Math.max(...weights);
+  const total = weights.reduce((a, b) => a + b, 0);
+  return firstTrue(heaviest, total + 1, (c) => daysNeeded(weights, c, counter) <= maxDays, counter);
+}
+</file>
+<p>Try it on the ten parcels, and count the work as before:</p>
+<example file="min-capacity.js" project="bs">
+import { minCapacity } from "./capacity.js";
+
+const parcels = [30, 25, 40, 10, 35, 20, 45, 15, 30, 25];
+console.log(minCapacity(parcels, 5), minCapacity(parcels, 1), minCapacity(parcels, 10), minCapacity([], 3));
+
+for (const n of [100, 1000, 10000]) {
+  const weights = Array.from({ length: n }, (_, i) => 1 + ((i * 37) % 50));
+  const counter = { checks: 0, loads: 0 };
+  const capacity = minCapacity(weights, 5, counter);
+  console.log(`n=${String(n).padEnd(6)} capacity=${String(capacity).padEnd(6)} checks=${String(counter.checks).padEnd(3)} parcel loads=${counter.loads}`);
+}
+</example>
+<output>
+60 275 45 0
+n=100    capacity=524    checks=11  parcel loads=1100
+n=1000   capacity=5100   checks=15  parcel loads=15000
+n=10000  capacity=51000  checks=18  parcel loads=180000
+</output>
+<p>The same capacities as the naive version, with 11 to 18 checks instead of hundreds or tens of thousands. At 10,000 parcels, 180,000 simulated loads instead of about 510 million. The number of checks is <code>log₂(total − heaviest + 1)</code>, rounded up: doubling the total weight adds just one check.</p>
+<p>Notice the division of labour. The <em>check</em> contains all the knowledge about trucks and parcels; the <em>search</em> knows nothing about them. That separation is what makes the pattern reusable: change the check and the same <code>firstTrue</code> finds a minimum rider speed, a minimum server count, or a minimum interest rate.</p>
+</section>
+
+<section>
+<h2 id="complexity">Its complexity</h2>
+<p>Let <code>n</code> be the input size, <code>R</code> the number of candidate answers (here <code>total − heaviest + 1</code>), and <code>C</code> the cost of one check (here O(n)).</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Approach</th><th>Checks</th><th>Total time</th><th>Extra space</th></tr></thead>
+<tbody>
+<tr><td>try every candidate upwards</td><td>up to R</td><td>O(R · C)</td><td>O(1)</td></tr>
+<tr><td>binary search on the answer</td><td>⌈log₂ R⌉</td><td>O(C · log R)</td><td>O(1)</td></tr>
+<tr><td>truck capacity</td><td>⌈log₂(total − max + 1)⌉</td><td>O(n log(total))</td><td>O(1)</td></tr>
+</tbody>
+</table></div>
+<p>The range <code>R</code> can be huge (billions of kobo, years of seconds) and it barely matters: <code>log₂</code> of a billion is about 30. What matters is the cost of each check, which is why the pattern shines when a check is expensive, as in the next problem.</p>
+</section>
+
+<section>
+<h2 id="first-failing-build">The first failing build</h2>
+<p>On Monday the checkout tests passed. Today, 1,000 commits later, they fail. Running the full test suite for one commit takes about 8 minutes. Which commit broke checkout?</p>
+<reason title="Before you code: bisecting a history">
+<ul>
+<li>Checking every commit from Monday forwards, how many test runs is that at worst, and how long?</li>
+<li>What must be true about the history for binary search to be valid here?</li>
+<li>What could make the test results <em>not</em> monotonic?</li>
+<li>What are <code>lo</code> and <code>hi</code>, and what do you already know about them?</li>
+</ul>
+<answer>
+<p><strong>Linear:</strong> up to 1,000 runs, about 8,000 minutes, more than five days of machine time.</p>
+<p><strong>Monotonic history:</strong> once a commit is broken, every later commit is broken too, until the fix. So the results over the commits are good, good, …, bad, bad: a monotonic predicate "is this commit broken?".</p>
+<p><strong>What breaks it:</strong> a flaky test (sometimes fails for no reason), or a bug that was introduced, fixed, and introduced again. Then "the first bad commit" is not well defined, and bisecting returns some switch point, not necessarily the one you want. Make the test deterministic first.</p>
+<p><strong>Bounds:</strong> commit 0 (Monday) is known good and the last commit is known bad. Search the commits after the good one; the last one is certainly bad.</p>
+</answer>
+</reason>
+<example file="bisect.js" project="bs">
+import { firstTrue } from "./first-true.js";
+
+const commits = Array.from({ length: 1001 }, (_, i) => ({ id: `c${String(i).padStart(4, "0")}`, index: i }));
+const brokenFrom = 637; // unknown to the search: only the test knows
+
+function testsFail(commit, log) {
+  log.push(commit.id); // in real life: check out, build, run the suite (8 minutes)
+  return commit.index >= brokenFrom;
+}
+
+const log = [];
+const first = firstTrue(1, commits.length, (i) => testsFail(commits[i], log));
+console.log(`first failing commit: ${commits[first].id} after ${log.length} test runs (about ${log.length * 8} minutes)`);
+console.log(log.join(" "));
+
+let linearRuns = 0;
+for (const commit of commits.slice(1)) {
+  linearRuns++;
+  if (commit.index >= brokenFrom) break;
+}
+console.log(`walking forwards from Monday: ${linearRuns} test runs (about ${linearRuns * 8} minutes)`);
+</example>
+<output>
+first failing commit: c0637 after 10 test runs (about 80 minutes)
+c0501 c0751 c0626 c0689 c0658 c0642 c0634 c0638 c0636 c0637
+walking forwards from Monday: 637 test runs (about 5096 minutes)
+</output>
+<p>Ten test runs, 80 minutes, instead of 637 runs and about three and a half days. The log shows the search homing in: a run in the middle, then a quarter, then an eighth. This is exactly what <code>git bisect</code> does. You mark one commit good and one bad; git checks out the middle commit; you (or a script with <code>git bisect run</code>) report good or bad; and it halves again. <a href="/learn/git">The Git lesson</a> covers git itself, and <a href="/learn/debug-practice">Debugging practice</a> uses bisect on a real bug hunt.</p>
+<note>Time estimates like "about 80 minutes" here are <em>computed</em> from the number of test runs, not measured. The count is the reliable quantity; multiply it by the cost of one run to reason about time.</note>
+</section>
+
+<section>
+<h2 id="rotated">Searching a rotated list</h2>
+<p>A delivery tracker keeps the last 12 hours of GPS pings in a <strong>ring buffer</strong>: a fixed-size array that is written in a circle, overwriting the oldest entry once full (you built one in <a href="/learn/dsa-stacks-queues">Stacks and queues</a>). The timestamps inside are sorted, but the sorted order starts somewhere in the middle of the array and wraps around:</p>
+<pre>
+positions:   0     1     2     3     4     5     6     7
+minutes:   [610,  615,  620,  580,  590,  595,  600,  605]
+                         ^     ^
+                   newest       oldest: the array is sorted, then "rotated" at 3
+</pre>
+<p>Such an array is called a <strong>rotated sorted array</strong>. Support asks for the ping at minute 595. Plain binary search fails: at the middle (position 3, value 580) it would conclude that 595, being bigger, lies to the right, which here happens to be true, but for 615 it would also go right and miss it.</p>
+<reason title="Before you code: which half is sorted?">
+<ul>
+<li>Split a rotated sorted array at any middle position. Can <em>both</em> halves contain the rotation point?</li>
+<li>How can you tell, from just three values (<code>items[lo]</code>, <code>items[mid]</code>, <code>items[hi]</code>), which half is in normal sorted order?</li>
+<li>Once you know one half is sorted, how do you decide whether the target is in it?</li>
+</ul>
+<answer>
+<p><strong>No.</strong> There is only one place where the values drop, so at least one half has no drop: it is sorted normally.</p>
+<p><strong>Compare the ends.</strong> If <code>items[lo] &lt;= items[mid]</code>, the left half has no drop and is sorted. Otherwise the drop is in the left half, so the right half is sorted.</p>
+<p><strong>Range check on the sorted half.</strong> A sorted half contains the target exactly when the target lies between its first and last values. If it does, search there; if not, the target can only be in the other half. Either way, one comparison discards half the array, so the search stays O(log n).</p>
+</answer>
+</reason>
+<example file="rotated.js">
+function searchRotated(items, target, counter = { steps: 0 }) {
+  let lo = 0;
+  let hi = items.length - 1;           // inclusive bounds this time
+  while (lo <= hi) {
+    counter.steps++;
+    const mid = Math.floor((lo + hi) / 2);
+    if (items[mid] === target) return mid;
+    if (items[lo] <= items[mid]) {       // left half lo..mid is sorted
+      if (items[lo] <= target && target < items[mid]) hi = mid - 1;
+      else lo = mid + 1;
+    } else {                             // right half mid..hi is sorted
+      if (items[mid] < target && target <= items[hi]) lo = mid + 1;
+      else hi = mid - 1;
+    }
+  }
+  return -1;
+}
+
+const pings = [610, 615, 620, 580, 590, 595, 600, 605];
+console.log(pings.map((m) => searchRotated(pings, m)).join(" "));
+console.log(searchRotated(pings, 597), searchRotated([], 1), searchRotated([580], 580));
+
+const big = Array.from({ length: 1000000 }, (_, i) => (i + 400000) % 1000000); // rotated at 600000
+const counter = { steps: 0 };
+console.log(searchRotated(big, 123456, counter), counter.steps, "steps for a million pings");
+</example>
+<output>
+0 1 2 3 4 5 6 7
+-1 -1 0
+723456 20 steps for a million pings
+</output>
+<p>This version uses inclusive bounds (<code>lo &lt;= hi</code>, <code>mid ± 1</code>), like the classic search in the searching lesson; <code>firstTrue</code> uses half-open bounds. Both are correct on their own terms; mixing them is the bug. Every value is found, a missing minute returns −1, and a million entries take about 20 steps.</p>
+<warn>With <strong>duplicate</strong> values the trick can fail: in <code>[5, 5, 5, 1, 5]</code>, <code>items[lo]</code>, <code>items[mid]</code> and <code>items[hi]</code> are all 5, and nothing tells you which half is sorted. Real solutions then shrink by one (<code>lo++</code>), which makes the worst case O(n). Timestamps from one clock are usually unique; order totals are not.</warn>
+</section>
+
+<section>
+<h2 id="failure-cases">Failure cases</h2>
+<ul>
+<li><strong>A test that is not monotonic.</strong> Binary search assumes one switch. With a flaky test, or a condition like "the truck is <em>exactly</em> full on the last day" (true, false, true…), the result is an arbitrary switch point, returned with total confidence. Before searching, argue that "works for x" implies "works for every bigger x".</li>
+<li><strong>Bounds that do not contain the answer.</strong> Starting at 1 kg instead of the heaviest parcel is harmless (the check fails there), but ending below the total can mean no capacity passes, and <code>firstTrue</code> returns <code>hi</code>, a value you never tested. Choose an <code>lo</code> that is a valid lower limit and an <code>hi</code> that certainly works, or check the result before trusting it.</li>
+<li><strong>A check that is wrong at the edges.</strong> <code>daysNeeded</code> must handle a parcel exactly equal to the capacity (<code>load + w &gt; capacity</code>, not <code>&gt;=</code>). A bug in the check becomes a bug in the answer, and the search hides it.</li>
+<li><strong>Mixing bound styles.</strong> <code>hi = mid</code> belongs with <code>lo &lt; hi</code> and an exclusive <code>hi</code>; <code>hi = mid − 1</code> belongs with <code>lo &lt;= hi</code>. Mixing them loops forever or skips answers, as the searching lesson's classic bugs showed.</li>
+<li><strong>Searching real numbers.</strong> On decimals, <code>lo &lt; hi</code> may never become false. Search integers in the smallest unit (kobo, grams, seconds) whenever you can, or run a fixed number of halvings.</li>
+<li><strong>Rotated arrays with duplicates</strong> lose the O(log n) guarantee.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="testing">Testing a search on the answer</h2>
+<p>The naive version, "try every candidate from the bottom", is the perfect reference: slow, but its correctness is obvious. Compare on many small random inputs, including single parcels, parcels of equal weight and a day limit larger than the number of parcels:</p>
+<example file="capacity-test.js" project="bs">
+import { daysNeeded, minCapacity } from "./capacity.js";
+
+function minCapacitySlow(weights, maxDays) {
+  if (weights.length === 0) return 0;
+  let c = Math.max(...weights);
+  while (daysNeeded(weights, c) > maxDays) c++;
+  return c;
+}
+
+function xorshift(seed) {
+  return () => {
+    seed ^= seed << 13;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;
+    return (seed >>> 0) / 4294967296;
+  };
+}
+
+const random = xorshift(2026);
+let agree = 0, oneDay = 0, onePerDay = 0;
+for (let t = 0; t < 3000; t++) {
+  const weights = Array.from({ length: Math.floor(random() * 9) }, () => 1 + Math.floor(random() * 20));
+  const days = 1 + Math.floor(random() * 10);
+  const fast = minCapacity(weights, days);
+  if (fast === minCapacitySlow(weights, days)) agree++;
+  if (weights.length > 0 && fast === weights.reduce((a, b) => a + b, 0)) oneDay++;
+  if (weights.length > 0 && fast === Math.max(...weights)) onePerDay++;
+}
+console.log(`${agree}/3000 agree; ${oneDay} answers at the top bound, ${onePerDay} at the bottom bound`);
+</example>
+<output>
+3000/3000 agree; 580 answers at the top bound, 1964 at the bottom bound
+</output>
+<p>Counting how many answers landed on each bound shows the test reached both ends of the search range, where off-by-one bugs live. The test imports <code>minCapacity</code> from <code>capacity.js</code>, the file written earlier in this project, so the code you tested is the code you ship. It also borrows that file's <code>daysNeeded</code> for the reference, so the test checks the <em>search</em>; the check itself was verified by hand on the ten-parcel example.</p>
+</section>
+
+<section>
+<h2 id="production">Binary search in production</h2>
+<ul>
+<li><strong><code>git bisect run</code>.</strong> Give git a script that exits 0 for good and non-zero for bad, and it bisects unattended. Make the script deterministic; one flaky run sends it down the wrong half.</li>
+<li><strong>Capacity planning.</strong> "The fewest servers that keep response times under 300 ms at peak" is a search on the answer, with a load test as the check. Each check is expensive, so halving the range matters.</li>
+<li><strong>Logs and time series.</strong> Log files and metrics are sorted by time; tools jump to the first line after a timestamp with a binary search over the file's byte offsets instead of reading gigabytes.</li>
+<li><strong>Database indexes.</strong> A B-tree index is a very wide, shallow search tree; each level is a small binary search. It is why <code>WHERE created_at &gt;= …</code> on an indexed column is fast.</li>
+<li><strong>Configuration bisecting.</strong> When one of 40 feature flags breaks a page, turning half of them off at a time finds it in about 6 tries.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practise">New problems to practise</h2>
+<exercise title="The slowest printer that finishes on time">
+<p>A print shop has jobs with these page counts: <code>[120, 45, 300, 80, 210]</code>. A printer prints <code>s</code> pages per hour and works on one job at a time; a job of <code>p</code> pages takes <code>Math.ceil(p / s)</code> whole hours (the leftover part of an hour is not used for the next job). What is the slowest speed that finishes all jobs within 10 hours? Use <code>firstTrue</code>.</p>
+<solution>
+<example file="printer.js" project="bs">
+import { firstTrue } from "./first-true.js";
+
+function hoursAt(jobs, speed) {
+  let hours = 0;
+  for (const pages of jobs) hours += Math.ceil(pages / speed);
+  return hours;
+}
+
+function slowestSpeed(jobs, maxHours) {
+  if (jobs.length > maxHours) return null; // at least one hour per job
+  return firstTrue(1, Math.max(...jobs) + 1, (s) => hoursAt(jobs, s) <= maxHours);
+}
+
+const jobs = [120, 45, 300, 80, 210];
+const speed = slowestSpeed(jobs, 10);
+console.log(speed, hoursAt(jobs, speed), hoursAt(jobs, speed - 1));
+console.log(slowestSpeed(jobs, 5), slowestSpeed(jobs, 4));
+</example>
+<output>
+100 10 11
+300 null
+</output>
+<p>The bounds: speed 1 is the slowest possible, and at the size of the largest job every job takes one hour, which is the best possible, so if that fails nothing works (hence the early <code>null</code> when there are more jobs than hours). Faster is never slower, so the check is monotonic. Printing the hours at the answer and one below it confirms that it is the switch point.</p>
+</solution>
+</exercise>
+
+<exercise title="The smallest monthly repayment">
+<p>A customer borrows ₦500,000 at 3% interest per month and wants to repay it in 12 equal monthly payments. Each month, interest is added to the balance (rounded to the nearest kobo) and then the payment is subtracted. Find the smallest payment, in whole kobo, that brings the balance to zero or below after 12 months.</p>
+<solution>
+<example file="repayment.js" project="bs">
+import { firstTrue } from "./first-true.js";
+
+function balanceAfter(principalKobo, monthlyRate, payment, months) {
+  let balance = principalKobo;
+  for (let m = 0; m < months; m++) {
+    balance += Math.round(balance * monthlyRate);
+    balance -= payment;
+  }
+  return balance;
+}
+
+const principal = 500000 * 100;
+const payment = firstTrue(0, principal * 2, (p) => balanceAfter(principal, 0.03, p, 12) <= 0);
+console.log(`₦${(payment / 100).toFixed(2)} a month`);
+console.log(balanceAfter(principal, 0.03, payment, 12) <= 0, balanceAfter(principal, 0.03, payment - 1, 12) <= 0);
+</example>
+<output>
+₦50231.05 a month
+true false
+</output>
+<p>A bigger payment always leaves a smaller balance, so "paid off" is monotonic in the payment. The upper bound, twice the principal, certainly works (the first payment alone clears the loan and the interest on it). Searching whole kobo keeps everything in integers; there is a formula for this particular loan, but the search works just as well when the rules get messy (fees, a grace month, rounding rules) and the formula does not.</p>
+</solution>
+</exercise>
+
+<exercise title="The oldest ping in the ring buffer">
+<p>In a rotated sorted array of unique timestamps, find the position of the <em>smallest</em> one (the oldest ping, where the rotation happened) in O(log n). Hint: compare the middle with the last element.</p>
+<solution>
+<example file="rotation-point.js" project="bs">
+import { firstTrue } from "./first-true.js";
+
+function oldestPosition(items) {
+  if (items.length === 0) return -1;
+  const last = items[items.length - 1];
+  return firstTrue(0, items.length - 1, (i) => items[i] <= last);
+}
+
+console.log(oldestPosition([610, 615, 620, 580, 590, 595, 600, 605]));
+console.log(oldestPosition([580, 590, 600]), oldestPosition([600, 580]), oldestPosition([580]));
+</example>
+<output>
+3
+0 1 0
+</output>
+<p>Every value before the rotation point is bigger than the last element, and every value from the rotation point on is at most the last element: "at most the last element" is a monotonic predicate over positions, so the oldest ping is its first true. An array that is not rotated at all gives position 0. The search range excludes the last position, because the predicate is always true there.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="summary">Summary</h2>
+<ul>
+<li>Binary search needs a monotonic yes/no test over an ordered range, not a sorted array: false, …, false, true, …, true. It finds the switch in ⌈log₂ R⌉ tests.</li>
+<li>Write one <code>firstTrue(lo, hi, test)</code> with a clear invariant (everything below <code>lo</code> is false, everything from <code>hi</code> on is true) and reuse it: lower and upper bound, minimum capacity, first failing build.</li>
+<li>For "the minimum value such that…", write a check for one candidate, argue it is monotonic, pick bounds that surely contain the answer, and search them.</li>
+<li>Total cost is the cost of one check times log of the range, so even huge ranges are cheap; expensive checks (builds, load tests) benefit most.</li>
+<li>In a rotated sorted array, one half is always sorted; a range check on it decides which half to keep.</li>
+<li>Test against a linear scan of every candidate, and make sure the tests land on both bounds.</li>
+</ul>
+<p>Next: <a href="/learn/pattern-practice">Pattern practice</a>, where the problems no longer tell you which pattern to use.</p>
+</section>

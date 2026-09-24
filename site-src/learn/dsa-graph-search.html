@@ -118,6 +118,62 @@ day 5: Kano, Bauchi
 day 6: Maiduguri
 </output>
 <p>The visit order is the layers in sequence. Each hub was taken out of the queue once, and each route was checked twice, once from each end (40 checks for 20 routes). That makes BFS O(V + E): linear in the size of the graph. Here each shortest route happens to be unique. When several routes take the same number of days, which one BFS reports depends on the order of the neighbour lists. If that matters, make it deterministic on purpose, for example by sorting neighbour lists.</p>
+<h3>Failure case: marking too late</h3>
+<p>The reasoning box said to mark a hub as seen when it is <em>added</em> to the queue. Here is what happens on an open warehouse floor, where every cell has up to four neighbours, if you only mark it when it is <em>taken out</em>:</p>
+<example file="mark-late.js">
+function openFloor(size) {
+  const graph = new Map();
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      const next = [];
+      if (r > 0) next.push(`${r - 1},${c}`);
+      if (r < size - 1) next.push(`${r + 1},${c}`);
+      if (c > 0) next.push(`${r},${c - 1}`);
+      if (c < size - 1) next.push(`${r},${c + 1}`);
+      graph.set(`${r},${c}`, next);
+    }
+  }
+  return graph;
+}
+
+function markOnAdd(graph, start) {
+  const seen = new Set([start]);
+  const queue = [start];
+  for (let head = 0; head < queue.length; head++) {
+    for (const next of graph.get(queue[head])) {
+      if (!seen.has(next)) {
+        seen.add(next);
+        queue.push(next);
+      }
+    }
+  }
+  return queue.length;
+}
+
+function markOnTake(graph, start) {
+  const seen = new Set();
+  const queue = [start];
+  for (let head = 0; head < queue.length; head++) {
+    const cell = queue[head];
+    if (seen.has(cell)) continue;
+    seen.add(cell);
+    for (const next of graph.get(cell)) {
+      if (!seen.has(next)) queue.push(next);
+    }
+  }
+  return queue.length;
+}
+
+for (const size of [10, 100]) {
+  const floor = openFloor(size);
+  console.log(`${size * size} cells: mark on add ${markOnAdd(floor, "0,0")} queue entries, mark on take ${markOnTake(floor, "0,0")}`);
+}
+</example>
+<output>
+100 cells: mark on add 100 queue entries, mark on take 181
+10000 cells: mark on add 10000 queue entries, mark on take 19801
+</output>
+<p>Both versions find the same distances, but marking late puts almost every cell in the queue twice, once by each neighbour that discovers it before it is taken out. On a grid that doubles the memory. On a social network where people have hundreds of friends, the queue grows to one entry per <em>edge</em> instead of one per vertex, which can be hundreds of times larger.</p>
 <h3>Stopping early</h3>
 <p>If you only need one destination, you can stop as soon as it is discovered: every hub discovered later is at least as far away. On a national network that is a small saving; on a social network with millions of accounts, "how are Ada and Tunde connected?" can stop after two or three layers instead of visiting everyone. Exercise 1 does this with a depth limit.</p>
 </section>
@@ -324,13 +380,14 @@ const groups = components(graphFrom(open, allHubs));
 
 for (const { hubs, routes: count } of groups) {
   const loop = count >= hubs.length ? "has a spare route" : "no spare route";
-  console.log(`${hubs.length} hubs, ${count} routes, ${loop}: ${hubs.join(", ")}`);
+  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  console.log(`${plural(hubs.length, "hub")}, ${plural(count, "route")}, ${loop}: ${hubs.join(", ")}`);
 }
 </example>
 <output>
 10 hubs, 10 routes, has a spare route: Lagos, Ibadan, Benin, Ilorin, Onitsha, Warri, Enugu, Owerri, Port Harcourt, Calabar
 6 hubs, 6 routes, has a spare route: Abuja, Kaduna, Jos, Kano, Sokoto, Bauchi
-1 hubs, 0 routes, no spare route: Maiduguri
+1 hub, 0 routes, no spare route: Maiduguri
 </output>
 <p>The network split into three parts: the south, the north, and Maiduguri on its own. Notice <code>graphFrom(open, allHubs)</code>: a graph built only from the open routes would not contain Maiduguri at all, because it has no open route left, and the report would silently leave it out. Build the vertex list from the list of hubs, not from the edges.</p>
 <p>The last column uses a fact about undirected graphs: a connected group of V vertices needs at least V − 1 edges, and with exactly V − 1 it is a tree, with no loops at all. Every extra edge creates a <strong>cycle</strong>, a way to go round and come back. For a delivery network a cycle is good news: it means one more road can close without cutting the group in two. Both large groups still have one; Maiduguri needs the Bauchi road back before anything can reach it.</p>

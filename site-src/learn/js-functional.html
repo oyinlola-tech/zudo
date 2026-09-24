@@ -1,0 +1,687 @@
+---
+title: Functional JavaScript
+description: Turn a tangled checkout function into a pipeline of small pure steps, with immutable updates, composition, currying and partial application, and test every step.
+minutes: 55
+youNeed: Functions, Arrays, Closures in depth and Iterables and iterators
+youBuild: A checkout pipeline of pure, composable steps (pricing, promotions, VAT, delivery) behind a thin imperative shell, with tests that prove it is pure
+keywords: functional programming javascript, pure function, side effect, referential transparency, immutability, immutable update, structural sharing, toSorted with toSpliced, higher-order function, function composition, compose, pipe, pipeline, currying, curry, partial application, point-free style, parseInt map trap, functional core imperative shell
+objectives: Tell pure from impure code by finding hidden inputs and hidden outputs, and move side effects to the edges | Update nested data immutably and explain what structural sharing keeps | Build pipelines with compose and pipe, and reason about the order of steps | Curry and partially apply functions, and choose argument order so they compose | Recognise when point-free style helps and when it causes bugs such as map(parseInt) | Build and test a checkout pipeline with a functional core and an imperative shell
+---
+<section>
+<h2 id="problem">A checkout that changes its mind</h2>
+<p>A shop's checkout function started small and grew. It now prices the cart, applies a promotion, adds VAT, adds delivery, and logs the result. A condensed version:</p>
+<example file="problem.js">
+let promoActive = true;
+const VAT_RATE = 0.075;
+
+function checkout(cart) {
+  if (promoActive) {
+    for (const line of cart.lines) line.priceKobo = Math.round(line.priceKobo * 0.9);
+  }
+  let total = 0;
+  for (const line of cart.lines) total += line.priceKobo * line.qty;
+  total = Math.round(total * (1 + VAT_RATE));
+  if (new Date().getUTCHours() >= 18) total += 150000;
+  else total += 100000;
+  cart.total = total;
+  console.log("checked out", cart.id);
+  return total;
+}
+
+const cart = { id: "CART-1", lines: [{ sku: "RICE-5", qty: 2, priceKobo: 850000 }] };
+const first = checkout(cart);
+const second = checkout(cart);
+console.log(first === second, cart.lines[0].priceKobo);
+</example>
+<output>
+checked out CART-1
+checked out CART-1
+false 688500
+</output>
+<p>Calling <code>checkout</code> twice on the same cart gave two different totals, and the rice now costs ₦6,885 instead of ₦8,500. The function has several problems, and they have one root: it depends on things that are not its arguments, and it changes things that are not its result.</p>
+<ul>
+<li>It <strong>mutates</strong> the cart: each call discounts the prices again.</li>
+<li>It reads a global flag, <code>promoActive</code>, that any code can change.</li>
+<li>It reads the clock, so the delivery fee depends on when the test runs. (That is also why this page does not show you the total itself: it changes with the time of day.)</li>
+<li>It logs, so it cannot be called "just to see the total" without writing to the log.</li>
+<li>Pricing, promotion, VAT and delivery are welded together. The invoice page needs the VAT calculation alone and cannot reuse it.</li>
+</ul>
+<p><strong>Functional programming</strong> is a style that attacks exactly these problems: build programs from functions that depend only on their arguments and only produce a return value, keep data unchanged, and combine small functions into bigger ones. JavaScript is not a purely functional language, and you will not write it as one. But its functions are values, and the techniques in this lesson make business logic easier to test, reuse and trust. At the end, you rebuild this checkout as a pipeline.</p>
+</section>
+
+<section>
+<h2 id="pure">Pure functions, precisely</h2>
+<p><a href="/learn/js-functions#pure">Functions</a> defined a <strong>pure function</strong>: same arguments, same result, and no side effects. A useful way to check any function is to list its <strong>inputs</strong> and <strong>outputs</strong>, including the hidden ones:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Hidden inputs (make results vary)</th><th>Hidden outputs (side effects)</th></tr></thead>
+<tbody>
+<tr><td>Global or module variables that can change</td><td>Changing an argument (mutation)</td></tr>
+<tr><td>The clock: <code>Date.now()</code>, <code>new Date()</code></td><td>Changing a global or module variable</td></tr>
+<tr><td>Randomness: <code>Math.random()</code>, <code>crypto.randomUUID()</code></td><td>Logging, printing</td></tr>
+<tr><td>Environment and configuration read inside the function</td><td>Network requests, database writes, files</td></tr>
+<tr><td>Data fetched from a database or API</td><td>Throwing is <em>not</em> a side effect in this sense, but it is an output: document it</td></tr>
+</tbody>
+</table></div>
+<p>A pure function has none of the left column and none of the right. Its only input is its parameters and its only output is its return value. That gives it a property called <strong>referential transparency</strong>: any call can be replaced by its result without changing the program. <code>add(2, 3)</code> can be replaced by <code>5</code> everywhere. <code>checkout(cart)</code> cannot be replaced by anything, because it does different things every time.</p>
+<h3>Turning hidden inputs into parameters</h3>
+<p>The fix for a hidden input is almost always the same: make it a parameter. The delivery fee depends on the time, so the time becomes an argument, and the caller decides where it comes from:</p>
+<example file="delivery.js">
+function deliveryFeeKobo(orderedAt) {
+  return orderedAt.getUTCHours() >= 18 ? 150000 : 100000;
+}
+
+console.log(deliveryFeeKobo(new Date("2026-09-24T09:00:00Z")));
+console.log(deliveryFeeKobo(new Date("2026-09-24T19:30:00Z")));
+console.log(deliveryFeeKobo(new Date("2026-09-24T17:59:59Z")));
+</example>
+<output>
+100000
+150000
+100000
+</output>
+<p>The function is now pure, and testing the 18:00 boundary takes three lines instead of waiting for the evening. You saw the same move in <a href="/learn/js-closures#reason">Closures in depth</a>, where the transfer limit received a <code>today</code> function. Production code passes <code>new Date()</code>; tests pass fixed dates.</p>
+<h3>A functional core and an imperative shell</h3>
+<p>A real program must have side effects; a checkout that never saves the order is useless. The goal is not to remove them but to <em>push them to the edges</em>. A common architecture is called <strong>functional core, imperative shell</strong>:</p>
+<figure class="lx-diagram">
+<pre>
+  request ──► ┌──────────────────── imperative shell ────────────────────┐
+              │ read clock, load catalog, read promo settings            │
+              │           │                                              │
+              │           ▼                                              │
+              │   ┌──────────── functional core (pure) ─────────────┐    │
+              │   │ price lines → apply promo → VAT → delivery      │    │
+              │   │ same input, same output; no I/O; easy to test   │    │
+              │   └─────────────────────────────────────────────────┘    │
+              │           │                                              │
+              │           ▼                                              │
+              │ save order, log, send receipt                            │
+              └──────────────────────────────────────────────────────────┘ ──► response
+</pre>
+<figcaption>The shell gathers every input and performs every effect; the core only computes.</figcaption>
+</figure>
+<p>The core holds the business rules, where bugs are expensive, and it is pure, so it is cheap to test thoroughly. The shell is thin and boring, and a few integration tests cover it. The <a href="#build">build</a> follows this shape.</p>
+</section>
+
+<section>
+<h2 id="immutability">Immutability without pain</h2>
+<p>The first checkout discounted the prices <em>in</em> the cart. The functional alternative is to never change the data you were given, and to return new data instead. This is <strong>immutability</strong>. <a href="/learn/js-types-deep#mutability">Types in depth</a> explained why shared objects make mutation dangerous; here is how to work without it day to day.</p>
+<h3>Immutable updates to nested data</h3>
+<p>Changing one line's quantity in a cart means building a new line, a new <code>lines</code> array and a new cart, while reusing everything that did not change. Spread (<a href="/learn/js-modern#spread-rest">Modern JavaScript</a>) and <code>map</code> do the work:</p>
+<example file="update.js">
+const cart = Object.freeze({
+  id: "CART-1",
+  customer: Object.freeze({ name: "Ada", city: "Lagos" }),
+  lines: Object.freeze([
+    Object.freeze({ sku: "RICE-5", qty: 2 }),
+    Object.freeze({ sku: "OIL-1", qty: 1 }),
+  ]),
+});
+
+function setQty(cart, sku, qty) {
+  return {
+    ...cart,
+    lines: cart.lines.map((line) => (line.sku === sku ? { ...line, qty } : line)),
+  };
+}
+
+const updated = setQty(cart, "OIL-1", 3);
+
+console.log(cart.lines[1].qty, updated.lines[1].qty);
+console.log("cart replaced:", updated !== cart);
+console.log("lines replaced:", updated.lines !== cart.lines);
+console.log("rice line shared:", updated.lines[0] === cart.lines[0]);
+console.log("customer shared:", updated.customer === cart.customer);
+</example>
+<output>
+1 3
+cart replaced: true
+lines replaced: true
+rice line shared: true
+customer shared: true
+</output>
+<p>Only the objects on the path to the change were copied: the cart, its <code>lines</code> array, and the oil line. The rice line and the customer are the <em>same objects</em> in both versions. Reusing unchanged parts like this is called <strong>structural sharing</strong>, and it is why immutable updates are cheaper than they look: the cost is proportional to the depth of the change, not the size of the data. Freezing the original (<a href="/learn/js-objects-deep#locking">Objects in depth</a>) proves the function never tried to change it: in a module, any write to a frozen object would have thrown.</p>
+<h3>The non-mutating array methods</h3>
+<p>Some old array methods change the array in place: <code>sort</code>, <code>reverse</code>, <code>splice</code>, and assignment to an index. Since ES2023 each has a copying twin: <code>toSorted</code>, <code>toReversed</code>, <code>toSpliced</code> and <code>with(index, value)</code>:</p>
+<example file="copying-methods.js">
+const queue = Object.freeze(["ORD-3", "ORD-1", "ORD-2"]);
+
+console.log(queue.toSorted());
+console.log(queue.toReversed());
+console.log(queue.toSpliced(1, 1));
+console.log(queue.with(0, "ORD-9"));
+console.log(queue);
+
+try {
+  queue.sort();
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+[ 'ORD-1', 'ORD-2', 'ORD-3' ]
+[ 'ORD-2', 'ORD-1', 'ORD-3' ]
+[ 'ORD-3', 'ORD-2' ]
+[ 'ORD-9', 'ORD-1', 'ORD-2' ]
+[ 'ORD-3', 'ORD-1', 'ORD-2' ]
+TypeError: Cannot assign to read only property '0' of object '[object Array]'
+</output>
+<h3>The cost of copying in a loop</h3>
+<p>Immutability has one real trap. Building a result by copying it on every step of a loop copies everything built so far, each time. Grouping 1,000 orders by city this way performs about half a million property copies:</p>
+<example file="copy-cost.js">
+const orders = Array.from({ length: 1000 }, (_, i) => ({ id: `ORD-${i}`, city: ["Lagos", "Abuja", "Kano"][i % 3] }));
+
+let copiedItems = 0;
+const slow = orders.reduce((groups, order) => {
+  copiedItems += Object.values(groups).reduce((n, list) => n + list.length, 0);
+  return { ...groups, [order.city]: [...(groups[order.city] ?? []), order] };
+}, {});
+console.log("copying every step:", copiedItems, "items copied");
+
+const fast = Object.groupBy(orders, (order) => order.city);
+console.log(Object.keys(fast), fast.Lagos.length === slow.Lagos.length);
+</example>
+<output>
+copying every step: 499500 items copied
+[ 'Lagos', 'Abuja', 'Kano' ] true
+</output>
+<p>That is O(n²) work (<a href="/learn/dsa-complexity">Complexity</a>) for an O(n) job. The rule that keeps both safety and speed: <strong>a function may mutate data it created itself</strong>, as long as nothing outside can see it before it returns. <code>Object.groupBy</code> (ES2024) does exactly that inside, and a plain loop that pushes into a local <code>Map</code> would too. Purity is about what callers can observe, not about never using <code>push</code>.</p>
+</section>
+
+<section>
+<h2 id="higher-order">Functions as data</h2>
+<p>A <strong>first-class</strong> value is one you can store in a variable, put in an array, pass as an argument and return from a function. In JavaScript, functions are first-class (<a href="/learn/js-functions#callbacks">Functions</a>), and a function that takes or returns functions is <strong>higher-order</strong>. You know <code>map</code> and <code>filter</code>. The more powerful idea is to treat <em>business rules</em> as data: a list of functions that you can add to, remove from, and test one at a time.</p>
+<p>A shop has several promotions. Instead of an <code>if</code> chain inside the checkout, each promotion is a function from an order to a discount, and the rules live in an array:</p>
+<example file="rules.js">
+const promotions = [
+  { name: "RICE10", discount: (order) => order.lines.filter((l) => l.sku === "RICE-5").reduce((sum, l) => sum + Math.round(l.priceKobo * l.qty * 0.1), 0) },
+  { name: "BIG-BASKET", discount: (order) => (order.subtotalKobo >= 5000000 ? 250000 : 0) },
+  { name: "FIRST-ORDER", discount: (order) => (order.customer.orders === 0 ? 100000 : 0) },
+];
+
+function bestPromotion(order, rules) {
+  return rules
+    .map((rule) => ({ name: rule.name, kobo: rule.discount(order) }))
+    .filter((result) => result.kobo > 0)
+    .reduce((best, result) => (result.kobo > best.kobo ? result : best), { name: "none", kobo: 0 });
+}
+
+const order = {
+  customer: { orders: 0 },
+  subtotalKobo: 5700000,
+  lines: [{ sku: "RICE-5", qty: 2, priceKobo: 850000 }, { sku: "TV-32", qty: 1, priceKobo: 4000000 }],
+};
+
+const smallOrder = { ...order, subtotalKobo: 1700000, lines: order.lines.slice(0, 1) };
+
+console.log(bestPromotion(order, promotions));
+console.log(bestPromotion(smallOrder, promotions));
+console.log(bestPromotion(smallOrder, promotions.filter((rule) => rule.name !== "RICE10")));
+</example>
+<output>
+{ name: 'BIG-BASKET', kobo: 250000 }
+{ name: 'RICE10', kobo: 170000 }
+{ name: 'FIRST-ORDER', kobo: 100000 }
+</output>
+<p>Adding a promotion is adding an object to an array; no existing code changes. Each rule is a pure function you can test alone. And because the rules are data, a test (or a feature flag) can pass a different list, as the third call does: with the rice promotion switched off, the first-order discount wins. This is the <strong>strategy</strong> idea from object-oriented design, done with plain functions.</p>
+</section>
+
+<section>
+<h2 id="composition">Composition and pipelines</h2>
+<p><strong>Composition</strong> means building a function out of other functions, where each one's output is the next one's input. With two functions <code>f</code> and <code>g</code>, "g after f" is <code>(x) =&gt; g(f(x))</code>. With many, nesting becomes unreadable: <code>round(addDelivery(addVat(applyPromo(price(cart)))))</code> must be read from the inside out.</p>
+<p>Two small helpers fix the reading order. <code>pipe</code> runs functions left to right, in the order they happen; <code>compose</code> runs them right to left, like the nested form, as in mathematics. Both are one <code>reduce</code>:</p>
+<example file="pipe.js" project="fp">
+export const pipe = (...fns) => (input) => fns.reduce((value, fn) => fn(value), input);
+export const compose = (...fns) => (input) => fns.reduceRight((value, fn) => fn(value), input);
+</example>
+<example file="use-pipe.js" project="fp">
+import { compose, pipe } from "./pipe.js";
+
+const addVat = (kobo) => Math.round(kobo * 1.075);
+const minusVoucher = (kobo) => Math.max(kobo - 200000, 0);
+const toNaira = (kobo) => `₦${(kobo / 100).toFixed(2)}`;
+
+const priceLabel = pipe(minusVoucher, addVat, toNaira);
+const sameThing = compose(toNaira, addVat, minusVoucher);
+
+console.log(priceLabel(1700000), sameThing(1700000));
+console.log(toNaira(addVat(minusVoucher(1700000))));
+</example>
+<output>
+₦16125.00 ₦16125.00
+₦16125.00
+</output>
+<p>This course uses <code>pipe</code>, because a pipeline reads like the checkout steps in order. A <strong>pipeline</strong> is exactly this: data flowing through a fixed sequence of transformations, like the generator pipelines in <a href="/learn/js-generators#lazy">Generators</a>, except that each step here handles the whole value at once.</p>
+<h3>Order is a business decision</h3>
+<p>Composition makes the order of steps explicit, which exposes decisions that were hidden in the old function. Is the voucher taken off before or after VAT? The answer changes the price, and it is a question for the finance team, not a detail:</p>
+<example file="order-matters.js" project="fp">
+import { pipe } from "./pipe.js";
+
+const addVat = (kobo) => Math.round(kobo * 1.075);
+const minusVoucher = (kobo) => Math.max(kobo - 200000, 0);
+
+const voucherFirst = pipe(minusVoucher, addVat);
+const vatFirst = pipe(addVat, minusVoucher);
+
+console.log(voucherFirst(1700000), vatFirst(1700000));
+</example>
+<output>
+1612500 1627500
+</output>
+<p>Taking the voucher off first means the customer pays VAT on less: ₦150 less in total. In Nigeria, as in most countries, VAT is charged on the amount actually paid, so a voucher the shop funds normally comes off first. With a pipeline, that rule is one visible line, and a test can pin it.</p>
+<h3>Every step must fit the next</h3>
+<p>Composition only works when each function takes one argument and returns what the next function expects. Real steps need more: the VAT <em>rate</em>, the voucher <em>amount</em>. The next section is about turning many-argument functions into one-argument steps.</p>
+</section>
+
+<section>
+<h2 id="currying">Currying and partial application</h2>
+<p>A tax calculator needs a rate and an amount. You want <code>addVat</code> for Nigeria (7.5%), for Ghana (15%), and so on, each a one-argument function that fits in a pipeline. There are two related techniques:</p>
+<ul>
+<li><strong>Partial application</strong>: take a function of several arguments, fix some of them now, and get back a function of the rest. You met it in <a href="/learn/js-closures#factories">Closures in depth</a>.</li>
+<li><strong>Currying</strong>: write (or convert) a function of several arguments as a chain of one-argument functions: <code>f(a, b, c)</code> becomes <code>f(a)(b)(c)</code>. Each call returns the next function until all arguments are in.</li>
+</ul>
+<example file="curry-by-hand.js">
+const addTax = (rate) => (kobo) => Math.round(kobo * (1 + rate));
+const percentOff = (percent) => (kobo) => Math.round(kobo * (1 - percent / 100));
+
+const addVatNigeria = addTax(0.075);
+const addVatGhana = addTax(0.15);
+const blackFriday = percentOff(20);
+
+console.log(addVatNigeria(1000000), addVatGhana(1000000));
+console.log([850000, 320000, 20000].map(blackFriday));
+console.log(addTax(0.075)(1000000));
+</example>
+<output>
+1075000 1150000
+[ 680000, 256000, 16000 ]
+1075000
+</output>
+<p><code>addTax</code> is curried by hand: an arrow returning an arrow. Calling it with a rate gives a configured function; calling that with an amount gives the result. Each configured function is a closure over its <code>rate</code>, and each is a perfect pipeline step.</p>
+<h3>Argument order: configuration first, data last</h3>
+<p>Currying only helps if the argument you know <em>early</em> comes first. The rate is known when the program starts; the amount only arrives with each order. So the rule for functions you intend to curry or compose is <strong>configuration first, data last</strong>. A function written as <code>addTax(kobo, rate)</code> cannot be partially applied into a pipeline step without a wrapper.</p>
+<h3>A general curry, and its limits</h3>
+<p>You can write a helper that curries any function. It collects arguments until it has as many as the function declares, using <code>fn.length</code>, the number of declared parameters:</p>
+<example file="curry.js">
+function curry(fn) {
+  return function curried(...args) {
+    if (args.length >= fn.length) return fn(...args);
+    return (...more) => curried(...args, ...more);
+  };
+}
+
+const lineTotal = curry((vatRate, discountPercent, priceKobo, qty) =>
+  Math.round(priceKobo * qty * (1 - discountPercent / 100) * (1 + vatRate)),
+);
+
+const nigeriaNoDiscount = lineTotal(0.075, 0);
+const nigeriaStaff = lineTotal(0.075)(15);
+
+console.log(nigeriaNoDiscount(850000, 2), nigeriaStaff(850000, 2), lineTotal(0.075, 15, 850000)(2));
+
+const withDefault = curry((kobo, rate = 0.075) => Math.round(kobo * (1 + rate)));
+console.log(withDefault.length, typeof withDefault(1000));
+console.log(((a, b = 1) => a).length, ((...all) => all).length);
+</example>
+<output>
+1827500 1553375 1553375
+0 number
+1 0
+</output>
+<p>The curried <code>lineTotal</code> accepts its arguments one at a time or several at once. But look at the last lines: <code>fn.length</code> stops counting at the first parameter with a default value, and a rest parameter counts as 0. So <code>curry</code> saw a function of one argument and called it as soon as it had <code>1000</code>, using the default rate. Generic <code>curry</code> is fragile around defaults and rest parameters; hand-written curried functions like <code>addTax</code> say exactly what they mean, and are what most JavaScript codebases use.</p>
+<h3>Partial application with bind and a helper</h3>
+<p>When a function is not curried and you only want to fix its first arguments, <code>bind</code> does it (it also fixes <code>this</code>, from <a href="/learn/js-this#explicit">this in depth</a>; pass <code>null</code> when there is none). A small <code>partial</code> helper does the same without the <code>this</code> argument:</p>
+<example file="partial.js">
+function shippingKobo(zoneRates, city, weightKg) {
+  const rate = zoneRates[city] ?? zoneRates.default;
+  return rate.baseKobo + Math.ceil(weightKg) * rate.perKgKobo;
+}
+
+const partial = (fn, ...preset) => (...rest) => fn(...preset, ...rest);
+
+const ZONES = {
+  Lagos: { baseKobo: 100000, perKgKobo: 20000 },
+  default: { baseKobo: 250000, perKgKobo: 50000 },
+};
+
+const shipWithOurRates = partial(shippingKobo, ZONES);
+const shipToLagos = shippingKobo.bind(null, ZONES, "Lagos");
+
+console.log(shipWithOurRates("Kano", 2.2), shipToLagos(2.2), shipToLagos(0.5));
+</example>
+<output>
+400000 160000 120000
+</output>
+<p>Both fixed the rate table once; <code>shipToLagos</code> also fixed the city. Partial application is the everyday tool; currying is the same idea taken to one argument at a time.</p>
+</section>
+
+<section>
+<h2 id="point-free">Point-free style, used sensibly</h2>
+<p><strong>Point-free</strong> style means passing a function directly instead of wrapping it in an arrow that only forwards its argument: <code>prices.map(toNaira)</code> instead of <code>prices.map((kobo) =&gt; toNaira(kobo))</code>. The name comes from mathematics, where the "points" are the arguments. It can read beautifully. It also causes two classic bugs, because the callback receives <em>every</em> argument <code>map</code> passes, and loses its <code>this</code>:</p>
+<example file="point-free-traps.js">
+const quantities = ["10", "10", "10"];
+console.log(quantities.map(parseInt));
+console.log(quantities.map((text) => parseInt(text, 10)));
+console.log(quantities.map(Number));
+
+const cart = {
+  items: [],
+  add(sku) {
+    this.items.push(sku);
+  },
+};
+try {
+  ["RICE-5", "OIL-1"].forEach(cart.add);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+["RICE-5", "OIL-1"].forEach((sku) => cart.add(sku));
+console.log(cart.items);
+</example>
+<output>
+[ 10, NaN, 2 ]
+[ 10, 10, 10 ]
+[ 10, 10, 10 ]
+TypeError: Cannot read properties of undefined (reading 'items')
+[ 'RICE-5', 'OIL-1' ]
+</output>
+<ul>
+<li><code>map</code> calls its callback with <code>(item, index, array)</code>, and <code>parseInt</code> takes <code>(text, radix)</code>. So the calls were <code>parseInt("10", 0)</code> (radix 0 means "guess": 10), <code>parseInt("10", 1)</code> (radix 1 is invalid: <code>NaN</code>) and <code>parseInt("10", 2)</code> (binary: 2).</li>
+<li><code>cart.add</code> passed as a value is just the function; called by <code>forEach</code> without an object, its <code>this</code> is <code>undefined</code>.</li>
+</ul>
+<p>Guidelines that keep the benefits without the bugs:</p>
+<ul>
+<li>Pass a function directly when you wrote it to take exactly one argument and it does not use <code>this</code>: <code>map(toNaira)</code>, <code>filter(isPaid)</code>, <code>pipe(addVat, toNaira)</code>.</li>
+<li>Wrap it in an arrow when it has optional extra parameters that <code>map</code>'s index could fill (<code>parseInt</code>'s radix is the famous one), or when it is a method that needs its <code>this</code>.</li>
+<li>If a point-free chain needs a comment to explain it, write the arrow. Readability wins over cleverness.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="reason">Before you build: the checkout pipeline</h2>
+<reason title="Design a pure checkout">
+<p>You will rebuild the checkout from the start of the lesson. Before reading the code, decide:</p>
+<ul>
+<li>List every input the checkout needs. Which of them did the old function read from hidden places?</li>
+<li>What are the steps, in which order, and what does each one receive and return?</li>
+<li>Where does money get rounded? What happens if each step rounds, versus rounding once?</li>
+<li>What should happen when the cart contains a SKU that is not in the catalog, or a quantity of 0 or -1?</li>
+<li>How will a test prove the core is pure?</li>
+</ul>
+<answer>
+<ul>
+<li><strong>Inputs</strong>: the cart (SKUs and quantities), the catalog (prices), the promotion rules, the VAT rate, the delivery rules and the order time. The old version read the promotion flag, the VAT rate and the time from hidden places, and took prices from the cart, where a client could have changed them. The core receives all of these as data.</li>
+<li><strong>Steps</strong>: validate lines → price lines from the catalog → choose the best promotion → add VAT on the discounted amount → add delivery → summarise. Each step takes a <em>quote</em> object and returns a new quote with more fields, so every step has the same shape and <code>pipe</code> can join them.</li>
+<li><strong>Rounding</strong>: every amount is kept in whole kobo, and each step that multiplies rounds its own result once. Rounding in one agreed place per calculation keeps the numbers identical to what the invoice shows; rounding at random points makes totals drift by a kobo or two.</li>
+<li><strong>Bad lines</strong>: an unknown SKU or a quantity that is not a whole number above 0 makes the checkout fail with a clear error before any money is calculated. Silently dropping a line would charge the customer for a different cart than the one they saw.</li>
+<li><strong>Proving purity</strong>: freeze the input (any mutation throws), run the pipeline twice and compare the results, and check that nothing was logged. Then test the time-dependent step with fixed dates.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="build">Build: a checkout pipeline</h2>
+<p>The project gets the same one-line <code>pipe</code> as before:</p>
+<example file="pipe.js" project="checkout">
+export const pipe = (...fns) => (input) => fns.reduce((value, fn) => fn(value), input);
+</example>
+<p>The core is a set of small, curried steps. Each takes its configuration first and returns a function from quote to quote:</p>
+<example file="checkout-core.js" project="checkout">
+import { pipe } from "./pipe.js";
+
+export const validateLines = (catalog) => (quote) => {
+  for (const line of quote.lines) {
+    if (!Object.hasOwn(catalog, line.sku)) throw new RangeError(`unknown product ${line.sku}`);
+    if (!Number.isInteger(line.qty) || line.qty < 1) throw new RangeError(`bad quantity ${line.qty} for ${line.sku}`);
+  }
+  return quote;
+};
+
+export const priceLines = (catalog) => (quote) => {
+  const lines = quote.lines.map((line) => ({ ...line, priceKobo: catalog[line.sku], totalKobo: catalog[line.sku] * line.qty }));
+  return { ...quote, lines, subtotalKobo: lines.reduce((sum, line) => sum + line.totalKobo, 0) };
+};
+
+export const applyBestPromotion = (rules) => (quote) => {
+  const best = rules
+    .map((rule) => ({ name: rule.name, kobo: Math.min(rule.discount(quote), quote.subtotalKobo) }))
+    .reduce((top, next) => (next.kobo > top.kobo ? next : top), { name: null, kobo: 0 });
+  return { ...quote, promotion: best.name, discountKobo: best.kobo };
+};
+
+export const addVat = (rate) => (quote) => ({
+  ...quote,
+  vatKobo: Math.round((quote.subtotalKobo - quote.discountKobo) * rate),
+});
+
+export const addDelivery = (feeFor) => (quote) => ({ ...quote, deliveryKobo: feeFor(quote) });
+
+export const summarise = (quote) => ({
+  ...quote,
+  totalKobo: quote.subtotalKobo - quote.discountKobo + quote.vatKobo + quote.deliveryKobo,
+});
+
+export const createCheckout = ({ catalog, promotions, vatRate, deliveryFee }) =>
+  pipe(validateLines(catalog), priceLines(catalog), applyBestPromotion(promotions), addVat(vatRate), addDelivery(deliveryFee), summarise);
+</example>
+<p>Every step is pure, and <code>createCheckout</code> is partial application at the scale of a whole feature: it takes the shop's configuration once and returns a single function from quote to quote. The discount is capped at the subtotal, so a promotion can never make a total negative. Delivery depends on the order time, so the time is part of the quote, not read from a clock. Now the shell, which gathers inputs and performs effects:</p>
+<example file="checkout-shell.js" project="checkout">
+import { createCheckout } from "./checkout-core.js";
+
+export function createCheckoutService({ loadCatalog, loadPromotions, clock, saveOrder, log }) {
+  return function checkout(cart) {
+    const checkoutQuote = createCheckout({
+      catalog: loadCatalog(),
+      promotions: loadPromotions(),
+      vatRate: 0.075,
+      deliveryFee: (quote) => (quote.orderedAt.getUTCHours() >= 18 ? 150000 : 100000),
+    });
+    const quote = checkoutQuote({ cartId: cart.id, lines: cart.lines, orderedAt: clock() });
+    saveOrder(quote);
+    log(`checked out ${cart.id}: ${quote.totalKobo} kobo`);
+    return quote;
+  };
+}
+</example>
+<example file="main.js" project="checkout">
+import { createCheckoutService } from "./checkout-shell.js";
+
+const CATALOG = { "RICE-5": 850000, "OIL-1": 320000, "TV-32": 4000000 };
+const PROMOTIONS = [
+  { name: "RICE10", discount: (q) => q.lines.filter((l) => l.sku === "RICE-5").reduce((s, l) => s + Math.round(l.totalKobo * 0.1), 0) },
+  { name: "BIG-BASKET", discount: (q) => (q.subtotalKobo >= 5000000 ? 250000 : 0) },
+];
+
+const saved = [];
+const checkout = createCheckoutService({
+  loadCatalog: () => CATALOG,
+  loadPromotions: () => PROMOTIONS,
+  clock: () => new Date("2026-09-24T19:05:00Z"),
+  saveOrder: (quote) => saved.push(quote),
+  log: console.log,
+});
+
+const cart = Object.freeze({ id: "CART-1", lines: Object.freeze([Object.freeze({ sku: "RICE-5", qty: 2 }), Object.freeze({ sku: "OIL-1", qty: 1 })]) });
+const first = checkout(cart);
+const second = checkout(cart);
+
+const { subtotalKobo, promotion, discountKobo, vatKobo, deliveryKobo, totalKobo } = first;
+console.log({ subtotalKobo, promotion, discountKobo, vatKobo, deliveryKobo, totalKobo });
+console.log("same total twice:", first.totalKobo === second.totalKobo, "saved:", saved.length);
+</example>
+<output>
+checked out CART-1: 2138750 kobo
+checked out CART-1: 2138750 kobo
+{
+  subtotalKobo: 2020000,
+  promotion: 'RICE10',
+  discountKobo: 170000,
+  vatKobo: 138750,
+  deliveryKobo: 150000,
+  totalKobo: 2138750
+}
+same total twice: true saved: 2
+</output>
+<p>The same frozen cart, checked out twice, gave the same total both times, and the cart was never changed (a write would have thrown). The only effects, saving and logging, happen in the shell, through functions that were passed in. In a ZudoJS service, those would be a repository and a logger resolved from the container; the core would not change at all.</p>
+<h3>Testing the core</h3>
+<p>Because every step is a pure function, tests are plain calls with plain data. No fake database, no fake clock, no setup:</p>
+<example file="checkout.test.js" project="checkout">
+import { addDelivery, addVat, applyBestPromotion, createCheckout, priceLines, validateLines } from "./checkout-core.js";
+
+function check(label, run, expected) {
+  let actual;
+  try {
+    actual = run();
+  } catch (error) {
+    actual = `${error.name}: ${error.message}`;
+  }
+  const same = JSON.stringify(actual) === JSON.stringify(expected);
+  console.log(`${same ? "PASS" : "FAIL"} ${label} -> ${JSON.stringify(actual)}`);
+}
+
+const catalog = { "RICE-5": 850000, "SALT": 20000 };
+const base = { lines: [{ sku: "RICE-5", qty: 2 }], orderedAt: new Date("2026-09-24T09:00:00Z") };
+const flatFee = () => 100000;
+
+check("prices from the catalog", () => priceLines(catalog)(base).subtotalKobo, 1700000);
+check("ignores a price sent by the client", () => priceLines(catalog)({ lines: [{ sku: "SALT", qty: 1, priceKobo: 1 }] }).lines[0].priceKobo, 20000);
+check("unknown product", () => validateLines(catalog)({ lines: [{ sku: "TV-99", qty: 1 }] }), "RangeError: unknown product TV-99");
+check("zero quantity", () => validateLines(catalog)({ lines: [{ sku: "SALT", qty: 0 }] }), "RangeError: bad quantity 0 for SALT");
+check("inherited key is not a product", () => validateLines(catalog)({ lines: [{ sku: "toString", qty: 1 }] }), "RangeError: unknown product toString");
+check("VAT after discount", () => addVat(0.075)({ subtotalKobo: 1000000, discountKobo: 200000 }).vatKobo, 60000);
+check("discount never exceeds subtotal", () => applyBestPromotion([{ name: "HUGE", discount: () => 99999999 }])({ subtotalKobo: 5000 }).discountKobo, 5000);
+check("no promotion", () => applyBestPromotion([])({ subtotalKobo: 5000 }).promotion, null);
+check("evening delivery", () => addDelivery((q) => (q.orderedAt.getUTCHours() >= 18 ? 150000 : 100000))({ orderedAt: new Date("2026-09-24T18:00:00Z") }).deliveryKobo, 150000);
+
+const run = createCheckout({ catalog, promotions: [], vatRate: 0.075, deliveryFee: flatFee });
+const frozen = Object.freeze({ ...base, lines: Object.freeze(base.lines.map(Object.freeze)) });
+check("pure: same input, same output", () => JSON.stringify(run(frozen)) === JSON.stringify(run(frozen)), true);
+check("pure: input untouched", () => (run(frozen), frozen.lines[0]), { sku: "RICE-5", qty: 2 });
+check("total", () => run(frozen).totalKobo, 1700000 + 127500 + 100000);
+</example>
+<output>
+PASS prices from the catalog -> 1700000
+PASS ignores a price sent by the client -> 20000
+PASS unknown product -> "RangeError: unknown product TV-99"
+PASS zero quantity -> "RangeError: bad quantity 0 for SALT"
+PASS inherited key is not a product -> "RangeError: unknown product toString"
+PASS VAT after discount -> 60000
+PASS discount never exceeds subtotal -> 5000
+PASS no promotion -> null
+PASS evening delivery -> 150000
+PASS pure: same input, same output -> true
+PASS pure: input untouched -> {"sku":"RICE-5","qty":2}
+PASS total -> 1927500
+</output>
+<p>Two tests guard security, not just arithmetic. The client-sent <code>priceKobo: 1</code> was ignored because <code>priceLines</code> always prices from the catalog. And <code>"toString"</code> is refused as a SKU: <code>catalog.toString</code> exists through the prototype chain (<a href="/learn/js-prototypes#object-prototype">Prototypes in depth</a>), so a check like <code>catalog[sku] !== undefined</code> would have accepted it; <code>Object.hasOwn</code> does not.</p>
+<h3>In production</h3>
+<ul>
+<li><strong>Debug a pipeline with a tap.</strong> A step like <code>tap((q) =&gt; log(q))</code> that runs a side effect and returns its input unchanged lets you look inside a pipeline without breaking it. Remove it, or route it to a debug logger, afterwards (exercise 1).</li>
+<li><strong>Stack traces get shorter names.</strong> Errors thrown inside a <code>pipe</code> show anonymous arrow functions and <code>reduce</code> in the trace. Named step functions (<code>const addVat = …</code>) keep traces readable.</li>
+<li><strong>Errors in pipelines.</strong> Here a bad cart throws and the whole pipeline stops, which is right for a checkout. When a pipeline should collect several problems instead of stopping at the first, steps can return result objects; <a href="/learn/js-error-design">Designing error handling</a> weighs the options.</li>
+<li><strong>Do not chase purity into the shell.</strong> Saving, logging and sending receipts are the program's purpose. Keep them explicit, in one place, and keep the rules that decide money pure.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A tap for debugging pipelines">
+<p>Write <code>tap(fn)</code>: it returns a step that calls <code>fn(value)</code> for its side effect and then returns <code>value</code> unchanged. Use it to log the quote between two steps of a pipeline without changing the result.</p>
+<solution>
+<example file="tap.js">
+const pipe = (...fns) => (input) => fns.reduce((value, fn) => fn(value), input);
+const tap = (fn) => (value) => {
+  fn(value);
+  return value;
+};
+
+const addVat = (rate) => (kobo) => Math.round(kobo * (1 + rate));
+const minusVoucher = (voucherKobo) => (kobo) => Math.max(kobo - voucherKobo, 0);
+
+const price = pipe(
+  minusVoucher(200000),
+  tap((kobo) => console.log("after voucher:", kobo)),
+  addVat(0.075),
+  tap((kobo) => console.log("after VAT:", kobo)),
+);
+
+console.log("final:", price(1700000));
+</example>
+<output>
+after voucher: 1500000
+after VAT: 1612500
+final: 1612500
+</output>
+<p><code>tap</code> is impure on purpose, but it cannot change the data flowing through, so removing it can never change a result. Libraries such as RxJS use the same name for the same idea.</p>
+</solution>
+</exercise>
+<exercise title="Per-country price calculators">
+<p>Write a curried <code>priceFor(taxRate)(discountPercent)(kobo)</code> that applies the discount first, then the tax, rounding once at the end. Build calculators for a Nigerian customer with no discount (7.5%), a Ghanaian customer with no discount (15%) and a Nigerian staff member with 20% off, and price ₦10,000 for each.</p>
+<solution>
+<example file="price-for.js">
+const priceFor = (taxRate) => (discountPercent) => (kobo) => Math.round(kobo * (1 - discountPercent / 100) * (1 + taxRate));
+
+const nigeria = priceFor(0.075);
+const ghana = priceFor(0.15);
+
+const calculators = {
+  "NG customer": nigeria(0),
+  "GH customer": ghana(0),
+  "NG staff": nigeria(20),
+};
+
+for (const [who, price] of Object.entries(calculators)) {
+  console.log(who.padEnd(12), price(1000000));
+}
+</example>
+<output>
+NG customer  1075000
+GH customer  1150000
+NG staff     860000
+</output>
+<p>The tax rate is known per country, the discount per customer group, and the amount per order, so the arguments are in the order they become known. <code>nigeria</code> is itself reusable: it is partially applied once and then specialised twice.</p>
+</solution>
+</exercise>
+<exercise title="Remove a line immutably">
+<p>Write <code>removeLine(cart, sku)</code> that returns a new cart without that line and with a new <code>updatedAt</code> passed in by the caller. The original cart must be unchanged, and lines that were not removed must be the same objects (structural sharing). If the SKU is not in the cart, return the original cart unchanged, so callers can detect "nothing happened" with <code>===</code>.</p>
+<solution>
+<example file="remove-line.js">
+function removeLine(cart, sku, updatedAt) {
+  const index = cart.lines.findIndex((line) => line.sku === sku);
+  if (index === -1) return cart;
+  return { ...cart, lines: cart.lines.toSpliced(index, 1), updatedAt };
+}
+
+const cart = Object.freeze({
+  id: "CART-1",
+  updatedAt: "2026-09-24T09:00:00Z",
+  lines: Object.freeze([{ sku: "RICE-5", qty: 2 }, { sku: "OIL-1", qty: 1 }, { sku: "SALT", qty: 4 }]),
+});
+
+const next = removeLine(cart, "OIL-1", "2026-09-24T09:05:00Z");
+console.log(next.lines.map((l) => l.sku), next.updatedAt);
+console.log(cart.lines.length, next.lines[1] === cart.lines[2]);
+console.log(removeLine(cart, "TV-32", "2026-09-24T09:06:00Z") === cart);
+</example>
+<output>
+[ 'RICE-5', 'SALT' ] 2026-09-24T09:05:00Z
+3 true
+true
+</output>
+<p><code>toSpliced</code> returns a copy without the removed item, so the frozen original is never touched. Returning the same object when nothing changed is a useful convention: UI frameworks and caches use <code>===</code> to decide whether anything needs to be redrawn or recomputed. The time is a parameter, so the function stays pure.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A pure function's only input is its parameters and its only output is its return value. Find hidden inputs (globals, clock, randomness, config) and hidden outputs (mutation, logging, I/O), and turn inputs into parameters.</li>
+<li>Structure programs as a functional core of pure business rules inside a thin imperative shell that gathers inputs and performs effects.</li>
+<li>Update data immutably with spread, <code>map</code> and the copying array methods (<code>toSorted</code>, <code>toReversed</code>, <code>toSpliced</code>, <code>with</code>); structural sharing reuses unchanged parts. Avoid copying on every step of a loop; mutating data you just created is fine.</li>
+<li>Functions are data: business rules can live in arrays of functions. <code>pipe</code> and <code>compose</code> build functions from functions, and make the order of steps, a business decision, visible.</li>
+<li>Currying (<code>f(a)(b)(c)</code>) and partial application fix arguments early. Put configuration first and data last. Generic <code>curry</code> breaks on defaults and rest parameters.</li>
+<li>Point-free style is fine for one-argument functions without <code>this</code>; wrap <code>parseInt</code> and methods in arrows.</li>
+</ul>
+<p>Next: <a href="/learn/js-promises">Promises in depth</a>, where the values flowing through your code arrive later.</p>
+</section>

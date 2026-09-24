@@ -1,0 +1,840 @@
+---
+title: Components with @zudojs/lifecycle
+description: Start and stop a database, a job queue and an HTTP server in the right order with @zudojs/lifecycle, with retries, timeouts, priorities, optional parts, rollback and graceful shutdown.
+minutes: 55
+youNeed: "The application runtime and lifecycle"
+youBuild: A shop backend whose database, order queue and HTTP server start in order, retry a slow database, roll back on failure and drain every pending order before shutting down
+keywords: zudojs lifecycle, createLifecycleManager, LifecycleComponent, dependsOn, priority, critical, retry, backoff, timeout, shutdownTimeout, rollback, graceful shutdown, SIGTERM, SIGINT, state machine, LifecycleStateMachine, lifecycle events, AbortSignal
+objectives: Describe a component's five phases and the manager's state machine | Order components with dependsOn and priority, and predict which run in parallel | Choose critical, retry, timeout and shutdownTimeout values and explain what each one really does | Make hooks cancellable so a timeout actually frees startup | Coordinate a database, a queue and an HTTP server so shutdown loses no work
+---
+<section>
+<h2 id="why">The problem: parts inside a part</h2>
+<p>Your shop's order service has three moving parts: a database connection pool, a background queue that confirms orders, and an HTTP server that accepts them. You deploy with <code>docker compose up</code>, which starts the database container and your app at the same moment. Your app connects in the first second, the database needs three, and the app crashes with <code>ECONNREFUSED</code>. Then the platform restarts it, and the same race happens again.</p>
+<p>Shutdown has its own trap. The HTTP server has just accepted two orders and put them on the queue. If the database closes before the queue has written them, both orders stay "pending" forever, and the customers have already been told "201 Created".</p>
+<p>In <a href="/learn/zudo-runtime">The application runtime and lifecycle</a> you ordered <strong>modules</strong>, the large parts of an application. <code>@zudojs/lifecycle</code> applies the same ideas one level down, to <strong>components</strong>: the connection pool, the queue worker, the server inside a module. It adds what those smaller parts need most: retries for slow dependencies, time limits, optional parts, priorities, and a deadline for shutdown.</p>
+<p>The package stands alone: it depends only on <code>@zudojs/errors</code> and <code>@zudojs/constants</code>, not on the core. You can use it inside a module's hooks, in a worker process, or in a script.</p>
+</section>
+
+<section>
+<h2 id="phases">Components and their five phases</h2>
+<p>A <strong>component</strong> is any object with a <code>name</code> and up to five optional methods, one per <strong>phase</strong>:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Phase</th><th>Method</th><th>Typical work</th></tr></thead>
+<tbody>
+<tr><td rowspan="3">Startup</td><td><code>initialize</code></td><td>Prepare: read settings, create objects, nothing that talks to the network yet</td></tr>
+<tr><td><code>start</code></td><td>Connect to the database, start the server, start the worker</td></tr>
+<tr><td><code>ready</code></td><td>Confirm it can serve: a health query, warming a cache</td></tr>
+<tr><td rowspan="2">Shutdown</td><td><code>stop</code></td><td>Stop taking new work and finish what is running</td></tr>
+<tr><td><code>dispose</code></td><td>Release everything: close connections, clear timers</td></tr>
+</tbody>
+</table></div>
+<p>This helper builds a component that prints every hook:</p>
+<file name="shop.ts" project="lc" browser="no">
+import type { LifecycleComponent } from "@zudojs/lifecycle";
+
+// A component that prints every hook, so you can watch the phases.
+export function component(name: string): LifecycleComponent {
+  const say = (hook: string) => async () => console.log(`${hook.padEnd(10)} ${name}`);
+  return {
+    name,
+    initialize: say("initialize"),
+    start: say("start"),
+    ready: say("ready"),
+    stop: say("stop"),
+    dispose: say("dispose"),
+  };
+}
+</file>
+<p>You <strong>register</strong> components on a <strong>manager</strong>, with options such as <code>dependsOn</code>. The HTTP server needs the queue, the queue needs the database:</p>
+<example file="phases.ts" project="lc" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+import { component } from "./shop.js";
+
+const manager = createLifecycleManager({ handleSignals: false });
+manager.register(component("http"), { dependsOn: ["queue"] });
+manager.register(component("queue"), { dependsOn: ["database"] });
+manager.register(component("database"));
+
+console.log("state:", manager.state);
+await manager.start();
+console.log("state:", manager.state);
+await manager.shutdown();
+console.log("state:", manager.state);
+</example>
+<output>
+state: idle
+initialize database
+initialize queue
+initialize http
+start      database
+start      queue
+start      http
+ready      database
+ready      queue
+ready      http
+state: ready
+stop       http
+stop       queue
+stop       database
+dispose    http
+dispose    queue
+dispose    database
+state: disposed
+</output>
+<ul>
+<li>The manager runs one phase for every component before the next phase begins: all <code>initialize</code>, then all <code>start</code>, then all <code>ready</code>. So when <code>http</code> becomes ready, everything has at least started.</li>
+<li>Within a phase, dependencies go first: database, queue, http. Shutdown runs the same order backwards, <code>stop</code> for all, then <code>dispose</code> for all.</li>
+<li><code>createLifecycleManager({ handleSignals: false })</code> keeps this example from listening for <kbd>Ctrl</kbd> + <kbd>C</kbd>. <a href="#signals">Signals</a> covers the default.</li>
+<li>The manager starts in <code>idle</code>, is <code>ready</code> after <code>start()</code>, and ends in <code>disposed</code>. A manager is used once.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="states">The state machine</h2>
+<p>A <strong>state machine</strong> is a set of states plus the list of allowed moves between them. Anything else is refused, so the manager can never, say, become <code>ready</code> without having started. The lifecycle states and their allowed transitions live in <code>@zudojs/constants</code>, and <code>LifecycleStateMachine</code> enforces them for one entity:</p>
+<example file="states.ts" browser="no">
+import { LIFECYCLE_VALID_TRANSITIONS, LifecycleState } from "@zudojs/constants";
+import { LifecycleStateMachine } from "@zudojs/lifecycle";
+
+for (const [from, to] of Object.entries(LIFECYCLE_VALID_TRANSITIONS)) console.log(from.padEnd(12), "->", to.join(", ") || "(none)");
+
+const machine = new LifecycleStateMachine("database");
+machine.transition(LifecycleState.INITIALIZING);
+machine.transition(LifecycleState.INITIALIZED);
+console.log(machine.state, machine.canTransition(LifecycleState.READY), machine.isRunning);
+try {
+  machine.transition(LifecycleState.READY);
+} catch (error) {
+  console.log(`${(error as Error).name}: ${(error as Error).message}`);
+}
+</example>
+<output>
+idle         -> initializing, disposed
+initializing -> initialized, failed
+initialized  -> starting, stopping, disposed
+starting     -> started, failed
+started      -> ready, stopping, failed
+ready        -> stopping, failed
+stopping     -> stopped, failed
+stopped      -> disposed
+failed       -> stopping, disposed
+disposed     -> (none)
+initialized false false
+LifecycleStateError: Invalid lifecycle state transition from "initialized" to "ready".
+</output>
+<p>Read the table as a map. The happy path is <code>idle → initializing → initialized → starting → started → ready → stopping → stopped → disposed</code>. <code>failed</code> can be reached from any active state and only leads to <code>stopping</code> or <code>disposed</code>: a failed component is cleaned up, never "un-failed". <code>disposed</code> leads nowhere. The manager tracks one such machine for itself and one per component, which is what <code>manager.state</code> and <code>manager.getStatus()</code> report.</p>
+<note>Three packages have a type called <code>LifecycleState</code> with different values: <code>@zudojs/constants</code> (the one above, starting at <code>idle</code>), <code>@zudojs/core</code> (starting at <code>created</code>, with <code>running</code>) and the runtime's states. Import it from <code>@zudojs/constants</code> when you work with <code>@zudojs/lifecycle</code>.</note>
+</section>
+
+<section>
+<h2 id="ordering">Dependencies, parallelism and priority</h2>
+<reason title="Which parts can start together?">
+<p>Before running the next example, work out the start order yourself. There are four components:</p>
+<ul>
+<li><code>database</code> takes 200 ms to connect;</li>
+<li><code>cache</code> takes 100 ms and depends on nothing;</li>
+<li><code>queue</code> takes 50 ms and depends on <code>database</code>;</li>
+<li><code>metrics</code> takes 50 ms, depends on nothing, and has <code>priority: 100</code>.</li>
+</ul>
+<p>Which components can start at the same time? When does <code>queue</code> start? What should a priority mean when there are no dependencies between two components? And how long does the whole start take?</p>
+<answer>
+<ul>
+<li>Components that do not depend on each other have no reason to wait for each other, so they can start together. Starting them one by one would add their times up for nothing.</li>
+<li><code>queue</code> must wait for <code>database</code>, so it starts at 200 ms at the earliest.</li>
+<li>A priority is a way to say "this one first" when dependencies do not decide. In <code>@zudojs/lifecycle</code> it is a <strong>barrier</strong>: every component with a higher priority finishes the phase before any lower priority begins. <code>metrics</code> (100) runs alone first, then the others (default priority 0).</li>
+<li>So: metrics 0 to 50 ms; database and cache together from 50 ms, cache done at 150, database at 250; queue from 250 to 300 ms. About 300 ms in total, against 400 ms one by one.</li>
+</ul>
+</answer>
+</reason>
+<example file="parallel.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const t0 = Date.now();
+const at = () => `${Math.round((Date.now() - t0) / 50) * 50}ms`.padStart(6);
+
+function slow(name: string, ms: number) {
+  return {
+    name,
+    start: async () => {
+      console.log(`${at()} start ${name}`);
+      await sleep(ms);
+      console.log(`${at()} ${name} up`);
+    },
+  };
+}
+
+const manager = createLifecycleManager({ handleSignals: false });
+manager.register(slow("database", 200));
+manager.register(slow("cache", 100));
+manager.register(slow("queue", 50), { dependsOn: ["database"] });
+manager.register(slow("metrics", 50), { priority: 100 });
+await manager.start();
+console.log(`${at()} ready`);
+</example>
+<output mask="ms">
+   0ms start metrics
+  50ms metrics up
+  50ms start database
+  50ms start cache
+ 150ms cache up
+ 250ms database up
+ 250ms start queue
+ 300ms queue up
+ 300ms ready
+</output>
+<p>The times are rounded to 50 ms; yours may differ slightly. <code>database</code> and <code>cache</code> started together, and <code>queue</code> waited only for <code>database</code>. Priority is useful for parts that everything else should be able to rely on without declaring it, such as metrics or logging, and on shutdown it runs in mirror image: the highest priority stops <strong>last</strong>.</p>
+<p>How many components may run a phase at the same time is limited by the <code>concurrency</code> option of <code>createLifecycleManager</code> (10 by default, <code>LIFECYCLE_DEFAULT_CONCURRENCY</code> in <code>@zudojs/constants</code>).</p>
+<p>Mistakes in the graph are caught before any hook runs: a cycle is a <code>LifecycleDependencyError</code> naming the whole loop (<code>orders -&gt; payments -&gt; orders</code>), a dependency on an unregistered component fails with <code>Component "orders" depends on "inventory" which is not registered</code>, registering the same name twice is refused, and registering after <code>start()</code> fails with <code>Cannot register components after registry is frozen</code>.</p>
+</section>
+
+<section>
+<h2 id="critical">Optional parts: critical: false</h2>
+<p>If the mail server is down, the shop should still take orders; confirmation e-mails can wait. A component registered with <code>critical: false</code> may fail without failing the whole start:</p>
+<example file="critical.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+const manager = createLifecycleManager({ handleSignals: false });
+manager.events.on("component:failed", (event) =>
+  console.log(`failed: ${event.component?.componentId} (${((event.component?.error as Error).cause as Error)?.message})`),
+);
+manager.register({ name: "database", start: async () => {}, stop: async () => console.log("stop database") });
+manager.register(
+  {
+    name: "mailer",
+    start: async () => {
+      throw new Error("SMTP server smtp.shop.ng refused the connection");
+    },
+    stop: async () => console.log("stop mailer"),
+  },
+  { critical: false },
+);
+
+await manager.start();
+console.log("state:", manager.state);
+for (const [id, status] of manager.getStatus()) {
+  console.log(id.padEnd(9), status.state.padEnd(7), status.results.map((r) => `${r.phase}:${r.success ? "ok" : "failed"}`).join(" "));
+}
+await manager.shutdown();
+</example>
+<output>
+failed: mailer (SMTP server smtp.shop.ng refused the connection)
+state: ready
+database  ready   initialize:ok start:ok ready:ok
+mailer    failed  initialize:ok start:failed
+stop mailer
+stop database
+</output>
+<ul>
+<li>The <code>component:failed</code> event reported the mailer, and <code>start()</code> still resolved: the manager is <code>ready</code>.</li>
+<li><code>getStatus()</code> shows each component's state and the result of every phase it ran. The mailer never reached <code>ready</code>.</li>
+<li>On shutdown the manager still called the mailer's <code>stop</code>, although it never started. Write <code>stop</code> so it is safe on a component that failed to start.</li>
+</ul>
+<p>Every component is critical unless you say otherwise. Mark something optional only when the application is genuinely useful without it, and make sure something (a health check, an alert on <code>component:failed</code>) tells a human that it is down.</p>
+</section>
+
+<section>
+<h2 id="retry">Retrying a slow dependency</h2>
+<p>The database race from the start of the lesson is solved with a <strong>retry</strong>: try again after a pause instead of failing at once.</p>
+<example file="retry.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+// The database container needs a moment after `docker compose up`.
+let attempt = 0;
+let last = Date.now();
+const database = {
+  name: "database",
+  start: async () => {
+    attempt += 1;
+    const waited = Date.now() - last;
+    last = Date.now();
+    console.log(`attempt ${attempt} after ~${Math.round(waited / 100) * 100}ms`);
+    if (attempt < 4) throw new Error("connect ECONNREFUSED 127.0.0.1:5432");
+    console.log("database connected");
+  },
+};
+
+const manager = createLifecycleManager({ handleSignals: false });
+manager.register(database, { retry: { attempts: 5, delay: 100 } });
+await manager.start();
+console.log("state:", manager.state);
+await manager.shutdown();
+</example>
+<output mask="ms">
+attempt 1 after ~0ms
+attempt 2 after ~100ms
+attempt 3 after ~200ms
+attempt 4 after ~400ms
+database connected
+state: ready
+</output>
+<p>The waits double: 100, 200, 400 ms. That is <strong>exponential backoff</strong>, and it is what you get when you set a <code>delay</code> and no <code>backoff</code>. It gives a struggling service more and more room instead of hammering it. <code>maxDelay</code> caps a single wait (10 seconds by default). Two details are easy to get wrong:</p>
+<example file="retry-fixed.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+async function run(label: string, retry: { attempts: number; delay: number; backoff?: "fixed" | "exponential" }) {
+  const gaps: number[] = [];
+  let last = Date.now();
+  const manager = createLifecycleManager({ handleSignals: false });
+  manager.register(
+    {
+      name: "search",
+      start: async () => {
+        gaps.push(Math.round((Date.now() - last) / 100) * 100);
+        last = Date.now();
+        throw new Error("search cluster unreachable");
+      },
+    },
+    { retry },
+  );
+  try {
+    await manager.start();
+  } catch (error) {
+    console.log(`${label}: ${gaps.length} calls, waits ${gaps.slice(1).join(", ")} ms -> ${(error as Error).name}`);
+  }
+}
+
+await run("attempts 3, backoff fixed", { attempts: 3, delay: 100, backoff: "fixed" });
+await run("attempts 3, no backoff given", { attempts: 3, delay: 100 });
+</example>
+<output mask="ms">
+attempts 3, backoff fixed: 4 calls, waits 100, 100, 100 ms -> LifecycleStartError
+attempts 3, no backoff given: 4 calls, waits 100, 200, 400 ms -> LifecycleStartError
+</output>
+<ul>
+<li><code>attempts</code> counts <em>retries</em>, not calls. <code>attempts: 3</code> means one first try plus three retries: four calls.</li>
+<li>Backoff is exponential unless you write <code>backoff: "fixed"</code>, which the type allows but the documentation does not call the default.</li>
+</ul>
+<p>Retry what can succeed later: a connection refused, a timeout, a 503. Do not retry what will fail every time, such as a wrong password or a missing table; that only delays the error message the operator needs.</p>
+</section>
+
+<section>
+<h2 id="timeout">Timeouts, and what they really do</h2>
+<p>A payment provider's API is slow today. You give its component 100 ms with <code>timeout: 100</code>:</p>
+<example file="timeout.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+const manager = createLifecycleManager({ handleSignals: false });
+manager.register(
+  {
+    name: "payments-api",
+    // The provider's sandbox answers after 500 ms; we allow 100 ms.
+    start: () => new Promise<void>((resolve) => setTimeout(resolve, 500)),
+    stop: async () => console.log("stop payments-api"),
+  },
+  { timeout: 100 },
+);
+
+const t0 = Date.now();
+try {
+  await manager.start();
+} catch (error) {
+  const chain: string[] = [];
+  for (let e: unknown = error; e instanceof Error; e = e.cause) chain.push(e.name);
+  console.log(chain.join(" <- "));
+  console.log(((error as Error).cause as Error).cause instanceof Error ? (((error as Error).cause as Error).cause as Error).message : "");
+  console.log("start() rejected after", Date.now() - t0 >= 450 ? "about 500 ms, not 100 ms" : "about 100 ms");
+}
+</example>
+<output>
+stop payments-api
+LifecycleStartError <- LifecycleComponentError <- LifecycleTimeoutError
+Lifecycle operation timed out for component "payments-api" during start after 100ms.
+start() rejected after about 500 ms, not 100 ms
+</output>
+<p>The error chain is informative: <code>LifecycleStartError</code> (the start failed), caused by <code>LifecycleComponentError</code> (this component, this phase), caused by <code>LifecycleTimeoutError</code> (after 100 ms). The loop <code>for (let e = error; e instanceof Error; e = e.cause)</code> walks such a chain.</p>
+<p>But look at the last line. The timeout <em>marked</em> the component as failed after 100 ms, yet <code>start()</code> only rejected after the hook finished on its own, 500 ms later. The manager waits for a timed-out hook to settle before it rolls back, so a later <code>stop</code> never runs in parallel with a <code>start</code> that is still going. The <code>signal</code> passed to the hook is not aborted by a component timeout either.</p>
+<warn title="A HOOK THAT NEVER SETTLES HANGS START">In the published version, a <code>start</code> hook whose promise never resolves keeps <code>start()</code> waiting forever, whatever <code>timeout</code> you set. The timeout protects you only from hooks that eventually finish.</warn>
+<p>The fix is to make the work itself cancellable. Most Node.js network APIs accept an <code>AbortSignal</code>, and <code>AbortSignal.timeout(ms)</code> creates one that aborts on its own:</p>
+<example file="cancellable.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+// A stand-in for a network call that honours an AbortSignal, like fetch does.
+function connect(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, 500);
+    signal.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    });
+  });
+}
+
+const manager = createLifecycleManager({ handleSignals: false });
+manager.register({ name: "payments-api", start: () => connect(AbortSignal.timeout(100)) }, { timeout: 150 });
+
+const t0 = Date.now();
+try {
+  await manager.start();
+} catch (error) {
+  const original = ((error as Error).cause as Error).cause as Error;
+  console.log(original.name, "-", original.message);
+  console.log("start() rejected after", Date.now() - t0 < 300 ? "about 100 ms" : "much longer");
+}
+</example>
+<output>
+TimeoutError - The operation was aborted due to timeout
+start() rejected after about 100 ms
+</output>
+<p>Now the hook gives up after 100 ms, and the manager's <code>timeout: 150</code> is only a safety net. Pass the signal to <code>fetch</code>, to your database driver's connect call, or to anything else that waits on the network.</p>
+</section>
+
+<section>
+<h2 id="rollback">Rollback</h2>
+<p>When a critical component fails, the manager <strong>rolls back</strong>: it stops the components that started, in reverse order, disposes everything, and rejects <code>start()</code>. Here the HTTP server cannot get its port:</p>
+<example file="rollback.ts" project="lc" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+import type { LifecycleManager } from "@zudojs/lifecycle";
+import { component } from "./shop.js";
+
+function build(portFree: boolean): LifecycleManager {
+  const manager = createLifecycleManager({ handleSignals: false });
+  manager.register(component("database"));
+  manager.register(component("queue"), { dependsOn: ["database"] });
+  manager.register(
+    {
+      ...component("http"),
+      start: async () => {
+        console.log("start      http");
+        if (!portFree) throw new Error("listen EADDRINUSE: address already in use :::3000");
+      },
+    },
+    { dependsOn: ["queue"] },
+  );
+  return manager;
+}
+
+const first = build(false);
+try {
+  await first.start();
+} catch (error) {
+  console.log(`${(error as Error).name}: ${(error as Error).message}`);
+}
+console.log("state:", first.state);
+await first.start().catch((error: Error) => console.log("again:", error.name));
+
+console.log("--- a new manager, port free ---");
+const second = build(true);
+await second.start();
+console.log("state:", second.state);
+</example>
+<output>
+initialize database
+initialize queue
+initialize http
+start      database
+start      queue
+start      http
+stop       http
+stop       queue
+stop       database
+dispose    http
+dispose    queue
+dispose    database
+LifecycleStartError: Failed to start component "http".
+state: disposed
+again: LifecycleStartError
+--- a new manager, port free ---
+initialize database
+initialize queue
+initialize http
+start      database
+start      queue
+start      http
+ready      database
+ready      queue
+ready      http
+state: ready
+</output>
+<ul>
+<li>After the failure the queue and the database were stopped and disposed in reverse order. No connection is left open.</li>
+<li><code>stop http</code> ran too, although <code>http</code> failed to start. As with non-critical parts, <code>stop</code> must cope with a component that never got going.</li>
+<li>The manager is <code>disposed</code>. Calling <code>start()</code> again returns the same failure: <code>start()</code> is <strong>idempotent</strong>, it hands back the same promise every time. To try again, build a new manager, as the second half does. A small function that creates and registers everything makes that easy.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="shutdown">Shutdown: failures and the deadline</h2>
+<p>Shutdown must finish even when a part misbehaves. Two kinds of misbehaviour:</p>
+<p><strong>A stop hook that throws.</strong> The manager records it and carries on, so one broken part cannot keep the others open:</p>
+<example file="stop-failure.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+const manager = createLifecycleManager({ handleSignals: false });
+manager.events.on("component:failed", (event) => console.log("event: failed", event.component?.componentId));
+manager.register({ name: "search", stop: async () => { throw new Error("could not flush the search index"); } });
+manager.register({ name: "database", stop: async () => console.log("database: pool closed") });
+
+await manager.start();
+await manager.shutdown();
+console.log("shutdown resolved, state", manager.state);
+for (const [id, status] of manager.getStatus()) {
+  console.log(id.padEnd(8), status.results.filter((r) => r.phase === "stop").map((r) => `stop ${r.success ? "ok" : "failed"}`).join(""));
+}
+</example>
+<output>
+database: pool closed
+event: failed search
+shutdown resolved, state disposed
+search   stop failed
+database stop ok
+</output>
+<p><code>shutdown()</code> resolved normally. The failure is visible only through the <code>component:failed</code> event and the phase results, so listen to one of them and log it.</p>
+<p><strong>A stop hook that takes too long.</strong> A hosting platform gives your process a fixed time between <code>SIGTERM</code> and a hard kill (Kubernetes waits 30 seconds by default). <code>shutdownTimeout</code> is the manager's own deadline for the whole shutdown (30 seconds by default). When it expires, the manager aborts the <code>signal</code> in the context passed to each hook:</p>
+<example file="deadline.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+const manager = createLifecycleManager({ handleSignals: false, shutdownTimeout: 200 });
+manager.register({
+  name: "worker",
+  // Finishing the current batch would take 5 seconds.
+  stop: (context) =>
+    new Promise<void>((resolve) => {
+      const batch = setTimeout(() => {
+        console.log("worker: batch finished");
+        resolve();
+      }, 5000);
+      context.signal.addEventListener("abort", () => {
+        clearTimeout(batch);
+        console.log("worker: giving up,", (context.signal.reason as Error).message);
+        resolve();
+      });
+    }),
+});
+
+await manager.start();
+const t0 = Date.now();
+await manager.shutdown();
+console.log(`shutdown returned after about ${Math.round((Date.now() - t0) / 100) * 100} ms, state ${manager.state}`);
+</example>
+<output mask="ms">
+worker: giving up, Lifecycle shutdown exceeded its 200ms deadline.
+shutdown returned after about 200 ms, state disposed
+</output>
+<p>The worker listened to <code>context.signal</code> and gave up its batch cleanly when the deadline passed. A hook that ignores the signal is simply abandoned: <code>shutdown()</code> still returns at the deadline, without an error or a <code>component:failed</code> event, and <code>getStatus()</code> leaves that component in <code>stopping</code>. So a silent shutdown after exactly <code>shutdownTimeout</code> milliseconds is itself a sign that something hung. Set <code>shutdownTimeout</code> a few seconds below your platform's grace period, so your own clean-up runs before the hard kill.</p>
+</section>
+
+<section>
+<h2 id="signals">SIGINT and SIGTERM</h2>
+<p>By default (<code>handleSignals: true</code>), <code>start()</code> installs handlers for <code>SIGINT</code> and <code>SIGTERM</code> (<code>DEFAULT_SHUTDOWN_SIGNALS</code>; pass <code>signals</code> to change the list) that run <code>shutdown()</code>, and removes them once shutdown finishes. A second signal during shutdown exits the process at once with code 1, in case shutdown is stuck:</p>
+<example file="signals.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+let server: NodeJS.Timeout | undefined;
+const manager = createLifecycleManager(); // handleSignals defaults to true
+manager.register({ name: "database", start: async () => console.log("database connected"), dispose: async () => console.log("database closed") });
+manager.register(
+  {
+    name: "http",
+    start: async () => {
+      server = setInterval(() => {}, 1000); // stands in for an open server socket
+      console.log("http listening");
+    },
+    stop: async () => {
+      clearInterval(server);
+      console.log("http stopped accepting requests");
+    },
+  },
+  { dependsOn: ["database"] },
+);
+manager.events.on("application:stopping", () => console.log("shutdown begins, state:", manager.state));
+process.on("exit", (code) => console.log(`exit code ${code}, state: ${manager.state}`));
+
+await manager.start();
+process.kill(process.pid, "SIGTERM");
+</example>
+<output>
+database connected
+http listening
+shutdown begins, state: stopping
+http stopped accepting requests
+database closed
+exit code 0, state: disposed
+</output>
+<p>The manager never calls <code>process.exit()</code> after a normal shutdown. The process ended with code 0 because nothing was left open once <code>http</code> cleared its interval. If your process does not exit after "database closed", something still holds the event loop: an open socket, a timer, a database pool you forgot to close.</p>
+<p>Only one part of a process should own the signals. If a <code>@zudojs/runtime</code> runtime or your own <code>server.ts</code> already handles them, create the manager with <code>handleSignals: false</code> and call <code>shutdown()</code> from there.</p>
+</section>
+
+<section>
+<h2 id="events">Watching it happen: events</h2>
+<p><code>manager.events</code> emits typed events for the application and each component, with durations on completion events. They are the hook for logs, metrics and alerts:</p>
+<example file="events.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+import type { LifecycleEventType } from "@zudojs/lifecycle";
+
+const manager = createLifecycleManager({ handleSignals: false });
+const types: LifecycleEventType[] = ["component:started", "component:ready", "application:ready"];
+for (const type of types) {
+  manager.events.on(type, (event) => {
+    const who = event.component?.componentId ?? "app";
+    const took = event.component?.duration ?? event.duration;
+    console.log(type.padEnd(22), who.padEnd(9), took === undefined ? "" : `${Math.round(took / 50) * 50}ms`);
+  });
+}
+manager.register({ name: "database", start: () => new Promise((resolve) => setTimeout(resolve, 100)) });
+manager.register({ name: "cache", start: async () => {} }, { dependsOn: ["database"] });
+await manager.start();
+</example>
+<output mask="ms">
+component:started      database  100ms
+component:started      cache     0ms
+component:ready        database  0ms
+component:ready        cache     0ms
+application:ready      app       100ms
+</output>
+<p>A slow start is now measurable per component: the database took 100 ms of the total. Two naming quirks to know when you subscribe: during the <code>ready</code> phase the manager emits <code>application:starting</code> and <code>component:starting</code> again, and during <code>dispose</code> it emits <code>component:stopping</code> and <code>component:stopped</code>. Filter on the event you care about (<code>component:started</code>, <code>component:ready</code>, <code>component:failed</code>, <code>application:ready</code>, <code>application:stopped</code>) rather than counting "starting" events.</p>
+</section>
+
+<section>
+<h2 id="shop">Put it together: database, queue, HTTP server</h2>
+<p>Now the order service from the start of the lesson, with a real HTTP server from <code>node:http</code>. The database is a <code>Map</code> with an "open" flag, standing in for a connection pool. The queue collects pending orders and confirms them; when it stops, it lets the job in progress finish (50 ms) and then confirms everything still waiting. The server accepts <code>POST</code> requests and queues each new order:</p>
+<example file="task-shop.ts" browser="no">
+import { createServer } from "node:http";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+// database: a pool of connections (a Map stands in for PostgreSQL)
+const orders = new Map<string, { id: string; totalKobo: number; status: string }>();
+let poolOpen = false;
+const database = {
+  name: "database",
+  start: async () => { poolOpen = true; console.log("database: pool open"); },
+  stop: async () => { poolOpen = false; console.log("database: pool closed"); },
+};
+
+// queue: a worker that confirms pending orders in the background
+const pending: string[] = [];
+let worker: NodeJS.Timeout | undefined;
+function drain() {
+  for (const id of pending.splice(0)) {
+    if (!poolOpen) throw new Error("database is closed");
+    orders.get(id)!.status = "confirmed";
+    console.log(`queue: confirmed ${id}`);
+  }
+}
+const queue = {
+  name: "queue",
+  start: async () => { worker = setInterval(drain, 5_000); console.log("queue: worker running"); },
+  stop: async () => {
+    clearInterval(worker);
+    await new Promise((resolve) => setTimeout(resolve, 50)); // let the job in progress finish
+    drain();
+    console.log("queue: drained and stopped");
+  },
+};
+
+// http: accepts orders and puts them on the queue
+let server: Server | undefined;
+const http = {
+  name: "http",
+  start: () =>
+    new Promise<void>((resolve) => {
+      server = createServer((request, response) => {
+        const id = `ord_${orders.size + 1}`;
+        orders.set(id, { id, totalKobo: 250_000, status: "pending" });
+        pending.push(id);
+        response.writeHead(201, { "content-type": "application/json" }).end(JSON.stringify({ id }));
+      });
+      server.listen(0, "127.0.0.1", () => { console.log("http: listening"); resolve(); });
+    }),
+  stop: () =>
+    new Promise<void>((resolve) => {
+      server?.close(() => { console.log("http: closed"); resolve(); });
+      server?.closeAllConnections();
+    }),
+};
+
+const manager = createLifecycleManager({ handleSignals: false, shutdownTimeout: 10_000 });
+manager.register(database, { retry: { attempts: 3, delay: 100 }, timeout: 5_000 });
+manager.register(queue, { dependsOn: ["database"] });
+manager.register(http, { dependsOn: ["queue"] });
+
+await manager.start();
+const { port } = server!.address() as AddressInfo;
+for (let i = 0; i < 2; i++) {
+  const response = await fetch(`http://127.0.0.1:${port}/orders`, { method: "POST" });
+  console.log("client: got", response.status, await response.json());
+}
+await manager.shutdown();
+console.log("orders:", [...orders.values()].map((o) => `${o.id}=${o.status}`).join(", "));
+</example>
+<output>
+database: pool open
+queue: worker running
+http: listening
+client: got 201 { id: 'ord_1' }
+client: got 201 { id: 'ord_2' }
+http: closed
+queue: confirmed ord_1
+queue: confirmed ord_2
+queue: drained and stopped
+database: pool closed
+orders: ord_1=confirmed, ord_2=confirmed
+</output>
+<p>Follow the shutdown: the server closed first, so no new order could arrive; the queue confirmed both pending orders; only then did the database close. Both customers who got a 201 have a confirmed order.</p>
+<p><code>listen(0, …)</code> asks the operating system for any free port, which keeps examples and tests from clashing, and <code>closeAllConnections()</code> closes idle keep-alive connections so <code>close()</code> does not wait for them.</p>
+<p>The dependencies do the real work here. Watch what happens when <code>dependsOn: ["database"]</code> is forgotten on the queue:</p>
+<example file="task-shop-broken.ts" browser="no">
+import { createServer } from "node:http";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+// database: a pool of connections (a Map stands in for PostgreSQL)
+const orders = new Map<string, { id: string; totalKobo: number; status: string }>();
+let poolOpen = false;
+const database = {
+  name: "database",
+  start: async () => { poolOpen = true; console.log("database: pool open"); },
+  stop: async () => { poolOpen = false; console.log("database: pool closed"); },
+};
+
+// queue: a worker that confirms pending orders in the background
+const pending: string[] = [];
+let worker: NodeJS.Timeout | undefined;
+function drain() {
+  for (const id of pending.splice(0)) {
+    if (!poolOpen) throw new Error("database is closed");
+    orders.get(id)!.status = "confirmed";
+    console.log(`queue: confirmed ${id}`);
+  }
+}
+const queue = {
+  name: "queue",
+  start: async () => { worker = setInterval(drain, 5_000); console.log("queue: worker running"); },
+  stop: async () => {
+    clearInterval(worker);
+    await new Promise((resolve) => setTimeout(resolve, 50)); // let the job in progress finish
+    drain();
+    console.log("queue: drained and stopped");
+  },
+};
+
+// http: accepts orders and puts them on the queue
+let server: Server | undefined;
+const http = {
+  name: "http",
+  start: () =>
+    new Promise<void>((resolve) => {
+      server = createServer((request, response) => {
+        const id = `ord_${orders.size + 1}`;
+        orders.set(id, { id, totalKobo: 250_000, status: "pending" });
+        pending.push(id);
+        response.writeHead(201, { "content-type": "application/json" }).end(JSON.stringify({ id }));
+      });
+      server.listen(0, "127.0.0.1", () => { console.log("http: listening"); resolve(); });
+    }),
+  stop: () =>
+    new Promise<void>((resolve) => {
+      server?.close(() => { console.log("http: closed"); resolve(); });
+      server?.closeAllConnections();
+    }),
+};
+
+const manager = createLifecycleManager({ handleSignals: false, shutdownTimeout: 10_000 });
+manager.events.on("component:failed", (event) => console.log("failed:", event.component?.componentId, "-", ((event.component?.error as Error).cause as Error).message));
+manager.register(database, { retry: { attempts: 3, delay: 100 }, timeout: 5_000 });
+manager.register(queue); // dependsOn: ["database"] forgotten
+manager.register(http, { dependsOn: ["queue"] });
+
+await manager.start();
+const { port } = server!.address() as AddressInfo;
+for (let i = 0; i < 2; i++) {
+  const response = await fetch(`http://127.0.0.1:${port}/orders`, { method: "POST" });
+  console.log("client: got", response.status, await response.json());
+}
+await manager.shutdown();
+console.log("orders:", [...orders.values()].map((o) => `${o.id}=${o.status}`).join(", "));
+</example>
+<output>
+database: pool open
+queue: worker running
+http: listening
+client: got 201 { id: 'ord_1' }
+client: got 201 { id: 'ord_2' }
+http: closed
+database: pool closed
+failed: queue - database is closed
+orders: ord_1=pending, ord_2=pending
+</output>
+<p>Without the dependency, the queue and the database stopped in the same stage, at the same time. The database closed while the queue was still finishing its job, the drain failed, and both orders stayed <code>pending</code>, although their customers were told "201 Created". Nothing crashed and <code>shutdown()</code> resolved: only the <code>component:failed</code> event showed it. Startup order is easy to test because failures are loud; shutdown order fails quietly, so test it on purpose.</p>
+</section>
+
+<section>
+<h2 id="production">Production checklist</h2>
+<ul>
+<li><strong>Declare every dependency</strong>, including the ones that only matter on shutdown.</li>
+<li><strong>Retry only transient failures</strong>, with a delay and exponential backoff, and cap the total with <code>attempts</code> and <code>maxDelay</code> so a broken configuration still fails within a minute.</li>
+<li><strong>Make hooks cancellable</strong> with <code>AbortSignal.timeout</code> for connects and <code>context.signal</code> for shutdown work; treat <code>timeout</code> as a safety net.</li>
+<li><strong>Keep <code>shutdownTimeout</code> below the platform's grace period</strong>, and log <code>component:failed</code> so a failed or abandoned stop is visible.</li>
+<li><strong>Mark optional parts <code>critical: false</code></strong> and alert when they fail, so "the shop works but sends no e-mails" is noticed.</li>
+<li><strong>One owner for signals</strong> per process.</li>
+<li><strong>Build a new manager to retry a whole start</strong>; a manager is single-use.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Fix the lost orders">
+<p>In <code>task-shop-broken.ts</code>, the database closes during the queue's drain. Give two different fixes, and say which one you prefer.</p>
+<solution>
+<ul>
+<li>Declare the dependency again: <code>manager.register(queue, { dependsOn: ["database"] })</code>. The queue then stops in an earlier stage than the database, as in <code>task-shop.ts</code>.</li>
+<li>Or move the database's closing from <code>stop</code> to <code>dispose</code>. The <code>dispose</code> phase only begins after every component has stopped, so the drain always sees an open database, whatever the dependencies say.</li>
+</ul>
+<p>Prefer the first, and keep the second as a habit: the dependency documents the real relationship between the two parts, and closing connections in <code>dispose</code> gives a second line of defence.</p>
+</solution>
+</exercise>
+<exercise title="A capped retry">
+<p>A search cluster may take up to a few seconds to come up after a deploy. Register a <code>search</code> component that fails its first two starts, with at most four retries, a first wait of 50 ms and exponential backoff capped at 150 ms. Print the waits.</p>
+<solution>
+<example file="capped.ts" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+let calls = 0;
+let last = Date.now();
+const waits: number[] = [];
+const manager = createLifecycleManager({ handleSignals: false });
+manager.register(
+  {
+    name: "search",
+    start: async () => {
+      calls += 1;
+      if (calls > 1) waits.push(Math.round((Date.now() - last) / 50) * 50);
+      last = Date.now();
+      if (calls <= 4) throw new Error("search cluster warming up");
+    },
+  },
+  { retry: { attempts: 4, delay: 50, maxDelay: 150, backoff: "exponential" } },
+);
+await manager.start();
+console.log(`${calls} calls, waits ${waits.join(", ")} ms, state ${manager.state}`);
+</example>
+<output mask="ms">
+5 calls, waits 50, 100, 150, 150 ms, state ready
+</output>
+<p>The doubling (50, 100, 200, …) is capped at 150, so a long outage costs a steady 150 ms per try instead of growing without limit. With the fifth call succeeding, all four retries were needed.</p>
+</solution>
+</exercise>
+<exercise title="Give the queue a deadline">
+<p>Change the queue's <code>stop</code> in <code>task-shop.ts</code> so that it finishes early when <code>context.signal</code> aborts, and create the manager with <code>shutdownTimeout: 20</code>. What happens to the pending orders, and what should the queue do with them in a real system?</p>
+<solution>
+<p>With a 20 ms deadline and a 50 ms wait, the signal aborts before the job in progress finishes. The queue returns early without draining, the database closes, and the orders stay <code>pending</code>. In a real system the queue must not keep pending work only in memory: it writes jobs to durable storage (a database table, Redis, a message broker) when they are accepted, so a worker can pick them up after the restart. The <a href="/learn/zudo-queue">queue lesson</a> does that with <code>@zudojs/queue</code>. A deadline decides how long you wait; durability decides what you lose when the wait is not enough.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li><code>@zudojs/lifecycle</code> manages components: objects with <code>initialize</code>, <code>start</code>, <code>ready</code>, <code>stop</code> and <code>dispose</code>. Each phase runs for all components before the next begins; shutdown reverses the order.</li>
+<li>The manager and each component follow the state machine from <code>@zudojs/constants</code>; a manager goes from <code>idle</code> to <code>ready</code> to <code>disposed</code> and is used once.</li>
+<li><code>dependsOn</code> orders components; independent ones run in parallel; <code>priority</code> is a barrier (higher first, stopped last).</li>
+<li><code>critical: false</code> lets a part fail without failing the start. <code>retry.attempts</code> counts retries; backoff is exponential by default.</li>
+<li>A component <code>timeout</code> marks it failed but waits for the hook to settle: make hooks cancellable with <code>AbortSignal.timeout</code>.</li>
+<li>A critical failure rolls back and disposes the manager. Stop failures are recorded and shutdown continues; <code>shutdownTimeout</code> aborts <code>context.signal</code> and abandons hooks that ignore it.</li>
+<li>Signals are handled by default; one owner per process.</li>
+</ul>
+<p>Next, <a href="/learn/zudo-types-constants">Types and constants</a> looks at the two small packages every other ZudoJS package builds on, including the constants this lesson's state machine came from, and at clocks and random numbers you can control in tests.</p>
+</section>

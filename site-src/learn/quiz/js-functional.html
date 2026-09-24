@@ -1,0 +1,563 @@
+<question id="fp-hidden-input" type="choice">
+<q>Which function is <strong>pure</strong>?</q>
+<option><code>const fee = (kobo) =&gt; kobo * config.feeRate;</code> where <code>config</code> is a module variable that can change</option>
+<option><code>const stamp = (order) =&gt; ({ ...order, at: Date.now() });</code></option>
+<option correct><code>const fee = (kobo, rate) =&gt; Math.round(kobo * rate);</code></option>
+<option><code>const add = (cart, line) =&gt; { cart.lines.push(line); return cart; };</code></option>
+<explain><p>Only the third depends on nothing but its parameters and changes nothing. The first reads a changeable variable, the second reads the clock (a hidden input), and the fourth mutates its argument (a hidden output).</p></explain>
+</question>
+
+<question id="fp-hidden-output" type="output">
+<q>What does this print?</q>
+<code file="mutate.js">
+function applyDiscount(cart) {
+  for (const line of cart.lines) line.priceKobo = Math.round(line.priceKobo * 0.9);
+  return cart.lines.reduce((sum, l) => sum + l.priceKobo, 0);
+}
+const cart = { lines: [{ priceKobo: 10000 }] };
+console.log(applyDiscount(cart), applyDiscount(cart));
+</code>
+<option correct>9000 8100</option>
+<option>9000 9000</option>
+<option>10000 9000</option>
+<option>8100 8100</option>
+<explain><p>The function changes the prices inside the cart, so the second call discounts the already-discounted price. Same argument, different result: the mutation is a hidden output that becomes a hidden input next time.</p></explain>
+</question>
+
+<question id="fp-referential" type="choice">
+<q>What does <strong>referential transparency</strong> mean?</q>
+<option>A function can see all variables in the program</option>
+<option correct>A call can be replaced by its result anywhere without changing what the program does</option>
+<option>Objects are compared by reference</option>
+<option>A function returns a reference instead of a copy</option>
+<explain><p>If <code>vat(1000)</code> always returns 75 and does nothing else, every <code>vat(1000)</code> could be replaced by 75. That only holds for pure functions.</p></explain>
+</question>
+
+<question id="fp-clock-param" type="choice">
+<q>A delivery fee depends on the time of the order. What is the functional way to make it testable?</q>
+<option>Mock <code>Date</code> globally in every test</option>
+<option correct>Pass the order time in as a parameter; the caller reads the clock</option>
+<option>Run the tests at the right time of day</option>
+<option>Cache the first result</option>
+<explain><p>Turning the hidden input into a parameter makes the function pure. Production passes <code>new Date()</code>; tests pass fixed dates, including the exact boundary.</p></explain>
+</question>
+
+<question id="fp-core-shell" type="choice">
+<q>In a "functional core, imperative shell" design, where does saving the order to the database go?</q>
+<option>In the core, next to the pricing rules</option>
+<option correct>In the shell, which gathers inputs, calls the pure core, and performs the effects with its result</option>
+<option>Nowhere: functional programs cannot save data</option>
+<option>In every step of the pipeline</option>
+<explain><p>Effects are the program's purpose, so they stay, but at the edges. The core computes; the shell reads, calls the core, and writes.</p></explain>
+</question>
+
+<question id="fp-sharing" type="output">
+<q>What does this print?</q>
+<code file="sharing.js">
+const cart = { customer: { name: "Ada" }, lines: [{ sku: "RICE", qty: 1 }, { sku: "OIL", qty: 1 }] };
+const next = { ...cart, lines: cart.lines.map((l) => (l.sku === "OIL" ? { ...l, qty: 2 } : l)) };
+console.log(next.customer === cart.customer, next.lines[0] === cart.lines[0], next.lines[1] === cart.lines[1]);
+</code>
+<option correct>true true false</option>
+<option>false false false</option>
+<option>true false false</option>
+<option>true true true</option>
+<explain><p>Only objects on the path to the change are new: the cart, the lines array and the oil line. The customer and the rice line are reused: that is structural sharing.</p></explain>
+</question>
+
+<question id="fp-shallow-spread" type="output">
+<q>This update was meant to be immutable. What does it print?</q>
+<code file="shallow.js">
+const order = { id: "ORD-1", address: { city: "Lagos" } };
+const moved = { ...order };
+moved.address.city = "Abuja";
+console.log(order.address.city);
+</code>
+<option correct>Abuja</option>
+<option>Lagos</option>
+<option>undefined</option>
+<option>TypeError</option>
+<explain><p>Spread copies one level. <code>moved.address</code> is the same object as <code>order.address</code>, so changing it changes the original. The immutable version is <code>{ ...order, address: { ...order.address, city: "Abuja" } }</code>.</p></explain>
+</question>
+
+<question id="fp-copying-methods" type="output">
+<q>What does this print?</q>
+<code file="copying.js">
+const queue = ["ORD-3", "ORD-1", "ORD-2"];
+const sorted = queue.toSorted();
+const replaced = queue.with(1, "ORD-9");
+console.log(queue.join(","), "|", sorted.join(","), "|", replaced.join(","));
+</code>
+<option correct>ORD-3,ORD-1,ORD-2 | ORD-1,ORD-2,ORD-3 | ORD-3,ORD-9,ORD-2</option>
+<option>ORD-1,ORD-2,ORD-3 | ORD-1,ORD-2,ORD-3 | ORD-1,ORD-9,ORD-3</option>
+<option>ORD-3,ORD-9,ORD-2 | ORD-1,ORD-2,ORD-3 | ORD-3,ORD-9,ORD-2</option>
+<option>ORD-3,ORD-1,ORD-2 | ORD-1,ORD-2,ORD-3 | ORD-9,ORD-1,ORD-2</option>
+<explain><p><code>toSorted</code> and <code>with</code> return copies and leave the original alone. <code>with(1, …)</code> replaces the item at index 1.</p></explain>
+</question>
+
+<question id="fp-copy-loop-cost" type="choice">
+<q>Why is <code>orders.reduce((acc, o) =&gt; ({ ...acc, [o.id]: o }), {})</code> slow for 50,000 orders?</q>
+<option><code>reduce</code> is always slower than a loop</option>
+<option correct>Every step copies all entries collected so far, so the total work grows with the square of the number of orders</option>
+<option>Computed keys are slow</option>
+<option>Spread creates deep copies</option>
+<explain><p>Step 1 copies 0 entries, step 2 copies 1, …, step n copies n-1: about n²/2 copies. Mutating a local object or <code>Map</code> that nobody else can see yet is still pure from the caller's point of view, and O(n).</p></explain>
+</question>
+
+<question id="fp-local-mutation" type="choice">
+<q>Is this function pure? <code>function ids(orders) { const out = []; for (const o of orders) out.push(o.id); return out; }</code></q>
+<option>No, because it uses <code>push</code></option>
+<option correct>Yes: it only mutates an array it created itself, which nobody can see until it returns</option>
+<option>No, because it uses a loop</option>
+<option>Only if <code>orders</code> is frozen</option>
+<explain><p>Purity is about what callers can observe. Local mutation of fresh data is invisible outside the function, so the function is still pure.</p></explain>
+</question>
+
+<question id="fp-rules-as-data" type="choice">
+<q>Promotions are stored as an array of <code>{ name, discount(order) }</code> objects instead of an <code>if</code> chain inside the checkout. What is the main benefit?</q>
+<option>It runs faster</option>
+<option correct>Rules can be added, removed, switched off and tested one at a time without changing the checkout code</option>
+<option>Arrays use less memory than <code>if</code> statements</option>
+<option>It removes the need for tests</option>
+<explain><p>Treating rules as data (an array of functions) separates what the rules are from how they are applied. Tests and feature flags can pass different lists.</p></explain>
+</question>
+
+<question id="fp-pipe-order" type="output">
+<q>What does this print?</q>
+<code file="pipe-order.js">
+const pipe = (...fns) => (x) => fns.reduce((v, f) => f(v), x);
+const compose = (...fns) => (x) => fns.reduceRight((v, f) => f(v), x);
+const double = (n) => n * 2;
+const addTen = (n) => n + 10;
+console.log(pipe(double, addTen)(5), compose(double, addTen)(5));
+</code>
+<option correct>20 30</option>
+<option>30 20</option>
+<option>20 20</option>
+<option>30 30</option>
+<explain><p><code>pipe</code> runs left to right: double then add ten (20). <code>compose</code> runs right to left: add ten then double (30), like the nested call <code>double(addTen(5))</code>.</p></explain>
+</question>
+
+<question id="fp-order-business" type="output">
+<q>A ₦2,000 voucher (200000 kobo) and 7.5% VAT on a ₦17,000 order. What does this print?</q>
+<code file="voucher.js">
+const pipe = (...fns) => (x) => fns.reduce((v, f) => f(v), x);
+const addVat = (k) => Math.round(k * 1.075);
+const voucher = (k) => Math.max(k - 200000, 0);
+console.log(pipe(voucher, addVat)(1700000) - pipe(addVat, voucher)(1700000));
+</code>
+<option correct>-15000</option>
+<option>15000</option>
+<option>0</option>
+<option>-200000</option>
+<explain><p>Voucher first: VAT is charged on ₦15,000, total 1612500. VAT first: 1827500 minus the voucher, 1627500. The customer pays ₦150 less when the voucher comes off first. The order of steps is a business rule.</p></explain>
+</question>
+
+<question id="fp-compose-arity" type="choice">
+<q>Why must every step in a <code>pipe</code> take exactly one argument?</q>
+<option>Because arrow functions cannot take more than one argument</option>
+<option correct>Each step receives only the previous step's return value, and a function returns one value</option>
+<option>Because <code>reduce</code> only passes one argument</option>
+<option>It is a style rule with no technical reason</option>
+<explain><p>Data flows from one return value into the next call. Extra settings, such as a VAT rate, are fixed in advance with currying or partial application.</p></explain>
+</question>
+
+<question id="fp-curry-vs-partial" type="choice">
+<q>What is the difference between currying and partial application?</q>
+<option>They are the same thing</option>
+<option correct>Currying turns <code>f(a, b, c)</code> into <code>f(a)(b)(c)</code>, one argument per call; partial application fixes some arguments now and returns a function of the rest</option>
+<option>Currying only works with numbers</option>
+<option>Partial application changes the original function</option>
+<explain><p>Curried functions make partial application trivial (call with the first argument), but you can partially apply any function with <code>bind</code> or a <code>partial</code> helper.</p></explain>
+</question>
+
+<question id="fp-curried-calls" type="output">
+<q>What does this print?</q>
+<code file="curried.js">
+const addTax = (rate) => (kobo) => Math.round(kobo * (1 + rate));
+const ghana = addTax(0.15);
+console.log(typeof addTax(0.15), ghana(20000), addTax(0.075)(20000));
+</code>
+<option correct>function 23000 21500</option>
+<option>number 23000 21500</option>
+<option>function 23000 NaN</option>
+<option>NaN 23000 21500</option>
+<explain><p>Calling the curried function with only the rate returns the next function. Supplying the amount then gives the number.</p></explain>
+</question>
+
+<question id="fp-data-last" type="choice">
+<q>You want <code>discount</code> to be usable in <code>pipe(discount(10), addVat)</code>. Which signature fits?</q>
+<option><code>discount(kobo, percent)</code></option>
+<option><code>discount(kobo)(percent)</code></option>
+<option correct><code>discount(percent)(kobo)</code></option>
+<option><code>discount({ kobo, percent })</code></option>
+<explain><p>Configuration first, data last. The percent is known when the pipeline is built; the amount arrives when it runs.</p></explain>
+</question>
+
+<question id="fp-curry-length" type="output">
+<q>A generic <code>curry</code> uses <code>fn.length</code>. What does this print?</q>
+<code file="length.js">
+console.log(
+  ((kobo, rate) => 0).length,
+  ((kobo, rate = 0.075) => 0).length,
+  ((...amounts) => 0).length,
+);
+</code>
+<option correct>2 1 0</option>
+<option>2 2 1</option>
+<option>2 2 0</option>
+<option>2 1 1</option>
+<explain><p><code>length</code> counts parameters up to the first one with a default, and a rest parameter is not counted. That is why a generic <code>curry</code> calls such functions too early.</p></explain>
+</question>
+
+<question id="fp-bind-partial" type="output">
+<q>What does this print?</q>
+<code file="bind.js">
+function shipping(baseKobo, perKgKobo, kg) {
+  return baseKobo + Math.ceil(kg) * perKgKobo;
+}
+const lagos = shipping.bind(null, 100000, 20000);
+console.log(lagos(1.2), lagos(3));
+</code>
+<option correct>140000 160000</option>
+<option>124000 160000</option>
+<option>100000 100000</option>
+<option>NaN NaN</option>
+<explain><p><code>bind(null, 100000, 20000)</code> fixes the first two arguments. <code>Math.ceil(1.2)</code> is 2 kg, so 100000 + 2 × 20000 = 140000.</p></explain>
+</question>
+
+<question id="fp-parseint-map" type="output">
+<q>What does this print?</q>
+<code file="parse.js">
+console.log(["7", "7", "7"].map(parseInt));
+</code>
+<option correct>[ 7, NaN, NaN ]</option>
+<option>[ 7, 7, 7 ]</option>
+<option>[ 7, NaN, 7 ]</option>
+<option>[ '7', '7', '7' ]</option>
+<explain><p><code>map</code> passes <code>(item, index, array)</code>, so the calls are <code>parseInt("7", 0)</code> (guess: 7), <code>parseInt("7", 1)</code> (invalid radix: NaN) and <code>parseInt("7", 2)</code> (7 is not a binary digit: NaN). Write <code>map((s) =&gt; parseInt(s, 10))</code> or <code>map(Number)</code>.</p></explain>
+</question>
+
+<question id="fp-point-free-this" type="choice">
+<q>Why does <code>skus.forEach(cart.add)</code> fail when <code>add</code> uses <code>this.items</code>?</q>
+<option><code>forEach</code> does not accept methods</option>
+<option correct>Passing <code>cart.add</code> passes only the function; <code>forEach</code> calls it without an object, so <code>this</code> is <code>undefined</code></option>
+<option>Point-free style is not allowed with arrays</option>
+<option><code>add</code> receives too many arguments</option>
+<explain><p>This is the lost-<code>this</code> problem from <em>this in depth</em>. Wrap it (<code>(sku) =&gt; cart.add(sku)</code>) or bind it.</p></explain>
+</question>
+
+<question id="fp-point-free-when" type="choice">
+<q>When is point-free style (<code>orders.filter(isPaid)</code>) a good choice?</q>
+<option>Always; arrow wrappers are never needed</option>
+<option correct>When the function was written to take exactly the one argument being passed and does not use <code>this</code></option>
+<option>Only with built-in functions like <code>parseInt</code></option>
+<option>Never; it always causes bugs</option>
+<explain><p>With your own single-argument functions it reads well and is safe. With functions that have optional extra parameters, or methods, wrap them in an arrow.</p></explain>
+</question>
+
+<question id="fp-tap" type="output">
+<q>What does this print?</q>
+<code file="tap.js">
+const pipe = (...fns) => (x) => fns.reduce((v, f) => f(v), x);
+const tap = (fn) => (v) => { fn(v); return v; };
+const run = pipe((k) => k + 100, tap((k) => console.log("mid", k)), (k) => k * 2);
+console.log("end", run(50));
+</code>
+<option correct>mid 150
+end 300</option>
+<option>mid 150
+end 150</option>
+<option>end 300
+mid 150</option>
+<option>mid 300
+end 300</option>
+<explain><p><code>tap</code> runs a side effect and passes its input through unchanged, so it can log the middle of a pipeline without changing the result.</p></explain>
+</question>
+
+<question id="fp-hasown" type="choice">
+<q>The checkout validates SKUs with <code>Object.hasOwn(catalog, sku)</code> rather than <code>catalog[sku] !== undefined</code>. Which SKU does that stop?</q>
+<option><code>"RICE-5"</code></option>
+<option correct><code>"toString"</code>, which exists on every object through the prototype chain</option>
+<option>An empty string</option>
+<option>A SKU with spaces</option>
+<explain><p><code>catalog.toString</code> is the inherited method, not <code>undefined</code>, so the weaker check would accept it as a product. <code>Object.hasOwn</code> only accepts keys the catalog itself has.</p></explain>
+</question>
+
+<question id="fp-client-price" type="choice">
+<q>A request sends <code>{ sku: "TV-32", qty: 1, priceKobo: 1 }</code>. Why does the lesson's <code>priceLines</code> ignore <code>priceKobo</code>?</q>
+<option>Because the field name is wrong</option>
+<option correct>Prices must come from the server's catalog; a price sent by the client can be anything the client wants</option>
+<option>Because spread removes it</option>
+<option>Because 1 kobo is too small to charge</option>
+<explain><p>Never trust money values from the outside. The pure core takes the catalog as an input, and always prices from it.</p></explain>
+</question>
+
+<question id="fp-purity-test" type="choice">
+<q>Which test best shows that the checkout core does not mutate its input?</q>
+<option>Check that the total is correct</option>
+<option correct>Deep-freeze the input, run the core (a mutation would throw), and check that the input still equals its original value</option>
+<option>Run it inside a <code>try</code>/<code>catch</code></option>
+<option>Check that it returns an object</option>
+<explain><p>Freezing turns silent mutation into an error, and comparing the input afterwards confirms it. Running it twice and comparing results checks the "same input, same output" half.</p></explain>
+</question>
+
+<question id="fp-rounding" type="choice">
+<q>Why does the checkout keep every amount in whole kobo and round each calculated amount once?</q>
+<option>Because JavaScript cannot store decimals</option>
+<option correct>So every step works with exact integers and the totals match the invoice lines; rounding at random points makes totals drift by a kobo or two</option>
+<option>Because rounding is a side effect</option>
+<option>To make the numbers smaller</option>
+<explain><p>Floating-point fractions accumulate errors. Integer minor units, rounded at agreed points, keep money exact and reproducible.</p></explain>
+</question>
+
+<question id="fp-code-pure-delivery" type="code" file="delivery.js">
+<q><p>Make <code>deliveryFeeKobo</code> pure: it must take the order time as a parameter instead of reading the clock. Evening orders (18:00 UTC or later) cost 150000, others 100000.</p></q>
+<starter>
+function deliveryFeeKobo() {
+  const hours = new Date().getUTCHours();
+  return hours >= 18 ? 150000 : 100000;
+}
+
+console.log(deliveryFeeKobo(new Date("2026-09-24T17:59:59Z")));
+console.log(deliveryFeeKobo(new Date("2026-09-24T18:00:00Z")));
+</starter>
+<solution>
+function deliveryFeeKobo(orderedAt) {
+  return orderedAt.getUTCHours() >= 18 ? 150000 : 100000;
+}
+
+console.log(deliveryFeeKobo(new Date("2026-09-24T17:59:59Z")));
+console.log(deliveryFeeKobo(new Date("2026-09-24T18:00:00Z")));
+</solution>
+<expected>
+100000
+150000
+</expected>
+<explain><p>The clock was a hidden input. As a parameter, the boundary can be tested exactly, at any time of day.</p></explain>
+</question>
+
+<question id="fp-code-immutable-qty" type="code" file="qty.js">
+<q><p>Write <code>setQty(cart, sku, qty)</code> that returns a new cart with that line's quantity changed, without changing the original, and reuses the lines that did not change.</p></q>
+<starter>
+function setQty(cart, sku, qty) {
+  // return a new cart
+}
+
+const cart = Object.freeze({ id: "C1", lines: Object.freeze([Object.freeze({ sku: "RICE", qty: 1 }), Object.freeze({ sku: "OIL", qty: 1 })]) });
+const next = setQty(cart, "OIL", 4);
+console.log(cart.lines[1].qty, next.lines[1].qty, next.lines[0] === cart.lines[0]);
+</starter>
+<solution>
+function setQty(cart, sku, qty) {
+  return {
+    ...cart,
+    lines: cart.lines.map((line) => (line.sku === sku ? { ...line, qty } : line)),
+  };
+}
+
+const cart = Object.freeze({ id: "C1", lines: Object.freeze([Object.freeze({ sku: "RICE", qty: 1 }), Object.freeze({ sku: "OIL", qty: 1 })]) });
+const next = setQty(cart, "OIL", 4);
+console.log(cart.lines[1].qty, next.lines[1].qty, next.lines[0] === cart.lines[0]);
+</solution>
+<expected>1 4 true</expected>
+<explain><p>Copy the objects on the path to the change (cart, lines array, the changed line) and reuse everything else. The frozen input proves nothing was mutated.</p></explain>
+</question>
+
+<question id="fp-code-pipe" type="code" file="pipe.js">
+<q><p>Write <code>pipe(...fns)</code>, which returns a function that passes its input through each function from left to right. Use it to build <code>label</code>: take off a 200000 kobo voucher (not below 0), add 7.5% VAT (rounded), and format as <code>₦16125.00</code>.</p></q>
+<starter>
+const pipe = (...fns) => {
+  // your code here
+};
+
+const minusVoucher = (kobo) => Math.max(kobo - 200000, 0);
+const addVat = (kobo) => Math.round(kobo * 1.075);
+const toNaira = (kobo) => `₦${(kobo / 100).toFixed(2)}`;
+
+const label = pipe(minusVoucher, addVat, toNaira);
+console.log(label(1700000), label(100000));
+</starter>
+<solution>
+const pipe = (...fns) => (input) => fns.reduce((value, fn) => fn(value), input);
+
+const minusVoucher = (kobo) => Math.max(kobo - 200000, 0);
+const addVat = (kobo) => Math.round(kobo * 1.075);
+const toNaira = (kobo) => `₦${(kobo / 100).toFixed(2)}`;
+
+const label = pipe(minusVoucher, addVat, toNaira);
+console.log(label(1700000), label(100000));
+</solution>
+<expected>₦16125.00 ₦0.00</expected>
+<explain><p><code>reduce</code> threads the value through the functions in order, starting from the input. A voucher larger than the order leaves 0, not a negative amount.</p></explain>
+</question>
+
+<question id="fp-code-curry" type="code" file="curry.js">
+<q><p>Write a curried <code>percentOff(percent)(kobo)</code> that rounds to whole kobo, and use it with <code>map</code> to apply 15% off to every price.</p></q>
+<starter>
+// write percentOff here
+
+const prices = [850000, 320000, 20000];
+console.log(prices.map(percentOff(15)));
+</starter>
+<solution>
+const percentOff = (percent) => (kobo) => Math.round(kobo * (1 - percent / 100));
+
+const prices = [850000, 320000, 20000];
+console.log(prices.map(percentOff(15)));
+</solution>
+<expected>[ 722500, 272000, 17000 ]</expected>
+<explain><p><code>percentOff(15)</code> returns a one-argument function, which is exactly what <code>map</code> needs. The argument known early (the percent) comes first.</p></explain>
+</question>
+
+<question id="fp-code-parseint" type="code" file="quantities.js">
+<q><p>The form sends quantities as text. The code below turns them into numbers but prints <code>[ 3, NaN, NaN ]</code>. Fix it so each quantity is parsed in base 10.</p></q>
+<starter>
+const fromForm = ["3", "12", "5"];
+const quantities = fromForm.map(parseInt);
+console.log(quantities);
+</starter>
+<solution>
+const fromForm = ["3", "12", "5"];
+const quantities = fromForm.map((text) => parseInt(text, 10));
+console.log(quantities);
+</solution>
+<expected>[ 3, 12, 5 ]</expected>
+<explain><p><code>map</code> passes the index as the second argument, which <code>parseInt</code> treats as the radix. An arrow that passes only the text (and radix 10) fixes it; <code>map(Number)</code> would also work.</p></explain>
+</question>
+
+<question id="fp-code-rules" type="code" file="rules.js">
+<q><p>Write <code>bestDiscount(order, rules)</code>: each rule is a function from order to a discount in kobo. Return the largest discount, but never more than <code>order.subtotalKobo</code>, and 0 when there are no rules.</p></q>
+<starter>
+function bestDiscount(order, rules) {
+  // your code here
+}
+
+const rules = [
+  (o) => (o.subtotalKobo >= 5000000 ? 250000 : 0),
+  (o) => (o.firstOrder ? 100000 : 0),
+  (o) => 9999999,
+];
+console.log(bestDiscount({ subtotalKobo: 6000000, firstOrder: true }, rules.slice(0, 2)));
+console.log(bestDiscount({ subtotalKobo: 50000, firstOrder: false }, rules));
+console.log(bestDiscount({ subtotalKobo: 50000 }, []));
+</starter>
+<solution>
+function bestDiscount(order, rules) {
+  const best = rules.map((rule) => rule(order)).reduce((max, kobo) => Math.max(max, kobo), 0);
+  return Math.min(best, order.subtotalKobo);
+}
+
+const rules = [
+  (o) => (o.subtotalKobo >= 5000000 ? 250000 : 0),
+  (o) => (o.firstOrder ? 100000 : 0),
+  (o) => 9999999,
+];
+console.log(bestDiscount({ subtotalKobo: 6000000, firstOrder: true }, rules.slice(0, 2)));
+console.log(bestDiscount({ subtotalKobo: 50000, firstOrder: false }, rules));
+console.log(bestDiscount({ subtotalKobo: 50000 }, []));
+</solution>
+<expected>
+250000
+50000
+0
+</expected>
+<explain><p>Rules are data: map them to amounts and keep the largest, starting from 0 so an empty list works. Capping at the subtotal means no rule, however wrong, can make a total negative.</p></explain>
+</question>
+
+<question id="fp-first-class" type="choice">
+<q>What does it mean that functions are <strong>first-class</strong> values in JavaScript?</q>
+<option>They run before other code</option>
+<option correct>They can be stored in variables and arrays, passed as arguments and returned from other functions, like any other value</option>
+<option>They are always pure</option>
+<option>They cannot be changed after they are declared</option>
+<explain><p>First-class functions are what make callbacks, rule arrays, <code>pipe</code>, currying and factories possible.</p></explain>
+</question>
+
+<question id="fp-freeze-shallow" type="output">
+<q>What does this print?</q>
+<code file="freeze.js">
+const order = Object.freeze({ id: "ORD-1", lines: [{ qty: 1 }] });
+order.lines[0].qty = 5;
+order.lines.push({ qty: 2 });
+console.log(order.lines.length, order.lines[0].qty);
+</code>
+<option correct>2 5</option>
+<option>1 1</option>
+<option>TypeError: Cannot assign to read only property</option>
+<option>1 5</option>
+<explain><p><code>Object.freeze</code> is shallow: the <code>order</code> object is frozen, but the <code>lines</code> array and the line objects inside it are not. To use freezing as a mutation detector, freeze every level.</p></explain>
+</question>
+
+<question id="fp-same-object-signal" type="choice">
+<q>An immutable <code>removeLine(cart, sku)</code> returns the <em>original</em> cart object when the SKU is not in it. Why is that useful?</q>
+<option>It saves one line of code</option>
+<option correct>Callers can detect "nothing changed" cheaply with <code>===</code>, and caches or UIs can skip work</option>
+<option>It makes the cart mutable</option>
+<option>It is required by <code>Object.freeze</code></option>
+<explain><p>With immutable data, a new object means something changed and the same object means nothing did. That makes change detection a single comparison.</p></explain>
+</question>
+
+<question id="fp-when-not-curry" type="choice">
+<q>When is a generic <code>curry(fn)</code> helper a poor choice?</q>
+<option>When the function has exactly two required parameters</option>
+<option correct>When the function has default or rest parameters, because <code>fn.length</code> no longer tells how many arguments it needs</option>
+<option>When the function returns a number</option>
+<option>When the function is pure</option>
+<explain><p><code>curry</code> decides when to call the function by counting arguments against <code>fn.length</code>. Defaults and rest parameters make that count wrong. Hand-written curried arrows are explicit and safer.</p></explain>
+</question>
+
+<question id="fp-shell-injected" type="choice">
+<q>In the lesson's checkout shell, <code>saveOrder</code>, <code>log</code> and <code>clock</code> are passed in as functions. What does that give you?</q>
+<option>Faster database writes</option>
+<option correct>The shell can run in a test with fakes (an array for saving, a fixed clock), and production passes the real ones; nothing in the shell reaches for globals</option>
+<option>It makes the shell pure</option>
+<option>It removes the need for the core</option>
+<explain><p>The shell is still impure, but its effects are injected, so they are visible and replaceable. In a ZudoJS service, the container provides them.</p></explain>
+</question>
+
+<question id="fp-compose-reduce-right" type="output">
+<q>What does this print?</q>
+<code file="compose.js">
+const compose = (...fns) => (x) => fns.reduceRight((v, f) => f(v), x);
+const trace = (label) => (v) => `${v}>${label}`;
+console.log(compose(trace("c"), trace("b"), trace("a"))("start"));
+</code>
+<option correct>start>a>b>c</option>
+<option>start>c>b>a</option>
+<option>c>b>a>start</option>
+<option>start>a</option>
+<explain><p><code>compose</code> applies the rightmost function first, like the nested form <code>c(b(a(x)))</code>.</p></explain>
+</question>
+
+<question id="fp-code-partial" type="code" file="partial.js">
+<q><p>Write <code>partial(fn, ...preset)</code> that returns a function which calls <code>fn</code> with the preset arguments followed by the new ones. Use it to fix the zone table of <code>shippingKobo</code>.</p></q>
+<starter>
+const partial = (fn, ...preset) => {
+  // your code here
+};
+
+function shippingKobo(zones, city, kg) {
+  const zone = zones[city] ?? zones.default;
+  return zone.base + Math.ceil(kg) * zone.perKg;
+}
+const ZONES = { Lagos: { base: 100000, perKg: 20000 }, default: { base: 250000, perKg: 50000 } };
+
+const ship = partial(shippingKobo, ZONES);
+console.log(ship("Lagos", 1.5), ship("Kano", 1));
+</starter>
+<solution>
+const partial = (fn, ...preset) => (...rest) => fn(...preset, ...rest);
+
+function shippingKobo(zones, city, kg) {
+  const zone = zones[city] ?? zones.default;
+  return zone.base + Math.ceil(kg) * zone.perKg;
+}
+const ZONES = { Lagos: { base: 100000, perKg: 20000 }, default: { base: 250000, perKg: 50000 } };
+
+const ship = partial(shippingKobo, ZONES);
+console.log(ship("Lagos", 1.5), ship("Kano", 1));
+</solution>
+<expected>140000 300000</expected>
+<explain><p>A rest parameter collects the preset arguments, the returned arrow collects the rest, and spread passes them all in order. It is <code>bind</code> without the <code>this</code> argument.</p></explain>
+</question>

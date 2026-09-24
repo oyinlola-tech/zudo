@@ -1,0 +1,858 @@
+---
+title: Concurrency and cancellation
+description: Limit how many jobs run at once with a pool, cancel unneeded work with AbortController, and find and fix the race conditions of concurrent async code.
+minutes: 60
+youNeed: Combining promises and The event loop
+youBuild: A concurrency pool that sends 1,000 emails 5 at a time and can be stopped, a search box that cancels stale requests, and a lock that stops double withdrawals
+keywords: concurrency vs parallelism, concurrency limit, promise pool, p-limit, AbortController, AbortSignal, AbortSignal.timeout, AbortSignal.any, cancel fetch, cancellable timer, race condition, stale response, check then act, async mutex, request coalescing, single flight
+objectives: Explain the difference between concurrency and parallelism, and which one JavaScript gives you | Build a pool that keeps a fixed number of jobs running and returns results in input order | Make your own async functions cancellable with AbortSignal, including timers and fetch | Combine user cancellation and timeouts with AbortSignal.timeout and AbortSignal.any | Recognise stale responses, check-then-act and duplicate work as race conditions, and fix each one
+---
+<section>
+<h2 id="problem">A thousand emails, five at a time</h2>
+<p>Every Friday a shop emails its weekly offers to its 1,000 customers. The email provider's rules say: at most <strong>5</strong> connections at a time from one account; any more are refused with an error (HTTP status 429, "Too Many Requests"). The first version of the code used <code>Promise.all</code> over all 1,000 customers, which opens 1,000 connections at once.</p>
+<p>Here is the provider, simulated with the same rule: each email takes a few milliseconds (the <code>delayMs</code> option can change that), and a sixth open connection is refused.</p>
+<file name="provider.js" project="mail">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export function createMailProvider({ maxConnections, delayMs = (to) => 1 + (to.length % 4) }) {
+  let open = 0;
+  const stats = { sent: 0, peak: 0 };
+  return {
+    stats,
+    async send(to, subject, { signal } = {}) {
+      signal?.throwIfAborted();
+      if (open >= maxConnections) throw new Error(`429 Too Many Requests (${open} connections open)`);
+      open += 1;
+      stats.peak = Math.max(stats.peak, open);
+      try {
+        await wait(delayMs(to));
+        signal?.throwIfAborted();
+        stats.sent += 1;
+        return `sent "${subject}" to ${to}`;
+      } finally {
+        open -= 1;
+      }
+    },
+  };
+}
+</file>
+<example file="problem.js" project="mail">
+import { createMailProvider } from "./provider.js";
+
+const provider = createMailProvider({ maxConnections: 5 });
+const customers = Array.from({ length: 1_000 }, (_, i) => `customer${i + 1}@example.com`);
+
+const results = await Promise.allSettled(customers.map((to) => provider.send(to, "Weekly offers")));
+const sent = results.filter((r) => r.status === "fulfilled").length;
+
+console.log("sent:", sent, "refused:", 1_000 - sent);
+console.log("first refusal:", results.find((r) => r.status === "rejected").reason.message);
+</example>
+<output>
+sent: 5 refused: 995
+first refusal: 429 Too Many Requests (5 connections open)
+</output>
+
+<p>Only 5 emails went out; 995 customers got nothing. In <a href="/learn/js-promise-combinators#shapes">Combining promises</a> you saw batching as a fix, and its weakness: each batch waits for its slowest email. This lesson builds the proper tool, a <strong>pool</strong>, then adds the other half of running many jobs: <strong>cancelling</strong> the ones nobody needs any more, and avoiding the bugs that appear when async jobs overlap.</p>
+</section>
+
+<section>
+<h2 id="concurrency">Concurrency is not parallelism</h2>
+<p>Two words get mixed up here, and the difference matters:</p>
+<ul>
+<li><strong>Concurrency</strong> means several jobs are <em>in progress</em> at the same time: each has started and not yet finished. They may take turns on one worker.</li>
+<li><strong>Parallelism</strong> means several jobs are <em>executing</em> at the same instant, on different processor cores.</li>
+</ul>
+<p>A single cashier serving five customers by switching between them while each one looks for their card is concurrent. Five cashiers are parallel. Your JavaScript runs on one thread, so your code itself is never parallel: <a href="/learn/js-event-loop">the event loop</a> runs one callback at a time. But while one email is waiting for the network, your thread can start the next one. The <em>waiting</em> happens in parallel (in the operating system, in the network, on the provider's servers); the JavaScript takes turns. That is why async JavaScript handles thousands of concurrent requests on one thread, and also why it does not make heavy computation faster.</p>
+<figure class="lx-diagram">
+<pre>
+concurrency on one thread (JavaScript):       parallelism (worker threads, several cores):
+
+thread  |A|B|C|  |A|  |B|C|                  core 1  |AAAAAAAAAA|
+        start      finish                      core 2  |BBBBBBBBBB|
+network  AAAAAAA                               core 3  |CCCCCCCCCC|
+          BBBBBBBBB
+           CCCCCCCCC
+</pre>
+<figcaption>With concurrency, the thread only runs short slices (|A|); the long waits overlap outside it.</figcaption>
+</figure>
+<p>A <strong>concurrency limit</strong> is a cap on how many jobs may be in progress at once. You need one whenever the other side has a limit (the mail provider's 5 connections, a database's connection pool, an API's rate limit) or when each job holds memory. <strong>Scheduling</strong> is deciding which waiting job starts next, and when. A pool is a small scheduler: first come, first served, never more than N at once.</p>
+</section>
+
+<section>
+<h2 id="pool">Build: a concurrency pool</h2>
+<reason title="What must a pool get right?">
+<p>You will write <code>mapWithLimit(items, limit, fn)</code>: like <code>Promise.all(items.map(fn))</code>, but with at most <code>limit</code> calls of <code>fn</code> in progress at once. Before writing it:</p>
+<ul>
+<li>A slot frees up when a job finishes. How does the pool know to start the next job at exactly that moment, and not when a whole batch is done?</li>
+<li>Jobs finish in any order. In what order should the results be returned?</li>
+<li>What if a job fails? Should the other running jobs be abandoned, and should new jobs still start?</li>
+<li>What about <code>limit</code> of 0, a negative number, or a limit larger than the number of items? And an empty list?</li>
+<li>Two slots finish at the same moment. Can both take the same next item?</li>
+</ul>
+<answer>
+<ul>
+<li><strong>Start the next job when one finishes</strong>: run <code>limit</code> little loops ("workers"). Each worker takes the next item, awaits its job, then takes another, until the items run out. As soon as any worker finishes a job, it immediately starts the next one, so all slots stay busy.</li>
+<li><strong>Order</strong>: store each result at the index of its item, so the output matches the input, like <code>Promise.all</code>.</li>
+<li><strong>Failure</strong>: match <code>Promise.all</code>, reject with the first error, and also stop starting new jobs (set a flag the workers check). Jobs already running cannot be stopped without cancellation, which comes later in this lesson. A caller who wants every outcome can make <code>fn</code> return a report instead of throwing, like <code>allSettled</code>.</li>
+<li><strong>Bad limits</strong>: a limit below 1 would never start anything and hang forever, so reject it with a <code>RangeError</code>. A limit above the item count just means fewer workers. An empty list resolves to <code>[]</code>.</li>
+<li><strong>Same item twice</strong>: cannot happen. Taking the next index (<code>next++</code>) is synchronous, and JavaScript runs one piece of code at a time, so two workers can never read the same value of <code>next</code>. This is one of the gifts of a single thread: no locks needed for that line.</li>
+</ul>
+</answer>
+</reason>
+<example file="pool.js" project="mail">
+export async function mapWithLimit(items, limit, fn) {
+  if (!Number.isInteger(limit) || limit < 1) throw new RangeError(`limit must be an integer of at least 1, got ${limit}`);
+  const results = new Array(items.length);
+  let next = 0;
+  let failed = false;
+
+  async function worker() {
+    while (!failed && next < items.length) {
+      const index = next++;
+      try {
+        results[index] = await fn(items[index], index);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, worker);
+  await Promise.all(workers);
+  return results;
+}
+</example>
+<p>Only a few lines, and each answers one of the questions above. Now send the newsletter through it, and compare with batches of 5, which respect the limit too but waste slots:</p>
+<example file="newsletter.js" project="mail">
+import { createMailProvider } from "./provider.js";
+import { mapWithLimit } from "./pool.js";
+
+const customers = Array.from({ length: 1_000 }, (_, i) => `customer${i + 1}@example.com`);
+const provider = createMailProvider({ maxConnections: 5 });
+
+const results = await mapWithLimit(customers, 5, (to) => provider.send(to, "Weekly offers"));
+console.log("sent", provider.stats.sent, "| peak connections", provider.stats.peak);
+console.log("results in input order:", results[0].split(" to ")[1], "...", results.at(-1).split(" to ")[1]);
+
+// Pool against batches, with emails that take 5, 10, 15 or 20 ms.
+async function inBatches(items, size, fn) {
+  const out = [];
+  for (let i = 0; i < items.length; i += size) out.push(...(await Promise.all(items.slice(i, i + size).map(fn))));
+  return out;
+}
+const delayMs = (to) => 5 + ((Number(to.match(/\d+/)[0]) * 7) % 4) * 5;
+const sample = customers.slice(0, 60);
+const times = {};
+
+for (const [name, run] of [
+  ["pool", (p) => mapWithLimit(sample, 5, (to) => p.send(to, "Weekly offers"))],
+  ["batches", (p) => inBatches(sample, 5, (to) => p.send(to, "Weekly offers"))],
+]) {
+  const p = createMailProvider({ maxConnections: 5, delayMs });
+  const start = Date.now();
+  await run(p);
+  times[name] = Date.now() - start;
+  console.log(`${name.padEnd(7)} sent ${p.stats.sent}, peak ${p.stats.peak}`);
+}
+console.log("the pool took less time than batches:", times.pool < times.batches);
+</example>
+<output>
+sent 1000 | peak connections 5
+results in input order: customer1@example.com ... customer1000@example.com
+pool    sent 60, peak 5
+batches sent 60, peak 5
+the pool took less time than batches: true
+</output>
+<p>All 1,000 emails went out, never more than 5 at once, and the results came back in customer order. In the comparison, both approaches respected the limit, but the pool was clearly faster, because it started a new email the moment any slot freed up, instead of waiting for the slowest email of each batch. With real emails that take 50 to 800 ms each, that difference is minutes.</p>
+<h3>Failure and bad limits</h3>
+<example file="pool-failure.js" project="mail">
+import { mapWithLimit } from "./pool.js";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const started = [];
+
+try {
+  await mapWithLimit([1, 2, 3, 4, 5, 6, 7, 8], 2, async (id) => {
+    started.push(id);
+    await wait(10);
+    if (id === 3) throw new Error(`invoice ${id}: customer has no email`);
+  });
+} catch (error) {
+  console.log("rejected:", error.message);
+}
+await wait(30);
+console.log("jobs started:", started);
+
+console.log(await mapWithLimit([], 5, async () => "never called"));
+try {
+  await mapWithLimit([1, 2], 0, async () => {});
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+rejected: invoice 3: customer has no email
+jobs started: [ 1, 2, 3, 4 ]
+[]
+RangeError: limit must be an integer of at least 1, got 0
+</output>
+<p>Job 3 failed while job 4 was running. The pool rejected, job 4 finished on its own, and jobs 5 to 8 were never started. Everything else behaves like <code>Promise.all</code>.</p>
+<h3>A limiter for jobs that arrive over time</h3>
+<p><code>mapWithLimit</code> needs the whole list up front. A server gets its jobs one at a time, from different requests, and still must not call the payment API more than, say, 3 times at once. For that you want a <strong>limiter</strong>: a function that wraps any job and makes it wait in a queue until a slot is free. Popular npm packages such as <code>p-limit</code> do exactly this:</p>
+<example file="limiter.js" project="mail">
+export function createLimiter(limit) {
+  let active = 0;
+  const queue = [];
+
+  function startNext() {
+    if (active >= limit || queue.length === 0) return;
+    active += 1;
+    const { job, resolve, reject } = queue.shift();
+    Promise.try(job)
+      .then(resolve, reject)
+      .finally(() => {
+        active -= 1;
+        startNext();
+      });
+  }
+
+  return function run(job) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    queue.push({ job, resolve, reject });
+    startNext();
+    return promise;
+  };
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const limit = createLimiter(3);
+let running = 0;
+let peak = 0;
+
+async function verifyPayment(ref) {
+  running += 1;
+  peak = Math.max(peak, running);
+  await wait(10);
+  running -= 1;
+  return `${ref} verified`;
+}
+
+const fromRequestA = limit(() => verifyPayment("PSK_1"));
+const fromRequestB = Promise.all(["PSK_2", "PSK_3", "PSK_4", "PSK_5"].map((ref) => limit(() => verifyPayment(ref))));
+setTimeout(() => limit(() => verifyPayment("PSK_6")).then(console.log), 5);
+
+console.log(await fromRequestA);
+console.log(await fromRequestB);
+await wait(40);
+console.log("peak at once:", peak);
+</example>
+<output>
+PSK_1 verified
+[
+  'PSK_2 verified',
+  'PSK_3 verified',
+  'PSK_4 verified',
+  'PSK_5 verified'
+]
+PSK_6 verified
+peak at once: 3
+</output>
+<p>Jobs from different callers share one limit. <code>Promise.try</code> (from <a href="/learn/js-promise-combinators#with-resolvers">Combining promises</a>) makes sure a job that throws synchronously still frees its slot. Note the queue here is an array with <code>shift()</code>, which is fine for short queues; for queues of thousands, use the queue from <a href="/learn/dsa-stacks-queues">Stacks and queues</a>.</p>
+</section>
+
+<section>
+<h2 id="abort">Cancellation with AbortController</h2>
+<p>A customer types "ric" into the shop's search box, then "rice", then "rice 5kg". Three searches start. The first two answers are useless before they arrive. A campaign manager starts the Friday newsletter, then notices a typo in the price and wants to stop it. A promise cannot be stopped from outside; the work must <em>cooperate</em>. JavaScript's standard way to ask work to stop is a pair of objects:</p>
+<ul>
+<li>An <strong><code>AbortController</code></strong> is held by whoever may want to cancel. Calling <code>controller.abort(reason)</code> cancels.</li>
+<li>Its <strong><code>AbortSignal</code></strong> (<code>controller.signal</code>) is passed to the work. The work checks <code>signal.aborted</code>, reads <code>signal.reason</code>, calls <code>signal.throwIfAborted()</code>, or listens for the signal's <code>"abort"</code> event.</li>
+</ul>
+<p>The split is deliberate: the code that receives a signal can <em>observe</em> cancellation but cannot trigger it.</p>
+<example file="abort-basics.js">
+const controller = new AbortController();
+const { signal } = controller;
+
+signal.addEventListener("abort", () => console.log("abort event, reason:", signal.reason.message), { once: true });
+console.log("aborted before:", signal.aborted);
+
+controller.abort(new Error("customer closed the page"));
+console.log("aborted after:", signal.aborted);
+
+try {
+  signal.throwIfAborted();
+} catch (error) {
+  console.log("throwIfAborted threw the reason:", error.message);
+}
+
+controller.abort(new Error("second abort"));    // ignored: a signal aborts once
+console.log("reason is still:", signal.reason.message);
+
+const plain = new AbortController();
+plain.abort();                                   // no reason given
+console.log("default reason:", plain.signal.reason.name);
+</example>
+<output>
+aborted before: false
+abort event, reason: customer closed the page
+aborted after: true
+throwIfAborted threw the reason: customer closed the page
+reason is still: customer closed the page
+default reason: AbortError
+</output>
+<p>Without a reason, the signal's reason is a <code>DOMException</code> named <code>"AbortError"</code>. Check errors by <code>name</code>, not by message: the default messages differ between Node.js and browsers.</p>
+<h3>Making your own function cancellable</h3>
+<p>Built-in APIs such as <code>fetch</code> and Node's <code>timers/promises</code> accept a <code>signal</code> option. Your own async functions should too. Here is a cancellable <code>sleep</code>, the building block for retries and polling. Every cancellable function follows the same four rules:</p>
+<ol>
+<li>If the signal is already aborted, fail at once.</li>
+<li>On abort, stop the work (here: clear the timer) and reject with <code>signal.reason</code>.</li>
+<li>When the work finishes normally, remove the abort listener, or every call leaves a listener behind on a long-lived signal (a memory leak, see <a href="/learn/js-memory">Memory</a>).</li>
+<li>Never resolve after rejecting, or the other way round (a promise ignores it anyway, but cleanup must still run once).</li>
+</ol>
+<file name="sleep.js" project="cancel">
+export function sleep(ms, { signal } = {}) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+</file>
+<p>Now a 10-second sleep that gets cancelled after 20 ms:</p>
+<example file="sleep-demo.js" project="cancel">
+import { sleep } from "./sleep.js";
+
+const controller = new AbortController();
+setTimeout(() => controller.abort(new Error("campaign stopped")), 20);
+
+const start = Date.now();
+try {
+  await sleep(10_000, { signal: controller.signal });
+} catch (error) {
+  console.log(`woke early: ${error.message}, after less than 100 ms: ${Date.now() - start < 100}`);
+}
+
+try {
+  await sleep(10, { signal: controller.signal });
+} catch (error) {
+  console.log("already aborted, failed at once:", error.message);
+}
+</example>
+<output>
+woke early: campaign stopped, after less than 100 ms: true
+already aborted, failed at once: campaign stopped
+</output>
+<p>The 10-second sleep ended after 20 ms, and its timer was cleared, so nothing kept running. Without cancellation, a cancelled retry loop would still sit in its 10-second wait.</p>
+<h3>Timeouts and combined signals</h3>
+<p>Two static helpers cover the most common needs:</p>
+<ul>
+<li><code>AbortSignal.timeout(ms)</code> returns a signal that aborts by itself after <code>ms</code>, with a reason named <code>"TimeoutError"</code>.</li>
+<li><code>AbortSignal.any([signalA, signalB])</code> returns a signal that aborts as soon as <em>any</em> of the given signals aborts, with that signal's reason.</li>
+</ul>
+<p>Together they express "stop if the user cancels, or after 3 seconds, whichever comes first":</p>
+<example file="timeout-any.js" project="cancel">
+import { sleep } from "./sleep.js";
+
+async function chargeCard(amountKobo, { signal }) {
+  await sleep(200, { signal });        // the slow payment provider
+  return `charged ₦${amountKobo / 100}`;
+}
+
+async function checkout(amountKobo, userSignal) {
+  const signal = AbortSignal.any([userSignal, AbortSignal.timeout(50)]);
+  try {
+    return await chargeCard(amountKobo, { signal });
+  } catch (error) {
+    if (error.name === "TimeoutError") return "payment provider too slow: status unknown, will check";
+    if (signal.aborted) return `cancelled: ${signal.reason.message}`;
+    throw error;
+  }
+}
+
+const patient = new AbortController();
+console.log(await checkout(1_500_000, patient.signal));
+
+const leaving = new AbortController();
+setTimeout(() => leaving.abort(new Error("customer pressed back")), 10);
+console.log(await checkout(1_500_000, leaving.signal));
+</example>
+<output>
+payment provider too slow: status unknown, will check
+cancelled: customer pressed back
+</output>
+<p>The first checkout hit the 50 ms timeout; the second was cancelled by the customer at 10 ms. The code tells them apart by the reason. The timeout message reminds you of the rule from <a href="/learn/js-promise-combinators#race">Combining promises</a>: when a <em>payment</em> times out, its status is unknown, because the provider may have received the request.</p>
+<h3>Cancelling fetch</h3>
+<p><code>fetch</code> accepts a <code>signal</code>. When it aborts, the request is abandoned (the connection is closed) and the <code>fetch</code> promise, or the promise from reading the body, rejects with the signal's reason, an <code>AbortError</code> by default. This example uses a <code>data:</code> URL, which <code>fetch</code> reads without a network, so it runs anywhere:</p>
+<example file="fetch-abort.js">
+const url = "data:application/json," + encodeURIComponent(JSON.stringify({ sku: "rice-5kg", stock: 12 }));
+
+const response = await fetch(url, { signal: AbortSignal.timeout(1_000) });
+console.log(await response.json());
+
+const controller = new AbortController();
+controller.abort();
+try {
+  await fetch(url, { signal: controller.signal });
+} catch (error) {
+  console.log("aborted fetch rejected with:", error.name);
+}
+</example>
+<output>
+{ sku: 'rice-5kg', stock: 12 }
+aborted fetch rejected with: AbortError
+</output>
+<p>Against a real, slow server the effect is the same, only later. This Node.js example starts a local HTTP server that takes 500 ms to answer, and gives up after 50 ms:</p>
+<example file="fetch-slow.js" browser="no">
+import { createServer } from "node:http";
+
+const server = createServer((req, res) => {
+  const timer = setTimeout(() => res.end(JSON.stringify({ results: ["rice 5kg"] })), 500);
+  req.on("close", () => clearTimeout(timer));     // the client went away: stop working
+});
+await new Promise((resolve) => server.listen(0, resolve));
+const { port } = server.address();
+
+const start = Date.now();
+try {
+  await fetch(`http://localhost:${port}/search?q=rice`, { signal: AbortSignal.timeout(50) });
+} catch (error) {
+  console.log(`${error.name} after less than 200 ms: ${Date.now() - start < 200}`);
+}
+server.close();
+</example>
+<output>
+TimeoutError after less than 200 ms: true
+</output>
+<p>Notice the server side: it listens for the request's <code>"close"</code> event and stops its own work when the client disconnects. Cancellation should travel all the way down: from the user, through your code, to the services you call.</p>
+</section>
+
+<section>
+<h2 id="races">Race conditions in async code</h2>
+<p>A <strong>race condition</strong> is a bug where the result depends on the timing of operations that overlap. JavaScript has no two threads changing a variable at the same instant, but async code still interleaves: between one <code>await</code> and the next, any other callback may run and change things. Three shapes cover most real cases.</p>
+<h3>1. The stale response</h3>
+<p>The search box sends a request per keystroke. Shorter queries match more products and take longer. The answer for "ric" arrives <em>after</em> the answer for "rice 5kg" and overwrites it. The fake service below makes short queries slower, and accepts a <code>signal</code>:</p>
+<file name="search-service.js" project="search">
+export function createSearchService() {
+  const products = ["rice 5kg", "rice 10kg", "rice flour", "ricola sweets", "brown rice 5kg"];
+  const wait = (ms, signal) =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(resolve, ms);
+      signal?.addEventListener("abort", () => (clearTimeout(timer), reject(signal.reason)), { once: true });
+    });
+  return {
+    calls: 0,
+    async search(query, { signal } = {}) {
+      this.calls += 1;
+      await wait(100 - query.length * 10, signal);  // short queries are slower
+      return products.filter((p) => p.includes(query));
+    },
+  };
+}
+</file>
+<example file="stale-search.js" project="search">
+import { createSearchService } from "./search-service.js";
+
+const service = createSearchService();
+const screen = { query: "", results: [] };
+
+async function onType(query) {
+  screen.query = query;
+  const results = await service.search(query);
+  screen.results = results;
+}
+
+onType("ric");
+setTimeout(() => onType("rice"), 5);
+setTimeout(() => onType("rice 5kg"), 10);
+
+setTimeout(() => console.log(`box shows "${screen.query}", results:`, screen.results), 150);
+</example>
+<output>
+box shows "rice 5kg", results: [
+  'rice 5kg',
+  'rice 10kg',
+  'rice flour',
+  'ricola sweets',
+  'brown rice 5kg'
+]
+</output>
+<p>The box says "rice 5kg" but lists sweets and flour: the results of "ric". Two fixes, which you usually combine: <strong>abort</strong> the previous request when a new one starts (saves work on both sides), and <strong>ignore</strong> any answer that is not for the latest query (guards against APIs that cannot be cancelled):</p>
+<example file="search-fixed.js" project="search">
+import { createSearchService } from "./search-service.js";
+
+const service = createSearchService();
+const screen = { query: "", results: [] };
+let current = null;
+
+async function onType(query) {
+  current?.abort(new Error(`superseded by "${query}"`));
+  const controller = new AbortController();
+  current = controller;
+  screen.query = query;
+  try {
+    const results = await service.search(query, { signal: controller.signal });
+    if (controller !== current) return;          // a newer search started meanwhile
+    screen.results = results;
+  } catch (error) {
+    if (!controller.signal.aborted) throw error;  // a real failure, not our own cancel
+  }
+}
+
+onType("ric");
+setTimeout(() => onType("rice"), 5);
+setTimeout(() => onType("rice 5kg"), 10);
+
+setTimeout(() => console.log(`box shows "${screen.query}", results:`, screen.results), 150);
+</example>
+<output>
+box shows "rice 5kg", results: [ 'rice 5kg', 'brown rice 5kg' ]
+</output>
+<p>Now the box shows the right results for "rice 5kg". The older two searches were aborted as soon as a newer one started, and even if an old answer had slipped through, the <code>controller !== current</code> check would have dropped it.</p>
+<h3>2. Check, then act</h3>
+<p>A wallet endpoint checks the balance, then debits it. Between the check and the debit there is an <code>await</code> (the database). Two withdrawals arrive at the same moment, both see enough money, and both debit. Here is the wallet, with the database simulated:</p>
+<file name="wallet.js" project="wallet">
+export const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export function createWallet(balanceKobo) {
+  const db = { balanceKobo };
+  return {
+    db,
+    async withdraw(amountKobo) {
+      const { balanceKobo } = db;                  // check
+      await wait(10);                              // e.g. fraud check, database round trip
+      if (balanceKobo < amountKobo) throw new Error("insufficient funds");
+      db.balanceKobo = balanceKobo - amountKobo;   // act
+      return `withdrew ₦${amountKobo / 100}`;
+    },
+  };
+}
+</file>
+<example file="double-withdrawal.js" project="wallet">
+import { createWallet } from "./wallet.js";
+
+const wallet = createWallet(1_000_000);           // ₦10,000
+const results = await Promise.allSettled([wallet.withdraw(800_000), wallet.withdraw(800_000)]);
+console.log(results.map((r) => r.value ?? r.reason.message));
+console.log("balance now: ₦" + wallet.db.balanceKobo / 100, "(₦16,000 was paid out of ₦10,000)");
+</example>
+<output>
+[ 'withdrew ₦8000', 'withdrew ₦8000' ]
+balance now: ₦2000 (₦16,000 was paid out of ₦10,000)
+</output>
+<p>This is the <strong>check-then-act</strong> race. The check was true when it ran and false by the time the code acted on it. In a real system with a real database, the fix belongs in the database: a transaction with a row lock, or a single conditional update (<code>UPDATE wallets SET balance = balance - $1 WHERE id = $2 AND balance &gt;= $1</code>), because several server processes can run the same code. Inside one process, you can make the check and the act happen with nothing in between by putting a <strong>lock</strong> (also called a <strong>mutex</strong>, for "mutual exclusion") around them: only one caller at a time may hold it, the others wait their turn.</p>
+<example file="mutex.js" project="wallet">
+import { createWallet } from "./wallet.js";
+
+export function createMutex() {
+  let last = Promise.resolve();
+  return function runExclusive(job) {
+    const result = last.then(() => job());
+    last = result.catch(() => {});                 // a failed job must not block the next one
+    return result;
+  };
+}
+
+const wallet = createWallet(1_000_000);
+const exclusive = createMutex();
+const withdraw = (kobo) => exclusive(() => wallet.withdraw(kobo));
+
+const results = await Promise.allSettled([withdraw(800_000), withdraw(800_000), withdraw(150_000)]);
+console.log(results.map((r) => r.value ?? r.reason.message));
+console.log("balance now: ₦" + wallet.db.balanceKobo / 100);
+</example>
+<output>
+[ 'withdrew ₦8000', 'insufficient funds', 'withdrew ₦1500' ]
+balance now: ₦500
+</output>
+<p>The second withdrawal waited for the first, saw the new balance and was refused; the third fitted and went through. The mutex is a promise chain: each job is chained onto the previous one, so they run one at a time, in arrival order. In a real service you would keep one mutex per account (in a <code>Map</code> keyed by account id), so that different accounts do not wait for each other.</p>
+<h3>3. Duplicate work</h3>
+<p>The product page asks for a product's price; the price is cached for a minute. When the cache is empty and 50 requests arrive at once, all 50 miss the cache and all 50 query the database. This burst is called a <strong>cache stampede</strong>. The fix is <strong>request coalescing</strong> (also called "single flight"): while a lookup for a key is in progress, later callers get the <em>same promise</em> instead of starting their own:</p>
+<example file="coalesce.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let databaseQueries = 0;
+
+async function loadPriceFromDb(sku) {
+  databaseQueries += 1;
+  await wait(20);
+  return { sku, kobo: 950_000 };
+}
+
+const inFlight = new Map();
+function getPrice(sku) {
+  if (!inFlight.has(sku)) {
+    const promise = loadPriceFromDb(sku).finally(() => inFlight.delete(sku));
+    inFlight.set(sku, promise);
+  }
+  return inFlight.get(sku);
+}
+
+const prices = await Promise.all(Array.from({ length: 50 }, () => getPrice("rice-5kg")));
+console.log("answers:", prices.length, "| database queries:", databaseQueries);
+
+await getPrice("rice-5kg");
+console.log("after the first lookup finished, a new one queries again:", databaseQueries);
+</example>
+<output>
+answers: 50 | database queries: 1
+after the first lookup finished, a new one queries again: 2
+</output>
+<p>Fifty callers, one query. The <code>finally</code> removes the entry when the lookup ends, whether it succeeded or failed, so a failure is not cached forever and the map does not grow. A real cache would then store the <em>value</em> with an expiry time; <a href="/learn/zudo-cache">@zudojs/cache</a> covers that.</p>
+</section>
+
+<section>
+<h2 id="stoppable">Build: a newsletter you can stop</h2>
+<p>Now add cancellation to the pool. A campaign manager must be able to stop a send half-way: no new emails may start, and emails in progress should be abandoned if the provider supports it. The pool gets a <code>signal</code> option, checks it before taking each item, and passes it to each job:</p>
+<example file="stoppable-pool.js" project="mail">
+export async function mapWithLimit(items, limit, fn, { signal } = {}) {
+  if (!Number.isInteger(limit) || limit < 1) throw new RangeError(`limit must be an integer of at least 1, got ${limit}`);
+  signal?.throwIfAborted();
+  const results = new Array(items.length);
+  let next = 0;
+  let failed = false;
+
+  async function worker() {
+    while (!failed && next < items.length) {
+      signal?.throwIfAborted();
+      const index = next++;
+      try {
+        results[index] = await fn(items[index], { index, signal });
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+</example>
+<example file="stop-campaign.js" project="mail">
+import { createMailProvider } from "./provider.js";
+import { mapWithLimit } from "./stoppable-pool.js";
+
+const provider = createMailProvider({ maxConnections: 5 });
+const customers = Array.from({ length: 1_000 }, (_, i) => `customer${i + 1}@example.com`);
+const campaign = new AbortController();
+
+setTimeout(() => campaign.abort(new Error("price typo in the offer, stopped by Ada")), 30);
+
+try {
+  await mapWithLimit(customers, 5, (to, { signal }) => provider.send(to, "Weekly offers", { signal }), {
+    signal: campaign.signal,
+  });
+} catch (error) {
+  console.log("campaign ended:", error.message);
+}
+
+const sentAtStop = provider.stats.sent;
+await new Promise((resolve) => setTimeout(resolve, 50));
+console.log("some sent, most not:", sentAtStop > 0 && sentAtStop < 500);
+console.log("nothing more was sent after the stop:", provider.stats.sent === sentAtStop);
+</example>
+<output>
+campaign ended: price typo in the offer, stopped by Ada
+some sent, most not: true
+nothing more was sent after the stop: true
+</output>
+<p>The pool stopped taking customers, the emails in flight were abandoned (the fake provider checks the signal before it "sends"), and nothing more went out after the stop. In a real system you would also record which customers did get the email, so a corrected campaign can go to the rest, and to the others with an apology.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing concurrent code</h2>
+<p>Concurrency bugs depend on timing, so tests must <em>control</em> timing instead of hoping for it:</p>
+<ul>
+<li><strong>Measure the limit.</strong> Count jobs in progress and record the peak, as the examples above do. "Never more than 5" is a precise, stable assertion.</li>
+<li><strong>Force the order of completion.</strong> With <code>Promise.withResolvers</code> a test can hold each fake request open and finish them in whatever order it likes, for example the slow search first. Then the race happens every time, not one run in a hundred.</li>
+<li><strong>Test cancellation paths.</strong> Abort before the start, during the work and after the end. Check that timers and listeners were cleaned up.</li>
+</ul>
+<example file="controlled-order.js">
+function fakeSearch() {
+  const pending = new Map();
+  return {
+    search(query) {
+      const deferred = Promise.withResolvers();
+      pending.set(query, deferred);
+      return deferred.promise;
+    },
+    answer(query, results) {
+      pending.get(query).resolve(results);
+    },
+  };
+}
+
+const service = fakeSearch();
+let latest = 0;
+let shown = null;
+async function onType(query) {
+  const id = ++latest;
+  const results = await service.search(query);
+  if (id === latest) shown = `${query}: ${results}`;
+}
+
+onType("ric");
+onType("rice 5kg");
+service.answer("rice 5kg", ["rice 5kg"]);     // the newest answer arrives first
+await null;
+service.answer("ric", ["ricola sweets"]);     // the stale answer arrives last
+await new Promise((resolve) => setTimeout(resolve, 0));
+console.log("shown:", shown);
+</example>
+<output>
+shown: rice 5kg: rice 5kg
+</output>
+<p>No timers decide the order here: the test does. That makes the stale-response bug reproducible every time, and the fix provable.</p>
+</section>
+
+<section>
+<h2 id="production">Concurrency in production</h2>
+<ul>
+<li><strong>Every downstream gets a limit.</strong> Match it to the other side's rules (connections, rate limits) and to your memory. A database driver's pool size is also a concurrency limit.</li>
+<li><strong>Pass signals down.</strong> Accept a <code>signal</code> in every function that waits, and pass it to everything it calls, including <code>fetch</code> and database drivers that support it. Cancellation that stops at the first layer only hides the waste.</li>
+<li><strong>Clean up after a cancel.</strong> Clear timers, remove listeners (use <code>{ once: true }</code> or <code>removeEventListener</code>), close connections. A cancellation path that leaks is worse than none.</li>
+<li><strong>Check error names.</strong> Tell cancellations (<code>AbortError</code>, your own reasons) and timeouts (<code>TimeoutError</code>) apart from real failures. Do not log cancellations as errors; they are normal.</li>
+<li><strong>Protect shared state across awaits.</strong> Anything read before an <code>await</code> may be stale after it. Re-check, use a per-key lock, or let the database enforce the rule; with several server processes, only the database (or a distributed lock) can.</li>
+<li><strong>Coalesce identical in-flight work</strong> to survive traffic spikes, and remember that a queue that grows without limit is just a slower crash: reject or shed work when it is too long.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Settle everything with a limit">
+<p>Write <code>settleWithLimit(items, limit, fn)</code> on top of <code>mapWithLimit</code>: it never rejects, and returns an <code>allSettled</code>-style report for each item. Test it with invoices where two fail.</p>
+<solution>
+<example file="settle-limit.js" project="mail">
+import { mapWithLimit } from "./pool.js";
+
+function settleWithLimit(items, limit, fn) {
+  return mapWithLimit(items, limit, (item, i) =>
+    Promise.try(fn, item, i).then(
+      (value) => ({ status: "fulfilled", value }),
+      (reason) => ({ status: "rejected", reason }),
+    ),
+  );
+}
+
+const reports = await settleWithLimit([101, 102, 103, 104], 2, async (invoice) => {
+  if (invoice % 2 === 0) throw new Error(`invoice ${invoice}: no email address`);
+  return `invoice ${invoice} sent`;
+});
+console.log(reports.map((r) => (r.status === "fulfilled" ? r.value : r.reason.message)));
+</example>
+<output>
+[
+  'invoice 101 sent',
+  'invoice 102: no email address',
+  'invoice 103 sent',
+  'invoice 104: no email address'
+]
+</output>
+<p>Each job is turned into one that never rejects, so the pool never stops early. <code>Promise.try</code> also catches a job that throws synchronously.</p>
+</solution>
+</exercise>
+<exercise title="A cancellable retry">
+<p>Write <code>retry(fn, { attempts, delayMs, signal })</code> that calls <code>fn(signal)</code>, waits <code>delayMs</code> between failed attempts using the cancellable <code>sleep</code>, and stops immediately when the signal aborts, even in the middle of a wait. Show a success on the third attempt and a cancellation during a wait.</p>
+<solution>
+<example file="retry-cancel.js" project="cancel">
+import { sleep } from "./sleep.js";
+
+async function retry(fn, { attempts, delayMs, signal }) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    signal?.throwIfAborted();
+    try {
+      return await fn(signal, attempt);
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason;
+      lastError = error;
+      if (attempt < attempts) await sleep(delayMs, { signal });
+    }
+  }
+  throw lastError;
+}
+
+const flaky = async (signal, attempt) => {
+  if (attempt < 3) throw new Error("503 from the SMS gateway");
+  return `sent on attempt ${attempt}`;
+};
+console.log(await retry(flaky, { attempts: 5, delayMs: 10 }));
+
+const controller = new AbortController();
+setTimeout(() => controller.abort(new Error("order cancelled")), 25);
+const start = Date.now();
+try {
+  await retry(async () => { throw new Error("503"); }, { attempts: 5, delayMs: 1_000, signal: controller.signal });
+} catch (error) {
+  console.log(`stopped: ${error.message}, within 100 ms: ${Date.now() - start < 100}`);
+}
+</example>
+<output>
+sent on attempt 3
+stopped: order cancelled, within 100 ms: true
+</output>
+<p>Without the signal in <code>sleep</code>, the cancelled retry would still have waited out its full 1-second delay.</p>
+</solution>
+</exercise>
+<exercise title="One lock per account">
+<p>Using <code>createMutex</code>, write <code>createAccountLocks()</code> that returns <code>withLock(accountId, job)</code>: jobs for the same account run one at a time, jobs for different accounts do not wait for each other. Show it with timings.</p>
+<solution>
+<example file="account-locks.js">
+function createMutex() {
+  let last = Promise.resolve();
+  return (job) => {
+    const result = last.then(() => job());
+    last = result.catch(() => {});
+    return result;
+  };
+}
+
+function createAccountLocks() {
+  const locks = new Map();
+  return function withLock(accountId, job) {
+    if (!locks.has(accountId)) locks.set(accountId, createMutex());
+    return locks.get(accountId)(job);
+  };
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const withLock = createAccountLocks();
+const finished = [];
+const start = Date.now();
+
+await Promise.all([
+  withLock("acc-1", async () => { await wait(30); finished.push("acc-1 debit"); }),
+  withLock("acc-1", async () => { await wait(30); finished.push("acc-1 credit"); }),
+  withLock("acc-2", async () => { await wait(40); finished.push("acc-2 debit"); }),
+]);
+console.log(finished);
+console.log("acc-2 did not wait for acc-1 (done in well under 30 + 30 + 40 ms):", Date.now() - start < 90);
+</example>
+<output>
+[ 'acc-1 debit', 'acc-2 debit', 'acc-1 credit' ]
+acc-2 did not wait for acc-1 (done in well under 30 + 30 + 40 ms): true
+</output>
+<p>The <code>acc-1</code> credit waited for the <code>acc-1</code> debit (30 + 30 ms), while <code>acc-2</code> ran alongside and finished in between, at 40 ms. This version never removes idle locks from the map; for millions of accounts you would delete a lock when its queue empties.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Concurrency is many jobs in progress; parallelism is many executing at the same instant. JavaScript gives you concurrency on one thread; the waiting overlaps outside it.</li>
+<li>A pool runs N workers that each pull the next item, so every slot stays busy. Results go in input order; a failure stops new jobs. A limiter does the same for jobs that arrive over time.</li>
+<li>Cancellation is cooperative: <code>AbortController</code> cancels, <code>AbortSignal</code> is passed down. Cancellable functions fail at once if already aborted, clean up on abort, and remove their listener when done.</li>
+<li><code>AbortSignal.timeout(ms)</code> aborts with a <code>TimeoutError</code>; <code>AbortSignal.any</code> combines signals. <code>fetch</code> accepts a signal. Check errors by <code>name</code>.</li>
+<li>Async race conditions: stale responses (abort and ignore old answers), check-then-act (lock, or let the database enforce it) and duplicate work (coalesce in-flight promises).</li>
+<li>Test concurrency by measuring peaks and by forcing completion order with deferred promises.</li>
+</ul>
+<p>Next: <a href="/learn/js-execution">How JavaScript runs</a>, where you look under the event loop at how the engine parses, compiles and executes your code.</p>
+</section>

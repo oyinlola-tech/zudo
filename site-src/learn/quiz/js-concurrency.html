@@ -1,0 +1,785 @@
+<question id="conc-vs-par" type="choice">
+<q>Which statement about JavaScript on one thread is right?</q>
+<option>It runs several of your callbacks at the same instant on different cores</option>
+<option correct>It is concurrent: many jobs can be in progress, taking turns on the thread while their waiting overlaps outside it</option>
+<option>It can only have one network request in progress at a time</option>
+<option>It is parallel, because promises run on background threads</option>
+<explain><p>Concurrency is many jobs in progress; parallelism is many executing at once. Your callbacks run one at a time, but while one request waits on the network, others can be started. Parallel JavaScript needs worker threads.</p></explain>
+</question>
+
+<question id="conc-cpu" type="choice">
+<q>Resizing 200 product photos is pure computation. Why does running the resizes with <code>Promise.all</code> not make it faster?</q>
+<option>Promise.all only accepts network requests</option>
+<option correct>The work is CPU-bound on the single JavaScript thread, so the jobs still run one after another; concurrency only helps when jobs spend time waiting</option>
+<option>Promise.all runs them in reverse order</option>
+<option>It is faster, by a factor of 200</option>
+<explain><p>Async concurrency overlaps <em>waiting</em>. Computation still needs the thread. To use several cores, move the work to worker threads.</p></explain>
+</question>
+
+<question id="conc-why-limit" type="choice">
+<q>Which is <strong>not</strong> a reason to limit how many jobs run at once?</q>
+<option>The email provider refuses more than 5 connections</option>
+<option>The database pool has only 10 connections</option>
+<option>Each job holds a large file in memory</option>
+<option correct>JavaScript cannot start more than 5 promises at a time</option>
+<explain><p>JavaScript can start as many promises as you like. The limits come from the other side (connections, rate limits) and from your own resources (memory).</p></explain>
+</question>
+
+<question id="conc-pool-vs-batch" type="choice">
+<q>Why does a pool with limit 5 usually finish sooner than batches of 5?</q>
+<option>The pool runs more than 5 jobs at once</option>
+<option correct>A pool starts a new job as soon as any slot frees up; a batch waits for its slowest job before starting any new one</option>
+<option>A pool skips failed jobs</option>
+<option>Batches run their jobs one at a time</option>
+<explain><p>Both respect the limit. The pool keeps all slots busy; batches leave slots idle while the slowest job of each batch finishes.</p></explain>
+</question>
+
+<question id="conc-pool-order" type="output">
+<q>What does this print?</q>
+<code file="pool-order.js">
+async function mapWithLimit(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+const finished = [];
+const out = await mapWithLimit([30, 10, 20], 3, async (ms) => {
+  await wait(ms);
+  finished.push(ms);
+  return `${ms} ms job`;
+});
+console.log(finished);
+console.log(out);
+</code>
+<option correct>[ 10, 20, 30 ]
+[ '30 ms job', '10 ms job', '20 ms job' ]</option>
+<option>[ 30, 10, 20 ]
+[ '30 ms job', '10 ms job', '20 ms job' ]</option>
+<option>[ 10, 20, 30 ]
+[ '10 ms job', '20 ms job', '30 ms job' ]</option>
+<option>[ 30, 10, 20 ]
+[ '10 ms job', '20 ms job', '30 ms job' ]</option>
+<explain><p>Jobs finish in time order, but each result is stored at its item's index, so the output keeps the input order, like <code>Promise.all</code>.</p></explain>
+</question>
+
+<question id="conc-pool-peak" type="output">
+<q>What does this print?</q>
+<code file="pool-peak.js">
+async function mapWithLimit(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+let running = 0;
+let peak = 0;
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+await mapWithLimit(Array.from({ length: 12 }, (_, i) => i), 4, async () => {
+  running++;
+  peak = Math.max(peak, running);
+  await wait(5);
+  running--;
+});
+console.log("peak:", peak);
+</code>
+<option correct>peak: 4</option>
+<option>peak: 12</option>
+<option>peak: 1</option>
+<option>peak: 3</option>
+<explain><p>Four workers each run one job at a time, so at most four jobs are in progress at any moment.</p></explain>
+</question>
+
+<question id="conc-next-plus-plus" type="choice">
+<q>In the pool, two workers finish at the same moment and both run <code>const index = next++</code>. Can they get the same index?</q>
+<option>Yes, so a lock is needed around that line</option>
+<option correct>No: the line is synchronous and JavaScript runs one callback at a time, so one worker's read-and-increment always completes before the other's</option>
+<option>Yes, but only in Node.js</option>
+<option>No, because next++ is atomic in all languages</option>
+<explain><p>Two callbacks never run at the same instant on one thread. Races in JavaScript happen across <code>await</code>s, not inside synchronous lines.</p></explain>
+</question>
+
+<question id="conc-limit-zero" type="choice">
+<q>What would a pool with <code>limit = 0</code> do if it did not check its limit?</q>
+<option>Run every job at once</option>
+<option>Run jobs one at a time</option>
+<option correct>Start no workers and resolve with an array of empty slots, without running any job</option>
+<option>Throw a RangeError automatically</option>
+<explain><p>With no workers, <code>Promise.all([])</code> resolves at once and no job ever runs: a silent failure. That is why the pool rejects a limit below 1 with its own <code>RangeError</code>.</p></explain>
+</question>
+
+<question id="conc-pool-failure" type="choice">
+<q>In the lesson's pool, job 3 fails while job 4 is running. What happens?</q>
+<option>Job 4 is cancelled and jobs 5 onwards run</option>
+<option correct>The pool rejects with job 3's error, job 4 finishes on its own, and no new jobs start</option>
+<option>The pool retries job 3</option>
+<option>The pool ignores the error and continues</option>
+<explain><p>The <code>failed</code> flag stops workers from taking new items. Job 4 cannot be stopped without cancellation, so it runs to the end; its result is ignored.</p></explain>
+</question>
+
+<question id="conc-limiter" type="choice">
+<q>When do you need a limiter (like <code>p-limit</code>) rather than <code>mapWithLimit</code>?</q>
+<option>When the list of jobs is known up front</option>
+<option correct>When jobs arrive over time from different callers but must share one limit, for example all requests calling one payment API</option>
+<option>When you want results in input order</option>
+<option>When jobs never fail</option>
+<explain><p>A limiter queues each job as it arrives and starts it when a slot is free. <code>mapWithLimit</code> needs the whole list at the start.</p></explain>
+</question>
+
+<question id="conc-abort-roles" type="choice">
+<q>Why are cancellation's two roles split into <code>AbortController</code> and <code>AbortSignal</code>?</q>
+<option>For speed</option>
+<option correct>The code that may cancel keeps the controller; the work only receives the signal, so it can observe cancellation but not trigger it</option>
+<option>Signals only work in browsers</option>
+<option>The controller is for timers and the signal for fetch</option>
+<explain><p>Passing only the signal down means a called function cannot cancel work that belongs to its caller.</p></explain>
+</question>
+
+<question id="conc-abort-basics" type="output">
+<q>What does this print?</q>
+<code file="abort.js">
+const controller = new AbortController();
+controller.signal.addEventListener("abort", () => console.log("abort event"));
+
+console.log(controller.signal.aborted);
+controller.abort(new Error("customer left"));
+controller.abort(new Error("second call"));
+console.log(controller.signal.aborted, controller.signal.reason.message);
+</code>
+<option correct>false
+abort event
+true customer left</option>
+<option>false
+abort event
+abort event
+true second call</option>
+<option>false
+true customer left
+abort event</option>
+<option>false
+abort event
+true second call</option>
+<explain><p>The abort event fires synchronously during <code>abort()</code>. A signal aborts only once: the second call changes nothing, and the reason stays the first one.</p></explain>
+</question>
+
+<question id="conc-default-reason" type="output">
+<q>What does this print?</q>
+<code file="default-reason.js">
+const controller = new AbortController();
+controller.abort();
+console.log(controller.signal.reason.name);
+try {
+  controller.signal.throwIfAborted();
+} catch (error) {
+  console.log(error === controller.signal.reason);
+}
+</code>
+<option correct>AbortError
+true</option>
+<option>Error
+true</option>
+<option>undefined
+false</option>
+<option>AbortError
+false</option>
+<explain><p>Without a reason, the signal's reason is a <code>DOMException</code> named <code>AbortError</code>. <code>throwIfAborted()</code> throws that exact reason object.</p></explain>
+</question>
+
+<question id="conc-check-name" type="choice">
+<q>Why should code check <code>error.name === "AbortError"</code> rather than the error's message?</q>
+<option>Messages are always empty</option>
+<option correct>The default messages differ between Node.js and browsers; the name is standard</option>
+<option>name is faster to read</option>
+<option>AbortError has no message property</option>
+<explain><p>Node says "This operation was aborted", browsers say something else. The <code>name</code> (<code>AbortError</code>, <code>TimeoutError</code>) is the portable way to recognise the kind of error.</p></explain>
+</question>
+
+<question id="conc-cancellable-rules" type="choice">
+<q>A cancellable <code>sleep(ms, { signal })</code> finishes normally. Which clean-up step must it still do?</q>
+<option>Call controller.abort()</option>
+<option correct>Remove its abort listener from the signal, or every call leaves a listener behind on a long-lived signal</option>
+<option>Clear the signal's reason</option>
+<option>Nothing, listeners remove themselves when a promise resolves</option>
+<explain><p>A listener added with <code>addEventListener</code> stays until it fires or is removed. <code>{ once: true }</code> only removes it after it fires. A signal that lives for a whole campaign would collect thousands of listeners.</p></explain>
+</question>
+
+<question id="conc-sleep-output" type="output">
+<q>What does this print?</q>
+<code file="sleep.js">
+function sleep(ms, { signal } = {}) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    }, { once: true });
+  });
+}
+
+const controller = new AbortController();
+setTimeout(() => controller.abort(new Error("stopped")), 10);
+const start = Date.now();
+const outcome = await sleep(5000, { signal: controller.signal }).then(() => "slept", (e) => e.message);
+console.log(outcome, Date.now() - start < 1000);
+</code>
+<option correct>stopped true</option>
+<option>slept false</option>
+<option>stopped false</option>
+<option>slept true</option>
+<explain><p>The abort after 10 ms clears the 5-second timer and rejects with the reason, so the sleep ends early and nothing keeps running.</p></explain>
+</question>
+
+<question id="conc-timeout-signal" type="choice">
+<q>What does <code>AbortSignal.timeout(3000)</code> give you?</q>
+<option>A controller that aborts after 3 seconds</option>
+<option correct>A signal that aborts by itself after 3 seconds, with a reason named TimeoutError</option>
+<option>A promise that rejects after 3 seconds</option>
+<option>A function that times out any promise</option>
+<explain><p>It is a ready-made signal; pass it to <code>fetch</code> or any function that accepts a signal. Its reason's <code>name</code> is <code>"TimeoutError"</code>, so you can tell a timeout from a user cancel.</p></explain>
+</question>
+
+<question id="conc-any-signal" type="output">
+<q>What does this print?</q>
+<code file="any-signal.js">
+const user = new AbortController();
+const signal = AbortSignal.any([user.signal, AbortSignal.timeout(5000)]);
+
+user.abort(new Error("customer pressed back"));
+console.log(signal.aborted, signal.reason.message);
+</code>
+<option correct>true customer pressed back</option>
+<option>false undefined</option>
+<option>true TimeoutError</option>
+<option>true signal timed out</option>
+<explain><p><code>AbortSignal.any</code> aborts as soon as any of its signals aborts, taking that signal's reason. The user aborted first.</p></explain>
+</question>
+
+<question id="conc-fetch-abort" type="output">
+<q>What does this print?</q>
+<code file="fetch-abort.js">
+const url = "data:text/plain,in stock";
+const controller = new AbortController();
+controller.abort();
+
+const outcome = await fetch(url, { signal: controller.signal }).then(
+  (response) => response.text(),
+  (error) => error.name,
+);
+console.log(outcome);
+</code>
+<option correct>AbortError</option>
+<option>in stock</option>
+<option>TypeError</option>
+<option>TimeoutError</option>
+<explain><p>A fetch given an already-aborted signal rejects immediately with the signal's reason, an <code>AbortError</code> by default. Without the abort it would print <code>in stock</code>.</p></explain>
+</question>
+
+<question id="conc-cancel-downstream" type="choice">
+<q>A request handler aborts its database query when the client disconnects. What else should happen for cancellation to be complete?</q>
+<option>Nothing else</option>
+<option correct>The signal should be passed on to every call the handler makes (fetches, other services), and those should stop their work too</option>
+<option>The server should restart</option>
+<option>The query should be retried</option>
+<explain><p>Cancellation that stops at the first layer only hides the waste: the calls further down keep running. Pass the signal all the way down.</p></explain>
+</question>
+
+<question id="conc-race-def" type="choice">
+<q>What is a race condition?</q>
+<option>Two promises passed to Promise.race</option>
+<option correct>A bug where the result depends on the timing of operations that overlap</option>
+<option>A function that runs too fast</option>
+<option>An error thrown by the event loop</option>
+<explain><p>In async JavaScript, operations overlap across <code>await</code>s. If the outcome changes with which one finishes first, that is a race condition.</p></explain>
+</question>
+
+<question id="conc-stale" type="output">
+<q>Earlier searches are slower. What does this print?</q>
+<code file="stale.js">
+const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+const search = (query) => wait(query === "ric" ? 40 : 10, `results for ${query}`);
+let shown = "";
+
+async function onType(query) {
+  shown = await search(query);
+}
+
+onType("ric");
+setTimeout(() => onType("rice 5kg"), 5);
+setTimeout(() => console.log(shown), 80);
+</code>
+<option correct>results for ric</option>
+<option>results for rice 5kg</option>
+<option>results for ric, results for rice 5kg</option>
+<option>(an empty line)</option>
+<explain><p>The answer for "rice 5kg" arrives at 15 ms and is shown, then the slower answer for "ric" arrives at 40 ms and overwrites it. This is the stale-response race.</p></explain>
+</question>
+
+<question id="conc-stale-fix" type="choice">
+<q>Which fix for stale search results also saves work on the server?</q>
+<option>Only ignoring answers whose query is not the latest</option>
+<option correct>Aborting the previous request when a new search starts (and still ignoring any old answer that slips through)</option>
+<option>Adding a setTimeout before showing results</option>
+<option>Running the searches with Promise.all</option>
+<explain><p>Ignoring stale answers fixes the display. Aborting also closes the old request, so neither side keeps working on it. Combine both, because some APIs cannot be cancelled.</p></explain>
+</question>
+
+<question id="conc-check-then-act" type="output">
+<q>What does this print?</q>
+<code file="check-act.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const seats = { "12A": null };
+
+async function book(seat, name) {
+  if (seats[seat] !== null) return `${name}: seat taken`;
+  await wait(10);
+  seats[seat] = name;
+  return `${name}: booked`;
+}
+
+console.log(await Promise.all([book("12A", "Ada"), book("12A", "Bola")]));
+console.log(seats["12A"]);
+</code>
+<option correct>[ 'Ada: booked', 'Bola: booked' ]
+Bola</option>
+<option>[ 'Ada: booked', 'Bola: seat taken' ]
+Ada</option>
+<option>[ 'Ada: seat taken', 'Bola: booked' ]
+Bola</option>
+<option>[ 'Ada: booked', 'Bola: booked' ]
+Ada</option>
+<explain><p>Both checks ran before either booking was written, so both passed: check-then-act. Both customers were told "booked", and Bola's write overwrote Ada's.</p></explain>
+</question>
+
+<question id="conc-db-lock" type="choice">
+<q>A wallet service runs on four server processes. Why is an in-process mutex not enough to stop double withdrawals?</q>
+<option>Mutexes do not work with async functions</option>
+<option correct>Each process has its own mutex, so two requests handled by different processes do not wait for each other; the database must enforce the rule (a transaction with a lock or a conditional update)</option>
+<option>The mutex makes withdrawals too slow</option>
+<option>It is enough</option>
+<explain><p>An in-process lock only coordinates code in one process. Shared state in a database needs the database's guarantees, or a distributed lock.</p></explain>
+</question>
+
+<question id="conc-mutex-output" type="output">
+<q>What does this print?</q>
+<code file="mutex.js">
+function createMutex() {
+  let last = Promise.resolve();
+  return (job) => {
+    const result = last.then(() => job());
+    last = result.catch(() => {});
+    return result;
+  };
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const exclusive = createMutex();
+const log = [];
+
+await Promise.allSettled([
+  exclusive(async () => { log.push("A start"); await wait(20); throw new Error("A failed"); }),
+  exclusive(async () => { log.push("B start"); await wait(5); log.push("B end"); }),
+]);
+console.log(log);
+</code>
+<option correct>[ 'A start', 'B start', 'B end' ]</option>
+<option>[ 'A start', 'B start' ]</option>
+<option>[ 'B start', 'B end', 'A start' ]</option>
+<option>[ 'A start' ]</option>
+<explain><p>B waits for A to finish. A fails, but <code>last = result.catch(() =&gt; {})</code> keeps the chain going, so B still runs. Without that <code>catch</code>, one failed job would block every later job.</p></explain>
+</question>
+
+<question id="conc-stampede" type="choice">
+<q>A price is cached for a minute. When the cache expires, 200 requests arrive at once and all query the database. What is this, and what is the fix?</q>
+<option>A deadlock; add a timeout</option>
+<option correct>A cache stampede; coalesce requests by sharing the in-flight promise for the same key</option>
+<option>A memory leak; clear the cache</option>
+<option>A stale response; abort old requests</option>
+<explain><p>Request coalescing ("single flight") lets the first caller start the lookup and makes later callers await the same promise, so 200 requests cause one query.</p></explain>
+</question>
+
+<question id="conc-coalesce-output" type="output">
+<q>What does this print?</q>
+<code file="coalesce.js">
+let queries = 0;
+const inFlight = new Map();
+
+function getStock(sku) {
+  if (!inFlight.has(sku)) {
+    const p = new Promise((resolve) => setTimeout(() => { queries++; resolve(12); }, 10))
+      .finally(() => inFlight.delete(sku));
+    inFlight.set(sku, p);
+  }
+  return inFlight.get(sku);
+}
+
+await Promise.all([getStock("rice"), getStock("rice"), getStock("oil")]);
+await getStock("rice");
+console.log(queries);
+</code>
+<option correct>3</option>
+<option>4</option>
+<option>2</option>
+<option>1</option>
+<explain><p>The first two rice calls share one query; oil has its own: 2. After they finish, <code>finally</code> removes the entries, so the last rice call starts a new query: 3.</p></explain>
+</question>
+
+<question id="conc-coalesce-finally" type="choice">
+<q>Why does the coalescing map delete its entry in <code>finally</code>, not only after success?</q>
+<option>finally runs faster than then</option>
+<option correct>So a failed lookup is not cached forever: the next caller retries instead of getting the same rejection again</option>
+<option>So the value is cached for longer</option>
+<option>Because delete throws inside then</option>
+<explain><p>If a failed promise stayed in the map, every later caller would receive that same failure. Removing it either way makes the map hold only lookups that are still in progress.</p></explain>
+</question>
+
+<question id="conc-test-order" type="choice">
+<q>How can a test make a stale-response bug happen every time instead of occasionally?</q>
+<option>Run the test 1,000 times</option>
+<option>Use longer real timers</option>
+<option correct>Use deferred promises (Promise.withResolvers) for the fake requests and resolve them in the order the test chooses</option>
+<option>Remove all awaits</option>
+<explain><p>When the test controls when each fake request completes, the problematic order is forced deterministically, and the fix can be proven.</p></explain>
+</question>
+
+<question id="conc-cancel-log" type="choice">
+<q>Should a cancelled search be logged as an error?</q>
+<option>Yes, every rejection is an error</option>
+<option correct>No: cancellation is expected behaviour; recognise it (by the signal or error name) and do not report it as a failure</option>
+<option>Yes, at the highest severity</option>
+<option>Only in production</option>
+<explain><p>Logging normal cancellations as errors floods the logs and hides real failures. Check <code>signal.aborted</code> or the error's <code>name</code> first.</p></explain>
+</question>
+
+<question id="conc-code-pool" type="code" file="pool.js">
+<q><p>Finish <code>mapWithLimit(items, limit, fn)</code>: run at most <code>limit</code> calls of <code>fn</code> at once, start the next one as soon as any finishes, and return the results in input order.</p></q>
+<starter>
+async function mapWithLimit(items, limit, fn) {
+  // your code here
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let running = 0;
+let peak = 0;
+const out = await mapWithLimit([5, 1, 4, 2, 3, 1], 2, async (ms) => {
+  running++;
+  peak = Math.max(peak, running);
+  await wait(ms);
+  running--;
+  return ms * 10;
+});
+console.log(out, "peak:", peak);
+</starter>
+<solution>
+async function mapWithLimit(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let running = 0;
+let peak = 0;
+const out = await mapWithLimit([5, 1, 4, 2, 3, 1], 2, async (ms) => {
+  running++;
+  peak = Math.max(peak, running);
+  await wait(ms);
+  running--;
+  return ms * 10;
+});
+console.log(out, "peak:", peak);
+</solution>
+<expected>[ 50, 10, 40, 20, 30, 10 ] peak: 2</expected>
+<explain><p>Start <code>limit</code> workers that each take the next index and await its job in a loop. Storing results by index keeps the input order.</p></explain>
+</question>
+
+<question id="conc-code-sleep" type="code" file="sleep.js">
+<q><p>Finish <code>sleep(ms, { signal })</code>: reject at once with <code>signal.reason</code> if already aborted; on abort, clear the timer and reject with the reason; on normal completion, remove the listener and resolve.</p></q>
+<starter>
+function sleep(ms, { signal } = {}) {
+  // your code here
+}
+
+const controller = new AbortController();
+setTimeout(() => controller.abort(new Error("stopped by Ada")), 10);
+console.log(await sleep(5, { signal: controller.signal }).then(() => "short sleep finished"));
+console.log(await sleep(5000, { signal: controller.signal }).catch((e) => `long sleep: ${e.message}`));
+console.log(await sleep(5, { signal: controller.signal }).catch((e) => `already aborted: ${e.message}`));
+</starter>
+<solution>
+function sleep(ms, { signal } = {}) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+const controller = new AbortController();
+setTimeout(() => controller.abort(new Error("stopped by Ada")), 10);
+console.log(await sleep(5, { signal: controller.signal }).then(() => "short sleep finished"));
+console.log(await sleep(5000, { signal: controller.signal }).catch((e) => `long sleep: ${e.message}`));
+console.log(await sleep(5, { signal: controller.signal }).catch((e) => `already aborted: ${e.message}`));
+</solution>
+<expected>
+short sleep finished
+long sleep: stopped by Ada
+already aborted: stopped by Ada
+</expected>
+<explain><p>The three cases are the three rules of a cancellable function: finish normally and clean up, stop on abort, and fail at once if already aborted.</p></explain>
+</question>
+
+<question id="conc-code-latest" type="code" file="latest.js">
+<q><p>Fix <code>onType</code> so an older, slower answer can never overwrite a newer one: give each call an increasing id and only show the result if it is still the latest call.</p></q>
+<starter>
+const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+const search = (query) => wait(50 - query.length * 5, `results for ${query}`);
+let shown = "";
+
+async function onType(query) {
+  shown = await search(query);
+}
+
+onType("ric");
+setTimeout(() => onType("rice"), 2);
+setTimeout(() => onType("rice 5kg"), 4);
+setTimeout(() => console.log(shown), 100);
+</starter>
+<solution>
+const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+const search = (query) => wait(50 - query.length * 5, `results for ${query}`);
+let shown = "";
+let latest = 0;
+
+async function onType(query) {
+  const id = ++latest;
+  const results = await search(query);
+  if (id === latest) shown = results;
+}
+
+onType("ric");
+setTimeout(() => onType("rice"), 2);
+setTimeout(() => onType("rice 5kg"), 4);
+setTimeout(() => console.log(shown), 100);
+</solution>
+<expected>results for rice 5kg</expected>
+<explain><p>Each call remembers its own id. After the <code>await</code>, a newer call may have started; comparing with <code>latest</code> drops the stale answer.</p></explain>
+</question>
+
+<question id="conc-code-mutex" type="code" file="mutex.js">
+<q><p>Finish <code>createMutex()</code> so that <code>exclusive(job)</code> runs jobs one at a time in arrival order, and a failed job does not block the next. The two withdrawals must no longer both succeed.</p></q>
+<starter>
+function createMutex() {
+  // your code here
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const account = { balance: 10000 };
+async function withdraw(amount) {
+  const balance = account.balance;
+  await wait(10);
+  if (balance < amount) throw new Error("insufficient funds");
+  account.balance = balance - amount;
+  return `withdrew ${amount}`;
+}
+
+const exclusive = createMutex();
+const results = await Promise.allSettled([exclusive(() => withdraw(8000)), exclusive(() => withdraw(8000))]);
+console.log(results.map((r) => r.value ?? r.reason.message), account.balance);
+</starter>
+<solution>
+function createMutex() {
+  let last = Promise.resolve();
+  return function exclusive(job) {
+    const result = last.then(() => job());
+    last = result.catch(() => {});
+    return result;
+  };
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const account = { balance: 10000 };
+async function withdraw(amount) {
+  const balance = account.balance;
+  await wait(10);
+  if (balance < amount) throw new Error("insufficient funds");
+  account.balance = balance - amount;
+  return `withdrew ${amount}`;
+}
+
+const exclusive = createMutex();
+const results = await Promise.allSettled([exclusive(() => withdraw(8000)), exclusive(() => withdraw(8000))]);
+console.log(results.map((r) => r.value ?? r.reason.message), account.balance);
+</solution>
+<expected>[ 'withdrew 8000', 'insufficient funds' ] 2000</expected>
+<explain><p>Chaining each job onto the previous one serialises them, so the second withdrawal reads the balance after the first has written it. The <code>catch</code> keeps the chain alive after a failure.</p></explain>
+</question>
+
+<question id="conc-code-timeout" type="code" file="timeout.js">
+<q><p>Finish <code>loadStock(sku, signal)</code> so it passes a signal to <code>slowWarehouse</code> that aborts when the caller's signal aborts <em>or</em> after 30 ms. Report a timeout as <code>timeout</code> and a user cancel as <code>cancelled: REASON</code>.</p></q>
+<starter>
+function slowWarehouse(sku, { signal }) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(`${sku}: 12 in stock`), 200);
+    signal.addEventListener("abort", () => (clearTimeout(timer), reject(signal.reason)), { once: true });
+  });
+}
+
+async function loadStock(sku, userSignal) {
+  // your code here
+}
+
+console.log(await loadStock("rice-5kg", new AbortController().signal));
+const leaving = new AbortController();
+setTimeout(() => leaving.abort(new Error("page closed")), 5);
+console.log(await loadStock("rice-5kg", leaving.signal));
+</starter>
+<solution>
+function slowWarehouse(sku, { signal }) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(`${sku}: 12 in stock`), 200);
+    signal.addEventListener("abort", () => (clearTimeout(timer), reject(signal.reason)), { once: true });
+  });
+}
+
+async function loadStock(sku, userSignal) {
+  const signal = AbortSignal.any([userSignal, AbortSignal.timeout(30)]);
+  try {
+    return await slowWarehouse(sku, { signal });
+  } catch (error) {
+    if (error.name === "TimeoutError") return "timeout";
+    if (userSignal.aborted) return `cancelled: ${userSignal.reason.message}`;
+    throw error;
+  }
+}
+
+console.log(await loadStock("rice-5kg", new AbortController().signal));
+const leaving = new AbortController();
+setTimeout(() => leaving.abort(new Error("page closed")), 5);
+console.log(await loadStock("rice-5kg", leaving.signal));
+</solution>
+<expected>
+timeout
+cancelled: page closed
+</expected>
+<explain><p><code>AbortSignal.any</code> combines the caller's signal with a timeout signal. The reason tells you which one fired: a <code>TimeoutError</code>, or the caller's own reason.</p></explain>
+</question>
+
+<question id="conc-code-coalesce" type="code" file="coalesce.js">
+<q><p>Finish <code>getRate(currency)</code> so that concurrent calls for the same currency share one lookup, and the entry is removed when the lookup ends.</p></q>
+<starter>
+let lookups = 0;
+const fetchRate = (currency) =>
+  new Promise((resolve) => setTimeout(() => { lookups++; resolve(currency === "USD" ? 1540 : 1680); }, 10));
+
+const inFlight = new Map();
+function getRate(currency) {
+  // your code here
+}
+
+const rates = await Promise.all([getRate("USD"), getRate("USD"), getRate("GBP"), getRate("USD")]);
+console.log(rates, "lookups:", lookups, "in flight after:", inFlight.size);
+</starter>
+<solution>
+let lookups = 0;
+const fetchRate = (currency) =>
+  new Promise((resolve) => setTimeout(() => { lookups++; resolve(currency === "USD" ? 1540 : 1680); }, 10));
+
+const inFlight = new Map();
+function getRate(currency) {
+  if (!inFlight.has(currency)) {
+    inFlight.set(currency, fetchRate(currency).finally(() => inFlight.delete(currency)));
+  }
+  return inFlight.get(currency);
+}
+
+const rates = await Promise.all([getRate("USD"), getRate("USD"), getRate("GBP"), getRate("USD")]);
+console.log(rates, "lookups:", lookups, "in flight after:", inFlight.size);
+</solution>
+<expected>[ 1540, 1540, 1680, 1540 ] lookups: 2 in flight after: 0</expected>
+<explain><p>The first caller for a key stores the promise; later callers get the same promise. <code>finally</code> removes it when done, so the map only holds lookups in progress.</p></explain>
+</question>
+
+<question id="conc-code-stoppable" type="code" file="stoppable.js">
+<q><p>Add a <code>signal</code> option to the pool: each worker must call <code>signal?.throwIfAborted()</code> before taking the next item, so aborting stops new jobs. The campaign is stopped after the first few emails.</p></q>
+<starter>
+async function mapWithLimit(items, limit, fn, { signal } = {}) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const sent = [];
+const campaign = new AbortController();
+setTimeout(() => campaign.abort(new Error("stopped: wrong price")), 25);
+
+const customers = Array.from({ length: 50 }, (_, i) => i + 1);
+const outcome = await mapWithLimit(customers, 2, async (id) => { await wait(10); sent.push(id); }, { signal: campaign.signal })
+  .then(() => "all sent", (error) => error.message);
+console.log(outcome, "| sent fewer than 10:", sent.length < 10);
+</starter>
+<solution>
+async function mapWithLimit(items, limit, fn, { signal } = {}) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      signal?.throwIfAborted();
+      const index = next++;
+      results[index] = await fn(items[index]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const sent = [];
+const campaign = new AbortController();
+setTimeout(() => campaign.abort(new Error("stopped: wrong price")), 25);
+
+const customers = Array.from({ length: 50 }, (_, i) => i + 1);
+const outcome = await mapWithLimit(customers, 2, async (id) => { await wait(10); sent.push(id); }, { signal: campaign.signal })
+  .then(() => "all sent", (error) => error.message);
+console.log(outcome, "| sent fewer than 10:", sent.length < 10);
+</solution>
+<expected>stopped: wrong price | sent fewer than 10: true</expected>
+<explain><p>Checking the signal before each new job makes the pool stop starting work as soon as the campaign is aborted, and the pool rejects with the abort reason.</p></explain>
+</question>

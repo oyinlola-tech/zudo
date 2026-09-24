@@ -1,0 +1,659 @@
+<question id="col-leak" type="choice">
+<q>A service caches each request's cart object in a module-level <code>Map</code> and never deletes entries. Why is this a memory leak?</q>
+<option>Because <code>Map</code> copies every object it stores</option>
+<option correct>The map refers to every cart, so none of them can be freed after its request ends, and the map grows with every request</option>
+<option>Because maps are slower than objects</option>
+<option>It is not a leak: the garbage collector removes old map entries automatically</option>
+<explain><p>A <code>Map</code> holds its keys and values strongly. Anything reachable from a long-lived map stays in memory until you delete it.</p></explain>
+</question>
+
+<question id="col-samevaluezero" type="output">
+<q>What does this print?</q>
+<code file="svz.js">
+const prices = new Map([[NaN, "unknown"], [0, "free"]]);
+console.log(prices.get(NaN), prices.get(-0), new Set([NaN, NaN, 0, -0]).size);
+</code>
+<option>undefined free 4</option>
+<option>unknown undefined 3</option>
+<option correct>unknown free 2</option>
+<option>undefined undefined 4</option>
+<explain><p>Maps and sets use SameValueZero: <code>NaN</code> equals <code>NaN</code>, and <code>0</code> equals <code>-0</code>. So the set holds just <code>NaN</code> and <code>0</code>.</p></explain>
+</question>
+
+<question id="col-object-key-identity" type="output">
+<q>What does this print?</q>
+<code file="identity.js">
+const fees = new Map();
+fees.set(["RICE", "Lagos"], 150000);
+const key = ["OIL", "Lagos"];
+fees.set(key, 50000);
+console.log(fees.get(["RICE", "Lagos"]), fees.get(key), fees.size);
+</code>
+<option>150000 50000 2</option>
+<option correct>undefined 50000 2</option>
+<option>undefined undefined 2</option>
+<option>150000 50000 1</option>
+<explain><p>Array keys are compared by identity. The literal in <code>get</code> creates a new array, so it never matches. Only the stored <code>key</code> object finds its entry.</p></explain>
+</question>
+
+<question id="col-composite-key" type="choice">
+<q>What is a safe way to key delivery fees by product <em>and</em> city, where city names are free text typed by staff?</q>
+<option><code>map.set([sku, city], fee)</code></option>
+<option><code>map.set(sku + city, fee)</code></option>
+<option correct>Nested maps (product → city → fee), or a key built with <code>JSON.stringify([sku, city])</code></option>
+<option><code>map.set({ sku, city }, fee)</code></option>
+<explain><p>Arrays and objects are keyed by identity. Plain concatenation can merge different pairs ("ab"+"c" and "a"+"bc"). Nested maps and JSON-encoded pairs keep the parts distinct.</p></explain>
+</question>
+
+<question id="col-separator" type="output">
+<q>What does this print?</q>
+<code file="separator.js">
+const keyOf = (a, b) => `${a}|${b}`;
+console.log(keyOf("a|b", "") === keyOf("a", "b|"), JSON.stringify(["a|b", ""]) === JSON.stringify(["a", "b|"]));
+</code>
+<option>false false</option>
+<option correct>true false</option>
+<option>true true</option>
+<option>false true</option>
+<explain><p>Both concatenations produce <code>"a|b|"</code>. <code>JSON.stringify</code> quotes each part, so the two pairs stay different.</p></explain>
+</question>
+
+<question id="col-set-existing" type="output">
+<q>What does this print?</q>
+<code file="order.js">
+const recent = new Map([["RICE", 1], ["OIL", 2], ["SALT", 3]]);
+recent.set("RICE", 10);
+const a = [...recent.keys()].join(",");
+recent.delete("OIL");
+recent.set("OIL", 20);
+console.log(a, [...recent.keys()].join(","));
+</code>
+<option>OIL,SALT,RICE RICE,SALT,OIL</option>
+<option correct>RICE,OIL,SALT RICE,SALT,OIL</option>
+<option>RICE,OIL,SALT RICE,OIL,SALT</option>
+<option>SALT,OIL,RICE OIL,SALT,RICE</option>
+<explain><p>Setting an existing key keeps its position. Deleting and adding it again moves it to the end.</p></explain>
+</question>
+
+<question id="col-first-key" type="choice">
+<q>In an LRU cache built on a <code>Map</code>, why is <code>map.keys().next().value</code> the key to evict?</q>
+<option>Because maps are sorted alphabetically</option>
+<option correct>Every read and write deletes and re-adds its key, moving it to the end, so the first key in insertion order is the least recently used</option>
+<option>Because <code>next()</code> returns a random key</option>
+<option>Because the first key is always the smallest</option>
+<explain><p>Insertion order plus "move to the end on use" gives a recency order for free, and reading the first key is O(1).</p></explain>
+</question>
+
+<question id="col-mutate-loop" type="output">
+<q>What does this print?</q>
+<code file="loop.js">
+const queue = new Map([["A", 1], ["B", 2], ["C", 3]]);
+const visited = [];
+for (const [key] of queue) {
+  visited.push(key);
+  if (key === "A") {
+    queue.delete("B");
+    queue.set("D", 4);
+  }
+}
+console.log(visited.join(""));
+</code>
+<option>ABC</option>
+<option>AC</option>
+<option correct>ACD</option>
+<option>ABCD</option>
+<explain><p>An entry deleted before the loop reaches it is skipped, and an entry added during the loop is visited later in the same loop.</p></explain>
+</question>
+
+<question id="col-snapshot" type="choice">
+<q>A loop over a <code>Set</code> must add new items to that same set as it goes. How do you make sure it only visits the items that were there at the start?</q>
+<option>Use <code>forEach</code> instead of <code>for...of</code></option>
+<option correct>Iterate over a snapshot, <code>for (const x of [...set])</code>, and add to the real set</option>
+<option>Nothing is needed; new items are never visited</option>
+<option>Freeze the set first</option>
+<explain><p>Items added during iteration are visited, so a loop that keeps adding can run forever. A copied array fixes the list of items to visit.</p></explain>
+</question>
+
+<question id="col-lru-trace" type="output">
+<q>An LRU cache holds at most 2 keys; <code>get</code> moves a key to the most recent position. What does this print?</q>
+<code file="lru.js">
+const cache = new Map();
+const MAX = 2;
+function use(key) {
+  if (cache.has(key)) cache.delete(key);
+  cache.set(key, true);
+  if (cache.size > MAX) cache.delete(cache.keys().next().value);
+}
+["RICE", "OIL", "RICE", "SALT"].forEach(use);
+console.log([...cache.keys()].join(","));
+</code>
+<option>OIL,SALT</option>
+<option correct>RICE,SALT</option>
+<option>RICE,OIL</option>
+<option>SALT,RICE</option>
+<explain><p>After RICE, OIL, RICE the order is OIL, RICE. SALT makes three keys, so the oldest, OIL, is evicted.</p></explain>
+</question>
+
+<question id="col-lru-undefined" type="choice">
+<q>A cache's <code>get</code> decides "hit or miss" with <code>if (value !== undefined)</code>. A product's cached price can be <code>0</code> and some cached lookups are legitimately <code>undefined</code>. What goes wrong?</q>
+<option>Nothing</option>
+<option correct>Cached <code>undefined</code> values are treated as misses and recomputed every time; use <code>has(key)</code> to decide instead</option>
+<option>Prices of 0 are treated as misses</option>
+<option>The cache evicts the wrong entry</option>
+<explain><p><code>!== undefined</code> handles 0 correctly but not cached <code>undefined</code>. A truthiness check (<code>if (value)</code>) would also get 0 wrong. <code>has</code> answers the real question.</p></explain>
+</question>
+
+<question id="col-working-set" type="choice">
+<q>An LRU cache has room for 3 products, and customers keep cycling through the same 4 products in order. What happens?</q>
+<option>The hit rate is about 75%</option>
+<option correct>Almost every request misses, because each new product evicts the one that will be needed next</option>
+<option>The cache grows to 4 entries</option>
+<option>Every request hits after the first round</option>
+<explain><p>LRU works when the working set fits in the cache. Size it for the keys in active use, and measure the hit rate.</p></explain>
+</question>
+
+<question id="col-ttl" type="choice">
+<q>What does a time-to-live (TTL) on cache entries bound?</q>
+<option>The memory used by the cache</option>
+<option correct>How stale a cached value can be: after the TTL, the next read goes back to the source</option>
+<option>The number of hits</option>
+<option>The size of each key</option>
+<explain><p>A size limit bounds memory; a TTL bounds staleness. Deleting an entry when its data changes makes it fresh immediately.</p></explain>
+</question>
+
+<question id="col-set-like" type="output">
+<q>What does this print?</q>
+<code file="set-like.js">
+const inCart = new Set(["RICE", "OIL", "SALT"]);
+const stock = new Map([["RICE", 4], ["BEANS", 0], ["OIL", 2]]);
+console.log([...inCart.intersection(stock)], [...inCart.difference(stock)]);
+</code>
+<option>TypeError: stock is not a Set</option>
+<option correct>[ 'RICE', 'OIL' ] [ 'SALT' ]</option>
+<option>[ 'RICE', 'OIL', 'BEANS' ] [ 'SALT' ]</option>
+<option>[ 'RICE' ] [ 'SALT', 'OIL' ]</option>
+<explain><p>The set methods accept any set-like object: one with <code>size</code>, <code>has</code> and <code>keys</code>. A <code>Map</code> qualifies, using its keys. BEANS is in the map but not in the cart, so it is not in the intersection.</p></explain>
+</question>
+
+<question id="col-array-not-set-like" type="choice">
+<q>Why does <code>new Set(["A"]).union(["B"])</code> throw a <code>TypeError</code>?</q>
+<option>Because <code>union</code> only works with numbers</option>
+<option correct>An array is not set-like: it has no <code>size</code> property (and no <code>has</code>), so the method rejects it</option>
+<option>Because the set is empty</option>
+<option>Because <code>union</code> is not supported in Node.js</option>
+<explain><p>Wrap the array first: <code>set.union(new Set(array))</code>. The error message, "The .size property is NaN", comes from reading <code>undefined</code> as a size.</p></explain>
+</question>
+
+<question id="col-dedupe-objects" type="output">
+<q>What does this print?</q>
+<code file="dedupe.js">
+const events = [
+  { id: "ORD-1", status: "pending" },
+  { id: "ORD-2", status: "paid" },
+  { id: "ORD-1", status: "paid" },
+];
+const byId = new Map(events.map((e) => [e.id, e]));
+console.log(new Set(events).size, [...byId.values()].map((e) => `${e.id}:${e.status}`).join(" "));
+</code>
+<option>2 ORD-1:pending ORD-2:paid</option>
+<option correct>3 ORD-1:paid ORD-2:paid</option>
+<option>3 ORD-2:paid ORD-1:paid</option>
+<option>2 ORD-1:paid ORD-2:paid</option>
+<explain><p>A set compares objects by identity, so all three stay. The map keyed by id lets the later event overwrite the value while ORD-1 keeps its first position.</p></explain>
+</question>
+
+<question id="col-groupby" type="output">
+<q>What does this print?</q>
+<code file="group.js">
+const orders = [
+  { id: 1, total: 900 },
+  { id: 2, total: 200 },
+  { id: 3, total: 1200 },
+];
+const byObject = Object.groupBy(orders, (o) => o.total >= 800);
+const byMap = Map.groupBy(orders, (o) => o.total >= 800);
+console.log(Object.keys(byObject), byMap.get(true).map((o) => o.id));
+</code>
+<option>[ true, false ] [ 1, 3 ]</option>
+<option correct>[ 'true', 'false' ] [ 1, 3 ]</option>
+<option>[ 'true', 'false' ] undefined</option>
+<option>[ 'false', 'true' ] [ 1, 3 ]</option>
+<explain><p><code>Object.groupBy</code> turns keys into strings; <code>Map.groupBy</code> keeps the real boolean keys. Groups appear in the order their key was first seen.</p></explain>
+</question>
+
+<question id="col-json" type="output">
+<q>What does this print?</q>
+<code file="json.js">
+const stock = new Map([["RICE", 4]]);
+const tags = new Set(["sale"]);
+console.log(JSON.stringify({ stock, tags }), JSON.stringify({ stock: Object.fromEntries(stock), tags: [...tags] }));
+</code>
+<option>{"stock":{"RICE":4},"tags":["sale"]} {"stock":{"RICE":4},"tags":["sale"]}</option>
+<option correct>{"stock":{},"tags":{}} {"stock":{"RICE":4},"tags":["sale"]}</option>
+<option>TypeError: cannot serialise Map</option>
+<option>{"stock":[["RICE",4]],"tags":["sale"]} {"stock":{"RICE":4},"tags":["sale"]}</option>
+<explain><p><code>JSON.stringify</code> sees maps and sets as objects with no own enumerable properties and prints <code>{}</code>, without an error. Convert them explicitly.</p></explain>
+</question>
+
+<question id="col-structured-clone" type="choice">
+<q>How do you copy a <code>Map</code> of sets so that changing the copy's inner sets does not change the original?</q>
+<option><code>new Map(original)</code></option>
+<option><code>{ ...original }</code></option>
+<option correct><code>structuredClone(original)</code></option>
+<option><code>JSON.parse(JSON.stringify(original))</code></option>
+<explain><p><code>new Map(original)</code> copies only one level: the inner sets are shared. Spread produces an empty object, and JSON loses the map entirely. <code>structuredClone</code> deep-copies maps and sets.</p></explain>
+</question>
+
+<question id="col-weakmap-keys" type="output">
+<q>What does this print?</q>
+<code file="weak-keys.js">
+const cache = new WeakMap();
+const results = [];
+for (const key of [{}, "CART-1", Symbol("local"), Symbol.for("global")]) {
+  try {
+    cache.set(key, 1);
+    results.push("ok");
+  } catch (error) {
+    results.push(error.name);
+  }
+}
+console.log(results.join(" "));
+</code>
+<option>ok ok ok ok</option>
+<option>ok TypeError TypeError TypeError</option>
+<option correct>ok TypeError ok TypeError</option>
+<option>ok TypeError ok ok</option>
+<explain><p>Weak keys must be able to die. Objects and ordinary symbols can; a string or a registered symbol from <code>Symbol.for</code> can always be recreated, so it is refused.</p></explain>
+</question>
+
+<question id="col-weakmap-no-size" type="choice">
+<q>Why does a <code>WeakMap</code> have no <code>size</code>, no <code>keys()</code> and no iteration?</q>
+<option>To make it faster</option>
+<option correct>Entries can disappear whenever the garbage collector runs; exposing the contents would make program behaviour depend on when collection happens</option>
+<option>Because its keys are secret</option>
+<option>Because it stores only one entry</option>
+<explain><p>Hiding the contents is what lets the engine drop entries freely. You can only ask about a key you already hold.</p></explain>
+</question>
+
+<question id="col-weakmap-fit" type="choice">
+<q>Which cache is a good fit for a <code>WeakMap</code>?</q>
+<option>Product prices keyed by SKU string</option>
+<option correct>A computed total keyed by a cart object, needed only while that cart is in use</option>
+<option>Exchange rates keyed by currency code</option>
+<option>User sessions keyed by session id</option>
+<explain><p>WeakMaps need object keys, and they shine when the key object defines how long the data is useful. Primitive keys need a Map with a size limit and TTL.</p></explain>
+</question>
+
+<question id="col-mutable-key" type="choice">
+<q>A cart total is cached in a <code>WeakMap</code> keyed by the cart object. Code then pushes a new line into the same cart. What does the cache return next time?</q>
+<option>The new total, because the cache notices the change</option>
+<option correct>The old total, because the key is still the same object; make carts immutable or clear the entry when the cart changes</option>
+<option>Nothing, because changing an object removes it from WeakMaps</option>
+<option>A <code>TypeError</code></option>
+<explain><p>Identity-keyed caches cannot see changes inside the key. Immutable values (a new object for every change) make every change a new key.</p></explain>
+</question>
+
+<question id="col-metadata" type="choice">
+<q>Several middleware functions need to attach data to a frozen request object provided by a library. What does the lesson recommend?</q>
+<option>Unfreeze the request and add properties</option>
+<option>A global array of <code>[request, data]</code> pairs</option>
+<option correct>One <code>WeakMap</code> per kind of data, keyed by the request object</option>
+<option>Copy the request with spread and add properties to the copy</option>
+<explain><p>WeakMaps attach data to objects you cannot or should not modify, keep it private to the code holding the map, and let it disappear with the request.</p></explain>
+</question>
+
+<question id="col-weakset-path" type="output">
+<q>This <code>toPlain</code> marks objects on the current path in a <code>WeakSet</code>. What does it print for a shared, non-circular address?</q>
+<code file="path.js">
+function toPlain(value, seen = new WeakSet()) {
+  if (typeof value !== "object" || value === null) return value;
+  if (seen.has(value)) return "[circular]";
+  seen.add(value);
+  const out = {};
+  for (const [key, child] of Object.entries(value)) out[key] = toPlain(child, seen);
+  seen.delete(value);
+  return out;
+}
+const address = { city: "Lagos" };
+console.log(JSON.stringify(toPlain({ billing: address, shipping: address })));
+</code>
+<option>{"billing":{"city":"Lagos"},"shipping":"[circular]"}</option>
+<option correct>{"billing":{"city":"Lagos"},"shipping":{"city":"Lagos"}}</option>
+<option>{"billing":"[circular]","shipping":"[circular]"}</option>
+<option>TypeError: Converting circular structure to JSON</option>
+<explain><p>The address is removed from <code>seen</code> after the billing branch finishes, so the shipping branch visits it again. Only objects that appear on their own path are cycles.</p></explain>
+</question>
+
+<question id="col-weakref-promise" type="choice">
+<q>What does a <code>FinalizationRegistry</code> callback guarantee?</q>
+<option>It runs immediately after the object becomes unreachable</option>
+<option>It runs before the process exits</option>
+<option correct>Almost nothing: it may run some time after collection, or never, so it must not be used for program logic</option>
+<option>It runs exactly once per registered object, at a predictable time</option>
+<explain><p>Collection timing is up to the engine. Close files, release locks and save data explicitly, with <code>try...finally</code>.</p></explain>
+</question>
+
+<question id="col-weakref-deref" type="output">
+<q>What does this print?</q>
+<code file="deref.js">
+const report = { month: "2026-08" };
+const ref = new WeakRef(report);
+const again = ref.deref();
+console.log(again === report, again?.month);
+</code>
+<option>false undefined</option>
+<option correct>true 2026-08</option>
+<option>true undefined</option>
+<option>TypeError</option>
+<explain><p><code>report</code> is still referenced by a variable, so it cannot have been collected; <code>deref</code> returns the same object. After the last strong reference is gone it may return <code>undefined</code>.</p></explain>
+</question>
+
+<question id="col-record-vs-dict" type="choice">
+<q>Which should be a plain object rather than a <code>Map</code>?</q>
+<option>Products indexed by SKU</option>
+<option>Counts of views per product</option>
+<option correct>A single order with fields <code>id</code>, <code>status</code> and <code>totalKobo</code></option>
+<option>Customers indexed by email address</option>
+<explain><p>A record with a fixed set of known field names is an object. Collections of entries keyed by data are dictionaries, and <code>Map</code> fits them better.</p></explain>
+</question>
+
+<question id="col-multi-instance" type="choice">
+<q>A shop runs four Node.js processes behind a load balancer, each with an in-memory price cache. An admin changes a price and the handling process deletes its cache entry. What is the problem?</q>
+<option>The deleted entry comes back automatically</option>
+<option correct>The other three processes still serve the old price until their own entries expire; in-memory caches are per process</option>
+<option>The price change is lost</option>
+<option>Nothing; processes share memory</option>
+<explain><p>Either accept staleness up to the TTL, broadcast invalidations, or use a shared cache when instances must agree.</p></explain>
+</question>
+
+<question id="col-count-map" type="output">
+<q>What does this print?</q>
+<code file="count.js">
+const counts = new Map();
+for (const sku of ["OIL", "RICE", "OIL", "SALT", "RICE", "OIL"]) counts.set(sku, (counts.get(sku) ?? 0) + 1);
+console.log([...counts].map(([sku, n]) => `${sku}=${n}`).join(" "));
+</code>
+<option>OIL=1 RICE=1 SALT=1</option>
+<option correct>OIL=3 RICE=2 SALT=1</option>
+<option>RICE=2 OIL=3 SALT=1</option>
+<option>SALT=1 RICE=2 OIL=3</option>
+<explain><p>Updating an existing key keeps its position, so the map is in order of first appearance: OIL, RICE, SALT.</p></explain>
+</question>
+
+<question id="col-weakset-fit" type="choice">
+<q>Which job suits a <code>WeakSet</code>?</q>
+<option>Counting how many times each product was viewed</option>
+<option>Storing the ids of customers who opted out of email</option>
+<option correct>Marking request objects that have already been logged, so middleware does not log them twice</option>
+<option>Listing all active sessions for an admin page</option>
+<explain><p>A WeakSet holds objects weakly and can only answer "is this object marked?". It cannot count, hold strings or be listed.</p></explain>
+</question>
+
+<question id="col-map-vs-object-keys" type="choice">
+<q>A dictionary is keyed by product codes typed by staff, and one code is <code>"constructor"</code>. Why is a <code>Map</code> safer than a plain object here?</q>
+<option>Maps are faster for strings</option>
+<option correct>A plain object already "has" inherited keys such as <code>constructor</code> and <code>__proto__</code>, so lookups and writes can hit the prototype; a Map has no inherited keys</option>
+<option>Plain objects cannot have more than 1,000 keys</option>
+<option>Maps sort their keys</option>
+<explain><p>Keys from data belong in a Map (or an <code>Object.create(null)</code> object). Hash maps covered the full list of object traps.</p></explain>
+</question>
+
+<question id="col-promise-cache" type="choice">
+<q>Two requests ask for the same uncached, slow catalogue entry at the same moment, and both go to the database. What change makes the second request wait for the first load instead?</q>
+<option>A bigger cache</option>
+<option>A shorter TTL</option>
+<option correct>Caching the promise of the value as soon as the load starts, so the second request finds and awaits it</option>
+<option>Using a WeakMap</option>
+<explain><p>Storing the in-flight promise collapses concurrent loads into one. Remove it from the cache if the load fails, or the failure is cached too.</p></explain>
+</question>
+
+<question id="col-cache-correctness" type="choice">
+<q>Turning a cache off makes one test fail with a different total. What does that tell you?</q>
+<option>The test is wrong: caches are supposed to change results</option>
+<option correct>The cache has a bug, such as stale data or a key that is not unique enough, because a cache should only change speed, never results</option>
+<option>The cache is too small</option>
+<option>The TTL is too long, which is fine</option>
+<explain><p>A correct cache is invisible except for speed. Comparing results with the cache on and off is a good test.</p></explain>
+</question>
+
+<question id="col-code-lru" type="code" file="lru-class.js">
+<q><p>Finish the <code>LruCache</code> class: <code>get(key)</code> returns the value and marks the key as most recently used (or returns <code>undefined</code>), and <code>set(key, value)</code> stores it as most recent and evicts the least recently used key when there are more than <code>max</code> entries.</p></q>
+<starter>
+class LruCache {
+  #max;
+  #map = new Map();
+  constructor(max) { this.#max = max; }
+  get(key) {
+    // your code here
+  }
+  set(key, value) {
+    // your code here
+  }
+  keys() { return [...this.#map.keys()]; }
+}
+
+const cache = new LruCache(2);
+cache.set("RICE", 850000);
+cache.set("OIL", 320000);
+cache.get("RICE");
+cache.set("SALT", 45000);
+console.log(cache.keys(), cache.get("OIL"));
+</starter>
+<solution>
+class LruCache {
+  #max;
+  #map = new Map();
+  constructor(max) { this.#max = max; }
+  get(key) {
+    if (!this.#map.has(key)) return undefined;
+    const value = this.#map.get(key);
+    this.#map.delete(key);
+    this.#map.set(key, value);
+    return value;
+  }
+  set(key, value) {
+    this.#map.delete(key);
+    this.#map.set(key, value);
+    if (this.#map.size > this.#max) this.#map.delete(this.#map.keys().next().value);
+  }
+  keys() { return [...this.#map.keys()]; }
+}
+
+const cache = new LruCache(2);
+cache.set("RICE", 850000);
+cache.set("OIL", 320000);
+cache.get("RICE");
+cache.set("SALT", 45000);
+console.log(cache.keys(), cache.get("OIL"));
+</solution>
+<expected>[ 'RICE', 'SALT' ] undefined</expected>
+<explain><p>Delete-and-set moves a key to the end, so the first key is always the least recently used. Reading RICE saved it; OIL was evicted.</p></explain>
+</question>
+
+<question id="col-code-memo" type="code" file="memo.js">
+<q><p>Write <code>memoizeByObject(fn)</code> using a <code>WeakMap</code>, so <code>fn</code> runs at most once per object, including when it returns <code>undefined</code>. The program should print <code>2</code>.</p></q>
+<starter>
+function memoizeByObject(fn) {
+  // your code here
+}
+
+let calls = 0;
+const discount = memoizeByObject((customer) => {
+  calls += 1;
+  return customer.vip ? 1000 : undefined;
+});
+
+const ada = { vip: true };
+const bola = { vip: false };
+discount(ada); discount(ada); discount(bola); discount(bola);
+console.log(calls);
+</starter>
+<solution>
+function memoizeByObject(fn) {
+  const cache = new WeakMap();
+  return (obj) => {
+    if (cache.has(obj)) return cache.get(obj);
+    const result = fn(obj);
+    cache.set(obj, result);
+    return result;
+  };
+}
+
+let calls = 0;
+const discount = memoizeByObject((customer) => {
+  calls += 1;
+  return customer.vip ? 1000 : undefined;
+});
+
+const ada = { vip: true };
+const bola = { vip: false };
+discount(ada); discount(ada); discount(bola); discount(bola);
+console.log(calls);
+</solution>
+<expected>2</expected>
+<explain><p><code>has</code> tells "cached as undefined" apart from "not cached", so Bola's second call is a hit too.</p></explain>
+</question>
+
+<question id="col-code-group" type="code" file="group-status.js">
+<q><p>Use <code>Map.groupBy</code> to group the orders by status, then print one line per status with the number of orders and the total in naira, in order of first appearance.</p></q>
+<starter>
+const orders = [
+  { id: "ORD-1", status: "paid", totalKobo: 1250000 },
+  { id: "ORD-2", status: "pending", totalKobo: 450000 },
+  { id: "ORD-3", status: "paid", totalKobo: 800000 },
+];
+
+// your code here
+</starter>
+<solution>
+const orders = [
+  { id: "ORD-1", status: "paid", totalKobo: 1250000 },
+  { id: "ORD-2", status: "pending", totalKobo: 450000 },
+  { id: "ORD-3", status: "paid", totalKobo: 800000 },
+];
+
+for (const [status, list] of Map.groupBy(orders, (o) => o.status)) {
+  const total = list.reduce((sum, o) => sum + o.totalKobo, 0);
+  console.log(`${status}: ${list.length} orders, ₦${total / 100}`);
+}
+</solution>
+<expected>
+paid: 2 orders, ₦20500
+pending: 1 orders, ₦4500
+</expected>
+<explain><p>Each group is an array of the original objects. Iterating the map gives <code>[key, group]</code> pairs in the order keys first appeared.</p></explain>
+</question>
+
+<question id="col-code-dedupe" type="code" file="dedupe-last.js">
+<q><p>Write <code>latestById(events)</code> that returns an array with one event per <code>orderId</code>: the <strong>last</strong> one for each id, in order of each id's first appearance.</p></q>
+<starter>
+function latestById(events) {
+  // your code here
+}
+
+const events = [
+  { orderId: "ORD-1", status: "pending" },
+  { orderId: "ORD-2", status: "paid" },
+  { orderId: "ORD-1", status: "paid" },
+  { orderId: "ORD-3", status: "pending" },
+];
+console.log(latestById(events).map((e) => `${e.orderId}:${e.status}`).join(" "));
+</starter>
+<solution>
+function latestById(events) {
+  return [...new Map(events.map((event) => [event.orderId, event])).values()];
+}
+
+const events = [
+  { orderId: "ORD-1", status: "pending" },
+  { orderId: "ORD-2", status: "paid" },
+  { orderId: "ORD-1", status: "paid" },
+  { orderId: "ORD-3", status: "pending" },
+];
+console.log(latestById(events).map((e) => `${e.orderId}:${e.status}`).join(" "));
+</solution>
+<expected>ORD-1:paid ORD-2:paid ORD-3:pending</expected>
+<explain><p>Later pairs overwrite earlier values, but an existing key keeps its position, which gives exactly "last value, first position".</p></explain>
+</question>
+
+<question id="col-code-nested" type="code" file="nested-fees.js">
+<q><p>Write <code>setFee(fees, sku, city, kobo)</code> and <code>getFee(fees, sku, city)</code> using nested maps (a map from SKU to a map from city to fee). <code>getFee</code> returns <code>undefined</code> for unknown products or cities.</p></q>
+<starter>
+function setFee(fees, sku, city, kobo) {
+  // your code here
+}
+
+function getFee(fees, sku, city) {
+  // your code here
+}
+
+const fees = new Map();
+setFee(fees, "RICE", "Lagos", 150000);
+setFee(fees, "RICE", "Abuja", 250000);
+console.log(getFee(fees, "RICE", "Abuja"), getFee(fees, "RICE", "Kano"), getFee(fees, "OIL", "Lagos"), fees.get("RICE").size);
+</starter>
+<solution>
+function setFee(fees, sku, city, kobo) {
+  if (!fees.has(sku)) fees.set(sku, new Map());
+  fees.get(sku).set(city, kobo);
+}
+
+function getFee(fees, sku, city) {
+  return fees.get(sku)?.get(city);
+}
+
+const fees = new Map();
+setFee(fees, "RICE", "Lagos", 150000);
+setFee(fees, "RICE", "Abuja", 250000);
+console.log(getFee(fees, "RICE", "Abuja"), getFee(fees, "RICE", "Kano"), getFee(fees, "OIL", "Lagos"), fees.get("RICE").size);
+</solution>
+<expected>250000 undefined undefined 2</expected>
+<explain><p>Optional chaining (<code>?.</code>) returns <code>undefined</code> when the product has no inner map, instead of throwing.</p></explain>
+</question>
+
+<question id="col-code-set-like" type="code" file="never-ordered.js">
+<q><p>Print the customers who have an open cart but no entry in <code>lastOrder</code>, using a set method with the map as its argument.</p></q>
+<starter>
+const openCart = new Set(["CUS-1", "CUS-2", "CUS-3"]);
+const lastOrder = new Map([["CUS-2", "2026-08-30"], ["CUS-9", "2026-01-01"]]);
+
+// your code here
+</starter>
+<solution>
+const openCart = new Set(["CUS-1", "CUS-2", "CUS-3"]);
+const lastOrder = new Map([["CUS-2", "2026-08-30"], ["CUS-9", "2026-01-01"]]);
+
+console.log([...openCart.difference(lastOrder)]);
+</solution>
+<expected>[ 'CUS-1', 'CUS-3' ]</expected>
+<explain><p>A map is set-like through its keys, so <code>difference</code> works directly without building a set of ids.</p></explain>
+</question>
+
+<question id="col-code-json" type="code" file="stock-json.js">
+<q><p>Convert the stock <code>Map</code> and the tags <code>Set</code> to JSON so no data is lost, then parse the JSON back into a <code>Map</code> and a <code>Set</code> and print <code>2 true</code>.</p></q>
+<starter>
+const stock = new Map([["RICE", 4], ["OIL", 2]]);
+const tags = new Set(["sale", "new"]);
+
+const body = JSON.stringify({ stock, tags }); // fix this line
+
+const parsed = JSON.parse(body);
+// rebuild restoredStock and restoredTags here
+
+console.log(restoredStock.get("OIL"), restoredTags.has("sale"));
+</starter>
+<solution>
+const stock = new Map([["RICE", 4], ["OIL", 2]]);
+const tags = new Set(["sale", "new"]);
+
+const body = JSON.stringify({ stock: Object.fromEntries(stock), tags: [...tags] });
+
+const parsed = JSON.parse(body);
+const restoredStock = new Map(Object.entries(parsed.stock));
+const restoredTags = new Set(parsed.tags);
+
+console.log(restoredStock.get("OIL"), restoredTags.has("sale"));
+</solution>
+<expected>2 true</expected>
+<explain><p>JSON only knows objects and arrays. <code>Object.fromEntries</code> and spread convert on the way out; <code>Object.entries</code> and the constructors rebuild on the way in.</p></explain>
+</question>
