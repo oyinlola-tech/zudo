@@ -231,7 +231,8 @@ export function checkNode(lessons, { log = console.log, only = null, root = null
       if (ex.check === "tsc-error") {
         const r = runMerged(`${join(bin, "tsc")} --noEmit --pretty`, dir);
         const got = applyMasks(normalize(r.text), ex.mask);
-        const want = ex.expected ? applyMasks(normalize(ex.expected), ex.mask) : null;
+        /* No <output> at all: only "tsc fails" is checked. An empty <output> is compared like any other. */
+        const want = ex.expected !== null ? applyMasks(normalize(ex.expected), ex.mask) : null;
         const ok = r.status !== 0 && (want === null || want === got);
         results.push({ label, ok, detail: ok ? "" : r.status === 0 ? "expected a type error, tsc passed" : diff(want, got) });
         rmSync(target);

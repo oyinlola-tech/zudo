@@ -1,0 +1,827 @@
+<question id="comp-fragile-define" type="choice">
+<q>What is the <strong>fragile base class problem</strong>?</q>
+<option>A base class that throws too many errors</option>
+<option correct>A subclass breaks when its parent changes internally, even though the parent's own behaviour stays correct</option>
+<option>A base class that cannot be extended because its fields are private</option>
+<option>A class hierarchy that uses too much memory</option>
+<explain><p>The parent's author refactors something that callers of the parent cannot notice, such as whether <code>addItems</code> calls <code>addItem</code>. A subclass that depended on that detail breaks without being touched.</p></explain>
+</question>
+
+<question id="comp-double-points" type="output">
+<q>What does this print?</q>
+<code file="double.js">
+class Cart {
+  items = [];
+  addItem(item) { this.items.push(item); }
+  addItems(items) { for (const item of items) this.addItem(item); }
+}
+
+class PointsCart extends Cart {
+  points = 0;
+  addItem(item) { this.points += 1; super.addItem(item); }
+  addItems(items) { this.points += items.length; super.addItems(items); }
+}
+
+const cart = new PointsCart();
+cart.addItems(["rice", "oil", "salt"]);
+console.log(cart.items.length, cart.points);
+</code>
+<option>3 3</option>
+<option correct>3 6</option>
+<option>6 6</option>
+<option>3 0</option>
+<explain><p><code>PointsCart.addItems</code> adds 3 points, then the parent's <code>addItems</code> calls <code>this.addItem</code> three times. <code>this</code> is the points cart, so the override runs and adds 3 more points.</p></explain>
+</question>
+
+<question id="comp-refactor-breaks" type="output">
+<q>The subclass only overrides <code>addItem</code>. Then the parent is changed as shown. What does this print?</q>
+<code file="refactor.js">
+class Cart {
+  items = [];
+  addItem(item) { this.items.push(item); }
+  addItems(items) { this.items.push(...items); }
+}
+
+class PointsCart extends Cart {
+  points = 0;
+  addItem(item) { this.points += 1; super.addItem(item); }
+}
+
+const cart = new PointsCart();
+cart.addItem("rice");
+cart.addItems(["oil", "salt"]);
+console.log(cart.items.length, cart.points);
+</code>
+<option>3 3</option>
+<option correct>3 1</option>
+<option>1 1</option>
+<option>3 0</option>
+<explain><p>The new <code>addItems</code> pushes directly instead of calling <code>addItem</code>, so the override never runs for the bulk add. Only the single <code>addItem("rice")</code> earns a point.</p></explain>
+</question>
+
+<question id="comp-three-things" type="choice">
+<q>Which of these does a subclass <strong>not</strong> get from <code>extends</code>?</q>
+<option>The parent's public methods</option>
+<option>The parent's method code running with <code>this</code> set to the subclass instance</option>
+<option>Calls from inside the parent's methods to <code>this.method()</code> reaching the subclass's overrides</option>
+<option correct>Access to the parent's <code>#private</code> fields</option>
+<explain><p>Private fields belong to the class body that declares them; even a subclass cannot read them. The other three are exactly what makes subclasses coupled to their parents.</p></explain>
+</question>
+
+<question id="comp-liskov" type="choice">
+<q>A <code>ReadOnlyAccount extends Account</code> overrides <code>deposit()</code> to throw. Why is this a poor use of inheritance?</q>
+<option>Because <code>extends</code> cannot override methods that change state</option>
+<option correct>Code that works with any <code>Account</code> and calls <code>deposit</code> breaks when handed a <code>ReadOnlyAccount</code>, even though <code>instanceof Account</code> is true</option>
+<option>Because throwing inside a method is not allowed in classes</option>
+<option>Because the subclass uses more memory than the parent</option>
+<explain><p>The Liskov substitution principle: a subclass must keep the promises its parent makes to callers. Sounding like "a kind of account" in English is not enough.</p></explain>
+</question>
+
+<question id="comp-wrapper-output" type="output">
+<q>What does this print?</q>
+<code file="wrapper.js">
+class Cart {
+  items = [];
+  addItem(item) { this.items.push(item); }
+  addItems(items) { for (const item of items) this.addItem(item); }
+}
+
+class PointsCart {
+  #cart;
+  points = 0;
+  constructor(cart) { this.#cart = cart; }
+  addItem(item) { this.points += 1; this.#cart.addItem(item); }
+  addItems(items) { this.points += items.length; this.#cart.addItems(items); }
+  get count() { return this.#cart.items.length; }
+}
+
+const cart = new PointsCart(new Cart());
+cart.addItems(["rice", "oil", "salt"]);
+console.log(cart.count, cart.points);
+</code>
+<option correct>3 3</option>
+<option>3 6</option>
+<option>0 3</option>
+<option>TypeError: cart.addItems is not a function</option>
+<explain><p>The wrapper calls <code>addItems</code> on the cart it holds. Inside the cart, <code>this.addItem</code> is the cart's own method, never the wrapper's, so points are counted once.</p></explain>
+</question>
+
+<question id="comp-wrapper-cost" type="choice">
+<q>What is the main cost of a forwarding wrapper compared with a subclass?</q>
+<option>It cannot keep private state</option>
+<option correct>You must write a forwarding method for every method you want the wrapper to offer</option>
+<option>It is always slower than inheritance by a large factor</option>
+<option>It cannot be used with <code>await</code></option>
+<explain><p>Methods you do not forward do not exist on the wrapper. That is extra typing, and often a benefit: the wrapper chooses its own public interface.</p></explain>
+</question>
+
+<question id="comp-decorator-order" type="output">
+<q>Two wrappers around the same gateway. What does this print?</q>
+<code file="order.js">
+const base = { charge: (amount) => amount };
+const withVat = (g) => ({ charge: (amount) => g.charge(amount * 2) });
+const withFee = (g) => ({ charge: (amount) => g.charge(amount + 10) });
+
+console.log(withVat(withFee(base)).charge(100));
+console.log(withFee(withVat(base)).charge(100));
+</code>
+<option>210 210</option>
+<option correct>210
+220</option>
+<option>220
+210</option>
+<option>200
+110</option>
+<explain><p>The outer wrapper runs first. <code>withVat(withFee(base))</code>: 100 × 2 = 200, then + 10 = 210. <code>withFee(withVat(base))</code>: 100 + 10 = 110, then × 2 = 220. The order of wrapping is a real decision.</p></explain>
+</question>
+
+<question id="comp-decorator-define" type="choice">
+<q>What makes a wrapper a <strong>decorator</strong> in the sense used in the lesson?</q>
+<option>It uses the <code>@</code> syntax</option>
+<option>It extends the class it wraps</option>
+<option correct>It offers the same methods as the object it wraps, so callers cannot tell them apart and wrappers can be stacked</option>
+<option>It is written as an arrow function</option>
+<explain><p>Same shape in, same shape out. That is why <code>withRetry(withLogging(gateway))</code> works: each layer looks like a gateway to the next.</p></explain>
+</question>
+
+<question id="comp-retry-safety" type="choice">
+<q>A <code>withRetry</code> wrapper retries a payment after a network timeout. What must be true for this to be safe?</q>
+<option>The retry must wait at least one second</option>
+<option correct>The provider must treat the retry as the same payment (for example by its reference), because the timed-out attempt may actually have succeeded</option>
+<option>The wrapper must extend the gateway class</option>
+<option>Nothing: retrying is always safe</option>
+<explain><p>A timeout means "no answer", not "no payment". Without idempotency by reference, a retry can charge the customer twice.</p></explain>
+</question>
+
+<question id="comp-strategy-define" type="choice">
+<q>A checkout holds a <code>delivery</code> object and calls <code>delivery.feeKobo(order)</code>. Which statement is correct?</q>
+<option>The checkout must know every delivery option in a <code>switch</code></option>
+<option correct>Any object with a <code>feeKobo(order)</code> method can be used, and it can be swapped at runtime or in tests</option>
+<option>Each delivery option must extend <code>Checkout</code></option>
+<option>The strategy must be a class instance, not a plain object</option>
+<explain><p>This is delegation to a strategy. The checkout depends on an interface, "has <code>feeKobo</code>", not on any class. Relying on what an object can do is duck typing.</p></explain>
+</question>
+
+<question id="comp-strategy-output" type="output">
+<q>What does this print?</q>
+<code file="strategy.js">
+const strategies = {
+  flat: { feeKobo: () => 250000 },
+  free: { feeKobo: (o) => (o.subtotalKobo >= 5000000 ? 0 : 250000) },
+};
+
+function total(order, delivery) {
+  return (order.subtotalKobo + delivery.feeKobo(order)) / 100;
+}
+
+const order = { subtotalKobo: 4990000 };
+console.log(total(order, strategies.flat), total(order, strategies.free));
+</code>
+<option>52400 49900</option>
+<option correct>52400 52400</option>
+<option>49900 49900</option>
+<option>52400 50000</option>
+<explain><p>₦49,900 is below the ₦50,000 threshold, so the "free" strategy still charges ₦2,500. Both totals are ₦52,400.</p></explain>
+</question>
+
+<question id="comp-validate-collaborator" type="choice">
+<q>Where should a checkout check that its gateway has a <code>charge</code> method?</q>
+<option>Inside every call to <code>charge</code>, just before it</option>
+<option correct>Once, in the constructor, so a wiring mistake stops the program at start-up</option>
+<option>Nowhere: JavaScript checks interfaces automatically</option>
+<option>In the gateway's own constructor</option>
+<explain><p>A missing method is a bug in how the program was assembled. Failing at construction surfaces it before the first customer tries to pay.</p></explain>
+</question>
+
+<question id="comp-mixin-clash" type="output">
+<q>What does this print?</q>
+<code file="clash.js">
+class Product {
+  describe() { return "product"; }
+}
+
+const Describable = { describe() { return "mixin"; } };
+const Taggable = { tag() { return "tagged"; } };
+
+Object.assign(Product.prototype, Taggable, Describable);
+const p = new Product();
+console.log(p.describe(), p.tag());
+</code>
+<option>product tagged</option>
+<option correct>mixin tagged</option>
+<option>Error: mixin clash</option>
+<option>product undefined</option>
+<explain><p><code>Object.assign</code> overwrites existing keys without a warning, so the mixin's <code>describe</code> replaces the class's own. That silent clash is the main risk of object mixins.</p></explain>
+</question>
+
+<question id="comp-mixin-instanceof" type="choice">
+<q>After <code>Object.assign(Order.prototype, Taggable)</code>, what does <code>order instanceof Taggable</code> do?</q>
+<option>Returns <code>true</code></option>
+<option>Returns <code>false</code></option>
+<option correct>Throws a <code>TypeError</code>, because <code>Taggable</code> is a plain object, not a function</option>
+<option>Returns <code>undefined</code></option>
+<explain><p>The right side of <code>instanceof</code> must be callable. Object mixins give you no identity to test; you can only check for the methods.</p></explain>
+</question>
+
+<question id="comp-mixin-risks" type="choice">
+<q>A <code>Describable</code> mixin's method reads <code>this.id</code>. Which mixin risk is this?</q>
+<option>A name clash</option>
+<option correct>A hidden dependency: the requirement is not written anywhere, and objects without <code>id</code> quietly print <code>undefined</code></option>
+<option>A memory leak</option>
+<option>A prototype pollution vulnerability</option>
+<explain><p>Nothing states that users of the mixin must have an <code>id</code>. The mistake does not throw; it produces wrong output.</p></explain>
+</question>
+
+<question id="comp-class-mixin-order" type="output">
+<q>What does this print?</q>
+<code file="class-mixins.js">
+const Loud = (Base) => class extends Base { speak() { return super.speak().toUpperCase(); } };
+const Polite = (Base) => class extends Base { speak() { return super.speak() + ", please"; } };
+
+class Clerk {
+  speak() { return "next customer"; }
+}
+
+class A extends Loud(Polite(Clerk)) {}
+class B extends Polite(Loud(Clerk)) {}
+
+console.log(new A().speak());
+console.log(new B().speak());
+</code>
+<option>NEXT CUSTOMER, please
+NEXT CUSTOMER, PLEASE</option>
+<option correct>NEXT CUSTOMER, PLEASE
+NEXT CUSTOMER, please</option>
+<option>next customer, please
+NEXT CUSTOMER</option>
+<option>NEXT CUSTOMER, PLEASE
+NEXT CUSTOMER, PLEASE</option>
+<explain><p>The outermost mixin's method runs first and calls <code>super</code>. In <code>A</code>, <code>Loud</code> upper-cases what <code>Polite</code> returned, including ", please". In <code>B</code>, <code>Polite</code> adds ", please" after <code>Loud</code> has already upper-cased the clerk's text.</p></explain>
+</question>
+
+<question id="comp-class-mixin-is-inheritance" type="choice">
+<q>Why does the lesson say class-expression mixins are "still inheritance"?</q>
+<option>Because they use the <code>class</code> keyword</option>
+<option correct>Each mixin becomes a real class in the prototype chain, so self-calls and overrides couple the layers exactly like ordinary subclasses</option>
+<option>Because they copy methods with <code>Object.assign</code></option>
+<option>Because they cannot call <code>super</code></option>
+<explain><p><code>SoftDeletable(Timestamped(Record))</code> builds a chain of anonymous classes. Every coupling problem of <code>extends</code> applies to it.</p></explain>
+</question>
+
+<question id="comp-spread-getter" type="output">
+<q>What does this print?</q>
+<code file="spread-getter.js">
+let stock = 10;
+const capability = {
+  get left() { return stock; },
+};
+
+const product = { sku: "RICE", ...capability };
+stock = 3;
+console.log(product.left);
+</code>
+<option>3</option>
+<option correct>10</option>
+<option>undefined</option>
+<option>[Getter]</option>
+<explain><p>Spread reads each property's <em>value</em> once. The product gets a plain data property holding 10; the getter is gone. Copy descriptors, or use methods, to keep live values.</p></explain>
+</question>
+
+<question id="comp-descriptors-keep" type="output">
+<q>What does this print?</q>
+<code file="keep.js">
+let stock = 10;
+const capability = { get left() { return stock; } };
+
+const product = Object.defineProperties({}, Object.getOwnPropertyDescriptors(capability));
+stock = 3;
+console.log(product.left, typeof Object.getOwnPropertyDescriptor(product, "left").get);
+</code>
+<option correct>3 function</option>
+<option>10 function</option>
+<option>3 undefined</option>
+<option>10 undefined</option>
+<explain><p>Copying descriptors copies the getter function itself, so reading <code>left</code> still runs it and sees the current stock.</p></explain>
+</question>
+
+<question id="comp-factory-privacy" type="output">
+<q>What does this print?</q>
+<code file="factory.js">
+function createWallet(startKobo) {
+  let balance = startKobo;
+  return Object.freeze({
+    pay(kobo) {
+      if (kobo > balance) throw new Error("insufficient funds");
+      balance -= kobo;
+    },
+    balance: () => balance,
+  });
+}
+
+const wallet = createWallet(500000);
+wallet.pay(120000);
+wallet.balance = () => 999999999;
+console.log(wallet.balance(), Object.keys(wallet).length);
+</code>
+<option>999999999 2</option>
+<option correct>380000 2</option>
+<option>380000 3</option>
+<option>500000 2</option>
+<explain><p><code>balance</code> is a variable in the closure, not a property. The frozen object ignores the attempt to replace the method (in a sloppy script; in a module it would throw), so the real balance, 380,000, comes back.</p></explain>
+</question>
+
+<question id="comp-factory-cost" type="choice">
+<q>When is a class a better choice than a factory function that returns an object full of closures?</q>
+<option>When you need private state</option>
+<option correct>When you create very many objects, because each factory object carries its own copies of the method functions while class instances share methods on the prototype</option>
+<option>When the object has fewer than three methods</option>
+<option>Never; factories are always better</option>
+<explain><p>Closures give each object its own functions. For a few thousand objects that is fine; for millions, sharing methods on a prototype saves memory.</p></explain>
+</question>
+
+<question id="comp-rules-order" type="output">
+<q>The coupon should come off before VAT. What does this print?</q>
+<code file="rules.js">
+const vat = (amount) => Math.round(amount * 1.075);
+const coupon = (amount) => amount - 100000;
+
+const apply = (rules, amount) => rules.reduce((current, rule) => rule(current), amount);
+
+console.log(apply([coupon, vat], 1000000));
+console.log(apply([vat, coupon], 1000000));
+</code>
+<option>967500
+967500</option>
+<option correct>967500
+975000</option>
+<option>975000
+967500</option>
+<option>1075000
+900000</option>
+<explain><p>Coupon first: (1,000,000 − 100,000) × 1.075 = 967,500. VAT first: 1,075,000 − 100,000 = 975,000. The order of the rule list is part of the business rule.</p></explain>
+</question>
+
+<question id="comp-rule-factory" type="choice">
+<q>In <code>const coupon = (code, offKobo) =&gt; (amount, order) =&gt; …</code>, what is <code>coupon("WELCOME", 200000)</code>?</q>
+<option>A number: the discounted amount</option>
+<option correct>A rule function that remembers the code and the amount off, ready to be put in the rule list</option>
+<option>A promise</option>
+<option>An error, because arrow functions cannot return functions</option>
+<explain><p>A function that returns a function. The returned rule closes over <code>code</code> and <code>offKobo</code>, so one definition covers every coupon.</p></explain>
+</question>
+
+<question id="comp-private-subclass" type="choice">
+<q>What happens when a subclass method reads <code>this.#items</code>, where <code>#items</code> is declared only in the parent class?</q>
+<option>It returns <code>undefined</code></option>
+<option>It works, because the subclass inherits the field</option>
+<option correct>The file fails to load with a <code>SyntaxError</code>: the private name is not declared in an enclosing class</option>
+<option>It throws a <code>TypeError</code> only when the method is called</option>
+<explain><p>Private names are checked when the code is parsed. A subclass cannot even mention the parent's private fields, so it has to use the public API.</p></explain>
+</question>
+
+<question id="comp-brand-output" type="output">
+<q>What does this print?</q>
+<code file="brand.js">
+class Invoice {
+  #number;
+  constructor(number) { this.#number = number; }
+  static isInvoice(value) { return #number in value; }
+}
+
+const real = new Invoice("INV-7");
+const forged = Object.create(Invoice.prototype);
+console.log(forged instanceof Invoice, Invoice.isInvoice(forged), Invoice.isInvoice(real));
+</code>
+<option>false false true</option>
+<option correct>true false true</option>
+<option>true true true</option>
+<option>TypeError: Cannot read private member</option>
+<explain><p><code>instanceof</code> only checks the prototype chain, which <code>Object.create</code> can fake. <code>#number in value</code> is a brand check: only objects built by the constructor have the private field.</p></explain>
+</question>
+
+<question id="comp-proxy-private" type="choice">
+<q>Why does wrapping a class instance with private fields in a <code>Proxy</code> often throw when you read a getter through it?</q>
+<option>Proxies cannot forward getters</option>
+<option correct>The getter runs with <code>this</code> set to the proxy, and the proxy object does not have the private field</option>
+<option>Private fields are deleted when a proxy is created</option>
+<option>Proxies only work on plain objects</option>
+<explain><p>Private fields are attached to the real object, not to the proxy. An explicit forwarding wrapper calls methods on the real object, so it does not have this problem.</p></explain>
+</question>
+
+<question id="comp-static-this" type="output">
+<q>What does this print?</q>
+<code file="static-this.js">
+class Account {
+  constructor(owner) { this.owner = owner; }
+  static open(owner) { return new this(owner); }
+}
+class SavingsAccount extends Account {}
+
+const a = SavingsAccount.open("Ada");
+console.log(a.constructor.name, a instanceof Account);
+</code>
+<option>Account true</option>
+<option correct>SavingsAccount true</option>
+<option>SavingsAccount false</option>
+<option>TypeError: this is not a constructor</option>
+<explain><p>Static methods are inherited, and inside a static method <code>this</code> is the class it was called on. <code>new this(owner)</code> therefore builds a <code>SavingsAccount</code>.</p></explain>
+</question>
+
+<question id="comp-static-block" type="choice">
+<q>When does the code in a class's <code>static { … }</code> block run?</q>
+<option>Every time an instance is created</option>
+<option correct>Once, when the class definition is evaluated</option>
+<option>The first time a static method is called</option>
+<option>Only if the class is exported</option>
+<explain><p>A static block is class-wide set-up, run once. It suits things like building one shared <code>Intl.NumberFormat</code> for all instances.</p></explain>
+</question>
+
+<question id="comp-getter-assign" type="choice">
+<q>A class has <code>get totalKobo()</code> and no setter. Code in an ES module runs <code>cart.totalKobo = 0</code>. What happens?</q>
+<option>The total becomes 0</option>
+<option>Nothing, silently</option>
+<option correct>A <code>TypeError</code>: the property has only a getter</option>
+<option>The getter is replaced by the number 0</option>
+<explain><p>Modules and classes are strict mode, and assigning to an accessor with no setter throws in strict mode. The caller learns about the mistake immediately.</p></explain>
+</question>
+
+<question id="comp-json-getters" type="output">
+<q>What does this print?</q>
+<code file="json.js">
+class Cart {
+  #lines = [{ sku: "OIL", qty: 2 }];
+  get count() { return this.#lines.length; }
+}
+
+class Order {
+  #id = "ORD-1";
+  get id() { return this.#id; }
+  toJSON() { return { id: this.#id }; }
+}
+
+console.log(JSON.stringify(new Cart()), JSON.stringify(new Order()));
+</code>
+<option correct>{} {"id":"ORD-1"}</option>
+<option>{"count":1} {"id":"ORD-1"}</option>
+<option>{"#lines":[{"sku":"OIL","qty":2}]} {"id":"ORD-1"}</option>
+<option>{} {}</option>
+<explain><p>Private fields are invisible to <code>JSON.stringify</code>, and getters live on the prototype, so the cart serialises as <code>{}</code>. A <code>toJSON</code> method decides what the JSON looks like.</p></explain>
+</question>
+
+<question id="comp-getter-io" type="choice">
+<q>Which of these belongs in a getter?</q>
+<option>Loading the customer's orders from the database</option>
+<option>Sending a "cart viewed" analytics event</option>
+<option correct>Adding up the prices of the lines already in memory</option>
+<option>Charging the customer's card</option>
+<explain><p>Reading a property should be cheap and change nothing. I/O and side effects belong in methods, preferably <code>async</code> ones, so callers can see them.</p></explain>
+</question>
+
+<question id="comp-lines-copy" type="choice">
+<q>A cart keeps its lines in <code>#lines</code>. Why does its <code>lines()</code> method return <code>this.#lines.map((l) =&gt; ({ ...l }))</code> rather than <code>this.#lines</code>?</q>
+<option>Because <code>map</code> is faster than returning the array</option>
+<option correct>Returning the internal array would let callers push into it or edit lines, bypassing the cart's checks and its lock</option>
+<option>Because private fields cannot be returned from methods</option>
+<option>To convert the lines to JSON</option>
+<explain><p>A private field protects the <em>variable</em>, not the object it points to. Handing out copies keeps the cart the only code that can change its lines.</p></explain>
+</question>
+
+<question id="comp-rollback" type="choice">
+<q>A checkout reserves stock for each line, then charges the card. The charge fails. What should it do?</q>
+<option>Nothing; the stock will be corrected by the next stock count</option>
+<option correct>Release exactly the reservations it made, then report the error</option>
+<option>Release all stock for every product in the shop</option>
+<option>Retry the charge until it succeeds</option>
+<explain><p>Keep a list of what you reserved and undo that list. If the second reservation fails, the first one must be released too.</p></explain>
+</question>
+
+<question id="comp-inject" type="choice">
+<q>Why is <code>new Checkout({ gateway })</code> easier to test than a <code>Checkout</code> whose constructor runs <code>this.gateway = new CardGateway()</code>?</q>
+<option>Because tests cannot call constructors</option>
+<option correct>A test can pass a fake gateway that fails on demand and records its calls, without touching a real payment provider</option>
+<option>Because <code>new</code> is slow</option>
+<option>It is not easier; both are the same</option>
+<explain><p>Passing collaborators in (dependency injection) is what makes them replaceable. A class that creates its own gateway can only be tested against that gateway.</p></explain>
+</question>
+
+<question id="comp-when-inherit" type="choice">
+<q>Which is the best candidate for <code>extends</code>?</q>
+<option>A <code>LoggingCart</code> that adds logging to a cart</option>
+<option correct>A <code>PaymentDeclinedError</code> that extends <code>Error</code></option>
+<option>A <code>CheapDelivery</code> that changes how the delivery fee is computed</option>
+<option>A <code>ReadOnlyCart</code> that throws on every change</option>
+<explain><p><code>Error</code> is designed to be extended, callers rely on <code>instanceof</code> and <code>catch</code>, and a declined-payment error really can stand in for an error everywhere. The others are better as wrappers, strategies or separate types.</p></explain>
+</question>
+
+<question id="comp-mixin-clash-helper" type="output">
+<q>What does this print?</q>
+<code file="mixinto.js">
+function mixInto(target, source) {
+  for (const key of Reflect.ownKeys(source)) {
+    if (key in target) throw new Error(`clash: ${String(key)}`);
+    Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key));
+  }
+  return target;
+}
+
+class Order {}
+try {
+  mixInto(Order.prototype, { total() { return 0; }, toString() { return "order"; } });
+} catch (error) {
+  console.log(error.message, typeof Order.prototype.total);
+}
+</code>
+<option>clash: total function</option>
+<option correct>clash: toString function</option>
+<option>clash: toString undefined</option>
+<option>order function</option>
+<explain><p><code>key in target</code> follows the prototype chain, so the inherited <code>Object.prototype.toString</code> counts as a clash. <code>total</code> was copied before the loop reached <code>toString</code>, so it exists.</p></explain>
+</question>
+
+<question id="comp-code-wrapper" type="code" file="counting-stock.js">
+<q><p>Write a class <code>CountingStock</code> that <em>wraps</em> (does not extend) any stock object with <code>set(sku, qty)</code>, <code>restock(sku, qty)</code> and <code>level(sku)</code>. It forwards all three and counts how many times its own <code>set</code> and <code>restock</code> were called, in a getter <code>changes</code>. The program should print <code>2 15</code>.</p></q>
+<starter>
+class Stock {
+  #levels = new Map();
+  set(sku, qty) { this.#levels.set(sku, qty); }
+  restock(sku, qty) { this.set(sku, this.level(sku) + qty); }
+  level(sku) { return this.#levels.get(sku) ?? 0; }
+}
+
+// write CountingStock here
+
+const stock = new CountingStock(new Stock());
+stock.set("RICE", 10);
+stock.restock("RICE", 5);
+console.log(stock.changes, stock.level("RICE"));
+</starter>
+<solution>
+class Stock {
+  #levels = new Map();
+  set(sku, qty) { this.#levels.set(sku, qty); }
+  restock(sku, qty) { this.set(sku, this.level(sku) + qty); }
+  level(sku) { return this.#levels.get(sku) ?? 0; }
+}
+
+class CountingStock {
+  #stock;
+  #changes = 0;
+  constructor(stock) { this.#stock = stock; }
+  set(sku, qty) { this.#changes += 1; this.#stock.set(sku, qty); }
+  restock(sku, qty) { this.#changes += 1; this.#stock.restock(sku, qty); }
+  level(sku) { return this.#stock.level(sku); }
+  get changes() { return this.#changes; }
+}
+
+const stock = new CountingStock(new Stock());
+stock.set("RICE", 10);
+stock.restock("RICE", 5);
+console.log(stock.changes, stock.level("RICE"));
+</solution>
+<expected>2 15</expected>
+<explain><p>Because the wrapper calls methods on the stock it holds, <code>Stock.restock</code>'s internal <code>this.set</code> stays inside the stock and is not counted a second time. A subclass would have counted 3.</p></explain>
+</question>
+
+<question id="comp-code-strategy" type="code" file="delivery.js">
+<q><p>Write two delivery strategies, <code>express</code> (₦5,000 fee, i.e. 500000 kobo) and <code>pickup</code> (free), each an object with a <code>feeKobo(order)</code> method, so the program prints <code>35000</code> then <code>30000</code>.</p></q>
+<starter>
+// write express and pickup here
+
+function totalNaira(order, delivery) {
+  return (order.subtotalKobo + delivery.feeKobo(order)) / 100;
+}
+
+const order = { subtotalKobo: 3000000 };
+console.log(totalNaira(order, express));
+console.log(totalNaira(order, pickup));
+</starter>
+<solution>
+const express = { feeKobo: () => 500000 };
+const pickup = { feeKobo: () => 0 };
+
+function totalNaira(order, delivery) {
+  return (order.subtotalKobo + delivery.feeKobo(order)) / 100;
+}
+
+const order = { subtotalKobo: 3000000 };
+console.log(totalNaira(order, express));
+console.log(totalNaira(order, pickup));
+</solution>
+<expected>
+35000
+30000
+</expected>
+<explain><p><code>totalNaira</code> delegates the fee to whatever object it is given. New delivery options never require changing it.</p></explain>
+</question>
+
+<question id="comp-code-mixin-guard" type="code" file="mixin-guard.js">
+<q><p>Finish <code>mixInto(target, ...sources)</code>: copy every own key of every source onto <code>target</code> using property descriptors, but throw <code>new Error("clash: " + key)</code> if the key already exists on the target (including inherited keys). The program should print <code>true</code> then <code>clash: describe</code>.</p></q>
+<starter>
+function mixInto(target, ...sources) {
+  // your code here
+  return target;
+}
+
+class Product {
+  describe() { return "product"; }
+}
+
+mixInto(Product.prototype, { tag() { return this; } });
+console.log(typeof Product.prototype.tag === "function");
+
+try {
+  mixInto(Product.prototype, { describe() { return "mixin"; } });
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+function mixInto(target, ...sources) {
+  for (const source of sources) {
+    for (const key of Reflect.ownKeys(source)) {
+      if (key in target) throw new Error("clash: " + String(key));
+      Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key));
+    }
+  }
+  return target;
+}
+
+class Product {
+  describe() { return "product"; }
+}
+
+mixInto(Product.prototype, { tag() { return this; } });
+console.log(typeof Product.prototype.tag === "function");
+
+try {
+  mixInto(Product.prototype, { describe() { return "mixin"; } });
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>
+true
+clash: describe
+</expected>
+<explain><p><code>Reflect.ownKeys</code> includes symbol keys, <code>in</code> checks the whole chain, and descriptors keep getters as getters. The clash surfaces when the program starts instead of silently replacing a method.</p></explain>
+</question>
+
+<question id="comp-code-rules" type="code" file="price-rules.js">
+<q><p>Write a rule factory <code>percentOff(percent)</code> that returns a rule <code>(amount) =&gt; …</code> taking <code>percent</code>% off and rounding to a whole kobo with <code>Math.round</code>. With the rules shown, the program should print <code>903000</code>.</p></q>
+<starter>
+// write percentOff here
+
+const vat = (amount) => Math.round(amount * 1.075);
+const rules = [percentOff(16), vat];
+console.log(rules.reduce((amount, rule) => rule(amount), 1000000));
+</starter>
+<solution>
+const percentOff = (percent) => (amount) => Math.round(amount * (1 - percent / 100));
+
+const vat = (amount) => Math.round(amount * 1.075);
+const rules = [percentOff(16), vat];
+console.log(rules.reduce((amount, rule) => rule(amount), 1000000));
+</solution>
+<expected>903000</expected>
+<explain><p>1,000,000 × 0.84 = 840,000, then × 1.075 = 903,000. The factory returns a function that closes over <code>percent</code>, so each call makes a new rule.</p></explain>
+</question>
+
+<question id="comp-code-brand" type="code" file="brand-check.js">
+<q><p>Add a static method <code>isTicket(value)</code> to <code>Ticket</code> that uses a brand check on the private field <code>#seat</code>. It must return <code>false</code> (not throw) for <code>null</code> and primitives. The program should print <code>true false false false</code>.</p></q>
+<starter>
+class Ticket {
+  #seat;
+  constructor(seat) { this.#seat = seat; }
+  // add isTicket here
+}
+
+const forged = Object.create(Ticket.prototype);
+console.log(Ticket.isTicket(new Ticket("A12")), Ticket.isTicket(forged), Ticket.isTicket(null), Ticket.isTicket("A12"));
+</starter>
+<solution>
+class Ticket {
+  #seat;
+  constructor(seat) { this.#seat = seat; }
+  static isTicket(value) {
+    return typeof value === "object" && value !== null && #seat in value;
+  }
+}
+
+const forged = Object.create(Ticket.prototype);
+console.log(Ticket.isTicket(new Ticket("A12")), Ticket.isTicket(forged), Ticket.isTicket(null), Ticket.isTicket("A12"));
+</solution>
+<expected>true false false false</expected>
+<explain><p><code>#seat in value</code> throws a <code>TypeError</code> when <code>value</code> is not an object, so check that first. Only objects built by the constructor carry the private field.</p></explain>
+</question>
+
+<question id="comp-code-tojson" type="code" file="money-json.js">
+<q><p>The <code>Money</code> class keeps its amount in a private field, so <code>JSON.stringify</code> prints <code>{}</code>. Add a <code>toJSON</code> method so the program prints <code>{"price":{"kobo":850000,"currency":"NGN"}}</code>.</p></q>
+<starter>
+class Money {
+  #kobo;
+  constructor(kobo) { this.#kobo = kobo; }
+  get kobo() { return this.#kobo; }
+  // add toJSON here
+}
+
+console.log(JSON.stringify({ price: new Money(850000) }));
+</starter>
+<solution>
+class Money {
+  #kobo;
+  constructor(kobo) { this.#kobo = kobo; }
+  get kobo() { return this.#kobo; }
+  toJSON() { return { kobo: this.#kobo, currency: "NGN" }; }
+}
+
+console.log(JSON.stringify({ price: new Money(850000) }));
+</solution>
+<expected>{"price":{"kobo":850000,"currency":"NGN"}}</expected>
+<explain><p><code>JSON.stringify</code> calls <code>toJSON</code> when an object has one and serialises its return value instead. The class decides exactly what leaves it.</p></explain>
+</question>
+
+<question id="comp-code-limit" type="code" file="limited.js">
+<q><p>Write <code>withLimit(gateway, maxKobo)</code>, a decorator that returns an object with an <code>async charge(amountKobo, reference)</code>. It throws <code>new Error("over limit")</code> for amounts above <code>maxKobo</code> without calling the gateway, and otherwise forwards the call. The program should print <code>paid ORD-1</code>, then <code>over limit</code>, then <code>1</code>.</p></q>
+<starter>
+let calls = 0;
+const gateway = {
+  async charge(amountKobo, reference) {
+    calls += 1;
+    return `paid ${reference}`;
+  },
+};
+
+// write withLimit here
+
+const limited = withLimit(gateway, 1000000);
+console.log(await limited.charge(500000, "ORD-1"));
+try {
+  await limited.charge(2000000, "ORD-2");
+} catch (error) {
+  console.log(error.message);
+}
+console.log(calls);
+</starter>
+<solution>
+let calls = 0;
+const gateway = {
+  async charge(amountKobo, reference) {
+    calls += 1;
+    return `paid ${reference}`;
+  },
+};
+
+function withLimit(gateway, maxKobo) {
+  return {
+    async charge(amountKobo, reference) {
+      if (amountKobo > maxKobo) throw new Error("over limit");
+      return gateway.charge(amountKobo, reference);
+    },
+  };
+}
+
+const limited = withLimit(gateway, 1000000);
+console.log(await limited.charge(500000, "ORD-1"));
+try {
+  await limited.charge(2000000, "ORD-2");
+} catch (error) {
+  console.log(error.message);
+}
+console.log(calls);
+</solution>
+<expected>
+paid ORD-1
+over limit
+1
+</expected>
+<explain><p>The decorator has the same shape as a gateway, so it can wrap any gateway and be wrapped by others. Checking before forwarding means a refused payment never reaches the provider.</p></explain>
+</question>
+
+<question id="comp-code-descriptor-copy" type="code" file="live-getter.js">
+<q><p>The product below copies its capability with spread, so <code>left</code> never changes. Replace the spread with a copy that keeps the getter, so the program prints <code>12</code> then <code>2</code>.</p></q>
+<starter>
+const state = { stock: 12 };
+const capability = { get left() { return state.stock; } };
+
+const product = { ...capability };
+
+console.log(product.left);
+state.stock = 2;
+console.log(product.left);
+</starter>
+<solution>
+const state = { stock: 12 };
+const capability = { get left() { return state.stock; } };
+
+const product = Object.defineProperties({}, Object.getOwnPropertyDescriptors(capability));
+
+console.log(product.left);
+state.stock = 2;
+console.log(product.left);
+</solution>
+<expected>
+12
+2
+</expected>
+<explain><p>Spread stores the getter's current value. <code>Object.getOwnPropertyDescriptors</code> plus <code>Object.defineProperties</code> copies the getter function itself, so every read runs it again.</p></explain>
+</question>
