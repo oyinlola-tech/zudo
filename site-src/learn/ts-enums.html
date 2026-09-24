@@ -1,0 +1,743 @@
+---
+title: Enums and their alternatives
+description: Write numeric, string and const enums, read the exact JavaScript tsc emits for each, learn the pitfalls and erasableSyntaxOnly, and replace enums with unions and as const objects.
+minutes: 45
+youNeed: Narrowing and Type assertions
+youBuild: A payment-status module migrated from a numeric enum to an as const object, without changing a single call site
+keywords: typescript enum, numeric enum, string enum, const enum, reverse mapping, enum compiled javascript, erasableSyntaxOnly, isolatedModules const enum, node type stripping enum, ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX, as const object, literal union instead of enum
+objectives: Write numeric, string and const enums and read the JavaScript tsc emits for each | Explain reverse mappings and why Object.keys doubles on numeric enums | Avoid the enum pitfalls: unchecked numbers, reordered members and nominal string enums | Explain why Node's type stripping and erasableSyntaxOnly reject enums | Replace an enum with a literal union or an as const object and its derived type
+---
+<section>
+<h2 id="problem">Magic numbers in a payments table</h2>
+<p>A payments service you have just joined stores each payment's status as a small number, and the code is full of lines like these:</p>
+<example file="magic.ts" project="magic">
+const payment = { id: "PAY-1", amount: 25000, status: 2 };
+
+if (payment.status === 2) {
+  console.log("send receipt");
+}
+if (payment.status === 3) {
+  console.log("return the money");
+}
+</example>
+<output>
+send receipt
+</output>
+<p>What is status 2? You have to find someone who remembers, or a comment somewhere. And nothing stops a typo: <code>status === 4</code> compiles, even if 4 means nothing. The values need <em>names</em>, the names need to be checked, and the set of allowed values needs to be closed.</p>
+<p>Many languages solve this with an <strong>enum</strong> (short for enumeration): a named set of constants. TypeScript has one too. It is one of the very few TypeScript features that is not just types: it generates JavaScript. That makes it worth understanding exactly, because it behaves differently from everything else you have learned, and because modern TypeScript tooling increasingly prefers the alternatives. This lesson covers both.</p>
+</section>
+
+<section>
+<h2 id="numeric">Numeric enums</h2>
+<p>An <code>enum</code> declaration lists names. By default, the first gets the value <code>0</code>, and each next one is one higher:</p>
+<example file="status.ts" project="numeric">
+enum PaymentStatus {
+  Pending,
+  Authorized,
+  Captured,
+  Refunded,
+}
+
+const payment = { id: "PAY-1", amount: 25000, status: PaymentStatus.Captured };
+
+if (payment.status === PaymentStatus.Captured) {
+  console.log("send receipt");
+}
+console.log(payment.status, PaymentStatus.Refunded);
+</example>
+<output>
+send receipt
+2 3
+</output>
+<p><code>PaymentStatus.Captured</code> reads far better than <code>2</code>, and a misspelled member is a compile error. <code>PaymentStatus</code> is two things at once: a <strong>type</strong> (<code>status: PaymentStatus</code>) and a <strong>value</strong>, an object that exists when the program runs. You can pick the numbers yourself, too. Members without a value continue counting from the last one:</p>
+<example file="codes.ts" project="numeric">
+enum TransferError {
+  InsufficientFunds = 51,
+  LimitExceeded = 61,
+  AccountBlocked,
+  UnknownBank = 91,
+}
+
+console.log(TransferError.InsufficientFunds, TransferError.AccountBlocked, TransferError.UnknownBank);
+</example>
+<output>
+51 62 91
+</output>
+<h3>What tsc emits</h3>
+<p>Everything else you have written in TypeScript disappears when compiled. An enum does not. Here is the real output of <code>tsc</code> for the <code>PaymentStatus</code> declaration:</p>
+<shell>
+$ npx tsc --noEmit false --outDir dist
+$ cat dist/status.js
+var PaymentStatus;
+(function (PaymentStatus) {
+    PaymentStatus[PaymentStatus["Pending"] = 0] = "Pending";
+    PaymentStatus[PaymentStatus["Authorized"] = 1] = "Authorized";
+    PaymentStatus[PaymentStatus["Captured"] = 2] = "Captured";
+    PaymentStatus[PaymentStatus["Refunded"] = 3] = "Refunded";
+})(PaymentStatus || (PaymentStatus = {}));
+const payment = { id: "PAY-1", amount: 25000, status: PaymentStatus.Captured };
+if (payment.status === PaymentStatus.Captured) {
+    console.log("send receipt");
+}
+console.log(payment.status, PaymentStatus.Refunded);
+export {};
+</shell>
+<p>Read the middle line from the inside out. <code>PaymentStatus["Captured"] = 2</code> stores 2 under the name, and an assignment expression evaluates to the assigned value, so the outer part becomes <code>PaymentStatus[2] = "Captured"</code>: the name stored under the number. The function wrapped around it is an <strong>IIFE</strong> (an immediately invoked function expression), and <code>PaymentStatus || (PaymentStatus = {})</code> lets several declarations of the same enum add to one object. That emitted code is plain JavaScript; run it and print the object:</p>
+<example file="emitted.js" project="numeric">
+var PaymentStatus;
+(function (PaymentStatus) {
+    PaymentStatus[PaymentStatus["Pending"] = 0] = "Pending";
+    PaymentStatus[PaymentStatus["Authorized"] = 1] = "Authorized";
+    PaymentStatus[PaymentStatus["Captured"] = 2] = "Captured";
+    PaymentStatus[PaymentStatus["Refunded"] = 3] = "Refunded";
+})(PaymentStatus || (PaymentStatus = {}));
+
+console.log(PaymentStatus);
+</example>
+<output>
+{
+  '0': 'Pending',
+  '1': 'Authorized',
+  '2': 'Captured',
+  '3': 'Refunded',
+  Pending: 0,
+  Authorized: 1,
+  Captured: 2,
+  Refunded: 3
+}
+</output>
+</section>
+
+<section>
+<h2 id="reverse">Reverse mappings</h2>
+<p>That second set of keys, number to name, is called a <strong>reverse mapping</strong>. Only numeric members get one. It is handy for logs, where a bare <code>2</code> tells you nothing:</p>
+<example file="reverse.ts" project="numeric">
+enum PaymentStatus {
+  Pending,
+  Authorized,
+  Captured,
+  Refunded,
+}
+
+const fromDatabase: PaymentStatus = 2;
+console.log(`status ${fromDatabase} is ${PaymentStatus[fromDatabase]}`);
+
+console.log(Object.keys(PaymentStatus));
+console.log(Object.keys(PaymentStatus).length);
+</example>
+<output>
+status 2 is Captured
+[ '0', '1', '2', '3', 'Pending', 'Authorized', 'Captured', 'Refunded' ]
+8
+</output>
+<p>It is also a trap. <code>Object.keys</code>, <code>Object.values</code> and <code>for…in</code> see <em>both</em> directions, so an enum with four members has eight keys. A status dropdown built with <code>Object.keys(PaymentStatus)</code> shows "0", "1", "2" and "3" next to the names. To list the members, keep only the numeric values:</p>
+<example file="list.ts" project="numeric">
+enum PaymentStatus {
+  Pending,
+  Authorized,
+  Captured,
+  Refunded,
+}
+
+const values = Object.values(PaymentStatus).filter((value) => typeof value === "number");
+const names = values.map((value) => PaymentStatus[value]);
+console.log(values, names);
+</example>
+<output>
+[ 0, 1, 2, 3 ] [ 'Pending', 'Authorized', 'Captured', 'Refunded' ]
+</output>
+</section>
+
+<section>
+<h2 id="string">String enums</h2>
+<p>In a <strong>string enum</strong>, every member gets an explicit string value. There is no auto-increment and no reverse mapping:</p>
+<example file="currency.ts" project="string">
+enum Currency {
+  Naira = "NGN",
+  Dollar = "USD",
+  Pound = "GBP",
+}
+
+const price = { amount: 250000, currency: Currency.Naira };
+console.log(price, JSON.stringify(price));
+console.log(Currency);
+</example>
+<output>
+{ amount: 250000, currency: 'NGN' } {"amount":250000,"currency":"NGN"}
+{ Naira: 'NGN', Dollar: 'USD', Pound: 'GBP' }
+</output>
+<p>The emitted JavaScript has just one assignment per member:</p>
+<shell>
+$ cat dist/currency.js
+var Currency;
+(function (Currency) {
+    Currency["Naira"] = "NGN";
+    Currency["Dollar"] = "USD";
+    Currency["Pound"] = "GBP";
+})(Currency || (Currency = {}));
+const price = { amount: 250000, currency: Currency.Naira };
+console.log(price, JSON.stringify(price));
+console.log(Currency);
+export {};
+</shell>
+<p>String enums fix the unreadable-number problem: the JSON says <code>"NGN"</code>, which a person, a database column and another service all understand. But they have a property no other TypeScript type has: they are <strong>nominal</strong>. A <em>nominal</em> type is matched by its name, not by its shape. The string <code>"NGN"</code> is exactly the value of <code>Currency.Naira</code>, and it is still not accepted:</p>
+<example file="nominal.ts" project="string" check="tsc-error">
+enum Currency {
+  Naira = "NGN",
+  Dollar = "USD",
+}
+
+function format(amount: number, currency: Currency): string {
+  return `${currency} ${amount.toFixed(2)}`;
+}
+
+console.log(format(5000, "NGN"));
+</example>
+<output kind="tsc">
+nominal.ts:10:26 - error TS2345: Argument of type '"NGN"' is not assignable to parameter of type 'Currency'.
+
+10 console.log(format(5000, "NGN"));
+                            ~~~~~
+
+
+Found 1 error in nominal.ts:10
+</output>
+<p>Every value that arrives as JSON, from a query string or from a database row is a plain string, so every one of them needs a check before it becomes a <code>Currency</code>. That is the right thing to do with outside data anyway, but it also applies to your own tests and fixtures, which is where string enums start to feel heavy.</p>
+</section>
+
+<section>
+<h2 id="const-enums">const enums</h2>
+<p>A <code>const enum</code> is meant to leave no object behind at all. <code>tsc</code> replaces each use with the literal value, and deletes the declaration. With a default configuration, that is what happens:</p>
+<file name="direction.ts" project="const-enum">
+const enum Direction {
+  Credit = "CR",
+  Debit = "DR",
+}
+
+const entry = { amount: 5000, direction: Direction.Debit };
+console.log(entry);
+</file>
+<shell title="tsc with a default tsconfig">
+$ npx tsc --noEmit false --outDir dist
+$ cat dist/direction.js
+const entry = { amount: 5000, direction: "DR" /* Direction.Debit */ };
+console.log(entry);
+export {};
+</shell>
+<p>Now compile the same file with the settings this course uses (and ZudoJS uses): <code>verbatimModuleSyntax</code>, which turns on <code>isolatedModules</code>. The output is completely different:</p>
+<shell title="tsc with verbatimModuleSyntax (TypeScript 7)">
+$ npx tsc --noEmit false --outDir dist
+$ cat dist/direction.js
+var Direction;
+(function (Direction) {
+    Direction["Credit"] = "CR";
+    Direction["Debit"] = "DR";
+})(Direction || (Direction = {}));
+const entry = { amount: 5000, direction: Direction.Debit };
+console.log(entry);
+export {};
+</shell>
+<p>The reason is the way modern tools work. <code>tsx</code>, the browser terminal, bundlers and Node.js all translate <strong>one file at a time</strong>, without reading the others. To inline <code>Direction.Debit</code> in <code>ledger.ts</code>, a tool would have to open <code>direction.ts</code> to find out it is <code>"DR"</code>. So under <code>isolatedModules</code>, which exists to keep your code translatable file by file, a <code>const enum</code> is emitted and used like a normal enum. The one thing that still differs: a <code>const enum</code> has no reverse mapping you are allowed to use:</p>
+<example file="reverse-const.ts" project="const-enum" check="tsc-error">
+const enum Priority {
+  Low,
+  High,
+}
+
+console.log(Priority[0]);
+</example>
+<output kind="tsc">
+reverse-const.ts:6:22 - error TS2476: A const enum member can only be accessed using a string literal.
+
+6 console.log(Priority[0]);
+                       ~
+
+
+Found 1 error in reverse-const.ts:6
+</output>
+<p>The practical lesson: <code>const enum</code> only pays off in projects compiled by <code>tsc</code> alone, without <code>isolatedModules</code>. In a modern project it is a normal enum with an extra restriction.</p>
+</section>
+
+<section>
+<h2 id="pitfalls">Enum pitfalls</h2>
+<h3>Any number fits a numeric enum</h3>
+<p>TypeScript refuses a numeric <em>literal</em> that is not a member, like <code>const s: PaymentStatus = 7</code>. But a value typed <code>number</code> is accepted, because numeric enums are also used for bit flags, where combined values are not members:</p>
+<example file="any-number.ts" project="pitfalls">
+enum PaymentStatus {
+  Pending,
+  Authorized,
+  Captured,
+  Refunded,
+}
+
+function label(status: PaymentStatus): string {
+  return PaymentStatus[status].toLowerCase();
+}
+
+const row = { id: "PAY-9", status: 7 };
+try {
+  console.log(label(row.status));
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+TypeError: Cannot read properties of undefined (reading 'toLowerCase')
+</output>
+<p><code>row.status</code> is a <code>number</code>, <code>label</code> accepted it, and <code>PaymentStatus[7]</code> does not exist. The enum type looked like a closed set, but for numbers it is not a check at all.</p>
+<h3>Reordering changes stored values</h3>
+<p>A numeric enum's values come from the order of the members. That is fine while the values live only in memory. Once they are stored (in a database, a queue message, a cache, a mobile app's local storage), the order becomes a contract. A teammate adds <code>Disputed</code> in the place that reads most naturally:</p>
+<example file="reorder.ts" project="pitfalls">
+enum StatusV1 {
+  Pending,
+  Authorized,
+  Captured,
+  Refunded,
+}
+
+enum StatusV2 {
+  Pending,
+  Authorized,
+  Disputed,
+  Captured,
+  Refunded,
+}
+
+const storedLastYear = StatusV1.Captured;
+console.log(`stored ${storedLastYear}, read back as ${StatusV2[storedLastYear]}`);
+</example>
+<output>
+stored 2, read back as Disputed
+</output>
+<p>Nothing failed to compile, no test with fresh data failed, and every payment captured before the release is now "disputed". If you use numeric enums for stored values, give every member an explicit number and never change one. Better: store strings.</p>
+<h3>Enums are values, and values have a cost</h3>
+<p>Because an enum is an object, importing its type still imports a module at runtime, and bundlers cannot remove unused members. Two enums with the same members are also incompatible with each other (<code>Currency.Naira</code> from one library is not <code>Currency.Naira</code> from another), which makes sharing types between packages awkward.</p>
+</section>
+
+<section>
+<h2 id="erasable">Node type stripping and erasableSyntaxOnly</h2>
+<p>In <a href="/learn/ts-setup#run">Why TypeScript exists</a> you ran <code>.ts</code> files directly with <code>node</code>. Node's <strong>type stripping</strong> removes type syntax and runs what is left; it never generates code. An enum <em>needs</em> generated code, so Node refuses it:</p>
+<shell title="Node.js 24 from nodejs.org">
+$ node --version
+v24.19.0
+$ node status.ts
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+file://~/ts-tasks/status.ts:1
+  > enum PaymentStatus {
+      Pending,
+      Authorized,
+      Captured,
+      Refunded,
+  > }
+
+SyntaxError [ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX]: TypeScript enum is not supported in strip-only mode
+    at parseTypeScript (node:internal/modules/typescript:68:40)
+…
+Node.js v24.19.0
+$ node --experimental-transform-types status.ts
+(node:48213) ExperimentalWarning: Transform Types is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+send receipt
+2 3
+</shell>
+<p><code>const enum</code> is refused with exactly the same message. The <code>--experimental-transform-types</code> flag makes Node generate the enum code, but it is experimental and prints a warning on every start. The code that is <em>not</em> erasable is a short list: <code>enum</code>, <code>namespace</code> blocks with code in them, parameter properties (<code>constructor(private readonly id: string)</code>, from <a href="/learn/ts-classes#parameter-properties">Classes in TypeScript</a>) and the old <code>import x = require()</code> form.</p>
+<p>TypeScript 5.8 added a compiler option that makes <code>tsc</code> enforce this for you: <code>erasableSyntaxOnly</code>. Turn it on in a project that should run under <code>node</code> directly:</p>
+<file name="tsconfig.json" project="erasable">
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "noEmit": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true
+  }
+}
+</file>
+<example file="account.ts" project="erasable" check="tsc-error">
+enum AccountType {
+  Savings = "savings",
+  Current = "current",
+}
+
+class Account {
+  constructor(private readonly id: string, readonly type: AccountType) {}
+}
+
+console.log(new Account("ACC-1", AccountType.Savings));
+</example>
+<output kind="tsc">
+account.ts:1:6 - error TS1294: This syntax is not allowed when 'erasableSyntaxOnly' is enabled.
+
+1 enum AccountType {
+       ~~~~~~~~~~~
+
+account.ts:7:15 - error TS1294: This syntax is not allowed when 'erasableSyntaxOnly' is enabled.
+
+7   constructor(private readonly id: string, readonly type: AccountType) {}
+                ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+account.ts:7:44 - error TS1294: This syntax is not allowed when 'erasableSyntaxOnly' is enabled.
+
+7   constructor(private readonly id: string, readonly type: AccountType) {}
+                                             ~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 3 errors in the same file, starting at: account.ts:1
+</output>
+<p>Every piece of syntax that Node cannot strip is flagged, before anyone tries to run the file. The rest of this lesson shows what to write instead, and all of it passes with <code>erasableSyntaxOnly</code> on.</p>
+</section>
+
+<section>
+<h2 id="alternatives">The alternatives: literal unions and as const objects</h2>
+<h3>A union of string literals</h3>
+<p>The simplest replacement is a union of string literals, which you have used since <a href="/learn/ts-objects#unions">Interfaces, unions and literal types</a>. It is pure type information: the compiled JavaScript has no trace of it, and the values are plain strings everywhere:</p>
+<example file="union.ts" project="erasable">
+type PaymentStatus = "pending" | "authorized" | "captured" | "refunded";
+
+function nextAction(status: PaymentStatus): string {
+  switch (status) {
+    case "pending":
+      return "wait for the bank";
+    case "authorized":
+      return "capture within 7 days";
+    case "captured":
+      return "send receipt";
+    case "refunded":
+      return "close the ticket";
+  }
+}
+
+const row = JSON.parse('{"id": "PAY-1", "status": "captured"}');
+console.log(nextAction("authorized"), "|", nextAction(row.status));
+</example>
+<output>
+capture within 7 days | send receipt
+</output>
+<p>You still get autocompletion, typo checking and exhaustive <code>switch</code>es. JSON, test fixtures and database values need no conversion. What you lose is a runtime list of the values, for a dropdown or for validating input.</p>
+<h3>An as const object</h3>
+<p>When you want names <em>and</em> a runtime object, write the object yourself and derive the type from it. This is the pattern <code>@zudojs/constants</code> uses for <code>HttpStatus</code>:</p>
+<example file="status-object.ts" project="erasable">
+export const PaymentStatus = {
+  Pending: "pending",
+  Authorized: "authorized",
+  Captured: "captured",
+  Refunded: "refunded",
+} as const;
+
+export type PaymentStatus = (typeof PaymentStatus)[keyof typeof PaymentStatus];
+
+const ALL: readonly PaymentStatus[] = Object.values(PaymentStatus);
+
+export function isPaymentStatus(value: unknown): value is PaymentStatus {
+  return ALL.some((status) => status === value);
+}
+
+const payment: { status: PaymentStatus } = { status: PaymentStatus.Captured };
+console.log(payment.status === "captured", ALL);
+console.log(isPaymentStatus("refunded"), isPaymentStatus("lost"), isPaymentStatus(2));
+</example>
+<output>
+true [ 'pending', 'authorized', 'captured', 'refunded' ]
+true false false
+</output>
+<ul>
+<li><code>as const</code> keeps each value as its literal type and makes the object read-only, so <code>PaymentStatus.Captured</code> has the type <code>"captured"</code>, not <code>string</code>.</li>
+<li><code>keyof typeof PaymentStatus</code> is <code>"Pending" | "Authorized" | …</code>, and indexing the object's type with it gives the union of the values. A type and a value may share a name, so <code>PaymentStatus</code> works in both places, exactly as with an enum.</li>
+<li><code>Object.values</code> returns exactly the four values, with no reverse mapping to filter out. That list powers the <code>isPaymentStatus</code> guard for outside data.</li>
+<li>A plain string <code>"captured"</code> is accepted wherever a <code>PaymentStatus</code> is expected, because the type is structural, not nominal.</li>
+</ul>
+<p>Compiled, the object is exactly what you wrote, minus <code>as const</code>, so Node's type stripping runs it without any flag.</p>
+<h3>When a numeric enum still makes sense</h3>
+<p>Ordered levels are the classic case. <code>@zudojs/logger</code> defines <code>LoggerLevel</code> as a numeric enum because comparing numbers is exactly what a log threshold needs, and the numbers are never stored. <code>@zudojs/errors</code> uses a string enum for <code>ErrorCategory</code>. All three styles are in the ZudoJS packages you will use:</p>
+<example file="zudo-constants.ts" project="zudo">
+import { HttpStatus } from "@zudojs/constants";
+import type { HttpStatusCode } from "@zudojs/constants";
+import { LoggerLevel, shouldLog } from "@zudojs/logger";
+import { ErrorCategory } from "@zudojs/errors";
+
+const notFound: HttpStatusCode = HttpStatus.NOT_FOUND;
+console.log(notFound, typeof HttpStatus);
+console.log(LoggerLevel.WARN, LoggerLevel[LoggerLevel.WARN]);
+console.log(shouldLog(LoggerLevel.WARN, LoggerLevel.DEBUG), shouldLog(LoggerLevel.WARN, LoggerLevel.ERROR));
+console.log(ErrorCategory.RATE_LIMIT);
+</example>
+<output>
+404 object
+2 WARN
+false true
+rate_limit
+</output>
+<p>With a threshold of <code>WARN</code>, a <code>DEBUG</code> message (4) is dropped and an <code>ERROR</code> (1) is logged: the numeric order carries meaning. When you consume a library's enum, it is already compiled JavaScript, so none of the type-stripping limits apply to you.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th></th><th>Numeric enum</th><th>String enum</th><th>const enum</th><th>Literal union</th><th><code>as const</code> object</th></tr></thead>
+<tbody>
+<tr><td>Runtime object</td><td>Yes</td><td>Yes</td><td>Only under <code>isolatedModules</code></td><td>No</td><td>Yes</td></tr>
+<tr><td>Readable stored values</td><td>No (numbers)</td><td>Yes</td><td>Depends</td><td>Yes</td><td>Yes</td></tr>
+<tr><td>Plain string or number accepted</td><td>Any number</td><td>No (nominal)</td><td>Same as enum</td><td>Yes, if a member</td><td>Yes, if a member</td></tr>
+<tr><td><code>Object.values</code> lists members</td><td>Doubled</td><td>Yes</td><td>No</td><td>No object</td><td>Yes</td></tr>
+<tr><td>Runs under <code>node file.ts</code></td><td>No</td><td>No</td><td>No</td><td>Yes</td><td>Yes</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="build">Build: migrate an enum without touching call sites</h2>
+<reason title="Before you migrate">
+<p>A payments module exports a numeric <code>enum PaymentStatus</code>. It is used in forty files as <code>PaymentStatus.Captured</code>, and existing rows in the <code>payments</code> table store the numbers 0 to 3. You want to switch to an erasable <code>as const</code> object with string values. Think it through before touching the code:</p>
+<ul>
+<li>Which call sites can stay exactly as they are, and which will break?</li>
+<li>What happens to the rows already stored as numbers?</li>
+<li>New code writes strings. For a while, the table holds both numbers and strings. How does the reading code cope?</li>
+<li>What must a test prove before the release?</li>
+</ul>
+<answer>
+<p>Every <code>PaymentStatus.Captured</code> keeps working, because the object has the same member names and the type keeps the same name. What breaks is anything that relied on numbers: comparisons like <code>status &gt; PaymentStatus.Authorized</code>, reverse lookups like <code>PaymentStatus[n]</code>, and <code>Object.keys</code> filtering; <code>tsc</code> points at each of them. Old rows must be translated when read (or in a database migration), with an explicit table from old numbers to new strings, never computed from member order. The reader must accept both forms during the transition and reject anything else. The tests must cover every old number, every new string, and a value that is neither.</p>
+</answer>
+</reason>
+<example file="payment-status.ts" project="migrate">
+export const PaymentStatus = {
+  Pending: "pending",
+  Authorized: "authorized",
+  Captured: "captured",
+  Refunded: "refunded",
+} as const;
+
+export type PaymentStatus = (typeof PaymentStatus)[keyof typeof PaymentStatus];
+
+const LEGACY_CODES: Readonly<Record<number, PaymentStatus>> = {
+  0: PaymentStatus.Pending,
+  1: PaymentStatus.Authorized,
+  2: PaymentStatus.Captured,
+  3: PaymentStatus.Refunded,
+};
+
+const ALL: readonly PaymentStatus[] = Object.values(PaymentStatus);
+
+export function readStatus(stored: unknown): PaymentStatus {
+  if (typeof stored === "number") {
+    const status = LEGACY_CODES[stored];
+    if (status !== undefined) return status;
+  }
+  for (const status of ALL) {
+    if (status === stored) return status;
+  }
+  throw new RangeError(`unknown payment status: ${JSON.stringify(stored)}`);
+}
+</example>
+<p>A call site from before the migration, unchanged:</p>
+<example file="receipts.ts" project="migrate">
+import { PaymentStatus, readStatus } from "./payment-status.js";
+
+function nextAction(status: PaymentStatus): string {
+  switch (status) {
+    case PaymentStatus.Pending:
+      return "wait";
+    case PaymentStatus.Authorized:
+      return "capture";
+    case PaymentStatus.Captured:
+      return "send receipt";
+    case PaymentStatus.Refunded:
+      return "close";
+  }
+}
+
+const rows: unknown[] = [2, "captured", 0, "refunded", 7, "lost"];
+for (const stored of rows) {
+  try {
+    console.log(JSON.stringify(stored), "->", nextAction(readStatus(stored)));
+  } catch (error) {
+    console.log(JSON.stringify(stored), "->", String(error));
+  }
+}
+</example>
+<output>
+2 -> send receipt
+"captured" -> send receipt
+0 -> wait
+"refunded" -> close
+7 -> RangeError: unknown payment status: 7
+"lost" -> RangeError: unknown payment status: "lost"
+</output>
+<p>The <code>switch</code> still uses <code>PaymentStatus.Captured</code>, still gets an exhaustiveness check, and now works with strings. Old numeric rows are translated through an explicit table, so reordering the object later cannot change what an old row means. Anything unknown is refused at the boundary with a clear error, instead of flowing on as <code>undefined</code>.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing enums and their replacements</h2>
+<p>The type checker proves that your code uses the names correctly. It cannot prove that the <em>values</em> match the outside world: the strings your database column allows, the codes a partner bank sends. Pin them down with a test that fails loudly when someone edits the list:</p>
+<example file="status.test.ts" project="migrate">
+import { PaymentStatus, readStatus } from "./payment-status.js";
+
+const expected = ["pending", "authorized", "captured", "refunded"];
+const actual = Object.values(PaymentStatus);
+console.log("values unchanged:", JSON.stringify(actual) === JSON.stringify(expected));
+
+const legacy = [0, 1, 2, 3].map((code) => readStatus(code));
+console.log("legacy codes:", legacy.join(", "));
+
+for (const bad of [4, -1, "Captured", null]) {
+  try {
+    readStatus(bad);
+    console.log("FAIL accepted", bad);
+  } catch {
+    console.log("rejected", JSON.stringify(bad));
+  }
+}
+</example>
+<output>
+values unchanged: true
+legacy codes: pending, authorized, captured, refunded
+rejected 4
+rejected -1
+rejected "Captured"
+rejected null
+</output>
+<p>This is sometimes called a <strong>snapshot</strong> of the values: a deliberate copy that makes any change a visible, reviewed decision. Note <code>"Captured"</code> with a capital C: a member <em>name</em> is not a member <em>value</em>, and the reader correctly refuses it.</p>
+</section>
+
+<section>
+<h2 id="production">Enums in production code</h2>
+<ul>
+<li><strong>Store strings, not enum numbers.</strong> Readable values survive reordering, show up clearly in logs and SQL, and need no lookup table in other services.</li>
+<li><strong>Prefer literal unions and <code>as const</code> objects in new code.</strong> They are erasable, structural, and list cleanly. Turn on <code>erasableSyntaxOnly</code> when the code must run under plain <code>node</code>.</li>
+<li><strong>If you keep a numeric enum, pin every value.</strong> Write <code>Pending = 0, Authorized = 1, …</code> explicitly and add new members at the end with new numbers.</li>
+<li><strong>Validate before you trust.</strong> A number from outside is not a member just because the parameter type says so; neither is a string. Check it against the list of values.</li>
+<li><strong>Do not export <code>const enum</code> from a library.</strong> Consumers compiling with <code>isolatedModules</code> cannot inline it, and ambient const enums in <code>.d.ts</code> files are an error for them.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Build a dropdown from an enum">
+<p>A settings page builds its dropdown from this enum and shows eight options instead of four. Fix <code>options</code> so it lists four <code>{ value, label }</code> pairs, with the member name as the label.</p>
+<example file="dropdown.ts" project="ex-dropdown">
+enum Frequency {
+  Daily,
+  Weekly,
+  Monthly,
+  Yearly,
+}
+
+const options = Object.keys(Frequency).map((key) => ({ value: key, label: key }));
+console.log(options.length);
+</example>
+<output>
+8
+</output>
+<solution>
+<example file="dropdown.ts" project="ex-dropdown">
+enum Frequency {
+  Daily,
+  Weekly,
+  Monthly,
+  Yearly,
+}
+
+const options = Object.values(Frequency)
+  .filter((value) => typeof value === "number")
+  .map((value) => ({ value, label: Frequency[value] }));
+console.log(options);
+</example>
+<output>
+[
+  { value: 0, label: 'Daily' },
+  { value: 1, label: 'Weekly' },
+  { value: 2, label: 'Monthly' },
+  { value: 3, label: 'Yearly' }
+]
+</output>
+<p>The reverse mapping doubles the keys. Keep only the numeric values, and use the reverse mapping on purpose, to get each label.</p>
+</solution>
+</exercise>
+<exercise title="Replace a string enum">
+<p>Rewrite this string enum as an <code>as const</code> object with a derived type of the same name, so that <code>greet("fr")</code>, a plain string from a query parameter, compiles when it is a valid member. Keep <code>Language.French</code> working.</p>
+<example file="language.ts" project="ex-language" check="tsc-error">
+enum Language {
+  English = "en",
+  French = "fr",
+  Yoruba = "yo",
+}
+
+function greet(language: Language): string {
+  return language === Language.Yoruba ? "Ẹ káàbọ̀" : language === Language.French ? "Bienvenue" : "Welcome";
+}
+
+console.log(greet(Language.French), greet("yo"));
+</example>
+<output kind="tsc">
+language.ts:11:43 - error TS2345: Argument of type '"yo"' is not assignable to parameter of type 'Language'.
+
+11 console.log(greet(Language.French), greet("yo"));
+                                             ~~~~
+
+
+Found 1 error in language.ts:11
+</output>
+<solution>
+<example file="language.ts" project="ex-language">
+const Language = {
+  English: "en",
+  French: "fr",
+  Yoruba: "yo",
+} as const;
+
+type Language = (typeof Language)[keyof typeof Language];
+
+function greet(language: Language): string {
+  return language === Language.Yoruba ? "Ẹ káàbọ̀" : language === Language.French ? "Bienvenue" : "Welcome";
+}
+
+console.log(greet(Language.French), greet("yo"));
+</example>
+<output>
+Bienvenue Ẹ káàbọ̀
+</output>
+<p>The derived type is the union <code>"en" | "fr" | "yo"</code>, which is structural, so the literal <code>"yo"</code> is accepted. A string you receive at runtime is only a <code>string</code>, so it still needs a guard like <code>isPaymentStatus</code> first.</p>
+</solution>
+</exercise>
+<exercise title="Pin the numbers">
+<p>A <code>KycLevel</code> enum is stored in the database as numbers: <code>None</code>, <code>Basic</code>, <code>Verified</code>. Product wants a new level, <code>Enhanced</code>, between <code>Basic</code> and <code>Verified</code> in meaning. Write the enum so no stored value changes meaning, and so a check "at least Basic" still works for all four levels.</p>
+<solution>
+<example file="kyc.ts" project="ex-kyc">
+enum KycLevel {
+  None = 0,
+  Basic = 10,
+  Enhanced = 15,
+  Verified = 20,
+}
+
+function canTransfer(level: KycLevel): boolean {
+  return level >= KycLevel.Basic;
+}
+
+const stored = [0, 10, 20];
+console.log(stored.map((value) => `${KycLevel[value]}:${canTransfer(value)}`).join(" "));
+console.log(canTransfer(KycLevel.Enhanced));
+</example>
+<output>
+None:false Basic:true Verified:true
+true
+</output>
+<p>Old rows stored 0, 1 and 2, so a real migration first rewrites them to 0, 10 and 20, once, with an explicit mapping. From then on the values are pinned, with gaps, so a level can be inserted between two others without renumbering. Here the order carries meaning, which is the one case where a numeric enum is a good fit.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>An enum is a type and a runtime object. <code>tsc</code> emits an IIFE that fills the object; numeric members also get reverse mappings (number to name).</li>
+<li>Reverse mappings double <code>Object.keys</code> and <code>Object.values</code>. Numeric enums accept any <code>number</code>, and reordering members changes stored values.</li>
+<li>String enums have readable values but are nominal: <code>"NGN"</code> is not accepted as <code>Currency.Naira</code>.</li>
+<li><code>const enum</code> is inlined only without <code>isolatedModules</code>; with <code>verbatimModuleSyntax</code> it compiles like a normal enum and forbids reverse lookups.</li>
+<li>Node's type stripping rejects every enum with <code>ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX</code>; <code>erasableSyntaxOnly</code> makes <code>tsc</code> flag it first.</li>
+<li>Literal unions and <code>as const</code> objects with <code>(typeof X)[keyof typeof X]</code> give names, checks and plain values, with nothing to strip.</li>
+</ul>
+<p>Next: <a href="/learn/ts-tuples">Tuples</a>, arrays where every position has its own type.</p>
+</section>

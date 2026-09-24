@@ -1,0 +1,934 @@
+---
+title: Objects in depth
+description: Control exactly how an object behaves: lock its shape, validate writes with setters, hide fields, copy it safely and compare it, by building a bank account that cannot be broken.
+minutes: 50
+youNeed: Objects and JSON, Arrays and Functions
+youBuild: A bank account object that rejects typos, bad amounts and outside edits, with a test list that proves it
+keywords: javascript objects, Object.create, computed property, property order, object spread, rest properties, property descriptor, Object.defineProperty, getter, setter, Object.freeze, Object.seal, Object.preventExtensions, structuredClone, deep copy, shallow copy, object identity
+objectives: Create objects in the right form for the job, including dictionaries with no prototype | Predict what spread, rest and Object.assign copy and what they leave behind | Read and set property descriptors to make properties read-only or hidden | Validate writes with getters and setters | Choose between preventExtensions, seal and freeze, and deep-freeze a config | Make shallow and deep copies on purpose and compare objects by identity or by content
+---
+<section>
+<h2 id="problem">An account anyone can break</h2>
+<p>In <a href="/learn/js-data">Objects and JSON</a> you learned to build objects, read and change their properties, and copy them with spread. That is enough to write a first bank account for a small savings app. Amounts are kept in <strong>kobo</strong> (1 naira = 100 kobo), as whole numbers, so there are no floating point surprises:</p>
+<example file="problem.js">
+const account = {
+  id: "ACC-001",
+  owner: { name: "Ada Obi", phone: "0803 000 0000" },
+  balanceKobo: 500000,
+};
+
+// 1. A typo creates a new property instead of failing.
+account.balnceKobo = 0;
+
+// 2. Someone stores text instead of a number.
+account.balanceKobo = "500000";
+account.balanceKobo = account.balanceKobo + 150000;
+
+// 3. A "copy" for a printed statement changes the real account.
+const statement = { ...account };
+statement.owner.phone = "hidden";
+
+console.log(account);
+</example>
+<output>
+{
+  id: 'ACC-001',
+  owner: { name: 'Ada Obi', phone: 'hidden' },
+  balanceKobo: '500000150000',
+  balnceKobo: 0
+}
+</output>
+<p>Three ordinary lines of code and the account is broken in three different ways, and JavaScript did not complain once:</p>
+<ol>
+<li>Assigning to a misspelled name silently <em>added</em> a property called <code>balnceKobo</code>.</li>
+<li>The balance became a string, so <code>+</code> glued text together: Ada now has "500000150000".</li>
+<li>Spread copied only the top level. <code>statement.owner</code> and <code>account.owner</code> are the same object, so hiding the phone number on the statement hid it on the account.</li>
+</ol>
+<p>An object literal says nothing about which properties are allowed, which values are valid, or who may change them. This lesson gives you the tools to say all of that: how objects are created, what exactly copying copies, <strong>property descriptors</strong> that make a property read-only or hidden, <strong>getters and setters</strong> that check every write, three levels of locking, deep copies, and how to compare objects. At the end you rebuild this account so that each of the three lines above fails loudly instead.</p>
+</section>
+
+<section>
+<h2 id="creating">Five ways to create an object</h2>
+<p>Almost every object you have written so far was an <strong>object literal</strong>: properties between braces. It is the right choice most of the time. The other forms exist for specific jobs:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Form</th><th>Example</th><th>Use it for</th></tr></thead>
+<tbody>
+<tr><td>Object literal</td><td><code>{ id: 1, name: "Ada" }</code></td><td>One object whose shape you know while writing the code</td></tr>
+<tr><td>Factory function</td><td><code>createAccount("Ada", 5000)</code></td><td>Many objects of the same shape, with checks or private state</td></tr>
+<tr><td><code>Object.fromEntries</code></td><td><code>Object.fromEntries([["a", 1]])</code></td><td>Building an object from data, such as rows or a transformed object</td></tr>
+<tr><td><code>Object.create(proto)</code></td><td><code>Object.create(null)</code></td><td>Choosing the object's prototype, or having none</td></tr>
+<tr><td><code>new</code> with a class</td><td><code>new Account("Ada")</code></td><td>Many objects sharing methods (see <a href="/learn/js-classes">this, prototypes and classes</a>)</td></tr>
+</tbody>
+</table></div>
+<p>A <strong>factory function</strong> is an ordinary function that builds and returns a new object. It is a good place to validate input, because every object has to pass through it:</p>
+<example file="factory.js">
+function createProduct(name, priceKobo) {
+  if (!Number.isInteger(priceKobo) || priceKobo < 0) {
+    throw new Error(`Invalid price for ${name}: ${priceKobo}`);
+  }
+  return { name, priceKobo, createdBy: "catalogue" };
+}
+
+const rice = createProduct("Rice 5kg", 850000);
+console.log(rice);
+
+try {
+  createProduct("Beans", "free");
+} catch (error) {
+  console.log(error.message);
+}
+
+const rows = [["sku", "RICE-5"], ["stock", 42]];
+console.log(Object.fromEntries(rows));
+</example>
+<output>
+{ name: 'Rice 5kg', priceKobo: 850000, createdBy: 'catalogue' }
+Invalid price for Beans: free
+{ sku: 'RICE-5', stock: 42 }
+</output>
+<h3>Object.create(null): a dictionary with nothing inherited</h3>
+<p>Every object literal is linked to <code>Object.prototype</code>, a shared object that gives it methods such as <code>toString</code> and <code>hasOwnProperty</code>. You will study that link, the <strong>prototype</strong>, in <a href="/learn/js-prototypes">Prototypes in depth</a>. For now, one consequence matters: an ordinary object already "has" some names you never wrote. That breaks code that uses an object as a <strong>dictionary</strong>, a lookup table whose keys come from data:</p>
+<example file="dictionary.js">
+const words = ["price", "constructor", "price", "toString"];
+
+const counts = {};
+for (const word of words) {
+  counts[word] = (counts[word] || 0) + 1;
+}
+console.log(counts.price, typeof counts.constructor, typeof counts.toString);
+
+const safeCounts = Object.create(null);
+for (const word of words) {
+  safeCounts[word] = (safeCounts[word] ?? 0) + 1;
+}
+console.log(safeCounts);
+console.log("constructor" in {}, "constructor" in Object.create(null));
+</example>
+<output>
+2 string string
+[Object: null prototype] { price: 2, constructor: 1, toString: 1 }
+true false
+</output>
+<p>In the first loop, <code>counts["constructor"]</code> did not start as <code>undefined</code>. It started as the inherited <code>Object</code> function, and <code>function + 1</code> gave a string. The same happened to <code>toString</code>. The dictionary built with <code>Object.create(null)</code> has no prototype at all, so the only keys it has are the ones you put in; Node prints it with the label <code>[Object: null prototype]</code> to remind you of that.</p>
+<p>With keys that come from users (tags, product names, words from a search box), use <code>Object.create(null)</code> or, better, a <code>Map</code>, which you meet in <a href="/learn/js-collections">the lesson on collections</a>.</p>
+</section>
+
+<section>
+<h2 id="keys">Property keys: strings, symbols and order</h2>
+<p>A property key is always a <strong>string</strong> or a <strong>symbol</strong> (a unique value made with <code>Symbol()</code>, covered in <a href="/learn/js-symbols">the lesson on symbols</a>). Anything else you use as a key is turned into a string first. That includes numbers, and it includes objects, which become the string <code>"[object Object]"</code>:</p>
+<example file="keys.js">
+const stock = {};
+stock[1] = "Rice";
+stock["1"] = "Beans";
+console.log(stock, Object.keys(stock));
+
+const ada = { id: 1 };
+const grace = { id: 2 };
+const carts = {};
+carts[ada] = ["rice"];
+carts[grace] = ["beans"];
+console.log(carts);
+</example>
+<output>
+{ '1': 'Beans' } [ '1' ]
+{ '[object Object]': [ 'beans' ] }
+</output>
+<p><code>stock[1]</code> and <code>stock["1"]</code> are the same property. And both users' carts landed on one key, <code>"[object Object]"</code>, so Grace's cart replaced Ada's. When the key is an object, you need a <code>Map</code>, which keeps keys by identity.</p>
+<h3>Computed keys</h3>
+<p>You met computed properties in <a href="/learn/js-data#shorthand">Objects and JSON</a>: <code>{ [key]: value }</code>. Any expression works between the brackets, including a template literal. This is handy when a key is built from data:</p>
+<example file="computed.js">
+function priceField(currency, amount) {
+  return { [`price${currency}`]: amount, [`${currency.toLowerCase()}Set`]: true };
+}
+
+console.log(priceField("NGN", 850000));
+console.log(priceField("USD", 550));
+
+const field = "status";
+const update = { [field]: "shipped", [field + "At"]: "2026-09-24" };
+console.log(update);
+</example>
+<output>
+{ priceNGN: 850000, ngnSet: true }
+{ priceUSD: 550, usdSet: true }
+{ status: 'shipped', statusAt: '2026-09-24' }
+</output>
+<h3>The order of keys</h3>
+<p><code>Object.keys</code>, <code>for...in</code>, spread and <code>JSON.stringify</code> all list keys in the same order, and it is not always the order you wrote them. Keys that look like whole numbers (<code>"2"</code>, <code>"10"</code>) come first, sorted as numbers. Then come the other string keys, in the order they were added:</p>
+<example file="order.js">
+const seats = { B: "Grace", 10: "Chidi", A: "Ada", 2: "Tunde" };
+console.log(Object.keys(seats));
+
+const invoices = { "INV-10": 5000, "INV-2": 1200 };
+console.log(Object.keys(invoices));
+</example>
+<output>
+[ '2', '10', 'B', 'A' ]
+[ 'INV-10', 'INV-2' ]
+</output>
+<p>Seat numbers jumped to the front and were sorted; the letter keys kept their insertion order. The invoice keys are not whole numbers, so they stay in insertion order and are <em>not</em> sorted. Never rely on key order for meaning. If order matters, keep an array, or sort the keys yourself when you print.</p>
+</section>
+
+<section>
+<h2 id="spread-rest">What spread, rest and Object.assign really copy</h2>
+<p>Spread <code>{ ...source }</code> looks like "copy the object". It is more precise than that, and the details decide whether your copy works. Spread copies each <strong>own, enumerable</strong> property of the source:</p>
+<ul>
+<li><strong>Own</strong> means stored on the object itself, not inherited from its prototype. Methods that live on a class's prototype are not copied.</li>
+<li><strong>Enumerable</strong> means "shows up when you list the keys". Most properties are; the descriptors section shows how to make one that is not.</li>
+<li>A <strong>getter</strong> (a property that runs a function when read, explained below) is <em>called</em>, and its current result is copied as a plain value.</li>
+</ul>
+<example file="spread-copies.js">
+class Account {
+  constructor(owner, balanceKobo) {
+    this.owner = owner;
+    this.balanceKobo = balanceKobo;
+  }
+  deposit(amountKobo) {
+    this.balanceKobo += amountKobo;
+  }
+}
+
+const real = new Account("Ada", 500000);
+const copy = { ...real };
+
+console.log(copy);
+console.log(typeof real.deposit, typeof copy.deposit);
+console.log(real instanceof Account, copy instanceof Account);
+
+const cart = {
+  items: [{ sku: "RICE-5", priceKobo: 850000 }, { sku: "OIL-1", priceKobo: 320000 }],
+  get totalKobo() {
+    return this.items.reduce((sum, item) => sum + item.priceKobo, 0);
+  },
+};
+const snapshot = { ...cart };
+cart.items.push({ sku: "SALT", priceKobo: 20000 });
+console.log(cart.totalKobo, snapshot.totalKobo);
+</example>
+<output>
+{ owner: 'Ada', balanceKobo: 500000 }
+function undefined
+true false
+1190000 1170000
+</output>
+<p>The copy of the account kept the data but lost the <code>deposit</code> method and is no longer an <code>Account</code>. The cart's <code>totalKobo</code> getter was frozen into the number it had at copy time; <code>snapshot.totalKobo</code> is now a plain number that will never change. Sometimes that is exactly what you want (a snapshot for an order confirmation), sometimes it is a bug.</p>
+<h3>Merging: later wins</h3>
+<p>When two sources have the same key, the one written later wins. So the position of the spread decides between "defaults" and "overrides". Spreading <code>null</code> or <code>undefined</code> is allowed and adds nothing, which gives a neat way to add a property only when a condition holds:</p>
+<example file="merge.js">
+const defaults = { currency: "NGN", deliveryKobo: 150000, giftWrap: false };
+const request = { deliveryKobo: 0, giftWrap: true };
+
+console.log({ ...defaults, ...request });
+console.log({ ...request, ...defaults });
+
+const isVip = true;
+const note = null;
+const order = {
+  id: "ORD-7",
+  ...(isVip && { priority: "high" }),
+  ...(note && { note }),
+};
+console.log(order);
+</example>
+<output>
+{ currency: 'NGN', deliveryKobo: 0, giftWrap: true }
+{ deliveryKobo: 150000, giftWrap: false, currency: 'NGN' }
+{ id: 'ORD-7', priority: 'high' }
+</output>
+<p>The second line is a real bug pattern: the defaults were spread last and overwrote what the customer asked for. <code>...(isVip &amp;&amp; { priority: "high" })</code> spreads the object when <code>isVip</code> is true, and spreads <code>false</code> (which adds nothing) when it is not. The same trick with <code>note</code> left out the <code>note</code> property entirely instead of storing <code>null</code>.</p>
+<h3>Object.assign writes into its target</h3>
+<p><code>Object.assign(target, ...sources)</code> copies the same own, enumerable properties, but it <em>assigns</em> them into an existing target and returns that target. Two consequences: it changes the target, and assigning goes through any setter the target has. Spread always builds a brand new object and never calls setters. Use spread to build new objects; use <code>Object.assign</code> only when you really mean to change an existing one.</p>
+<h3>Rest: everything except</h3>
+<p>Rest in a destructuring pattern, <code>const { a, ...others } = obj</code>, is the mirror image: it collects every own, enumerable property you did not name into a new object. It is the standard way to remove fields before sending an object somewhere else:</p>
+<example file="rest.js">
+const customer = {
+  id: 7,
+  name: "Ada Obi",
+  email: "ada@example.com",
+  passwordHash: "<hash>",
+  bvn: "22212345678",
+};
+
+const { passwordHash, bvn, ...publicCustomer } = customer;
+console.log(publicCustomer);
+
+function omit(obj, ...keys) {
+  return Object.fromEntries(Object.entries(obj).filter(([key]) => !keys.includes(key)));
+}
+console.log(omit(customer, "passwordHash", "bvn", "email"));
+</example>
+<output>
+{ id: 7, name: 'Ada Obi', email: 'ada@example.com' }
+{ id: 7, name: 'Ada Obi' }
+</output>
+<p>Destructuring can also rename properties and give them defaults; <a href="/learn/js-modern#destructuring">Modern JavaScript</a> covers all the forms. Keep in mind that removing fields with rest is a <em>block-list</em>: when someone adds a new secret field to <code>customer</code> next year, it leaks. For data that leaves your server, an allow-list, as in the profile system of <a href="/learn/js-data#build">Objects and JSON</a>, is safer.</p>
+</section>
+
+<section>
+<h2 id="descriptors">Property descriptors</h2>
+<p>So far a property has been a name and a value. Underneath, every property also has three yes-or-no settings, called <strong>attributes</strong>. Together with the value they form the property's <strong>descriptor</strong>:</p>
+<ul>
+<li><code>writable</code>: can the value be changed by assignment?</li>
+<li><code>enumerable</code>: does the property show up in <code>Object.keys</code>, <code>for...in</code>, spread and <code>JSON.stringify</code>?</li>
+<li><code>configurable</code>: can the property be deleted, or its attributes changed later?</li>
+</ul>
+<p><code>Object.getOwnPropertyDescriptor(obj, key)</code> shows them. <code>Object.defineProperty(obj, key, descriptor)</code> creates or changes a property with exactly the attributes you choose:</p>
+<example file="descriptor.js">
+const account = { owner: "Ada" };
+console.log(Object.getOwnPropertyDescriptor(account, "owner"));
+
+Object.defineProperty(account, "id", { value: "ACC-001" });
+console.log(Object.getOwnPropertyDescriptor(account, "id"));
+console.log(account.id, Object.keys(account));
+
+try {
+  account.id = "ACC-999";
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+console.log(account.id);
+</example>
+<output>
+{ value: 'Ada', writable: true, enumerable: true, configurable: true }
+{
+  value: 'ACC-001',
+  writable: false,
+  enumerable: false,
+  configurable: false
+}
+ACC-001 [ 'owner' ]
+TypeError: Cannot assign to read only property 'id' of object '#<Object>'
+ACC-001
+</output>
+<p>Two things to learn from this:</p>
+<ul>
+<li>A property made by normal assignment or a literal has all three attributes <code>true</code>. A property made by <code>defineProperty</code> has every attribute you leave out set to <code>false</code>. So <code>id</code> is read-only, hidden from <code>Object.keys</code>, and cannot be deleted, all from one line.</li>
+<li>Writing to a read-only property throws a <code>TypeError</code> in <strong>strict mode</strong>. Strict mode is a stricter set of rules that turns silent mistakes into errors. It is always on inside ES modules and classes, which is how every example in this course runs. In old non-module scripts, the same assignment is silently ignored, which is far harder to debug.</li>
+</ul>
+<h3>Hidden, but still there</h3>
+<p>A non-enumerable property is not secret. It is only left out of listings. You can still read it, and <code>Object.getOwnPropertyNames</code> lists it:</p>
+<example file="hidden.js">
+const order = { id: "ORD-7", totalKobo: 1170000 };
+Object.defineProperty(order, "internalNote", {
+  value: "customer called twice",
+  enumerable: false,
+  writable: true,
+});
+
+console.log(order);
+console.log(JSON.stringify(order));
+console.log({ ...order });
+console.log(order.internalNote);
+console.log(Object.getOwnPropertyNames(order));
+</example>
+<output>
+{ id: 'ORD-7', totalKobo: 1170000 }
+{"id":"ORD-7","totalKobo":1170000}
+{ id: 'ORD-7', totalKobo: 1170000 }
+customer called twice
+[ 'id', 'totalKobo', 'internalNote' ]
+</output>
+<p>This is how JavaScript's own objects keep their methods out of your loops: <code>Array.prototype.map</code> is non-enumerable, so <code>for...in</code> over an array does not list it. It is also useful for bookkeeping data that should not go into JSON. It is <em>not</em> a way to protect passwords or tokens: any code that has the object can read them.</p>
+<note>You can define several properties at once with <code>Object.defineProperties(obj, { a: {…}, b: {…} })</code>, and read all descriptors with <code>Object.getOwnPropertyDescriptors(obj)</code>. Together they make a copy that keeps getters, setters and attributes: <code>Object.defineProperties({}, Object.getOwnPropertyDescriptors(source))</code>. Spread cannot do that.</note>
+</section>
+
+<section>
+<h2 id="accessors">Getters and setters</h2>
+<p>A property does not have to store a value. An <strong>accessor property</strong> runs a function instead: a <strong>getter</strong> runs when the property is read, a <strong>setter</strong> runs when it is assigned. From the outside it looks like a normal property. You met them in classes in <a href="/learn/js-classes#members">this, prototypes and classes</a>; they work in plain objects too, written with <code>get</code> and <code>set</code> in a literal.</p>
+<p>A getter suits a value that is <em>derived</em> from other data, so it can never be out of date. A setter suits a value that must be <em>checked</em> before it is stored:</p>
+<example file="accessors.js">
+function createWallet(owner) {
+  let balanceKobo = 0;
+  return {
+    owner,
+    get balanceKobo() {
+      return balanceKobo;
+    },
+    set balanceKobo(value) {
+      if (!Number.isInteger(value) || value < 0) {
+        throw new TypeError(`balance must be a whole, non-negative number of kobo, got ${JSON.stringify(value)}`);
+      }
+      balanceKobo = value;
+    },
+    get balance() {
+      return `₦${(balanceKobo / 100).toFixed(2)}`;
+    },
+  };
+}
+
+const wallet = createWallet("Ada");
+wallet.balanceKobo = 250050;
+console.log(wallet.balance, wallet.balanceKobo);
+
+for (const bad of ["500000", -1, 10.5]) {
+  try {
+    wallet.balanceKobo = bad;
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+
+try {
+  wallet.balance = "₦1,000,000.00";
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+
+console.log(wallet);
+console.log(JSON.stringify(wallet));
+</example>
+<output>
+₦2500.50 250050
+balance must be a whole, non-negative number of kobo, got "500000"
+balance must be a whole, non-negative number of kobo, got -1
+balance must be a whole, non-negative number of kobo, got 10.5
+TypeError: Cannot set property balance of #<Object> which has only a getter
+{ owner: 'Ada', balanceKobo: [Getter/Setter], balance: [Getter] }
+{"owner":"Ada","balanceKobo":250050,"balance":"₦2500.50"}
+</output>
+<p>Read it closely:</p>
+<ul>
+<li>The real number lives in the variable <code>balanceKobo</code> inside <code>createWallet</code>, kept alive by a closure (<a href="/learn/js-closures">Closures in depth</a> explains how). The only way to change it is through the setter, and the setter refuses strings, negatives and fractions of a kobo.</li>
+<li><code>balance</code> has a getter and no setter, so it is read-only: assigning to it throws in strict mode.</li>
+<li><code>console.log</code> does not run getters; it shows <code>[Getter]</code> or <code>[Getter/Setter]</code>. <code>JSON.stringify</code> does run them, so the JSON contains the current values.</li>
+</ul>
+<warn title="A setter that assigns to itself never ends">Inside <code>set balanceKobo(value)</code>, writing <code>this.balanceKobo = value</code> calls the same setter again, which calls it again, until the stack overflows with <code>RangeError: Maximum call stack size exceeded</code>. Store the real value somewhere else: a closure variable as above, a <code>#private</code> field in a class, or a differently named property.</warn>
+<h3>Accessors with defineProperty</h3>
+<p>You can add an accessor to an existing object with <code>defineProperty</code>. Its descriptor has <code>get</code> and <code>set</code> instead of <code>value</code> and <code>writable</code>; you cannot mix the two kinds:</p>
+<example file="define-accessor.js">
+const order = { items: [{ priceKobo: 850000, qty: 2 }, { priceKobo: 20000, qty: 3 }] };
+
+Object.defineProperty(order, "totalKobo", {
+  get() {
+    return this.items.reduce((sum, item) => sum + item.priceKobo * item.qty, 0);
+  },
+  enumerable: true,
+});
+
+console.log(order.totalKobo);
+order.items.push({ priceKobo: 5000, qty: 1 });
+console.log(order.totalKobo);
+console.log(Object.getOwnPropertyDescriptor(order, "totalKobo"));
+
+try {
+  Object.defineProperty(order, "vat", { value: 7.5, get() { return 7.5; } });
+} catch (error) {
+  console.log(error.name);
+}
+</example>
+<output>
+1760000
+1765000
+{
+  get: [Function: get],
+  set: undefined,
+  enumerable: true,
+  configurable: false
+}
+TypeError
+</output>
+<p>The total follows the items automatically, because it is computed on every read. A getter should be cheap and should not change anything: code that reads <code>order.totalKobo</code> expects a read, not a side effect. If the work is expensive, a plain method such as <code>order.computeTotal()</code> makes the cost visible to the caller.</p>
+</section>
+
+<section>
+<h2 id="locking">Locking objects: preventExtensions, seal and freeze</h2>
+<p>Descriptors lock one property at a time. Three built-in functions lock a whole object at once, each a little tighter than the last:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th></th><th>Add a property</th><th>Delete a property</th><th>Change a value</th><th>Check with</th></tr></thead>
+<tbody>
+<tr><td>Normal object</td><td>yes</td><td>yes</td><td>yes</td><td></td></tr>
+<tr><td><code>Object.preventExtensions</code></td><td>no</td><td>yes</td><td>yes</td><td><code>Object.isExtensible</code></td></tr>
+<tr><td><code>Object.seal</code></td><td>no</td><td>no</td><td>yes</td><td><code>Object.isSealed</code></td></tr>
+<tr><td><code>Object.freeze</code></td><td>no</td><td>no</td><td>no</td><td><code>Object.isFrozen</code></td></tr>
+</tbody>
+</table></div>
+<p><code>seal</code> makes every property non-configurable; <code>freeze</code> also makes every data property non-writable. All three return the same object they were given (not a copy), and none can be undone. In strict mode, every forbidden change throws a <code>TypeError</code>:</p>
+<example file="locking.js">
+function attempt(label, change) {
+  try {
+    change();
+    console.log(`${label}: ok`);
+  } catch (error) {
+    console.log(`${label}: ${error.message}`);
+  }
+}
+
+const sealed = Object.seal({ owner: "Ada", balanceKobo: 500000 });
+attempt("sealed, typo", () => { sealed.balnceKobo = 0; });
+attempt("sealed, delete", () => { delete sealed.owner; });
+attempt("sealed, change", () => { sealed.balanceKobo = 400000; });
+
+const frozen = Object.freeze({ currency: "NGN", vatPercent: 7.5 });
+attempt("frozen, change", () => { frozen.vatPercent = 0; });
+
+const limited = Object.preventExtensions({ owner: "Ada", note: "VIP" });
+attempt("limited, add", () => { limited.extra = 1; });
+attempt("limited, delete", () => { delete limited.note; });
+
+console.log(Object.isSealed(sealed), Object.isFrozen(frozen), Object.isExtensible(limited));
+console.log(sealed, frozen, limited);
+</example>
+<output>
+sealed, typo: Cannot add property balnceKobo, object is not extensible
+sealed, delete: Cannot delete property 'owner' of #<Object>
+sealed, change: ok
+frozen, change: Cannot assign to read only property 'vatPercent' of object '#<Object>'
+limited, add: Cannot add property extra, object is not extensible
+limited, delete: ok
+true true false
+{ owner: 'Ada', balanceKobo: 400000 } { currency: 'NGN', vatPercent: 7.5 } { owner: 'Ada' }
+</output>
+<p>Seal is the tool against the typo bug from the start of the lesson: the shape is fixed, the values can still change. Freeze is the tool for values that must never change after start-up, such as configuration and lookup tables.</p>
+<h3>Freeze is shallow</h3>
+<p>Like spread, <code>Object.freeze</code> only works on one level. A frozen object's nested objects are still perfectly changeable:</p>
+<example file="shallow-freeze.js">
+const config = Object.freeze({
+  currency: "NGN",
+  deliveryKobo: { lagos: 150000, abuja: 250000 },
+});
+
+config.deliveryKobo.lagos = 0;
+console.log(config.deliveryKobo.lagos, Object.isFrozen(config.deliveryKobo));
+
+function deepFreeze(value) {
+  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
+  for (const key of Reflect.ownKeys(value)) {
+    deepFreeze(value[key]);
+  }
+  return Object.freeze(value);
+}
+
+const safeConfig = deepFreeze({
+  currency: "NGN",
+  deliveryKobo: { lagos: 150000, abuja: 250000 },
+  zones: ["lagos", "abuja"],
+});
+
+try {
+  safeConfig.deliveryKobo.lagos = 0;
+} catch (error) {
+  console.log(error.message);
+}
+try {
+  safeConfig.zones.push("kano");
+} catch (error) {
+  console.log(error.message);
+}
+</example>
+<output>
+0 false
+Cannot assign to read only property 'lagos' of object '#<Object>'
+Cannot add property 2, object is not extensible
+</output>
+<p><code>deepFreeze</code> freezes every nested object and array before freezing the object itself. It calls itself for each nested value, which is <strong>recursion</strong> (the whole topic of <a href="/learn/js-recursion">Recursion</a>). <code>Reflect.ownKeys</code> lists every own key, including non-enumerable and symbol keys, so nothing is skipped. The check for <code>Object.isFrozen</code> stops it from walking the same object twice.</p>
+<p>Arrays are objects too: freezing one makes <code>push</code>, <code>pop</code>, <code>sort</code> and index assignment throw. <code>map</code>, <code>filter</code> and <code>toSorted</code> still work, because they return new arrays.</p>
+</section>
+
+<section>
+<h2 id="copies">Shallow and deep copies</h2>
+<p>You now have four ways to "copy" an object, and they give four different results. A <strong>shallow copy</strong> is a new top-level object whose nested objects are still shared with the original. A <strong>deep copy</strong> copies every level, so nothing is shared.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Code</th><th>What you get</th></tr></thead>
+<tbody>
+<tr><td><code>const b = a</code></td><td>No copy at all: a second name for the same object</td></tr>
+<tr><td><code>{ ...a }</code>, <code>Object.assign({}, a)</code></td><td>Shallow copy of own enumerable properties; getters become values; prototype lost</td></tr>
+<tr><td><code>structuredClone(a)</code></td><td>Deep copy; keeps <code>Date</code>, <code>Map</code>, <code>Set</code> and shared or circular references; refuses functions; prototype lost</td></tr>
+<tr><td><code>JSON.parse(JSON.stringify(a))</code></td><td>Deep copy of JSON-safe data only: dates become strings, <code>Map</code> becomes <code>{}</code>, <code>undefined</code> and functions vanish</td></tr>
+</tbody>
+</table></div>
+<example file="copies.js">
+const order = {
+  id: "ORD-7",
+  placedAt: new Date("2026-09-24T10:00:00Z"),
+  items: [{ sku: "RICE-5", qty: 2 }],
+  tags: new Set(["gift"]),
+  couponCode: undefined,
+};
+
+const shallow = { ...order };
+const cloned = structuredClone(order);
+const viaJson = JSON.parse(JSON.stringify(order));
+
+order.items[0].qty = 99;
+console.log(shallow.items[0].qty, cloned.items[0].qty, viaJson.items[0].qty);
+
+console.log(cloned.placedAt instanceof Date, typeof viaJson.placedAt);
+console.log(cloned.tags, viaJson.tags);
+console.log("couponCode" in cloned, "couponCode" in viaJson);
+</example>
+<output>
+99 2 2
+true string
+Set(1) { 'gift' } {}
+true false
+</output>
+<p><code>structuredClone</code> is the right default for deep copies of data. The JSON round trip is older and still common in existing code; you can see why it causes bugs: the date is now a string, the set is an empty object, and a property disappeared.</p>
+<h3>What structuredClone cannot copy</h3>
+<p><code>structuredClone</code> copies <em>data</em>, not behaviour. It throws on functions, and it turns class instances into plain objects:</p>
+<example file="clone-limits.js">
+class Account {
+  constructor(owner) {
+    this.owner = owner;
+    this.balanceKobo = 0;
+  }
+  deposit(amountKobo) {
+    this.balanceKobo += amountKobo;
+  }
+}
+
+const account = new Account("Ada");
+const copy = structuredClone(account);
+console.log(copy, copy instanceof Account, typeof copy.deposit);
+
+try {
+  structuredClone({ owner: "Ada", notify: () => console.log("sms sent") });
+} catch (error) {
+  console.log(error.name);
+}
+
+const shared = { city: "Lagos" };
+const pair = { home: shared, delivery: shared };
+const pairCopy = structuredClone(pair);
+console.log(pairCopy.home === pairCopy.delivery, pairCopy.home === shared);
+</example>
+<output>
+{ owner: 'Ada', balanceKobo: 0 } false undefined
+DataCloneError
+true false
+</output>
+<p>The last line shows something the JSON round trip cannot do: two properties that pointed at one object still point at one (new) object in the copy. <code>structuredClone</code> also handles an object that refers back to itself, a <strong>circular reference</strong>, where <code>JSON.stringify</code> throws. To deep-copy a class instance, give the class its own method, such as <code>clone()</code>, that creates a new instance with <code>new</code>.</p>
+<tip>Do you need a copy at all? A copy is only needed when someone will change one of the two objects. If nobody changes data after it is created, you can share it safely, and freezing it makes that promise enforceable. Copying large objects on every request costs time and memory.</tip>
+</section>
+
+<section>
+<h2 id="identity">Identity and equality</h2>
+<p>A variable holds a reference to an object, as you saw in <a href="/learn/js-data#references">Objects and JSON</a>. So <code>===</code> on objects answers "are these the <em>same object</em>?", which is called <strong>identity</strong>. It never looks inside. <code>Object.is</code> is a variant of <code>===</code> with two differences for numbers (<code>NaN</code> equals itself, and <code>0</code> and <code>-0</code> differ); for objects it also compares identity.</p>
+<p>When you need "do these two objects hold the same data?", you have to write the comparison. For flat objects, a <strong>shallow equality</strong> check compares the keys and then each value with <code>Object.is</code>:</p>
+<example file="equality.js">
+const a = { sku: "RICE-5", qty: 2 };
+const b = { sku: "RICE-5", qty: 2 };
+const c = a;
+
+console.log(a === b, a === c, Object.is(a, c));
+console.log(NaN === NaN, Object.is(NaN, NaN), Object.is(0, -0));
+
+function shallowEqual(x, y) {
+  const xKeys = Object.keys(x);
+  const yKeys = Object.keys(y);
+  if (xKeys.length !== yKeys.length) return false;
+  return xKeys.every((key) => Object.hasOwn(y, key) && Object.is(x[key], y[key]));
+}
+
+console.log(shallowEqual(a, b));
+console.log(shallowEqual(a, { qty: 2, sku: "RICE-5" }));
+console.log(shallowEqual({ items: [1] }, { items: [1] }));
+
+const cart = new Set([a, b]);
+console.log(cart.size);
+</example>
+<output>
+false true true
+false true false
+true
+true
+false
+2
+</output>
+<p>Key order does not matter to <code>shallowEqual</code>, but nested objects do: <code>{ items: [1] }</code> and <code>{ items: [1] }</code> are not shallow-equal, because their two arrays are different objects. Comparing all levels, <strong>deep equality</strong>, needs a function that calls itself on nested values; test runners provide one (<code>toEqual</code> in Vitest), and you will write your own in <a href="/learn/js-recursion">Recursion</a>.</p>
+<p>The last line matters in real code: a <code>Set</code> (and a <code>Map</code> key) uses identity too. Two cart lines that look the same are still two entries. To remove duplicates by content, pick a key that identifies the data, such as the SKU, and deduplicate by that.</p>
+</section>
+
+<section>
+<h2 id="reason">Before you build: what must the account guarantee?</h2>
+<reason title="Design the rules first">
+<p>You are about to rebuild the account from the start of the lesson. Before writing code, answer these:</p>
+<ul>
+<li>Which properties may outside code <em>read</em>? Which may it <em>change</em> directly, and which only through a method?</li>
+<li>What counts as a valid amount for a deposit or a withdrawal? Think about strings, negative numbers, zero, fractions and <code>NaN</code>.</li>
+<li>What must happen when someone assigns to a misspelled property?</li>
+<li>The account keeps a history of transactions and hands out a statement. What could a caller do to the history if you returned the real array?</li>
+<li>What should <code>JSON.stringify(account)</code> contain when the API sends it to the mobile app?</li>
+</ul>
+<answer>
+<ul>
+<li><strong>Reading</strong>: <code>id</code>, <code>owner</code> and the balance can be read by anyone. <strong>Changing</strong>: <code>id</code> never changes, so it is a read-only data property. <code>owner</code> is data about a person and should be a frozen copy, so nobody can edit it through the account. The balance must <em>only</em> change through <code>deposit</code> and <code>withdraw</code>, which record history; so it is a getter with no setter, backed by a private variable.</li>
+<li><strong>Valid amounts</strong>: whole numbers of kobo greater than zero. <code>Number.isInteger</code> rejects strings, <code>NaN</code>, <code>Infinity</code> and fractions in one check; <code>&gt; 0</code> rejects zero and negatives. A withdrawal must also not exceed the balance.</li>
+<li><strong>Typos</strong>: seal the object, so any new property throws in strict mode.</li>
+<li><strong>History</strong>: returning the real array would let a caller <code>push</code> a fake deposit or <code>pop</code> a withdrawal. Return a deep copy of each entry (the entries are plain data, so <code>structuredClone</code> fits), or freeze each entry and return a copied array.</li>
+<li><strong>JSON</strong>: <code>JSON.stringify</code> includes own, enumerable properties and runs getters. So <code>id</code> must be enumerable, the balance getter must be enumerable, and the methods are skipped automatically because JSON drops functions.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="build">Build: an account that cannot be broken</h2>
+<p>Here is the account, built with a factory function and every tool from this lesson. Each rule from the reasoning above is one or two lines:</p>
+<example file="account.js" project="account">
+function requireKobo(amountKobo) {
+  if (!Number.isInteger(amountKobo) || amountKobo <= 0) {
+    throw new TypeError(`amount must be a whole number of kobo above 0, got ${JSON.stringify(amountKobo)}`);
+  }
+}
+
+export function formatNaira(kobo) {
+  return `₦${(kobo / 100).toFixed(2)}`;
+}
+
+export function createAccount({ id, owner, openingKobo = 0 }) {
+  let balanceKobo = 0;
+  const history = [];
+
+  const account = {
+    owner: Object.freeze({ ...owner }),
+    get balanceKobo() {
+      return balanceKobo;
+    },
+    deposit(amountKobo) {
+      requireKobo(amountKobo);
+      balanceKobo += amountKobo;
+      history.push({ type: "deposit", amountKobo, balanceKobo });
+    },
+    withdraw(amountKobo) {
+      requireKobo(amountKobo);
+      if (amountKobo > balanceKobo) {
+        throw new RangeError(`insufficient funds: balance ${formatNaira(balanceKobo)}, asked ${formatNaira(amountKobo)}`);
+      }
+      balanceKobo -= amountKobo;
+      history.push({ type: "withdrawal", amountKobo, balanceKobo });
+    },
+    statement() {
+      return structuredClone(history);
+    },
+  };
+
+  Object.defineProperty(account, "id", { value: id, enumerable: true });
+  if (openingKobo > 0) account.deposit(openingKobo);
+  return Object.seal(account);
+}
+</example>
+<p>Notice the details:</p>
+<ul>
+<li><code>balanceKobo</code> and <code>history</code> are local variables. Only the functions inside the object can reach them.</li>
+<li><code>owner</code> is a frozen shallow copy of what the caller passed, so the caller's object and the account's are separate, and the account's cannot be edited.</li>
+<li><code>id</code> is defined with <code>enumerable: true</code> and nothing else, so it is read-only and not deletable, but still appears in JSON.</li>
+<li>The opening balance goes through <code>deposit</code>, so it is validated and recorded like any other deposit.</li>
+<li><code>Object.seal</code> comes last, after all properties exist.</li>
+</ul>
+<p>Now use it, and replay the three broken lines from the start of the lesson:</p>
+<example file="main.js" project="account">
+import { createAccount, formatNaira } from "./account.js";
+
+const owner = { name: "Ada Obi", phone: "0803 000 0000" };
+const account = createAccount({ id: "ACC-001", owner, openingKobo: 500000 });
+
+account.deposit(150000);
+account.withdraw(20000);
+console.log(account.id, formatNaira(account.balanceKobo));
+console.log(JSON.stringify(account));
+
+const attempts = {
+  typo: () => { account.balnceKobo = 0; },
+  "text balance": () => { account.balanceKobo = "500000"; },
+  "edit owner": () => { account.owner.phone = "hidden"; },
+  "change id": () => { account.id = "ACC-666"; },
+  "text deposit": () => account.deposit("150000"),
+  overdraw: () => account.withdraw(10000000),
+};
+for (const [label, run] of Object.entries(attempts)) {
+  try {
+    run();
+    console.log(`${label}: allowed!`);
+  } catch (error) {
+    console.log(`${label}: ${error.name}: ${error.message}`);
+  }
+}
+
+const statement = account.statement();
+statement.push({ type: "deposit", amountKobo: 99999999 });
+console.log(account.statement().length, formatNaira(account.balanceKobo));
+</example>
+<output>
+ACC-001 ₦6300.00
+{"owner":{"name":"Ada Obi","phone":"0803 000 0000"},"balanceKobo":630000,"id":"ACC-001"}
+typo: TypeError: Cannot add property balnceKobo, object is not extensible
+text balance: TypeError: Cannot set property balanceKobo of #<Object> which has only a getter
+edit owner: TypeError: Cannot assign to read only property 'phone' of object '#<Object>'
+change id: TypeError: Cannot assign to read only property 'id' of object '#<Object>'
+text deposit: TypeError: amount must be a whole number of kobo above 0, got "150000"
+overdraw: RangeError: insufficient funds: balance ₦6300.00, asked ₦100000.00
+3 ₦6300.00
+</output>
+<p>Every one of the original bugs now fails at the exact line that caused it, with a message that says what went wrong. The fake deposit pushed onto the statement changed only the copy.</p>
+<h3>Testing the guarantees</h3>
+<p>Each rule is a promise, and each promise deserves a test. Here they are as a list of checks, using the same small <code>check</code> helper as the calculator in <a href="/learn/js-functions#build">Functions</a>. A check passes when the code returns the expected value or throws the expected kind of error:</p>
+<example file="account.test.js" project="account">
+import { createAccount } from "./account.js";
+
+function check(label, run, expected) {
+  let actual;
+  try {
+    actual = run();
+  } catch (error) {
+    actual = error.name;
+  }
+  console.log(`${Object.is(actual, expected) ? "PASS" : "FAIL"} ${label} -> ${actual}`);
+}
+
+const fresh = () => createAccount({ id: "ACC-T", owner: { name: "Test" }, openingKobo: 1000 });
+
+check("opening balance", () => fresh().balanceKobo, 1000);
+check("deposit adds", () => { const a = fresh(); a.deposit(500); return a.balanceKobo; }, 1500);
+check("zero deposit rejected", () => fresh().deposit(0), "TypeError");
+check("NaN deposit rejected", () => fresh().deposit(NaN), "TypeError");
+check("fraction rejected", () => fresh().deposit(0.5), "TypeError");
+check("overdraw rejected", () => fresh().withdraw(1001), "RangeError");
+check("exact withdrawal allowed", () => { const a = fresh(); a.withdraw(1000); return a.balanceKobo; }, 0);
+check("no new properties", () => { fresh().extra = 1; }, "TypeError");
+check("balance read-only", () => { fresh().balanceKobo = 5; }, "TypeError");
+check("id not deletable", () => { delete fresh().id; }, "TypeError");
+check("sealed", () => Object.isSealed(fresh()), true);
+check("history recorded", () => fresh().statement().length, 1);
+check("caller's owner untouched", () => {
+  const owner = { name: "Ada" };
+  const a = createAccount({ id: "X", owner });
+  owner.name = "Changed";
+  return a.owner.name;
+}, "Ada");
+</example>
+<output>
+PASS opening balance -> 1000
+PASS deposit adds -> 1500
+PASS zero deposit rejected -> TypeError
+PASS NaN deposit rejected -> TypeError
+PASS fraction rejected -> TypeError
+PASS overdraw rejected -> RangeError
+PASS exact withdrawal allowed -> 0
+PASS no new properties -> TypeError
+PASS balance read-only -> TypeError
+PASS id not deletable -> TypeError
+PASS sealed -> true
+PASS history recorded -> 1
+PASS caller's owner untouched -> Ada
+</output>
+<p>Notice what the tests check: not only the happy path, but every boundary from the reasoning block (zero, <code>NaN</code>, a fraction, withdrawing exactly the balance, one kobo more). These are the cases where bugs live. In <a href="/learn/testing-basics">Testing</a> you will write the same checks with Vitest.</p>
+<h3>In production</h3>
+<ul>
+<li><strong>Locking is a safety net, not security.</strong> Seal and freeze stop mistakes in your own code. They do not protect data from code that is written to attack it, and they do nothing to data that comes in from outside: always validate input at the edge of your program.</li>
+<li><strong>Real accounts live in a database.</strong> An in-memory balance disappears when the process restarts, and two servers would each have their own. The rules stay the same, but they move into a database transaction, which you will meet in <a href="/learn/zudo-transactions">the transactions lesson</a>.</li>
+<li><strong>Freeze configuration at start-up.</strong> A deep-frozen config object makes "some request changed a setting for everyone" impossible. Freezing costs a little time once; do not deep-freeze large data on every request.</li>
+<li><strong>Libraries can mutate.</strong> Passing a frozen object to a library that tries to change it will throw in the library. That is usually a bug worth finding, but it can surprise you; pass a copy when a library needs to modify its input.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A pick helper">
+<p>Write <code>pick(obj, ...keys)</code>, the allow-list opposite of <code>omit</code>: it returns a new object with only the listed keys that the object really has (own properties). Keys the object does not have must not appear in the result, not even as <code>undefined</code>.</p>
+<solution>
+<example file="pick.js">
+function pick(obj, ...keys) {
+  return Object.fromEntries(keys.filter((key) => Object.hasOwn(obj, key)).map((key) => [key, obj[key]]));
+}
+
+const customer = { id: 7, name: "Ada Obi", email: "ada@example.com", passwordHash: "<hash>" };
+console.log(pick(customer, "id", "name"));
+console.log(pick(customer, "id", "phone"));
+console.log(pick({}, "toString"));
+</example>
+<output>
+{ id: 7, name: 'Ada Obi' }
+{ id: 7 }
+{}
+</output>
+<p><code>Object.hasOwn</code> ignores inherited names, so <code>pick({}, "toString")</code> does not copy the inherited method. With <code>key in obj</code> instead, it would.</p>
+</solution>
+</exercise>
+<exercise title="A product with a validated price">
+<p>Given a plain product object <code>{ name: "Rice 5kg" }</code>, use <code>Object.defineProperty</code> to add a <code>priceKobo</code> accessor. The setter accepts only whole numbers from 1 upwards and stores the value in a closure variable; the getter returns it. The property must show up in <code>JSON.stringify</code>. Then show that <code>"850000"</code> is rejected.</p>
+<solution>
+<example file="price.js">
+function addPrice(product, initialKobo) {
+  let priceKobo;
+  Object.defineProperty(product, "priceKobo", {
+    get() {
+      return priceKobo;
+    },
+    set(value) {
+      if (!Number.isInteger(value) || value < 1) throw new TypeError(`bad price: ${JSON.stringify(value)}`);
+      priceKobo = value;
+    },
+    enumerable: true,
+  });
+  product.priceKobo = initialKobo;
+  return product;
+}
+
+const rice = addPrice({ name: "Rice 5kg" }, 850000);
+console.log(JSON.stringify(rice));
+
+try {
+  rice.priceKobo = "850000";
+} catch (error) {
+  console.log(error.message);
+}
+console.log(rice.priceKobo);
+</example>
+<output>
+{"name":"Rice 5kg","priceKobo":850000}
+bad price: "850000"
+850000
+</output>
+<p>Without <code>enumerable: true</code>, the price would be missing from the JSON, because <code>defineProperty</code> defaults every attribute you leave out to <code>false</code>.</p>
+</solution>
+</exercise>
+<exercise title="Find the leak in the snapshot">
+<p>This function is meant to return an order snapshot that the caller can change freely. After the caller edits the snapshot, the original order has changed too. Explain why, and fix it so the date stays a <code>Date</code>.</p>
+<example file="snapshot-bug.js">
+function snapshot(order) {
+  return Object.assign({}, order);
+}
+
+const order = { id: "ORD-7", placedAt: new Date("2026-09-24T10:00:00Z"), items: [{ sku: "RICE-5", qty: 2 }] };
+const copy = snapshot(order);
+copy.items[0].qty = 0;
+console.log(order.items[0].qty);
+</example>
+<output>
+0
+</output>
+<solution>
+<p><code>Object.assign({}, order)</code> is a shallow copy: <code>copy.items</code> is the same array as <code>order.items</code>. <code>structuredClone</code> copies every level and keeps the <code>Date</code> as a <code>Date</code>, which a JSON round trip would not:</p>
+<example file="snapshot-fix.js">
+function snapshot(order) {
+  return structuredClone(order);
+}
+
+const order = { id: "ORD-7", placedAt: new Date("2026-09-24T10:00:00Z"), items: [{ sku: "RICE-5", qty: 2 }] };
+const copy = snapshot(order);
+copy.items[0].qty = 0;
+console.log(order.items[0].qty, copy.items[0].qty);
+console.log(copy.placedAt instanceof Date);
+</example>
+<output>
+2 0
+true
+</output>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Use literals for one object, factory functions for many objects with checks, <code>Object.fromEntries</code> to build from data, and <code>Object.create(null)</code> (or a <code>Map</code>) for dictionaries with outside keys.</li>
+<li>Keys are strings or symbols; numbers and objects are turned into strings. Integer-like keys are listed first, in number order.</li>
+<li>Spread and <code>Object.assign</code> copy own, enumerable properties, one level deep. Getters become plain values; methods on the prototype and the prototype link are lost. Later sources win.</li>
+<li>Every property has a descriptor: <code>writable</code>, <code>enumerable</code>, <code>configurable</code>. <code>defineProperty</code> defaults the ones you leave out to <code>false</code>.</li>
+<li>Getters compute a value on read; setters check a value on write. Store the real value somewhere else, never in the property the setter guards.</li>
+<li><code>preventExtensions</code> stops additions, <code>seal</code> also stops deletions, <code>freeze</code> also stops changes. All are shallow; deep-freeze configuration.</li>
+<li><code>structuredClone</code> makes deep copies of data, keeping dates, maps, sets and shared references, but not functions or prototypes.</li>
+<li><code>===</code> and <code>Object.is</code> compare identity. Comparing contents needs your own function, shallow or deep.</li>
+</ul>
+<p>Next: <a href="/learn/js-modern">Modern JavaScript</a>, where you use destructuring, spread, optional chaining and nullish coalescing to rewrite old-style code.</p>
+</section>

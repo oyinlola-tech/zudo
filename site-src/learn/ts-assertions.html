@@ -1,0 +1,643 @@
+---
+title: Type assertions
+description: Learn what as, angle-bracket assertions, as unknown as and the non-null ! really do, see why none of them check or convert anything, and replace them with safer tools.
+minutes: 40
+youNeed: Narrowing
+youBuild: A signup handler rebuilt from an unsafe request.body as NewUser into a checked parse, plus safe replacements for every common assertion
+keywords: typescript type assertion, as keyword, angle bracket assertion, as unknown as, double assertion, non-null assertion operator, definite assignment assertion, satisfies operator, as const, TS2352, request body as User, type casting typescript
+objectives: Explain what a type assertion changes and what it cannot change | Predict which assertions tsc accepts and which it rejects with TS2352 | Replace non-null assertions with checks, defaults and getOrThrow helpers | Choose between as, satisfies, an annotation and a type guard | Recognise the few places where an assertion is justified
+---
+<section>
+<h2 id="problem">One line that trusts a stranger</h2>
+<p>Here is the heart of a signup endpoint for a small savings app. Frameworks such as Express give you the parsed request body typed as <code>any</code>, so the author adds <code>as NewUser</code> to "give it a type" and saves the result:</p>
+<example file="signup.ts" project="problem">
+interface NewUser {
+  email: string;
+  name: string;
+}
+
+interface StoredUser extends NewUser {
+  id: number;
+  role: "customer" | "admin";
+}
+
+const users: StoredUser[] = [];
+
+function signup(body: unknown): StoredUser {
+  const input = body as NewUser;
+  const user: StoredUser = { id: users.length + 1, role: "customer", ...input };
+  users.push(user);
+  return user;
+}
+
+const attack = JSON.parse('{"email": "eve@example.com", "name": "Eve", "role": "admin"}');
+console.log(signup(attack));
+
+try {
+  const broken = signup(JSON.parse('{"name": "Tunde"}'));
+  console.log(broken.email.toLowerCase());
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+{ id: 1, role: 'admin', email: 'eve@example.com', name: 'Eve' }
+TypeError: Cannot read properties of undefined (reading 'toLowerCase')
+</output>
+<p>Two requests, two disasters, and <code>tsc</code> is silent about both:</p>
+<ul>
+<li>The first client sent an extra <code>"role": "admin"</code>. <code>as NewUser</code> did not remove it, and because the spread comes last it overwrote <code>role: "customer"</code>. Eve just made herself an administrator.</li>
+<li>The second client left out <code>email</code>. The code typed <code>broken.email</code> as a <code>string</code>, and it crashed on the first string method.</li>
+</ul>
+<p><code>body as NewUser</code> reads like a conversion. It is not one. This lesson explains what a <strong>type assertion</strong> actually does, which ones <code>tsc</code> refuses, and what to write instead. <a href="/learn/ts-runtime#assertions">TypeScript and JavaScript together</a> showed the first examples; here you go all the way.</p>
+</section>
+
+<section>
+<h2 id="what-as-does">What as does, and does not do</h2>
+<p>A <strong>type assertion</strong>, <code>expression as Type</code>, tells the compiler: "treat this expression as having <code>Type</code>, I take responsibility". It changes the type the compiler uses from that point on. It does nothing else. It does not check the value, convert it, copy it, or remove properties. Compile a file with assertions and look at the JavaScript:</p>
+<file name="erased.ts" project="erased">
+interface User {
+  id: number;
+  email: string;
+}
+
+const body: unknown = JSON.parse('{"id": 1, "email": "ada@example.com"}');
+const user = body as User;
+const other = <User>body;
+const balances = new Map<string, number>([["ACC-1", 5000]]);
+const balance = balances.get("ACC-1")!;
+console.log(user.email, other.id, balance);
+</file>
+<shell>
+$ npx tsc --noEmit false --outDir dist
+$ cat dist/erased.js
+const body = JSON.parse('{"id": 1, "email": "ada@example.com"}');
+const user = body;
+const other = body;
+const balances = new Map([["ACC-1", 5000]]);
+const balance = balances.get("ACC-1");
+console.log(user.email, other.id, balance);
+export {};
+</shell>
+<p><code>body as User</code> became <code>body</code>. So did <code>&lt;User&gt;body</code>, and the <code>!</code> after <code>get(…)</code> simply vanished. Whatever <code>body</code> holds at runtime is exactly what <code>user</code> holds.</p>
+<p>Many languages have <strong>casts</strong> that do convert: in C, casting a float to an int really drops the decimals. People often call TypeScript assertions "casts", and the name misleads. When you need a conversion, call a function that converts:</p>
+<example file="convert.ts" project="convert">
+const fromForm: unknown = "2500";
+
+const asserted = fromForm as unknown as number;
+const converted = Number(fromForm);
+
+console.log(typeof asserted, asserted + 500);
+console.log(typeof converted, converted + 500);
+</example>
+<output>
+string 2500500
+number 3000
+</output>
+<p>The asserted value is still the string <code>"2500"</code>, so <code>+ 500</code> joins text and prints <code>2500500</code>, with the compiler's full blessing. <code>Number(…)</code> really produced a number.</p>
+</section>
+
+<section>
+<h2 id="which-compile">Which assertions compile</h2>
+<p>TypeScript does not accept every assertion. It allows <code>x as T</code> when the two types <strong>overlap sufficiently</strong>: when the type of <code>x</code> is assignable to <code>T</code>, or <code>T</code> is assignable to the type of <code>x</code>. In practice that means you may move <em>up</em> to a wider type (always safe) or <em>down</em> to a narrower one (unchecked). You may not jump sideways between unrelated types:</p>
+<example file="sideways.ts" project="compile" check="tsc-error">
+interface Account {
+  id: number;
+  balance: number;
+}
+
+const amount = "2500" as number;
+const account = { id: "ACC-1", balance: 5000 } as Account;
+</example>
+<output kind="tsc">
+sideways.ts:6:16 - error TS2352: Conversion of type 'string' to type 'number' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+
+6 const amount = "2500" as number;
+                 ~~~~~~~~~~~~~~~~
+
+sideways.ts:7:17 - error TS2352: Conversion of type '{ id: string; balance: number; }' to type 'Account' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Types of property 'id' are incompatible.
+    Type 'string' is not comparable to type 'number'.
+
+7 const account = { id: "ACC-1", balance: 5000 } as Account;
+                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 2 errors in the same file, starting at: sideways.ts:6
+</output>
+<p>Error <strong>TS2352</strong> is the compiler asking "are you sure?". It even tells you how to override it: go through <code>unknown</code>, which every type is assignable to. That is the <strong>double assertion</strong>, <code>as unknown as T</code>, and it compiles for any <code>T</code> at all. When you find yourself writing it, stop and ask why the types do not overlap.</p>
+<p>Now the surprising part: the overlap rule lets through a lot of things that are wrong. All of these compile:</p>
+<example file="lets-through.ts" project="compile">
+type PaymentKind = "card" | "transfer";
+
+interface Account {
+  id: string;
+  balance: number;
+  currency: string;
+}
+
+const kind = "cash" as PaymentKind;
+const account = { id: "ACC-1" } as Account;
+const extra = { id: "ACC-2", balance: 0, currency: "NGN", frozen: true } as Account;
+
+console.log(kind, account.balance, account.currency?.toUpperCase());
+console.log(Object.keys(extra));
+</example>
+<output>
+cash undefined undefined
+[ 'id', 'balance', 'currency', 'frozen' ]
+</output>
+<ul>
+<li><code>"cash" as PaymentKind</code>: in an assertion, the literal <code>"cash"</code> is compared as a <code>string</code>, and <code>string</code> overlaps with any union of strings. A value that is not in the union now has the union's type.</li>
+<li><code>{ id: "ACC-1" } as Account</code>: <code>Account</code> is assignable to <code>{ id: string }</code>, so the assertion is a legal "move down". The missing <code>balance</code> and <code>currency</code> are simply <code>undefined</code>.</li>
+<li><code>frozen: true</code> survives: excess property checks, which catch unknown properties in <code>const a: Account = { … }</code>, do not run on assertions.</li>
+</ul>
+<p>An annotation would have caught the last two. That is the general rule: <strong>an annotation checks the value against the type; an assertion overrides the check</strong>.</p>
+<example file="annotate.ts" project="compile" check="tsc-error">
+interface Account {
+  id: string;
+  balance: number;
+  currency: string;
+}
+
+const account: Account = { id: "ACC-1" };
+const extra: Account = { id: "ACC-2", balance: 0, currency: "NGN", frozen: true };
+</example>
+<output kind="tsc">
+annotate.ts:7:7 - error TS2739: Type '{ id: string; }' is missing the following properties from type 'Account': balance, currency
+
+7 const account: Account = { id: "ACC-1" };
+        ~~~~~~~
+
+annotate.ts:8:68 - error TS2353: Object literal may only specify known properties, and 'frozen' does not exist in type 'Account'.
+
+8 const extra: Account = { id: "ACC-2", balance: 0, currency: "NGN", frozen: true };
+                                                                     ~~~~~~
+
+
+Found 2 errors in the same file, starting at: annotate.ts:7
+</output>
+</section>
+
+<section>
+<h2 id="angle-brackets">The angle-bracket form</h2>
+<p>TypeScript had assertions before it had <code>as</code>. The original syntax puts the type in angle brackets in front of the expression:</p>
+<example file="angle.ts" project="angle">
+type Currency = "NGN" | "USD";
+
+const raw: unknown = "NGN";
+const withAs = raw as Currency;
+const withBrackets = <Currency>raw;
+
+console.log(withAs === withBrackets, withBrackets);
+</example>
+<output>
+true NGN
+</output>
+<p>The two forms mean exactly the same thing. Everyone uses <code>as</code> today, for two reasons. In <code>.tsx</code> files (TypeScript with JSX, used by React), <code>&lt;Currency&gt;raw</code> looks like an HTML tag, so the angle-bracket form is not allowed there at all. And it is easily confused with generics: <code>&lt;Currency&gt;raw</code> and <code>parse&lt;Currency&gt;(raw)</code> look alike but do completely different things. Recognise the old form when you read older code; write <code>as</code>.</p>
+</section>
+
+<section>
+<h2 id="non-null">The non-null assertion !</h2>
+<p>A postfix <code>!</code> after an expression is the <strong>non-null assertion operator</strong>. It removes <code>null</code> and <code>undefined</code> from the expression's type. Like <code>as</code>, it compiles to nothing, so it is only true if you are right:</p>
+<example file="bang.ts" project="bang">
+const balances = new Map<string, number>([
+  ["ACC-1", 125000],
+  ["ACC-2", 0],
+]);
+
+function withdraw(accountId: string, amount: number): number {
+  const balance = balances.get(accountId)!;
+  return balance - amount;
+}
+
+console.log(withdraw("ACC-1", 5000));
+console.log(withdraw("ACC-9", 5000));
+</example>
+<output>
+120000
+NaN
+</output>
+<p>No crash, which is worse. <code>undefined - 5000</code> is <code>NaN</code>, and a <code>NaN</code> balance can travel through the whole system, into a database and onto a statement, before anyone notices. The <code>!</code> told the compiler "this account exists", and nobody checked.</p>
+<p>Every <code>!</code> has a safer replacement. Pick the one that says what should happen when the value is missing:</p>
+<example file="bang-fixed.ts" project="bang">
+const balances = new Map<string, number>([
+  ["ACC-1", 125000],
+  ["ACC-2", 0],
+]);
+
+function getOrThrow<K, V>(map: ReadonlyMap<K, V>, key: K, what: string): V {
+  const value = map.get(key);
+  if (value === undefined) throw new Error(`${what} not found: ${String(key)}`);
+  return value;
+}
+
+function withdraw(accountId: string, amount: number): number {
+  const balance = getOrThrow(balances, accountId, "account");
+  return balance - amount;
+}
+
+function displayBalance(accountId: string): string {
+  return `₦${balances.get(accountId) ?? 0}`;
+}
+
+console.log(withdraw("ACC-2", 0), displayBalance("ACC-9"));
+try {
+  withdraw("ACC-9", 5000);
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+0 ₦0
+Error: account not found: ACC-9
+</output>
+<ul>
+<li><strong>Missing is a bug</strong>: throw, with a message that says what was missing. <code>getOrThrow</code> is a tiny generic helper you will write once per project.</li>
+<li><strong>Missing has a sensible default</strong>: use <code>??</code>. Showing ₦0 for an unknown account on a dashboard might be acceptable; withdrawing from it is not.</li>
+<li><strong>Missing needs a decision</strong>: check with <code>if (value === undefined)</code> and handle it, as in <a href="/learn/ts-narrowing#truthiness">Narrowing</a>.</li>
+</ul>
+<h3>Definite assignment: let x!: T</h3>
+<p>The <code>!</code> has a second job. After a variable or class property name, it is a <strong>definite assignment assertion</strong>: "this will be set before anyone reads it, even though you cannot see where". It switches off the check that catches reading a property before it is set:</p>
+<example file="definite.ts" project="bang">
+class Invoice {
+  total!: number;
+
+  addLine(amount: number): void {
+    this.total += amount;
+  }
+}
+
+const invoice = new Invoice();
+invoice.addLine(2500);
+console.log(invoice.total);
+</example>
+<output>
+NaN
+</output>
+<p>Nothing set <code>total</code> first, so <code>undefined + 2500</code> gave <code>NaN</code>. Give the property a starting value (<code>total = 0</code>) or set it in the constructor instead. The <code>!</code> form is only for properties that a framework or a setup method fills in, and even then, a constructor parameter is usually clearer.</p>
+</section>
+
+<section>
+<h2 id="double">as unknown as T</h2>
+<p>You saw that <code>as unknown as T</code> turns anything into anything. There is one place where it is common and reasonable: <strong>test fakes</strong>. A real <code>PaymentGateway</code> interface might have twenty methods, and a unit test only needs one:</p>
+<example file="fake.ts" project="fake">
+interface PaymentGateway {
+  charge(cardToken: string, kobo: number): Promise<{ reference: string }>;
+  refund(reference: string): Promise<void>;
+  balance(): Promise<number>;
+}
+
+async function payInvoice(gateway: PaymentGateway, kobo: number): Promise<string> {
+  const { reference } = await gateway.charge("tok_test", kobo);
+  return `paid ${kobo} kobo, ref ${reference}`;
+}
+
+const fakeGateway = {
+  charge: async (_token: string, kobo: number) => ({ reference: `TEST-${kobo}` }),
+} as unknown as PaymentGateway;
+
+console.log(await payInvoice(fakeGateway, 250000));
+</example>
+<output>
+paid 250000 kobo, ref TEST-250000
+</output>
+<p>Inside a test, a missing method fails loudly and at once (<em>gateway.refund is not a function</em>), in a file that only runs in CI. That is a price worth paying to avoid writing twenty empty methods. In application code, the same line would hide the missing methods until a customer triggers one. <a href="/learn/ts-classes#fakes">Classes in TypeScript</a> shows the full-fake alternative, which the compiler checks.</p>
+</section>
+
+<section>
+<h2 id="alternatives">Better tools: annotations, satisfies, as const and guards</h2>
+<p>Most assertions in real code are written because the author wanted a value to <em>have</em> a type, and <code>as</code> was the first tool that came to mind. Each of those situations has a tool that checks instead of overriding.</p>
+<h3>Annotate when you create the value</h3>
+<p><code>const fee: Fee = { … }</code> checks the object. <code>const fee = { … } as Fee</code> does not. When you are writing the value yourself, annotate.</p>
+<h3>satisfies: check, but keep the precise type</h3>
+<p>An annotation has one downside: the variable gets exactly the annotated type, and loses the details of the value. The <code>satisfies</code> operator checks the value against a type, like an annotation, but lets the variable keep the more precise type TypeScript inferred:</p>
+<example file="satisfies.ts" project="alternatives">
+type Currency = "NGN" | "USD" | "GBP";
+
+interface FeeRule {
+  percent: number;
+  cap?: number;
+}
+
+const fees = {
+  NGN: { percent: 1.5, cap: 2000 },
+  USD: { percent: 2.9 },
+  GBP: { percent: 2.5, cap: 20 },
+} satisfies Record<Currency, FeeRule>;
+
+console.log(fees.NGN.cap.toLocaleString("en-NG"));
+console.log(Object.keys(fees).join(", "));
+</example>
+<output>
+2,000
+NGN, USD, GBP
+</output>
+<p><code>satisfies Record&lt;Currency, FeeRule&gt;</code> checked that all three currencies are present and that every rule is well-formed. But <code>fees.NGN</code> still has the type <code>{ percent: number; cap: number }</code>, so <code>fees.NGN.cap</code> is known to exist, with no <code>!</code>. With <code>as Record&lt;Currency, FeeRule&gt;</code>, a missing currency would slip through; with an annotation, <code>cap</code> would be <code>number | undefined</code>. Leave out <code>GBP</code> and see which tool notices:</p>
+<example file="satisfies.ts" project="alternatives" check="tsc-error">
+type Currency = "NGN" | "USD" | "GBP";
+
+interface FeeRule {
+  percent: number;
+  cap?: number;
+}
+
+const withAs = {
+  NGN: { percent: 1.5, cap: 2000 },
+  USD: { percent: 2.9 },
+} as Record<Currency, FeeRule>;
+
+const withSatisfies = {
+  NGN: { percent: 1.5, cap: 2000 },
+  USD: { percent: 2.9 },
+} satisfies Record<Currency, FeeRule>;
+</example>
+<output kind="tsc">
+satisfies.ts:16:3 - error TS2741: Property 'GBP' is missing in type '{ NGN: { percent: number; cap: number; }; USD: { percent: number; }; }' but required in type 'Record<Currency, FeeRule>'.
+
+16 } satisfies Record<Currency, FeeRule>;
+     ~~~~~~~~~
+
+
+Found 1 error in satisfies.ts:16
+</output>
+<p>Only <code>satisfies</code> complained. The <code>as</code> version compiles, and <code>withAs.GBP.percent</code> would crash at runtime.</p>
+<h3>as const is the safe assertion</h3>
+<p><code>as const</code> is written like an assertion, but it can only make a type <em>narrower and read-only</em>, never different: <code>["card", "transfer"] as const</code> becomes <code>readonly ["card", "transfer"]</code>. It cannot lie about the value, because the value is right there. You met it in <a href="/learn/ts-advanced#indexed-access">Advanced and utility types</a>, and the next lesson uses it to replace enums.</p>
+<h3>Guards for values you did not create</h3>
+<p>For values from outside (request bodies, <code>JSON.parse</code>, files, <code>localStorage</code>, other services), neither <code>as</code> nor <code>satisfies</code> helps: <code>satisfies</code> checks only what the compiler can see, and it cannot see runtime data. Use a type guard, an assertion function or a validator, as in <a href="/learn/ts-narrowing#type-guards">Narrowing</a>.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>You want to…</th><th>Use</th><th>Checked?</th></tr></thead>
+<tbody>
+<tr><td>Give a value you write a type</td><td><code>const x: T = …</code></td><td>Yes</td></tr>
+<tr><td>Check a value but keep its precise type</td><td><code>… satisfies T</code></td><td>Yes</td></tr>
+<tr><td>Keep literal values, read-only</td><td><code>… as const</code></td><td>Yes (nothing to lie about)</td></tr>
+<tr><td>Trust data from outside</td><td>Guard, assertion function, validator</td><td>Yes, at runtime</td></tr>
+<tr><td>Tell the compiler something it cannot know</td><td><code>… as T</code></td><td>No</td></tr>
+<tr><td>Say "not null" without checking</td><td><code>value!</code></td><td>No</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="justified">When an assertion is justified</h2>
+<reason title="Before you write as">
+<p>You are about to write <code>something as SomeType</code>. Before you do, answer these for yourself:</p>
+<ul>
+<li>Where did the value come from? Did your own code create it, or did it cross a boundary (network, disk, user input, another library)?</li>
+<li>What exactly do you know that the compiler does not? Can you point to the line that proves it?</li>
+<li>Could that proof become false later, when someone edits the code far away?</li>
+<li>If you are wrong, what happens: a crash in a test, a wrong number on a statement, or a security hole?</li>
+</ul>
+<answer>
+<p>An assertion is defensible only when the value comes from your own code, the proof is visible nearby (ideally on the line above), and being wrong fails loudly. If the value crossed a boundary, you do not <em>know</em> anything, you are <em>hoping</em>, and you need a runtime check. If the proof lives in another file, the next refactor can break it silently, so encode it in the types instead (a guard, a generic, a discriminated union). And if being wrong means wrong money or wrong permissions, never assert: check.</p>
+</answer>
+</reason>
+<p>With those questions answered, a handful of situations remain where <code>as</code> is the honest tool:</p>
+<ol>
+<li><strong>After a check the compiler cannot follow.</strong> <code>Object.keys(obj)</code> is typed <code>string[]</code> even for an object you built with known keys, because other objects with extra keys could be passed in. For an object you just created, <code>Object.keys(rates) as Currency[]</code> is true.</li>
+<li><strong>Moving up to a wider type.</strong> <code>[] as Payment[]</code> or <code>new Map() as Map&lt;string, number&gt;</code> gives an empty value its intended type. (A type argument, <code>new Map&lt;string, number&gt;()</code>, or an annotation is still clearer.)</li>
+<li><strong>Test fakes</strong>, as above, where a mistake fails immediately.</li>
+<li><strong>Browser DOM lookups</strong> such as <code>document.querySelector("#amount") as HTMLInputElement</code>, when the HTML is in the same project. Even there, <code>instanceof HTMLInputElement</code> costs one line and checks for real.</li>
+</ol>
+<example file="keys.ts" project="justified">
+type Currency = "NGN" | "USD" | "GBP";
+
+const rates: Record<Currency, number> = { NGN: 1, USD: 1550, GBP: 2050 };
+
+const currencies = Object.keys(rates) as Currency[];
+for (const currency of currencies) {
+  console.log(currency, rates[currency]);
+}
+</example>
+<output>
+NGN 1
+USD 1550
+GBP 2050
+</output>
+<p>The proof is on the line above: <code>rates</code> was created two lines earlier with exactly those keys. Now compare with the signup handler: its value came from the network. No proof exists anywhere in the program, so no assertion is justified there.</p>
+<h3>When assertions signal poor design</h3>
+<p>Count the <code>as</code> and <code>!</code> in a file. More than one or two usually means the types do not describe the data. Typical causes, and their fixes:</p>
+<ul>
+<li><strong>One wide type with many optional fields</strong>, and <code>payment.card!.last4</code> everywhere. Use a discriminated union, so narrowing proves which fields exist.</li>
+<li><strong>A function that returns <code>any</code> or <code>unknown</code></strong>, and every caller asserts. Make the function generic, or make it validate and return the precise type.</li>
+<li><strong><code>as</code> on every value read from storage or JSON.</strong> Write one validator at the boundary; everything inside is then correctly typed without assertions.</li>
+<li><strong><code>!</code> after every <code>find</code> and <code>get</code>.</strong> Add a <code>getOrThrow</code>-style helper, or handle the missing case.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="build">Build: the signup handler, fixed</h2>
+<p>Back to the endpoint from the start. The fix has three parts: treat the body as <code>unknown</code>, check each field at runtime, and build the stored user from named fields only, so nothing the client sent can sneak through:</p>
+<example file="signup.ts" project="fixed">
+interface NewUser {
+  email: string;
+  name: string;
+}
+
+interface StoredUser extends NewUser {
+  id: number;
+  role: "customer" | "admin";
+}
+
+type Parsed = { ok: true; value: NewUser } | { ok: false; issues: string[] };
+
+function parseNewUser(body: unknown): Parsed {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return { ok: false, issues: ["body must be a JSON object"] };
+  }
+  const issues: string[] = [];
+  const email = "email" in body && typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+  const name = "name" in body && typeof body.name === "string" ? body.name.trim() : "";
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) issues.push("email must be a valid address");
+  if (name.length < 2) issues.push("name must be at least 2 characters");
+  return issues.length > 0 ? { ok: false, issues } : { ok: true, value: { email, name } };
+}
+
+const users: StoredUser[] = [];
+
+function signup(body: unknown): StoredUser | string[] {
+  const parsed = parseNewUser(body);
+  if (!parsed.ok) return parsed.issues;
+  const user: StoredUser = {
+    id: users.length + 1,
+    role: "customer",
+    email: parsed.value.email,
+    name: parsed.value.name,
+  };
+  users.push(user);
+  return user;
+}
+
+console.log(signup(JSON.parse('{"email": "eve@example.com", "name": "Eve", "role": "admin"}')));
+console.log(signup(JSON.parse('{"name": "Tunde"}')));
+console.log(signup(JSON.parse('{"email": " ADA@Example.com ", "name": "Ada"}')));
+console.log(signup(JSON.parse("[1, 2]")));
+</example>
+<output>
+{ id: 1, role: 'customer', email: 'eve@example.com', name: 'Eve' }
+[ 'email must be a valid address' ]
+{ id: 2, role: 'customer', email: 'ada@example.com', name: 'Ada' }
+[ 'body must be a JSON object' ]
+</output>
+<p>There is not a single assertion left. <code>"email" in body</code> followed by <code>typeof body.email === "string"</code> narrows the property step by step, as you learned in the previous lesson. Eve's <code>role</code> is ignored because <code>StoredUser</code> is built from four named fields, the missing e-mail is reported instead of crashing, and addresses are normalised on the way in. <a href="/learn/ts-validation">Runtime validation</a> shows how schema libraries write the parse function for you.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing code that used to assert</h2>
+<p>Assertions hide bugs from the compiler, so the tests have to look for them. Two habits catch most of them:</p>
+<ul>
+<li><strong>Test with the data an assertion would have trusted.</strong> Missing fields, wrong types, extra fields such as <code>role</code>, an array instead of an object, <code>null</code>. The happy path never exercises the code an assertion skipped.</li>
+<li><strong>Test that nothing extra gets through.</strong> Compare the keys of the result with the keys you expect, so an accidental spread is caught.</li>
+</ul>
+<example file="signup.test.ts" project="fixed" browser="no">
+import assert from "node:assert/strict";
+
+function allowOnly(input: Record<string, unknown>, allowed: readonly string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of allowed) if (key in input) out[key] = input[key];
+  return out;
+}
+
+const cleaned = allowOnly({ email: "eve@example.com", name: "Eve", role: "admin" }, ["email", "name"]);
+assert.deepEqual(Object.keys(cleaned), ["email", "name"]);
+assert.equal("role" in cleaned, false);
+console.log("extra fields are dropped");
+
+assert.deepEqual(allowOnly({}, ["email", "name"]), {});
+console.log("missing fields stay missing");
+</example>
+<output>
+extra fields are dropped
+missing fields stay missing
+</output>
+<p><code>node:assert/strict</code> is Node's built-in assertion library (runtime checks that throw, not type assertions), so this example runs in Node.js only. In a real project these checks go into Vitest tests, which you will meet in <a href="/learn/testing-basics">the testing lesson</a>.</p>
+</section>
+
+<section>
+<h2 id="production">Assertions in production code</h2>
+<ul>
+<li><strong>Ban them at the boundary.</strong> No <code>as</code> on request bodies, query strings, environment variables, <code>JSON.parse</code>, database rows from raw SQL, or responses from other services. Parse them.</li>
+<li><strong>Let a linter count them.</strong> typescript-eslint has rules such as <code>no-non-null-assertion</code> and <code>consistent-type-assertions</code> that flag or forbid assertions, so every remaining one is a deliberate, reviewed choice.</li>
+<li><strong>Leave a reason.</strong> When an assertion is justified, a short comment with the proof ("keys come from the literal above") saves the next reader from guessing.</li>
+<li><strong>Prefer failing loudly.</strong> A <code>getOrThrow</code> that throws with a clear message is far cheaper to debug than a <code>NaN</code> that reached a customer's statement.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Remove the non-null assertions">
+<p>This function finds a booking and its room. Both lookups use <code>!</code>. Rewrite it so an unknown booking throws <code>booking not found: ID</code>, and a booking whose room has been removed returns <code>"room unavailable"</code>.</p>
+<example file="booking.ts" project="ex-bang">
+const rooms = new Map([["R1", "Deluxe"], ["R2", "Standard"]]);
+const bookings = [
+  { id: "B1", roomId: "R1" },
+  { id: "B2", roomId: "R9" },
+];
+
+function roomFor(bookingId: string): string {
+  const booking = bookings.find((b) => b.id === bookingId)!;
+  return rooms.get(booking.roomId)!;
+}
+
+console.log(roomFor("B1"), roomFor("B2"));
+</example>
+<output>
+Deluxe undefined
+</output>
+<solution>
+<example file="booking.ts" project="ex-bang">
+const rooms = new Map([["R1", "Deluxe"], ["R2", "Standard"]]);
+const bookings = [
+  { id: "B1", roomId: "R1" },
+  { id: "B2", roomId: "R9" },
+];
+
+function roomFor(bookingId: string): string {
+  const booking = bookings.find((b) => b.id === bookingId);
+  if (booking === undefined) throw new Error(`booking not found: ${bookingId}`);
+  return rooms.get(booking.roomId) ?? "room unavailable";
+}
+
+console.log(roomFor("B1"), roomFor("B2"));
+try {
+  roomFor("B7");
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+Deluxe room unavailable
+Error: booking not found: B7
+</output>
+<p>The two lookups fail for different reasons, so they get different treatments: an unknown booking id is a caller's mistake (throw), and a removed room is a normal situation with a sensible answer (<code>??</code>). The original silently printed <code>undefined</code>.</p>
+</solution>
+</exercise>
+<exercise title="as or satisfies?">
+<p>A config object for SMS providers is written with <code>as</code>. Replace <code>as</code> with <code>satisfies</code>, run <code>tsc</code>, and fix what it finds.</p>
+<example file="providers.ts" project="ex-satisfies">
+type Provider = "termii" | "twilio";
+
+interface ProviderConfig {
+  baseUrl: string;
+  timeoutMs: number;
+}
+
+const providers = {
+  termii: { baseUrl: "https://api.ng.termii.com", timeoutMs: 5000 },
+  twilio: { baseUrl: "https://api.twilio.com" },
+} as Record<Provider, ProviderConfig>;
+
+console.log(providers.twilio.timeoutMs * 2);
+</example>
+<output>
+NaN
+</output>
+<solution>
+<p>With <code>satisfies</code>, <code>tsc</code> reports that <code>timeoutMs</code> is missing in the <code>twilio</code> entry. Add it:</p>
+<example file="providers.ts" project="ex-satisfies">
+type Provider = "termii" | "twilio";
+
+interface ProviderConfig {
+  baseUrl: string;
+  timeoutMs: number;
+}
+
+const providers = {
+  termii: { baseUrl: "https://api.ng.termii.com", timeoutMs: 5000 },
+  twilio: { baseUrl: "https://api.twilio.com", timeoutMs: 8000 },
+} satisfies Record<Provider, ProviderConfig>;
+
+console.log(providers.twilio.timeoutMs * 2);
+</example>
+<output>
+16000
+</output>
+<p>The <code>as</code> version printed <code>NaN</code>: <code>undefined * 2</code>. It compiled because <code>ProviderConfig</code> is assignable to <code>{ baseUrl: string }</code>, so the assertion was a legal "move down" to a narrower type.</p>
+</solution>
+</exercise>
+<exercise title="Spot the justified assertion">
+<p>Three assertions from a codebase. Which one is justified, and what should replace the other two?</p>
+<ol>
+<li><code>const user = (await response.json()) as User;</code></li>
+<li><code>const methods = Object.keys(feeTable) as PaymentMethod[];</code>, where <code>feeTable</code> is a <code>Record&lt;PaymentMethod, number&gt;</code> literal defined just above.</li>
+<li><code>const port = process.env.PORT as unknown as number;</code></li>
+</ol>
+<solution>
+<p>Only the second. The keys come from an object literal the same file created, and the proof is on the line above.</p>
+<p>The first trusts another service's response, which crossed a network boundary. Validate it with a guard or a schema. The third does not even convert: <code>process.env.PORT</code> is a string (or <code>undefined</code>), and after the assertion it is still a string that the compiler calls a number. Convert it with <code>Number(…)</code> and check the result, like <code>readPort</code> in <a href="/learn/ts-runtime#practice">TypeScript and JavaScript together</a>.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li><code>x as T</code> and <code>&lt;T&gt;x</code> change what the compiler believes and compile to nothing. They never check, convert, copy or remove anything.</li>
+<li><code>tsc</code> allows an assertion when the types overlap: up to a wider type (safe) or down to a narrower one (unchecked). Sideways gives TS2352; <code>as unknown as T</code> overrides it and should be rare.</li>
+<li>Assertions skip missing-property and excess-property checks, and <code>"cash" as PaymentKind</code> compiles. An annotation or <code>satisfies</code> checks instead.</li>
+<li><code>value!</code> removes <code>null</code> and <code>undefined</code> without a check; <code>field!: T</code> skips the definite-assignment check. Replace them with a check, <code>??</code>, or a <code>getOrThrow</code> helper.</li>
+<li>Justified: after a proof the compiler cannot follow, widening, test fakes. Never on data from outside: <code>request.body as User</code> is a security hole waiting to happen.</li>
+</ul>
+<p>Next: <a href="/learn/ts-enums">Enums and their alternatives</a>, and the JavaScript that each kind of enum really becomes.</p>
+</section>

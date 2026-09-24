@@ -1,0 +1,764 @@
+---
+title: Graphs and topological sort
+description: Model packages, roads between cities and followers as graphs, store them as adjacency lists, and compute a safe install order with topological sort.
+minutes: 55
+youNeed: Trees and binary search trees, Hash maps, and Stacks and queues
+youBuild: A Graph class, a dependency resolver that finds install order, parallel stages and cycles, and a tested topological sort
+keywords: graph data structure, adjacency list, adjacency matrix, directed graph, weighted graph, dag, topological sort, kahn algorithm, dependency graph, cycle detection, javascript graph
+objectives: Name the parts of a graph and choose directed or undirected, weighted or unweighted for a real problem | Store a graph as an adjacency list or matrix and state the cost of each operation | Find everything reachable from a vertex without visiting anything twice | Order dependencies with topological sort (Kahn's algorithm and depth-first), group them into parallel stages, and report cycles | Test a topological sort with a property check on random graphs
+---
+<section>
+<h2 id="problem">The problem: what to install first</h2>
+<p>A shop's code lives in a monorepo of small packages. <code>@shop/api</code> uses <code>@shop/orders</code> and <code>@shop/auth</code>; <code>@shop/orders</code> uses <code>@shop/catalog</code>; almost everything uses <code>@shop/db</code>. Before a package can be built, every package it uses must already be built. In what order do you build them?</p>
+<p>A first attempt: keep going round the list, and build any package whose dependencies are all built, until everything is done. It needs a guard: if a whole round builds nothing, something is wrong.</p>
+<example file="naive-order.js">
+const packages = {
+  "@shop/api": ["@shop/auth", "@shop/orders", "@shop/logger"],
+  "@shop/orders": ["@shop/catalog", "@shop/users", "@shop/money"],
+  "@shop/auth": ["@shop/users", "@shop/config"],
+  "@shop/catalog": ["@shop/db", "@shop/money"],
+  "@shop/users": ["@shop/db"],
+  "@shop/db": ["@shop/config", "@shop/logger"],
+  "@shop/config": [],
+  "@shop/logger": [],
+  "@shop/money": [],
+};
+
+function naiveOrder(packages) {
+  const built = new Set();
+  const order = [];
+  let checks = 0;
+  while (order.length < Object.keys(packages).length) {
+    let progress = false;
+    for (const [name, deps] of Object.entries(packages)) {
+      if (built.has(name)) continue;
+      checks += deps.length;
+      if (deps.every((dep) => built.has(dep))) {
+        built.add(name);
+        order.push(name);
+        progress = true;
+      }
+    }
+    if (!progress) return { order, stuck: true, checks };
+  }
+  return { order, stuck: false, checks };
+}
+
+const result = naiveOrder(packages);
+console.log(result.order.join("\n"));
+console.log(`dependency checks: ${result.checks}, stuck: ${result.stuck}`);
+
+packages["@shop/db"].push("@shop/users");
+console.log("after db starts using users:", naiveOrder(packages));
+</example>
+<output>
+</output>
+<p>It finds a correct order, and it notices the loop the last line created: <code>db</code> needs <code>users</code>, which needs <code>db</code>, so neither can ever be built. But it is wasteful. Each round rechecks every unbuilt package, and in the worst case (a long chain listed in reverse) only one package gets built per round: O(V) rounds of O(V + E) work, where V is the number of packages and E the number of dependency links. And when it gets stuck, it cannot say <em>which</em> packages form the loop.</p>
+<p>The shape of this data is a <strong>graph</strong>. This lesson gives you the vocabulary, two ways to store a graph, and <strong>topological sort</strong>: an O(V + E) algorithm that finds a build order, finds which packages can be built in parallel, and names the loop when there is one.</p>
+</section>
+
+<section>
+<h2 id="terms">What a graph is</h2>
+<p>A <strong>graph</strong> is a set of <strong>vertices</strong> (also called nodes: packages, cities, people) and a set of <strong>edges</strong> connecting pairs of them (dependencies, roads, "follows"). That is the whole definition. A tree from <a href="/learn/dsa-trees">the trees lesson</a> is a graph with extra rules (one root, one parent each, no loops); a general graph has none of those rules.</p>
+<ul>
+<li>In an <strong>undirected</strong> graph an edge has no direction: a road between Lagos and Ibadan can be driven both ways. In a <strong>directed</strong> graph each edge goes <em>from</em> one vertex <em>to</em> another: "<code>@shop/api</code> uses <code>@shop/auth</code>" is not the same as the reverse.</li>
+<li>In a <strong>weighted</strong> graph each edge carries a number: a distance in km, a travel time, a price. In an <strong>unweighted</strong> graph an edge just exists or not.</li>
+<li>Two vertices joined by an edge are <strong>adjacent</strong>, or <strong>neighbours</strong>. The <strong>degree</strong> of a vertex is how many edges touch it. In a directed graph, the <strong>out-degree</strong> counts edges leaving it (how many packages it uses) and the <strong>in-degree</strong> counts edges arriving (how many packages use it).</li>
+<li>A <strong>path</strong> is a sequence of vertices where each consecutive pair is joined by an edge. A <strong>cycle</strong> is a path that returns to where it started, like <code>db → users → db</code>.</li>
+<li>A directed graph with no cycles is a <strong>DAG</strong> (directed acyclic graph). Dependency graphs must be DAGs, or nothing can be built.</li>
+<li>An undirected graph is <strong>connected</strong> if there is a path between every pair of vertices.</li>
+<li>A graph is <strong>sparse</strong> when it has far fewer edges than the maximum possible (every vertex linked to every other: about V² edges), and <strong>dense</strong> when it is close to that maximum. Real graphs are almost always sparse: a city has a few roads out, not roads to every other city.</li>
+</ul>
+<p>Here is the package graph drawn with an arrow from each package to the packages it uses:</p>
+<pre>
+api ──► auth ──► users ──► db ──► config
+ │        └──────────────────┬──► config
+ │                           │
+ ├──► orders ──► catalog ──► db ──► logger
+ │      │   └──► money       └──► money
+ │      ├──► users
+ │      └──► money
+ └──► logger
+</pre>
+<p>Drawings of real graphs get messy fast, which is one reason to learn to think about them as data.</p>
+
+<reason title="Choosing the model">
+<p>A delivery app needs a map of a city to plan routes for riders. Before any code: what should a vertex be? What should an edge be? Directed or undirected? Weighted, and by what? Can the weights change during the day? What else in the app could be a graph?</p>
+<answer>
+<ul>
+<li><strong>Vertices</strong>: road junctions (plus the shop and the customers' addresses, snapped to the nearest junction). Using whole streets as vertices would lose the information about where you can turn.</li>
+<li><strong>Edges</strong>: a stretch of road between two junctions.</li>
+<li><strong>Directed</strong>, because one-way streets exist. A two-way street becomes two edges, one each way. An undirected graph would happily send a rider the wrong way down a one-way street.</li>
+<li><strong>Weighted</strong>, and the useful weight is <em>travel time</em>, not distance: a short road through a market at noon is slower than a longer expressway. Travel time changes with traffic, so the weights must be updatable, and a route planned at 8:00 may be wrong at 8:30.</li>
+<li><strong>Other graphs in the same app</strong>: customers referring customers (directed), which products are bought together (undirected, weighted by how often), which services call which (directed, a dependency graph again).</li>
+</ul>
+<p>The same algorithm gives very different answers depending on these choices, so the modelling is where most graph bugs are born.</p>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="storing">Storing a graph: matrix or list</h2>
+<p>There are two classic representations.</p>
+<p>An <strong>adjacency matrix</strong> is a V × V grid: the cell in row <em>a</em>, column <em>b</em> holds the weight of the edge from <em>a</em> to <em>b</em>, or 0 when there is none. Checking one edge is a single array access, but the grid has V² cells whatever the number of edges.</p>
+<p>An <strong>adjacency list</strong> stores, for each vertex, only its neighbours. In JavaScript the natural form is a <code>Map</code> from vertex to a <code>Map</code> of neighbour to weight. Its size is proportional to V + E.</p>
+<example file="representations.js">
+const cities = ["Lagos", "Ibadan", "Benin", "Abuja", "Kano"];
+const roads = [
+  ["Lagos", "Ibadan", 128], ["Lagos", "Benin", 312], ["Ibadan", "Abuja", 640],
+  ["Benin", "Abuja", 480], ["Abuja", "Kano", 430],
+];
+
+const index = new Map(cities.map((city, i) => [city, i]));
+const matrix = cities.map(() => cities.map(() => 0));
+for (const [a, b, km] of roads) {
+  matrix[index.get(a)][index.get(b)] = km;
+  matrix[index.get(b)][index.get(a)] = km;
+}
+
+const list = new Map(cities.map((city) => [city, new Map()]));
+for (const [a, b, km] of roads) {
+  list.get(a).set(b, km);
+  list.get(b).set(a, km);
+}
+
+console.log("matrix:");
+for (const [i, row] of matrix.entries()) {
+  console.log(cities[i].padEnd(7), row.map((km) => String(km).padStart(4)).join(""));
+}
+console.log("list:");
+for (const [city, next] of list) {
+  console.log(city.padEnd(7), [...next].map(([to, km]) => `${to} ${km}`).join(", "));
+}
+
+for (const [v, e] of [[5, 5], [1000, 3000], [100000, 300000]]) {
+  console.log(`${v} cities, ${e} roads: matrix ${v * v} cells, list ${v + 2 * e} entries`);
+}
+</example>
+<output>
+</output>
+<p>The distances are approximate road distances in km. For 5 cities the matrix is fine. For 100,000 junctions it would need 10 billion cells, almost all zero; the list needs 700,000 entries (each undirected road is stored twice, once from each end).</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Operation</th><th>Adjacency matrix</th><th>Adjacency list (<code>Map</code> of <code>Map</code>s)</th></tr></thead>
+<tbody>
+<tr><td>Memory</td><td>O(V²)</td><td>O(V + E)</td></tr>
+<tr><td>Is there an edge a → b?</td><td>O(1)</td><td>O(1) average (O(degree) if neighbours are an array)</td></tr>
+<tr><td>List the neighbours of a</td><td>O(V): scan a whole row</td><td>O(degree of a)</td></tr>
+<tr><td>Visit every edge</td><td>O(V²)</td><td>O(V + E)</td></tr>
+<tr><td>Add a vertex</td><td>O(V²): grow the grid</td><td>O(1)</td></tr>
+</tbody>
+</table></div>
+<p>Most graph algorithms spend their time listing neighbours, so the adjacency list is the default. A matrix earns its place for small, dense graphs, or when you mostly ask "are these two connected?".</p>
+
+<h3>A Graph class</h3>
+<file name="graph.js" project="graph">
+export class Graph {
+  #adjacency = new Map();
+  #directed;
+  #edges = 0;
+
+  constructor({ directed = false } = {}) {
+    this.#directed = directed;
+  }
+
+  addVertex(v) {
+    if (!this.#adjacency.has(v)) this.#adjacency.set(v, new Map());
+  }
+
+  addEdge(from, to, weight = 1) {
+    this.addVertex(from);
+    this.addVertex(to);
+    if (!this.#adjacency.get(from).has(to)) this.#edges++;
+    this.#adjacency.get(from).set(to, weight);
+    if (!this.#directed) this.#adjacency.get(to).set(from, weight);
+  }
+
+  removeEdge(from, to) {
+    if (!this.#adjacency.get(from)?.delete(to)) return false;
+    if (!this.#directed) this.#adjacency.get(to).delete(from);
+    this.#edges--;
+    return true;
+  }
+
+  hasEdge(from, to) {
+    return this.#adjacency.get(from)?.has(to) ?? false;
+  }
+
+  weight(from, to) {
+    return this.#adjacency.get(from)?.get(to);
+  }
+
+  neighbours(v) {
+    return [...(this.#adjacency.get(v)?.keys() ?? [])];
+  }
+
+  vertices() {
+    return [...this.#adjacency.keys()];
+  }
+
+  get vertexCount() { return this.#adjacency.size; }
+  get edgeCount() { return this.#edges; }
+  get directed() { return this.#directed; }
+}
+</file>
+<p><code>addEdge</code> creates missing vertices, ignores a repeated edge when counting, and for an undirected graph stores the edge in both directions. <code>neighbours</code> returns a copy, so callers cannot change the graph by accident. Map iteration follows insertion order, which makes every result below repeatable.</p>
+<example file="roads.js" project="graph">
+import { Graph } from "./graph.js";
+
+const roads = new Graph();
+for (const [a, b, km] of [
+  ["Lagos", "Ibadan", 128], ["Lagos", "Benin", 312], ["Ibadan", "Abuja", 640],
+  ["Benin", "Abuja", 480], ["Abuja", "Kano", 430], ["Benin", "Enugu", 250],
+]) {
+  roads.addEdge(a, b, km);
+}
+
+console.log(`${roads.vertexCount} cities, ${roads.edgeCount} roads`);
+console.log("from Benin:", roads.neighbours("Benin").join(", "));
+console.log("Abuja to Benin:", roads.weight("Abuja", "Benin"), "km");
+
+function tripLength(graph, stops) {
+  let total = 0;
+  for (let i = 1; i < stops.length; i++) {
+    const km = graph.weight(stops[i - 1], stops[i]);
+    if (km === undefined) throw new Error(`no road from ${stops[i - 1]} to ${stops[i]}`);
+    total += km;
+  }
+  return total;
+}
+
+console.log("Lagos-Benin-Abuja-Kano:", tripLength(roads, ["Lagos", "Benin", "Abuja", "Kano"]), "km");
+try {
+  tripLength(roads, ["Lagos", "Kano"]);
+} catch (error) {
+  console.log(error.message);
+}
+</example>
+<output>
+</output>
+<p>Checking a planned trip is easy. <em>Finding</em> the shortest trip is a search problem, with its own lesson: <a href="/learn/dsa-graph-search">Graph search</a> covers breadth-first search and Dijkstra's algorithm on exactly this kind of weighted graph.</p>
+</section>
+
+<section>
+<h2 id="directed">Directed graphs: followers and dependencies</h2>
+<p>On a social network, "Ada follows Tunde" does not mean Tunde follows Ada, so follows are directed edges. An adjacency list answers "who does Ada follow?" in O(her out-degree). The reverse question, "who follows Tunde?", has no direct answer: you would have to check every vertex's list, O(V + E). If you ask it often, keep a second, <strong>reversed</strong> graph as well, updated on every follow and unfollow. That trade (twice the memory, both directions fast) is exactly what the <code>@zudojs/lifecycle</code> graph you will meet below does with its <code>getDependencies</code> and <code>getDependents</code>.</p>
+<example file="follows.js" project="graph">
+import { Graph } from "./graph.js";
+
+const follows = new Graph({ directed: true });
+const followers = new Graph({ directed: true });
+
+function follow(a, b) {
+  follows.addEdge(a, b);
+  followers.addEdge(b, a);
+}
+
+follow("Ada", "Tunde");
+follow("Tunde", "Ada");
+follow("Chioma", "Tunde");
+follow("Emeka", "Tunde");
+follow("Ada", "Chioma");
+
+console.log("Ada follows:", follows.neighbours("Ada").join(", "));
+console.log("Tunde's followers:", followers.neighbours("Tunde").join(", "));
+
+const mutual = follows.neighbours("Ada").filter((other) => follows.hasEdge(other, "Ada"));
+console.log("Ada's mutual follows:", mutual.join(", "));
+</example>
+<output>
+</output>
+<p>The mutual-follow check is O(out-degree), because each <code>hasEdge</code> is an O(1) <code>Map</code> lookup. With neighbour <em>arrays</em> it would be O(out-degree × degree), a difference you would feel for an account with a million followers.</p>
+</section>
+
+<section>
+<h2 id="reach">What does a package pull in?</h2>
+<p>Installing <code>@shop/orders</code> installs its dependencies, and theirs, and so on. The set of packages you can reach by following edges is its <strong>transitive dependencies</strong>. Walking a graph looks like walking a tree, with one crucial difference: in a graph the same vertex can be reached by more than one path. Both <code>catalog</code> and <code>users</code> lead to <code>db</code>. A walk that does not remember where it has been visits <code>db</code> twice, and <code>db</code>'s dependencies twice, and it gets worse with every shared dependency.</p>
+<p>The fix is a <strong>visited set</strong>: before expanding a vertex, check whether you have seen it. To show how much it matters, here is a graph of 20 "diamonds", each layer depending on two packages that both depend on the next layer. There are only 61 packages, but 2<sup>20</sup> different paths from the top to the bottom:</p>
+<example file="diamonds.js" project="graph">
+import { Graph } from "./graph.js";
+
+const deps = new Graph({ directed: true });
+for (let i = 0; i < 20; i++) {
+  deps.addEdge(`layer${i}`, `left${i}`);
+  deps.addEdge(`layer${i}`, `right${i}`);
+  deps.addEdge(`left${i}`, `layer${i + 1}`);
+  deps.addEdge(`right${i}`, `layer${i + 1}`);
+}
+
+function walkWithoutMemory(graph, start) {
+  let visits = 0;
+  const stack = [start];
+  while (stack.length > 0) {
+    const v = stack.pop();
+    visits++;
+    for (const next of graph.neighbours(v)) stack.push(next);
+  }
+  return visits;
+}
+
+function reachable(graph, start) {
+  const seen = new Set([start]);
+  const stack = [start];
+  while (stack.length > 0) {
+    const v = stack.pop();
+    for (const next of graph.neighbours(v)) {
+      if (!seen.has(next)) {
+        seen.add(next);
+        stack.push(next);
+      }
+    }
+  }
+  return seen;
+}
+
+console.log("packages:", deps.vertexCount, "links:", deps.edgeCount);
+console.log("visits without a visited set:", walkWithoutMemory(deps, "layer0"));
+console.log("reachable with a visited set:", reachable(deps, "layer0").size);
+</example>
+<output>
+</output>
+<p>Without memory the walk made millions of visits to a 61-package graph, and each extra layer doubles it. With the visited set every vertex is pushed once and every edge is looked at once: O(V + E). In a graph with a cycle, the walk without memory would never end at all. <strong>Every graph walk needs a visited set.</strong></p>
+<p>This is a <strong>depth-first</strong> walk (it uses a stack). With a queue it would be <strong>breadth-first</strong>, visiting vertices in order of distance from the start. <a href="/learn/dsa-graph-search">Graph search</a> builds both properly, with paths, shortest routes and connected components.</p>
+</section>
+
+<section>
+<h2 id="topo">Topological sort</h2>
+<p>A <strong>topological order</strong> of a directed graph lists every vertex so that for every edge <em>u → v</em>, <em>u</em> comes before <em>v</em>. For building packages you want each dependency before the packages that use it, so the edges should point from a dependency to the package that <strong>needs</strong> it: <code>db → users</code> means "db must be built before users". That is the reverse of the "uses" arrows in the drawing above; getting the direction wrong gives you the order exactly backwards.</p>
+<p>A topological order exists if and only if the graph is a DAG. If there is a cycle, every vertex on it is waiting for another one, forever.</p>
+
+<reason title="Before writing the sort">
+<p>Think about the inputs before the algorithm. The dependency lists come from each package's <code>package.json</code>, written by people. What if a package lists a dependency that is not in the monorepo at all? What if it lists itself? What if two packages have no relation to each other: which goes first, and is the answer unique? If there is a cycle, should the function throw, or return what it could order? And what does the caller need from the error to fix it?</p>
+<answer>
+<ul>
+<li><strong>Unknown dependency</strong>: it may be an external npm package (fine, not your job to build) or a typo like <code>@shop/userz</code>. Silently adding it as an empty vertex hides the typo. Better: only order known packages, and report unknown names so the caller can decide.</li>
+<li><strong>Self-dependency</strong>: a cycle of length one. The sort must reject it like any other cycle.</li>
+<li><strong>Unrelated packages</strong>: either order is correct, so topological order is usually <em>not unique</em>. Build tools want the same order on every machine, so make ties deterministic (for example, process ready packages in the order they were declared, or alphabetically).</li>
+<li><strong>Cycles</strong>: a partial order is dangerous if the caller does not notice it is partial. Return it clearly marked, or throw, and in both cases <em>name the packages involved</em>, ideally the actual loop (<code>db → users → db</code>). "Cycle detected" alone sends someone searching through 200 package files.</li>
+</ul>
+</answer>
+</reason>
+
+<h3>Kahn's algorithm</h3>
+<p>The idea is the naive loop from the start, done efficiently. A package is ready when it has no unbuilt dependencies, that is, when its <strong>in-degree</strong> (counting only unbuilt dependencies) is 0. So:</p>
+<ol>
+<li>Count the in-degree of every vertex. Put every vertex with in-degree 0 into a queue.</li>
+<li>Take a vertex from the queue and append it to the order. For each vertex it points to, decrease that vertex's in-degree by 1; if it reaches 0, it is now ready, so add it to the queue.</li>
+<li>When the queue is empty, stop. If the order has fewer vertices than the graph, the rest are on a cycle, or depend on one.</li>
+</ol>
+<file name="topo.js" project="graph">
+export function dependencyGraph(packages) {
+  const needs = new Map(Object.keys(packages).map((name) => [name, []]));
+  const unknown = [];
+  for (const [name, deps] of Object.entries(packages)) {
+    for (const dep of deps) {
+      if (needs.has(dep)) needs.get(dep).push(name);
+      else unknown.push(`${name} -> ${dep}`);
+    }
+  }
+  return { needs, unknown };
+}
+
+export function topoSort(needs) {
+  const inDegree = new Map([...needs.keys()].map((v) => [v, 0]));
+  for (const targets of needs.values()) {
+    for (const t of targets) inDegree.set(t, inDegree.get(t) + 1);
+  }
+  const queue = [...needs.keys()].filter((v) => inDegree.get(v) === 0);
+  const order = [];
+  for (let head = 0; head < queue.length; head++) {
+    const v = queue[head];
+    order.push(v);
+    for (const t of needs.get(v)) {
+      inDegree.set(t, inDegree.get(t) - 1);
+      if (inDegree.get(t) === 0) queue.push(t);
+    }
+  }
+  const blocked = [...needs.keys()].filter((v) => inDegree.get(v) > 0);
+  return { order, blocked };
+}
+</file>
+<p><code>dependencyGraph</code> turns the "uses" lists into a <code>needs</code> map pointing the other way (from a dependency to the packages that need it), and collects unknown names instead of inventing vertices for them. <code>topoSort</code> works on any such map. Every vertex enters the queue once and every edge is followed once: O(V + E) time and O(V) extra memory.</p>
+<example file="install-order.js" project="graph">
+import { dependencyGraph, topoSort } from "./topo.js";
+
+const packages = {
+  "@shop/api": ["@shop/auth", "@shop/orders", "@shop/logger", "express"],
+  "@shop/orders": ["@shop/catalog", "@shop/users", "@shop/money"],
+  "@shop/auth": ["@shop/users", "@shop/config"],
+  "@shop/catalog": ["@shop/db", "@shop/money"],
+  "@shop/users": ["@shop/db"],
+  "@shop/db": ["@shop/config", "@shop/logger"],
+  "@shop/config": [],
+  "@shop/logger": [],
+  "@shop/money": [],
+};
+
+const { needs, unknown } = dependencyGraph(packages);
+const { order, blocked } = topoSort(needs);
+order.forEach((name, i) => console.log(`${i + 1}. ${name}`));
+console.log("blocked:", blocked.length === 0 ? "none" : blocked.join(", "));
+console.log("not in the monorepo:", unknown.join(", "));
+</example>
+<output>
+</output>
+<p><code>express</code> is reported, not ordered: it comes from npm. Now break the graph the same way as at the start:</p>
+<example file="install-cycle.js" project="graph">
+import { dependencyGraph, topoSort } from "./topo.js";
+
+const packages = {
+  "@shop/api": ["@shop/orders"],
+  "@shop/orders": ["@shop/users", "@shop/money"],
+  "@shop/users": ["@shop/db"],
+  "@shop/db": ["@shop/config", "@shop/users"],
+  "@shop/config": [],
+  "@shop/money": [],
+};
+
+const { order, blocked } = topoSort(dependencyGraph(packages).needs);
+console.log("can build:", order.join(", "));
+console.log("blocked:", blocked.join(", "));
+</example>
+<output>
+</output>
+<p>Kahn's algorithm tells you <em>which</em> packages are blocked, but not which of them form the loop: <code>orders</code> and <code>api</code> are only blocked because they depend on it. The depth-first version below finds the loop itself.</p>
+
+<h3>Parallel stages</h3>
+<p>Packages that do not depend on each other can be built at the same time. Run Kahn's algorithm one "wave" at a time: everything ready now is a stage; finishing a stage makes the next stage ready. This is how monorepo tools such as Turborepo and pnpm schedule parallel builds.</p>
+<example file="stages.js" project="graph">
+import { dependencyGraph } from "./topo.js";
+
+const packages = {
+  "@shop/api": ["@shop/auth", "@shop/orders", "@shop/logger"],
+  "@shop/orders": ["@shop/catalog", "@shop/users", "@shop/money"],
+  "@shop/auth": ["@shop/users", "@shop/config"],
+  "@shop/catalog": ["@shop/db", "@shop/money"],
+  "@shop/users": ["@shop/db"],
+  "@shop/db": ["@shop/config", "@shop/logger"],
+  "@shop/config": [],
+  "@shop/logger": [],
+  "@shop/money": [],
+};
+
+function stages(needs) {
+  const inDegree = new Map([...needs.keys()].map((v) => [v, 0]));
+  for (const targets of needs.values()) for (const t of targets) inDegree.set(t, inDegree.get(t) + 1);
+  let ready = [...needs.keys()].filter((v) => inDegree.get(v) === 0);
+  const result = [];
+  while (ready.length > 0) {
+    result.push(ready);
+    const next = [];
+    for (const v of ready) {
+      for (const t of needs.get(v)) {
+        inDegree.set(t, inDegree.get(t) - 1);
+        if (inDegree.get(t) === 0) next.push(t);
+      }
+    }
+    ready = next;
+  }
+  return result;
+}
+
+stages(dependencyGraph(packages).needs).forEach((stage, i) => {
+  console.log(`stage ${i + 1}: ${stage.join(", ")}`);
+});
+</example>
+<output>
+</output>
+<p>Nine packages, five stages. If every build takes a minute, the parallel build takes five minutes instead of nine. The number of stages is the length of the longest dependency chain (here config → db → users → auth or orders → api), which is called the <strong>critical path</strong>: no amount of parallel workers can beat it.</p>
+
+<h3>Depth-first topological sort, with the cycle named</h3>
+<p>The second classic method uses depth-first search. Visit a package, first visit (recursively) everything it uses, and only then add the package to the output. That is a post-order walk, from <a href="/learn/dsa-trees#traversals">the trees lesson</a>, and in post-order every dependency is written before the package that uses it. The edges here are the natural "uses" direction, so no reversing is needed.</p>
+<p>To detect cycles, each vertex has one of three states: not visited yet, <strong>in progress</strong> (on the current path), and done. Reaching an in-progress vertex again means you have walked in a circle, and the current path from that vertex onwards <em>is</em> the cycle.</p>
+<example file="dfs-topo.js">
+function buildOrder(packages) {
+  const state = new Map();
+  const path = [];
+  const order = [];
+
+  function visit(name) {
+    if (state.get(name) === "done") return;
+    if (state.get(name) === "in progress") {
+      const loop = [...path.slice(path.indexOf(name)), name];
+      throw new Error(`dependency cycle: ${loop.join(" -> ")}`);
+    }
+    state.set(name, "in progress");
+    path.push(name);
+    for (const dep of packages[name] ?? []) visit(dep);
+    path.pop();
+    state.set(name, "done");
+    order.push(name);
+  }
+
+  for (const name of Object.keys(packages)) visit(name);
+  return order;
+}
+
+const packages = {
+  "@shop/api": ["@shop/orders", "@shop/auth"],
+  "@shop/orders": ["@shop/users", "@shop/money"],
+  "@shop/auth": ["@shop/users"],
+  "@shop/users": ["@shop/db"],
+  "@shop/db": ["@shop/config"],
+  "@shop/config": [],
+  "@shop/money": [],
+};
+console.log(buildOrder(packages).join(", "));
+
+packages["@shop/db"].push("@shop/auth");
+try {
+  buildOrder(packages);
+} catch (error) {
+  console.log(error.message);
+}
+</example>
+<output>
+</output>
+<p>The order differs from Kahn's, and both are correct: remember that topological order is usually not unique. The cycle message names the exact loop, which is what a developer needs. The <code>?? []</code> treats unknown packages (external ones) as having no dependencies here; the recursion depth is the longest dependency chain, which is small for packages but could overflow the stack for a huge generated graph, where Kahn's loop is the safer choice.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th></th><th>Kahn (in-degrees and a queue)</th><th>Depth-first (post-order)</th></tr></thead>
+<tbody>
+<tr><td>Time, memory</td><td>O(V + E), O(V)</td><td>O(V + E), O(V)</td></tr>
+<tr><td>On a cycle</td><td>Lists all blocked vertices</td><td>Names the exact loop</td></tr>
+<tr><td>Parallel stages</td><td>Natural (process in waves)</td><td>Needs extra work</td></tr>
+<tr><td>Recursion</td><td>None</td><td>Depth = longest chain (or use an explicit stack)</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="zudo">The same idea inside a framework</h2>
+<p>An application has the same problem at startup: the database connection needs the config loaded, the job queue needs the database, the HTTP server needs the queue. Shutdown is the mirror image: stop accepting requests first, close the database last. The ZudoJS lifecycle package solves it with exactly this lesson's tools: a dependency graph with both directions stored (<code>getDependencies</code> and <code>getDependents</code>), and a topological sort that returns <strong>stages</strong> of components that can start in parallel. It exports both, so you can try them directly (this example needs Node):</p>
+<example file="zudo-stages.js" browser="no">
+import { DependencyGraph, topologicalSort, reverseTopologicalSort } from "@zudojs/lifecycle";
+
+const graph = new DependencyGraph();
+for (const id of ["config", "logger", "database", "cache", "queue", "http"]) graph.addNode(id);
+graph.addEdge("logger", "config");
+graph.addEdge("database", "config");
+graph.addEdge("database", "logger");
+graph.addEdge("cache", "config");
+graph.addEdge("queue", "database");
+graph.addEdge("http", "database");
+graph.addEdge("http", "cache");
+
+console.log("start:", topologicalSort(graph).map((stage) => stage.join(" + ")).join("  then  "));
+console.log("stop: ", reverseTopologicalSort(graph).map((stage) => stage.join(" + ")).join("  then  "));
+
+graph.addEdge("config", "http");
+try {
+  graph.validate();
+} catch (error) {
+  console.log(error.name + ": " + error.message);
+}
+</example>
+<output>
+</output>
+<p>Here <code>addEdge(from, to)</code> means "from depends on to", the "uses" direction. <code>validate()</code> reports the loop as a path, like the depth-first version. In an application you rarely call these yourself: you register components with <code>dependsOn</code> and the lifecycle manager orders them, which <a href="/learn/zudo-runtime">the runtime lesson</a> shows.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing a topological sort</h2>
+<p>Hand-written cases are a start, but a sort that passes three examples can still fail on the fourth shape. A <strong>property</strong> that every correct answer must have is easy to state and check: the output contains every vertex exactly once, and for every edge <em>u → v</em>, <em>u</em> comes before <em>v</em>. Generate many random DAGs (a simple trick guarantees no cycles: shuffle the vertices, and only add edges from earlier to later in that shuffled order) and check the property on each. Then check that graphs <em>with</em> a cycle are always rejected.</p>
+<example file="topo-test.js" project="graph">
+import { topoSort } from "./topo.js";
+
+function check(label, ok) {
+  console.log(`${ok ? "PASS" : "FAIL"} ${label}`);
+}
+
+function isTopological(needs, order) {
+  if (order.length !== needs.size || new Set(order).size !== order.length) return false;
+  const position = new Map(order.map((v, i) => [v, i]));
+  for (const [v, targets] of needs) {
+    for (const t of targets) if (position.get(v) > position.get(t)) return false;
+  }
+  return true;
+}
+
+let seed = 11;
+const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+function randomDag(size, density) {
+  const names = Array.from({ length: size }, (_, i) => `pkg${i}`);
+  for (let i = names.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [names[i], names[j]] = [names[j], names[i]];
+  }
+  const needs = new Map(names.map((n) => [n, []]));
+  for (let i = 0; i < size; i++) {
+    for (let j = i + 1; j < size; j++) if (random() < density) needs.get(names[i]).push(names[j]);
+  }
+  return { needs, names };
+}
+
+check("empty graph", topoSort(new Map()).order.length === 0);
+check("self-dependency is blocked", topoSort(new Map([["a", ["a"]]])).blocked.join() === "a");
+
+let dagFailures = 0;
+let cycleFailures = 0;
+for (let round = 0; round < 300; round++) {
+  const { needs, names } = randomDag(2 + Math.floor(random() * 30), random() * 0.3);
+  const { order, blocked } = topoSort(needs);
+  if (!isTopological(needs, order) || blocked.length > 0) dagFailures++;
+  needs.get(names[names.length - 1]).push(names[0]);
+  const withCycle = topoSort(needs);
+  if (needs.get(names[0]).length > 0 && withCycle.blocked.length === 0) cycleFailures++;
+}
+check("300 random DAGs are ordered correctly", dagFailures === 0);
+check("adding a back edge is always caught", cycleFailures === 0);
+</example>
+<output>
+</output>
+<p>The back-edge test closes a loop from the last vertex in the shuffled order to the first. That only creates a cycle when a path from the first to the last already exists, so the test only demands a rejection when the first vertex has outgoing edges at all. That is a weak condition, and a good exercise is to make it exact with the <code>reachable</code> function from earlier: a cycle exists exactly when the last vertex is reachable from the first. Writing the property precisely is often the hardest part of property-based testing.</p>
+</section>
+
+<section>
+<h2 id="production">Graphs in production</h2>
+<ul>
+<li><strong>Everywhere you look.</strong> Package managers resolve dependency graphs. Build tools, spreadsheets (recalculate a cell after the cells it reads) and database migration tools run topological sorts. Workflow schedulers such as Apache Airflow call their jobs "DAGs". ES modules form an import graph, and circular imports are cycles in it (see <a href="/learn/js-modules">Modules</a>). Maps, social networks, fraud rings and recommendation systems are graphs of millions of vertices.</li>
+<li><strong>Make ties deterministic.</strong> If two machines build in different orders, a bug that depends on order appears on one and not the other. Iterate in a fixed order (declaration order, as here, or sorted names).</li>
+<li><strong>Report cycles well.</strong> Name the loop. Many tools also show the path from the thing you asked for to the loop, because the loop is often deep inside someone else's package.</li>
+<li><strong>Validate edges.</strong> A typo in a dependency name must not become a silent new vertex. Check names against the known set, as <code>dependencyGraph</code> did.</li>
+<li><strong>Big graphs need compact storage.</strong> A <code>Map</code> of <code>Map</code>s costs dozens of bytes per edge. Graphs with millions of edges are stored with integer vertex ids and flat typed arrays (a format called compressed sparse row), or in a graph database. The algorithms stay the same.</li>
+<li><strong>Weights change.</strong> Travel times, prices and link latencies change all the time. Route results should carry the time they were computed, and be recomputed rather than cached forever.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="People you may know">
+<p>Friendships are an undirected graph. Suggest people for Ada: friends of her friends who are not Ada and not already her friends, ranked by how many mutual friends they share (ties alphabetically). What is the cost in terms of degrees?</p>
+<solution>
+<example file="suggest.js" project="graph">
+import { Graph } from "./graph.js";
+
+const friends = new Graph();
+for (const [a, b] of [
+  ["Ada", "Tunde"], ["Ada", "Chioma"], ["Ada", "Emeka"], ["Tunde", "Bola"],
+  ["Chioma", "Bola"], ["Chioma", "Yusuf"], ["Emeka", "Yusuf"], ["Emeka", "Bola"], ["Tunde", "Chioma"],
+]) {
+  friends.addEdge(a, b);
+}
+
+function suggestions(graph, person) {
+  const mutual = new Map();
+  for (const friend of graph.neighbours(person)) {
+    for (const candidate of graph.neighbours(friend)) {
+      if (candidate === person || graph.hasEdge(person, candidate)) continue;
+      mutual.set(candidate, (mutual.get(candidate) ?? 0) + 1);
+    }
+  }
+  return [...mutual].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
+for (const [name, count] of suggestions(friends, "Ada")) console.log(`${name}: ${count} mutual friends`);
+</example>
+<output>
+</output>
+<p>For each of Ada's d friends you look at their friends: the sum of their degrees, then a sort of the candidates. Tunde and Chioma are skipped because they are already Ada's friends. This is why social networks can suggest friends instantly even with a billion users: the work depends on the neighbourhood, not on the size of the graph.</p>
+</solution>
+</exercise>
+
+<exercise title="What breaks if money changes?">
+<p>Someone changes <code>@shop/money</code>. Which packages must be rebuilt and retested? Build the reversed graph (from each package to the packages that use it) and find everything reachable from <code>@shop/money</code>, without visiting anything twice.</p>
+<solution>
+<example file="affected.js">
+const packages = {
+  "@shop/api": ["@shop/auth", "@shop/orders"],
+  "@shop/orders": ["@shop/catalog", "@shop/users", "@shop/money"],
+  "@shop/auth": ["@shop/users"],
+  "@shop/catalog": ["@shop/db", "@shop/money"],
+  "@shop/users": ["@shop/db"],
+  "@shop/invoices": ["@shop/money"],
+  "@shop/db": [],
+  "@shop/money": [],
+};
+
+const usedBy = new Map(Object.keys(packages).map((name) => [name, []]));
+for (const [name, deps] of Object.entries(packages)) {
+  for (const dep of deps) usedBy.get(dep).push(name);
+}
+
+function affectedBy(start) {
+  const seen = new Set([start]);
+  const queue = [start];
+  for (let head = 0; head < queue.length; head++) {
+    for (const user of usedBy.get(queue[head])) {
+      if (!seen.has(user)) {
+        seen.add(user);
+        queue.push(user);
+      }
+    }
+  }
+  seen.delete(start);
+  return [...seen];
+}
+
+console.log("rebuild after money changes:", affectedBy("@shop/money").join(", "));
+console.log("rebuild after auth changes:", affectedBy("@shop/auth").join(", "));
+</example>
+<output>
+</output>
+<p>Reversing takes O(V + E) and the walk is O(V + E) at most. <code>@shop/users</code> and <code>@shop/db</code> are untouched by a money change, so a CI system that knows this graph can skip their tests. Monorepo tools call this "affected" or "dependents" filtering.</p>
+</solution>
+</exercise>
+
+<exercise title="Course plan">
+<p>An academy lists which lessons each lesson requires. Print a valid study order, and the smallest number of weeks needed if a student can take any number of lessons in one week but only after all their prerequisites are done. Then add a prerequisite that creates a cycle and show the error.</p>
+<solution>
+<example file="course-plan.js" project="graph">
+import { topoSort } from "./topo.js";
+
+function plan(requires) {
+  const needs = new Map(Object.keys(requires).map((lesson) => [lesson, []]));
+  for (const [lesson, before] of Object.entries(requires)) {
+    for (const b of before) needs.get(b).push(lesson);
+  }
+  const { order, blocked } = topoSort(needs);
+  if (blocked.length > 0) throw new Error(`impossible plan, stuck on: ${blocked.join(", ")}`);
+  const week = new Map();
+  for (const lesson of order) {
+    week.set(lesson, 1 + Math.max(0, ...requires[lesson].map((b) => week.get(b))));
+  }
+  return { order, weeks: Math.max(...week.values()) };
+}
+
+const requires = {
+  javascript: [],
+  recursion: ["javascript"],
+  trees: ["recursion", "hash maps"],
+  "hash maps": ["javascript"],
+  heaps: ["trees"],
+  graphs: ["trees", "hash maps"],
+  tries: ["trees"],
+};
+
+const { order, weeks } = plan(requires);
+console.log(order.join(" -> "));
+console.log(`at least ${weeks} weeks`);
+
+requires.javascript.push("graphs");
+try {
+  plan(requires);
+} catch (error) {
+  console.log(error.message);
+}
+</example>
+<output>
+</output>
+<p>The week of each lesson is one more than the latest week among its prerequisites, computed in topological order so the prerequisites are always known first. That is the longest path in the DAG, the critical path from the parallel-stages section, and it takes O(V + E) because the order is topological. Finding the longest path in a graph <em>with</em> cycles is a much harder problem; DAGs make it easy.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A graph is vertices plus edges, with no other rules. Edges can be directed or undirected, weighted or not. Choosing what the vertices, edges, direction and weights mean is most of the work.</li>
+<li>An adjacency list (a <code>Map</code> of <code>Map</code>s) uses O(V + E) memory and lists neighbours in O(degree); an adjacency matrix uses O(V²) and checks one edge in O(1). Real graphs are sparse, so lists are the default. Keep a reversed graph when you need "who points at me?" quickly.</li>
+<li>Every graph walk needs a visited set: shared dependencies make the number of paths explode, and cycles make it infinite. With the set, reachability is O(V + E).</li>
+<li>A topological order puts every edge's source before its target; it exists only for DAGs and is usually not unique. Kahn's algorithm (in-degrees and a queue) is O(V + E), lists blocked vertices and gives parallel stages; the depth-first version (post-order with an "in progress" state) names the exact cycle.</li>
+<li>Test a topological sort with properties on random DAGs: every vertex once, every edge forwards, and every cycle rejected.</li>
+</ul>
+<p>Next: <a href="/learn/dsa-tries">Tries</a> are trees whose edges are letters, built to answer "which product names start with <em>sam</em>?" as fast as the user types.</p>
+</section>

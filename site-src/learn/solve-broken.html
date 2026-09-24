@@ -1,0 +1,586 @@
+---
+title: Why doesn't this work?
+description: Diagnose broken algorithms that run without errors but give wrong answers, using trace tables, predictions and boundary tests, then fix each root cause.
+minutes: 50
+youNeed: Problem workshop: intermediate
+youBuild: Diagnoses and fixes for six broken algorithms, plus a symptom-to-cause table you can use on any bug
+keywords: debugging, tracing code, trace table, off-by-one error, fencepost error, condition order, unreachable code, base case, infinite recursion, mutation during iteration, floating point comparison, logic errors, root cause
+objectives: Trace an algorithm by hand in a trace table and find the exact step where it goes wrong | Predict what code will do before running it, and use the difference as evidence | Recognise off-by-one errors, wrong condition order, missing base cases, mutation during iteration and float comparison from their symptoms | Fix the root cause instead of the symptom, and add the test that would have caught the bug | Use a symptom-to-cause table to decide where to look first
+---
+<section>
+<h2 id="silent-bugs">The bug with no error message</h2>
+<p>A customer writes to a small online shop: "Your site says my average spend over the last week is NaN. What does that mean?" The developer opens the code. It runs. There is no red error, no stack trace, nothing to search for. The program does exactly what it was told. It was just told the wrong thing.</p>
+<p>These are <strong>logic errors</strong>: the code is valid JavaScript, it runs to the end, and the answer is wrong. They are the hardest bugs for beginners, because the usual strategy, "read the error message", has nothing to read. And they are the most common bugs in real systems, because syntax errors never survive long enough to reach a customer.</p>
+<p>In this lesson you are handed six algorithms that are already written and already wrong. Your tools are not new syntax. They are the reasoning tools from this whole module: predict, trace, compare, find the first step where reality and your prediction disagree. In each case, try to find the bug yourself before you read the diagnosis.</p>
+</section>
+
+<section>
+<h2 id="method">The method: predict, trace, compare</h2>
+<p>When code gives a wrong answer, resist the urge to change things until it works. Changing code at random can hide a bug instead of fixing it. Instead:</p>
+<ol>
+<li><strong>Reproduce</strong> the bug with the smallest input that shows it. Nine days of sales is easier to follow than nine thousand.</li>
+<li><strong>Predict</strong> what the code <em>should</em> do with that input, working it out by hand from the problem, not from the code.</li>
+<li><strong>Trace</strong> what the code <em>actually</em> does, step by step, writing down every variable after every step.</li>
+<li><strong>Compare</strong>: find the <em>first</em> step where the trace and your prediction disagree. The bug is at or just before that step.</li>
+<li><strong>Fix the cause</strong>, not the symptom, then add a test with the input that exposed it, so the bug can never come back unnoticed.</li>
+</ol>
+<p>The main tool for step 3 is a <strong>trace table</strong>: one column per variable, one row per step. Here is a tiny, correct loop and its trace:</p>
+<example file="trace-demo.js">
+const prices = [300, 500, 200];
+let total = 0;
+for (let i = 0; i < prices.length; i++) {
+  total = total + prices[i];
+}
+console.log(total);
+</example>
+<output>
+1000
+</output>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Step</th><th><code>i</code></th><th><code>i &lt; prices.length</code></th><th><code>prices[i]</code></th><th><code>total</code> after the step</th></tr></thead>
+<tbody>
+<tr><td>start</td><td>–</td><td>–</td><td>–</td><td>0</td></tr>
+<tr><td>1</td><td>0</td><td>true</td><td>300</td><td>300</td></tr>
+<tr><td>2</td><td>1</td><td>true</td><td>500</td><td>800</td></tr>
+<tr><td>3</td><td>2</td><td>true</td><td>200</td><td>1000</td></tr>
+<tr><td>end</td><td>3</td><td>false: the loop stops</td><td>–</td><td>1000</td></tr>
+</tbody>
+</table></div>
+<p>Writing it out feels slow. It is also the only way to see what the computer sees, instead of what you meant. You can make the computer write the trace for you by printing the variables inside the loop; you will do that below. Printing is quick, but the paper version makes you <em>predict</em> each row, and the prediction is what finds the bug.</p>
+</section>
+
+<section>
+<h2 id="off-by-one">Bug 1: off by one</h2>
+<p>Here is the code behind the customer's NaN. It should return the average of the last 7 days of sales.</p>
+<example file="average-broken.js">
+function averageLast7(sales) {
+  let total = 0;
+  for (let i = sales.length - 7; i <= sales.length; i++) {
+    total = total + sales[i];
+  }
+  return total / 7;
+}
+
+const sales = [120, 90, 100, 80, 110, 95, 105, 130, 70];   // 9 days
+console.log(averageLast7(sales));
+</example>
+<output>
+NaN
+</output>
+<reason title="Find it: the last 7 days">
+<ul>
+<li>With 9 days of sales, which positions hold the last 7 days? (Positions start at 0.)</li>
+<li>Which values does <code>i</code> take in the loop? Write them all down.</li>
+<li>What is <code>sales[9]</code>? What happens when you add it to a number?</li>
+<li>What will this function do for a customer with only 3 days of history, even after you fix the first bug?</li>
+</ul>
+<answer>
+<p><strong>Prediction:</strong> 9 days means positions 0 to 8. The last 7 are positions 2 to 8: 100 + 80 + 110 + 95 + 105 + 130 + 70 = 690, and 690 / 7 is about 98.57.</p>
+<p><strong>Trace:</strong> <code>i</code> starts at 9 − 7 = 2 and the loop continues while <code>i &lt;= 9</code>, so <code>i</code> takes the values 2, 3, 4, 5, 6, 7, 8, <em>9</em>. That is eight values for seven days. At <code>i = 9</code>, <code>sales[9]</code> is past the end of the list, which gives <code>undefined</code>, and <code>690 + undefined</code> is <code>NaN</code>. Once a total is NaN, everything after it is NaN.</p>
+<p><strong>Root cause:</strong> <code>&lt;=</code> where <code>&lt;</code> was needed. The last valid position is <code>length − 1</code>, so a loop over positions must stop <em>before</em> <code>length</code>.</p>
+<p><strong>Second bug, same family:</strong> with 3 days, <code>i</code> starts at 3 − 7 = −4. <code>sales[-4]</code> is also <code>undefined</code>, so the result is NaN again. And even without that, dividing by 7 would be wrong when there are fewer than 7 days. Decide: average the days you have, and return <code>null</code> for a customer with no sales at all.</p>
+</answer>
+</reason>
+<p>Here is the trace, written by the computer. Printing the variables inside the loop shows the exact step where the total breaks:</p>
+<example file="average-trace.js">
+const sales = [120, 90, 100, 80, 110, 95, 105, 130, 70];
+let total = 0;
+for (let i = sales.length - 7; i <= sales.length; i++) {
+  total = total + sales[i];
+  console.log(`i=${i} sales[i]=${sales[i]} total=${total}`);
+}
+</example>
+<output>
+i=2 sales[i]=100 total=100
+i=3 sales[i]=80 total=180
+i=4 sales[i]=110 total=290
+i=5 sales[i]=95 total=385
+i=6 sales[i]=105 total=490
+i=7 sales[i]=130 total=620
+i=8 sales[i]=70 total=690
+i=9 sales[i]=undefined total=NaN
+</output>
+<p>The first row that disagrees with the prediction is <code>i=9</code>: there should not be a ninth position at all. Now the fix, which handles both bugs, and the tests that pin them down:</p>
+<example file="average-fixed.js">
+function check(label, actual, expected) {
+  console.log(actual === expected ? `PASS ${label}` : `FAIL ${label}: got ${actual}, expected ${expected}`);
+}
+
+function averageLast7(sales) {
+  if (sales.length === 0) return null;
+  const start = Math.max(0, sales.length - 7);
+  let total = 0;
+  for (let i = start; i < sales.length; i++) {
+    total = total + sales[i];
+  }
+  return total / (sales.length - start);
+}
+
+check("9 days", averageLast7([120, 90, 100, 80, 110, 95, 105, 130, 70]), 690 / 7);
+check("exactly 7 days", averageLast7([10, 20, 30, 40, 50, 60, 70]), 40);
+check("only 3 days", averageLast7([100, 200, 300]), 200);
+check("no sales", averageLast7([]), null);
+</example>
+<output>
+PASS 9 days
+PASS exactly 7 days
+PASS only 3 days
+PASS no sales
+</output>
+<p><code>Math.max(0, …)</code> keeps the start from going below position 0, and dividing by the number of days actually added makes the average honest. The "exactly 7 days" test is the boundary: the start is exactly 0.</p>
+<h3>The fencepost family</h3>
+<p>Off-by-one errors are also called <strong>fencepost errors</strong>, after a classic puzzle: a fence 30 metres long with a post every 3 metres needs 11 posts, not 10, because there is a post at both ends. The same trap hides in "how many days from the 3rd to the 7th, both included?" (5, not 7 − 3 = 4) and in "how many pages?" from <a href="/learn/solve-intermediate#pagination">pagination</a>. When you see an answer that is wrong by exactly one, look at every <code>&lt;</code> versus <code>&lt;=</code>, every start at 0 versus 1, and every "both ends included?" question.</p>
+</section>
+
+<section>
+<h2 id="condition-order">Bug 2: wrong condition order</h2>
+<p>A shop's loyalty rule: 10% off orders of ₦50,000 or more, 5% off orders of ₦10,000 or more. The marketing team reports that nobody has ever received the 10% discount.</p>
+<example file="loyalty-broken.js">
+function discountPercent(totalKobo) {
+  if (totalKobo >= 1000000) return 5;    // ₦10,000 or more
+  if (totalKobo >= 5000000) return 10;   // ₦50,000 or more
+  return 0;
+}
+
+console.log(discountPercent(500000), discountPercent(2000000), discountPercent(8000000));
+</example>
+<output>
+0 5 5
+</output>
+<reason title="Find it: who reaches the second line?">
+<ul>
+<li>A function stops at its first <code>return</code>. Which totals ever reach the second <code>if</code>?</li>
+<li>Can any of those totals be ₦50,000 or more?</li>
+<li>Why did every test the developer wrote pass?</li>
+</ul>
+<answer>
+<p><strong>Reachability:</strong> the second <code>if</code> only runs when the first condition was false, that is, for totals <em>below</em> ₦10,000. None of those is ₦50,000 or more, so the second <code>return</code> can never run. It is <strong>unreachable code</strong>: it looks like it does something, and it never does.</p>
+<p><strong>Root cause:</strong> the checks overlap (every total over ₦50,000 is also over ₦10,000), and the broader check came first. With overlapping <code>&gt;=</code> checks, the most specific (highest) one must come first.</p>
+<p><strong>Why the tests passed:</strong> the developer tested ₦5,000 and ₦20,000, which were both right. Nobody tested a total over ₦50,000, the only input that reaches the bug. A test for every rule, including one on each boundary, would have caught it the first time it ran.</p>
+</answer>
+</reason>
+<p>The question "which inputs reach this line?" is one of the most powerful reasoning tools you have. For each line, describe the inputs that get there. If the answer is "none", the line is dead and something above it is wrong.</p>
+<example file="loyalty-fixed.js">
+function discountPercent(totalKobo) {
+  if (totalKobo >= 5000000) return 10;
+  if (totalKobo >= 1000000) return 5;
+  return 0;
+}
+
+for (const total of [999999, 1000000, 4999999, 5000000, 8000000]) {
+  console.log(`₦${total / 100}: ${discountPercent(total)}%`);
+}
+</example>
+<output>
+₦9999.99: 0%
+₦10000: 5%
+₦49999.99: 5%
+₦50000: 10%
+₦80000: 10%
+</output>
+<h3>When order causes a crash</h3>
+<p>Order also matters when one check <em>protects</em> another. This function should refuse missing users and banned users:</p>
+<example file="guard-order.js">
+function canCheckout(user) {
+  if (user.banned) return "no: banned";
+  if (user === null) return "no: please log in";
+  return "yes";
+}
+
+console.log(canCheckout({ name: "Ada", banned: false }));
+try {
+  console.log(canCheckout(null));
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+yes
+TypeError: Cannot read properties of null (reading 'banned')
+</output>
+<p>The null check exists, but it runs <em>after</em> the line it was supposed to protect. Reading <code>.banned</code> of nothing crashes first. The rule: a check that makes a later line safe must come before that line. Swap the two <code>if</code>s and both calls work.</p>
+</section>
+
+<section>
+<h2 id="base-case">Bug 3: the missing base case</h2>
+<p>A function may call <em>itself</em>. This is called <strong>recursion</strong>, and you will study it properly in <a href="/learn/js-recursion">Recursion</a>. The idea: solve a problem by solving a slightly smaller version of the same problem, until the problem is so small that the answer is obvious. That smallest case, where the function answers directly without calling itself, is the <strong>base case</strong>. Every call waits for the inner call to finish, so if the calls never reach a base case, they pile up until JavaScript gives up.</p>
+<example file="sum-broken.js">
+function sumTo(n) {
+  return n + sumTo(n - 1);   // 5 + 4 + 3 + ... but where does it stop?
+}
+
+try {
+  console.log(sumTo(5));
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+RangeError: Maximum call stack size exceeded
+</output>
+<p>The message means "too many calls waiting for each other". It is JavaScript's way of saying "your recursion never stopped". The fix is a base case: <code>if (n === 0) return 0;</code>. But a base case that exists is not enough. It must be <em>reachable</em> from every input.</p>
+<p>Here is a more realistic case. A savings app rewards whoever started a chain of referrals. Each user records who referred them; the founder of a chain was referred by nobody (<code>null</code>).</p>
+<example file="referrals-broken.js">
+const referredBy = { dayo: "chen", chen: "bola", bola: "ada", ada: null };
+
+function founder(user) {
+  const parent = referredBy[user];
+  if (parent === null) return user;    // the base case
+  return founder(parent);
+}
+
+console.log(founder("dayo"));
+
+for (const user of ["zara", "ada"]) {
+  try {
+    console.log(founder(user));
+  } catch (error) {
+    console.log(`${user}: ${error.name}`);
+  }
+}
+</example>
+<output>
+ada
+zara: RangeError
+ada
+</output>
+<reason title="Find it: why does zara never stop?">
+<ul>
+<li>Trace <code>founder("dayo")</code>: write down each call and the value of <code>parent</code>.</li>
+<li>Now trace <code>founder("zara")</code>. What is <code>referredBy["zara"]</code>? Does it equal <code>null</code>? What is the next call?</li>
+<li>Someone edits the data so that <code>ada</code> was referred by <code>dayo</code>. What happens to <code>founder("dayo")</code>?</li>
+</ul>
+<answer>
+<p><strong>dayo:</strong> <code>founder("dayo")</code> → parent "chen" → <code>founder("chen")</code> → parent "bola" → <code>founder("bola")</code> → parent "ada" → <code>founder("ada")</code> → parent <code>null</code>: base case, return "ada". Four calls, and the answer travels back out through all of them.</p>
+<p><strong>zara</strong> is not in the table, so <code>referredBy["zara"]</code> is <code>undefined</code>. <code>undefined === null</code> is false, so the base case does not fire and the function calls <code>founder(undefined)</code>. The table has no entry for that either, so it calls <code>founder(undefined)</code> again, forever. The base case only covers "the founder", not "a user we have never heard of".</p>
+<p><strong>A cycle</strong> (ada referred by dayo) means the chain dayo → chen → bola → ada → dayo → … never reaches <code>null</code>. Real data contains mistakes like this, so the function must protect itself: remember the users already visited, and stop if one comes round again.</p>
+<p><strong>Root cause:</strong> the base case covers the happy path only. Every input must be able to reach <em>some</em> stopping point: the founder, an unknown user, or a cycle.</p>
+</answer>
+</reason>
+<example file="referrals-fixed.js">
+function founder(user, referredBy, visited = new Set()) {
+  if (referredBy[user] === undefined) return "unknown user";
+  if (visited.has(user)) return "cycle in the data";
+  visited.add(user);
+  const parent = referredBy[user];
+  if (parent === null) return user;
+  return founder(parent, referredBy, visited);
+}
+
+const good = { dayo: "chen", chen: "bola", bola: "ada", ada: null };
+const looped = { dayo: "chen", chen: "bola", bola: "ada", ada: "dayo" };
+
+console.log(founder("dayo", good));
+console.log(founder("ada", good));
+console.log(founder("zara", good));
+console.log(founder("dayo", looped));
+</example>
+<output>
+ada
+ada
+unknown user
+cycle in the data
+</output>
+<p>Now there are three ways out, and every input takes one of them. <code>visited = new Set()</code> is a <strong>default parameter</strong>: the first call gets a fresh empty set, and each recursive call passes the same set along so it remembers the whole chain. The table is passed in as a parameter too, so the tests can use a broken table without touching the real one.</p>
+<note>The recursive version of <code>sumTo</code> has the same hidden problem: with <code>if (n === 0) return 0;</code>, <code>sumTo(-1)</code> or <code>sumTo(2.5)</code> skips over 0 and never stops. <code>if (n &lt;= 0) return 0;</code> is reachable from every number.</note>
+</section>
+
+<section>
+<h2 id="mutation">Bug 4: changing a list while walking through it</h2>
+<p>An admin screen has a button that removes cancelled orders from the list on screen. Staff report that "sometimes one cancelled order stays behind".</p>
+<example file="remove-broken.js">
+function removeCancelled(orders) {
+  for (let i = 0; i < orders.length; i++) {
+    if (orders[i].status === "cancelled") {
+      orders.splice(i, 1);   // remove 1 item at position i
+    }
+  }
+  return orders;
+}
+
+const orders = [
+  { id: "A", status: "paid" },
+  { id: "B", status: "cancelled" },
+  { id: "C", status: "cancelled" },
+  { id: "D", status: "paid" },
+];
+
+const left = removeCancelled(orders);
+let ids = "";
+for (const order of left) ids = ids + order.id + ":" + order.status + " ";
+console.log(ids);
+</example>
+<output>
+A:paid C:cancelled D:paid
+</output>
+<p><code>orders.splice(i, 1)</code> removes one item at position <code>i</code>, and every item after it moves one position to the left to close the gap.</p>
+<reason title="Find it: where did C go?">
+<ul>
+<li>Fill in a trace table with the columns <code>i</code>, the list's contents, and what happens at that step.</li>
+<li>After B is removed at <code>i = 1</code>, which order is now at position 1? What is <code>i</code> on the next step?</li>
+<li>Why does the bug only appear "sometimes"?</li>
+</ul>
+<answer>
+<div class="lx-table-wrap"><table>
+<thead><tr><th><code>i</code></th><th>List before the step</th><th>What happens</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>A B C D</td><td>A is paid: keep</td></tr>
+<tr><td>1</td><td>A B C D</td><td>B is cancelled: remove it. C and D move left.</td></tr>
+<tr><td>2</td><td>A C D</td><td>Position 2 is now <strong>D</strong>. C moved into position 1, which the loop has already passed.</td></tr>
+<tr><td>3</td><td>A C D</td><td>3 is not less than the length (3): stop</td></tr>
+</tbody>
+</table></div>
+<p><strong>Root cause:</strong> removing an item shifts the rest of the list, but <code>i</code> still moves forward, so the item right after a removed one is never looked at. The loop and the list disagree about where they are.</p>
+<p><strong>"Sometimes":</strong> it only goes wrong when two cancelled orders are next to each other. With one cancelled order, or cancelled orders spread out, the skipped item is always a paid one and nothing looks wrong. That is why the test data must include two matching items in a row.</p>
+</answer>
+</reason>
+<p>There are two fixes. The best one avoids the problem entirely: do not change the list you are walking through. Build a new list of the orders to keep, as in <a href="/learn/solve-intermediate#filter">the filtering problem</a>. If you really must remove items in place, walk <em>backwards</em>: removing an item then only shifts items the loop has already visited.</p>
+<example file="remove-fixed.js">
+function keepNotCancelled(orders) {
+  const kept = [];
+  for (const order of orders) {
+    if (order.status !== "cancelled") kept.push(order);
+  }
+  return kept;
+}
+
+function removeCancelledInPlace(orders) {
+  for (let i = orders.length - 1; i >= 0; i--) {
+    if (orders[i].status === "cancelled") orders.splice(i, 1);
+  }
+  return orders;
+}
+
+function ids(list) {
+  let out = "";
+  for (const order of list) out = out + order.id;
+  return out;
+}
+
+const make = () => [
+  { id: "A", status: "paid" },
+  { id: "B", status: "cancelled" },
+  { id: "C", status: "cancelled" },
+  { id: "D", status: "paid" },
+  { id: "E", status: "cancelled" },
+];
+
+console.log(ids(keepNotCancelled(make())), ids(removeCancelledInPlace(make())));
+console.log(ids(keepNotCancelled([])), "|", ids(keepNotCancelled([{ id: "X", status: "cancelled" }])), "|");
+</example>
+<output>
+AD AD
+ |  |
+</output>
+<p><code>make</code> is a small function that returns a fresh copy of the test data each time, so the in-place version cannot spoil the data for the other test. The last line checks two edge cases: an empty list, and a list where every order is removed; both print nothing between the bars. <code>i--</code> counts down by one each step.</p>
+</section>
+
+<section>
+<h2 id="float">Bug 5: comparing decimals exactly</h2>
+<p>A school lets parents pay fees in instalments. An invoice of ₦3.30 in late fees was paid as ₦1.10 and then ₦2.20. The system still shows it as unpaid.</p>
+<example file="invoice-broken.js">
+const due = 3.3;
+const payments = [1.1, 2.2];
+
+let paid = 0;
+for (const p of payments) paid = paid + p;
+
+console.log(paid);
+console.log(paid === due ? "Fully paid" : "Still owing");
+</example>
+<output>
+3.3000000000000003
+Still owing
+</output>
+<reason title="Find it: why is 1.1 + 2.2 not 3.3?">
+<ul>
+<li>Where have you seen a number like 3.3000000000000003 before?</li>
+<li>If you change <code>===</code> to <code>&gt;=</code>, is the bug fixed, or just hidden?</li>
+<li>What is the fix that makes the comparison exact?</li>
+</ul>
+<answer>
+<p><strong>Floating point:</strong> computers store decimals in binary, and 1.1, 2.2 and 3.3 have no exact binary form, just as 1/3 has no exact decimal form. The tiny errors add up to 3.3000000000000003, and <code>===</code> sees every digit (<a href="/learn/logic-math">Mathematical reasoning</a>).</p>
+<p><strong>Changing to <code>&gt;=</code></strong> makes this example print "Fully paid", but only by luck: here the error happened to push the sum up. With other amounts the sum lands slightly <em>below</em> the true value (0.7 + 0.1 is 0.7999999999999999), and a correctly paid invoice would stay unpaid. That is a symptom fix.</p>
+<p><strong>Root cause:</strong> money stored as decimal naira. Store whole kobo (330, 110, 220) and every sum is exact. For measurements that really are decimals, such as weights, compare with a tolerance: "close enough" instead of "exactly equal".</p>
+</answer>
+</reason>
+<example file="invoice-fixed.js">
+const dueKobo = 330;
+const paymentsKobo = [110, 220];
+
+let paidKobo = 0;
+for (const p of paymentsKobo) paidKobo = paidKobo + p;
+
+console.log(paidKobo, paidKobo === dueKobo ? "Fully paid" : "Still owing");
+
+function closeTo(a, b) {
+  return Math.abs(a - b) < 0.000001;
+}
+console.log(0.7 + 0.1 >= 0.8, closeTo(0.7 + 0.1, 0.8));
+</example>
+<output>
+330 Fully paid
+false true
+</output>
+<h3>The loop that never ends</h3>
+<p>Exact comparison with decimals can also stop a loop from ever stopping. This loop is meant to run for 0, 0.1, 0.2 … up to 1 and then stop. A safety counter stops it after 15 steps so the example can finish:</p>
+<example file="float-loop.js">
+let steps = 0;
+for (let x = 0; x !== 1; x = x + 0.1) {
+  steps = steps + 1;
+  if (steps === 15) {
+    console.log(`still running at x = ${x}`);
+    break;
+  }
+}
+
+let safeSteps = 0;
+for (let tenths = 0; tenths <= 10; tenths++) safeSteps = safeSteps + 1;
+console.log(`counting whole tenths: ${safeSteps} steps`);
+</example>
+<output>
+still running at x = 1.4000000000000001
+counting whole tenths: 11 steps
+</output>
+<p><code>x</code> goes 0.1, 0.2, 0.30000000000000004, …, 0.9999999999999999, 1.0999999999999999, and jumps straight past 1 without ever being exactly 1, so <code>x !== 1</code> stays true forever. <code>break</code> leaves a loop early. The fix is the same idea as kobo: count in whole numbers (tenths) and divide only when you need the decimal.</p>
+</section>
+
+<section>
+<h2 id="accumulate">Bug 6: the total that only counts the last item</h2>
+<p>A last one, short and very common. A cart total is always equal to the price of the last item:</p>
+<example file="total-broken.js">
+function cartTotal(items) {
+  let total = 0;
+  for (const item of items) {
+    total = item.price * item.quantity;
+  }
+  return total;
+}
+
+console.log(cartTotal([{ price: 500, quantity: 2 }, { price: 300, quantity: 1 }]));
+</example>
+<output>
+300
+</output>
+<p>Trace it: after the first item <code>total</code> is 1000, after the second it is 300. Each step <em>replaces</em> the total instead of <em>adding</em> to it. The line should be <code>total = total + item.price * item.quantity;</code>. A test with only one item would pass; you need at least two items to see the difference. This is why "one item" and "several items" are separate rows in an edge-case table.</p>
+</section>
+
+<section>
+<h2 id="symptoms">From symptom to suspect</h2>
+<p>After enough bugs, you start to recognise them by their symptoms. This table is a starting point for where to look first. It does not replace tracing, but it tells you which rows of the trace table to watch.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Symptom</th><th>Likely cause</th><th>Look at</th></tr></thead>
+<tbody>
+<tr><td><code>NaN</code> appears in a total</td><td>Reading past the end of a list, a missing starting value, or text in arithmetic</td><td>Loop bounds, <code>&lt;</code> vs <code>&lt;=</code>, the first value of each counter</td></tr>
+<tr><td>Wrong by exactly one (item, day, page)</td><td>Off-by-one / fencepost</td><td>Start at 0 or 1, <code>&lt;</code> vs <code>&lt;=</code>, both ends included?</td></tr>
+<tr><td>One branch never happens</td><td>Wrong condition order, unreachable code</td><td>Which inputs reach that line?</td></tr>
+<tr><td>"Maximum call stack size exceeded"</td><td>Missing or unreachable base case</td><td>Can every input reach a stopping point? Unknown input? Cycles?</td></tr>
+<tr><td>Items skipped "sometimes"</td><td>Changing a list while walking through it</td><td><code>splice</code>, removals inside a forward loop; two matches in a row</td></tr>
+<tr><td>Numbers like 0.30000000000000004; equal amounts not equal</td><td>Exact comparison of decimals</td><td>Money in decimals, <code>===</code> on results of arithmetic</td></tr>
+<tr><td>A loop that never ends</td><td>The stop condition can never become true</td><td>Is the loop variable changed? Can it skip past the target?</td></tr>
+<tr><td>Result equals the last item only</td><td>Replacing instead of adding</td><td><code>=</code> where <code>total = total + …</code> was needed</td></tr>
+<tr><td>A crash on missing data, though a check exists</td><td>The check runs after the line it protects</td><td>Order of guard clauses</td></tr>
+</tbody>
+</table></div>
+<p>Notice what is <em>not</em> in the table: "change things until it works". Each fix in this lesson came from a specific explanation of why the old code was wrong, and each came with a test that fails on the old code and passes on the new. That test is your proof. If you cannot write a test that fails before your fix, you have not found the bug yet.</p>
+<p>These same bugs appear in every language and at every level of experience. The <a href="/learn/debug-method">debugging method</a> and <a href="/learn/debug-tools">debugging tools</a> lessons later in the course add breakpoints and debuggers, but they automate the trace table; the reasoning stays yours.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<p>Each exercise gives you broken code and a bug report. Predict, trace, compare, fix, and write the test that proves it.</p>
+<exercise title="Locked out too late">
+<p>Bug report: "The rule says an account locks after 3 failed logins, but I could try a 4th time." Find the bug by tracing the failures 1 to 4.</p>
+<pre><code>function isLocked(failedAttempts) {
+  return failedAttempts &gt; 3;
+}</code></pre>
+<solution>
+<p>Trace: after 1, 2 and 3 failures, <code>failedAttempts &gt; 3</code> is false, so the account is still open after the third failure and a fourth try is allowed. "Locks after 3 failed logins" means locked when the count reaches 3: <code>&gt;= 3</code>. It is an off-by-one on a boundary, caught by the boundary pair 2 and 3.</p>
+<example file="locked.js">
+function isLocked(failedAttempts) {
+  return failedAttempts >= 3;
+}
+
+for (const n of [0, 2, 3, 4]) console.log(n, isLocked(n));
+</example>
+<output>
+0 false
+2 false
+3 true
+4 true
+</output>
+</solution>
+</exercise>
+<exercise title="The average of nothing">
+<p>Bug report: "The dashboard shows NaN as the average order value for new shops." Trace the function below with an empty list, explain the NaN, and fix it so that a shop without orders gets <code>null</code>.</p>
+<pre><code>function averageOrder(totals) {
+  let sum = 0;
+  for (const t of totals) sum = sum + t;
+  return sum / totals.length;
+}</code></pre>
+<solution>
+<p>With an empty list the loop runs zero times, so <code>sum</code> is 0, and the function returns <code>0 / 0</code>, which is <code>NaN</code> in JavaScript: there is no sensible answer to "the average of nothing". The fix is a guard clause for the empty case, and the test is the empty list.</p>
+<example file="average-order.js">
+function averageOrder(totals) {
+  if (totals.length === 0) return null;
+  let sum = 0;
+  for (const t of totals) sum = sum + t;
+  return sum / totals.length;
+}
+
+console.log(averageOrder([]), averageOrder([4000, 6000]), averageOrder([2500]));
+</example>
+<output>
+null 5000 2500
+</output>
+</solution>
+</exercise>
+<exercise title="All paid?">
+<p>Bug report: "The system said all invoices were paid, but the second one was not." Trace the function with the list below, row by row. Then find a second bug by asking what it returns for an empty list.</p>
+<pre><code>function allPaid(invoices) {
+  for (const invoice of invoices) {
+    if (invoice.paid) {
+      return true;
+    } else {
+      return false;
+    }
+  }
+}
+
+allPaid([{ id: 1, paid: true }, { id: 2, paid: false }]);</code></pre>
+<solution>
+<p>Trace: the loop looks at invoice 1, which is paid, and <em>returns true</em> immediately. It never looks at invoice 2. Both branches return, so the loop can never get past its first item: it really answers "is the first invoice paid?". The fix: return <code>false</code> as soon as an unpaid invoice is found, and return <code>true</code> only after the loop has checked them all.</p>
+<p>Second bug: with an empty list the loop body never runs, and the function ends without a <code>return</code>, so it returns <code>undefined</code>. Decide: "all of zero invoices are paid" is true (there is nothing unpaid), which the fixed version gives naturally.</p>
+<example file="all-paid.js">
+function allPaid(invoices) {
+  for (const invoice of invoices) {
+    if (!invoice.paid) return false;
+  }
+  return true;
+}
+
+console.log(allPaid([{ id: 1, paid: true }, { id: 2, paid: false }]));
+console.log(allPaid([{ id: 1, paid: true }, { id: 2, paid: true }]));
+console.log(allPaid([]));
+</example>
+<output>
+false
+true
+true
+</output>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Logic errors run without complaint and give wrong answers. Find them by reasoning, not by changing code at random.</li>
+<li>Reproduce with the smallest input, predict by hand, trace step by step, and look for the first step where the two disagree.</li>
+<li>Off-by-one: check <code>&lt;</code> vs <code>&lt;=</code>, 0 vs 1, and both ends of a range. Condition order: ask which inputs reach each line.</li>
+<li>Recursion needs a base case that every input can reach, including unknown input and cyclic data.</li>
+<li>Do not change a list while walking through it; build a new one. Do not compare decimals exactly; use whole kobo or a tolerance.</li>
+<li>Fix the cause, then add the test that fails on the old code. That test is the proof, and the guard against the bug coming back.</li>
+</ul>
+<p>That completes Programming thinking. Next comes the <a href="/learn/js-intro">JavaScript course</a>, starting with where the language came from and how its code is put together. Every habit from this module (inputs, edge cases, tracing, tests) comes with you.</p>
+</section>

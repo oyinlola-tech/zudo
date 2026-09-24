@@ -1,0 +1,841 @@
+---
+title: Closures in depth
+description: See how closures really work through lexical environments, then use them for private state, function factories, memoization and cleanup, without leaking memory.
+minutes: 45
+youNeed: Scope and how code runs, Functions, and Objects in depth
+youBuild: A per-account daily transfer limit with a fake clock for testing, plus a memoized fee calculator with a size limit
+keywords: javascript closure, lexical environment, private state, function factory, closures in loops, var vs let, IIFE, once, memoization, memoize, cache, memory leak, unsubscribe, partial application
+objectives: Draw the lexical environments behind any closure and predict what it sees | Keep state private with closures and choose between a closure and a class | Explain and fix the loop closure bug in all its forms | Write function factories such as once and a configured fee calculator | Memoize a pure function with a bounded cache | Spot what a closure keeps alive and avoid the listener leak
+---
+<section>
+<h2 id="problem">Two customers, one daily limit</h2>
+<p>A savings app lets each customer transfer at most ₦50,000 per day. The first version keeps the running total in a variable at the top of the module, the simplest place a beginner can think of:</p>
+<example file="problem.js">
+const DAILY_LIMIT_KOBO = 5000000;
+let sentTodayKobo = 0;
+
+function authorizeTransfer(customer, amountKobo) {
+  if (sentTodayKobo + amountKobo > DAILY_LIMIT_KOBO) {
+    return `${customer}: refused`;
+  }
+  sentTodayKobo += amountKobo;
+  return `${customer}: sent ₦${amountKobo / 100}`;
+}
+
+console.log(authorizeTransfer("Ada", 3000000));
+console.log(authorizeTransfer("Chidi", 3000000));
+
+sentTodayKobo = 0;
+console.log(authorizeTransfer("Ada", 3000000));
+</example>
+<output>
+Ada: sent ₦30000
+Chidi: refused
+Ada: sent ₦30000
+</output>
+<p>Two bugs sit in these few lines:</p>
+<ol>
+<li>Chidi was refused because of <em>Ada's</em> transfer. There is one <code>sentTodayKobo</code> for the whole program, but the rule is per customer.</li>
+<li>Any code in the module can write <code>sentTodayKobo = 0</code> and wipe the limit. Here it is one obvious line; in a real codebase it is one line in a file you never read.</li>
+</ol>
+<p>What you need is state that belongs to one customer, and that only the limit logic can change. You already met the tool in <a href="/learn/js-scope#closures">Scope and how code runs</a>: a <strong>closure</strong>, a function together with the variables it remembers from where it was created. That lesson showed <em>what</em> a closure does. This one shows <em>how</em> it works, so you can predict every case, and then uses it for the jobs closures do in real backends: private state, configured functions, caching, and cleanup. At the end you fix this limiter properly and test it.</p>
+</section>
+
+<section>
+<h2 id="environments">Lexical environments: the model behind closures</h2>
+<p>To predict what a closure sees, you need one mental model. JavaScript keeps variables in <strong>lexical environments</strong> (the specification's name; you can think "scope objects"). An environment is a table of names and their current values, plus a link to the environment around it, called its <strong>outer</strong> environment.</p>
+<ul>
+<li>When a module starts, it gets a module environment. Its outer is the global environment (where <code>console</code> and <code>Math</code> live).</li>
+<li>Every <em>call</em> of a function creates a <strong>new</strong> environment for that call's parameters and local variables. Blocks with <code>let</code> or <code>const</code> inside get one too.</li>
+<li>When a function is <em>created</em>, it stores a hidden reference to the environment it was created in. The specification calls it <code>[[Environment]]</code>.</li>
+<li>When a function runs, its new call environment's outer link is set to that stored <code>[[Environment]]</code>, not to the caller's. That is exactly why scope is <em>lexical</em>: it follows where code is written.</li>
+</ul>
+<p>To look up a name, JavaScript checks the current environment, then its outer, then that one's outer, until it reaches the global environment. A closure is nothing more than a function whose stored environment is still needed after the call that created it has returned.</p>
+<example file="environments.js">
+function createAccount(owner) {
+  let balanceKobo = 0;
+
+  function deposit(amountKobo) {
+    balanceKobo += amountKobo;
+    return balanceKobo;
+  }
+  function balance() {
+    return `${owner}: ₦${balanceKobo / 100}`;
+  }
+  return { deposit, balance };
+}
+
+const ada = createAccount("Ada");
+const chidi = createAccount("Chidi");
+
+ada.deposit(250000);
+ada.deposit(100000);
+chidi.deposit(5000);
+
+console.log(ada.balance());
+console.log(chidi.balance());
+</example>
+<output>
+Ada: ₦3500
+Chidi: ₦50
+</output>
+<p>Here is what exists in memory after those lines, drawn as boxes. Arrows are references:</p>
+<pre>
+ global environment        { console, Math, ... }
+        ^ outer
+ module environment        { createAccount, ada, chidi }
+        ^ outer                          ^ outer
+ call env #1                       call env #2
+ { owner: "Ada",                   { owner: "Chidi",
+   balanceKobo: 350000 }             balanceKobo: 5000 }
+   ^            ^                    ^            ^
+ ada.deposit  ada.balance       chidi.deposit  chidi.balance
+ ([[Environment]] of each function points at the call that created it)
+</pre>
+<p>Three facts follow directly from the drawing, and they explain every closure puzzle you will meet:</p>
+<ol>
+<li><strong>Each call makes a fresh environment.</strong> Ada and Chidi each have their own <code>balanceKobo</code>.</li>
+<li><strong>Functions created in the same call share that call's environment.</strong> <code>ada.deposit</code> and <code>ada.balance</code> see the same <code>balanceKobo</code>, which is why the balance reflects both deposits.</li>
+<li><strong>The environment holds variables, not snapshots.</strong> A closure reads the current value each time it runs.</li>
+</ol>
+<h3>Nested environments</h3>
+<p>Environments chain as deep as your functions nest. Each level can see everything outwards, and nothing inwards:</p>
+<example file="nested.js">
+const currency = "NGN";
+
+function createShop(shopName) {
+  let ordersPlaced = 0;
+
+  return function createCheckout(customer) {
+    let itemsInCart = 0;
+
+    return function addItem(sku) {
+      itemsInCart += 1;
+      ordersPlaced += 1;
+      return `${shopName}/${customer}: ${sku} (cart ${itemsInCart}, shop ${ordersPlaced}, ${currency})`;
+    };
+  };
+}
+
+const lagosShop = createShop("Lagos");
+const adaAdds = lagosShop("Ada");
+const tundeAdds = lagosShop("Tunde");
+
+console.log(adaAdds("RICE-5"));
+console.log(adaAdds("OIL-1"));
+console.log(tundeAdds("SALT"));
+</example>
+<output>
+Lagos/Ada: RICE-5 (cart 1, shop 1, NGN)
+Lagos/Ada: OIL-1 (cart 2, shop 2, NGN)
+Lagos/Tunde: SALT (cart 1, shop 3, NGN)
+</output>
+<p><code>itemsInCart</code> lives in each <code>createCheckout</code> call, so Ada and Tunde have separate carts. <code>ordersPlaced</code> lives one level out, in the single <code>createShop("Lagos")</code> call, so both checkouts share and increase it. <code>currency</code> is in the module environment and everyone sees it. Where a variable is declared decides who shares it.</p>
+</section>
+
+<section>
+<h2 id="live-values">Variables, not values</h2>
+<p><a href="/learn/js-scope#closures">Scope and how code runs</a> showed that a closure sees later changes to a variable. The flip side catches people all the time: when you <em>want</em> a snapshot, you must make one. Copy the value into a variable that will not change, or pass it as an argument, which creates a new variable in the new call:</p>
+<example file="snapshot.js">
+let exchangeRate = 1500;
+
+const liveQuote = (usd) => `₦${usd * exchangeRate}`;
+
+function quoteWithRate(rate) {
+  return (usd) => `₦${usd * rate}`;
+}
+const lockedQuote = quoteWithRate(exchangeRate);
+
+console.log(liveQuote(10), lockedQuote(10));
+exchangeRate = 1650;
+console.log(liveQuote(10), lockedQuote(10));
+</example>
+<output>
+₦15000 ₦15000
+₦16500 ₦15000
+</output>
+<p><code>liveQuote</code> reads <code>exchangeRate</code> from the module environment every time, so it follows the new rate. <code>lockedQuote</code> reads <code>rate</code>, a parameter of the call <code>quoteWithRate(1500)</code>. Nothing ever assigns to that parameter again, so it keeps 1500 forever. A shop that shows a customer a price and then charges them at checkout needs exactly this: a quote locked at the rate they saw.</p>
+</section>
+
+<section>
+<h2 id="private-state">Private state</h2>
+<p>The first fix for the limiter is to move the total into a function call, so each customer gets one, and nothing outside can reach it. Compare three ways to hold a balance:</p>
+<example file="private.js">
+const plain = { balanceKobo: 0, deposit(amountKobo) { this.balanceKobo += amountKobo; } };
+plain.deposit(1000);
+plain.balanceKobo = 99999999;
+console.log("plain object:", plain.balanceKobo);
+
+function createAccount() {
+  let balanceKobo = 0;
+  return Object.freeze({
+    deposit(amountKobo) {
+      if (!Number.isInteger(amountKobo) || amountKobo <= 0) throw new RangeError("bad amount");
+      balanceKobo += amountKobo;
+    },
+    balance: () => balanceKobo,
+  });
+}
+
+const account = createAccount();
+account.deposit(1000);
+try {
+  account.balanceKobo = 99999999;
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+try {
+  account.balance = () => 99999999;
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+console.log("closure:", account.balance());
+
+class Account {
+  #balanceKobo = 0;
+  deposit(amountKobo) {
+    this.#balanceKobo += amountKobo;
+  }
+  balance() {
+    return this.#balanceKobo;
+  }
+}
+const classAccount = new Account();
+classAccount.deposit(1000);
+console.log("class:", classAccount.balance());
+</example>
+<output>
+plain object: 99999999
+TypeError: Cannot add property balanceKobo, object is not extensible
+TypeError: Cannot assign to read only property 'balance' of object '#<Object>'
+closure: 1000
+class: 1000
+</output>
+<p>The plain object trusts every caller. The closure version keeps <code>balanceKobo</code> in the call environment, where no outside code can name it. Freezing the returned object (see <a href="/learn/js-objects-deep#locking">Objects in depth</a>) also stops someone from replacing <code>balance</code> with a fake function. The class version uses a <code>#private</code> field, from <a href="/learn/js-classes#members">this, prototypes and classes</a>, and reaches the same goal.</p>
+<h3>Closure or class?</h3>
+<div class="lx-table-wrap"><table>
+<thead><tr><th></th><th>Closure (factory function)</th><th>Class with <code>#private</code> fields</th></tr></thead>
+<tbody>
+<tr><td>Privacy</td><td>Complete: the variables have no name outside</td><td>Complete: <code>#field</code> is a syntax error outside the class</td></tr>
+<tr><td><code>this</code></td><td>Not used, so methods can be passed as callbacks safely</td><td>Methods lose <code>this</code> when passed as callbacks (see <a href="/learn/js-this">this in depth</a>)</td></tr>
+<tr><td>Memory per object</td><td>Every object gets its own copy of every method function</td><td>Methods live once on the prototype and are shared</td></tr>
+<tr><td><code>instanceof</code>, inheritance</td><td>No</td><td>Yes</td></tr>
+</tbody>
+</table></div>
+<p>Both are good. A closure fits a handful of long-lived objects (a limiter per customer, a service, a store) and callback-heavy code. A class fits large numbers of objects of one kind, such as a million order lines, where sharing methods saves memory. ZudoJS uses closures of exactly this shape: <code>createRateLimiter</code> from <code>@zudojs/security</code> keeps its request counts in a <code>Map</code> inside the factory call and returns a function that checks them.</p>
+</section>
+
+<section>
+<h2 id="loops">Closures in loops</h2>
+<p>The loop bug from <a href="/learn/js-scope#kinds">Scope and how code runs</a> makes complete sense with environments. Here it is without timers: each loop turn stores a function that will send a reminder later.</p>
+<example file="loops.js">
+const customers = ["Ada", "Chidi", "Tunde"];
+
+const withVar = [];
+for (var i = 0; i < customers.length; i++) {
+  withVar.push(() => `remind ${customers[i]} (#${i})`);
+}
+console.log(withVar.map((send) => send()));
+
+const withLet = [];
+for (let j = 0; j < customers.length; j++) {
+  withLet.push(() => `remind ${customers[j]} (#${j})`);
+}
+console.log(withLet.map((send) => send()));
+</example>
+<output>
+[
+  'remind undefined (#3)',
+  'remind undefined (#3)',
+  'remind undefined (#3)'
+]
+[ 'remind Ada (#0)', 'remind Chidi (#1)', 'remind Tunde (#2)' ]
+</output>
+<ul>
+<li><code>var i</code> lives in the environment of the whole module (or function), and there is only one. All three arrows point at that one environment, and when they run, <code>i</code> is 3. <code>customers[3]</code> is <code>undefined</code>: the bug is not just a wrong number, it reads past the end of the array.</li>
+<li><code>let j</code> in a <code>for</code> head gets special treatment: JavaScript creates a <strong>new environment for every turn</strong> of the loop and copies the current value of <code>j</code> into it before the turn starts. Each arrow captures its own turn's environment.</li>
+</ul>
+<h3>let alone is not the fix</h3>
+<p>The per-turn copy only happens for a <code>let</code> declared <em>in the <code>for</code> head</em>. A <code>let</code> declared outside the loop is one variable, and you get the old bug back:</p>
+<example file="while-loop.js">
+const customers = ["Ada", "Chidi", "Tunde"];
+const reminders = [];
+
+let index = 0;
+while (index < customers.length) {
+  reminders.push(() => `remind #${index}`);
+  index += 1;
+}
+console.log(reminders.map((send) => send()).join(", "));
+
+const fixed = [];
+let n = 0;
+while (n < customers.length) {
+  const position = n;
+  fixed.push(() => `remind #${position}`);
+  n += 1;
+}
+console.log(fixed.map((send) => send()).join(", "));
+
+const best = customers.map((name, position) => () => `remind ${name} (#${position})`);
+console.log(best.map((send) => send()).join(", "));
+</example>
+<output>
+remind #3, remind #3, remind #3
+remind #0, remind #1, remind #2
+remind Ada (#0), remind Chidi (#1), remind Tunde (#2)
+</output>
+<p>The rule that always works: <strong>capture a variable that never changes after the closure is made</strong>. A <code>const</code> inside the loop body is a new variable each turn (the block gets a new environment each time). Array methods such as <code>map</code> and <code>forEach</code> are even simpler: every item is a separate call, so every callback has its own parameters.</p>
+<h3>The IIFE in old code</h3>
+<p>Before <code>let</code> existed, the only way to get a new environment was to call a function. You will see this pattern in older code, called an <strong>IIFE</strong> (Immediately Invoked Function Expression): a function written and called on the spot.</p>
+<example file="iife.js">
+var reminders = [];
+for (var i = 0; i < 3; i++) {
+  (function (position) {
+    reminders.push(function () {
+      return "remind #" + position;
+    });
+  })(i);
+}
+console.log(reminders.map(function (send) { return send(); }).join(", "));
+</example>
+<output>
+remind #0, remind #1, remind #2
+</output>
+<p>Each turn calls the anonymous function with the current <code>i</code>, and the call's parameter <code>position</code> lives in a fresh environment. It works, but in new code, <code>let</code>, <code>const</code> and array methods do the same job more clearly.</p>
+</section>
+
+<section>
+<h2 id="factories">Function factories</h2>
+<p>A <strong>function factory</strong> is a function that builds and returns another function, configured by the arguments you gave the factory. The returned function remembers the configuration through its closure. You met a tiny one in <a href="/learn/js-functions#callbacks">Functions</a> (<code>multiplier</code>). Real ones read configuration once and then run many times:</p>
+<example file="fee-factory.js">
+function createFeeCalculator({ percent, minKobo, capKobo }) {
+  if (percent < 0 || minKobo > capKobo) throw new RangeError("invalid fee settings");
+  const rate = percent / 100;
+
+  return function feeFor(amountKobo) {
+    const raw = Math.round(amountKobo * rate);
+    return Math.min(Math.max(raw, minKobo), capKobo);
+  };
+}
+
+const transferFee = createFeeCalculator({ percent: 0.5, minKobo: 1000, capKobo: 200000 });
+const cardFee = createFeeCalculator({ percent: 1.5, minKobo: 0, capKobo: 500000 });
+
+for (const amountKobo of [50000, 5000000, 90000000]) {
+  console.log(amountKobo, transferFee(amountKobo), cardFee(amountKobo));
+}
+</example>
+<output>
+50000 1000 750
+5000000 25000 75000
+90000000 200000 500000
+</output>
+<p>The settings are checked once, in the factory, and the <code>rate</code> is computed once. Each fee function then only does the work that depends on the amount. The rest of the program only sees <code>transferFee(amount)</code> and never has to pass the settings around again. This is called <strong>partial application</strong>: supplying some of the inputs now and the rest later. <a href="/learn/js-functional">Functional JavaScript</a> takes it further.</p>
+<h3>Wrapping a function: once</h3>
+<p>A factory can also take a function and return an improved version of it. A classic example protects against a double click on "Pay": the payment must run <strong>once</strong>, however many times the handler is called:</p>
+<example file="once.js">
+function once(fn) {
+  let called = false;
+  let result;
+  return (...args) => {
+    if (!called) {
+      called = true;
+      result = fn(...args);
+    }
+    return result;
+  };
+}
+
+let charges = 0;
+const payOrder = once((orderId, amountKobo) => {
+  charges += 1;
+  return `charged ₦${amountKobo / 100} for ${orderId}`;
+});
+
+console.log(payOrder("ORD-7", 1170000));
+console.log(payOrder("ORD-7", 1170000));
+console.log(payOrder("ORD-8", 500));
+console.log("charges:", charges);
+</example>
+<output>
+charged ₦11700 for ORD-7
+charged ₦11700 for ORD-7
+charged ₦11700 for ORD-7
+charges: 1
+</output>
+<p><code>called</code> and <code>result</code> are private to this one wrapper. Note what the third line shows: a different order also got the first result, because <code>once</code> ignores its arguments after the first call. That is correct for "initialise the database connection once", and dangerous for payments in general. For real payments, protection against duplicates is keyed by the order id and stored in the database, a topic called <strong>idempotency</strong>, which you will meet in the backend lessons.</p>
+</section>
+
+<section>
+<h2 id="memoization">Memoization</h2>
+<p><strong>Memoization</strong> means remembering the results of a function so that a repeated call with the same arguments returns the stored result instead of doing the work again. The memory lives in a closure. Here the "expensive" work is a delivery quote, and a counter shows how often it really runs:</p>
+<example file="memoize.js">
+function memoize(fn) {
+  const cache = new Map();
+  return (key) => {
+    if (cache.has(key)) return cache.get(key);
+    const result = fn(key);
+    cache.set(key, result);
+    return result;
+  };
+}
+
+const ZONES = Object.freeze({ Lagos: 150000, Abuja: 250000, Kano: 300000 });
+let computed = 0;
+
+function deliveryQuoteKobo(city) {
+  computed += 1;
+  return ZONES[city] + city.length * 1000;
+}
+
+const quote = memoize(deliveryQuoteKobo);
+const orders = ["Lagos", "Abuja", "Lagos", "Lagos", "Kano", "Abuja"];
+
+console.log(orders.map(quote));
+console.log("computed:", computed);
+</example>
+<output>
+[ 155000, 255000, 155000, 155000, 304000, 255000 ]
+computed: 3
+</output>
+<p>In a real shop the quote would come from slow work, such as a route calculation; the counter stands in for that cost. Six quotes, three computations: one per distinct city. A <code>Map</code> is the right cache, because its keys can be any value and it has no inherited names (see <a href="/learn/js-objects-deep#creating">Objects in depth</a>).</p>
+<h3>When memoization goes wrong</h3>
+<p>Memoization is only safe for <strong>pure</strong> functions, which give the same result for the same arguments and have no side effects (<a href="/learn/js-functions#pure">Functions</a>). The cache also needs a correct <strong>key</strong>. Both conditions break easily:</p>
+<example file="memo-bugs.js">
+function memoize(fn) {
+  const cache = new Map();
+  return (key) => {
+    if (!cache.has(key)) cache.set(key, fn(key));
+    return cache.get(key);
+  };
+}
+
+const stock = { "RICE-5": 10 };
+const stockOf = memoize((sku) => stock[sku]);
+console.log(stockOf("RICE-5"));
+stock["RICE-5"] = 0;
+console.log(stockOf("RICE-5"));
+
+const totalOf = memoize((cart) => cart.items.reduce((sum, n) => sum + n, 0));
+const cart = { items: [500, 700] };
+console.log(totalOf(cart));
+cart.items.push(300);
+console.log(totalOf(cart));
+console.log(totalOf({ items: [500, 700] }));
+</example>
+<output>
+10
+10
+1200
+1200
+1200
+</output>
+<ul>
+<li><code>stockOf</code> reads outside data that changes. After the rice sold out, the cache still says 10: the shop would sell stock it does not have. Never memoize a function that reads a database, the clock or any mutable state.</li>
+<li><code>totalOf</code> uses an object as the key, and <code>Map</code> compares keys by identity. The same cart after a change hits the stale entry (1200 instead of 1500), and every new cart object, even one with equal contents, misses the cache and adds another entry.</li>
+</ul>
+<h3>Several arguments and a size limit</h3>
+<p>For several primitive arguments, build a string key from them. And every cache in a long-running server needs a limit, or it grows until the process runs out of memory. A <code>Map</code> remembers insertion order, so the first key is the oldest entry; deleting it when the cache is full keeps the size bounded:</p>
+<example file="memo-limit.js">
+function memoize(fn, { maxSize = 100 } = {}) {
+  const cache = new Map();
+  const memoized = (...args) => {
+    const key = JSON.stringify(args);
+    if (cache.has(key)) return cache.get(key);
+    const result = fn(...args);
+    cache.set(key, result);
+    if (cache.size > maxSize) cache.delete(cache.keys().next().value);
+    return result;
+  };
+  memoized.size = () => cache.size;
+  return memoized;
+}
+
+let calls = 0;
+const route = memoize((from, to) => {
+  calls += 1;
+  return `${from} -> ${to}`;
+}, { maxSize: 2 });
+
+route("Lagos", "Abuja");
+route("Lagos", "Kano");
+route("Lagos", "Abuja");
+route("Abuja", "Kano");
+route("Lagos", "Abuja");
+console.log("calls:", calls, "cached:", route.size());
+</example>
+<output>
+calls: 4 cached: 2
+</output>
+<p>The fourth call pushed the cache over its limit, so the oldest entry, Lagos to Abuja, was dropped, and the fifth call had to compute it again. Deleting the oldest entry is the simplest eviction rule; a better one moves an entry to the end each time it is used, which gives a <strong>least recently used</strong> (LRU) cache, built in <a href="/learn/dsa-linked-lists">the linked lists lesson</a>. If the function throws, nothing is stored, so errors are not cached, which is usually what you want.</p>
+<note><code>JSON.stringify(args)</code> is a fine key for strings, numbers and booleans. It is a poor key for objects (key order matters, and dates, maps and functions do not survive JSON), so memoize functions whose arguments are simple values, or pass an explicit key.</note>
+</section>
+
+<section>
+<h2 id="memory">What a closure keeps alive</h2>
+<p>The garbage collector frees an object when nothing can reach it any more (<a href="/learn/js-scope#heap">Scope and how code runs</a>). A closure is a way to reach things: as long as the function is reachable, the environment it points to is reachable, and so is everything in that environment that the closure uses. Usually that is exactly what you want. It becomes a <strong>memory leak</strong> when the function lives much longer than you expected.</p>
+<h3>The listener leak</h3>
+<p>The most common closure leak in servers: a long-lived object keeps a list of callbacks, code adds a callback for every request, and nobody ever removes them. Each callback keeps its request's data alive:</p>
+<example file="listeners.js">
+function createEventHub() {
+  const listeners = new Set();
+  return {
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    emit(event) {
+      for (const listener of listeners) listener(event);
+    },
+    count: () => listeners.size,
+  };
+}
+
+function handleRequestLeaky(hub, requestId) {
+  const request = { id: requestId, body: "x".repeat(10000) };
+  hub.subscribe((event) => `${request.id} saw ${event}`);
+  return "done";
+}
+
+function handleRequest(hub, requestId) {
+  const request = { id: requestId, body: "x".repeat(10000) };
+  const unsubscribe = hub.subscribe((event) => `${request.id} saw ${event}`);
+  try {
+    return "done";
+  } finally {
+    unsubscribe();
+  }
+}
+
+const leakyHub = createEventHub();
+const cleanHub = createEventHub();
+for (let i = 0; i < 1000; i++) {
+  handleRequestLeaky(leakyHub, i);
+  handleRequest(cleanHub, i);
+}
+console.log("listeners after leaky handlers:", leakyHub.count());
+console.log("listeners after clean handlers:", cleanHub.count());
+</example>
+<output>
+listeners after leaky handlers: 1000
+listeners after clean handlers: 0
+</output>
+<p>After 1,000 leaky requests, the hub holds 1,000 closures, and each one keeps its <code>request</code>, with a 10,000-character body, alive. A busy server handles millions of requests, so memory only grows until the process crashes. The fix is a closure too: <code>subscribe</code> returns an <strong>unsubscribe</strong> function that remembers exactly which listener to remove. Call it when the work is finished; a <code>finally</code> block (<a href="/learn/js-errors">Handling errors</a>) makes sure it runs even when the work throws. <code>@zudojs/events</code> uses the same pattern.</p>
+<h3>Keep only what you need</h3>
+<p>A closure keeps alive what it <em>uses</em>. If a long-lived callback only needs one field of a large object, copy that field into a local variable and use it instead of the whole object:</p>
+<example file="lean.js">
+function createReportLabel(report) {
+  return () => `${report.title} (${report.rows.length} rows)`;
+}
+
+function createReportLabelLean(report) {
+  const { title } = report;
+  const rowCount = report.rows.length;
+  return () => `${title} (${rowCount} rows)`;
+}
+
+const report = { title: "September sales", rows: Array.from({ length: 50000 }, (_, i) => ({ id: i })) };
+const heavy = createReportLabel(report);
+const lean = createReportLabelLean(report);
+console.log(heavy());
+console.log(lean());
+</example>
+<output>
+September sales (50000 rows)
+September sales (50000 rows)
+</output>
+<p>Both labels print the same text. But as long as <code>heavy</code> is reachable, the 50,000-row array is too; <code>lean</code> only keeps a short string and a number. One caution: engines keep one shared environment per call, so if <em>any</em> closure created in that call uses <code>report</code>, it stays alive for all of them. Keep long-lived closures in small functions that only hold what they need. <a href="/learn/js-memory">Memory</a> shows how to find leaks like these with heap snapshots.</p>
+</section>
+
+<section>
+<h2 id="reason">Before you build: the per-customer limit</h2>
+<reason title="Design the transfer limiter">
+<p>You will now fix the limiter from the start of the lesson. Think these through before reading the code:</p>
+<ul>
+<li>Where should each customer's running total live, so that customers are separate and outside code cannot reset it?</li>
+<li>"Per day" needs the current date. If the code calls <code>new Date()</code> itself, how would you test what happens at midnight without waiting for midnight?</li>
+<li>What amounts must be refused before they touch the total? What about an amount exactly equal to what is left?</li>
+<li>If a transfer is refused, should the total change?</li>
+<li>What can the caller be allowed to see?</li>
+</ul>
+<answer>
+<ul>
+<li><strong>Where the total lives</strong>: in the environment of a call to a factory, <code>createTransferLimit()</code>, one call per customer. Nothing outside can name the variable, so nothing can reset it.</li>
+<li><strong>Time</strong>: let the caller pass in a <code>today</code> function that returns the current day as a string. Production passes one that reads the real clock; tests pass a fake whose value they control. The limiter stores it in its closure and calls it on every check. Passing in a dependency like this is the same idea as dependency injection from <a href="/learn/js-classes#composition">this, prototypes and classes</a>.</li>
+<li><strong>Amounts</strong>: only whole numbers of kobo above zero, so strings, <code>NaN</code>, negatives, zero and fractions are refused. Exactly the remaining amount is allowed (<code>&lt;=</code>, not <code>&lt;</code>): a boundary that deserves a test.</li>
+<li><strong>Refusals</strong>: a refused transfer must not change the total. Check first, then change the state, in that order.</li>
+<li><strong>Visibility</strong>: the caller may read how much is left today, but only through a function, never by writing a variable.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="build">Build: a daily transfer limit</h2>
+<example file="limit.js" project="limit">
+export function createTransferLimit({ dailyLimitKobo, today }) {
+  if (!Number.isInteger(dailyLimitKobo) || dailyLimitKobo <= 0) {
+    throw new RangeError("dailyLimitKobo must be a positive whole number");
+  }
+  let day = today();
+  let sentKobo = 0;
+
+  function rollOver() {
+    const current = today();
+    if (current !== day) {
+      day = current;
+      sentKobo = 0;
+    }
+  }
+
+  return Object.freeze({
+    authorize(amountKobo) {
+      if (!Number.isInteger(amountKobo) || amountKobo <= 0) {
+        return { ok: false, reason: "invalid amount" };
+      }
+      rollOver();
+      if (sentKobo + amountKobo > dailyLimitKobo) {
+        return { ok: false, reason: "daily limit reached" };
+      }
+      sentKobo += amountKobo;
+      return { ok: true };
+    },
+    remainingKobo() {
+      rollOver();
+      return dailyLimitKobo - sentKobo;
+    },
+  });
+}
+</example>
+<p>Everything a limiter needs, <code>day</code>, <code>sentKobo</code>, the settings and the clock, lives in the environment of one <code>createTransferLimit</code> call. The two methods and the helper <code>rollOver</code> share it. Now one limiter per customer, and a fake clock, which is just a closure over a variable the test controls:</p>
+<example file="main.js" project="limit">
+import { createTransferLimit } from "./limit.js";
+
+let fakeDay = "2026-09-24";
+const today = () => fakeDay;
+
+const limits = new Map();
+function limitFor(customer) {
+  if (!limits.has(customer)) {
+    limits.set(customer, createTransferLimit({ dailyLimitKobo: 5000000, today }));
+  }
+  return limits.get(customer);
+}
+
+console.log("Ada", limitFor("Ada").authorize(3000000));
+console.log("Chidi", limitFor("Chidi").authorize(3000000));
+console.log("Ada", limitFor("Ada").authorize(3000000));
+console.log("Ada left:", limitFor("Ada").remainingKobo());
+
+fakeDay = "2026-09-25";
+console.log("Ada next day", limitFor("Ada").authorize(3000000));
+console.log("Ada left:", limitFor("Ada").remainingKobo());
+</example>
+<output>
+Ada { ok: true }
+Chidi { ok: true }
+Ada { ok: false, reason: 'daily limit reached' }
+Ada left: 2000000
+Ada next day { ok: true }
+Ada left: 2000000
+</output>
+<p>Chidi is no longer refused because of Ada, and the limit resets on the next day without anyone touching the total. Changing <code>fakeDay</code> moved the limiter to the next day instantly; in production you would pass <code>() =&gt; new Date().toISOString().slice(0, 10)</code> (the UTC date) instead.</p>
+<h3>Testing through the public functions</h3>
+<p>Private state cannot be inspected directly, and that is fine: tests should check behaviour through the same functions real callers use. The fake clock makes the day boundary testable in a millisecond:</p>
+<example file="limit.test.js" project="limit">
+import { createTransferLimit } from "./limit.js";
+
+function check(label, actual, expected) {
+  const same = JSON.stringify(actual) === JSON.stringify(expected);
+  console.log(`${same ? "PASS" : "FAIL"} ${label} -> ${JSON.stringify(actual)}`);
+}
+
+function setup(limit = 1000) {
+  const clock = { day: "2026-09-24" };
+  const limiter = createTransferLimit({ dailyLimitKobo: limit, today: () => clock.day });
+  return { clock, limiter };
+}
+
+{
+  const { limiter } = setup();
+  check("exactly the limit is allowed", limiter.authorize(1000), { ok: true });
+  check("one kobo more is refused", limiter.authorize(1), { ok: false, reason: "daily limit reached" });
+}
+{
+  const { limiter } = setup();
+  for (const bad of [0, -5, 2.5, "500", NaN]) {
+    check(`invalid ${JSON.stringify(bad)}`, limiter.authorize(bad).ok, false);
+  }
+  check("invalid amounts used nothing", limiter.remainingKobo(), 1000);
+}
+{
+  const { limiter } = setup();
+  limiter.authorize(800);
+  limiter.authorize(300);
+  check("refusal does not count", limiter.remainingKobo(), 200);
+}
+{
+  const { clock, limiter } = setup();
+  limiter.authorize(1000);
+  clock.day = "2026-09-25";
+  check("new day resets", limiter.remainingKobo(), 1000);
+}
+{
+  const a = setup().limiter;
+  const b = setup().limiter;
+  a.authorize(1000);
+  check("customers are independent", b.remainingKobo(), 1000);
+}
+{
+  let error = null;
+  try {
+    setup(0);
+  } catch (e) {
+    error = e.name;
+  }
+  check("zero limit rejected", error, "RangeError");
+}
+</example>
+<output>
+PASS exactly the limit is allowed -> {"ok":true}
+PASS one kobo more is refused -> {"ok":false,"reason":"daily limit reached"}
+PASS invalid 0 -> false
+PASS invalid -5 -> false
+PASS invalid 2.5 -> false
+PASS invalid "500" -> false
+PASS invalid null -> false
+PASS invalid amounts used nothing -> 1000
+PASS refusal does not count -> 200
+PASS new day resets -> 1000
+PASS customers are independent -> 1000
+PASS zero limit rejected -> "RangeError"
+</output>
+<p>Look at the <code>NaN</code> line: its label says <code>null</code>, because <code>JSON.stringify(NaN)</code> is <code>"null"</code>. The test still passed, but the label is misleading. A small reminder that JSON is not a debugging format; <code>String(bad)</code> would have printed <code>NaN</code>. Each test block <code>{ … }</code> gets its own block scope, so every test builds fresh limiters and nothing leaks from one test to the next, which is exactly what test runners such as Vitest give you with separate test functions.</p>
+<h3>In production</h3>
+<ul>
+<li><strong>In-memory state belongs to one process.</strong> The limiter above forgets everything on restart, and two server processes would each allow ₦50,000. Real limits are stored in a shared store such as Redis or the database; <code>@zudojs/security</code>'s <code>createRateLimiter</code> and <a href="/learn/zudo-cache">the cache lesson</a> show how. The closure design (state plus a clock passed in) carries over unchanged.</li>
+<li><strong>Module-level maps grow.</strong> The <code>limits</code> map above gains an entry per customer and never shrinks. Remove entries for past days, or give the map a size limit, as with memoization.</li>
+<li><strong>Every cache needs a limit and a reason to be correct.</strong> Memoize pure functions only, key on simple values, and bound the size.</li>
+<li><strong>Every subscribe needs an unsubscribe.</strong> Return the cleanup function from wherever you register a listener, and call it in <code>finally</code>.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A counter with step and reset">
+<p>Write <code>createTicketCounter(prefix, step = 1)</code>. It returns an object with <code>next()</code>, which returns ticket codes like <code>"Q-1"</code>, <code>"Q-2"</code> (increasing by <code>step</code>), and <code>reset()</code>, which starts again at the first number. Two counters must not affect each other.</p>
+<solution>
+<example file="tickets.js">
+function createTicketCounter(prefix, step = 1) {
+  let current = 0;
+  return {
+    next() {
+      current += step;
+      return `${prefix}-${current}`;
+    },
+    reset() {
+      current = 0;
+    },
+  };
+}
+
+const queue = createTicketCounter("Q");
+const vip = createTicketCounter("VIP", 10);
+
+console.log(queue.next(), queue.next(), vip.next(), vip.next());
+queue.reset();
+console.log(queue.next(), vip.next());
+</example>
+<output>
+Q-1 Q-2 VIP-10 VIP-20
+Q-1 VIP-30
+</output>
+<p>Each call to <code>createTicketCounter</code> creates its own environment with its own <code>current</code>, <code>prefix</code> and <code>step</code>. <code>next</code> and <code>reset</code> share it.</p>
+</solution>
+</exercise>
+<exercise title="Fix the handlers">
+<p>This code registers a discount handler for each coupon, but every handler reports the last coupon. Explain why using environments, and fix it in two different ways.</p>
+<example file="coupons-bug.js">
+const coupons = ["SAVE10", "SAVE20", "FREESHIP"];
+const handlers = [];
+let k = 0;
+while (k < coupons.length) {
+  handlers.push(() => `applied ${coupons[k - 1]}`);
+  k += 1;
+}
+console.log(handlers.map((h) => h()).join(", "));
+</example>
+<output>
+applied FREESHIP, applied FREESHIP, applied FREESHIP
+</output>
+<solution>
+<p>There is one <code>k</code>, in the module environment. All three arrows read it when they run, after the loop, when <code>k</code> is 3, so <code>coupons[k - 1]</code> is always the last coupon. Fix it by capturing a value that never changes: a <code>const</code> inside the loop body (a new environment each turn), or a <code>map</code> callback (a new call per item):</p>
+<example file="coupons-fix.js">
+const coupons = ["SAVE10", "SAVE20", "FREESHIP"];
+
+const handlers = [];
+let k = 0;
+while (k < coupons.length) {
+  const coupon = coupons[k];
+  handlers.push(() => `applied ${coupon}`);
+  k += 1;
+}
+console.log(handlers.map((h) => h()).join(", "));
+
+const viaMap = coupons.map((coupon) => () => `applied ${coupon}`);
+console.log(viaMap.map((h) => h()).join(", "));
+</example>
+<output>
+applied SAVE10, applied SAVE20, applied FREESHIP
+applied SAVE10, applied SAVE20, applied FREESHIP
+</output>
+</solution>
+</exercise>
+<exercise title="Count the cache hits">
+<p>Extend <code>memoize(fn)</code> so the memoized function has a <code>stats()</code> method that returns <code>{ hits, misses }</code>. A hit is a call answered from the cache; a miss is a call that ran <code>fn</code>.</p>
+<solution>
+<example file="memo-stats.js">
+function memoize(fn) {
+  const cache = new Map();
+  let hits = 0;
+  let misses = 0;
+  const memoized = (key) => {
+    if (cache.has(key)) {
+      hits += 1;
+      return cache.get(key);
+    }
+    misses += 1;
+    const result = fn(key);
+    cache.set(key, result);
+    return result;
+  };
+  memoized.stats = () => ({ hits, misses });
+  return memoized;
+}
+
+const vatKobo = memoize((priceKobo) => Math.round(priceKobo * 0.075));
+[850000, 320000, 850000, 850000, 20000].forEach((price) => vatKobo(price));
+console.log(vatKobo.stats());
+</example>
+<output>
+{ hits: 2, misses: 3 }
+</output>
+<p>Functions are objects, so you can attach <code>stats</code> to the memoized function. <code>stats</code> is a closure over the same environment as the cache, so it reads the live counters. Hit rate is the number to watch in production: a cache with almost no hits only costs memory.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Variables live in lexical environments. Every call creates a new one; every function remembers the environment it was created in, and looks names up outwards from there.</li>
+<li>Functions created in the same call share its environment. A closure sees variables, not snapshots: pass a value as an argument or copy it into a <code>const</code> to lock it.</li>
+<li>Closures give complete privacy without <code>this</code>. Classes with <code>#private</code> fields share methods through the prototype. Pick by how many objects you create and how they are used.</li>
+<li>In loops, capture a variable that never changes: a <code>let</code> in the <code>for</code> head, a <code>const</code> in the body, or an array method's parameter. A <code>let</code> outside the loop is still one variable.</li>
+<li>Factories configure a function once and return it; wrappers like <code>once</code> and <code>memoize</code> add behaviour to any function.</li>
+<li>Memoize only pure functions, with simple keys and a size limit.</li>
+<li>A reachable closure keeps its environment alive. Return an unsubscribe function for every subscription, and keep long-lived closures small.</li>
+</ul>
+<p>Next: <a href="/learn/js-recursion">Recursion</a>, where functions call themselves to walk folder trees, comment threads and org charts.</p>
+</section>

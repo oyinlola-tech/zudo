@@ -1,0 +1,514 @@
+---
+title: Sets
+description: Reason about groups of things with sets: remove duplicates, test membership, and combine permissions, tags and mailing lists with union, intersection, difference and subsets.
+minutes: 45
+youNeed: Boolean logic and Conditional reasoning
+youBuild: A role-based permission checker that says exactly which permissions a user is missing, plus a de-duplicated newsletter list
+keywords: sets, javascript set, union, intersection, difference, symmetric difference, subset, superset, disjoint, venn diagram, remove duplicates, dedupe, permissions, tags, set methods es2025
+objectives: Explain what a set is and why membership, not order or count, is what it tracks | Use JavaScript's Set to remove duplicates and test membership with has, add, delete and size | Combine sets with union, intersection, difference and symmetric difference, and link each to OR, AND, AND NOT and XOR | Check permissions with isSubsetOf and report what is missing with difference | Avoid the classic set traps: object identity, unnormalised text and new Set("text")
+---
+<section>
+<h2 id="problem">Three thousand customers got the same email twice</h2>
+<p>A shop keeps two lists of customers who agreed to receive its newsletter: one from the website, one from the tills in its stores. For the big sale, a developer joins the two lists and sends the email to everyone on the result:</p>
+<example file="double-send.js">
+const webList = ["ada@mail.com", "bola@mail.com", "chidi@mail.com"];
+const storeList = ["bola@mail.com", "dayo@mail.com", "ada@mail.com"];
+
+const everyone = [...webList, ...storeList];
+console.log(everyone.length, "emails to send");
+for (const email of everyone) {
+  console.log("sending to", email);
+}
+</example>
+<output>
+6 emails to send
+sending to ada@mail.com
+sending to bola@mail.com
+sending to chidi@mail.com
+sending to bola@mail.com
+sending to dayo@mail.com
+sending to ada@mail.com
+</output>
+<p><code>[...webList, ...storeList]</code> builds one array from the items of both; the three dots are called <strong>spread</strong>. The result has six entries, but only four customers. Ada and Bola signed up in both places and got the sale email twice. With real lists of tens of thousands, three thousand people get duplicates, some of them report the shop as spam, and the email provider starts filtering its messages.</p>
+<p>The developer thought of the lists as <em>lists</em>: ordered, and allowed to repeat. The question was really about <em>groups of people</em>: who is in at least one list? That question belongs to <strong>sets</strong>. This lesson shows how sets work, how JavaScript's <code>Set</code> implements them, and how the set operations map onto the AND, OR and NOT you already know. They will answer questions like "which permissions is this user missing?" and "which tags do these two products share?" in one line each.</p>
+</section>
+
+<section>
+<h2 id="what">What a set is</h2>
+<p>A <strong>set</strong> is a collection of distinct things, called its <strong>elements</strong> or <strong>members</strong>. Two properties make it different from a list:</p>
+<ul>
+<li><strong>No duplicates.</strong> A thing is either in the set or not. Adding it twice changes nothing.</li>
+<li><strong>Membership is the question.</strong> The main thing you ask a set is "is this element in you?". Mathematically the order of elements does not matter: {Ada, Bola} and {Bola, Ada} are the same set.</li>
+</ul>
+<p>Mathematics writes sets with braces, <code>{ada, bola, chidi}</code>, and membership with the symbol ∈: "ada ∈ W" reads "ada is an element of W". You will not need the symbols to write code, but you will meet them in documentation, so they appear once or twice below with their meaning.</p>
+<h3>JavaScript's Set</h3>
+<p>JavaScript has a built-in <code>Set</code>. You create one with <code>new Set(…)</code>, optionally passing an array of starting elements. (<code>new</code> creates a fresh object of a built-in kind.) A set has a few <strong>methods</strong>, functions that belong to it and are called with a dot:</p>
+<example file="set-basics.js">
+const cart = new Set(["rice", "beans", "rice", "oil"]);
+
+console.log(cart);
+console.log(cart.size);          // how many distinct elements
+console.log(cart.has("beans"));  // membership: true or false
+console.log(cart.has("sugar"));
+
+cart.add("sugar");
+cart.add("rice");                // already there: nothing happens
+cart.delete("beans");
+console.log(cart);
+</example>
+<output>
+Set(3) { 'rice', 'beans', 'oil' }
+3
+true
+false
+Set(3) { 'rice', 'oil', 'sugar' }
+</output>
+<p>JavaScript prints a set as <code>Set(size) { … }</code>, with text in single quotes. The second <code>"rice"</code> in the array was dropped at once, and adding it again later did nothing. <code>size</code> has no parentheses, because it is a <strong>property</strong> (a value), not a method.</p>
+<p>JavaScript's <code>Set</code> does remember the order in which elements were first added, and loops over them in that order. That is a convenience; do not build logic that depends on it.</p>
+<h3>Removing duplicates</h3>
+<p>The most common everyday use of a set is removing duplicates from an array: put the items into a set, then spread the set back into an array:</p>
+<example file="dedupe.js">
+const webList = ["ada@mail.com", "bola@mail.com", "chidi@mail.com"];
+const storeList = ["bola@mail.com", "dayo@mail.com", "ada@mail.com"];
+
+const everyone = new Set([...webList, ...storeList]);
+console.log(everyone.size, "emails to send");
+
+const unique = [...everyone];
+console.log(unique);
+</example>
+<output>
+4 emails to send
+[ 'ada@mail.com', 'bola@mail.com', 'chidi@mail.com', 'dayo@mail.com' ]
+</output>
+<p>One set, and the double send is gone. You will meet this pattern everywhere: unique product ids in a cart, unique visitors to a page, unique tags on a blog.</p>
+<h3>Why a set for membership</h3>
+<p>You could ask "is this email on the list?" with an array too, using <code>list.includes(email)</code>. The difference is speed on big collections: <code>includes</code> checks the items one by one until it finds a match, so on a list of a million emails it may look at a million items. A <code>Set</code> is built so that <code>has</code> jumps almost straight to the answer, however large the set. When your program asks the same membership question many times, such as "has this order id already been processed?", use a set.</p>
+</section>
+
+<section>
+<h2 id="operations">Combining sets</h2>
+<p>With two sets you can ask four natural questions. Take the web list W = {ada, bola, chidi} and the store list S = {ada, bola, dayo}. A <strong>Venn diagram</strong> draws each set as a circle; the overlap holds the elements that are in both:</p>
+<figure>
+<svg viewBox="0 0 400 210" width="400" style="max-width:100%;height:auto" role="img" aria-label="Venn diagram: two overlapping circles, W and S. Chidi is only in W, Dayo is only in S, Ada and Bola are in the overlap.">
+<circle cx="150" cy="105" r="90" fill="none" stroke="currentColor" stroke-width="2"/>
+<circle cx="250" cy="105" r="90" fill="none" stroke="currentColor" stroke-width="2"/>
+<text x="95" y="30" fill="currentColor" font-size="15" font-weight="bold">W (web)</text>
+<text x="245" y="30" fill="currentColor" font-size="15" font-weight="bold">S (store)</text>
+<text x="85" y="110" fill="currentColor" font-size="15">chidi</text>
+<text x="200" y="98" fill="currentColor" font-size="15" text-anchor="middle">ada</text>
+<text x="200" y="120" fill="currentColor" font-size="15" text-anchor="middle">bola</text>
+<text x="275" y="110" fill="currentColor" font-size="15">dayo</text>
+<text x="100" y="170" fill="currentColor" font-size="12">only W</text>
+<text x="200" y="170" fill="currentColor" font-size="12" text-anchor="middle">both</text>
+<text x="262" y="170" fill="currentColor" font-size="12">only S</text>
+</svg>
+</figure>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Operation</th><th>Symbol</th><th>Elements that are…</th><th>W and S</th><th>Logic</th><th>JavaScript</th></tr></thead>
+<tbody>
+<tr><td>Union</td><td>W ∪ S</td><td>in W or in S (or both)</td><td>ada, bola, chidi, dayo</td><td>OR</td><td><code>w.union(s)</code></td></tr>
+<tr><td>Intersection</td><td>W ∩ S</td><td>in both W and S</td><td>ada, bola</td><td>AND</td><td><code>w.intersection(s)</code></td></tr>
+<tr><td>Difference</td><td>W \ S</td><td>in W but not in S</td><td>chidi</td><td>AND NOT</td><td><code>w.difference(s)</code></td></tr>
+<tr><td>Symmetric difference</td><td>W △ S</td><td>in exactly one of them</td><td>chidi, dayo</td><td>XOR</td><td><code>w.symmetricDifference(s)</code></td></tr>
+</tbody>
+</table></div>
+<p>The last column but one is the key idea of this lesson. For any element x, "x is in W ∪ S" is exactly "x is in W <em>or</em> x is in S". The set operations are boolean logic applied to membership, one element at a time.</p>
+<example file="operations.js">
+const web = new Set(["ada", "bola", "chidi"]);
+const store = new Set(["ada", "bola", "dayo"]);
+
+console.log("union:", web.union(store));
+console.log("intersection:", web.intersection(store));
+console.log("web only:", web.difference(store));
+console.log("store only:", store.difference(web));
+console.log("exactly one:", web.symmetricDifference(store));
+</example>
+<output>
+union: Set(4) { 'ada', 'bola', 'chidi', 'dayo' }
+intersection: Set(2) { 'ada', 'bola' }
+web only: Set(1) { 'chidi' }
+store only: Set(1) { 'dayo' }
+exactly one: Set(2) { 'chidi', 'dayo' }
+</output>
+<p>Each method returns a <em>new</em> set and leaves the original sets unchanged. Notice that difference depends on the order: <code>web.difference(store)</code> and <code>store.difference(web)</code> are different sets, just as <code>a &amp;&amp; !b</code> differs from <code>b &amp;&amp; !a</code>. Union and intersection do not depend on the order.</p>
+<note title="Newer than most tutorials">These methods (<code>union</code>, <code>intersection</code>, <code>difference</code>, <code>symmetricDifference</code>, <code>isSubsetOf</code>, <code>isSupersetOf</code>, <code>isDisjointFrom</code>) were added to JavaScript in 2024 and are part of the ES2025 standard. They work in Node.js 22 and later and in all current browsers. Older tutorials, and older code you will read, build them by hand with loops, as the next section does.</note>
+<h3>Building them by hand</h3>
+<p>Writing an operation yourself shows that it really is just a loop and a condition. Intersection keeps each element of the first set that the second set also has:</p>
+<example file="by-hand.js">
+function intersect(a, b) {
+  const result = new Set();
+  for (const x of a) {
+    if (b.has(x)) result.add(x);          // AND: in a and in b
+  }
+  return result;
+}
+
+function subtract(a, b) {
+  const result = new Set();
+  for (const x of a) {
+    if (!b.has(x)) result.add(x);         // AND NOT: in a, not in b
+  }
+  return result;
+}
+
+const web = new Set(["ada", "bola", "chidi"]);
+const store = new Set(["ada", "bola", "dayo"]);
+console.log(intersect(web, store));
+console.log(subtract(web, store));
+</example>
+<output>
+Set(2) { 'ada', 'bola' }
+Set(1) { 'chidi' }
+</output>
+<p>The only difference between the two functions is one <code>!</code>. <code>for (const x of a)</code> loops over the elements of a set exactly as it loops over an array.</p>
+<h3>Complement: NOT needs a universe</h3>
+<p>What about NOT? "Everyone who is <em>not</em> on the web list" only makes sense if you know who "everyone" is: all customers, all users, all products. That full set is called the <strong>universe</strong>, and "everything in the universe that is not in W" is the <strong>complement</strong> of W. In code, a complement is always a difference from an explicit universe: <code>allCustomers.difference(web)</code>. There is no <code>complement()</code> method, because a set cannot know what universe you mean.</p>
+</section>
+
+<section>
+<h2 id="subsets">Subsets: does one set contain another?</h2>
+<p>A is a <strong>subset</strong> of B (written A ⊆ B) when every element of A is also in B. Then B is a <strong>superset</strong> of A. Two sets are <strong>disjoint</strong> when they have no element in common.</p>
+<p>Subsets are how permission checks work. An action requires some permissions; a user holds some permissions. The user may act when the required set is a subset of the held set:</p>
+<example file="subset.js">
+const held = new Set(["orders:read", "orders:refund", "customers:read"]);
+const refundNeeds = new Set(["orders:read", "orders:refund"]);
+const deleteNeeds = new Set(["orders:read", "orders:delete"]);
+
+console.log(refundNeeds.isSubsetOf(held));       // every required one is held
+console.log(deleteNeeds.isSubsetOf(held));
+console.log(held.isSupersetOf(refundNeeds));     // the same question, other way round
+console.log(deleteNeeds.difference(held));       // what exactly is missing
+
+const banned = new Set(["orders:delete", "users:delete"]);
+console.log(held.isDisjointFrom(banned));        // nothing in common
+</example>
+<output>
+true
+false
+true
+Set(1) { 'orders:delete' }
+true
+</output>
+<p><code>difference</code> turns a plain "no" into a helpful answer: the user is missing <code>orders:delete</code>. That is the same move as the guard clauses in <a href="/learn/logic-conditions#guards">Conditional reasoning</a>: not just refuse, but say why.</p>
+<h3>The empty set is a subset of everything</h3>
+<p>The <strong>empty set</strong>, written ∅, has no elements. It is a subset of every set: "every element of ∅ is in B" is true because there are no elements to fail the test. This is logically right, and it has a real consequence:</p>
+<example file="empty.js">
+const held = new Set();                 // a brand new user with no permissions
+const adminPageNeeds = new Set();        // someone forgot to fill this in
+
+console.log(adminPageNeeds.isSubsetOf(held));
+console.log(adminPageNeeds.size);
+</example>
+<output>
+true
+0
+</output>
+<p>A page whose required-permission set is empty is open to <em>everyone</em>, including a user with no permissions at all. If the empty set got there by accident, you have a security hole that no test on "users with the right permissions" will catch. The build below refuses empty requirements on purpose.</p>
+</section>
+
+<section>
+<h2 id="logic-link">Sets and logic are the same thing</h2>
+<p>You can check the table of operations with the loop technique from <a href="/learn/logic-boolean#truth-tables">Boolean logic</a>. For every element of the universe, membership in the union must equal "in W OR in S", and so on:</p>
+<example file="sets-are-logic.js">
+const universe = new Set(["ada", "bola", "chidi", "dayo", "efe"]);
+const web = new Set(["ada", "bola", "chidi"]);
+const store = new Set(["ada", "bola", "dayo"]);
+
+const union = web.union(store);
+const both = web.intersection(store);
+const webOnly = web.difference(store);
+const exactlyOne = web.symmetricDifference(store);
+
+let allMatch = true;
+for (const x of universe) {
+  const w = web.has(x);
+  const s = store.has(x);
+  const ok =
+    union.has(x) === (w || s) &&
+    both.has(x) === (w && s) &&
+    webOnly.has(x) === (w && !s) &&
+    exactlyOne.has(x) === (w !== s);
+  console.log(x, "web:", w, "store:", s, "matches logic:", ok);
+  if (!ok) allMatch = false;
+}
+console.log("every element matches:", allMatch);
+</example>
+<output>
+ada web: true store: true matches logic: true
+bola web: true store: true matches logic: true
+chidi web: true store: false matches logic: true
+dayo web: false store: true matches logic: true
+efe web: false store: false matches logic: true
+every element matches: true
+</output>
+<p>Efe is in the universe but on neither list: she is in none of the results, which is the "false, false" row of every truth table. This connection means the laws you already know work on sets too. De Morgan's laws, for example, say that the customers on <em>neither</em> list are the complement of the union: <code>universe.difference(web.union(store))</code>.</p>
+</section>
+
+<section>
+<h2 id="traps">Traps: what counts as "the same"?</h2>
+<p>A set drops an element when it is "the same" as one already inside. JavaScript decides sameness almost exactly like <code>===</code>. That leads to three traps.</p>
+<h3>Text that looks the same but is not</h3>
+<example file="normalise.js">
+const signups = ["Ada@Mail.com", "ada@mail.com ", "ada@mail.com"];
+
+console.log(new Set(signups).size);
+
+const normalised = new Set();
+for (const email of signups) {
+  normalised.add(email.trim().toLowerCase());
+}
+console.log(normalised);
+</example>
+<output>
+3
+Set(1) { 'ada@mail.com' }
+</output>
+<p>To a person, all three are Ada. To <code>===</code>, a capital letter or a trailing space makes a different string. <strong>Normalise</strong> values before they go into a set: <code>trim()</code> removes spaces at both ends and <code>toLowerCase()</code> makes every letter small. Deciding what "the same customer" means is a business decision, and the code must apply it before the set sees the data.</p>
+<h3>Objects are compared by identity</h3>
+<example file="objects.js">
+const orders = new Set();
+orders.add({ id: 101, total: 5000 });
+orders.add({ id: 101, total: 5000 });
+console.log(orders.size);
+
+const orderIds = new Set();
+orderIds.add(101);
+orderIds.add(101);
+console.log(orderIds.size);
+</example>
+<output>
+2
+1
+</output>
+<p>Two objects written the same way are still two different objects, just as two identical-looking houses are two houses. <code>===</code> on objects asks "is this the very same object?", and so does a set. To de-duplicate records, put their <strong>ids</strong> (numbers or strings) in the set, not the objects.</p>
+<h3>new Set("admin") is not a set of one role</h3>
+<example file="string-trap.js">
+const roles = new Set("admin");
+console.log(roles);
+console.log(roles.has("admin"));
+
+const fixed = new Set(["admin"]);
+console.log(fixed.has("admin"));
+</example>
+<output>
+Set(5) { 'a', 'd', 'm', 'i', 'n' }
+false
+true
+</output>
+<p><code>new Set(…)</code> loops over what you give it. Looping over a string gives its characters, so you get a set of letters; with <code>"manager"</code> the repeated <code>"a"</code> would even disappear. Always pass an array: <code>new Set(["admin"])</code>.</p>
+<h3>Two sets are never === each other</h3>
+<p>Sets are objects, so <code>new Set([1, 2]) === new Set([1, 2])</code> is <code>false</code>. To ask whether two sets have the same elements, check that each is a subset of the other: <code>a.isSubsetOf(b) &amp;&amp; b.isSubsetOf(a)</code>.</p>
+</section>
+
+<section>
+<h2 id="build">Build: role-based permissions</h2>
+<p>A shop's back office has three roles. Each role grants a set of permissions. A user can have several roles, and holds every permission that any of their roles grants, which is the <em>union</em> of their roles' sets.</p>
+
+<reason title="Designing the permission check">
+<p>You are going to write <code>checkAccess(user, required)</code>. Before reading the code, think:</p>
+<ul>
+<li>A user has roles ["support", "warehouse"]. How do you get the set of permissions they hold?</li>
+<li>Which set operation answers "may they do this?", and which answers "what are they missing?"</li>
+<li>What should happen if a user has a role name that does not exist, for example a typo like "suport"?</li>
+<li>What should happen if <code>required</code> is empty?</li>
+</ul>
+<answer>
+<p><strong>Held permissions</strong> are the union of the permission sets of each role, built by starting from an empty set and taking the union with each role's set in turn.</p>
+<p><strong>May they?</strong> is <code>required.isSubsetOf(held)</code>. <strong>What is missing</strong> is <code>required.difference(held)</code>. If the difference is empty, the subset check is true: the two answers always agree, so you can compute the difference once and use its size.</p>
+<p><strong>Unknown roles</strong> should grant nothing, and should be reported, because a typo in a role name silently removing someone's access (or, in a badly written check, crashing the page) is hard to debug. Failing closed means an unknown role adds no permissions.</p>
+<p><strong>Empty requirements</strong> are the trap from the subsets section: the empty set is a subset of everything, so an action with no requirements would be open to all. Most likely someone forgot to fill it in. The safe choice is to refuse and report it.</p>
+</answer>
+</reason>
+
+<example file="permissions.js">
+const rolePermissions = {
+  support: new Set(["orders:read", "customers:read", "orders:refund"]),
+  warehouse: new Set(["orders:read", "stock:read", "stock:update"]),
+  manager: new Set(["orders:read", "orders:refund", "orders:delete", "reports:read"]),
+};
+
+function permissionsOf(user) {
+  let held = new Set();
+  for (const role of user.roles) {
+    const granted = rolePermissions[role];
+    if (!granted) {
+      console.log(`warning: unknown role "${role}" for ${user.name}`);
+      continue;
+    }
+    held = held.union(granted);
+  }
+  return held;
+}
+
+function checkAccess(user, required) {
+  if (required.size === 0) return "refused: action has no permissions configured";
+  const missing = required.difference(permissionsOf(user));
+  if (missing.size > 0) return `refused: missing ${[...missing].join(", ")}`;
+  return "allowed";
+}
+
+const amaka = { name: "Amaka", roles: ["support", "warehouse"] };
+const tunde = { name: "Tunde", roles: ["suport"] };
+
+console.log(permissionsOf(amaka));
+console.log(checkAccess(amaka, new Set(["orders:refund"])));
+console.log(checkAccess(amaka, new Set(["orders:delete", "reports:read", "stock:read"])));
+console.log(checkAccess(tunde, new Set(["customers:read"])));
+console.log(checkAccess(amaka, new Set()));
+</example>
+<output>
+Set(5) {
+  'orders:read',
+  'customers:read',
+  'orders:refund',
+  'stock:read',
+  'stock:update'
+}
+allowed
+refused: missing orders:delete, reports:read
+warning: unknown role "suport" for Tunde
+refused: missing customers:read
+refused: action has no permissions configured
+</output>
+<p>New pieces:</p>
+<ul>
+<li><code>rolePermissions[role]</code> reads a property whose name is in a variable. If there is no such role, it gives <code>undefined</code>, which the guard catches.</li>
+<li><code>continue</code> skips the rest of this loop round and moves on to the next role.</li>
+<li><code>held = held.union(granted)</code> replaces <code>held</code> with a bigger set each round, which is why <code>held</code> is declared with <code>let</code>.</li>
+<li><code>[...missing].join(", ")</code> spreads the set into an array and joins its items into one string with commas between.</li>
+</ul>
+<p>Amaka's two roles both grant <code>orders:read</code>, but it appears once in her permissions: the union removed the duplicate. Her request for three permissions reports only the two she lacks, because <code>stock:read</code> is covered by her warehouse role. Tunde's typo gives him nothing and leaves a warning in the log for someone to fix.</p>
+<tip>Real systems, including the <a href="/learn/zudo-permissions">ZudoJS permissions package</a> you will meet much later, add wildcards (<code>orders:*</code>), role hierarchies and conditions on top. Underneath, the question is still this subset check.</tip>
+</section>
+
+<section>
+<h2 id="testing">Testing with set identities</h2>
+<p>Sets obey exact rules, and those rules make good tests: they must hold for <em>any</em> two sets, so if one fails, your code has a bug. Two of the most useful:</p>
+<ul>
+<li><strong>Counting the union:</strong> |A ∪ B| = |A| + |B| − |A ∩ B|. (The bars mean "number of elements".) Adding the two sizes counts the overlap twice, so you subtract it once. You will use this again in <a href="/learn/logic-counting">Counting</a>.</li>
+<li><strong>Splitting a set:</strong> A \ B and A ∩ B never overlap, and together they make up all of A. Every web customer is either also a store customer or web-only, never both, never neither.</li>
+</ul>
+<example file="identities.js">
+function checkIdentities(a, b) {
+  const unionOk = a.union(b).size === a.size + b.size - a.intersection(b).size;
+  const onlyA = a.difference(b);
+  const both = a.intersection(b);
+  const splitOk = onlyA.isDisjointFrom(both) && onlyA.union(both).size === a.size;
+  return unionOk && splitOk;
+}
+
+const web = new Set(["ada", "bola", "chidi"]);
+const store = new Set(["ada", "bola", "dayo"]);
+const nobody = new Set();
+
+console.log(checkIdentities(web, store));
+console.log(checkIdentities(web, nobody));
+console.log(checkIdentities(nobody, nobody));
+console.log(checkIdentities(web, web));
+</example>
+<output>
+true
+true
+true
+true
+</output>
+<p>The test tries ordinary sets, an empty set on one side, both empty, and a set with itself. Those are the edge cases for set code, just as zero and the boundary value are the edge cases for numbers.</p>
+</section>
+
+<section>
+<h2 id="production">Production concerns</h2>
+<ul>
+<li><strong>Sets do not survive JSON.</strong> <code>JSON.stringify(new Set(["a"]))</code> gives <code>"{}"</code>: the elements vanish. When you send a set over the network or save it, convert it to an array first (<code>[...set]</code>) and back into a set when you read it. <a href="/learn/js-data#json">Objects and JSON</a> covers JSON.</li>
+<li><strong>Normalise at the edge.</strong> Lower-case and trim emails, usernames and tags when they enter the system, so every set and every comparison downstream agrees on what "the same" means.</li>
+<li><strong>Databases do this too.</strong> A <code>UNIQUE</code> constraint makes a database column behave like a set, and SQL has <code>UNION</code>, <code>INTERSECT</code> and <code>EXCEPT</code>. For large data, ask the database rather than loading everything into a JavaScript set. You will see this in <a href="/learn/sql-basics">SQL basics</a>.</li>
+<li><strong>Fail closed on missing configuration.</strong> Unknown roles grant nothing; empty requirement sets are refused. Both are cases where "the maths says yes" and the business says "that was a mistake".</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Unsubscribes">
+<p>The shop from the start has a third list: customers who unsubscribed. Build the final send list: everyone on the web or store list, minus anyone who unsubscribed, with emails normalised. Print the number of emails and the list.</p>
+<solution>
+<example file="send-list.js">
+function normalisedSet(list) {
+  const result = new Set();
+  for (const email of list) result.add(email.trim().toLowerCase());
+  return result;
+}
+
+const web = normalisedSet(["ada@mail.com", "Bola@Mail.com", "chidi@mail.com"]);
+const store = normalisedSet(["bola@mail.com ", "dayo@mail.com", "ada@mail.com"]);
+const unsubscribed = normalisedSet(["CHIDI@mail.com"]);
+
+const sendTo = web.union(store).difference(unsubscribed);
+console.log(sendTo.size);
+console.log([...sendTo]);
+</example>
+<output>
+3
+[ 'ada@mail.com', 'bola@mail.com', 'dayo@mail.com' ]
+</output>
+<p>"On either list, but not unsubscribed" is (W ∪ S) \ U: union, then difference. Normalising all three lists the same way is what makes Bola appear once and Chidi's unsubscribe take effect despite the capital letters.</p>
+</solution>
+</exercise>
+<exercise title="Similar products">
+<p>Products have tags. Write <code>similarity(a, b)</code>: the number of shared tags divided by the number of distinct tags on either product. (It is 1 for identical tag sets and 0 for no overlap. This measure is called the <strong>Jaccard index</strong>.) Compare a rice cooker with a blender and with a novel.</p>
+<solution>
+<example file="similar.js">
+function similarity(a, b) {
+  const all = a.union(b);
+  if (all.size === 0) return 0;
+  return a.intersection(b).size / all.size;
+}
+
+const riceCooker = new Set(["kitchen", "electric", "appliance", "cooking"]);
+const blender = new Set(["kitchen", "electric", "appliance", "drinks"]);
+const novel = new Set(["book", "fiction"]);
+
+console.log(similarity(riceCooker, blender));
+console.log(similarity(riceCooker, novel));
+console.log(similarity(new Set(), new Set()));
+</example>
+<output>
+0.6
+0
+0
+</output>
+<p>The cooker and blender share 3 tags out of 5 distinct ones: 3 / 5 = 0.6. The guard handles two untagged products, where dividing 0 by 0 would give <code>NaN</code>. A shop can use this to suggest "similar products".</p>
+</solution>
+</exercise>
+<exercise title="Who needs a follow-up?">
+<p>Given the sets of customers who opened a promotion email, who clicked it, and who bought, find: (a) customers who clicked but did not buy, (b) customers who bought without clicking (they came some other way), (c) whether everyone who clicked had also opened it.</p>
+<solution>
+<example file="funnel.js">
+const opened = new Set(["ada", "bola", "chidi", "dayo", "efe"]);
+const clicked = new Set(["ada", "chidi", "dayo"]);
+const bought = new Set(["ada", "femi"]);
+
+console.log("clicked, did not buy:", clicked.difference(bought));
+console.log("bought without clicking:", bought.difference(clicked));
+console.log("every clicker opened:", clicked.isSubsetOf(opened));
+</example>
+<output>
+clicked, did not buy: Set(2) { 'chidi', 'dayo' }
+bought without clicking: Set(1) { 'femi' }
+every clicker opened: true
+</output>
+<p>"A but not B" is always a difference, and "every A is a B" is always a subset check. Chidi and Dayo are the customers worth a reminder. If <code>isSubsetOf</code> had returned <code>false</code>, the tracking data would be broken, since you cannot click an email you never opened: a subset check is also a cheap data-quality test.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A set holds distinct elements; its main question is membership. <code>new Set(array)</code>, <code>has</code>, <code>add</code>, <code>delete</code> and <code>size</code> cover everyday use, and <code>[...new Set(array)]</code> removes duplicates.</li>
+<li>Union is OR, intersection is AND, difference is AND NOT, symmetric difference is XOR. A complement needs an explicit universe: <code>universe.difference(set)</code>.</li>
+<li>A ⊆ B means every element of A is in B. Permission checks are <code>required.isSubsetOf(held)</code>, and <code>required.difference(held)</code> says what is missing.</li>
+<li>The empty set is a subset of everything, so empty requirements open the door to everyone. Refuse them.</li>
+<li>Sets compare like <code>===</code>: normalise text, store ids instead of objects, and pass an array, not a string, to <code>new Set</code>.</li>
+</ul>
+<p>Next: <a href="/learn/logic-math">Mathematical reasoning</a>, where you calculate with the numbers inside your rules: percentages, VAT, interest, and why money is counted in kobo.</p>
+</section>

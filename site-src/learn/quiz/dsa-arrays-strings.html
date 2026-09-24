@@ -1,0 +1,642 @@
+<question id="as-index-o1" type="choice">
+<q>Why does reading <code>orders[40000]</code> take the same time as reading <code>orders[0]</code>?</q>
+<option>The engine caches every index the first time the array is created</option>
+<option correct>The slots are contiguous and equal-sized, so the address is computed directly: start + index × slot size</option>
+<option>Arrays are hash maps, and hash maps are always O(1)</option>
+<option>It does not; later indexes are slower because the engine counts from 0</option>
+<explain><p>Contiguous storage means one multiplication and one addition find any slot. Nothing walks past the earlier items, so indexing is O(1).</p></explain>
+</question>
+
+<question id="as-front-insert" type="choice">
+<q>A "recently viewed products" list adds each new product with <code>unshift</code>. What does each <code>unshift</code> cost on a list of <code>n</code> products?</q>
+<option>O(1), like <code>push</code></option>
+<option correct>O(n): every existing product moves one slot to the right</option>
+<option>O(log n)</option>
+<option>O(n²)</option>
+<explain><p>The slots must stay contiguous from index 0, so inserting at the front moves everything. Adding at the end with <code>push</code> and reading the list backwards avoids the moves.</p></explain>
+</question>
+
+<question id="as-splice-forward" type="choice">
+<q>This loop is meant to remove every cancelled order. What goes wrong?</q>
+<code file="forward.js">
+for (let i = 0; i < orders.length; i++) {
+  if (orders[i].status === "cancelled") orders.splice(i, 1);
+}
+</code>
+<option>It throws, because you cannot change an array inside a loop</option>
+<option correct>After a removal the next order slides into index <code>i</code>, and the loop skips it, so two cancelled orders in a row leave one behind</option>
+<option>It removes paid orders too</option>
+<option>Nothing, it is correct and O(n)</option>
+<explain><p><code>splice</code> shifts later items left, but <code>i</code> still increases. The skipped item is only checked if you walk backwards or rebuild the array. It is also O(n²) in moves.</p></explain>
+</question>
+
+<question id="as-backwards" type="choice">
+<q>Walking the same <code>splice</code> loop backwards (from the last index to 0) fixes the skipped items. What is its cost for <code>n</code> orders when a third of them are cancelled?</q>
+<option>O(n), because each order is visited once</option>
+<option correct>O(n²) in the worst case, because each <code>splice</code> still moves every item after the removed one</option>
+<option>O(log n)</option>
+<option>O(1) per removal, because it works from the end</option>
+<explain><p>Walking backwards fixes correctness, not cost. Removing near the front still moves almost everything behind it. <code>filter</code> or a read/write index compaction is O(n).</p></explain>
+</question>
+
+<question id="as-best-remove" type="choice">
+<q>You must remove all cancelled orders from 200,000 orders and nothing else holds a reference to the array. Which approach is both correct and O(n)?</q>
+<option>A forward loop with <code>splice</code></option>
+<option>A backward loop with <code>splice</code></option>
+<option correct><code>orders = orders.filter((o) =&gt; o.status !== "cancelled")</code></option>
+<option>A <code>while</code> loop that calls <code>indexOf</code> and <code>splice</code> until nothing is found</option>
+<explain><p><code>filter</code> reads each order once and writes survivors into a new array. The <code>indexOf</code> loop is the worst of all: each search is O(n) and each <code>splice</code> is O(n), repeated for every cancelled order.</p></explain>
+</question>
+
+<question id="as-holes" type="choice">
+<q>What happens when you write <code>ids[1000000] = "ORD-1"</code> into an empty array?</q>
+<option>The engine fills indexes 0 to 999,999 with <code>undefined</code> values in a contiguous block</option>
+<option correct><code>length</code> becomes 1,000,001 with one real item and a million holes, and the engine may switch the array to slower dictionary-like storage</option>
+<option>It throws a <code>RangeError</code></option>
+<option>The item is stored at index 0</option>
+<explain><p>Holes are missing entries, not <code>undefined</code> values (<code>0 in ids</code> is <code>false</code>). Engines keep fast contiguous storage for dense arrays; very sparse ones may fall back to a dictionary. Keep arrays dense.</p></explain>
+</question>
+
+<question id="as-shift-loop" type="choice">
+<q>A payout job empties an array of 50,000 transfers with <code>while (transfers.length) process(transfers.shift())</code>. What is the better way when the array does not need to shrink as you go?</q>
+<option>Use <code>splice(0, 1)</code> instead of <code>shift()</code></option>
+<option correct>Walk an index forward: <code>for (let i = 0; i &lt; transfers.length; i++)</code>, which is O(1) per item</option>
+<option>Call <code>shift()</code> twice per iteration to halve the loop count</option>
+<option>Sort the array first</option>
+<explain><p><code>shift</code> and <code>splice(0, 1)</code> both move every remaining item: O(n) each, O(n²) for the loop. An index does not move anything. For a real queue that also receives new items, use a queue structure.</p></explain>
+</question>
+
+<question id="as-v8-shift" type="choice">
+<q>You timed <code>shift()</code> on a 100-item array and it looked instant. Why should you still treat it as O(n)?</q>
+<option>Because timings are always wrong</option>
+<option correct>The specification moves every item; V8 has a trick that avoids the moves for some arrays, but it does not hold for large arrays, and the cost comes back exactly when the data grows</option>
+<option>Because <code>shift</code> is O(n²) for every single call</option>
+<option>Because small arrays are stored as strings</option>
+<explain><p>An engine optimisation is not a guarantee. A test on 100 items hides the growth; measure at production sizes, and design for the documented cost.</p></explain>
+</question>
+
+<question id="as-immutable" type="choice">
+<q>What does <code>currency.toUpperCase()</code> do to <code>const currency = "ngn"</code>?</q>
+<option>Changes <code>currency</code> to <code>"NGN"</code></option>
+<option correct>Returns a new string <code>"NGN"</code> and leaves <code>currency</code> as <code>"ngn"</code></option>
+<option>Throws, because <code>currency</code> is a <code>const</code></option>
+<option>Returns <code>undefined</code></option>
+<explain><p>Strings are immutable. Every method that seems to change one returns a new string, in O(length) time. <code>const</code> is not the reason: a <code>let</code> string would not change either unless you assign the result back.</p></explain>
+</question>
+
+<question id="as-string-cost" type="choice">
+<q>What does <code>line.slice(0, 20)</code> cost, and why?</q>
+<option>O(1), because slicing only records two indexes</option>
+<option correct>O(length of the result): a new string is created and its characters are copied</option>
+<option>O(n²)</option>
+<option>O(log n)</option>
+<explain><p>Treat string operations that produce a new string as proportional to the length they produce or scan. Engines sometimes share memory internally, but you cannot rely on it, and the result is still a new immutable string.</p></explain>
+</question>
+
+<question id="as-flatten" type="choice">
+<q>Which statement-building loop has a hidden quadratic cost in V8?</q>
+<option><code>for (const line of lines) text += line + "\n";</code></option>
+<option correct><code>for (const line of lines) { if (!text.endsWith("\n")) text += "\n"; text += line; }</code></option>
+<option><code>const text = lines.join("\n");</code></option>
+<option><code>const parts = []; for (const line of lines) parts.push(line); const text = parts.join("\n");</code></option>
+<explain><p>V8 makes appending cheap by building a rope and copying later. Reading the partly built string (<code>endsWith</code>, <code>includes</code>, indexing) forces a flatten, a full copy, on every iteration: O(n²) overall.</p></explain>
+</question>
+
+<question id="as-join" type="choice">
+<q>Why is <code>parts.join("")</code> a safe way to build a big string on every engine?</q>
+<option>Because <code>join</code> runs in parallel on several cores</option>
+<option correct>It can compute the total length first, allocate the result once and copy each piece once: O(total length)</option>
+<option>Because arrays are faster than strings in every situation</option>
+<option>Because <code>join</code> does not create a new string</option>
+<explain><p>The expensive part of repeated concatenation is copying the growing result again and again. <code>join</code> copies each character exactly once.</p></explain>
+</question>
+
+<question id="as-emoji-length" type="choice">
+<q>Why is <code>"₦".length</code> 1 but <code>"🎉".length</code> 2?</q>
+<option>Emoji are stored as two characters on purpose so that they look bigger</option>
+<option correct><code>length</code> counts UTF-16 code units; the naira sign fits in one, the emoji needs two (a surrogate pair)</option>
+<option>Because <code>length</code> counts bytes</option>
+<option>It is a bug in JavaScript that will be fixed</option>
+<explain><p>JavaScript strings are sequences of 16-bit code units. Characters outside the first 65,536 code points take two. <code>[...text].length</code> counts code points instead.</p></explain>
+</question>
+
+<question id="as-split-reverse" type="choice">
+<q>Why does <code>text.split("").reverse().join("")</code> break an emoji?</q>
+<option>Because <code>reverse</code> does not work on strings</option>
+<option correct><code>split("")</code> cuts the emoji into its two surrogate code units, and reversing puts them in the wrong order, which is not a valid character</option>
+<option>Because <code>join("")</code> removes emoji</option>
+<option>It does not break emoji</option>
+<explain><p>Split by code point with <code>[...text]</code> to keep each emoji whole. Emoji built from several code points (flags, families) need <code>Intl.Segmenter</code>.</p></explain>
+</question>
+
+<question id="as-palindrome-space" type="choice">
+<q>After normalizing the text into an array of code points, a palindrome check compares <code>clean[left]</code> with <code>clean[right]</code> while moving both indexes inwards. What extra space does the comparison itself use?</q>
+<option correct>O(1): two indexes</option>
+<option>O(n): a reversed copy</option>
+<option>O(n / 2)</option>
+<option>O(log n)</option>
+<explain><p>The comparison only keeps two indexes. The normalization before it costs O(n) space, so the whole function is O(n) space, but the comparison step adds nothing that grows.</p></explain>
+</question>
+
+<question id="as-anagram-sort" type="choice">
+<q>Checking two voucher codes for anagrams by sorting both and comparing: what is the time complexity for codes of length <code>n</code>?</q>
+<option>O(n)</option>
+<option correct>O(n log n), because of the sort</option>
+<option>O(n²)</option>
+<option>O(1)</option>
+<explain><p>The sorts dominate. Counting characters with a <code>Map</code> brings it down to O(n), which the hash maps lesson explains.</p></explain>
+</question>
+
+<question id="as-anagram-set-bug" type="choice">
+<q>A developer checks anagrams with <code>new Set(a)</code> and <code>new Set(b)</code>, and returns true when the sets contain the same characters and the lengths match. Which pair shows the bug?</q>
+<option><code>"SAVE20"</code> and <code>"SAVE02"</code></option>
+<option><code>"ABC"</code> and <code>"ABD"</code></option>
+<option correct><code>"aab"</code> and <code>"abb"</code></option>
+<option><code>""</code> and <code>""</code></option>
+<explain><p>Both contain exactly <code>a</code> and <code>b</code> and have length 3, but the counts differ. A set forgets how many times each character appears; a count does not.</p></explain>
+</question>
+
+<question id="as-rotate-normalize" type="choice">
+<q>Why does <code>rotate</code> compute <code>((k % n) + n) % n</code> instead of just <code>k % n</code>?</q>
+<option>To make it faster</option>
+<option correct>In JavaScript <code>-1 % 5</code> is <code>-1</code>; adding <code>n</code> and taking <code>% n</code> again turns any negative <code>k</code> into the equivalent right rotation between 0 and <code>n - 1</code></option>
+<option>Because <code>%</code> does not work on large numbers</option>
+<option>To handle an empty array</option>
+<explain><p><code>%</code> in JavaScript keeps the sign of the left operand. The empty array still needs its own check first, because <code>k % 0</code> is <code>NaN</code>.</p></explain>
+</question>
+
+<question id="as-rotate-naive" type="choice">
+<q>What does rotating by <code>k</code> with <code>k</code> repetitions of <code>items.unshift(items.pop())</code> cost?</q>
+<option>O(k)</option>
+<option>O(n)</option>
+<option correct>O(n · k): each <code>unshift</code> moves every item</option>
+<option>O(n + k)</option>
+<explain><p><code>pop</code> is O(1), but <code>unshift</code> is O(n). With two slices or three reversals the cost is O(n) whatever <code>k</code> is (after normalizing <code>k</code> below <code>n</code>).</p></explain>
+</question>
+
+<question id="as-three-reversals" type="choice">
+<q>Rotating in place with three reversals (whole array, then the first <code>k</code>, then the rest) uses how much extra space?</q>
+<option correct>O(1)</option>
+<option>O(k)</option>
+<option>O(n)</option>
+<option>O(n · k)</option>
+<explain><p>Every reversal swaps items inside the same array using two indexes. The two-slice version is simpler but allocates a new array: O(n) extra space.</p></explain>
+</question>
+
+<question id="as-typed-array" type="choice">
+<q>You want to store a million balances in kobo in an <code>Int32Array</code>. What is the risk?</q>
+<option>Typed arrays cannot hold a million items</option>
+<option correct>An <code>Int32Array</code> only holds up to 2,147,483,647, about ₦21 million in kobo; bigger balances silently wrap around</option>
+<option>Typed arrays are slower than normal arrays for numbers</option>
+<option>Typed arrays cannot be indexed</option>
+<explain><p>Typed arrays store raw numbers contiguously and are fast, but each element type has a fixed range. <code>Float64Array</code> or <code>BigInt64Array</code> fits larger amounts; choose based on the range you need.</p></explain>
+</question>
+
+<question id="as-copy-methods" type="choice">
+<q>Inside a loop over 10,000 orders, code calls <code>orders.toSorted(byDate)[0]</code> to find the oldest order each time. What is the problem?</q>
+<option>None; <code>toSorted</code> is O(1)</option>
+<option correct>Each call copies and sorts the whole array, O(n log n), so the loop is O(n² log n); compute the oldest once, or track it in one pass</option>
+<option><code>toSorted</code> changes the original array</option>
+<option><code>toSorted</code> is not allowed inside loops</option>
+<explain><p>The non-mutating methods (<code>toSorted</code>, <code>toReversed</code>, <code>toSpliced</code>, <code>with</code>) are safer but always copy. Hoist them out of loops.</p></explain>
+</question>
+
+<question id="as-edge-adjacent" type="choice">
+<q>Which test case would have caught the forward <code>splice</code> bug in the cancelled-orders loop?</q>
+<option>An empty list</option>
+<option>A list with one paid order</option>
+<option correct>Two cancelled orders next to each other</option>
+<option>A list where no order is cancelled</option>
+<explain><p>The bug only shows when the item that slides into the current index also needs removing. Adjacent matches belong in every checklist for loops that remove items.</p></explain>
+</question>
+
+<question id="as-out-splice-forward" type="output">
+<q>What does this print?</q>
+<code file="evens.js">
+const amounts = [2, 4, 6, 7];
+for (let i = 0; i < amounts.length; i++) {
+  if (amounts[i] % 2 === 0) amounts.splice(i, 1);
+}
+console.log(amounts.join(","));
+</code>
+<option>7</option>
+<option correct>4,7</option>
+<option>4,6,7</option>
+<option>2,6,7</option>
+<explain><p>Removing 2 slides 4 into index 0, but the loop moves on to index 1, which is now 6. Removing 6 slides 7 into index 1, and the loop ends. The 4 is never checked.</p></explain>
+</question>
+
+<question id="as-out-holes" type="output">
+<q>What does this print?</q>
+<code file="holes.js">
+const ids = [];
+ids[3] = "ORD-4";
+console.log(ids.length, ids.filter(() => true).length, 0 in ids);
+</code>
+<option>1 1 false</option>
+<option correct>4 1 false</option>
+<option>4 4 true</option>
+<option>4 4 false</option>
+<explain><p><code>length</code> is one more than the highest index: 4. Indexes 0 to 2 are holes, which <code>filter</code> skips, and <code>in</code> reports them as missing.</p></explain>
+</question>
+
+<question id="as-out-immutable" type="output">
+<q>What does this print?</q>
+<code file="immutable.js">
+let reference = "pay-2024";
+reference.toUpperCase();
+reference.replace("pay", "ref");
+console.log(reference);
+</code>
+<option>PAY-2024</option>
+<option>ref-2024</option>
+<option>REF-2024</option>
+<option correct>pay-2024</option>
+<explain><p>Both methods returned new strings that were thrown away. The original never changes; you must assign the result: <code>reference = reference.toUpperCase()</code>.</p></explain>
+</question>
+
+<question id="as-out-lengths" type="output">
+<q>What does this print?</q>
+<code file="lengths.js">
+console.log("₦".length, "🎉".length, [..."🎉"].length);
+</code>
+<option>1 1 1</option>
+<option correct>1 2 1</option>
+<option>3 4 1</option>
+<option>1 2 2</option>
+<explain><p>The naira sign is one UTF-16 code unit, the emoji two. Spreading iterates by code point, so the emoji counts as one.</p></explain>
+</question>
+
+<question id="as-out-mod" type="output">
+<q>What does this print?</q>
+<code file="mod.js">
+const n = 5;
+const k = -1;
+console.log(k % n, ((k % n) + n) % n, 7 % n);
+</code>
+<option>4 4 2</option>
+<option correct>-1 4 2</option>
+<option>-1 -1 2</option>
+<option>1 4 2</option>
+<explain><p>JavaScript's <code>%</code> keeps the sign of the left side, so <code>-1 % 5</code> is <code>-1</code>. The normalization maps it to 4, a right rotation by 4, which equals a left rotation by 1.</p></explain>
+</question>
+
+<question id="as-out-rotate" type="output">
+<q>What does this print?</q>
+<code file="rotate.js">
+function rotate(items, k) {
+  const n = items.length;
+  if (n === 0) return [];
+  const shift = ((k % n) + n) % n;
+  return [...items.slice(n - shift), ...items.slice(0, n - shift)];
+}
+console.log(rotate(["Mon", "Tue", "Wed", "Thu"], 1).join(" "));
+console.log(rotate(["Mon", "Tue", "Wed", "Thu"], 6).join(" "));
+</code>
+<option correct>Thu Mon Tue Wed
+Wed Thu Mon Tue</option>
+<option>Tue Wed Thu Mon
+Wed Thu Mon Tue</option>
+<option>Thu Mon Tue Wed
+Mon Tue Wed Thu</option>
+<option>Thu Mon Tue Wed
+Tue Wed Thu Mon</option>
+<explain><p>Rotating right by 1 brings the last item to the front. 6 % 4 is 2, so the second call is a right rotation by 2.</p></explain>
+</question>
+
+<question id="as-out-truncate" type="output">
+<q>What does this print?</q>
+<code file="truncate.js">
+const stock = [5, 0, 3, 0, 8];
+let write = 0;
+for (let read = 0; read < stock.length; read++) {
+  if (stock[read] !== 0) stock[write++] = stock[read];
+}
+stock.length = write;
+console.log(stock.join(","), stock.length);
+</code>
+<option>5,0,3,0,8 5</option>
+<option correct>5,3,8 3</option>
+<option>5,3,8,0,8 5</option>
+<option>5,3,8 5</option>
+<explain><p>The read index visits every item; the write index only advances for kept ones. Before the last line the array is <code>5,3,8,0,8</code>; setting <code>length</code> to 3 cuts off the leftovers. O(n) time, O(1) extra space.</p></explain>
+</question>
+
+<question id="as-out-sort-letters" type="output">
+<q>What does this print?</q>
+<code file="letters.js">
+const key = (word) => [...word.toLowerCase()].sort().join("");
+console.log(key("Listen"), key("Silent") === key("Listen"), key("Enlists") === key("Listen"));
+</code>
+<option>listen true false</option>
+<option correct>eilnst true false</option>
+<option>eilnst true true</option>
+<option>Eilnst true false</option>
+<explain><p>Sorting the letters gives a canonical key: anagrams share it. "Enlists" has an extra s, so its key differs. The key is O(n log n) to compute.</p></explain>
+</question>
+
+<question id="as-out-compress" type="output">
+<q>What does this print?</q>
+<code file="compress.js">
+function compress(log) {
+  const parts = [];
+  let i = 0;
+  while (i < log.length) {
+    let run = 1;
+    while (i + run < log.length && log[i + run] === log[i]) run++;
+    parts.push(log[i] + run);
+    i += run;
+  }
+  return parts.join("");
+}
+console.log(compress("AABBBCA"));
+</code>
+<option>A3B3C1</option>
+<option correct>A2B3C1A1</option>
+<option>A2B3C1</option>
+<option>AABBBCA</option>
+<explain><p>Runs are consecutive: the final A is a new run of 1. The inner loop moves <code>i</code> forward by each run, so every character is read once: O(n).</p></explain>
+</question>
+
+<question id="as-out-reverse-cp" type="output">
+<q>What does this print?</q>
+<code file="reverse.js">
+console.log([..."₦500"].reverse().join(""));
+console.log("ab".split("").reverse().join("") === [..."ab"].reverse().join(""));
+</code>
+<option>₦500
+true</option>
+<option correct>005₦
+true</option>
+<option>005₦
+false</option>
+<option>500₦
+true</option>
+<explain><p>For text with no surrogate pairs, splitting by code unit and by code point give the same result. The difference only appears with characters such as emoji.</p></explain>
+</question>
+
+<question id="as-code-filter" type="code" file="filter.js">
+<q><p>Write <code>removeCancelled(orders)</code> that returns a new array without the cancelled orders, in O(n), without <code>splice</code>.</p></q>
+<starter>
+function removeCancelled(orders) {
+  // your code here
+}
+
+const orders = [
+  { id: "ORD-1", status: "paid" },
+  { id: "ORD-2", status: "cancelled" },
+  { id: "ORD-3", status: "cancelled" },
+  { id: "ORD-4", status: "paid" },
+];
+console.log(removeCancelled(orders).map((o) => o.id).join(" "));
+</starter>
+<solution>
+function removeCancelled(orders) {
+  return orders.filter((order) => order.status !== "cancelled");
+}
+
+const orders = [
+  { id: "ORD-1", status: "paid" },
+  { id: "ORD-2", status: "cancelled" },
+  { id: "ORD-3", status: "cancelled" },
+  { id: "ORD-4", status: "paid" },
+];
+console.log(removeCancelled(orders).map((o) => o.id).join(" "));
+</solution>
+<expected>ORD-1 ORD-4</expected>
+<explain><p><code>filter</code> visits each order once and never shifts anything, so adjacent cancelled orders are handled and the cost is O(n) time, O(n) space for the new array.</p></explain>
+</question>
+
+<question id="as-code-compact" type="code" file="compact.js">
+<q><p>Remove every out-of-stock product (<code>stock === 0</code>) <em>in place</em>, in O(n) time and O(1) extra space, using a read index and a write index. Then truncate the array.</p></q>
+<starter>
+function removeOutOfStock(products) {
+  // your code here
+}
+
+const products = [
+  { sku: "RICE-5KG", stock: 0 },
+  { sku: "OIL-1L", stock: 12 },
+  { sku: "BEANS-2KG", stock: 0 },
+  { sku: "SALT-500G", stock: 40 },
+];
+removeOutOfStock(products);
+console.log(products.map((p) => p.sku).join(" "), products.length);
+</starter>
+<solution>
+function removeOutOfStock(products) {
+  let write = 0;
+  for (let read = 0; read < products.length; read++) {
+    if (products[read].stock !== 0) {
+      products[write] = products[read];
+      write++;
+    }
+  }
+  products.length = write;
+}
+
+const products = [
+  { sku: "RICE-5KG", stock: 0 },
+  { sku: "OIL-1L", stock: 12 },
+  { sku: "BEANS-2KG", stock: 0 },
+  { sku: "SALT-500G", stock: 40 },
+];
+removeOutOfStock(products);
+console.log(products.map((p) => p.sku).join(" "), products.length);
+</solution>
+<expected>OIL-1L SALT-500G 2</expected>
+<explain><p>Every kept product is copied once to the write position, and nothing ever shifts. Setting <code>length</code> removes the leftover slots at the end.</p></explain>
+</question>
+
+<question id="as-code-palindrome" type="code" file="palindrome.js">
+<q><p>Write <code>isPalindrome(text)</code> that ignores case and anything that is not a letter or digit, and compares from both ends inwards.</p></q>
+<starter>
+function isPalindrome(text) {
+  // your code here
+}
+
+console.log(isPalindrome("Was it a car or a cat I saw?"));
+console.log(isPalindrome("REF-2024"));
+console.log(isPalindrome(""));
+</starter>
+<solution>
+function isPalindrome(text) {
+  const clean = [...text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "")];
+  let left = 0;
+  let right = clean.length - 1;
+  while (left < right) {
+    if (clean[left] !== clean[right]) return false;
+    left++;
+    right--;
+  }
+  return true;
+}
+
+console.log(isPalindrome("Was it a car or a cat I saw?"));
+console.log(isPalindrome("REF-2024"));
+console.log(isPalindrome(""));
+</solution>
+<expected>
+true
+false
+true
+</expected>
+<explain><p>Normalize once (O(n)), then compare pairs until the indexes meet. The empty string has no pair to compare, so the loop never runs and the answer is <code>true</code>.</p></explain>
+</question>
+
+<question id="as-code-anagram" type="code" file="anagram.js">
+<q><p>Write <code>isAnagram(a, b)</code> in O(n) time by counting characters with a <code>Map</code>. Ignore case.</p></q>
+<starter>
+function isAnagram(a, b) {
+  // your code here
+}
+
+console.log(isAnagram("SAVE20", "save02"));
+console.log(isAnagram("aab", "abb"));
+console.log(isAnagram("Listen", "Silent"));
+</starter>
+<solution>
+function isAnagram(a, b) {
+  const x = a.toLowerCase();
+  const y = b.toLowerCase();
+  if (x.length !== y.length) return false;
+  const counts = new Map();
+  for (const ch of x) counts.set(ch, (counts.get(ch) ?? 0) + 1);
+  for (const ch of y) {
+    const left = counts.get(ch);
+    if (!left) return false;
+    counts.set(ch, left - 1);
+  }
+  return true;
+}
+
+console.log(isAnagram("SAVE20", "save02"));
+console.log(isAnagram("aab", "abb"));
+console.log(isAnagram("Listen", "Silent"));
+</solution>
+<expected>
+true
+false
+true
+</expected>
+<explain><p>Count the first string up, count the second down; a missing or exhausted character means not an anagram. With equal lengths, never going below zero implies all counts end at zero.</p></explain>
+</question>
+
+<question id="as-code-rotate" type="code" file="rotate-rota.js">
+<q><p>Write <code>rotate(items, k)</code> that returns a new array rotated right by <code>k</code>. It must handle <code>k</code> larger than the length, negative <code>k</code> and the empty array.</p></q>
+<starter>
+function rotate(items, k) {
+  // your code here
+}
+
+const rota = ["Ada", "Bola", "Chidi"];
+console.log(rotate(rota, 1).join(" "));
+console.log(rotate(rota, 4).join(" "));
+console.log(rotate(rota, -1).join(" "));
+console.log(rotate([], 2).length);
+</starter>
+<solution>
+function rotate(items, k) {
+  const n = items.length;
+  if (n === 0) return [];
+  const shift = ((k % n) + n) % n;
+  return [...items.slice(n - shift), ...items.slice(0, n - shift)];
+}
+
+const rota = ["Ada", "Bola", "Chidi"];
+console.log(rotate(rota, 1).join(" "));
+console.log(rotate(rota, 4).join(" "));
+console.log(rotate(rota, -1).join(" "));
+console.log(rotate([], 2).length);
+</solution>
+<expected>
+Chidi Ada Bola
+Chidi Ada Bola
+Bola Chidi Ada
+0
+</expected>
+<explain><p>Normalize <code>k</code> into 0 to <code>n - 1</code>, then join the last <code>shift</code> items with the rest. O(n) time and space. Check <code>n === 0</code> before using <code>%</code>.</p></explain>
+</question>
+
+<question id="as-code-statement" type="code" file="statement.js">
+<q><p>Build a bank statement with one line per transaction in the form <code>ID amount</code>, using an array of lines and a single <code>join</code>. Amounts are in kobo; print them in naira with two decimals.</p></q>
+<starter>
+function statement(transactions) {
+  // your code here
+}
+
+console.log(statement([
+  { id: "TX-1", kobo: 250000 },
+  { id: "TX-2", kobo: 1999 },
+  { id: "TX-3", kobo: 50 },
+]));
+</starter>
+<solution>
+function statement(transactions) {
+  const lines = [];
+  for (const tx of transactions) {
+    lines.push(`${tx.id} ₦${(tx.kobo / 100).toFixed(2)}`);
+  }
+  return lines.join("\n");
+}
+
+console.log(statement([
+  { id: "TX-1", kobo: 250000 },
+  { id: "TX-2", kobo: 1999 },
+  { id: "TX-3", kobo: 50 },
+]));
+</solution>
+<expected>
+TX-1 ₦2500.00
+TX-2 ₦19.99
+TX-3 ₦0.50
+</expected>
+<explain><p>Collect the pieces, then <code>join</code> once: every character is copied once, so the cost is O(total length) on every engine, even for a million lines.</p></explain>
+</question>
+
+<question id="as-code-reverse" type="code" file="reverse-note.js">
+<q><p>Write <code>reverseText(text)</code> that reverses by code point, so the emoji survives.</p></q>
+<starter>
+function reverseText(text) {
+  // your code here
+}
+
+console.log(reverseText("Paid 🎉 ₦500"));
+</starter>
+<solution>
+function reverseText(text) {
+  return [...text].reverse().join("");
+}
+
+console.log(reverseText("Paid 🎉 ₦500"));
+</solution>
+<expected>005₦ 🎉 diaP</expected>
+<explain><p>Spreading a string iterates by code point, keeping surrogate pairs together. <code>split("")</code> would split the emoji into two invalid halves.</p></explain>
+</question>
+
+<question id="as-code-remove-at" type="code" file="remove-at.js">
+<q><p>Write <code>removeAt(items, index)</code> without <code>splice</code>: move every later item one place left, shrink the array by one, and return the removed item.</p></q>
+<starter>
+function removeAt(items, index) {
+  // your code here
+}
+
+const queue = ["Ada", "Bola", "Chidi", "Dayo"];
+console.log(removeAt(queue, 1), queue.join(" "), queue.length);
+</starter>
+<solution>
+function removeAt(items, index) {
+  const removed = items[index];
+  for (let i = index; i < items.length - 1; i++) {
+    items[i] = items[i + 1];
+  }
+  items.length = items.length - 1;
+  return removed;
+}
+
+const queue = ["Ada", "Bola", "Chidi", "Dayo"];
+console.log(removeAt(queue, 1), queue.join(" "), queue.length);
+</solution>
+<expected>Bola Ada Chidi Dayo 3</expected>
+<explain><p>Moving left starts at the removed index and goes forwards (the opposite of inserting). It moves <code>length - index - 1</code> items: O(n) at the front, O(1) at the end.</p></explain>
+</question>

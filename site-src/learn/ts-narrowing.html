@@ -1,0 +1,792 @@
+---
+title: Narrowing
+description: Turn wide union and unknown types into precise ones with typeof, truthiness, equality, in, instanceof, discriminants, type guards and assertion functions, and learn where narrowing lies.
+minutes: 50
+youNeed: Special types (any, unknown and never), and Interfaces, unions and literal types
+youBuild: A payment router for a banking app that accepts cards, bank transfers and wallets, with every branch checked by the compiler
+keywords: typescript narrowing, typeof narrowing, truthiness narrowing, equality narrowing, in operator narrowing, instanceof narrowing, discriminated union, control flow analysis, type guard, type predicate value is, assertion function asserts, inferred type predicate
+objectives: Explain the difference between a declared type and a narrowed type | Narrow unions with typeof, equality, in, instanceof and Array.isArray | Avoid the truthiness traps with 0, empty strings and NaN | Follow how control-flow analysis narrows through returns, assignments and closures | Write type guards and assertion functions, and test them
+---
+<section>
+<h2 id="problem">A value that could be two things</h2>
+<p>Your bank's old mobile app sends transfer amounts as numbers. The new web app sends them as strings, because they come straight from a form field. Your handler has to accept both, so you give the parameter a union type and try to format it:</p>
+<example file="amount.ts" project="problem" check="tsc-error">
+function formatAmount(amount: number | string): string {
+  return "₦" + amount.toFixed(2);
+}
+</example>
+<output kind="tsc">
+amount.ts:2:23 - error TS2339: Property 'toFixed' does not exist on type 'string | number'.
+  Property 'toFixed' does not exist on type 'string'.
+
+2   return "₦" + amount.toFixed(2);
+                        ~~~~~~~
+
+
+Found 1 error in amount.ts:2
+</output>
+<p>The compiler is right. <code>toFixed</code> is a number method, and <code>amount</code> might be a string. You cannot tell it "it is probably a number". You have to <em>check</em>, in plain JavaScript, and TypeScript follows your check:</p>
+<example file="amount.ts" project="problem">
+function formatAmount(amount: number | string): string {
+  if (typeof amount === "string") {
+    const parsed = Number(amount);
+    return "₦" + parsed.toFixed(2);
+  }
+  return "₦" + amount.toFixed(2);
+}
+
+console.log(formatAmount(1500));
+console.log(formatAmount("2500.5"));
+</example>
+<output>
+₦1500.00
+₦2500.50
+</output>
+<p>Every variable has a <strong>declared type</strong>: the type written in its annotation, here <code>number | string</code>. At each point in the code, TypeScript also tracks a <strong>narrowed type</strong>: what the value can still be, given the checks that ran before that point. Inside the <code>if</code>, <code>amount</code> is a <code>string</code>. After the <code>if</code> returns, only <code>number</code> is left. Turning a wide type into a more precise one this way is called <strong>narrowing</strong>, and the checks that do it are called <strong>type guards</strong>.</p>
+<p>You met narrowing briefly in <a href="/learn/ts-objects#narrowing">Interfaces, unions and literal types</a> and used <code>unknown</code> in <a href="/learn/ts-special-types">Special types</a>. This lesson covers every way to narrow, the traps in each, and how to write your own.</p>
+</section>
+
+<section>
+<h2 id="typeof">typeof</h2>
+<p>The JavaScript <code>typeof</code> operator returns one of eight strings: <code>"string"</code>, <code>"number"</code>, <code>"bigint"</code>, <code>"boolean"</code>, <code>"symbol"</code>, <code>"undefined"</code>, <code>"object"</code> and <code>"function"</code>. TypeScript knows which types go with each string, so comparing <code>typeof x</code> with one of them narrows <code>x</code>:</p>
+<example file="typeof.ts" project="typeof">
+function describe(value: string | number | boolean | (() => string)): string {
+  if (typeof value === "string") return `text of length ${value.length}`;
+  if (typeof value === "number") return `number ${value.toFixed(1)}`;
+  if (typeof value === "function") return `function returning ${value()}`;
+  return `boolean ${value ? "yes" : "no"}`;
+}
+
+console.log(describe("Ada"));
+console.log(describe(42));
+console.log(describe(() => "PAID"));
+console.log(describe(false));
+</example>
+<output>
+text of length 3
+number 42.0
+function returning PAID
+boolean no
+</output>
+<p>After three checks and three returns, only <code>boolean</code> is left on the last line, so TypeScript lets you use <code>value</code> as a boolean without another check.</p>
+<h3>The typeof null trap</h3>
+<p>One JavaScript mistake from 1995 is still with us: <code>typeof null</code> is <code>"object"</code>. So <code>typeof x === "object"</code> does not rule out <code>null</code>, and TypeScript knows it:</p>
+<example file="tags.ts" project="typeof" check="tsc-error">
+function countTags(tags: string | string[] | null): number {
+  if (typeof tags === "object") {
+    return tags.length;
+  }
+  return 1;
+}
+</example>
+<output kind="tsc">
+tags.ts:3:12 - error TS18047: 'tags' is possibly 'null'.
+
+3     return tags.length;
+             ~~~~
+
+
+Found 1 error in tags.ts:3
+</output>
+<p>Inside the <code>if</code>, <code>tags</code> is <code>string[] | null</code>, not <code>string[]</code>. Rule out <code>null</code> as well, or use a check that is more precise than <code>typeof</code>:</p>
+<example file="tags.ts" project="typeof">
+function countTags(tags: string | string[] | null): number {
+  if (tags === null) return 0;
+  if (Array.isArray(tags)) return tags.length;
+  return 1;
+}
+
+console.log(countTags(null), countTags("urgent"), countTags(["urgent", "vip", "lagos"]));
+</example>
+<output>
+0 1 3
+</output>
+<p><code>Array.isArray</code> narrows too. TypeScript's declaration for it is <code>isArray(arg: any): arg is any[]</code>, a type guard exactly like the ones you will write yourself later in this lesson.</p>
+</section>
+
+<section>
+<h2 id="truthiness">Truthiness narrowing and its traps</h2>
+<p>An <code>if (value)</code> check runs its branch only when the value is <strong>truthy</strong>: anything except the eight <strong>falsy</strong> values <code>false</code>, <code>0</code>, <code>-0</code>, <code>0n</code>, <code>NaN</code>, <code>""</code>, <code>null</code> and <code>undefined</code>. TypeScript uses this to remove <code>null</code> and <code>undefined</code> from a type:</p>
+<example file="nickname.ts" project="truthy">
+function greeting(nickname: string | undefined): string {
+  if (nickname) {
+    return `Welcome back, ${nickname.toUpperCase()}`;
+  }
+  return "Welcome back";
+}
+
+console.log(greeting("Ada"));
+console.log(greeting(undefined));
+console.log(greeting(""));
+</example>
+<output>
+Welcome back, ADA
+Welcome back
+Welcome back
+</output>
+<p>That is fine for a nickname, where an empty string really means "no nickname". Now the same habit on money:</p>
+<example file="balance.ts" project="truthy">
+function balanceLine(balance: number | null): string {
+  if (balance) {
+    return `Balance: ₦${balance.toLocaleString("en-NG")}`;
+  }
+  return "Balance not available";
+}
+
+console.log(balanceLine(125000));
+console.log(balanceLine(null));
+console.log(balanceLine(0));
+</example>
+<output>
+Balance: ₦125,000
+Balance not available
+Balance not available
+</output>
+<p>This compiles, and it is wrong. A customer with exactly ₦0 is told their balance is "not available", because <code>0</code> is falsy. TypeScript narrowed correctly: inside the <code>if</code>, <code>balance</code> is a <code>number</code>. But in the <code>else</code> path, <code>balance</code> is still <code>number | null</code>. The compiler never claimed the <code>else</code> branch meant <code>null</code>; the code's author assumed it.</p>
+<p>The fix is to say what you mean. When you want "not null or undefined", compare with <code>null</code>:</p>
+<example file="balance.ts" project="truthy">
+function balanceLine(balance: number | null): string {
+  if (balance !== null) {
+    return `Balance: ₦${balance.toLocaleString("en-NG")}`;
+  }
+  return "Balance not available";
+}
+
+console.log(balanceLine(0));
+
+const limit: number | undefined = 0;
+console.log(limit || 50000, limit ?? 50000);
+</example>
+<output>
+Balance: ₦0
+50000 0
+</output>
+<p>The same trap hides in <code>||</code>. <code>limit || 50000</code> replaces <em>every</em> falsy value, so a daily limit of 0 (an account that may not transfer anything) silently becomes ₦50,000. <code>??</code>, the nullish coalescing operator, only replaces <code>null</code> and <code>undefined</code>.</p>
+<warn title="TRUTHINESS ON NUMBERS AND STRINGS">Use <code>if (value)</code> only when every falsy value really means "missing": objects, arrays, and strings where <code>""</code> is empty. For numbers, amounts, counts, ids and flags, compare with <code>null</code> or <code>undefined</code> explicitly, and default with <code>??</code>.</warn>
+</section>
+
+<section>
+<h2 id="equality">Equality narrowing</h2>
+<p>Comparing with <code>===</code>, <code>!==</code>, <code>==</code> or <code>!=</code> narrows both sides. Comparing with a literal keeps only the matching member; comparing two variables keeps only the types they could share:</p>
+<example file="equality.ts" project="equality">
+type Channel = "sms" | "email" | "push";
+
+function send(channel: Channel, to: string | null, fallback: string | number): string {
+  if (to == null) return `${channel}: no recipient`;
+  if (channel === "sms") return `sms to ${to.replace(/^0/, "+234")}`;
+  if (to === fallback) return `${channel} to ${fallback.toLowerCase()} (same as fallback)`;
+  return `${channel} to ${to}`;
+}
+
+console.log(send("sms", "08031234567", 0));
+console.log(send("email", "ADA@EXAMPLE.COM", "ADA@EXAMPLE.COM"));
+console.log(send("push", null, 0));
+</example>
+<output>
+sms to +2348031234567
+email to ada@example.com (same as fallback)
+push: no recipient
+</output>
+<ul>
+<li><code>to == null</code> with two equals signs is the one place where loose equality is useful: it is true for both <code>null</code> and <code>undefined</code>, and TypeScript removes both from the type.</li>
+<li>After <code>channel === "sms"</code> returns, <code>channel</code> is <code>"email" | "push"</code>.</li>
+<li><code>to === fallback</code> can only be true when both are strings, because <code>to</code> is a <code>string</code> by then. So inside that branch <code>fallback</code> is narrowed to <code>string</code> too, and <code>.toLowerCase()</code> is allowed.</li>
+</ul>
+<p>A <code>switch</code> is a series of <code>===</code> checks, and narrows in exactly the same way in each <code>case</code>.</p>
+</section>
+
+<section>
+<h2 id="in-instanceof">in and instanceof</h2>
+<h3>The in operator</h3>
+<p><code>"iban" in account</code> is true when the object has a property called <code>iban</code>. When the union members differ in which properties they have, <code>in</code> picks the right member:</p>
+<example file="in.ts" project="in">
+interface LocalAccount {
+  accountNumber: string;
+  bankCode: string;
+}
+
+interface ForeignAccount {
+  iban: string;
+  swift: string;
+}
+
+function payee(account: LocalAccount | ForeignAccount): string {
+  if ("iban" in account) {
+    return `IBAN ${account.iban} via ${account.swift}`;
+  }
+  return `NUBAN ${account.accountNumber} at bank ${account.bankCode}`;
+}
+
+console.log(payee({ accountNumber: "0123456789", bankCode: "058" }));
+console.log(payee({ iban: "GB29NWBK60161331926819", swift: "NWBKGB2L" }));
+</example>
+<output>
+NUBAN 0123456789 at bank 058
+IBAN GB29NWBK60161331926819 via NWBKGB2L
+</output>
+<p><code>in</code> also works on objects whose type does not mention the property at all. After <code>typeof value === "object" &amp;&amp; value !== null &amp;&amp; "email" in value</code>, TypeScript knows <code>value</code> has an <code>email</code> property of type <code>unknown</code>. That is how <a href="/learn/ts-runtime#asserts">TypeScript and JavaScript together</a> checks request bodies one field at a time.</p>
+<h3>instanceof</h3>
+<p><code>x instanceof C</code> checks whether <code>C.prototype</code> is in the value's prototype chain. It narrows to the class type. This is the everyday way to tell errors apart:</p>
+<example file="instanceof.ts" project="instanceof">
+class InsufficientFundsError extends Error {
+  constructor(readonly shortBy: number) {
+    super(`short by ₦${shortBy}`);
+  }
+}
+
+function explain(error: unknown): string {
+  if (error instanceof InsufficientFundsError) return `Top up ₦${error.shortBy} and try again`;
+  if (error instanceof Error) return `Transfer failed: ${error.message}`;
+  if (error instanceof Date) return `Retry after ${error.toISOString().slice(0, 10)}`;
+  return "Transfer failed";
+}
+
+console.log(explain(new InsufficientFundsError(2500)));
+console.log(explain(new TypeError("amount must be a number")));
+console.log(explain(new Date("2026-10-01T00:00:00Z")));
+console.log(explain("timeout"));
+</example>
+<output>
+Top up ₦2500 and try again
+Transfer failed: amount must be a number
+Retry after 2026-10-01
+Transfer failed
+</output>
+<p>Order matters: <code>InsufficientFundsError</code> is also an <code>Error</code>, so the more specific check goes first. Two limits to remember: <code>instanceof</code> only works with classes, never with interfaces or type aliases, because those do not exist at runtime; and an object that came out of <code>JSON.parse</code> is never an instance of your class, even when it has all the right properties.</p>
+</section>
+
+<section>
+<h2 id="discriminants">Discriminated unions</h2>
+<p>The most reliable way to narrow objects is a <strong>discriminant</strong>: one property that every member of the union has, with a different literal value in each. A <code>switch</code> on it picks the member, and TypeScript checks every property access in every <code>case</code>:</p>
+<example file="payment.ts" project="payments">
+export type Payment =
+  | { kind: "card"; amount: number; last4: string }
+  | { kind: "transfer"; amount: number; bankCode: string; reference: string }
+  | { kind: "wallet"; amount: number; phone: string };
+
+export function receipt(payment: Payment): string {
+  switch (payment.kind) {
+    case "card":
+      return `₦${payment.amount} charged to card ending ${payment.last4}`;
+    case "transfer":
+      return `₦${payment.amount} sent to bank ${payment.bankCode}, ref ${payment.reference}`;
+    case "wallet":
+      return `₦${payment.amount} debited from wallet ${payment.phone}`;
+  }
+}
+
+console.log(receipt({ kind: "card", amount: 5000, last4: "4242" }));
+console.log(receipt({ kind: "wallet", amount: 1200, phone: "08031234567" }));
+</example>
+<output>
+₦5000 charged to card ending 4242
+₦1200 debited from wallet 08031234567
+</output>
+<p>Notice the function has no final <code>return</code>, and <code>tsc</code> does not complain. Because the <code>switch</code> covers all three kinds, TypeScript knows the end of the function cannot be reached. Add a fourth kind, <code>"ussd"</code>, without a <code>case</code>, and you get <em>Function lacks ending return statement</em>. For a clearer error, end with a <code>default</code> that assigns to <code>never</code>, the exhaustiveness check from <a href="/learn/ts-types#void-never">Basic types</a>.</p>
+<p>The discriminant also works after destructuring, as long as the variable you narrow is a <code>const</code> (or a parameter that is never reassigned):</p>
+<example file="destructure.ts" project="payments">
+import type { Payment } from "./payment.js";
+
+function fee(payment: Payment): number {
+  const { kind, amount } = payment;
+  if (kind === "transfer") {
+    return amount > 5000 ? 25 : 10;
+  }
+  return kind === "card" ? Math.round(amount * 0.015) : 0;
+}
+
+console.log(fee({ kind: "transfer", amount: 20000, bankCode: "058", reference: "RENT" }));
+console.log(fee({ kind: "card", amount: 5000, last4: "4242" }));
+</example>
+<output>
+25
+75
+</output>
+</section>
+
+<section>
+<h2 id="control-flow">Control-flow analysis</h2>
+<p>TypeScript does not narrow by looking at one <code>if</code> at a time. It follows every path through the function: returns, <code>throw</code>s, <code>break</code>s, assignments and loops. This is called <strong>control-flow analysis</strong>. Four rules explain almost everything you will see.</p>
+<h3>1. Early exits narrow the rest of the block</h3>
+<p>A <code>return</code> or <code>throw</code> inside an <code>if</code> means the code after it only runs when the check failed. This is why guard clauses work so well in TypeScript:</p>
+<example file="guard-clauses.ts" project="flow">
+interface Account {
+  id: string;
+  balance: number;
+  frozenReason?: string;
+}
+
+function withdraw(account: Account | undefined, amount: number): number {
+  if (account === undefined) throw new Error("account not found");
+  if (account.frozenReason !== undefined) throw new Error(`frozen: ${account.frozenReason}`);
+  if (amount > account.balance) throw new Error("insufficient funds");
+  return account.balance - amount;
+}
+
+console.log(withdraw({ id: "ACC-1", balance: 10000 }, 2500));
+for (const account of [undefined, { id: "ACC-2", balance: 100, frozenReason: "KYC pending" }]) {
+  try {
+    withdraw(account, 50);
+  } catch (error) {
+    console.log(String(error));
+  }
+}
+</example>
+<output>
+7500
+Error: account not found
+Error: frozen: KYC pending
+</output>
+<h3>2. Assignment narrows</h3>
+<p>Assigning a value narrows a variable to the type of what you assigned, within its declared type:</p>
+<example file="assign.ts" project="flow">
+let reference: string | number = "TX-001";
+console.log(reference.toLowerCase());
+
+reference = 1042;
+console.log(reference.toFixed(0).padStart(6, "0"));
+</example>
+<output>
+tx-001
+001042
+</output>
+<h3>3. A condition stored in a const still narrows</h3>
+<p>You can give a check a name, and the narrowing survives, as long as both the condition and the value are <code>const</code> (or parameters that are never reassigned):</p>
+<example file="aliased.ts" project="flow">
+function label(value: string | number): string {
+  const isText = typeof value === "string";
+  return isText ? value.toUpperCase() : value.toFixed(2);
+}
+
+console.log(label("pending"), label(99.5));
+</example>
+<output>
+PENDING 99.50
+</output>
+<h3>4. Narrowing does not survive everything</h3>
+<p>Narrowing is a promise about <em>this point in the code</em>. Two situations break it. First, a callback that runs later, on a variable that is assigned again after the callback is created:</p>
+<example file="closure.ts" project="flow" check="tsc-error">
+function scheduleReminder(email: string | undefined): void {
+  if (email === undefined) return;
+  setTimeout(() => console.log(`remind ${email.toLowerCase()}`), 1000);
+  email = undefined;
+}
+</example>
+<output kind="tsc">
+closure.ts:3:42 - error TS18048: 'email' is possibly 'undefined'.
+
+3   setTimeout(() => console.log(`remind ${email.toLowerCase()}`), 1000);
+                                           ~~~~~
+
+
+Found 1 error in closure.ts:3
+</output>
+<p>When the timer fires, <code>email</code> really is <code>undefined</code>, and the compiler caught it. Remove the last line, or copy the value into a <code>const</code> before the callback, and it compiles. The second situation goes the other way: the compiler <em>keeps</em> a narrowing that is no longer true. It assumes a function call does not change the properties it has already checked:</p>
+<example file="stale.ts" project="flow">
+interface Order {
+  total: number;
+  discount?: number;
+}
+
+function removeExpiredDiscount(order: Order): void {
+  delete order.discount;
+}
+
+const order: Order = { total: 20000, discount: 2000 };
+if (order.discount !== undefined) {
+  removeExpiredDiscount(order);
+  try {
+    console.log(order.discount.toFixed(2));
+  } catch (error) {
+    console.log(String(error));
+  }
+}
+</example>
+<output>
+TypeError: Cannot read properties of undefined (reading 'toFixed')
+</output>
+<p>This compiles and crashes. Checking every property again after every call would make almost all real code fail to compile, so TypeScript makes a practical choice and trusts you. The defence is a habit: read the property into a <code>const</code> (<code>const discount = order.discount</code>), check that, and use it. A <code>const</code> cannot change behind your back.</p>
+</section>
+
+<section>
+<h2 id="type-guards">Custom type guards: value is T</h2>
+<p>Sometimes the check you need is longer than one operator, or you need it in many places. Put it in a function whose return type is a <strong>type predicate</strong>, <code>parameterName is Type</code>. When the function returns <code>true</code>, TypeScript narrows the argument to <code>Type</code>; when it returns <code>false</code>, it removes <code>Type</code> from the argument's type:</p>
+<p>The examples in this section share the <code>Payment</code> union from before, kept in its own file:</p>
+<file name="types.ts" project="guards">
+export type Payment =
+  | { kind: "card"; amount: number; last4: string }
+  | { kind: "transfer"; amount: number; bankCode: string; reference: string }
+  | { kind: "wallet"; amount: number; phone: string };
+</file>
+<example file="guards.ts" project="guards">
+import type { Payment } from "./types.js";
+
+type CardPayment = Extract<Payment, { kind: "card" }>;
+
+function isCardPayment(payment: Payment): payment is CardPayment {
+  return payment.kind === "card";
+}
+
+const payments: Payment[] = [
+  { kind: "card", amount: 5000, last4: "4242" },
+  { kind: "wallet", amount: 1200, phone: "08031234567" },
+  { kind: "card", amount: 800, last4: "1881" },
+];
+
+const cards = payments.filter(isCardPayment);
+console.log(cards.map((card) => card.last4));
+
+const first = payments[1];
+if (first !== undefined && !isCardPayment(first)) {
+  console.log(first.kind);
+}
+</example>
+<output>
+[ '4242', '1881' ]
+wallet
+</output>
+<p><code>Extract&lt;Payment, { kind: "card" }&gt;</code> picks the card member out of the union; you will meet it properly in <a href="/learn/ts-advanced">Advanced and utility types</a>. Passing the guard to <code>filter</code> is the classic use: <code>filter</code> has an overload that takes a type predicate, so <code>cards</code> is <code>CardPayment[]</code>, not <code>Payment[]</code>, and <code>card.last4</code> is allowed. In the <code>else</code> direction, <code>!isCardPayment(first)</code> leaves <code>"transfer" | "wallet"</code> payments.</p>
+<h3>Inferred type predicates</h3>
+<p>Since TypeScript 5.5, a short arrow function that only returns a check is inferred as a type guard, so you often do not need to write the predicate:</p>
+<example file="inferred.ts" project="guards">
+const amounts = [1500, undefined, 700, undefined, 2500];
+const present = amounts.filter((amount) => amount !== undefined);
+const total = present.reduce((sum, amount) => sum + amount, 0);
+console.log(present.length, total);
+</example>
+<output>
+3 4700
+</output>
+<p>Before 5.5, <code>present</code> was <code>(number | undefined)[]</code> and <code>sum + amount</code> was an error. Inference only works when the function has no written return type and its body is a check TypeScript can read both ways; write the predicate yourself when the check is longer.</p>
+<h3>A guard can lie</h3>
+<p>TypeScript does not check that the body of a guard matches its predicate. It believes the <code>true</code>, and it also believes the <code>false</code>. A guard that returns <code>false</code> for some values that <em>are</em> the type makes the <code>else</code> branch lie:</p>
+<example file="lying-guard.ts" project="guards">
+function isBigAmount(amount: number | string): amount is number {
+  return typeof amount === "number" && amount >= 1_000_000;
+}
+
+function audit(amount: number | string): string {
+  if (isBigAmount(amount)) return `review ₦${amount}`;
+  try {
+    return `auto-approve ${amount.toUpperCase()}`;
+  } catch (error) {
+    return String(error);
+  }
+}
+
+console.log(audit(2_500_000));
+console.log(audit("450000"));
+console.log(audit(450000));
+</example>
+<output>
+review ₦2500000
+auto-approve 450000
+TypeError: amount.toUpperCase is not a function
+</output>
+<p>In the <code>else</code> path TypeScript removed <code>number</code>, so it let <code>amount.toUpperCase()</code> through. But ₦450,000 as a number also ends up there. A predicate must mean "is this type", exactly. Checks about the value ("is big", "is active") belong in a plain <code>boolean</code> function after narrowing.</p>
+</section>
+
+<section>
+<h2 id="assertion-functions">Assertion functions: asserts value is T</h2>
+<p>A type guard returns a boolean and leaves the <code>if</code> to you. An <strong>assertion function</strong> throws when the check fails, and when it returns normally, the narrowing holds for the rest of the scope. There are two forms: <code>asserts condition</code> narrows by whatever expression you pass, and <code>asserts value is T</code> narrows one argument:</p>
+<example file="assert.ts" project="asserts">
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
+
+function assertIsString(value: unknown, field: string): asserts value is string {
+  if (typeof value !== "string") throw new TypeError(`${field} must be a string`);
+}
+
+function openAccount(name: unknown, openingDeposit: number | null): string {
+  assertIsString(name, "name");
+  assert(openingDeposit !== null, "opening deposit is required");
+  assert(openingDeposit >= 1000, "opening deposit must be at least ₦1000");
+  return `${name.trim()}: ₦${openingDeposit.toFixed(2)}`;
+}
+
+console.log(openAccount("  Ada Obi ", 5000));
+for (const [name, deposit] of [[42, 5000], ["Grace", null], ["Grace", 500]] as const) {
+  try {
+    openAccount(name, deposit);
+  } catch (error) {
+    console.log(String(error));
+  }
+}
+</example>
+<output>
+Ada Obi: ₦5000.00
+TypeError: name must be a string
+Error: opening deposit is required
+Error: opening deposit must be at least ₦1000
+</output>
+<p>After <code>assert(openingDeposit !== null, …)</code>, <code>openingDeposit</code> is a <code>number</code> on every following line, exactly as if you had written <code>if (openingDeposit === null) throw …</code>. Node.js ships the same idea as <code>assert</code> from <code>node:assert</code>, which is typed <code>asserts value</code> too.</p>
+<p>One rule surprises everyone the first time. An assertion function must be called through a name whose type is written out. An arrow function stored in a <code>const</code> without an annotation does not count:</p>
+<example file="arrow-assert.ts" project="asserts" check="tsc-error">
+const assertPositive = (amount: number): asserts amount => {
+  if (amount <= 0) throw new RangeError("amount must be positive");
+};
+
+assertPositive(500);
+</example>
+<output kind="tsc">
+arrow-assert.ts:5:1 - error TS2775: Assertions require every name in the call target to be declared with an explicit type annotation.
+
+5 assertPositive(500);
+  ~~~~~~~~~~~~~~
+
+  arrow-assert.ts:1:7 - 'assertPositive' needs an explicit type annotation.
+    1 const assertPositive = (amount: number): asserts amount => {
+            ~~~~~~~~~~~~~~
+
+
+Found 1 error in arrow-assert.ts:5
+</output>
+<p>Control-flow analysis runs before full type inference, so it needs to know from the declaration alone that a call can narrow. Use a <code>function</code> declaration, as above, or annotate the <code>const</code>: <code>const assertPositive: (amount: number) =&gt; asserts amount = …</code>.</p>
+<p>Guards and assertion functions are also how you check data from outside your program, where the value starts as <code>unknown</code>. That boundary work, and why a guard must check every field, is covered in <a href="/learn/ts-runtime#guards">TypeScript and JavaScript together</a>.</p>
+</section>
+
+<section>
+<h2 id="build">Build: a payment router</h2>
+<reason title="Before you write the router">
+<p>A payments endpoint receives already-parsed payments, some from the old app (amount as a number) and some from the web app (amount as a string). Each must be routed to the card processor, the bank transfer service or the wallet service. Before reading the code, think:</p>
+<ul>
+<li>Which of the checks in this lesson fits each decision: which processor, which amount format, which error?</li>
+<li>What amounts must be refused? Think about <code>"abc"</code>, <code>"0"</code>, <code>-500</code>, <code>NaN</code>, and a string with spaces.</li>
+<li>Where would <code>if (amount)</code> be a bug?</li>
+<li>A processor can fail with a known error class, a generic <code>Error</code>, or something that is not an error at all. How do you report each?</li>
+</ul>
+<answer>
+<p>The processor is chosen by the <code>kind</code> discriminant, with a <code>switch</code> so a new kind cannot be forgotten. The amount format is a <code>typeof</code> check. The amount must be converted and then checked with <code>Number.isFinite</code> and <code>&gt; 0</code>: <code>Number("abc")</code> is <code>NaN</code>, which is still of type <code>number</code>, so no type check catches it. <code>if (amount)</code> would treat <code>0</code> as "missing" instead of "invalid", and would accept <code>"0"</code>, a non-empty string. Errors are <code>unknown</code> in <code>catch</code>, so they are narrowed with <code>instanceof</code>, most specific class first, with a fallback for anything else.</p>
+</answer>
+</reason>
+<example file="router.ts" project="router">
+type Amount = number | string;
+
+type Payment =
+  | { kind: "card"; amount: Amount; last4: string }
+  | { kind: "transfer"; amount: Amount; bankCode: string }
+  | { kind: "wallet"; amount: Amount; phone: string };
+
+class ProcessorDownError extends Error {
+  constructor(readonly processor: string) {
+    super(`${processor} is unavailable`);
+  }
+}
+
+function toKobo(amount: Amount): number {
+  const naira = typeof amount === "string" ? Number(amount.trim()) : amount;
+  if (!Number.isFinite(naira) || naira <= 0) {
+    throw new RangeError(`invalid amount: ${JSON.stringify(amount)}`);
+  }
+  return Math.round(naira * 100);
+}
+
+function charge(payment: Payment, kobo: number): string {
+  switch (payment.kind) {
+    case "card":
+      return `card *${payment.last4} charged ${kobo} kobo`;
+    case "transfer":
+      if (payment.bankCode === "999") throw new ProcessorDownError("NIP gateway");
+      return `transfer to bank ${payment.bankCode}: ${kobo} kobo`;
+    case "wallet":
+      if (!/^0\d{10}$/.test(payment.phone)) throw "wallet rejected the phone number";
+      return `wallet ${payment.phone} debited ${kobo} kobo`;
+    default: {
+      const unhandled: never = payment;
+      throw new Error(`unknown payment ${JSON.stringify(unhandled)}`);
+    }
+  }
+}
+
+export function route(payment: Payment): string {
+  try {
+    return "OK    " + charge(payment, toKobo(payment.amount));
+  } catch (error) {
+    if (error instanceof ProcessorDownError) return `RETRY ${error.processor}`;
+    if (error instanceof RangeError) return `FAIL  ${error.message}`;
+    if (error instanceof Error) return `FAIL  unexpected: ${error.message}`;
+    return `FAIL  ${String(error)}`;
+  }
+}
+
+const requests: Payment[] = [
+  { kind: "card", amount: 5000, last4: "4242" },
+  { kind: "transfer", amount: " 12500.50 ", bankCode: "058" },
+  { kind: "wallet", amount: "1200", phone: "08031234567" },
+  { kind: "card", amount: "abc", last4: "1881" },
+  { kind: "card", amount: 0, last4: "1881" },
+  { kind: "transfer", amount: 700, bankCode: "999" },
+  { kind: "wallet", amount: 300, phone: "12345" },
+];
+
+for (const payment of requests) console.log(route(payment));
+</example>
+<output>
+OK    card *4242 charged 500000 kobo
+OK    transfer to bank 058: 1250050 kobo
+OK    wallet 08031234567 debited 120000 kobo
+FAIL  invalid amount: "abc"
+FAIL  invalid amount: 0
+RETRY NIP gateway
+FAIL  wallet rejected the phone number
+</output>
+<p>Every narrowing form from this lesson is here. <code>typeof</code> picks the amount format, <code>Number.isFinite</code> catches the <code>NaN</code> that no type can, the discriminant chooses the processor, <code>never</code> guards against a forgotten kind, and <code>instanceof</code> sorts the errors. Converting to <strong>kobo</strong> (hundredths of a naira) as a whole number keeps money out of floating-point trouble from here on.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing narrowing code</h2>
+<p>The compiler proves that each branch uses the value correctly. It cannot prove that your checks <em>send each value to the right branch</em>. That is what tests are for, and guards are the easiest code in the world to test: a table of values and the answer you expect for each.</p>
+<example file="guard.test.ts" project="testing">
+function isNuban(value: unknown): value is string {
+  return typeof value === "string" && /^\d{10}$/.test(value);
+}
+
+const cases: [unknown, boolean][] = [
+  ["0123456789", true],
+  ["012345678", false],
+  ["01234567890", false],
+  ["01234 56789", false],
+  [1234567890, false],
+  [null, false],
+  [undefined, false],
+  [["0123456789"], false],
+];
+
+let failures = 0;
+for (const [input, expected] of cases) {
+  const actual = isNuban(input);
+  if (actual !== expected) failures++;
+  console.log(`${actual === expected ? "PASS" : "FAIL"} ${JSON.stringify(input)} -> ${actual}`);
+}
+console.log(`${failures} failures`);
+</example>
+<output>
+PASS "0123456789" -> true
+PASS "012345678" -> false
+PASS "01234567890" -> false
+PASS "01234 56789" -> false
+PASS 1234567890 -> false
+PASS null -> false
+PASS undefined -> false
+PASS ["0123456789"] -> false
+0 failures
+</output>
+<p>For a guard, always include the values that are <em>almost</em> right (nine digits, eleven digits, a number instead of a string) and the values <code>typeof</code> gets wrong (<code>null</code>, arrays). In a real project the same table goes into a Vitest <code>it.each</code>, which you will meet in <a href="/learn/testing-basics">the testing lesson</a>.</p>
+</section>
+
+<section>
+<h2 id="production">Narrowing in production code</h2>
+<ul>
+<li><strong>Prefer discriminants to property sniffing.</strong> <code>"iban" in account</code> works, but a <code>kind</code> property is explicit, survives refactoring, and gives you exhaustiveness checks.</li>
+<li><strong>Narrow once, near the edge.</strong> A function that receives <code>string | number</code> should turn it into one type early (like <code>toKobo</code>) so the rest of the code has nothing to narrow.</li>
+<li><strong>Copy before callbacks.</strong> <code>const email = user.email</code>, then use <code>email</code> in the callback. It removes both closure problems and stale property narrowing.</li>
+<li><strong>Keep predicates exact.</strong> A predicate means "is this type", nothing else. Keep guards short and test them with a table.</li>
+<li><strong>Never narrow with <code>as</code>.</strong> <code>payment as CardPayment</code> compiles without any check. The next lesson explains exactly what <code>as</code> does, and when it is acceptable.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Fix the zero-quantity bug">
+<p>This inventory function says "out of stock" for beans, which is right (0 left), and also for garri, which the shop does not sell at all. Rewrite it so a missing item returns <code>"unknown item"</code>, 0 returns <code>"out of stock"</code>, and anything else returns <code>"N in stock"</code>.</p>
+<example file="stock.ts" project="ex-stock">
+const stock: Record<string, number | undefined> = { rice: 12, beans: 0 };
+
+function stockLine(item: string): string {
+  const quantity = stock[item];
+  if (!quantity) return "out of stock";
+  return `${quantity} in stock`;
+}
+
+console.log(stockLine("rice"), "|", stockLine("beans"), "|", stockLine("garri"));
+</example>
+<output>
+12 in stock | out of stock | out of stock
+</output>
+<solution>
+<example file="stock.ts" project="ex-stock">
+const stock: Record<string, number | undefined> = { rice: 12, beans: 0 };
+
+function stockLine(item: string): string {
+  const quantity = stock[item];
+  if (quantity === undefined) return "unknown item";
+  if (quantity === 0) return "out of stock";
+  return `${quantity} in stock`;
+}
+
+console.log(stockLine("rice"), "|", stockLine("beans"), "|", stockLine("garri"));
+</example>
+<output>
+12 in stock | out of stock | unknown item
+</output>
+<p><code>!quantity</code> lumped together two different facts: "not in the list" (<code>undefined</code>) and "none left" (<code>0</code>). Compare with each value explicitly and each case gets its own branch.</p>
+</solution>
+</exercise>
+<exercise title="A guard for a union member">
+<p>Bookings are <code>{ status: "confirmed"; seat: string }</code> or <code>{ status: "waitlisted"; position: number }</code>. Write a type guard <code>isConfirmed</code> and use it with <code>filter</code> to print the seats of the confirmed bookings.</p>
+<solution>
+<example file="bookings.ts" project="ex-bookings">
+type Confirmed = { status: "confirmed"; seat: string };
+type Waitlisted = { status: "waitlisted"; position: number };
+type Booking = Confirmed | Waitlisted;
+
+function isConfirmed(booking: Booking): booking is Confirmed {
+  return booking.status === "confirmed";
+}
+
+const bookings: Booking[] = [
+  { status: "confirmed", seat: "12A" },
+  { status: "waitlisted", position: 3 },
+  { status: "confirmed", seat: "4C" },
+];
+
+console.log(bookings.filter(isConfirmed).map((booking) => booking.seat));
+</example>
+<output>
+[ '12A', '4C' ]
+</output>
+<p>The predicate is exact: it returns <code>true</code> for every confirmed booking and only for them, so both the <code>true</code> and the <code>false</code> narrowing are honest. With TypeScript 5.5 or later, <code>bookings.filter((b) =&gt; b.status === "confirmed")</code> infers the same predicate.</p>
+</solution>
+</exercise>
+<exercise title="An assertion for account ids">
+<p>Write <code>assertAccountId(value: unknown): asserts value is string</code> that accepts strings like <code>"ACC-00042"</code> (<code>ACC-</code> and five digits) and throws a <code>TypeError</code> otherwise. Call it on three values and print either the id in lower case or the error.</p>
+<solution>
+<example file="account-id.ts" project="ex-assert">
+function assertAccountId(value: unknown): asserts value is string {
+  if (typeof value !== "string" || !/^ACC-\d{5}$/.test(value)) {
+    throw new TypeError(`not an account id: ${JSON.stringify(value)}`);
+  }
+}
+
+for (const input of ["ACC-00042", "ACC-42", 42]) {
+  try {
+    assertAccountId(input);
+    console.log(input.toLowerCase());
+  } catch (error) {
+    console.log(String(error));
+  }
+}
+</example>
+<output>
+acc-00042
+TypeError: not an account id: "ACC-42"
+TypeError: not an account id: 42
+</output>
+<p>After the call, <code>input</code> is a <code>string</code>, so <code>toLowerCase</code> compiles. <code>JSON.stringify</code> in the message shows the difference between the string <code>"42"</code> and the number <code>42</code>.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A variable has a declared type and, at each point in the code, a narrowed type. Checks written in plain JavaScript narrow it.</li>
+<li><code>typeof</code> narrows primitives and functions, but <code>typeof null</code> is <code>"object"</code>. <code>Array.isArray</code>, <code>in</code> and <code>instanceof</code> narrow objects; <code>instanceof</code> needs a class.</li>
+<li>Truthiness removes <code>null</code> and <code>undefined</code>, but also sends <code>0</code>, <code>""</code> and <code>NaN</code> to the other branch. Compare explicitly for numbers and use <code>??</code> for defaults.</li>
+<li>Equality narrows both sides; <code>== null</code> covers <code>null</code> and <code>undefined</code>. A <code>switch</code> on a discriminant is the most reliable way to narrow objects.</li>
+<li>Control-flow analysis follows returns, throws and assignments. Narrowing can be lost in callbacks, and can go stale on properties after a function call.</li>
+<li><code>value is T</code> guards and <code>asserts value is T</code> functions package checks for reuse. The compiler trusts them in both directions, so keep them exact and test them.</li>
+</ul>
+<p>Next: <a href="/learn/ts-assertions">Type assertions</a>, the one tool that changes a type without any check at all, and when it is still the right choice.</p>
+</section>

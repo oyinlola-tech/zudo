@@ -1,0 +1,692 @@
+<question id="asr-what-it-does" type="choice">
+<q>What does <code>const user = body as User;</code> do at runtime?</q>
+<option>It checks that <code>body</code> has every property of <code>User</code> and throws if not</option>
+<option>It copies <code>body</code> into a new object with only the <code>User</code> properties</option>
+<option correct>Nothing: it compiles to <code>const user = body;</code></option>
+<option>It converts each property to the type declared in <code>User</code></option>
+<explain><p>A type assertion only changes what the compiler believes. It is erased completely, so <code>user</code> is exactly the same value as <code>body</code>, extra properties, missing properties and all.</p></explain>
+</question>
+
+<question id="asr-convert-output" type="output">
+<q>What does this print?</q>
+<code file="convert.ts">
+const fromForm: unknown = "1500";
+const asserted = fromForm as unknown as number;
+const converted = Number(fromForm);
+console.log(asserted + 500, converted + 500);
+</code>
+<option correct>1500500 2000</option>
+<option>2000 2000</option>
+<option>1500500 1500500</option>
+<option>NaN 2000</option>
+<explain><p>The assertion leaves the string <code>"1500"</code> as it is, so <code>+ 500</code> joins text. <code>Number(…)</code> really converts. When you need a different value, call a function; <code>as</code> never converts.</p></explain>
+</question>
+
+<question id="asr-mass-assignment" type="output">
+<q>What does this print?</q>
+<code file="mass.ts">
+interface NewUser {
+  email: string;
+}
+
+function register(body: unknown) {
+  const input = body as NewUser;
+  return { role: "customer", ...input };
+}
+
+const saved = register(JSON.parse('{"email": "eve@example.com", "role": "admin"}'));
+console.log(saved.role);
+</code>
+<option correct>admin</option>
+<option>customer</option>
+<option>undefined</option>
+<option>A compile error: role does not exist on NewUser</option>
+<explain><p><code>as NewUser</code> removes nothing. The client's <code>role</code> is still in the object, and because the spread comes after <code>role: "customer"</code>, it wins. Build stored objects from named, checked fields instead.</p></explain>
+</question>
+
+<question id="asr-missing-field" type="output">
+<q>This compiles. What does it print?</q>
+<code file="missing.ts">
+interface Transfer {
+  amount: number;
+  reference: string;
+}
+
+const body: unknown = JSON.parse('{"amount": 5000}');
+const transfer = body as Transfer;
+
+try {
+  console.log(transfer.reference.toUpperCase());
+} catch (error) {
+  console.log(error instanceof TypeError ? "TypeError" : "other");
+}
+</code>
+<option correct>TypeError</option>
+<option>undefined</option>
+<option>REFERENCE</option>
+<option>A compile error, so nothing runs</option>
+<explain><p>The compiler types <code>transfer.reference</code> as a <code>string</code> because you asserted it. At runtime it is <code>undefined</code>, and calling a method on <code>undefined</code> throws a <code>TypeError</code>.</p></explain>
+</question>
+
+<question id="asr-ts2352" type="choice">
+<q>Why does <code>const amount = "2500" as number;</code> fail with error TS2352?</q>
+<option>Because assertions are not allowed on literals</option>
+<option correct>Because <code>string</code> and <code>number</code> do not overlap: neither is assignable to the other</option>
+<option>Because <code>"2500"</code> cannot be converted to a number</option>
+<option>Because <code>as</code> requires <code>strict</code> mode to be off</option>
+<explain><p>An assertion is allowed when one type is assignable to the other. <code>string</code> and <code>number</code> are unrelated, so TypeScript asks whether you really meant it, and suggests going through <code>unknown</code> if you did.</p></explain>
+</question>
+
+<question id="asr-double" type="choice">
+<q>What makes <code>value as unknown as T</code> compile for any <code>T</code>?</q>
+<option>TypeScript checks <code>value</code> twice, once for each <code>as</code></option>
+<option correct>Every type is assignable to <code>unknown</code>, and <code>unknown</code> overlaps with every type, so both steps are allowed</option>
+<option><code>unknown</code> converts the value to <code>T</code> at runtime</option>
+<option>It only compiles when <code>T</code> is an interface</option>
+<explain><p>Each step passes the overlap rule on its own, so the pair can turn anything into anything. That is exactly why it should be rare and justified.</p></explain>
+</question>
+
+<question id="asr-which-compiles" type="choice">
+<q>With <code>interface Account { id: string; balance: number }</code>, which line compiles <strong>without</strong> an error?</q>
+<option><code>const a: Account = { id: "ACC-1" };</code></option>
+<option correct><code>const a = { id: "ACC-1" } as Account;</code></option>
+<option><code>const a = { id: 1, balance: 0 } as Account;</code></option>
+<option><code>const a = { id: "ACC-1" } satisfies Account;</code></option>
+<explain><p><code>Account</code> is assignable to <code>{ id: string }</code>, so the assertion is a legal "move down" and compiles, missing <code>balance</code> and all. The annotation and <code>satisfies</code> check the value and report the missing property; <code>{ id: 1 }</code> has the wrong <code>id</code> type, so even the assertion is refused.</p></explain>
+</question>
+
+<question id="asr-literal-union" type="output">
+<q>This compiles. What does it print?</q>
+<code file="kind.ts">
+type PaymentKind = "card" | "transfer";
+
+function fee(kind: PaymentKind): number {
+  return kind === "card" ? 100 : 25;
+}
+
+const kind = "cash" as PaymentKind;
+console.log(kind, fee(kind));
+</code>
+<option correct>cash 25</option>
+<option>cash 100</option>
+<option>card 100</option>
+<option>A compile error: "cash" is not a PaymentKind</option>
+<explain><p>In an assertion, the literal <code>"cash"</code> is compared as a <code>string</code>, which overlaps with any union of strings, so it compiles. <code>"cash"</code> is not <code>"card"</code>, so the fee is the transfer fee. An annotation, <code>const kind: PaymentKind = "cash"</code>, would have been refused.</p></explain>
+</question>
+
+<question id="asr-excess" type="output">
+<q>What does this print?</q>
+<code file="excess.ts">
+interface Invoice {
+  id: string;
+  total: number;
+}
+
+const invoice = { id: "INV-1", total: 5000, paid: true } as Invoice;
+console.log(Object.keys(invoice).length);
+</code>
+<option correct>3</option>
+<option>2</option>
+<option>A compile error: paid does not exist in Invoice</option>
+<option>undefined</option>
+<explain><p>Excess property checks run for annotations and arguments, not for assertions. The <code>paid</code> property stays on the object, even though the <code>Invoice</code> type does not mention it.</p></explain>
+</question>
+
+<question id="asr-annotation-vs-as" type="choice">
+<q>Which sentence describes the difference between <code>const x: T = value</code> and <code>const x = value as T</code>?</q>
+<option>They are the same; the annotation is just older syntax</option>
+<option correct>The annotation checks that <code>value</code> fits <code>T</code>; the assertion overrides that check</option>
+<option>The annotation converts the value; the assertion only checks it</option>
+<option>The assertion is checked at runtime; the annotation only at compile time</option>
+<explain><p>An annotation asks the compiler to verify the value. An assertion tells the compiler to stop verifying. Neither exists at runtime.</p></explain>
+</question>
+
+<question id="asr-angle" type="choice">
+<q>What is <code>&lt;Currency&gt;raw</code>?</q>
+<option>A call to a generic function called <code>raw</code></option>
+<option correct>The older angle-bracket form of <code>raw as Currency</code>, with exactly the same meaning</option>
+<option>A runtime check that <code>raw</code> is a <code>Currency</code></option>
+<option>JSX that renders a <code>Currency</code> component</option>
+<explain><p>Angle-bracket assertions predate <code>as</code>. They mean the same thing, but they are not allowed in <code>.tsx</code> files, where they look like JSX, so modern code uses <code>as</code>.</p></explain>
+</question>
+
+<question id="asr-angle-tsx" type="choice">
+<q>Why do modern codebases write <code>as</code> instead of angle-bracket assertions?</q>
+<option>Because angle-bracket assertions are slower</option>
+<option correct>Because angle brackets clash with JSX in <code>.tsx</code> files and are easily confused with generics</option>
+<option>Because angle-bracket assertions check the value at runtime</option>
+<option>Because <code>as</code> converts values and angle brackets do not</option>
+<explain><p>The two forms are identical in meaning. <code>as</code> works everywhere, including <code>.tsx</code>, and reads unambiguously.</p></explain>
+</question>
+
+<question id="asr-bang-output" type="output">
+<q>What does this print?</q>
+<code file="bang.ts">
+const balances = new Map<string, number>([["ACC-1", 8000]]);
+
+function withdraw(id: string, amount: number): number {
+  return balances.get(id)! - amount;
+}
+
+console.log(withdraw("ACC-1", 3000), withdraw("ACC-7", 3000));
+</code>
+<option correct>5000 NaN</option>
+<option>5000 -3000</option>
+<option>5000 undefined</option>
+<option>5000, then a TypeError</option>
+<explain><p><code>!</code> compiles to nothing. For the unknown account, <code>get</code> returns <code>undefined</code>, and <code>undefined - 3000</code> is <code>NaN</code>: no crash, just a wrong number that can spread. A check or <code>getOrThrow</code> would have stopped it.</p></explain>
+</question>
+
+<question id="asr-bang-meaning" type="choice">
+<q>What does the postfix <code>!</code> in <code>users.find((u) =&gt; u.id === id)!</code> do?</q>
+<option>Throws if <code>find</code> returns <code>undefined</code></option>
+<option correct>Removes <code>undefined</code> (and <code>null</code>) from the type, without any runtime check</option>
+<option>Negates the result, like <code>!value</code></option>
+<option>Returns a default user when nothing is found</option>
+<explain><p>The non-null assertion only affects the type. If <code>find</code> returns <code>undefined</code>, the code continues with <code>undefined</code> and fails later, somewhere less obvious.</p></explain>
+</question>
+
+<question id="asr-bang-replacement" type="choice">
+<q>A dashboard shows a customer's loyalty points from <code>points.get(customerId)</code>. A missing entry simply means 0 points. What should replace <code>points.get(customerId)!</code>?</q>
+<option><code>points.get(customerId) as number</code></option>
+<option correct><code>points.get(customerId) ?? 0</code></option>
+<option><code>points.get(customerId) || 0</code>, because it is shorter</option>
+<option>Keep the <code>!</code>, since the dashboard is not critical</option>
+<explain><p>When missing has a sensible default, <code>??</code> says so explicitly. <code>as number</code> is the same lie as <code>!</code>. <code>||</code> happens to work here, but it also replaces other falsy values, so <code>??</code> states the intent exactly.</p></explain>
+</question>
+
+<question id="asr-get-or-throw" type="output">
+<q>What does this print?</q>
+<code file="get-or-throw.ts">
+function getOrThrow<K, V>(map: ReadonlyMap<K, V>, key: K): V {
+  const value = map.get(key);
+  if (value === undefined) throw new Error(`missing ${String(key)}`);
+  return value;
+}
+
+const stock = new Map([["rice", 0], ["beans", 4]]);
+console.log(getOrThrow(stock, "rice"));
+try {
+  getOrThrow(stock, "garri");
+} catch (error) {
+  console.log(error instanceof Error ? error.message : "?");
+}
+</code>
+<option correct>0
+missing garri</option>
+<option>missing rice
+missing garri</option>
+<option>0
+undefined</option>
+<option>0
+NaN</option>
+<explain><p>The helper checks for <code>undefined</code> exactly, so a real 0 is returned. A missing key throws with a message that says what was missing, instead of letting <code>undefined</code> leak on.</p></explain>
+</question>
+
+<question id="asr-definite" type="output">
+<q>What does this print?</q>
+<code file="definite.ts">
+class Cart {
+  total!: number;
+
+  add(price: number): void {
+    this.total += price;
+  }
+}
+
+const cart = new Cart();
+cart.add(1200);
+cart.add(800);
+console.log(cart.total);
+</code>
+<option correct>NaN</option>
+<option>2000</option>
+<option>undefined</option>
+<option>A compile error: total is not initialised</option>
+<explain><p><code>total!: number</code> is a definite assignment assertion: it silences the "not initialised" check. Nothing set <code>total</code>, so <code>undefined + 1200</code> is <code>NaN</code>. Write <code>total = 0</code> instead.</p></explain>
+</question>
+
+<question id="asr-definite-meaning" type="choice">
+<q>What does <code>let rate!: number;</code> promise the compiler?</q>
+<option>That <code>rate</code> will never be <code>null</code></option>
+<option correct>That <code>rate</code> will be assigned before it is read, even though the compiler cannot see where</option>
+<option>That <code>rate</code> is a constant</option>
+<option>That <code>rate</code> starts at 0</option>
+<explain><p>After a variable or property name, <code>!</code> is a definite assignment assertion. It switches off the "used before being assigned" error, and nothing checks the promise.</p></explain>
+</question>
+
+<question id="asr-satisfies-keeps" type="choice">
+<q>What does <code>satisfies</code> give you that an annotation does not?</q>
+<option>A runtime check of the value</option>
+<option correct>The value is checked against the type, but the variable keeps the more precise inferred type</option>
+<option>It allows missing properties</option>
+<option>It converts the value to the type</option>
+<explain><p>With <code>const fees = { … } satisfies Record&lt;Currency, FeeRule&gt;</code>, missing currencies are errors, yet <code>fees.NGN.cap</code> is still known to exist. With an annotation, <code>cap</code> would be <code>number | undefined</code>.</p></explain>
+</question>
+
+<question id="asr-satisfies-vs-as" type="choice">
+<q>A config object is missing a required key. Which version reports it at compile time?</q>
+<option><code>const config = { … } as Config;</code></option>
+<option correct><code>const config = { … } satisfies Config;</code></option>
+<option><code>const config = &lt;Config&gt;{ … };</code></option>
+<option><code>const config = { … } as unknown as Config;</code></option>
+<explain><p><code>satisfies</code> checks the value like an annotation. All three assertion forms override the check, so a missing key becomes <code>undefined</code> at runtime.</p></explain>
+</question>
+
+<question id="asr-satisfies-runtime" type="choice">
+<q>Can <code>JSON.parse(text) satisfies User</code> protect you from bad JSON?</q>
+<option>Yes: <code>satisfies</code> validates the parsed object at runtime</option>
+<option correct>No: <code>satisfies</code> only checks what the compiler can see, and <code>JSON.parse</code> returns <code>any</code></option>
+<option>Yes, but only in strict mode</option>
+<option>Only for objects with fewer than ten properties</option>
+<explain><p><code>satisfies</code> is a compile-time check, erased like every type. Runtime data needs a runtime check: a guard, an assertion function or a validator.</p></explain>
+</question>
+
+<question id="asr-as-const" type="choice">
+<q>Why is <code>as const</code> considered safe, unlike other assertions?</q>
+<option>Because it freezes the object at runtime</option>
+<option correct>Because it can only make the type narrower and read-only, based on the literal value that is right there</option>
+<option>Because it validates the value</option>
+<option>Because it is removed only in production builds</option>
+<explain><p><code>["card", "transfer"] as const</code> becomes <code>readonly ["card", "transfer"]</code>: exactly what the literal is. It cannot claim anything the value does not show. (It does not freeze anything at runtime; <code>readonly</code> is compile-time only.)</p></explain>
+</question>
+
+<question id="asr-justified-keys" type="choice">
+<q>Which assertion is justified?</q>
+<option><code>const body = (await response.json()) as Order;</code></option>
+<option><code>const port = process.env.PORT as unknown as number;</code></option>
+<option correct><code>const currencies = Object.keys(rates) as Currency[];</code> right after <code>const rates: Record&lt;Currency, number&gt; = { NGN: 1, USD: 1550 };</code></option>
+<option><code>const user = req.body as User;</code></option>
+<explain><p>The keys come from a literal the same code just created, so the proof is on the line above. The other three trust data from the network or the environment, which needs a runtime check; the <code>PORT</code> line does not even convert the string.</p></explain>
+</question>
+
+<question id="asr-object-keys" type="choice">
+<q>Why is <code>Object.keys(obj)</code> typed as <code>string[]</code>, even when <code>obj</code> is a <code>Record&lt;Currency, number&gt;</code>?</q>
+<option>Because TypeScript cannot read object literals</option>
+<option correct>Because an object of that type may have extra keys at runtime (structural typing), so TypeScript cannot promise only <code>Currency</code> keys</option>
+<option>Because <code>Object.keys</code> converts keys to strings</option>
+<option>Because of a bug that will be fixed</option>
+<explain><p>Any object with at least those keys fits the type, so the real keys could be more. When you created the object yourself and know its keys, asserting to <code>Currency[]</code> is a reasonable, local promise.</p></explain>
+</question>
+
+<question id="asr-test-fake" type="choice">
+<q>Why is <code>{ charge: async () =&gt; ({ reference: "T1" }) } as unknown as PaymentGateway</code> acceptable in a unit test, but not in application code?</q>
+<option>Because tests do not run TypeScript</option>
+<option correct>Because in a test, a missing method fails immediately and loudly in CI; in production it would fail later, for a customer</option>
+<option>Because test files are allowed to use <code>any</code></option>
+<option>Because <code>as unknown as</code> checks the fake at runtime</option>
+<explain><p>The double assertion hides the missing methods. In a test that only calls <code>charge</code>, that is a fair trade. In application code, the gap stays hidden until someone calls another method.</p></explain>
+</question>
+
+<question id="asr-many-bangs" type="choice">
+<q>A file has <code>payment.card!.last4</code>, <code>payment.bank!.code</code> and <code>payment.wallet!.phone</code> in many places. What does this suggest?</q>
+<option>The file needs more <code>!</code> operators</option>
+<option correct>The payment type is one wide type with optional fields; a discriminated union would let narrowing prove which fields exist</option>
+<option>Strict mode should be switched off</option>
+<option>The fields should all be typed <code>any</code></option>
+<explain><p>Many assertions usually mean the types do not describe the data. With a <code>kind</code> discriminant, <code>switch (payment.kind)</code> narrows to the member that has <code>last4</code>, and no <code>!</code> is needed.</p></explain>
+</question>
+
+<question id="asr-boundary" type="choice">
+<q>Which of these values should <strong>never</strong> be given its type with <code>as</code>?</q>
+<option>An empty array you are about to fill: <code>[] as Payment[]</code></option>
+<option correct>A request body from a client</option>
+<option>A literal list of statuses with <code>as const</code></option>
+<option>The keys of an object literal you just wrote</option>
+<explain><p>A request body crossed a boundary and may contain anything, including an attacker's extra fields. It must be parsed and checked. The other three are values your own code created.</p></explain>
+</question>
+
+<question id="asr-upcast" type="choice">
+<q>Which assertion is always safe, because it moves <em>up</em> to a wider type?</q>
+<option><code>(value as unknown) as User</code></option>
+<option correct><code>(user as { email: string })</code>, where <code>user</code> is a full <code>User</code> with an <code>email</code></option>
+<option><code>(input as User)</code>, where <code>input</code> is <code>{ email: string }</code></option>
+<option><code>(id as number)</code>, where <code>id</code> is <code>string | number</code></option>
+<explain><p>A full <code>User</code> really has everything <code>{ email: string }</code> requires, so the wider type is true. Moving down, from less information to more, is where assertions become promises nobody checks.</p></explain>
+</question>
+
+<question id="asr-down-unchecked" type="output">
+<q>This compiles. What does it print?</q>
+<code file="down.ts">
+function total(amounts: (number | string)[]): number {
+  let sum = 0;
+  for (const amount of amounts) sum += amount as number;
+  return sum;
+}
+
+console.log(total([1000, 500]), total([1000, "500"]));
+</code>
+<option correct>1500 1000500</option>
+<option>1500 1500</option>
+<option>1500 NaN</option>
+<option>A compile error</option>
+<explain><p><code>amount as number</code> moves down from <code>number | string</code> without checking. When a string slips in, <code>+=</code> joins text, and the "total" becomes the string <code>"1000500"</code>. Narrow with <code>typeof</code>, or convert with <code>Number</code>.</p></explain>
+</question>
+
+<question id="asr-emit" type="choice">
+<q>After <code>tsc</code> compiles <code>const balance = balances.get("ACC-1")!;</code>, what is in the JavaScript file?</q>
+<option><code>const balance = balances.get("ACC-1") ?? throwError();</code></option>
+<option correct><code>const balance = balances.get("ACC-1");</code></option>
+<option><code>const balance = assertNotNull(balances.get("ACC-1"));</code></option>
+<option><code>const balance = !balances.get("ACC-1");</code></option>
+<explain><p>Like every assertion, the non-null <code>!</code> is erased. Nothing at runtime ever checks it.</p></explain>
+</question>
+
+<question id="asr-lint" type="choice">
+<q>What is a practical way to keep assertions rare in a team codebase?</q>
+<option>Switch off <code>strict</code> so fewer assertions are needed</option>
+<option correct>Enable lint rules such as typescript-eslint's <code>no-non-null-assertion</code>, so each remaining assertion is a reviewed, deliberate choice</option>
+<option>Replace every <code>as</code> with <code>as unknown as</code></option>
+<option>Use angle-bracket assertions, which the linter cannot see</option>
+<explain><p>A linter makes assertions visible in review. Combined with "parse at the boundary", most files end up with none.</p></explain>
+</question>
+
+<question id="asr-parse-output" type="output">
+<q>What does this print?</q>
+<code file="parse.ts">
+function parseEmail(body: unknown): string | null {
+  if (typeof body !== "object" || body === null) return null;
+  if (!("email" in body) || typeof body.email !== "string") return null;
+  return body.email.trim().toLowerCase();
+}
+
+console.log(parseEmail({ email: " ADA@Example.com " }));
+console.log(parseEmail({ email: 42 }));
+console.log(parseEmail(null));
+</code>
+<option correct>ada@example.com
+null
+null</option>
+<option> ADA@Example.com
+null
+null</option>
+<option>ada@example.com
+42
+null</option>
+<option>ada@example.com
+null
+TypeError</option>
+<explain><p>No assertion is needed: <code>typeof</code>, the <code>null</code> check and <code>"email" in body</code> narrow step by step until <code>body.email</code> is a <code>string</code>. Wrong types and <code>null</code> are refused.</p></explain>
+</question>
+
+<question id="asr-code-bang" type="code" file="rooms.ts">
+<q><p>Remove both <code>!</code>. An unknown booking must throw <code>new Error("booking not found")</code>; a booking whose room is missing returns <code>"room unavailable"</code>.</p></q>
+<starter>
+const rooms = new Map([["R1", "Deluxe"]]);
+const bookings = [
+  { id: "B1", roomId: "R1" },
+  { id: "B2", roomId: "R9" },
+];
+
+function roomFor(bookingId: string): string {
+  const booking = bookings.find((b) => b.id === bookingId)!;
+  return rooms.get(booking.roomId)!;
+}
+
+console.log(roomFor("B1"));
+console.log(roomFor("B2"));
+try {
+  roomFor("B7");
+} catch (error) {
+  console.log(error instanceof Error ? error.message : "?");
+}
+</starter>
+<solution>
+const rooms = new Map([["R1", "Deluxe"]]);
+const bookings = [
+  { id: "B1", roomId: "R1" },
+  { id: "B2", roomId: "R9" },
+];
+
+function roomFor(bookingId: string): string {
+  const booking = bookings.find((b) => b.id === bookingId);
+  if (booking === undefined) throw new Error("booking not found");
+  return rooms.get(booking.roomId) ?? "room unavailable";
+}
+
+console.log(roomFor("B1"));
+console.log(roomFor("B2"));
+try {
+  roomFor("B7");
+} catch (error) {
+  console.log(error instanceof Error ? error.message : "?");
+}
+</solution>
+<expected>
+Deluxe
+room unavailable
+booking not found
+</expected>
+<explain><p>An unknown booking is a caller's mistake, so it throws. A removed room is a normal situation with a sensible answer, so <code>??</code> supplies it.</p></explain>
+</question>
+
+<question id="asr-code-get-or-throw" type="code" file="get-or-throw.ts">
+<q><p>Write a generic <code>getOrThrow(map, key)</code> that returns the value, or throws <code>new Error("missing KEY")</code> when the map has no value for the key. A stored <code>0</code> must be returned.</p></q>
+<starter>
+function getOrThrow<K, V>(map: ReadonlyMap<K, V>, key: K): V {
+  return map.get(key)!;
+}
+
+const stock = new Map([["rice", 0], ["beans", 4]]);
+console.log(getOrThrow(stock, "rice"), getOrThrow(stock, "beans"));
+try {
+  getOrThrow(stock, "garri");
+  console.log("no error");
+} catch (error) {
+  console.log(error instanceof Error ? error.message : "?");
+}
+</starter>
+<solution>
+function getOrThrow<K, V>(map: ReadonlyMap<K, V>, key: K): V {
+  const value = map.get(key);
+  if (value === undefined) throw new Error(`missing ${String(key)}`);
+  return value;
+}
+
+const stock = new Map([["rice", 0], ["beans", 4]]);
+console.log(getOrThrow(stock, "rice"), getOrThrow(stock, "beans"));
+try {
+  getOrThrow(stock, "garri");
+  console.log("no error");
+} catch (error) {
+  console.log(error instanceof Error ? error.message : "?");
+}
+</solution>
+<expected>
+0 4
+missing garri
+</expected>
+<explain><p>Compare with <code>undefined</code> exactly, not with truthiness, so a stock of 0 is returned. After the check, <code>value</code> is narrowed to <code>V</code> and no assertion is needed.</p></explain>
+</question>
+
+<question id="asr-code-satisfies" type="code" file="fees.ts">
+<q><p>Replace <code>as</code> with <code>satisfies</code> and add the missing <code>GBP</code> rule (<code>{ percent: 2.5 }</code>). The program should print each currency's percentage.</p></q>
+<starter>
+type Currency = "NGN" | "USD" | "GBP";
+interface FeeRule {
+  percent: number;
+}
+
+const fees = {
+  NGN: { percent: 1.5 },
+  USD: { percent: 2.9 },
+} as Record<Currency, FeeRule>;
+
+for (const currency of ["NGN", "USD", "GBP"] as const) {
+  console.log(currency, fees[currency]?.percent);
+}
+</starter>
+<solution>
+type Currency = "NGN" | "USD" | "GBP";
+interface FeeRule {
+  percent: number;
+}
+
+const fees = {
+  NGN: { percent: 1.5 },
+  USD: { percent: 2.9 },
+  GBP: { percent: 2.5 },
+} satisfies Record<Currency, FeeRule>;
+
+for (const currency of ["NGN", "USD", "GBP"] as const) {
+  console.log(currency, fees[currency].percent);
+}
+</solution>
+<expected>
+NGN 1.5
+USD 2.9
+GBP 2.5
+</expected>
+<explain><p>With <code>satisfies</code>, leaving out <code>GBP</code> is a compile error instead of an <code>undefined</code> at runtime. Once every currency is present, the <code>?.</code> is no longer needed.</p></explain>
+</question>
+
+<question id="asr-code-convert" type="code" file="port.ts">
+<q><p>The line <code>const port = raw as unknown as number;</code> does not convert. Finish <code>readPort(raw)</code> so it converts with <code>Number</code>, returns <code>3000</code> when <code>raw</code> is <code>undefined</code>, and returns <code>-1</code> for anything that is not a whole number from 1 to 65535.</p></q>
+<starter>
+function readPort(raw: string | undefined): number {
+  const port = raw as unknown as number;
+  return port;
+}
+
+console.log(readPort("8080") + 1, readPort(undefined), readPort("http"), readPort("99999"));
+</starter>
+<solution>
+function readPort(raw: string | undefined): number {
+  if (raw === undefined) return 3000;
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return -1;
+  return port;
+}
+
+console.log(readPort("8080") + 1, readPort(undefined), readPort("http"), readPort("99999"));
+</solution>
+<expected>8081 3000 -1 -1</expected>
+<explain><p>With the assertion, <code>readPort("8080") + 1</code> is the string <code>"80801"</code>. <code>Number</code> converts for real, and <code>Number.isInteger</code> rejects <code>NaN</code> and fractions.</p></explain>
+</question>
+
+<question id="asr-code-parse" type="code" file="signup.ts">
+<q><p>Replace <code>body as NewUser</code> with real checks. <code>parseNewUser</code> returns a new object with only <code>email</code> and <code>name</code> (both must be strings), or <code>null</code>.</p></q>
+<starter>
+interface NewUser {
+  email: string;
+  name: string;
+}
+
+function parseNewUser(body: unknown): NewUser | null {
+  return body as NewUser;
+}
+
+console.log(parseNewUser({ email: "eve@example.com", name: "Eve", role: "admin" }));
+console.log(parseNewUser({ name: "Tunde" }));
+console.log(parseNewUser("hello"));
+</starter>
+<solution>
+interface NewUser {
+  email: string;
+  name: string;
+}
+
+function parseNewUser(body: unknown): NewUser | null {
+  if (typeof body !== "object" || body === null) return null;
+  if (!("email" in body) || typeof body.email !== "string") return null;
+  if (!("name" in body) || typeof body.name !== "string") return null;
+  return { email: body.email, name: body.name };
+}
+
+console.log(parseNewUser({ email: "eve@example.com", name: "Eve", role: "admin" }));
+console.log(parseNewUser({ name: "Tunde" }));
+console.log(parseNewUser("hello"));
+</solution>
+<expected>
+{ email: 'eve@example.com', name: 'Eve' }
+null
+null
+</expected>
+<explain><p>Narrow with <code>typeof</code>, <code>null</code> and <code>in</code>, then build a new object from the two checked fields. The attacker's <code>role</code> never reaches the result.</p></explain>
+</question>
+
+<question id="asr-code-sum" type="code" file="sum.ts">
+<q><p><code>total</code> uses <code>amount as number</code>, so a string amount joins text. Fix it: convert strings with <code>Number</code>, and skip (do not add) anything that is not finite.</p></q>
+<starter>
+function total(amounts: (number | string)[]): number {
+  let sum = 0;
+  for (const amount of amounts) sum += amount as number;
+  return sum;
+}
+
+console.log(total([1000, "500", "abc", 250]));
+</starter>
+<solution>
+function total(amounts: (number | string)[]): number {
+  let sum = 0;
+  for (const amount of amounts) {
+    const value = typeof amount === "string" ? Number(amount) : amount;
+    if (Number.isFinite(value)) sum += value;
+  }
+  return sum;
+}
+
+console.log(total([1000, "500", "abc", 250]));
+</solution>
+<expected>1750</expected>
+<explain><p>The assertion hid the strings. Narrowing with <code>typeof</code> and converting with <code>Number</code> handles them for real, and <code>Number.isFinite</code> filters out the <code>NaN</code> from <code>"abc"</code>.</p></explain>
+</question>
+
+<question id="asr-code-definite" type="code" file="cart.ts">
+<q><p>The <code>Cart</code> uses <code>total!: number</code> and prints <code>NaN</code>. Remove the definite assignment assertion by giving <code>total</code> a starting value, so the program prints <code>2000</code>.</p></q>
+<starter>
+class Cart {
+  total!: number;
+
+  add(price: number): void {
+    this.total += price;
+  }
+}
+
+const cart = new Cart();
+cart.add(1200);
+cart.add(800);
+console.log(cart.total);
+</starter>
+<solution>
+class Cart {
+  total = 0;
+
+  add(price: number): void {
+    this.total += price;
+  }
+}
+
+const cart = new Cart();
+cart.add(1200);
+cart.add(800);
+console.log(cart.total);
+</solution>
+<expected>2000</expected>
+<explain><p><code>total = 0</code> both initialises the property and lets TypeScript infer <code>number</code>. The <code>!</code> only silenced the compiler's warning about the missing start value.</p></explain>
+</question>
+
+<question id="asr-code-instanceof" type="code" file="error-message.ts">
+<q><p><code>messageOf</code> asserts <code>error as Error</code>, so a thrown string prints <code>undefined</code>. Replace the assertion with an <code>instanceof</code> check that falls back to <code>String(error)</code>.</p></q>
+<starter>
+function messageOf(error: unknown): string {
+  return (error as Error).message;
+}
+
+console.log(messageOf(new Error("card declined")));
+console.log(messageOf("timeout"));
+</starter>
+<solution>
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+console.log(messageOf(new Error("card declined")));
+console.log(messageOf("timeout"));
+</solution>
+<expected>
+card declined
+timeout
+</expected>
+<explain><p>JavaScript can throw anything, which is why <code>catch</code> gives you <code>unknown</code>. <code>instanceof Error</code> checks for real; <code>as Error</code> only pretends.</p></explain>
+</question>

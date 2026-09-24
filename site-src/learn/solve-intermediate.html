@@ -1,0 +1,830 @@
+---
+title: Problem workshop: intermediate
+description: Solve eight problems on lists of real data, from duplicate payments to stock levels, reasoning about edge cases and the amount of work first, then coding and testing.
+minutes: 60
+youNeed: Problem workshop: beginner, and the Logic and mathematical thinking module (especially Sets and Counting)
+youBuild: Tested functions for duplicate detection, sales counts, customer search, order filters, a task board, pagination, a leaderboard and stock levels
+keywords: problem solving, duplicate detection, frequency counting, linear search, filtering data, grouping data, pagination, ranking with ties, inventory calculation, edge cases, set, lookup table, algorithm steps
+objectives: Reason about a problem on a list of records: empty lists, repeated values, ties, first and last items, and inconsistent data | Count how much work an approach does and pick one that scales, such as a Set instead of nested loops | Use a lookup table (an object) to count, group and index records | Solve pagination and ranking problems without off-by-one errors, with ties handled on purpose | Process a sequence of events in order and reject invalid ones instead of silently corrupting totals
+---
+<section>
+<h2 id="lists">When the input is a list</h2>
+<p>A payment company emails you at 9 a.m.: "Our gateway had a hiccup overnight. Some payments were recorded twice. Here are yesterday's 48,000 payment references. Which ones are duplicates?"</p>
+<p>In the <a href="/learn/solve-beginner">beginner workshop</a> every problem took a few numbers and returned one answer. Real backend problems almost always take a <em>list</em>: orders, payments, customers, tasks, stock movements. Lists bring new edge cases and one new question:</p>
+<ul>
+<li><strong>New edge cases.</strong> The list is empty. It has one item. The same value appears twice, or three times. Two records tie. The interesting item is the first one, or the last one. Some records are written differently ("ord-1" and "ORD-1 ").</li>
+<li><strong>How much work?</strong> With three numbers, any approach is instant. With 48,000 references, an approach that compares every reference with every other one makes more than a billion comparisons. You need to <em>count the steps</em> of an idea before you trust it.</li>
+</ul>
+<p>The method stays the same: understand, inputs, outputs, edge cases, pseudocode, code, tests. Every problem below starts with a <strong>Reason it out</strong> box. Answer its questions on paper before you open the reasoning.</p>
+</section>
+
+<section>
+<h2 id="toolkit">The JavaScript you need</h2>
+<p>This workshop uses lists and records. You have seen both briefly; here is everything used below, in one program:</p>
+<example file="toolkit.js">
+const orders = [
+  { id: "ORD-1", customer: "Ada", totalKobo: 450000 },
+  { id: "ORD-2", customer: "Bola", totalKobo: 1200000 },
+];
+
+console.log(orders.length);          // how many items
+console.log(orders[0].customer);     // first item (positions start at 0)
+console.log(orders[orders.length - 1].id);   // last item
+
+const ids = [];
+for (const order of orders) {
+  ids.push(order.id);                // add to the end of a list
+}
+console.log(ids.join(" + "));
+
+const countByCustomer = {};          // an object used as a lookup table
+countByCustomer["Ada"] = 1;
+console.log(countByCustomer["Ada"], countByCustomer["Chen"]);
+
+const seen = new Set(["ORD-1"]);
+console.log(seen.has("ORD-1"), seen.has("ORD-9"));
+</example>
+<output>
+2
+Ada
+ORD-2
+ORD-1 + ORD-2
+1 undefined
+true false
+</output>
+<ul>
+<li>An <strong>array</strong> is a list in square brackets. <code>orders[0]</code> is the item at position (index) 0, the first one; the last one is at <code>length - 1</code>.</li>
+<li>An <strong>object</strong> in braces groups named values into a <strong>record</strong>, like one order. <code>order.id</code> reads a value.</li>
+<li>An object can also be a <strong>lookup table</strong>: <code>table[name]</code> reads or writes the value stored under any name you choose. A name that was never stored gives <code>undefined</code>, JavaScript's "nothing here".</li>
+<li>A <code>Set</code> holds each value at most once and answers <code>has(value)</code> instantly, as you saw in <a href="/learn/logic-sets">Sets</a>.</li>
+</ul>
+<p>The tests compare lists and records, and <code>===</code> cannot do that: two separate lists are never <code>===</code>, even with the same contents. So the <code>check</code> helper compares their <strong>JSON</strong> text instead. <code>JSON.stringify</code> turns a list or record into text such as <code>["ORD-1","ORD-2"]</code>; if the texts match, the contents match. You will meet JSON properly in <a href="/learn/js-data#json">Objects and JSON</a>.</p>
+<example file="check.js">
+function check(label, actual, expected) {
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  console.log(a === e ? `PASS ${label}` : `FAIL ${label}: got ${a}, expected ${e}`);
+}
+
+console.log(["ORD-1"] === ["ORD-1"]);
+check("same contents", ["ORD-1"], ["ORD-1"]);
+check("different order", ["A", "B"], ["B", "A"]);
+</example>
+<output>
+false
+PASS same contents
+FAIL different order: got ["A","B"], expected ["B","A"]
+</output>
+<p>Note the last line: order counts. When the order of a result matters to the user, decide it in the reasoning step and test it.</p>
+</section>
+
+<section>
+<h2 id="duplicates">Problem 1: duplicate payments</h2>
+<p>Back to the email. Given a list of payment references, return each reference that appears more than once.</p>
+<reason title="Before you code: duplicates">
+<ul>
+<li>What exactly is the output? If <code>PAY-7</code> appears three times, how many times is it reported?</li>
+<li>Are <code>"pay-7"</code>, <code>"PAY-7"</code> and <code>"PAY-7 "</code> (with a space) the same payment?</li>
+<li>What are the results for an empty list and a list without duplicates?</li>
+<li>Idea one: compare every reference with every reference after it. How many comparisons is that for 4 references? For 48,000?</li>
+<li>Can you find the duplicates by walking through the list only once?</li>
+</ul>
+<answer>
+<p><strong>Output:</strong> a list of the duplicated references, each reported once, in the order their second copy was found. <code>PAY-7</code> three times is still one problem to investigate.</p>
+<p><strong>Inconsistent writing:</strong> references are typed and copied by people and systems. Decide to treat them as the same after removing spaces at the ends and using capitals. Report the cleaned form.</p>
+<p><strong>Empty list and no duplicates</strong> both return an empty list. Neither is an error.</p>
+<p><strong>Idea one</strong> compares item 1 with items 2, 3, 4 (3 comparisons), item 2 with 3 and 4 (2), item 3 with 4 (1): 6 in total. For <em>n</em> items it is n × (n − 1) / 2, as you counted in <a href="/learn/logic-counting">Counting</a>. For 48,000 references that is about 1.15 billion comparisons.</p>
+<p><strong>Idea two</strong> walks once and remembers what it has seen in a Set. For each reference: if it is already in <code>seen</code>, it is a duplicate; either way, add it to <code>seen</code>. A second Set, <code>reported</code>, makes sure each duplicate is reported once. That is one step per reference: 48,000 steps.</p>
+<pre>
+START duplicates(refs)
+  SET seen TO an empty set, reported TO an empty set, found TO an empty list
+  FOR EACH raw IN refs
+    SET ref TO raw without end spaces, in capitals
+    IF ref IS IN seen AND ref IS NOT IN reported THEN
+      add ref to found; add ref to reported
+    add ref to seen
+  END FOR
+  RETURN found
+END
+</pre>
+</answer>
+</reason>
+<p>First, idea one, with a counter that records how many comparisons it makes. <code>for (let i = 0; i &lt; refs.length; i++)</code> is a loop that counts <code>i</code> through every position; the inner loop starts at <code>i + 1</code>, the item after <code>i</code>. <code>found.includes(x)</code> asks whether a list already contains <code>x</code>.</p>
+<example file="duplicates-slow.js">
+let comparisons = 0;
+
+function duplicatesSlow(refs) {
+  const found = [];
+  for (let i = 0; i < refs.length; i++) {
+    for (let j = i + 1; j < refs.length; j++) {
+      comparisons = comparisons + 1;
+      if (refs[i] === refs[j] && !found.includes(refs[i])) found.push(refs[i]);
+    }
+  }
+  return found;
+}
+
+console.log(duplicatesSlow(["PAY-1", "PAY-7", "PAY-2", "PAY-7"]), comparisons);
+
+const many = [];
+for (let n = 1; n <= 2000; n++) many.push(`PAY-${n}`);
+comparisons = 0;
+duplicatesSlow(many);
+console.log(`2000 references: ${comparisons} comparisons`);
+</example>
+<output>
+[ 'PAY-7' ] 6
+2000 references: 1999000 comparisons
+</output>
+<p>Two thousand references already need about two million comparisons, and the count grows with the <em>square</em> of the list: ten times more references means a hundred times more work. Now idea two:</p>
+<example file="duplicates.js">
+function check(label, actual, expected) {
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  console.log(a === e ? `PASS ${label}` : `FAIL ${label}: got ${a}, expected ${e}`);
+}
+
+function duplicates(refs) {
+  const seen = new Set();
+  const reported = new Set();
+  const found = [];
+  for (const raw of refs) {
+    const ref = raw.trim().toUpperCase();
+    if (seen.has(ref) && !reported.has(ref)) {
+      found.push(ref);
+      reported.add(ref);
+    }
+    seen.add(ref);
+  }
+  return found;
+}
+
+check("one duplicate", duplicates(["PAY-1", "PAY-7", "PAY-2", "PAY-7"]), ["PAY-7"]);
+check("three copies, reported once", duplicates(["PAY-7", "PAY-7", "PAY-7"]), ["PAY-7"]);
+check("written differently", duplicates(["pay-3", "PAY-3 "]), ["PAY-3"]);
+check("order of discovery", duplicates(["A", "B", "B", "A"]), ["B", "A"]);
+check("no duplicates", duplicates(["PAY-1", "PAY-2"]), []);
+check("empty list", duplicates([]), []);
+</example>
+<output>
+PASS one duplicate
+PASS three copies, reported once
+PASS written differently
+PASS order of discovery
+PASS no duplicates
+PASS empty list
+</output>
+<p>This version looks at each reference once, so 48,000 references take 48,000 steps. The trade: it uses extra memory for the <code>seen</code> set. Trading a little memory for a lot of time is one of the most common moves in programming, and <a href="/learn/dsa-hash-maps">Hash maps</a> explains why <code>has</code> is so fast.</p>
+</section>
+
+<section>
+<h2 id="frequency">Problem 2: counting sales</h2>
+<p>A supermarket's till records the name of each product sold, one entry per item. The manager wants to know how many of each product sold today, and which product sold best.</p>
+<reason title="Before you code: counting">
+<ul>
+<li>What is a good shape for "how many of each"? A list, or something else?</li>
+<li>What is the count of a product you have not seen yet, and how do you start counting it?</li>
+<li>Two products sell 5 each and nothing sells more. Which is the best seller?</li>
+<li>What do both answers look like for a day with no sales?</li>
+</ul>
+<answer>
+<p><strong>Shape:</strong> a lookup table from product name to count, such as <code>{ Bread: 3, Milk: 2 }</code>. Finding a product's count is then one step, however many products there are.</p>
+<p><strong>Unseen products:</strong> the table has no entry, so reading it gives <code>undefined</code>. Before adding one, start the count at 0. Forgetting this gives <code>undefined + 1</code>, which is <code>NaN</code>.</p>
+<p><strong>Ties:</strong> picking one of them would hide the other from the manager. Return <em>all</em> the products that share the top count, as a list.</p>
+<p><strong>No sales:</strong> the counts are an empty table and the best sellers an empty list.</p>
+<pre>
+START countSales(sales)
+  SET counts TO an empty table
+  FOR EACH product IN sales
+    IF counts has no entry for product THEN SET counts[product] TO 0
+    SET counts[product] TO counts[product] + 1
+  RETURN counts
+END
+
+START bestSellers(counts)
+  SET best TO 0, names TO an empty list
+  FOR EACH name IN counts
+    IF counts[name] &gt; best THEN SET best TO counts[name]; SET names TO [name]
+    ELSE IF counts[name] = best THEN add name to names
+  RETURN names
+END
+</pre>
+</answer>
+</reason>
+<p><code>for (const name in counts)</code> loops over the <em>names</em> (keys) stored in an object, in the order they were first added.</p>
+<example file="frequency.js">
+function check(label, actual, expected) {
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  console.log(a === e ? `PASS ${label}` : `FAIL ${label}: got ${a}, expected ${e}`);
+}
+
+function countSales(sales) {
+  const counts = {};
+  for (const product of sales) {
+    if (counts[product] === undefined) counts[product] = 0;
+    counts[product] = counts[product] + 1;
+  }
+  return counts;
+}
+
+function bestSellers(counts) {
+  let best = 0;
+  let names = [];
+  for (const name in counts) {
+    if (counts[name] > best) {
+      best = counts[name];
+      names = [name];
+    } else if (counts[name] === best) {
+      names.push(name);
+    }
+  }
+  return names;
+}
+
+const today = ["Bread", "Milk", "Bread", "Eggs", "Milk", "Bread", "Milk"];
+console.log(countSales(today));
+
+check("clear winner", bestSellers(countSales(["Bread", "Milk", "Bread"])), ["Bread"]);
+check("a tie", bestSellers(countSales(today)), ["Bread", "Milk"]);
+check("one sale", bestSellers(countSales(["Eggs"])), ["Eggs"]);
+check("no sales: counts", countSales([]), {});
+check("no sales: best", bestSellers(countSales([])), []);
+</example>
+<output>
+{ Bread: 3, Milk: 3, Eggs: 1 }
+PASS clear winner
+PASS a tie
+PASS one sale
+PASS no sales: counts
+PASS no sales: best
+</output>
+<p>This "count into a table" pattern is everywhere: page views per URL, failed logins per user, orders per status. It is also the heart of the <a href="/learn/pattern-frequency">frequency counter pattern</a> in the algorithms course.</p>
+</section>
+
+<section>
+<h2 id="search">Problem 3: finding a customer</h2>
+<p>A support agent types an email address to find a customer's account. Given the list of customers and an email, return that customer's record.</p>
+<reason title="Before you code: search">
+<ul>
+<li>What should the function return when nobody has that email? Is that an error?</li>
+<li>The agent types <code>" Ada@Example.com"</code>; the record says <code>"ada@example.com"</code>. Match or not?</li>
+<li>Where in the list is the search slowest? Where is it fastest?</li>
+<li>The same list is searched 10,000 times a day. Is there a better plan than walking the list every time?</li>
+</ul>
+<answer>
+<p><strong>Not found</strong> is a normal answer, not an error: agents mistype all the time. Return <code>null</code>, JavaScript's value for "deliberately nothing", and let the caller show "No customer with that email".</p>
+<p><strong>Case and spaces:</strong> email addresses are not case-sensitive in practice, so compare cleaned versions: trimmed and lowercase, on both sides.</p>
+<p><strong>Work:</strong> walk from the start and <em>stop at the first match</em>. The fastest case is the first customer (1 step); the slowest is the last customer or no match at all (every customer). This is <strong>linear search</strong>. Test the first, the last and a missing email.</p>
+<p><strong>Many searches:</strong> build a lookup table from email to customer once (n steps), then every search is one step. That table is called an <strong>index</strong>, the same idea a database uses (<a href="/learn/databases">Databases</a>).</p>
+<pre>
+START findByEmail(customers, email)
+  SET wanted TO email, trimmed and lowercased
+  FOR EACH customer IN customers
+    IF customer.email, trimmed and lowercased, = wanted THEN RETURN customer
+  RETURN null
+END
+</pre>
+</answer>
+</reason>
+<example file="search.js">
+function check(label, actual, expected) {
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  console.log(a === e ? `PASS ${label}` : `FAIL ${label}: got ${a}, expected ${e}`);
+}
+
+const customers = [
+  { id: 1, name: "Ada", email: "ada@example.com" },
+  { id: 2, name: "Bola", email: "Bola@Example.com" },
+  { id: 3, name: "Chen", email: "chen@example.com" },
+];
+
+function clean(email) {
+  return email.trim().toLowerCase();
+}
+
+function findByEmail(list, email) {
+  const wanted = clean(email);
+  for (const customer of list) {
+    if (clean(customer.email) === wanted) return customer;
+  }
+  return null;
+}
+
+check("first", findByEmail(customers, "ada@example.com").id, 1);
+check("last", findByEmail(customers, "chen@example.com").id, 3);
+check("messy input", findByEmail(customers, "  BOLA@example.COM").id, 2);
+check("not found", findByEmail(customers, "dayo@example.com"), null);
+check("empty list", findByEmail([], "ada@example.com"), null);
+
+const byEmail = {};
+for (const customer of customers) byEmail[clean(customer.email)] = customer;
+console.log(byEmail[clean("Chen@Example.com")].name);
+console.log(byEmail[clean("dayo@example.com")] ?? null);
+</example>
+<output>
+PASS first
+PASS last
+PASS messy input
+PASS not found
+PASS empty list
+Chen
+null
+</output>
+<p><code>return customer</code> inside the loop ends the whole function at the first match, so the loop never looks further. The index at the end is built once; after that, each search is one lookup. <code>?? null</code> turns the <code>undefined</code> of a missing entry into <code>null</code>, so both versions answer "not found" the same way.</p>
+<warn>The first test reads <code>.id</code> of the result. If the search returned <code>null</code>, reading <code>.id</code> would crash the test with a TypeError instead of printing FAIL. Crashing is still a failure you would notice, but in the JavaScript course you will learn to guard against it.</warn>
+</section>
+
+<section>
+<h2 id="filter">Problem 4: filtering orders</h2>
+<p>The finance team asks for every <em>paid</em> order of at least ₦10,000 placed between 1 and 15 September 2026, both days included.</p>
+<reason title="Before you code: filters">
+<ul>
+<li>Should the function change the original list of orders, or produce a new one?</li>
+<li>Which orders sit exactly on a boundary? List one for each rule.</li>
+<li>Dates are stored as text like <code>"2026-09-03"</code>. Can you compare two such texts with <code>&lt;</code> and get the right answer? What about <code>"2026-9-3"</code>?</li>
+<li>What if no order matches?</li>
+</ul>
+<answer>
+<p><strong>A new list.</strong> Other code is still using the original orders; removing items from it would be a nasty surprise. Filtering means building a new list with the items that pass every rule.</p>
+<p><strong>Boundaries:</strong> an order of exactly ₦10,000 (included: "at least"), one of ₦9,999.99 (excluded); an order on 1 September and one on 15 September (both included: "both days included"), and one each on 31 August and 16 September (excluded).</p>
+<p><strong>Dates as text:</strong> text compares character by character, left to right. <code>"2026-09-03" &lt; "2026-09-15"</code> is true because at the first difference "0" comes before "1". This works only because every date has the same shape: four-digit year, two-digit month, two-digit day. <code>"2026-9-3"</code> would compare as larger than <code>"2026-09-15"</code> (at the sixth character, "9" is after "0"). Decide that dates must use the fixed <code>YYYY-MM-DD</code> form, which is the international standard (ISO 8601) form.</p>
+<p><strong>No match:</strong> an empty list, which is a perfectly good answer.</p>
+<pre>
+START paidOrdersBetween(orders, from, to, minKobo)
+  SET result TO an empty list
+  FOR EACH order IN orders
+    IF order.status = "paid" AND order.totalKobo &gt;= minKobo
+       AND order.date &gt;= from AND order.date &lt;= to THEN add order to result
+  RETURN result
+END
+</pre>
+</answer>
+</reason>
+<example file="filter.js">
+function check(label, actual, expected) {
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  console.log(a === e ? `PASS ${label}` : `FAIL ${label}: got ${a}, expected ${e}`);
+}
+
+const orders = [
+  { id: "A", status: "paid", totalKobo: 1000000, date: "2026-09-01" },
+  { id: "B", status: "paid", totalKobo: 999999, date: "2026-09-05" },
+  { id: "C", status: "pending", totalKobo: 5000000, date: "2026-09-05" },
+  { id: "D", status: "paid", totalKobo: 2500000, date: "2026-09-15" },
+  { id: "E", status: "paid", totalKobo: 2500000, date: "2026-09-16" },
+  { id: "F", status: "paid", totalKobo: 2500000, date: "2026-08-31" },
+];
+
+function paidOrdersBetween(list, from, to, minKobo) {
+  const result = [];
+  for (const order of list) {
+    const inRange = order.date >= from && order.date <= to;
+    if (order.status === "paid" && order.totalKobo >= minKobo && inRange) {
+      result.push(order.id);
+    }
+  }
+  return result;
+}
+
+check("September 1-15", paidOrdersBetween(orders, "2026-09-01", "2026-09-15", 1000000), ["A", "D"]);
+check("nothing matches", paidOrdersBetween(orders, "2026-10-01", "2026-10-31", 1000000), []);
+check("original untouched", orders.length, 6);
+console.log("2026-09-03" < "2026-09-15", "2026-9-3" < "2026-09-15");
+</example>
+<output>
+PASS September 1-15
+PASS nothing matches
+PASS original untouched
+true false
+</output>
+<p>Each order in the test data was written for one rule: A and D sit on the date boundaries and are included, B is 1 kobo short, C is not paid, E and F are one day outside the range. When a filter test fails, the id tells you at once which rule is broken. The last line shows the date trap: the badly formatted date compares wrong.</p>
+<p>The function returns only the ids to keep the tests short. In a real program it would return the order records. The JavaScript course shows the shorter built-in way to write this: <code>orders.filter(…)</code> (<a href="/learn/js-arrays#transform">Arrays</a>).</p>
+</section>
+
+<section>
+<h2 id="group">Problem 5: grouping tasks into a board</h2>
+<p>A task app shows a board with three columns: To do, Doing and Done. Given a list of tasks, each with a title and a status, build the columns.</p>
+<reason title="Before you code: grouping">
+<ul>
+<li>What is the output shape?</li>
+<li>There are no "Doing" tasks today. Should the board still have a Doing column?</li>
+<li>One task has the status <code>"blocked"</code>, which the board does not know. What happens to it?</li>
+<li>Inside a column, in what order do the tasks appear?</li>
+</ul>
+<answer>
+<p><strong>Shape:</strong> a lookup table from status to a list of titles: <code>{ todo: [...], doing: [...], done: [...] }</code>.</p>
+<p><strong>Empty columns:</strong> yes. The screen always shows three columns, so start with all three lists, empty, before looking at any task. Grouping only by the statuses that happen to appear would make the Doing column vanish on quiet days.</p>
+<p><strong>Unknown status:</strong> never drop data silently. A task that disappears from the board is worse than a strange column. Put it in an <code>other</code> group, so someone notices and fixes the data.</p>
+<p><strong>Order:</strong> keep the order of the input list, so tasks do not jump around on the screen.</p>
+<pre>
+START board(tasks)
+  SET columns TO { todo: [], doing: [], done: [], other: [] }
+  FOR EACH task IN tasks
+    IF columns has a list for task.status THEN add task.title to it
+    ELSE add task.title to columns.other
+  RETURN columns
+END
+</pre>
+</answer>
+</reason>
+<example file="group.js">
+function check(label, actual, expected) {
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  console.log(a === e ? `PASS ${label}` : `FAIL ${label}: got ${a}, expected ${e}`);
+}
+
+function board(tasks) {
+  const columns = { todo: [], doing: [], done: [], other: [] };
+  for (const task of tasks) {
+    if (task.status !== "other" && columns[task.status] !== undefined) {
+      columns[task.status].push(task.title);
+    } else {
+      columns.other.push(`${task.title} (${task.status})`);
+    }
+  }
+  return columns;
+}
+
+const tasks = [
+  { title: "Buy printer ink", status: "todo" },
+  { title: "Send invoices", status: "done" },
+  { title: "Call supplier", status: "todo" },
+  { title: "Fix the website", status: "blocked" },
+];
+
+console.log(board(tasks));
+check("empty column still there", board(tasks).doing, []);
+check("order kept", board(tasks).todo, ["Buy printer ink", "Call supplier"]);
+check("unknown status kept", board(tasks).other, ["Fix the website (blocked)"]);
+check("no tasks", board([]), { todo: [], doing: [], done: [], other: [] });
+</example>
+<output>
+{
+  todo: [ 'Buy printer ink', 'Call supplier' ],
+  doing: [],
+  done: [ 'Send invoices' ],
+  other: [ 'Fix the website (blocked)' ]
+}
+PASS empty column still there
+PASS order kept
+PASS unknown status kept
+PASS no tasks
+</output>
+<p>One extra check hides in the code: <code>task.status !== "other"</code>. Without it, a task whose status really is <code>"other"</code> would land in the other column <em>without</em> its status label, and look different from every other unknown task. Asking "what if the input uses one of my own internal names?" is a good habit whenever user data becomes a key in your table.</p>
+</section>
+
+<section>
+<h2 id="pagination">Problem 6: pagination</h2>
+<p>A shop has hundreds of products, and the website shows 20 per page with "Previous" and "Next" buttons. Given the full list, a page number and a page size, return the products for that page and the total number of pages.</p>
+<reason title="Before you code: pages">
+<ul>
+<li>Do pages start at 0 or at 1? Which products are on page 1, page 2, page <em>p</em>?</li>
+<li>45 products, 20 per page: how many pages, and how many products on the last one?</li>
+<li>What happens for page 0, page −1, page 4 of 3, and a page size of 0?</li>
+<li>What should an empty shop return?</li>
+</ul>
+<answer>
+<p><strong>People count pages from 1,</strong> but list positions start at 0. Page 1 is positions 0 to 19, page 2 is 20 to 39, page <em>p</em> starts at (p − 1) × size. Mixing the two counting systems up is the classic <strong>off-by-one error</strong>, where a result is wrong by exactly one step: the first page silently skips 20 products, or two pages share one.</p>
+<p><strong>Total pages:</strong> 45 / 20 = 2.25, and a partial page is still a page, so round <em>up</em>: 3 pages, the last with 5 products. <code>Math.ceil</code> rounds up.</p>
+<p><strong>Bad page numbers</strong> (0, negative, not whole) and a page size that is not a positive whole number are caller mistakes: return <code>"invalid"</code>. <strong>Page 4 of 3</strong> is different: it can happen honestly (a product was deleted while someone was browsing). Return an empty page and the real total, so the website can say "no more products".</p>
+<p><strong>Empty shop:</strong> 0 pages and an empty page 1.</p>
+<pre>
+START paginate(items, page, size)
+  IF page or size is not a whole number, or page &lt; 1, or size &lt; 1 THEN RETURN "invalid"
+  SET start TO (page − 1) × size
+  SET pageItems TO the items from position start up to (not including) start + size
+  RETURN pageItems and totalPages = round up (length of items ÷ size)
+END
+</pre>
+</answer>
+</reason>
+<p><code>list.slice(start, end)</code> returns a new list with the items from position <code>start</code> up to, but not including, <code>end</code>. If <code>end</code> is past the end of the list, it simply stops at the end, so the last partial page needs no special code.</p>
+<example file="paginate.js">
+function paginate(items, page, size) {
+  if (!Number.isInteger(page) || !Number.isInteger(size)) return "invalid";
+  if (page < 1 || size < 1) return "invalid";
+  const start = (page - 1) * size;
+  return {
+    items: items.slice(start, start + size),
+    totalPages: Math.ceil(items.length / size),
+  };
+}
+
+function show(result) {
+  if (result === "invalid") return "invalid";
+  return `[${result.items.join(",")}] of ${result.totalPages} pages`;
+}
+
+const products = [];
+for (let n = 1; n <= 45; n++) products.push(n);
+
+console.log(show(paginate(products, 1, 20)));
+console.log(show(paginate(products, 3, 20)));   // the partial last page
+console.log(show(paginate(products, 4, 20)));   // past the end
+console.log(show(paginate(products, 0, 20)));
+console.log(show(paginate(products, 1, 0)));
+console.log(show(paginate([], 1, 20)));
+console.log(show(paginate(["Rice", "Beans"], 1, 2)));   // exactly one full page
+</example>
+<output>
+[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20] of 3 pages
+[41,42,43,44,45] of 3 pages
+[] of 3 pages
+invalid
+invalid
+[] of 0 pages
+[Rice,Beans] of 1 pages
+</output>
+<p>The products are the numbers 1 to 45, so you can see at a glance which positions each page took: page 1 is 1–20 and the last page is 41–45, with nothing skipped or repeated. Using data where each item shows its own position is a handy testing trick for any off-by-one problem. (The "1 pages" in the last line is a wording bug you could fix for the screen; the number is right.)</p>
+</section>
+
+<section>
+<h2 id="ranking">Problem 7: a sales leaderboard</h2>
+<p>A company shows a weekly leaderboard of its sales agents, highest sales first, with a rank number next to each name.</p>
+<reason title="Before you code: ranking">
+<ul>
+<li>Two agents sold exactly the same amount. What ranks do they get, and what rank does the next agent get?</li>
+<li>In what order are tied agents listed? Does it matter?</li>
+<li>Sorting rearranges a list. Whose list gets rearranged?</li>
+<li>What about an empty team, or a team of one?</li>
+</ul>
+<answer>
+<p><strong>Ties share a rank,</strong> and the next rank skips: sales of 900, 700, 700, 500 give ranks 1, 2, 2, 4. This is "competition ranking", the kind used in sport: the fourth agent had three people ahead of them. (Another choice is 1, 2, 2, 3; either is fine if you decide and test it.)</p>
+<p><strong>Tied agents</strong> need a second rule, or they may appear in a different order each week and people will complain. Here: alphabetical by name.</p>
+<p><strong>Sort a copy.</strong> The list of agents belongs to the caller; rearranging it in place could break other code that relies on its order. Sort a copy.</p>
+<p><strong>Rank rule:</strong> walking the sorted list, an agent whose sales equal the previous agent's takes the previous rank; otherwise their rank is their position + 1.</p>
+<pre>
+START leaderboard(agents)
+  SET sorted TO a copy of agents, by sales (highest first), then by name
+  FOR EACH position i IN sorted
+    IF i &gt; 0 AND sorted[i].sales = sorted[i − 1].sales THEN rank stays the same
+    ELSE SET rank TO i + 1
+    add "rank. name sales" to the result
+  RETURN result
+END
+</pre>
+</answer>
+</reason>
+<p><code>list.toSorted(compare)</code> returns a sorted <em>copy</em> and leaves the original alone. The <code>compare</code> function is given two agents and returns a negative number if the first should come first, a positive number if the second should, and 0 if they are equal. <a href="/learn/js-arrays#sort">Arrays</a> explains it fully.</p>
+<example file="ranking.js">
+function compareAgents(a, b) {
+  if (a.sales !== b.sales) return b.sales - a.sales;   // higher sales first
+  if (a.name < b.name) return -1;                      // then by name
+  if (a.name > b.name) return 1;
+  return 0;
+}
+
+function leaderboard(agents) {
+  const sorted = agents.toSorted(compareAgents);
+  const lines = [];
+  let rank = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    const tied = i > 0 && sorted[i].sales === sorted[i - 1].sales;
+    if (!tied) rank = i + 1;
+    lines.push(`${rank}. ${sorted[i].name} ₦${sorted[i].sales}`);
+  }
+  return lines;
+}
+
+const team = [
+  { name: "Tunde", sales: 700000 },
+  { name: "Amaka", sales: 900000 },
+  { name: "Zainab", sales: 500000 },
+  { name: "Emeka", sales: 700000 },
+];
+
+console.log(leaderboard(team).join("\n"));
+console.log(team[0].name);                  // the original order is untouched
+console.log(leaderboard([]).length, leaderboard([{ name: "Solo", sales: 1 }]));
+</example>
+<output>
+1. Amaka ₦900000
+2. Emeka ₦700000
+2. Tunde ₦700000
+4. Zainab ₦500000
+Tunde
+0 [ '1. Solo ₦1' ]
+</output>
+<p>Emeka and Tunde share rank 2 and appear in alphabetical order; Zainab is 4th. <code>"\n"</code> inside text is a line break, so <code>join("\n")</code> prints one agent per line.</p>
+</section>
+
+<section>
+<h2 id="inventory">Problem 8: stock levels</h2>
+<p>A warehouse starts the day with some stock of each product. During the day it records movements: deliveries in, and sales out. At the end of the day the manager wants the stock level of every product, and a list of any movements that could not be applied.</p>
+<reason title="Before you code: inventory">
+<ul>
+<li>A sale of 8 bags of rice arrives when there are only 5. What should happen?</li>
+<li>Does the order of the movements matter?</li>
+<li>What about a movement for a product the warehouse does not stock, or a quantity of 0 or −3?</li>
+<li>Should the function change the starting stock it was given?</li>
+</ul>
+<answer>
+<p><strong>Selling more than you have</strong> would make the stock negative, which is impossible for real bags of rice. The movement is <em>rejected</em>: stock stays as it was, and the movement goes on the rejected list with a reason, so a person can look into it. Silently skipping it, or letting the stock go to −3, would both hide a real problem.</p>
+<p><strong>Order matters.</strong> With 5 bags, "sell 8, then receive 10" rejects the sale, but "receive 10, then sell 8" accepts it. So movements must be processed in the order they happened, and the test must check both orders.</p>
+<p><strong>Unknown products and bad quantities</strong> are rejected with their own reasons. A quantity must be a positive whole number; a delivery of −3 is not a delivery.</p>
+<p><strong>Do not change the input.</strong> Copy the starting stock into a new table and update the copy. The starting figures may be needed again, for example for a report that compares the start and end of the day.</p>
+<pre>
+START endOfDay(start, movements)
+  SET stock TO a copy of start; SET rejected TO an empty list
+  FOR EACH m IN movements, in order
+    IF stock has no entry for m.product THEN reject m ("unknown product"); continue
+    IF m.quantity is not a positive whole number THEN reject m ("bad quantity"); continue
+    IF m.type = "in" THEN add m.quantity to stock[m.product]
+    ELSE IF m.quantity &gt; stock[m.product] THEN reject m ("not enough stock")
+    ELSE subtract m.quantity from stock[m.product]
+  RETURN stock and rejected
+END
+</pre>
+</answer>
+</reason>
+<p><code>continue</code> skips the rest of the loop body and moves straight on to the next movement: it is the guard clause of a loop.</p>
+<example file="inventory.js">
+function check(label, actual, expected) {
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  console.log(a === e ? `PASS ${label}` : `FAIL ${label}: got ${a}, expected ${e}`);
+}
+
+function endOfDay(start, movements) {
+  const stock = {};
+  for (const product in start) stock[product] = start[product];
+  const rejected = [];
+
+  for (const m of movements) {
+    const label = `${m.type} ${m.quantity} ${m.product}`;
+    if (stock[m.product] === undefined) {
+      rejected.push(`${label}: unknown product`);
+      continue;
+    }
+    if (!Number.isInteger(m.quantity) || m.quantity <= 0) {
+      rejected.push(`${label}: bad quantity`);
+      continue;
+    }
+    if (m.type === "in") {
+      stock[m.product] = stock[m.product] + m.quantity;
+    } else if (m.quantity > stock[m.product]) {
+      rejected.push(`${label}: not enough stock`);
+    } else {
+      stock[m.product] = stock[m.product] - m.quantity;
+    }
+  }
+  return { stock, rejected };
+}
+
+const start = { rice: 5, beans: 12 };
+
+const day = endOfDay(start, [
+  { type: "out", product: "rice", quantity: 8 },
+  { type: "in", product: "rice", quantity: 10 },
+  { type: "out", product: "rice", quantity: 8 },
+  { type: "out", product: "beans", quantity: 12 },
+  { type: "in", product: "garri", quantity: 4 },
+  { type: "in", product: "beans", quantity: -3 },
+]);
+
+console.log(day.stock);
+console.log(day.rejected.join("\n"));
+check("start untouched", start, { rice: 5, beans: 12 });
+check("order matters", endOfDay(start, [
+  { type: "in", product: "rice", quantity: 10 },
+  { type: "out", product: "rice", quantity: 8 },
+]).stock.rice, 7);
+check("no movements", endOfDay(start, []).stock, { rice: 5, beans: 12 });
+</example>
+<output>
+{ rice: 7, beans: 0 }
+out 8 rice: not enough stock
+in 4 garri: unknown product
+in -3 beans: bad quantity
+PASS start untouched
+PASS order matters
+PASS no movements
+</output>
+<p>Follow the rice by hand: 5, the sale of 8 is rejected, +10 makes 15, −8 makes 7. Beans: all 12 sold, exactly the stock (allowed: <code>&gt;</code>, not <code>&gt;=</code>), leaving 0. Every rejected movement says what it was and why, which is what the manager needs to investigate. The same shape, "apply events in order, reject the invalid ones with a reason", runs bank ledgers, booking systems and the <a href="/learn/zudo-transactions">transactions</a> you meet later in the course.</p>
+</section>
+
+<section>
+<h2 id="patterns">Patterns you now own</h2>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Pattern</th><th>Problems</th><th>The key idea</th></tr></thead>
+<tbody>
+<tr><td>Remember what you have seen</td><td>Duplicates</td><td>A Set turns "compare with everything" into one check per item.</td></tr>
+<tr><td>Count into a table</td><td>Sales counts</td><td>Start unseen keys at 0; return all ties.</td></tr>
+<tr><td>Walk and stop early / build an index</td><td>Customer search</td><td>"Not found" is a normal answer; index when you search often.</td></tr>
+<tr><td>Build a new list</td><td>Filtering</td><td>Never change the input; one test item per rule and boundary.</td></tr>
+<tr><td>Group into a table of lists</td><td>Task board</td><td>Create the known groups first; never drop unknown data.</td></tr>
+<tr><td>Index arithmetic</td><td>Pagination</td><td>Pages count from 1, positions from 0; round the page count up.</td></tr>
+<tr><td>Sort a copy, then walk</td><td>Leaderboard</td><td>Decide the tie rule and the tie-break order.</td></tr>
+<tr><td>Apply events in order</td><td>Stock levels</td><td>Reject invalid events with a reason; copy the starting state.</td></tr>
+</tbody>
+</table></div>
+<p>And one question to ask about every idea before you code it: <strong>how many steps does this take for a list of 10 items, and for a list of 100,000?</strong> The <a href="/learn/dsa-complexity">complexity lesson</a> gives that question a precise language.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="The second-highest price">
+<p>A shop wants to show "our second most expensive item". Given a list of prices in kobo, return the second-highest <em>distinct</em> price, or <code>null</code> if there is none. Reason first: what are the answers for <code>[500, 900, 900]</code>, <code>[700]</code> and <code>[]</code>?</p>
+<solution>
+<p>Reasoning: "distinct" means that two items at the top price do not count as first and second. <code>[500, 900, 900]</code> gives 500. A single item or an empty list has no second price: <code>null</code>. Keep two "best so far" values in one pass: the highest and the second highest, and update both when a new highest appears.</p>
+<example file="second-highest.js">
+function secondHighest(prices) {
+  let first = null;
+  let second = null;
+  for (const p of prices) {
+    if (first === null || p > first) {
+      second = first;
+      first = p;
+    } else if (p < first && (second === null || p > second)) {
+      second = p;
+    }
+  }
+  return second;
+}
+
+console.log(secondHighest([300, 900, 500, 700]));
+console.log(secondHighest([500, 900, 900]));
+console.log(secondHighest([700]), secondHighest([]), secondHighest([400, 400]));
+</example>
+<output>
+700
+500
+null null null
+</output>
+<p>The condition <code>p &lt; first</code> is what skips the second 900. Without it, <code>[500, 900, 900]</code> would answer 900.</p>
+</solution>
+</exercise>
+<exercise title="Most common first letter">
+<p>A school wants to know which first letter is most common among its students' names, to plan name tags. Count the first letters (ignoring case) of <code>["Ada", "amaka", "Bola", "Chen", "bayo", "Abdul"]</code> and print the table.</p>
+<solution>
+<example file="letters.js">
+function countFirstLetters(names) {
+  const counts = {};
+  for (const name of names) {
+    if (name.length === 0) continue;
+    const letter = name[0].toUpperCase();
+    if (counts[letter] === undefined) counts[letter] = 0;
+    counts[letter] = counts[letter] + 1;
+  }
+  return counts;
+}
+
+console.log(countFirstLetters(["Ada", "amaka", "Bola", "Chen", "bayo", "Abdul"]));
+console.log(countFirstLetters(["", "Eze"]));
+</example>
+<output>
+{ A: 3, B: 2, C: 1 }
+{ E: 1 }
+</output>
+<p>The same "count into a table" pattern, with one extra edge case: an empty name has no first letter, so it is skipped instead of crashing on <code>name[0].toUpperCase()</code>.</p>
+</solution>
+</exercise>
+<exercise title="Bookings that overlap">
+<p>A meeting room has bookings with start and end hours, such as <code>{ who: "Ada", start: 9, end: 11 }</code>. A booking that ends at 11 and one that starts at 11 do not clash. Write <code>clashes(bookings)</code> that lists every pair that overlaps. Reason about the boundary before you code.</p>
+<solution>
+<p>Two bookings overlap when each one starts before the other ends: <code>a.start &lt; b.end &amp;&amp; b.start &lt; a.end</code>. Using <code>&lt;</code> (not <code>&lt;=</code>) makes back-to-back bookings legal. Every pair must be compared, so this is the nested-loop shape from problem 1, which is fine for the few bookings one room has in a day.</p>
+<example file="clashes.js">
+function clashes(bookings) {
+  const found = [];
+  for (let i = 0; i < bookings.length; i++) {
+    for (let j = i + 1; j < bookings.length; j++) {
+      const a = bookings[i];
+      const b = bookings[j];
+      if (a.start < b.end && b.start < a.end) found.push(`${a.who} and ${b.who}`);
+    }
+  }
+  return found;
+}
+
+console.log(clashes([
+  { who: "Ada", start: 9, end: 11 },
+  { who: "Bola", start: 11, end: 12 },
+  { who: "Chen", start: 10, end: 13 },
+]));
+console.log(clashes([]));
+</example>
+<output>
+[ 'Ada and Chen', 'Bola and Chen' ]
+[]
+</output>
+<p>Ada (9–11) and Bola (11–12) touch but do not overlap. Chen (10–13) overlaps both.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Lists bring their own edge cases: empty, one item, repeats, ties, the first and the last item, and inconsistently written data.</li>
+<li>Count the steps of an idea. Comparing every item with every other item grows with the square of the list; remembering what you have seen in a Set is one step per item.</li>
+<li>Objects as lookup tables count, group and index records. Start unseen keys at a known value.</li>
+<li>Pages count from 1 and positions from 0: write the formula down and test the first, last and partial pages.</li>
+<li>Decide tie rules and sort order explicitly. Sort and filter into new lists; never change the caller's data.</li>
+<li>When applying events in order, reject invalid ones with a reason instead of letting totals go wrong.</li>
+</ul>
+<p>Next, <a href="/learn/solve-broken">Why doesn't this work?</a> hands you algorithms that are already written and already wrong, and you find the bugs by reasoning and tracing.</p>
+</section>

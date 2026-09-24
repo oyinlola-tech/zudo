@@ -1,0 +1,728 @@
+---
+title: Arrays and strings under the hood
+description: Learn what array and string operations really cost, from indexing to shift and string building, then solve reverse, palindrome, anagram and rotate with tests.
+minutes: 50
+youNeed: Big O and complexity, Arrays, and Objects and JSON
+youBuild: A tested toolkit of array and string functions (remove, insert, reverse, palindrome, anagram, rotate) with their costs
+keywords: javascript array performance, array indexing o(1), splice complexity, shift complexity, insert in middle of array, immutable strings, string concatenation performance, reverse string, palindrome check, anagram check, rotate array, in-place algorithm
+objectives: Explain why reading arr[i] is O(1) and inserting at the front is O(n) | Remove many items from an array in O(n) instead of O(n²) | Explain why strings are immutable and build large strings without a hidden quadratic | Reverse, check palindromes and anagrams, and rotate arrays, stating time and space | Write edge-case tests for array and string functions
+---
+<section>
+<h2 id="cancelled-orders">Removing cancelled orders</h2>
+<p>A shop keeps today's orders in an array. Before the nightly report, it removes the cancelled ones. A developer wrote the obvious loop with <code>splice</code>, which removes items at a position:</p>
+<example file="remove-bug.js">
+const orders = [
+  { id: "ORD-1", status: "paid" },
+  { id: "ORD-2", status: "cancelled" },
+  { id: "ORD-3", status: "cancelled" },
+  { id: "ORD-4", status: "paid" },
+  { id: "ORD-5", status: "cancelled" },
+];
+
+for (let i = 0; i < orders.length; i++) {
+  if (orders[i].status === "cancelled") orders.splice(i, 1);
+}
+
+console.log(orders.map((o) => `${o.id}:${o.status}`).join(" "));
+</example>
+<output>
+ORD-1:paid ORD-3:cancelled ORD-4:paid
+</output>
+<p><code>ORD-3</code> survived. When <code>splice</code> removed <code>ORD-2</code> at index 1, every later order moved one place to the left, so <code>ORD-3</code> slid into index 1. Then the loop moved on to index 2 and never looked at it.</p>
+<p>That is a correctness bug, and it points at a cost. "Every later order moved one place" is work: for an array of <code>n</code> items, removing at index <code>i</code> moves <code>n - i - 1</code> items. Walking backwards fixes the bug, but not the cost. Count the moves:</p>
+<example file="remove-cost.js">
+function removeCancelledSplice(orders) {
+  let moves = 0;
+  for (let i = orders.length - 1; i >= 0; i--) {
+    if (orders[i].status === "cancelled") {
+      moves += orders.length - i - 1; // items that shift left
+      orders.splice(i, 1);
+    }
+  }
+  return moves;
+}
+
+function removeCancelledFilter(orders) {
+  return orders.filter((o) => o.status !== "cancelled");
+}
+
+for (const n of [1000, 2000, 4000]) {
+  const make = () => Array.from({ length: n }, (_, i) => ({ id: `ORD-${i}`, status: i % 3 === 0 ? "cancelled" : "paid" }));
+  const a = make();
+  const moves = removeCancelledSplice(a);
+  const b = removeCancelledFilter(make());
+  console.log(`n=${n}: splice moved ${moves} items, filter touched ${n}, same result: ${a.length === b.length}`);
+}
+</example>
+<output>
+n=1000: splice moved 111222 items, filter touched 1000, same result: true
+n=2000: splice moved 444889 items, filter touched 2000, same result: true
+n=4000: splice moved 1778222 items, filter touched 4000, same result: true
+</output>
+<p>The <code>splice</code> loop is O(n²): doubling the orders quadruples the moves. <code>filter</code> reads each order once and writes the survivors into a new array: O(n) time, O(n) extra space. With 100,000 orders that is the difference between about a billion moves and 100,000.</p>
+<p>To use arrays and strings well you need a model of how they sit in memory. This lesson builds that model, uses it to explain what each operation costs, and then solves four classic problems (reverse, palindrome, anagram, rotate) with tests and a stated complexity. It builds on <a href="/learn/dsa-complexity">Big O and complexity</a>; the array methods themselves are in <a href="/learn/js-arrays">the Arrays lesson</a>.</p>
+</section>
+
+<section>
+<h2 id="memory">How an array sits in memory</h2>
+<p>Memory is a long row of numbered bytes. The number of a byte is its <strong>address</strong>. An array stores its items in one <strong>contiguous</strong> block: slot 0, then slot 1 right after it, then slot 2, with no gaps. Every slot has the same size (in JavaScript engines, typically 8 bytes: a number, or a pointer to an object stored elsewhere).</p>
+<pre>
+address:   1000     1008     1016     1024     1032
+         +--------+--------+--------+--------+--------+
+ slots:  | ORD-1  | ORD-2  | ORD-3  | ORD-4  | ORD-5  |
+         +--------+--------+--------+--------+--------+
+ index:      0        1        2        3        4
+
+ address of slot i = start + i × slot size
+ slot 3            = 1000  + 3 × 8          = 1024
+</pre>
+<p>That formula is why <strong>indexing is O(1)</strong>: to read <code>orders[3]</code> the engine does one multiplication and one addition, whether the array holds five items or five million. It never walks past the earlier items.</p>
+<p>The same layout explains the costs of changing an array:</p>
+<ul>
+<li><strong>At the end</strong> (<code>push</code>, <code>pop</code>): write or clear one slot. O(1), with <code>push</code> amortized because the block sometimes has to grow (see <a href="/learn/dsa-complexity#amortized">amortized cost</a>).</li>
+<li><strong>In the middle or at the front</strong> (<code>splice</code>, <code>unshift</code>, <code>shift</code>): the slots must stay contiguous, so every item after the position moves one slot. O(n).</li>
+</ul>
+<note>JavaScript arrays are more flexible than this picture: they can hold mixed types, grow, and have holes. Engines keep the fast contiguous layout while you use an array like a list (fill it from index 0 upwards, no huge gaps). If you write <code>ids[1000000] = "x"</code> into an empty array, the engine may switch that array to a slower dictionary-like storage. Keep arrays dense.</note>
+<example file="dense.js">
+const ids = [];
+ids[5] = "ORD-6";
+console.log(ids.length, Object.keys(ids));
+console.log(ids[0], 0 in ids);
+</example>
+<output>
+6 [ '5' ]
+undefined false
+</output>
+<p>The array claims a length of 6 but has one real item: indexes 0 to 4 are <strong>holes</strong>, missing entirely (<code>0 in ids</code> is <code>false</code>). Holes behave differently in different methods (<code>forEach</code> skips them, <code>for...of</code> does not), so they are a source of bugs as well as slow storage.</p>
+</section>
+
+<section>
+<h2 id="insert-delete">Inserting and deleting: count the moves</h2>
+<p>To see the moves for yourself, build an array the way the engine does: a fixed block of slots and a length. <code>insertAt</code> opens a gap by moving items right, starting from the end; <code>removeAt</code> closes the gap by moving items left.</p>
+<file name="slot-array.js" project="slots">
+export class SlotArray {
+  constructor(capacity) {
+    this.slots = new Array(capacity);
+    this.length = 0;
+    this.moves = 0;
+  }
+
+  get(index) {
+    if (index < 0 || index >= this.length) throw new RangeError(`index ${index} out of range`);
+    return this.slots[index];
+  }
+
+  insertAt(index, value) {
+    if (this.length === this.slots.length) throw new RangeError("full");
+    if (index < 0 || index > this.length) throw new RangeError(`index ${index} out of range`);
+    for (let i = this.length; i > index; i--) {
+      this.slots[i] = this.slots[i - 1]; // move right
+      this.moves++;
+    }
+    this.slots[index] = value;
+    this.length++;
+  }
+
+  removeAt(index) {
+    const value = this.get(index);
+    for (let i = index; i < this.length - 1; i++) {
+      this.slots[i] = this.slots[i + 1]; // move left
+      this.moves++;
+    }
+    this.length--;
+    this.slots[this.length] = undefined;
+    return value;
+  }
+
+  toArray() {
+    return this.slots.slice(0, this.length);
+  }
+}
+</file>
+<example file="slot-demo.js" project="slots">
+import { SlotArray } from "./slot-array.js";
+
+const list = new SlotArray(10);
+for (const id of ["B-1", "B-2", "B-3", "B-4"]) list.insertAt(list.length, id); // append
+console.log(list.toArray(), "moves:", list.moves);
+list.insertAt(0, "B-0");
+console.log(list.toArray(), "moves:", list.moves);
+list.removeAt(2);
+console.log(list.toArray(), "moves:", list.moves);
+</example>
+<output>
+[ 'B-1', 'B-2', 'B-3', 'B-4' ] moves: 0
+[ 'B-0', 'B-1', 'B-2', 'B-3', 'B-4' ] moves: 4
+[ 'B-0', 'B-1', 'B-3', 'B-4' ] moves: 6
+</output>
+<p>Appending cost no moves. Inserting at the front moved all four items. Removing index 2 of 5 moved the two items after it. In general:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Operation on an array of n items</th><th>Moves</th><th>Time</th></tr></thead>
+<tbody>
+<tr><td>read or write <code>arr[i]</code></td><td>0</td><td>O(1)</td></tr>
+<tr><td>insert or remove at the end (<code>push</code>, <code>pop</code>)</td><td>0</td><td>O(1) (push amortized)</td></tr>
+<tr><td>insert or remove at index <code>i</code> (<code>splice</code>)</td><td><code>n - i</code> or <code>n - i - 1</code></td><td>O(n - i), so O(n) in the worst case</td></tr>
+<tr><td>insert or remove at the front (<code>unshift</code>, <code>shift</code>)</td><td><code>n</code> or <code>n - 1</code></td><td>O(n)</td></tr>
+<tr><td>find a value (<code>indexOf</code>, <code>includes</code>)</td><td>0, but up to <code>n</code> reads</td><td>O(n)</td></tr>
+</tbody>
+</table></div>
+
+<h3>A real case: a sorted booking list</h3>
+<p>A clinic keeps today's appointments sorted by time, so the reception screen can show them in order. Every new booking is inserted at its place. Finding the place can be fast (binary search, O(log n), in <a href="/learn/dsa-searching">the searching lesson</a>), but opening the gap is not:</p>
+<example file="bookings.js" project="slots">
+import { SlotArray } from "./slot-array.js";
+
+function insertSorted(list, time) {
+  let index = 0;
+  while (index < list.length && list.get(index) < time) index++;
+  list.insertAt(index, time);
+}
+
+const early = new SlotArray(1000);
+const late = new SlotArray(1000);
+for (let t = 0; t < 500; t++) {
+  insertSorted(early, 1000 - t); // each new booking is earlier than all others
+  insertSorted(late, 1000 + t); // each new booking is later than all others
+}
+console.log("always earliest:", early.moves, "moves");
+console.log("always latest:", late.moves, "moves");
+console.log(early.get(0), early.get(499), late.get(0), late.get(499));
+</example>
+<output>
+always earliest: 124750 moves
+always latest: 0 moves
+501 1000 1000 1499
+</output>
+<p>The same 500 bookings cost 124,750 moves when every new one belongs at the front, and none when every new one belongs at the end. The worst case of a sorted insert is O(n) moves per booking, O(n²) for <code>n</code> bookings. When bookings arrive in time order (the common case), the sorted array is cheap; when they arrive in random order, a structure that keeps order without moving items, such as a balanced tree from <a href="/learn/dsa-trees">the trees lesson</a> or a heap from <a href="/learn/dsa-heaps">the heaps lesson</a>, is the better choice.</p>
+</section>
+
+<section>
+<h2 id="shift">shift and unshift: the hidden O(n)</h2>
+<p><code>shift()</code> removes the first item, and the language specification defines it as moving every other item one place to the left: O(n). <code>unshift(x)</code> is the mirror image. A loop that calls <code>shift</code> until the array is empty is therefore O(n²), the same trap as the <code>splice</code> loop.</p>
+<p>V8, the engine in Node.js and Chrome, has a trick for some arrays (it can move the start of the block instead of the items), so small arrays often shift quickly. You cannot rely on it: on large arrays the moves come back. A payout job that processes 50,000 queued transfers shows the difference between <code>shift</code> and simply walking an index forward:</p>
+<example file="shift-cost.js">
+function drainWithShift(transfers) {
+  let total = 0;
+  while (transfers.length > 0) total += transfers.shift().amount;
+  return total;
+}
+
+function drainWithIndex(transfers) {
+  let total = 0;
+  for (let next = 0; next < transfers.length; next++) total += transfers[next].amount;
+  return total;
+}
+
+function timeIt(fn, makeInput) {
+  const input = makeInput();
+  const start = performance.now();
+  const result = fn(input);
+  return { ms: performance.now() - start, result };
+}
+
+const make = () => Array.from({ length: 50000 }, (_, i) => ({ id: `TRF-${i}`, amount: 150000 }));
+timeIt(drainWithIndex, make); // warm-up
+const shifted = timeIt(drainWithShift, make);
+const indexed = timeIt(drainWithIndex, make);
+console.log("same total:", shifted.result === indexed.result, shifted.result);
+console.log("index is over 10 times faster:", shifted.ms > 10 * indexed.ms);
+</example>
+<output>
+same total: true 7500000000
+index is over 10 times faster: true
+</output>
+<p>Walking an index is O(1) per item, so the whole drain is O(n). When you need a real queue (items arriving at the back while others leave at the front), use the queue structures from <a href="/learn/dsa-stacks-queues">the stacks and queues lesson</a>, which never move items.</p>
+</section>
+
+<section>
+<h2 id="strings">Strings are immutable</h2>
+<p>A <strong>string</strong> is a sequence of UTF-16 <strong>code units</strong> (16-bit numbers; most characters are one code unit, some such as emoji are two). Like an array, it supports O(1) indexing: <code>code[2]</code> and <code>code.length</code> do not depend on the length of the string.</p>
+<p>Unlike an array, a string is <strong>immutable</strong>: once created, it never changes. Every method that seems to change a string returns a <em>new</em> one, and creating it costs time proportional to its length:</p>
+<example file="immutable.js">
+const currency = "ngn";
+const upper = currency.toUpperCase();
+const padded = currency.padStart(6, "*");
+console.log(currency, upper, padded);
+
+const receipt = "Total: ₦4,500";
+console.log(receipt[0], receipt.length, receipt.at(-1));
+console.log(receipt.replace("4,500", "5,000"), "|", receipt);
+</example>
+<output>
+ngn NGN ***ngn
+T 13 0
+Total: ₦5,000 | Total: ₦4,500
+</output>
+<p><code>currency</code> and <code>receipt</code> are unchanged after all those calls. In a module (every example on this site is one) or in strict mode, assigning to an index such as <code>currency[0] = "N"</code> throws a <code>TypeError</code>; in old sloppy scripts it is silently ignored. Either way the string stays the same.</p>
+<p>Immutability is why strings are safe to share: a function that receives your string cannot change it behind your back. The price is that every modification is a copy. <code>slice</code>, <code>toUpperCase</code>, <code>replace</code>, <code>trim</code>, <code>split</code> and <code>+</code> are all O(length).</p>
+<tip>Why does <code>"₦".length</code> equal 1 but <code>"🎉".length</code> equal 2? The naira sign fits in one UTF-16 code unit; the emoji needs two. This matters as soon as you reverse or cut strings, which the <a href="#reverse">reverse</a> section shows. <a href="/learn/js-strings">The strings lesson</a> covers code points and grapheme clusters in depth.</tip>
+</section>
+
+<section>
+<h2 id="building-strings">Building a big string</h2>
+<p>A bank exports a statement as text: one line per transaction. If every <code>+=</code> copied the whole string built so far, like the spread in the <a href="/learn/dsa-complexity#analyse">hidden quadratic</a>, then building <code>n</code> lines would copy about <code>n²/2</code> lines' worth of characters. Count what a naive copy-on-every-concatenation engine would do:</p>
+<example file="naive-concat-model.js">
+function naiveCopies(lines) {
+  let length = 0;
+  let copied = 0;
+  for (const line of lines) {
+    copied += length + line.length; // copy the old string and the new line
+    length += line.length;
+  }
+  return copied;
+}
+
+for (const n of [1000, 2000, 4000]) {
+  const lines = Array.from({ length: n }, (_, i) => `TX-${String(i).padStart(5, "0")},150000,NGN\n`);
+  const total = lines.join("").length;
+  console.log(`${n} lines (${total} chars): naive copying moves ${naiveCopies(lines)} chars, join moves ${total}`);
+}
+</example>
+<output>
+1000 lines (20000 chars): naive copying moves 10010000 chars, join moves 20000
+2000 lines (40000 chars): naive copying moves 40020000 chars, join moves 40000
+4000 lines (80000 chars): naive copying moves 160040000 chars, join moves 80000
+</output>
+<p>Real engines are smarter. V8 represents <code>a + b</code> as a small node that points at both halves (a <strong>rope</strong>) and copies nothing yet, so a loop that only appends is fast. The copy happens later, all at once, when something needs the characters in one piece. This is called <strong>flattening</strong>. The trap is a loop that appends <em>and</em> reads the string it is building: every read flattens, so every iteration copies everything again.</p>
+<example file="flatten-trap.js">
+function statementReading(lines) {
+  let text = "";
+  for (const line of lines) {
+    if (text.length > 0 && !text.endsWith("\n")) text += "\n"; // reads the text: flattens it
+    text += line + "\n";
+  }
+  return text;
+}
+
+function statementJoin(lines) {
+  return lines.join("\n") + "\n";
+}
+
+function bestTime(fn, input, runs = 3) {
+  fn(input);
+  let best = Infinity;
+  for (let r = 0; r < runs; r++) {
+    const start = performance.now();
+    fn(input);
+    best = Math.min(best, performance.now() - start);
+  }
+  return best;
+}
+
+const lines = Array.from({ length: 5000 }, (_, i) => `TX-${i},150000,NGN`);
+console.log("same text:", statementReading(lines) === statementJoin(lines));
+console.log("join is over 10 times faster:", bestTime(statementReading, lines) > 10 * bestTime(statementJoin, lines));
+</example>
+<output>
+same text: true
+join is over 10 times faster: true
+</output>
+<p>The rule that works on every engine: <strong>collect the pieces in an array and <code>join</code> once</strong>. <code>join</code> knows the total length up front, allocates the result once and copies each piece once: O(total length). Plain <code>+=</code> in a loop is fine in modern engines as long as the loop does not also inspect the string.</p>
+</section>
+
+<section>
+<h2 id="reason">Before you write the classic problems</h2>
+<reason title="What does &quot;the same&quot; mean?">
+<p>The next section checks palindromes (text that reads the same backwards) and anagrams (two texts with the same letters in a different order). Before writing any code, decide:</p>
+<ol>
+<li>Is <code>"Level"</code> a palindrome? Is <code>"Was it a car or a cat I saw?"</code>? What about <code>""</code> and <code>"a"</code>?</li>
+<li>Are <code>"Dormitory"</code> and <code>"dirty room"</code> anagrams?</li>
+<li>What happens to a palindrome check if the string contains an emoji like <code>"🎉"</code>?</li>
+<li>Which is cheaper in memory: comparing a string with a reversed copy, or comparing from both ends inwards?</li>
+<li>What is the fastest possible time for either check, and why can you not beat it?</li>
+</ol>
+<answer>
+<ol>
+<li>It depends on your rules, and you must write them down. The usual rule for sentences: ignore case, spaces and punctuation. Then both are palindromes. <code>""</code> and <code>"a"</code> read the same both ways, so they are palindromes too; your tests should say so explicitly.</li>
+<li>With the same rule (ignore case and spaces), yes: both contain d, o, r, m, i, t, o, r, y.</li>
+<li>An emoji is two code units. Reversing code units swaps them and produces an invalid character. Work with code points (<code>[...text]</code>) or compare from both ends with code points. For a plain comparison you can often avoid reversing entirely.</li>
+<li>The reversed copy costs O(n) extra space. Two indexes moving inwards cost O(1) extra space (after any normalization).</li>
+<li>O(n): every character might be the one that differs, so any correct algorithm has to look at all of them in the worst case. That is a lower bound, Ω(n), and both checks below reach it.</li>
+</ol>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="reverse">Reverse</h2>
+<p>Reversing an array in place with two indexes is O(n) time and O(1) extra space; you met it in <a href="/learn/dsa-complexity#space">space complexity</a>. For a string, you must build a new one anyway (strings are immutable), so the extra space is O(n) whatever you do. The subtle part is what you reverse:</p>
+<example file="reverse-string.js">
+function reverseUnits(text) {
+  return text.split("").reverse().join(""); // UTF-16 code units
+}
+
+function reverseCodePoints(text) {
+  return [...text].reverse().join(""); // code points: emoji stay whole
+}
+
+const note = "Paid ₦500 🎉";
+console.log(reverseCodePoints(note));
+console.log(reverseUnits(note) === reverseCodePoints(note));
+console.log(reverseUnits("🎉").length, [...reverseUnits("🎉")].map((c) => c.codePointAt(0).toString(16)));
+</example>
+<output>
+🎉 005₦ diaP
+false
+2 [ 'df89', 'd83c' ]
+</output>
+<p><code>split("")</code> cuts the emoji into its two halves (called <strong>surrogates</strong>: <code>d83c</code> and <code>df89</code>) and reversing puts them in the wrong order, which is no longer a valid character. Spreading a string with <code>[...text]</code> iterates by <strong>code point</strong>, which keeps each emoji whole. (Some emoji are several code points joined together, such as flags and family emoji; only <code>Intl.Segmenter</code> handles those, covered in <a href="/learn/js-strings">the strings lesson</a>.) Both versions are O(n) time and O(n) space.</p>
+</section>
+
+<section>
+<h2 id="palindrome">Palindrome</h2>
+<p>A payment reference system rejects "vanity" references that read the same backwards. Following the rules from the reasoning above: ignore case and anything that is not a letter or digit.</p>
+<example file="palindrome.js">
+function normalize(text) {
+  return text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+function isPalindrome(text) {
+  const clean = [...normalize(text)];
+  let left = 0;
+  let right = clean.length - 1;
+  while (left < right) {
+    if (clean[left] !== clean[right]) return false;
+    left++;
+    right--;
+  }
+  return true;
+}
+
+function check(label, actual, expected) {
+  console.log(`${actual === expected ? "PASS" : "FAIL"} ${label}`);
+}
+
+check("simple", isPalindrome("level"), true);
+check("mixed case", isPalindrome("Level"), true);
+check("sentence with punctuation", isPalindrome("Was it a car or a cat I saw?"), true);
+check("even length", isPalindrome("abba"), true);
+check("not a palindrome", isPalindrome("REF-2024"), false);
+check("empty string", isPalindrome(""), true);
+check("one character", isPalindrome("a"), true);
+check("only punctuation", isPalindrome("?!"), true);
+check("emoji in the middle", isPalindrome("ab🎉ba"), true);
+check("digits count", isPalindrome("12321"), true);
+</example>
+<output>
+PASS simple
+PASS mixed case
+PASS sentence with punctuation
+PASS even length
+PASS not a palindrome
+PASS empty string
+PASS one character
+PASS only punctuation
+PASS emoji in the middle
+PASS digits count
+</output>
+<p><code>\p{L}</code> and <code>\p{N}</code> in the regular expression mean "any letter" and "any digit" in any alphabet (the <code>u</code> flag enables them), so accented names and non-Latin scripts work. Complexity: normalizing is O(n) time and O(n) space (a new string and an array of code points), the comparison is O(n) time and O(1) extra space, so the whole function is O(n) time and O(n) space. The two indexes walking inwards are the <a href="/learn/pattern-two-pointers">two pointers</a> pattern, which has a lesson of its own later in this course.</p>
+<p>Notice the test for <code>"?!"</code>: after normalization it is empty. Is an empty reference a palindrome? Mathematically yes, but the payment system should probably reject empty references before this check even runs. Tests are where you discover questions like that.</p>
+</section>
+
+<section>
+<h2 id="anagram">Anagram</h2>
+<p>Customers sometimes type a voucher code with two letters swapped. Support wants to know whether a typed code is an anagram of a real one (same characters, different order), to suggest "did you mean…?". Two approaches:</p>
+<example file="anagram.js">
+function normalize(text) {
+  return text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+function isAnagramSort(a, b) {
+  const x = [...normalize(a)].sort().join("");
+  const y = [...normalize(b)].sort().join("");
+  return x === y;
+}
+
+function isAnagramCount(a, b) {
+  const x = normalize(a);
+  const y = normalize(b);
+  if (x.length !== y.length) return false;
+  const counts = new Map();
+  for (const ch of x) counts.set(ch, (counts.get(ch) ?? 0) + 1);
+  for (const ch of y) {
+    const left = counts.get(ch);
+    if (!left) return false; // missing or already used up
+    counts.set(ch, left - 1);
+  }
+  return true;
+}
+
+const cases = [
+  ["SAVE20NGN", "SVAE20NGN", true],
+  ["Dormitory", "dirty room", true],
+  ["SAVE20", "SAVE02", true],
+  ["SAVE20", "SAVE21", false],
+  ["aab", "abb", false],
+  ["", "", true],
+];
+for (const [a, b, expected] of cases) {
+  const sort = isAnagramSort(a, b);
+  const count = isAnagramCount(a, b);
+  console.log(`${sort === expected && count === expected ? "PASS" : "FAIL"} "${a}" vs "${b}" -> ${count}`);
+}
+</example>
+<output>
+PASS "SAVE20NGN" vs "SVAE20NGN" -> true
+PASS "Dormitory" vs "dirty room" -> true
+PASS "SAVE20" vs "SAVE02" -> true
+PASS "SAVE20" vs "SAVE21" -> false
+PASS "aab" vs "abb" -> false
+PASS "" vs "" -> true
+</output>
+<ul>
+<li><strong>Sorting</strong> both strings makes anagrams identical. Sorting is O(n log n) time and O(n) space. Short and hard to get wrong.</li>
+<li><strong>Counting</strong> each character with a <code>Map</code> is O(n) time. Its extra space is O(k), where <code>k</code> is the number of <em>different</em> characters (at most 36 for codes of letters and digits, so effectively constant).</li>
+</ul>
+<p>The <code>"aab"</code> vs <code>"abb"</code> case is the one that catches buggy versions: both strings use only <code>a</code> and <code>b</code> and have the same length, and only the counts differ. The counting approach is the <strong>frequency counter</strong> pattern; <a href="/learn/dsa-hash-maps">the next lesson</a> explains why <code>Map</code> makes it fast, and <a href="/learn/pattern-frequency">the frequency pattern lesson</a> applies it to many more problems.</p>
+</section>
+
+<section>
+<h2 id="rotate">Rotate</h2>
+<p>A support team has a weekly on-call rota. Each week it rotates by one place: whoever was last moves to the front. Rotating an array right by <code>k</code> means every item moves <code>k</code> places towards the end, and the items that fall off the end come back at the front.</p>
+<example file="rotate.js">
+function rotateCopy(items, k) {
+  const n = items.length;
+  if (n === 0) return [];
+  const shift = ((k % n) + n) % n; // handles k > n and negative k
+  return [...items.slice(n - shift), ...items.slice(0, n - shift)];
+}
+
+function reverseRange(items, from, to) {
+  while (from < to) {
+    [items[from], items[to]] = [items[to], items[from]];
+    from++;
+    to--;
+  }
+}
+
+function rotateInPlace(items, k) {
+  const n = items.length;
+  if (n === 0) return items;
+  const shift = ((k % n) + n) % n;
+  reverseRange(items, 0, n - 1); // E D C B A
+  reverseRange(items, 0, shift - 1); // D E | C B A   (for shift = 2)
+  reverseRange(items, shift, n - 1); // D E | A B C
+  return items;
+}
+
+const rota = ["Ada", "Bola", "Chidi", "Dayo", "Efe"];
+console.log(rotateCopy(rota, 2).join(" "));
+console.log(rotateInPlace([...rota], 2).join(" "));
+
+const tests = [[0], [1], [5], [7], [-1], [12]];
+for (const [k] of tests) {
+  const a = rotateCopy(rota, k).join(" ");
+  const b = rotateInPlace([...rota], k).join(" ");
+  console.log(`k=${k}: ${a === b ? "PASS" : "FAIL"} ${a}`);
+}
+console.log("empty:", rotateCopy([], 3).length, rotateInPlace([], 3).length);
+</example>
+<output>
+Dayo Efe Ada Bola Chidi
+Dayo Efe Ada Bola Chidi
+k=0: PASS Ada Bola Chidi Dayo Efe
+k=1: PASS Efe Ada Bola Chidi Dayo
+k=5: PASS Ada Bola Chidi Dayo Efe
+k=7: PASS Dayo Efe Ada Bola Chidi
+k=-1: PASS Bola Chidi Dayo Efe Ada
+k=12: PASS Dayo Efe Ada Bola Chidi
+empty: 0 0
+</output>
+<p>Three details carry this solution:</p>
+<ul>
+<li><strong>Normalize k.</strong> Rotating 5 items by 5 changes nothing, so only <code>k % n</code> matters. In JavaScript <code>-1 % 5</code> is <code>-1</code>, not 4, so <code>((k % n) + n) % n</code> turns a left rotation into the equivalent right one. And <code>n === 0</code> must be handled first, or <code>k % 0</code> is <code>NaN</code>.</li>
+<li><strong>The copy</strong> is two slices: O(n) time and O(n) extra space. Clear, and it leaves the input alone.</li>
+<li><strong>The three reversals</strong> rotate in place: each item is swapped at most twice, so O(n) time and O(1) extra space. Useful when the array is huge or when the caller wants it changed.</li>
+</ul>
+<p>The naive alternative, <code>k</code> times "<code>items.unshift(items.pop())</code>", is O(n · k): each <code>unshift</code> moves every item.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing array and string functions</h2>
+<p>Array and string bugs live at the edges. For every function in this lesson, the tests covered a checklist worth reusing:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Edge</th><th>Example</th><th>Catches</th></tr></thead>
+<tbody>
+<tr><td>empty input</td><td><code>[]</code>, <code>""</code></td><td><code>n - 1</code> becoming <code>-1</code>, division or <code>% 0</code></td></tr>
+<tr><td>one item</td><td><code>["Ada"]</code>, <code>"a"</code></td><td>loops that assume a pair</td></tr>
+<tr><td>odd and even lengths</td><td><code>"level"</code>, <code>"abba"</code></td><td>off-by-one in two-index loops</td></tr>
+<tr><td>the change at the first and last position</td><td>duplicate first, cancelled last</td><td>loops that start or stop one early</td></tr>
+<tr><td>adjacent matches</td><td>two cancelled orders in a row</td><td>skipped items after <code>splice</code></td></tr>
+<tr><td>sizes beyond the length</td><td><code>k = 7</code> for 5 items, negative <code>k</code></td><td>missing normalization</td></tr>
+<tr><td>non-ASCII text</td><td><code>"₦"</code>, <code>"🎉"</code>, accented letters</td><td>code unit vs code point bugs</td></tr>
+<tr><td>same multiset, different counts</td><td><code>"aab"</code> vs <code>"abb"</code></td><td>anagram checks that only compare sets</td></tr>
+</tbody>
+</table></div>
+<p>A second habit from <a href="/learn/dsa-complexity#testing">the complexity lesson</a>: test a fast in-place version against a simple copying version (as the rotate tests did), and assert on moves or steps rather than timings. Here is the fixed <code>removeCancelled</code> checked both ways:</p>
+<example file="remove-tests.js">
+function removeCancelledInPlace(orders) {
+  let write = 0;
+  for (let read = 0; read < orders.length; read++) {
+    if (orders[read].status !== "cancelled") {
+      orders[write] = orders[read];
+      write++;
+    }
+  }
+  const writes = write;
+  orders.length = write; // cut off the leftovers
+  return writes;
+}
+
+function check(label, condition) {
+  console.log(`${condition ? "PASS" : "FAIL"} ${label}`);
+}
+
+const make = (statuses) => statuses.map((status, i) => ({ id: `ORD-${i + 1}`, status }));
+const ids = (orders) => orders.map((o) => o.id).join(",");
+
+const cases = [
+  [],
+  ["paid"],
+  ["cancelled"],
+  ["cancelled", "cancelled", "paid"],
+  ["paid", "cancelled", "cancelled", "paid", "cancelled"],
+];
+for (const statuses of cases) {
+  const expected = ids(make(statuses).filter((o) => o.status !== "cancelled"));
+  const orders = make(statuses);
+  removeCancelledInPlace(orders);
+  check(`[${statuses.join(" ")}] -> [${ids(orders)}]`, ids(orders) === expected);
+}
+
+const big = make(Array.from({ length: 10000 }, (_, i) => (i % 2 ? "paid" : "cancelled")));
+check("10,000 orders: at most one write per order", removeCancelledInPlace(big) <= 10000);
+check("10,000 orders: 5,000 remain", big.length === 5000);
+</example>
+<output>
+PASS [] -> []
+PASS [paid] -> [ORD-1]
+PASS [cancelled] -> []
+PASS [cancelled cancelled paid] -> [ORD-3]
+PASS [paid cancelled cancelled paid cancelled] -> [ORD-1,ORD-4]
+PASS 10,000 orders: at most one write per order
+PASS 10,000 orders: 5,000 remain
+</output>
+<p>The in-place version keeps a <em>read</em> index and a <em>write</em> index: every kept order is copied once to the write position. O(n) time and O(1) extra space, and adjacent cancelled orders are no problem because nothing ever shifts. Setting <code>orders.length</code> to a smaller number truncates the array.</p>
+</section>
+
+<section>
+<h2 id="production">Arrays and strings in production</h2>
+<ul>
+<li><strong>Prefer building a new array</strong> (<code>filter</code>, <code>map</code>) over deleting from an existing one, unless memory is tight. It avoids both the skipped-item bug and the O(n²) moves, and it does not surprise other code that holds the same array.</li>
+<li><strong>The copying methods cost O(n).</strong> <code>toSorted</code>, <code>toReversed</code>, <code>toSpliced</code> and <code>with</code> (ES2023) never change the original, which is safer, but each call copies. Calling them inside a loop over the same array is a hidden quadratic.</li>
+<li><strong>Numbers in bulk</strong>: for a million prices, a typed array such as <code>Float64Array</code> or <code>Int32Array</code> stores raw numbers contiguously with no per-item overhead. It has a fixed length. Mind the range: an <code>Int32Array</code> holds at most 2,147,483,647, which is only about ₦21 million in kobo.</li>
+<li><strong>Normalize text at the boundary.</strong> Trim, fix the case and apply Unicode normalization (<code>text.normalize("NFC")</code>) once when input arrives, so every comparison afterwards is a plain <code>===</code>.</li>
+<li><strong>Limit input sizes.</strong> An O(n²) algorithm on a user-supplied string of 10 MB is a denial of service. Reject oversized input before any expensive work.</li>
+<li><strong>Stream large exports.</strong> A statement with a million lines does not need to exist as one string: write each chunk to the response or file as it is produced (see <a href="/learn/node-streams">streams</a>), which keeps memory O(1) in the number of lines.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Insert without splice">
+<p>Write <code>insertAt(items, index, value)</code> for a plain JavaScript array without <code>splice</code>: grow the array by one, move the items after <code>index</code> one place right (starting from the end), then write the value. Return the number of moves, and throw a <code>RangeError</code> for an index outside <code>0</code> to <code>items.length</code>. Why must the loop start from the end?</p>
+<solution>
+<example file="insert-at.js">
+function insertAt(items, index, value) {
+  if (!Number.isInteger(index) || index < 0 || index > items.length) {
+    throw new RangeError(`index ${index} out of range`);
+  }
+  let moves = 0;
+  for (let i = items.length; i > index; i--) {
+    items[i] = items[i - 1];
+    moves++;
+  }
+  items[index] = value;
+  return moves;
+}
+
+const queue = ["Ada", "Bola", "Chidi"];
+console.log(insertAt(queue, 1, "Dayo"), queue.join(" "));
+console.log(insertAt(queue, 0, "Efe"), queue.join(" "));
+console.log(insertAt(queue, queue.length, "Femi"), queue.join(" "));
+try {
+  insertAt(queue, 9, "Gbenga");
+} catch (error) {
+  console.log(error.name, error.message);
+}
+</example>
+<output>
+2 Ada Dayo Bola Chidi
+4 Efe Ada Dayo Bola Chidi
+0 Efe Ada Dayo Bola Chidi Femi
+RangeError index 9 out of range
+</output>
+<p>Writing <code>items[items.length]</code> first grows the array by one (it is the next dense slot). If the loop started at <code>index</code> and moved forwards, it would copy <code>items[index]</code> into <code>items[index + 1]</code>, overwriting that item before it was moved, and the same value would be smeared across the rest of the array. Moving from the end means every item is copied before its slot is overwritten. Moves: <code>items.length - index</code>, so O(n) at the front and O(1) at the end.</p>
+</solution>
+</exercise>
+
+<exercise title="Is it a rotation?">
+<p>A rota was rotated by some unknown <code>k</code>. Write <code>isRotation(a, b)</code> for two strings: <code>true</code> when <code>b</code> is <code>a</code> rotated by any amount. Hint: every rotation of <code>a</code> appears inside <code>a + a</code>. State the complexity.</p>
+<solution>
+<example file="is-rotation.js">
+function isRotation(a, b) {
+  return a.length === b.length && (a + a).includes(b);
+}
+
+console.log(isRotation("ABCDE", "DEABC"));
+console.log(isRotation("ABCDE", "ABCED"));
+console.log(isRotation("ABCDE", "ABCDE"));
+console.log(isRotation("", ""));
+console.log(isRotation("AB", "ABAB"));
+</example>
+<output>
+true
+false
+true
+true
+false
+</output>
+<p><code>a + a</code> is O(n) time and space. <code>includes</code> is a substring search: engines use fast algorithms that are usually close to O(n), but a simple search can be O(n · m) in the worst case (m is the length of <code>b</code>). The length check is essential: without it, <code>"AB"</code> would count <code>"A"</code> as a rotation, and <code>"ABAB"</code> is a substring of nothing shorter.</p>
+</solution>
+</exercise>
+
+<exercise title="Compress a stock log">
+<p>A warehouse scanner logs one letter per scanned box: <code>"AAABCCDDDD"</code>. Write <code>compress(log)</code> that returns <code>"A3B1C2D4"</code>, building the result with an array and <code>join</code>. Handle the empty log. What is the complexity?</p>
+<solution>
+<example file="compress.js">
+function compress(log) {
+  const parts = [];
+  let i = 0;
+  while (i < log.length) {
+    let run = 1;
+    while (i + run < log.length && log[i + run] === log[i]) run++;
+    parts.push(log[i], String(run));
+    i += run;
+  }
+  return parts.join("");
+}
+
+console.log(compress("AAABCCDDDD"));
+console.log(compress("ABC"));
+console.log(JSON.stringify(compress("")));
+console.log(compress("Z".repeat(12)));
+</example>
+<output>
+A3B1C2D4
+A1B1C1
+""
+Z12
+</output>
+<p>Even though there are two loops, <code>i</code> jumps forward by the length of each run, so every character is read once: O(n) time. The output has at most <code>2n</code> characters: O(n) space. <code>"ABC"</code> becomes longer than the input, a known weakness of this format; a real system would keep whichever is shorter.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="summary">Summary</h2>
+<ul>
+<li>An array is a contiguous block of equal-sized slots, so <code>arr[i]</code> is O(1): start + i × slot size.</li>
+<li>Changing the end is O(1); changing the front or middle moves every later item: <code>splice</code>, <code>shift</code> and <code>unshift</code> are O(n), and calling them in a loop is O(n²).</li>
+<li>To remove many items, build a new array with <code>filter</code>, or compact in place with a read index and a write index: O(n) either way.</li>
+<li>Strings are immutable: every "change" returns a new string in O(length). Collect pieces in an array and <code>join</code> once; never read a string you are building in the same loop.</li>
+<li>Reverse by code point (<code>[...text]</code>), not by code unit (<code>split("")</code>), or emoji break.</li>
+<li>Palindrome: normalize, then two indexes inwards, O(n). Anagram: sort, O(n log n), or count, O(n). Rotate: two slices, O(n) space, or three reversals, O(1) space; always normalize <code>k</code> and handle empty input.</li>
+<li>Test the edges: empty, one item, odd and even lengths, adjacent matches, <code>k</code> beyond the length, non-ASCII text.</li>
+</ul>
+<p>Next: <a href="/learn/dsa-hash-maps">Hash maps and sets</a>, the structure behind every O(1) lookup in this lesson.</p>
+</section>

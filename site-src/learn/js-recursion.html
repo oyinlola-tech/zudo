@@ -1,0 +1,795 @@
+---
+title: Recursion
+description: Solve problems on nested data of any depth by letting a function call itself: folder sizes, comment threads and org charts, then make it safe against deep and circular data.
+minutes: 50
+youNeed: Closures in depth, Scope and how code runs, Arrays and Objects
+youBuild: A comment thread engine that turns flat database rows into a tree, renders it, counts replies and survives bad data
+keywords: javascript recursion, recursive function, base case, recursive case, call stack, stack overflow, RangeError, tree traversal, nested data, folder tree, comment thread, org chart, deep equality, explicit stack, iteration, cycle detection, memoization
+objectives: Write a recursive function from its base case, its smaller step and its combine step | Trace a recursive call on the call stack and predict the order of its output | Walk nested data such as folders, comment threads and org charts | Find and fix the common recursion bugs, including cycles in data | Explain stack overflow and rewrite a recursive function with an explicit stack | Decide when recursion is safe in production and when to limit depth
+---
+<section>
+<h2 id="problem">How big is this folder?</h2>
+<p>A cloud storage app shows each user how much space a folder uses. A folder contains files and other folders, and those folders contain more files and folders. Here is a small one, as the API stores it:</p>
+<example file="problem.js">
+const photos = {
+  name: "Photos",
+  files: [{ name: "cover.jpg", kb: 300 }],
+  folders: [
+    {
+      name: "2025",
+      files: [{ name: "lagos.jpg", kb: 1200 }, { name: "abuja.jpg", kb: 900 }],
+      folders: [
+        { name: "Wedding", files: [{ name: "vows.mp4", kb: 50000 }], folders: [] },
+      ],
+    },
+    { name: "2026", files: [{ name: "kano.jpg", kb: 700 }], folders: [] },
+  ],
+};
+
+function sizeTwoLevels(folder) {
+  let total = 0;
+  for (const file of folder.files) total += file.kb;
+  for (const sub of folder.folders) {
+    for (const file of sub.files) total += file.kb;
+  }
+  return total;
+}
+
+console.log(sizeTwoLevels(photos));
+</example>
+<output>
+3100
+</output>
+<p>The answer should be 53,100 KB. The two-level loop never looked inside <code>Wedding</code>, so a 50 MB video went missing. You could add a third nested loop, but a user can create a fourth level, or a fortieth. The <em>shape</em> of the data has no fixed depth, so no fixed number of loops can handle it.</p>
+<p>Notice something about the shape, though: a folder contains folders. The data is defined in terms of itself. When data looks like that, the natural solution looks like that too: a function that handles one folder by calling <em>itself</em> on each sub-folder. A function that calls itself is <strong>recursive</strong>, and the technique is <strong>recursion</strong>. You met it briefly in <a href="/learn/js-functions#recursion">Functions</a> and saw how it can overflow the stack in <a href="/learn/js-scope#call-stack">Scope and how code runs</a>. This lesson teaches you to design recursive functions on purpose, to trace them, to walk real nested data, and to know when recursion is the wrong tool.</p>
+</section>
+
+<section>
+<h2 id="thinking">Thinking recursively</h2>
+<p>Every recursive function answers three questions:</p>
+<ol>
+<li><strong>Base case</strong>: what is the smallest input, one you can answer directly without calling yourself? For a folder, it is a folder with no sub-folders: its size is the sum of its files.</li>
+<li><strong>Smaller step</strong>: how do you get from this input to a smaller one of the same kind? Each sub-folder is a smaller folder.</li>
+<li><strong>Combine</strong>: once you have the answers for the smaller pieces, how do you build this answer? Add the files here to the sizes of the sub-folders.</li>
+</ol>
+<p>Then comes the part that feels like cheating at first: when you write the combine step, <strong>assume the function already works</strong> for the smaller pieces. You do not trace every level in your head. You only check that the base case is right and that each call gets closer to it. If both hold, the function is correct for any depth; this is the same reasoning as a proof by induction in maths.</p>
+<example file="folder-size.js">
+const photos = {
+  name: "Photos",
+  files: [{ name: "cover.jpg", kb: 300 }],
+  folders: [
+    {
+      name: "2025",
+      files: [{ name: "lagos.jpg", kb: 1200 }, { name: "abuja.jpg", kb: 900 }],
+      folders: [{ name: "Wedding", files: [{ name: "vows.mp4", kb: 50000 }], folders: [] }],
+    },
+    { name: "2026", files: [{ name: "kano.jpg", kb: 700 }], folders: [] },
+  ],
+};
+
+function folderSize(folder) {
+  let total = 0;
+  for (const file of folder.files) total += file.kb;
+  for (const sub of folder.folders) total += folderSize(sub);
+  return total;
+}
+
+console.log(folderSize(photos));
+console.log(folderSize(photos.folders[1]));
+console.log(folderSize({ name: "Empty", files: [], folders: [] }));
+</example>
+<output>
+53100
+700
+0
+</output>
+<p>Where is the base case? There is no <code>if</code>. For a folder without sub-folders, the second loop runs zero times, so the function returns without calling itself. The base case is built into the data: the recursion stops where the tree stops. This is typical for recursion over <strong>trees</strong>, data where every item can have children, and each child is the root of a smaller tree.</p>
+<h3>The recursive case on numbers</h3>
+<p>For numbers, the base case usually needs an explicit <code>if</code>. Here is a savings plan: each month the balance grows by 1% interest, then the customer adds a fixed deposit. The balance after <code>n</code> months is defined in terms of the balance after <code>n - 1</code> months:</p>
+<example file="savings.js">
+function balanceAfter(months, startKobo, depositKobo) {
+  if (months === 0) return startKobo;
+  const previous = balanceAfter(months - 1, startKobo, depositKobo);
+  return Math.round(previous * 1.01) + depositKobo;
+}
+
+console.log(balanceAfter(0, 1000000, 500000));
+console.log(balanceAfter(1, 1000000, 500000));
+console.log(balanceAfter(12, 1000000, 500000));
+</example>
+<output>
+1000000
+1510000
+7468076
+</output>
+<p>The three questions again: the base case is month 0, where the balance is the start. The smaller step is <code>months - 1</code>. The combine step applies one month of interest and one deposit to the previous balance. You could write this as a loop just as easily, and for numbers a loop is usually clearer. Recursion earns its place on nested data.</p>
+</section>
+
+<section>
+<h2 id="call-stack">Recursion on the call stack</h2>
+<p>Each call of a recursive function is a separate call, with its own execution context on the call stack and its own parameters and local variables (<a href="/learn/js-scope#call-stack">Scope and how code runs</a>). The calls below it wait, each holding its own half-finished work, until the call above returns. Printing with an indent that grows with the depth makes this visible:</p>
+<example file="trace.js">
+const org = {
+  name: "Ngozi (CEO)",
+  reports: [
+    { name: "Tunde (CTO)", reports: [{ name: "Ada (engineer)", reports: [] }] },
+    { name: "Bola (CFO)", reports: [] },
+  ],
+};
+
+function countPeople(person, depth = 0) {
+  const pad = "  ".repeat(depth);
+  console.log(`${pad}enter ${person.name}`);
+  let total = 1;
+  for (const report of person.reports) {
+    total += countPeople(report, depth + 1);
+  }
+  console.log(`${pad}leave ${person.name} -> ${total}`);
+  return total;
+}
+
+countPeople(org);
+</example>
+<output>
+enter Ngozi (CEO)
+  enter Tunde (CTO)
+    enter Ada (engineer)
+    leave Ada (engineer) -> 1
+  leave Tunde (CTO) -> 2
+  enter Bola (CFO)
+  leave Bola (CFO) -> 1
+leave Ngozi (CEO) -> 4
+</output>
+<p>Read the trace as the call stack growing to the right and shrinking back:</p>
+<pre>
+ stack while Ada runs:         after Ada returns:        after Tunde returns:
+ +---------------------+       +---------------------+   +---------------------+
+ | countPeople(Ada)    |       |                     |   |                     |
+ | countPeople(Tunde)  |       | countPeople(Tunde)  |   |                     |
+ | countPeople(Ngozi)  |       | countPeople(Ngozi)  |   | countPeople(Ngozi)  |
+ +---------------------+       +---------------------+   +---------------------+
+ three separate "total"s       Tunde's total: 1 + 1      Ngozi's total: 1 + 2, then Bola
+</pre>
+<ul>
+<li>Ngozi's call does not finish until everything below it has finished. Its <code>total</code> waits on the stack the whole time.</li>
+<li>The deepest call, Ada's, is the first to <em>leave</em>. Results flow back up: Ada returns 1 to Tunde, Tunde returns 2 to Ngozi.</li>
+<li>Each call has its own <code>total</code> and <code>depth</code>. They do not interfere, because each call has its own environment (<a href="/learn/js-closures#environments">Closures in depth</a>).</li>
+</ul>
+<h3>Work before or after the call</h3>
+<p>Where you put the work relative to the recursive call decides the order of the output. Work <em>before</em> the calls handles a parent before its children; that order is called <strong>pre-order</strong>. Work <em>after</em> the calls handles the children first; that is <strong>post-order</strong>:</p>
+<example file="order.js">
+const org = {
+  name: "Ngozi",
+  reports: [
+    { name: "Tunde", reports: [{ name: "Ada", reports: [] }] },
+    { name: "Bola", reports: [] },
+  ],
+};
+
+function preOrder(person, out = []) {
+  out.push(person.name);
+  for (const report of person.reports) preOrder(report, out);
+  return out;
+}
+
+function postOrder(person, out = []) {
+  for (const report of person.reports) postOrder(report, out);
+  out.push(person.name);
+  return out;
+}
+
+console.log(preOrder(org).join(" > "));
+console.log(postOrder(org).join(" > "));
+</example>
+<output>
+Ngozi > Tunde > Ada > Bola
+Ada > Tunde > Bola > Ngozi
+</output>
+<p>Pre-order suits printing a tree top-down, like a table of contents. Post-order suits work where the children must be done first: deleting a folder (empty it before removing it), or computing a total that depends on the children's totals. Both functions pass the same <code>out</code> array down to every call, so they all push into one list; this is called an <strong>accumulator</strong>.</p>
+</section>
+
+<section>
+<h2 id="nested-data">Walking real nested data</h2>
+<p>Most recursion in backend code walks one of three shapes: trees of objects (folders, comments, categories, org charts), nested arrays, and "any JSON value". Each needs a slightly different base case.</p>
+<h3>Rendering a comment thread</h3>
+<p>Comments with replies, which have replies, are a tree. Rendering them needs the depth for indentation, and a count is a one-line recursion:</p>
+<example file="comments.js">
+const thread = [
+  {
+    author: "Ada", text: "Is delivery free in Lagos?",
+    replies: [
+      { author: "Shop", text: "Yes, above ₦20,000.", replies: [
+        { author: "Ada", text: "Thanks!", replies: [] },
+      ] },
+      { author: "Chidi", text: "Same for Abuja?", replies: [] },
+    ],
+  },
+  { author: "Tunde", text: "Great rice.", replies: [] },
+];
+
+function render(comments, depth = 0) {
+  const lines = [];
+  for (const c of comments) {
+    lines.push(`${"  ".repeat(depth)}- ${c.author}: ${c.text}`);
+    lines.push(...render(c.replies, depth + 1));
+  }
+  return lines;
+}
+
+function countComments(comments) {
+  return comments.reduce((sum, c) => sum + 1 + countComments(c.replies), 0);
+}
+
+console.log(render(thread).join("\n"));
+console.log("comments:", countComments(thread));
+</example>
+<output>
+- Ada: Is delivery free in Lagos?
+  - Shop: Yes, above ₦20,000.
+    - Ada: Thanks!
+  - Chidi: Same for Abuja?
+- Tunde: Great rice.
+comments: 5
+</output>
+<p>Here the function takes a <em>list</em> of comments rather than one comment, so the base case is an empty list: <code>render([])</code> returns <code>[]</code> and <code>countComments([])</code> returns 0, because <code>reduce</code> starts from 0 and has nothing to add.</p>
+<h3>Searching an org chart</h3>
+<p>Some recursive functions look for something and must stop as soon as they find it. The answer from a deeper call has to be passed up through every level. Here the function returns the chain of managers from the top of the company down to a person, or <code>null</code> when the person is not in this part of the tree:</p>
+<example file="find-path.js">
+const org = {
+  name: "Ngozi",
+  reports: [
+    { name: "Tunde", reports: [{ name: "Ada", reports: [] }, { name: "Emeka", reports: [] }] },
+    { name: "Bola", reports: [{ name: "Funmi", reports: [] }] },
+  ],
+};
+
+function pathTo(person, target) {
+  if (person.name === target) return [person.name];
+  for (const report of person.reports) {
+    const path = pathTo(report, target);
+    if (path !== null) return [person.name, ...path];
+  }
+  return null;
+}
+
+console.log(pathTo(org, "Emeka"));
+console.log(pathTo(org, "Funmi"));
+console.log(pathTo(org, "Ngozi"));
+console.log(pathTo(org, "Zainab"));
+</example>
+<output>
+[ 'Ngozi', 'Tunde', 'Emeka' ]
+[ 'Ngozi', 'Bola', 'Funmi' ]
+[ 'Ngozi' ]
+null
+</output>
+<p>There are two base cases: found (return a path of one name) and a person with no reports who is not the target (the loop does nothing, so the function returns <code>null</code>). The combine step puts the current person in front of the path found below. Checking <code>path !== null</code> is essential: without it, the loop would stop at the first report even when the target was not under them. An approval workflow uses exactly this path: "who must approve Emeka's expense?" is everyone above him.</p>
+<h3>Any JSON value: deep equality</h3>
+<p>In <a href="/learn/js-objects-deep#identity">Objects in depth</a> you wrote <code>shallowEqual</code>, and saw that comparing all levels needs recursion. Data from JSON is a tree whose nodes are objects and arrays, and whose leaves are primitives. The base case is "at least one side is not an object":</p>
+<example file="deep-equal.js">
+function deepEqual(a, b) {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((key) => Object.hasOwn(b, key) && deepEqual(a[key], b[key]));
+}
+
+const saved = { id: 7, items: [{ sku: "RICE-5", qty: 2 }], address: { city: "Lagos" } };
+const incoming = { address: { city: "Lagos" }, id: 7, items: [{ qty: 2, sku: "RICE-5" }] };
+const changed = { id: 7, items: [{ sku: "RICE-5", qty: 3 }], address: { city: "Lagos" } };
+
+console.log(deepEqual(saved, incoming));
+console.log(deepEqual(saved, changed));
+console.log(deepEqual([1, [2, [3]]], [1, [2, [3]]]), deepEqual([], {}));
+</example>
+<output>
+true
+false
+true false
+</output>
+<p>A backend uses this to skip a database write when an update changes nothing. This version handles plain JSON data; a complete one, like Vitest's <code>toEqual</code>, also knows about dates, maps, sets and circular references.</p>
+</section>
+
+<section>
+<h2 id="bugs">When recursion goes wrong</h2>
+<p>Recursive bugs come in a few recognisable kinds. Learn their symptoms and you can find them quickly.</p>
+<example file="bugs.js">
+function tryIt(label, run) {
+  try {
+    console.log(`${label}: ${run()}`);
+  } catch (error) {
+    console.log(`${label}: ${error.name}: ${error.message}`);
+  }
+}
+
+function countdownNoBase(n) {
+  return countdownNoBase(n - 1);
+}
+
+function stepsOfTwo(n) {
+  if (n === 0) return "done";
+  return stepsOfTwo(n - 2);
+}
+
+function sizeForgotReturn(folder) {
+  if (folder.folders.length === 0) return folder.kb;
+  let total = folder.kb;
+  for (const sub of folder.folders) sizeForgotReturn(sub);
+  return total;
+}
+
+tryIt("no base case", () => countdownNoBase(3));
+tryIt("even start", () => stepsOfTwo(4));
+tryIt("odd start", () => stepsOfTwo(5));
+tryIt("result ignored", () => sizeForgotReturn({ kb: 10, folders: [{ kb: 5, folders: [] }] }));
+</example>
+<output>
+no base case: RangeError: Maximum call stack size exceeded
+even start: done
+odd start: RangeError: Maximum call stack size exceeded
+result ignored: 10
+</output>
+<ul>
+<li><strong>No base case</strong>: the function never stops, the stack fills up, and JavaScript throws a <code>RangeError</code>.</li>
+<li><strong>Base case that can be skipped</strong>: <code>stepsOfTwo(5)</code> goes 5, 3, 1, -1, and never hits exactly 0. Base cases should cover a range (<code>n &lt;= 0</code>), not one exact value, unless the input is guaranteed.</li>
+<li><strong>Recursive result thrown away</strong>: <code>sizeForgotReturn</code> calls itself but never adds the result. There is no error, just a wrong answer (10 instead of 15), which is worse. Every recursive call's result must be used.</li>
+</ul>
+<h3>Cycles in the data</h3>
+<p>Recursion over a tree assumes it <em>is</em> a tree: no item is its own ancestor. Real data breaks this. An admin sets a manager's manager to the employee; a folder "shortcut" points at its own parent. Recursion then goes round the loop until the stack overflows. The fix is to remember what you have visited, in a <code>Set</code>, and refuse to enter anything twice:</p>
+<example file="cycles.js">
+const ngozi = { name: "Ngozi", reports: [] };
+const tunde = { name: "Tunde", reports: [] };
+const ada = { name: "Ada", reports: [] };
+ngozi.reports.push(tunde);
+tunde.reports.push(ada);
+ada.reports.push(ngozi);
+
+function countPeople(person) {
+  let total = 1;
+  for (const report of person.reports) total += countPeople(report);
+  return total;
+}
+
+try {
+  countPeople(ngozi);
+} catch (error) {
+  console.log(`naive: ${error.name}`);
+}
+
+function countPeopleSafe(person, visited = new Set()) {
+  if (visited.has(person)) {
+    throw new Error(`cycle: ${person.name} reports to someone below them`);
+  }
+  visited.add(person);
+  let total = 1;
+  for (const report of person.reports) total += countPeopleSafe(report, visited);
+  return total;
+}
+
+try {
+  countPeopleSafe(ngozi);
+} catch (error) {
+  console.log(`safe: ${error.message}`);
+}
+
+ada.reports.length = 0;
+console.log("fixed data:", countPeopleSafe(ngozi));
+</example>
+<output>
+naive: RangeError
+safe: cycle: Ngozi reports to someone below them
+fixed data: 3
+</output>
+<p>The <code>Set</code> compares by identity, which is exactly right here: it recognises the <em>same</em> object coming round again. Whether to throw, skip or log a cycle is a decision for your application; for an org chart, a cycle is bad data that someone must fix, so throwing with a clear message is right. <code>structuredClone</code> handles cycles with the same idea internally.</p>
+<h3>Exponential recursion</h3>
+<p>A recursive function that calls itself <em>twice</em> per call can do an enormous amount of repeated work. Ways to climb a staircase taking one or two steps at a time is a classic: the ways for <code>n</code> steps are the ways for <code>n - 1</code> plus the ways for <code>n - 2</code>. Count the calls:</p>
+<example file="exponential.js">
+let calls = 0;
+function ways(n) {
+  calls += 1;
+  if (n <= 1) return 1;
+  return ways(n - 1) + ways(n - 2);
+}
+console.log(ways(25), "calls:", calls);
+
+const cache = new Map();
+let memoCalls = 0;
+function waysMemo(n) {
+  memoCalls += 1;
+  if (n <= 1) return 1;
+  if (cache.has(n)) return cache.get(n);
+  const result = waysMemo(n - 1) + waysMemo(n - 2);
+  cache.set(n, result);
+  return result;
+}
+console.log(waysMemo(25), "calls:", memoCalls);
+</example>
+<output>
+121393 calls: 242785
+121393 calls: 49
+</output>
+<p>The plain version computes <code>ways(23)</code> twice, <code>ways(22)</code> three times, and so on: the number of calls roughly doubles with each extra step. With the memoization from <a href="/learn/js-closures#memoization">Closures in depth</a>, each value is computed once and the whole thing takes 49 calls. When a recursive function calls itself on overlapping pieces, memoize it. <a href="/learn/dsa-dynamic-programming">Dynamic programming</a> builds a whole technique on this.</p>
+</section>
+
+<section>
+<h2 id="overflow">Stack overflow and deep data</h2>
+<p>Every pending call takes space on the call stack, and the stack is small: typically about ten thousand simple calls, depending on the engine and how many local variables each call has. A tree of folders is rarely more than a few dozen levels deep, so recursion over it is safe. But some data is deep by nature: a linked chain of records, where each points to the next, such as a history of edits, or a list of transactions that each reference the previous one:</p>
+<example file="deep-chain.js">
+function buildChain(length) {
+  let head = null;
+  for (let i = length; i >= 1; i--) head = { amountKobo: 100, previous: head };
+  return head;
+}
+
+function totalRecursive(entry) {
+  if (entry === null) return 0;
+  return entry.amountKobo + totalRecursive(entry.previous);
+}
+
+console.log(totalRecursive(buildChain(1000)));
+
+try {
+  totalRecursive(buildChain(100000));
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+100000
+RangeError: Maximum call stack size exceeded
+</output>
+<p>The logic is correct; the data is simply deeper than the stack. Some languages avoid this for calls in <strong>tail position</strong> (a <code>return f(x)</code> with nothing left to do afterwards) by reusing the stack frame. The JavaScript specification describes this, but V8, the engine in Node.js and Chrome, does not implement it, so you cannot rely on it. For data that can be arbitrarily deep, use iteration.</p>
+</section>
+
+<section>
+<h2 id="iteration">Turning recursion into iteration</h2>
+<p>Recursion uses the call stack to remember "what is still to do". You can keep that list yourself, in an ordinary array used as a <strong>stack</strong>: <code>push</code> to add work, <code>pop</code> to take the most recent. An array lives on the heap and can hold millions of items, so the depth limit disappears:</p>
+<example file="iterative.js">
+function buildChain(length) {
+  let head = null;
+  for (let i = length; i >= 1; i--) head = { amountKobo: 100, previous: head };
+  return head;
+}
+
+function totalIterative(entry) {
+  let total = 0;
+  for (let current = entry; current !== null; current = current.previous) {
+    total += current.amountKobo;
+  }
+  return total;
+}
+console.log(totalIterative(buildChain(100000)));
+
+function folderSizeIterative(root) {
+  let total = 0;
+  const stack = [root];
+  while (stack.length > 0) {
+    const folder = stack.pop();
+    for (const file of folder.files) total += file.kb;
+    for (const sub of folder.folders) stack.push(sub);
+  }
+  return total;
+}
+
+const photos = {
+  files: [{ kb: 300 }],
+  folders: [
+    { files: [{ kb: 1200 }, { kb: 900 }], folders: [{ files: [{ kb: 50000 }], folders: [] }] },
+    { files: [{ kb: 700 }], folders: [] },
+  ],
+};
+console.log(folderSizeIterative(photos));
+
+let deep = { files: [{ kb: 1 }], folders: [] };
+for (let i = 0; i < 50000; i++) deep = { files: [{ kb: 1 }], folders: [deep] };
+console.log(folderSizeIterative(deep));
+</example>
+<output>
+10000000
+53100
+50001
+</output>
+<p>A chain has only one "next", so a plain loop is enough. A tree can branch, so each folder may add several folders to the to-do stack. The iterative folder size gives the same 53,100 as the recursive one, and a folder nested 50,000 levels deep, which would overflow the recursive version, is no problem.</p>
+<h3>Level by level with a queue</h3>
+<p>Swap the stack for a <strong>queue</strong>, taking work from the front with <code>shift</code> instead of the end, and you visit a tree level by level: everyone at depth 1, then depth 2. That order, called <strong>breadth-first</strong>, answers questions such as "who are the CEO's direct reports, then theirs?":</p>
+<example file="levels.js">
+const org = {
+  name: "Ngozi",
+  reports: [
+    { name: "Tunde", reports: [{ name: "Ada", reports: [] }, { name: "Emeka", reports: [] }] },
+    { name: "Bola", reports: [{ name: "Funmi", reports: [] }] },
+  ],
+};
+
+function byLevel(root) {
+  const levels = [];
+  const queue = [{ person: root, depth: 0 }];
+  while (queue.length > 0) {
+    const { person, depth } = queue.shift();
+    (levels[depth] ??= []).push(person.name);
+    for (const report of person.reports) queue.push({ person: report, depth: depth + 1 });
+  }
+  return levels;
+}
+
+byLevel(org).forEach((names, depth) => console.log(`level ${depth}: ${names.join(", ")}`));
+</example>
+<output>
+level 0: Ngozi
+level 1: Tunde, Bola
+level 2: Ada, Emeka, Funmi
+</output>
+<p><code>shift</code> is slow on very large arrays, because every remaining item moves down one place; <a href="/learn/dsa-stacks-queues">Stacks and queues</a> shows faster queues, and <a href="/learn/dsa-graph-search">Graph search</a> uses this exact loop to find shortest paths.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th></th><th>Recursion</th><th>Explicit stack or queue</th></tr></thead>
+<tbody>
+<tr><td>Reads like</td><td>The definition of the data</td><td>A to-do list</td></tr>
+<tr><td>Depth limit</td><td>About ten thousand levels</td><td>Only memory</td></tr>
+<tr><td>Good for</td><td>Trees of known, modest depth: folders, menus, comment threads, config</td><td>Data of unknown or huge depth, chains, level-by-level order</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="reason">Before you build: comments from the database</h2>
+<reason title="From flat rows to a thread">
+<p>A database does not store a tree of objects. It stores comments as flat rows, each with an <code>id</code> and a <code>parentId</code> (<code>null</code> for a top-level comment). You must turn rows into a tree, render it, and count replies. Before writing code, think through:</p>
+<ul>
+<li>Does building the tree itself need recursion, or can you do it in one pass over the rows?</li>
+<li>What if a reply's row comes <em>before</em> its parent's row?</li>
+<li>What if a row's <code>parentId</code> points at a comment that was deleted?</li>
+<li>What if bad data makes two comments each other's parent?</li>
+<li>Threads come from users. How deep can they get, and does that make recursion risky?</li>
+</ul>
+<answer>
+<ul>
+<li><strong>Building</strong>: no recursion needed. Put every row into a <code>Map</code> by id first (one pass), then attach each row to its parent (a second pass). Two loops, no depth problem at all.</li>
+<li><strong>Order</strong>: doing it in two passes means order does not matter: by the second pass every parent is already in the map.</li>
+<li><strong>Missing parent</strong>: decide a policy. Showing the reply at the top level is friendlier than dropping it; record it so you can fix the data.</li>
+<li><strong>Cycles</strong>: rows that are each other's parent never reach the top level, so they are never attached to the roots and a recursive render starting from the roots never sees them. But the render must still not trust the tree blindly: a depth limit is a cheap guarantee.</li>
+<li><strong>Depth</strong>: users can reply to replies forever. Rendering with recursion is fine if you cap the depth (most sites stop indenting after a few levels and show "continue this thread"). The cap makes stack overflow impossible, whatever the data.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="build">Build: a comment thread engine</h2>
+<example file="thread.js" project="thread">
+export function buildThread(rows) {
+  const byId = new Map();
+  for (const row of rows) byId.set(row.id, { ...row, replies: [] });
+
+  const roots = [];
+  const orphans = [];
+  for (const node of byId.values()) {
+    if (node.parentId === null) {
+      roots.push(node);
+    } else if (byId.has(node.parentId)) {
+      byId.get(node.parentId).replies.push(node);
+    } else {
+      orphans.push(node.id);
+      roots.push(node);
+    }
+  }
+  return { roots, orphans };
+}
+
+export function renderThread(comments, { maxDepth = 3, depth = 0 } = {}) {
+  const lines = [];
+  for (const c of comments) {
+    lines.push(`${"  ".repeat(depth)}- ${c.author}: ${c.text}`);
+    if (c.replies.length === 0) continue;
+    if (depth + 1 > maxDepth) {
+      const hidden = countReplies([c]);
+      lines.push(`${"  ".repeat(depth + 1)}(${hidden} more ${hidden === 1 ? "reply" : "replies"})`);
+    } else {
+      lines.push(...renderThread(c.replies, { maxDepth, depth: depth + 1 }));
+    }
+  }
+  return lines;
+}
+
+export function countReplies(comments) {
+  let total = 0;
+  const stack = [...comments];
+  while (stack.length > 0) {
+    const c = stack.pop();
+    total += c.replies.length;
+    stack.push(...c.replies);
+  }
+  return total;
+}
+</example>
+<p>Three functions, three techniques. <code>buildThread</code> uses two plain loops and a <code>Map</code>, and turns a missing parent into a top-level comment while recording it in <code>orphans</code>. <code>renderThread</code> is recursive, because output order follows the tree, but it passes <code>depth</code> down and stops going deeper at <code>maxDepth</code>. <code>countReplies</code> uses an explicit stack, so it works at any depth; the renderer uses it to say how many replies are hidden.</p>
+<example file="main.js" project="thread">
+import { buildThread, countReplies, renderThread } from "./thread.js";
+
+const rows = [
+  { id: 4, parentId: 2, author: "Ada", text: "Thanks!" },
+  { id: 1, parentId: null, author: "Ada", text: "Is delivery free in Lagos?" },
+  { id: 2, parentId: 1, author: "Shop", text: "Yes, above ₦20,000." },
+  { id: 3, parentId: 1, author: "Chidi", text: "Same for Abuja?" },
+  { id: 5, parentId: 4, author: "Shop", text: "You're welcome." },
+  { id: 6, parentId: 5, author: "Ada", text: "Ordered!" },
+  { id: 7, parentId: 99, author: "Tunde", text: "Reply to a deleted comment" },
+];
+
+const { roots, orphans } = buildThread(rows);
+console.log(renderThread(roots).join("\n"));
+console.log("replies:", countReplies(roots), "orphans:", orphans);
+console.log(renderThread(roots, { maxDepth: 1 }).join("\n"));
+</example>
+<output>
+- Ada: Is delivery free in Lagos?
+  - Shop: Yes, above ₦20,000.
+    - Ada: Thanks!
+      - Shop: You're welcome.
+        (1 more reply)
+  - Chidi: Same for Abuja?
+- Tunde: Reply to a deleted comment
+replies: 5 orphans: [ 7 ]
+- Ada: Is delivery free in Lagos?
+  - Shop: Yes, above ₦20,000.
+    (3 more replies)
+  - Chidi: Same for Abuja?
+- Tunde: Reply to a deleted comment
+</output>
+<p>Row 4 arrived before its parent, row 2, and still landed in the right place. Row 7's parent was deleted, so it shows at the top level and is reported. With <code>maxDepth: 1</code> the deep part of the thread collapses into a count.</p>
+<h3>Testing the edge cases</h3>
+<p>The tests follow the reasoning: empty input, order, orphans, a cycle, the depth cap, and a thread far deeper than the call stack:</p>
+<example file="thread.test.js" project="thread">
+import { buildThread, countReplies, renderThread } from "./thread.js";
+
+function check(label, actual, expected) {
+  const same = JSON.stringify(actual) === JSON.stringify(expected);
+  console.log(`${same ? "PASS" : "FAIL"} ${label} -> ${JSON.stringify(actual)}`);
+}
+
+const row = (id, parentId) => ({ id, parentId, author: "u", text: `c${id}` });
+
+check("empty", renderThread(buildThread([]).roots), []);
+check("child before parent", renderThread(buildThread([row(2, 1), row(1, null)]).roots), ["- u: c1", "  - u: c2"]);
+check("orphan kept", buildThread([row(1, 42)]).orphans, [1]);
+
+const cyclic = buildThread([row(1, null), row(2, 3), row(3, 2)]);
+check("cycle never reaches the roots", renderThread(cyclic.roots), ["- u: c1"]);
+
+const chain = [row(1, null)];
+for (let id = 2; id <= 100000; id++) chain.push(row(id, id - 1));
+const deep = buildThread(chain);
+check("deep thread counted", countReplies(deep.roots), 99999);
+check("deep thread rendered with a cap", renderThread(deep.roots, { maxDepth: 2 }), [
+  "- u: c1",
+  "  - u: c2",
+  "    - u: c3",
+  "      (99997 more replies)",
+]);
+</example>
+<output>
+PASS empty -> []
+PASS child before parent -> ["- u: c1","  - u: c2"]
+PASS orphan kept -> [1]
+PASS cycle never reaches the roots -> ["- u: c1"]
+PASS deep thread counted -> 99999
+PASS deep thread rendered with a cap -> ["- u: c1","  - u: c2","    - u: c3","      (99997 more replies)"]
+</output>
+<p>The cycle test documents a real behaviour: rows 2 and 3 point at each other, so neither is a root and neither is an orphan. They silently vanish from the page. That is safe (no infinite loop) but it hides bad data. A production version would also report rows that were never reached from a root, and that is the first practice exercise.</p>
+<h3>In production</h3>
+<ul>
+<li><strong>Never recurse without a limit on data that users control.</strong> Deeply nested JSON in a request body, a reply chain, a category tree edited by admins: an attacker (or an accident) can make it deep enough to overflow the stack, and a thrown <code>RangeError</code> in the wrong place takes down a request or a worker. Cap the depth, or use an explicit stack.</li>
+<li><strong>Validate trees when they are saved.</strong> Reject a manager change that would create a cycle at write time, using <code>pathTo</code>-style checks, rather than discovering it every time a page renders.</li>
+<li><strong>Let the database do deep walks.</strong> PostgreSQL and other SQL databases can walk parent/child rows themselves with a recursive query (<code>WITH RECURSIVE</code>). Loading a whole tree into memory just to count it does not scale to millions of rows; the SQL lessons, starting with <a href="/learn/sql-basics">SQL basics</a>, show how to query the database instead.</li>
+<li><strong>Measure before optimising.</strong> Recursion over a few hundred items is fast. The costs to watch are exponential call counts (memoize) and depth (iterate), not the recursion itself.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Find the unreachable comments">
+<p>Write <code>unreachable(rows)</code> that returns the ids of rows that <code>renderThread</code> would never show: rows that are neither roots nor under a root (as in the cycle test). Use <code>buildThread</code>'s idea: build the tree, walk it from the roots with an explicit stack, collect the ids you reach, and return the others.</p>
+<solution>
+<example file="unreachable.js">
+function unreachable(rows) {
+  const byId = new Map(rows.map((r) => [r.id, { ...r, replies: [] }]));
+  const roots = [];
+  for (const node of byId.values()) {
+    const parent = byId.get(node.parentId);
+    if (node.parentId === null || !parent) roots.push(node);
+    else parent.replies.push(node);
+  }
+  const reached = new Set();
+  const stack = [...roots];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    reached.add(node.id);
+    stack.push(...node.replies);
+  }
+  return rows.map((r) => r.id).filter((id) => !reached.has(id));
+}
+
+const rows = [
+  { id: 1, parentId: null },
+  { id: 2, parentId: 3 },
+  { id: 3, parentId: 2 },
+  { id: 4, parentId: 1 },
+  { id: 5, parentId: 99 },
+];
+console.log(unreachable(rows));
+</example>
+<output>
+[ 2, 3 ]
+</output>
+<p>Row 5's parent is missing, so it is treated as a root and reached. Rows 2 and 3 only point at each other; no walk from a root ever finds them. Reporting them lets an admin repair the data.</p>
+</solution>
+</exercise>
+<exercise title="Total of a nested bundle">
+<p>A shop sells bundles, and a bundle can contain products and other bundles. Write a recursive <code>priceKobo(item)</code>: a product has a <code>priceKobo</code>; a bundle has <code>items</code> and a <code>discountPercent</code>, and costs the sum of its items minus the discount, rounded.</p>
+<solution>
+<example file="bundle.js">
+function priceKobo(item) {
+  if (!item.items) return item.priceKobo;
+  const sum = item.items.reduce((total, inner) => total + priceKobo(inner), 0);
+  return Math.round(sum * (1 - item.discountPercent / 100));
+}
+
+const rice = { name: "Rice 5kg", priceKobo: 850000 };
+const oil = { name: "Oil 1L", priceKobo: 320000 };
+const salt = { name: "Salt", priceKobo: 20000 };
+const kitchen = { name: "Kitchen pack", discountPercent: 10, items: [oil, salt] };
+const family = { name: "Family pack", discountPercent: 5, items: [rice, rice, kitchen] };
+
+console.log(priceKobo(rice), priceKobo(kitchen), priceKobo(family));
+</example>
+<output>
+850000 306000 1905700
+</output>
+<p>The base case is a product (no <code>items</code>). The kitchen pack is 340,000 minus 10%. The family pack is 850,000 + 850,000 + 306,000 = 2,006,000, minus 5%: the inner discount is applied first, because the recursive call returns the kitchen pack's final price.</p>
+</solution>
+</exercise>
+<exercise title="Flatten categories into breadcrumbs">
+<p>A category tree looks like <code>{ name: "Food", children: [...] }</code>. Write a recursive <code>breadcrumbs(category, trail = [])</code> that returns one string per category, such as <code>"Food &gt; Grains &gt; Rice"</code>, in pre-order.</p>
+<solution>
+<example file="breadcrumbs.js">
+function breadcrumbs(category, trail = []) {
+  const path = [...trail, category.name];
+  return [path.join(" > "), ...category.children.flatMap((child) => breadcrumbs(child, path))];
+}
+
+const food = {
+  name: "Food",
+  children: [
+    { name: "Grains", children: [{ name: "Rice", children: [] }, { name: "Beans", children: [] }] },
+    { name: "Oils", children: [] },
+  ],
+};
+console.log(breadcrumbs(food).join("\n"));
+</example>
+<output>
+Food
+Food > Grains
+Food > Grains > Rice
+Food > Grains > Beans
+Food > Oils
+</output>
+<p>Each call builds a <em>new</em> <code>path</code> array with spread instead of pushing into <code>trail</code>. If it pushed into a shared array, siblings would see each other's names in their trail.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A recursive function needs a base case, a smaller step, and a combine step. Trust the function for the smaller pieces; check only that the base case is right and always reached.</li>
+<li>Each recursive call has its own frame on the call stack. The deepest call returns first, and results flow back up.</li>
+<li>Work before the recursive calls gives pre-order (parents first); work after gives post-order (children first).</li>
+<li>Recursion fits nested data: folders, comment threads, org charts, categories, JSON. Base cases are often "no children" or "not an object".</li>
+<li>Typical bugs: no base case, a base case that can be skipped, a recursive result that is not used, and cycles in the data. Track visited objects in a <code>Set</code> to catch cycles.</li>
+<li>Calling yourself twice on overlapping pieces is exponential: memoize.</li>
+<li>The stack holds roughly ten thousand calls, and JavaScript engines do not remove tail calls. For deep or user-controlled data, cap the depth or use an explicit stack (depth-first) or queue (breadth-first).</li>
+</ul>
+<p>Next: <a href="/learn/js-classes">this, prototypes and classes</a>, where objects get shared methods and you meet <code>this</code>.</p>
+</section>

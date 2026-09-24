@@ -1,0 +1,740 @@
+---
+title: Type inference in depth
+description: Learn how TypeScript works out types you never wrote - literal types, widening, contextual typing, inferred returns - and decide where an annotation really pays off.
+minutes: 40
+youNeed: Basic types
+youBuild: An order-pricing module where every annotation is there for a reason, and every inferred type is one you can predict
+keywords: typescript type inference, inferred vs annotated, literal types, type widening, let vs const, as const, contextual typing, return type inference, best common type, when to annotate, string vs String, satisfies
+objectives: Predict the type TypeScript infers for a variable, object, array or function | Explain widening and stop it with const, as const or an annotation | Use contextual typing, and notice when a callback loses it | Decide which values to annotate and which to leave to inference | Choose string over String, and explain the difference at runtime
+---
+<section>
+<h2 id="problem">The order the compiler refused</h2>
+<p>A shop has a small order module. An order's status is one of three words, and <code>ship</code> only accepts orders with one of them. You build an order and pass it in:</p>
+<example file="ship.ts" project="problem" check="tsc-error">
+type OrderStatus = "pending" | "paid" | "shipped";
+
+function ship(order: { id: number; status: OrderStatus }): string {
+  return `order #${order.id} was ${order.status}, now shipped`;
+}
+
+const order = { id: 1042, status: "paid" };
+console.log(ship(order));
+</example>
+<output kind="tsc">
+ship.ts:8:18 - error TS2345: Argument of type '{ id: number; status: string; }' is not assignable to parameter of type '{ id: number; status: OrderStatus; }'.
+  Types of property 'status' are incompatible.
+    Type 'string' is not assignable to type 'OrderStatus'.
+
+8 console.log(ship(order));
+                   ~~~~~
+
+
+Found 1 error in ship.ts:8
+</output>
+<p>That is odd. The status <em>is</em> <code>"paid"</code>, which is allowed. And if you write the same object straight into the call, it compiles:</p>
+<example file="ship.ts" project="problem">
+type OrderStatus = "pending" | "paid" | "shipped";
+
+function ship(order: { id: number; status: OrderStatus }): string {
+  return `order #${order.id} was ${order.status}, now shipped`;
+}
+
+console.log(ship({ id: 1042, status: "paid" }));
+</example>
+<output>
+order #1042 was paid, now shipped
+</output>
+<p>Same value, different result. The difference is not in the value but in how TypeScript worked out its <em>type</em>. In the first version, <code>status</code> was given the type <code>string</code>, which is wider than <code>OrderStatus</code>. In the second, it was given <code>"paid"</code>. This lesson explains the rules that decide that, so this kind of error stops being a surprise. You met inference briefly in <a href="/learn/ts-setup#inference">Why TypeScript exists</a> and <a href="/learn/ts-types">Basic types</a>; here you learn how it really works.</p>
+</section>
+
+<section>
+<h2 id="inferred-vs-annotated">Inferred and annotated types</h2>
+<p><strong>Type inference</strong> is TypeScript working out a type from the code around it, usually from the value you assign. An <strong>annotation</strong> is a type you write yourself, after a colon. When a variable has an annotation, that is its <strong>declared type</strong>, and it wins:</p>
+<ul>
+<li>With an annotation, TypeScript <em>checks</em> the value against it, and from then on the variable has the annotated type, even if the value was more specific.</li>
+<li>Without one, TypeScript <em>describes</em> the value, and the description becomes the type.</li>
+</ul>
+<h3>Seeing an inferred type</h3>
+<p>In an editor, hold the mouse over a name and it shows the type. Without an editor, there is a trick worth knowing: assign the value to a variable of type <code>never</code>. Nothing can be assigned to <code>never</code>, so the compiler refuses, and its error message names the type it inferred. Here it reveals four types at once:</p>
+<example file="probe.ts" project="probe" check="tsc-error">
+const currency = "NGN";
+let fee = 50;
+const declaredFee: number = 50;
+const order = { id: 1042, status: "paid" };
+
+const probe1: never = currency;
+const probe2: never = fee;
+const probe3: never = declaredFee;
+const probe4: never = order;
+</example>
+<output kind="tsc">
+probe.ts:6:7 - error TS2322: Type '"NGN"' is not assignable to type 'never'.
+
+6 const probe1: never = currency;
+        ~~~~~~
+
+probe.ts:7:7 - error TS2322: Type 'number' is not assignable to type 'never'.
+
+7 const probe2: never = fee;
+        ~~~~~~
+
+probe.ts:8:7 - error TS2322: Type 'number' is not assignable to type 'never'.
+
+8 const probe3: never = declaredFee;
+        ~~~~~~
+
+probe.ts:9:7 - error TS2322: Type '{ id: number; status: string; }' is not assignable to type 'never'.
+
+9 const probe4: never = order;
+        ~~~~~~
+
+
+Found 4 errors in the same file, starting at: probe.ts:6
+</output>
+<ul>
+<li><code>currency</code> is a <code>const</code> holding a string, so its type is the <strong>literal type</strong> <code>"NGN"</code>: a type with exactly one value. A <code>const</code> can never change, so the most precise type is safe.</li>
+<li><code>fee</code> is a <code>let</code>. It may be changed later, so TypeScript gives it the general type <code>number</code>.</li>
+<li><code>declaredFee</code> holds the same <code>50</code> as a <code>const</code> would, but its annotation says <code>number</code>, and the annotation wins.</li>
+<li><code>order</code> is a <code>const</code>, but its <em>properties</em> are not: you can still write <code>order.status = "refunded"</code>. So <code>status</code> becomes <code>string</code>. That is the answer to the opening problem.</li>
+</ul>
+<tip>Use the <code>never</code> probe while you learn, then delete it. The error text is the compiler's own description of your value, which is more reliable than any guess.</tip>
+</section>
+
+<section>
+<h2 id="widening">Literal types and widening</h2>
+<p>Turning a literal type such as <code>"paid"</code> into the general type <code>string</code> is called <strong>widening</strong>. TypeScript widens whenever a value might change later:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Code</th><th>Inferred type</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td><code>const c = "NGN"</code></td><td><code>"NGN"</code></td><td>A <code>const</code> binding never changes</td></tr>
+<tr><td><code>let c = "NGN"</code></td><td><code>string</code></td><td>It may be reassigned</td></tr>
+<tr><td><code>const o = { status: "paid" }</code></td><td><code>{ status: string }</code></td><td>Properties can be reassigned</td></tr>
+<tr><td><code>const a = ["NGN", "USD"]</code></td><td><code>string[]</code></td><td>Elements can be replaced and pushed</td></tr>
+<tr><td><code>let n = null</code> or <code>let n;</code></td><td>Follows each assignment</td><td>Nothing to infer from (see below)</td></tr>
+</tbody>
+</table></div>
+<p>Widening is usually what you want: a <code>let total = 0</code> that could only ever hold <code>0</code> would be useless. It goes wrong when the <em>exact</em> value matters, as with a status. There are three ways to keep it.</p>
+<h3>1. Annotate with the type you mean</h3>
+<p>Give the object a named type. The annotation is checked against the value, and <code>status</code> then has type <code>OrderStatus</code>:</p>
+<example file="fix.ts" project="widen">
+type OrderStatus = "pending" | "paid" | "shipped";
+
+interface Order {
+  id: number;
+  status: OrderStatus;
+}
+
+function ship(order: Order): string {
+  return `order #${order.id} was ${order.status}, now shipped`;
+}
+
+const order: Order = { id: 1042, status: "paid" };
+console.log(ship(order));
+
+order.status = "shipped";
+console.log(order.status);
+</example>
+<output>
+order #1042 was paid, now shipped
+shipped
+</output>
+<p>This is the usual fix, and the best one when the type has a name in your domain. It also keeps <code>status</code> changeable, but only to valid values.</p>
+<h3>2. as const: freeze the value's type</h3>
+<p>Writing <code>as const</code> after a value is a <strong>const assertion</strong>. It stops widening at every level, and makes every property and array <code>readonly</code>:</p>
+<example file="as-const.ts" project="widen" check="tsc-error">
+const order = { id: 1042, status: "paid" } as const;
+const currencies = ["NGN", "USD"] as const;
+
+const probe1: never = order;
+const probe2: never = currencies;
+
+order.status = "shipped";
+currencies.push("GBP");
+</example>
+<output kind="tsc">
+as-const.ts:4:7 - error TS2322: Type '{ readonly id: 1042; readonly status: "paid"; }' is not assignable to type 'never'.
+
+4 const probe1: never = order;
+        ~~~~~~
+
+as-const.ts:5:7 - error TS2322: Type 'readonly ["NGN", "USD"]' is not assignable to type 'never'.
+
+5 const probe2: never = currencies;
+        ~~~~~~
+
+as-const.ts:7:7 - error TS2540: Cannot assign to 'status' because it is a read-only property.
+
+7 order.status = "shipped";
+        ~~~~~~
+
+as-const.ts:8:12 - error TS2339: Property 'push' does not exist on type 'readonly ["NGN", "USD"]'.
+
+8 currencies.push("GBP");
+             ~~~~
+
+
+Found 4 errors in the same file, starting at: as-const.ts:4
+</output>
+<p><code>currencies</code> became a <strong>readonly tuple</strong> of two exact strings, and <code>order</code> an object whose properties are fixed. Use <code>as const</code> for values that really never change: lists of currencies, roles, config defaults. Do not use it for an order whose status is supposed to move on. <code>as const</code> is not a type assertion that lies (like <code>as Order</code>, which you meet in <a href="/learn/ts-assertions">Type assertions</a>); it only stops widening.</p>
+<h3>3. Let the expected type guide the literal</h3>
+<p>The inline call <code>ship({ id: 1042, status: "paid" })</code> compiled because the object was written in a place where TypeScript already knew what it should be: a parameter of type <code>{ id: number; status: OrderStatus }</code>. That is <strong>contextual typing</strong>, and it gets its own section below.</p>
+
+<h3>null, and variables without a value</h3>
+<p>Two more cases catch people. A <code>let</code> that starts as <code>null</code>, or starts with no value at all, has nothing useful to infer from. TypeScript then lets its type <strong>evolve</strong>: after each assignment, the variable has the type of what was last assigned. That works in straight-line code, but a function that reads the variable later cannot know which assignment happened, so there it becomes <code>any</code>:</p>
+<example file="nulls.ts" project="widen" check="tsc-error">
+let approvedBy = null;
+
+let total;
+total = 2500;
+total = "2,500";
+const probe: never = total;
+
+function report(): string {
+  return `approved by ${approvedBy}, total ${total}`;
+}
+</example>
+<output kind="tsc">
+nulls.ts:1:5 - error TS7034: Variable 'approvedBy' implicitly has type 'any' in some locations where its type cannot be determined.
+
+1 let approvedBy = null;
+      ~~~~~~~~~~
+
+nulls.ts:3:5 - error TS7034: Variable 'total' implicitly has type 'any' in some locations where its type cannot be determined.
+
+3 let total;
+      ~~~~~
+
+nulls.ts:6:7 - error TS2322: Type 'string' is not assignable to type 'never'.
+
+6 const probe: never = total;
+        ~~~~~
+
+nulls.ts:9:25 - error TS7005: Variable 'approvedBy' implicitly has an 'any' type.
+
+9   return `approved by ${approvedBy}, total ${total}`;
+                          ~~~~~~~~~~
+
+nulls.ts:9:46 - error TS7005: Variable 'total' implicitly has an 'any' type.
+
+9   return `approved by ${approvedBy}, total ${total}`;
+                                               ~~~~~
+
+
+Found 5 errors in the same file, starting at: nulls.ts:1
+</output>
+<p>The probe shows that <code>total</code> quietly became a string after holding a number. And inside <code>report</code>, both variables are <code>any</code>, which <code>strict</code> reports (TS7034 and TS7005). Annotate both, so the declaration says what the variable may hold:</p>
+<example file="nulls.ts" project="widen">
+let approvedBy: string | null = null;
+approvedBy = "Ada";
+
+let total: number;
+total = 2500;
+console.log(approvedBy, total);
+</example>
+<output>
+Ada 2500
+</output>
+<p>Now <code>total = "2,500"</code> would be an error, and <code>approvedBy</code> says what it may hold: a name, or nothing yet.</p>
+</section>
+
+<section>
+<h2 id="best-common-type">Arrays, conditionals and mixed values</h2>
+<p>When an expression has several possible values, TypeScript combines their types. For an array, it looks at every element and builds the <strong>best common type</strong>: a type that fits them all, which is often a union. For a conditional expression (<code>a ? b : c</code>), the type is the union of both branches:</p>
+<example file="mixed.ts" project="mixed" check="tsc-error">
+const amounts = [2500, 700, 12000];
+const lines = [2500, "delivery"];
+const fee = Math.random() > 0.5 ? 10 : "free";
+const pending = [];
+pending.push({ id: 1, amount: 2500 });
+
+const probe1: never = amounts;
+const probe2: never = lines;
+const probe3: never = fee;
+const probe4: never = pending;
+</example>
+<output kind="tsc">
+mixed.ts:7:7 - error TS2322: Type 'number[]' is not assignable to type 'never'.
+
+7 const probe1: never = amounts;
+        ~~~~~~
+
+mixed.ts:8:7 - error TS2322: Type '(string | number)[]' is not assignable to type 'never'.
+
+8 const probe2: never = lines;
+        ~~~~~~
+
+mixed.ts:9:7 - error TS2322: Type '"free" | 10' is not assignable to type 'never'.
+  Type '"free"' is not assignable to type 'never'.
+
+9 const probe3: never = fee;
+        ~~~~~~
+
+mixed.ts:10:7 - error TS2322: Type '{ id: number; amount: number; }[]' is not assignable to type 'never'.
+
+10 const probe4: never = pending;
+         ~~~~~~
+
+
+Found 4 errors in the same file, starting at: mixed.ts:7
+</output>
+<ul>
+<li><code>amounts</code>: all numbers, so <code>number[]</code>, widened as usual.</li>
+<li><code>lines</code>: a mix, so <code>(string | number)[]</code>. Every element must now be checked before use. If you meant a fixed pair, use a tuple type (<a href="/learn/ts-tuples">Tuples</a>).</li>
+<li><code>fee</code>: a union of both branches, and the literals are kept because the variable is a <code>const</code>. (TypeScript 7 may list the members of a union in a different order from the one you wrote; the order has no meaning.)</li>
+<li><code>pending</code>: an empty array starts as an "evolving" array, and its type grows with each <code>push</code>. Inside one function that works, but the type of a list should not depend on the first thing someone pushes. Write <code>const pending: Transfer[] = []</code>.</li>
+</ul>
+<p>Objects returned from different branches are combined too, and the result can look strange:</p>
+<example file="shapes.ts" project="mixed" check="tsc-error">
+function check(balance: number, amount: number) {
+  return balance >= amount ? { ok: true, left: balance - amount } : { ok: false, reason: "insufficient funds" };
+}
+
+const probe: never = check;
+</example>
+<output kind="tsc">
+shapes.ts:5:7 - error TS2322: Type '(balance: number, amount: number) => { ok: boolean; left: number; reason?: undefined; } | { left?: undefined; ok: boolean; reason: string; }' is not assignable to type 'never'.
+
+5 const probe: never = check;
+        ~~~~~
+
+
+Found 1 error in shapes.ts:5
+</output>
+<p>TypeScript made both shapes the same by adding <code>left?: undefined</code> and <code>reason?: undefined</code>, and widened <code>true</code> and <code>false</code> to <code>boolean</code>. That type is hard to read and does not let callers tell the two cases apart by <code>ok</code>. When a function's result has cases, name them yourself as a union, as you will do in <a href="/learn/ts-unions">Union types in depth</a>.</p>
+</section>
+
+<section>
+<h2 id="contextual">Contextual typing: types that flow inward</h2>
+<p>So far the type flowed from the value to the variable. <strong>Contextual typing</strong> is the other direction: the place where an expression is written already has an expected type, and TypeScript uses it to type the expression. You saw it with callbacks in <a href="/learn/ts-functions#function-types">Typing functions</a>. It happens in many places:</p>
+<example file="context.ts" project="context">
+type OrderStatus = "pending" | "paid" | "shipped";
+
+interface Order {
+  id: number;
+  status: OrderStatus;
+  total: number;
+}
+
+const orders: Order[] = [
+  { id: 1, status: "paid", total: 12000 },
+  { id: 2, status: "pending", total: 4500 },
+];
+
+const paidTotal = orders.filter((o) => o.status === "paid").reduce((sum, o) => sum + o.total, 0);
+
+const labels: Record<OrderStatus, (id: number) => string> = {
+  pending: (id) => `#${id} waiting for payment`,
+  paid: (id) => `#${id} ready to ship`,
+  shipped: (id) => `#${id} on its way`,
+};
+
+console.log(paidTotal);
+console.log(orders.map((o) => labels[o.status](o.id)));
+</example>
+<output>
+12000
+[ '#1 ready to ship', '#2 waiting for payment' ]
+</output>
+<p>Not one callback parameter is annotated, and all are checked:</p>
+<ul>
+<li>The array elements are object literals written where an <code>Order</code> is expected, so <code>"paid"</code> stays a literal and is checked against <code>OrderStatus</code>. That is why the inline <code>ship</code> call at the top worked.</li>
+<li><code>(o) =&gt; …</code> inside <code>filter</code>, <code>reduce</code> and <code>map</code> get <code>o: Order</code> from the array's type, and <code>sum</code> gets <code>number</code> from the starting value <code>0</code>.</li>
+<li>Each handler in <code>labels</code> gets <code>id: number</code> from the <code>Record</code> type. And <code>Record&lt;OrderStatus, …&gt;</code> requires one handler per status: forget <code>shipped</code> and it is an error.</li>
+</ul>
+<h3>Where the context gets lost</h3>
+<p>Context only reaches an expression written <em>in</em> the place that has the expected type. Move a callback out into its own variable, and it has no context any more:</p>
+<example file="lost.ts" project="context" check="tsc-error">
+interface Order {
+  id: number;
+  total: number;
+}
+
+const orders: Order[] = [{ id: 1, total: 12000 }];
+
+const isLarge = (o) => o.total > 10000;
+console.log(orders.filter(isLarge));
+</example>
+<output kind="tsc">
+lost.ts:8:18 - error TS7006: Parameter 'o' implicitly has an 'any' type.
+
+8 const isLarge = (o) => o.total > 10000;
+                   ~
+
+
+Found 1 error in lost.ts:8
+</output>
+<p>When <code>isLarge</code> is declared, TypeScript does not yet know it will be passed to <code>filter</code>. You have two good fixes: annotate the parameter, <code>(o: Order) =&gt; …</code>, or give the variable a function type, <code>const isLarge: (o: Order) =&gt; boolean = (o) =&gt; …</code>, which provides the context again.</p>
+</section>
+
+<section>
+<h2 id="return-types">Inferred return types</h2>
+<p>TypeScript infers a function's return type from its <code>return</code> statements. That is convenient, and it is also where inference can hide a bug. Here are two versions of a discount function; both forget orders under ₦5,000:</p>
+<example file="discount.ts" project="returns" check="tsc-error">
+function discountInferred(total: number) {
+  if (total >= 50000) return 0.1;
+  if (total >= 5000) return 0.05;
+}
+
+function discountAnnotated(total: number): number {
+  if (total >= 50000) return 0.1;
+  if (total >= 5000) return 0.05;
+}
+
+const price = 3000;
+const toPay = price - price * discountInferred(price);
+</example>
+<output kind="tsc">
+discount.ts:6:44 - error TS2366: Function lacks ending return statement and return type does not include 'undefined'.
+
+6 function discountAnnotated(total: number): number {
+                                             ~~~~~~
+
+discount.ts:12:31 - error TS2532: Object is possibly 'undefined'.
+
+12 const toPay = price - price * discountInferred(price);
+                                 ~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 2 errors in the same file, starting at: discount.ts:6
+</output>
+<p>Read where each error points:</p>
+<ul>
+<li><code>discountInferred</code> compiled. Its inferred return type silently became <code>number | undefined</code>, and the error appears at the <strong>caller</strong>, on the last line. In a real project, that caller may be in another file, written by someone else, who has no idea why <code>undefined</code> is possible.</li>
+<li><code>discountAnnotated</code> is reported <strong>inside the function</strong>, at the return type (TS2366, from <a href="/learn/ts-functions#params-returns">Typing functions</a>). The annotation is a promise, and the compiler held the function to it.</li>
+</ul>
+<p>An inferred return type also changes whenever the body changes. If a teammate adds <code>return "free"</code> for VIP customers, the inferred type becomes <code>number | "free" | undefined</code>, and every caller in the project might break, or worse, keep compiling while doing the wrong thing. For an exported function, the return type is part of your public API; write it down so it changes only when you mean it to.</p>
+</section>
+
+<section>
+<h2 id="too-wide">When an annotation makes things worse</h2>
+<p>Annotations are not automatically safer. An annotation that is wider than the value throws information away. A common case is a lookup table typed as <code>Record&lt;string, number&gt;</code>:</p>
+<example file="fees.ts" project="wide">
+const fees: Record<string, number> = { transfer: 10, withdrawal: 25 };
+
+const charged = fees.tranfer;
+console.log(charged, 5000 + charged);
+</example>
+<output>
+undefined NaN
+</output>
+<p>No error, and a <code>NaN</code> in your accounts. <code>Record&lt;string, number&gt;</code> says "any string key gives a number", so the typo <code>tranfer</code> is a perfectly good key as far as the compiler knows. Two better options:</p>
+<ul>
+<li><strong>No annotation.</strong> <code>const fees = { transfer: 10, withdrawal: 25 }</code> is inferred with exactly those two keys, so <code>fees.tranfer</code> is an error.</li>
+<li><strong><code>satisfies</code>.</strong> Checks the value against a type <em>without</em> replacing the inferred type. You get both: the check that every fee is a number, and the exact keys.</li>
+</ul>
+<example file="fees.ts" project="wide" check="tsc-error">
+const fees = { transfer: 10, withdrawal: "25" } satisfies Record<string, number>;
+
+const charged = fees.tranfer;
+</example>
+<output kind="tsc">
+fees.ts:1:30 - error TS2322: Type 'string' is not assignable to type 'number'.
+
+1 const fees = { transfer: 10, withdrawal: "25" } satisfies Record<string, number>;
+                               ~~~~~~~~~~
+
+fees.ts:3:22 - error TS2551: Property 'tranfer' does not exist on type '{ transfer: number; withdrawal: string; }'. Did you mean 'transfer'?
+
+3 const charged = fees.tranfer;
+                       ~~~~~~~
+
+  fees.ts:1:16 - 'transfer' is declared here.
+    1 const fees = { transfer: 10, withdrawal: "25" } satisfies Record<string, number>;
+                     ~~~~~~~~~~~~
+
+
+Found 2 errors in the same file, starting at: fees.ts:1
+</output>
+<p>Both mistakes are caught: the fee written as text, and the misspelt key. <a href="/learn/ts-inference-deep">Advanced inference</a> compares <code>satisfies</code>, annotations and <code>as</code> in depth.</p>
+</section>
+
+<section>
+<h2 id="when-to-annotate">Deciding what to annotate</h2>
+<reason title="Annotate or infer?">
+<p>You are writing <code>pricing.ts</code> for the shop. Before you read the answer, decide for each of these whether you would write a type, and why:</p>
+<ol>
+<li>The parameters of the exported <code>priceOrder(items, coupon)</code>.</li>
+<li>Its return value, a <code>{ subtotal, discount, total }</code> object.</li>
+<li><code>const VAT_RATE = 0.075</code> at the top of the file.</li>
+<li><code>const lines = []</code>, filled in a loop later.</li>
+<li>The callback in <code>items.map((item) =&gt; item.price * item.quantity)</code>.</li>
+<li>A table of coupon codes to percentages, used as <code>coupons[code]</code>.</li>
+</ol>
+<answer>
+<ol>
+<li><strong>Annotate.</strong> Parameters have no value to infer from (without context, TypeScript reports TS7006). They are also the contract with every caller.</li>
+<li><strong>Annotate</strong>, with a named interface such as <code>OrderPrice</code>. It is exported, so its type is public API. The annotation catches a missing field inside the function, and a later change to the body cannot silently change what callers receive.</li>
+<li><strong>Infer.</strong> The value says it all. The inferred type is the literal <code>0.075</code>, which is even more precise than <code>number</code>.</li>
+<li><strong>Annotate</strong>: <code>const lines: InvoiceLine[] = []</code>. An empty array gives inference nothing to work with.</li>
+<li><strong>Infer.</strong> Contextual typing gives <code>item</code> the element type of <code>items</code>. An annotation would only repeat it.</li>
+<li><strong>It depends on the question you ask.</strong> For a fixed set of codes known at compile time, infer (or use <code>satisfies</code>) so typos are caught. For codes loaded from a database at runtime, the keys really are any string: annotate <code>Record&lt;string, number&gt;</code>, and handle the missing case, because <code>coupons[code]</code> may be <code>undefined</code> even though the type says <code>number</code>.</li>
+</ol>
+</answer>
+</reason>
+<p>The rule of thumb from the answers: <strong>annotate at boundaries, infer inside.</strong> Boundaries are where your code meets other code or other people: function parameters, exported functions' return types, public class members, and empty containers. Inside a function body, let inference do the work.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Situation</th><th>Annotate?</th><th>Reason</th></tr></thead>
+<tbody>
+<tr><td>Function parameters</td><td>Yes</td><td>Nothing to infer from; it is the contract</td></tr>
+<tr><td>Return type of an exported function</td><td>Yes</td><td>Errors stay inside the function; the API cannot change by accident</td></tr>
+<tr><td>Return type of a small local helper</td><td>Optional</td><td>Inference is fine when every caller is on the same screen</td></tr>
+<tr><td><code>const</code> with a value</td><td>No</td><td>Inference is exact</td></tr>
+<tr><td><code>let</code> starting with <code>null</code>, or with no value</td><td>Yes</td><td>Otherwise the type changes with each assignment, and is <code>any</code> inside functions</td></tr>
+<tr><td>Empty array or <code>new Map()</code></td><td>Yes</td><td>Nothing to infer from</td></tr>
+<tr><td>Object that must match a domain type</td><td>Yes (or <code>satisfies</code>)</td><td>Stops widening, catches missing and extra properties</td></tr>
+<tr><td>Callback passed inline</td><td>No</td><td>Contextual typing does it</td></tr>
+</tbody>
+</table></div>
+<p>Here is the pricing module written that way. Count the annotations: every one is at a boundary.</p>
+<example file="pricing.ts" project="pricing">
+export interface OrderItem {
+  name: string;
+  price: number;
+  quantity: number;
+}
+
+export interface OrderPrice {
+  subtotal: number;
+  discount: number;
+  vat: number;
+  total: number;
+}
+
+const VAT_RATE = 0.075;
+const coupons = { WELCOME10: 0.1, STAFF25: 0.25 } satisfies Record<string, number>;
+type CouponCode = keyof typeof coupons;
+
+export function priceOrder(items: readonly OrderItem[], coupon?: CouponCode): OrderPrice {
+  const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const discount = coupon === undefined ? 0 : Math.round(subtotal * coupons[coupon]);
+  const vat = Math.round((subtotal - discount) * VAT_RATE);
+  return { subtotal, discount, vat, total: subtotal - discount + vat };
+}
+
+const basket: OrderItem[] = [
+  { name: "Rice 5kg", price: 9500, quantity: 1 },
+  { name: "Palm oil 1L", price: 2800, quantity: 2 },
+];
+
+console.log(priceOrder(basket));
+console.log(priceOrder(basket, "WELCOME10"));
+</example>
+<output>
+{ subtotal: 15100, discount: 0, vat: 1133, total: 16233 }
+{ subtotal: 15100, discount: 1510, vat: 1019, total: 14609 }
+</output>
+<p><code>keyof typeof coupons</code> turns the table's keys into the union <code>"WELCOME10" | "STAFF25"</code>, so <code>priceOrder(basket, "WELCOM10")</code> would not compile (<a href="/learn/ts-advanced#keyof-typeof">Advanced and utility types</a> explains <code>keyof</code> and <code>typeof</code>). That only works because <code>coupons</code> was <em>not</em> annotated with <code>Record&lt;string, number&gt;</code>.</p>
+</section>
+
+<section>
+<h2 id="string-vs-string">string, not String</h2>
+<p>You were told in <a href="/learn/ts-types#primitives">Basic types</a> to write <code>string</code>, not <code>String</code>. Here is why. JavaScript has <strong>primitive</strong> strings, numbers and booleans, and also <strong>wrapper objects</strong> for each, made with <code>new String(…)</code>, <code>new Number(…)</code> and <code>new Boolean(…)</code>. The wrappers behave differently in ways that cause real bugs:</p>
+<example file="wrappers.js">
+const code = "NGN";
+const wrapped = new String("NGN");
+
+console.log(typeof code, typeof wrapped);
+console.log(code === "NGN", wrapped === "NGN");
+console.log(new String("NGN") === new String("NGN"));
+
+const blocked = new Boolean(false);
+if (blocked) console.log("account treated as blocked!");
+</example>
+<output>
+string object
+true false
+false
+account treated as blocked!
+</output>
+<p>A wrapper is an object, so <code>===</code> compares identity, not text, and every object is truthy, even a <code>Boolean</code> that holds <code>false</code>. In TypeScript, the lowercase <code>string</code> is the primitive type, and the capitalised <code>String</code> is the type of the wrapper object (and also of anything that has the string methods, which includes primitives). So the two are not the same:</p>
+<example file="wrappers.ts" project="wrappers" check="tsc-error">
+function formatCode(code: String): string {
+  return code.toUpperCase();
+}
+
+const fromForm = new String("ngn");
+const cleaned: string = fromForm;
+console.log(formatCode("usd"), cleaned);
+</example>
+<output kind="tsc">
+wrappers.ts:6:7 - error TS2322: Type 'String' is not assignable to type 'string'.
+  'string' is a primitive, but 'String' is a wrapper object. Prefer using 'string' when possible.
+
+6 const cleaned: string = fromForm;
+        ~~~~~~~
+
+
+Found 1 error in wrappers.ts:6
+</output>
+<p>A <code>String</code> parameter accepts both primitives and wrapper objects, so wrapper objects can flow into your code unnoticed. A <code>string</code> parameter accepts only real strings, and the compiler even explains the difference. The rule has no exceptions in everyday code: <code>string</code>, <code>number</code>, <code>boolean</code>, <code>bigint</code>, <code>symbol</code>, always lowercase. The same goes for <code>Object</code>, which <a href="/learn/ts-special-types">Special types</a> covers next to <code>object</code> and <code>{}</code>.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing inferred types</h2>
+<p>Inferred types change when code changes. When a type matters, for example that an order's status stays a union and does not quietly widen to <code>string</code>, you can pin it down with a type test. You met <code>// @ts-expect-error</code> in <a href="/learn/ts-compiler#testing">What the TypeScript compiler does</a>; here it guards inference:</p>
+<example file="order.types.ts" project="type-tests">
+type OrderStatus = "pending" | "paid" | "shipped";
+
+interface Order {
+  id: number;
+  status: OrderStatus;
+}
+
+function createOrder(id: number) {
+  return { id, status: "pending" as OrderStatus };
+}
+
+const order = createOrder(1);
+
+const statusIsNarrow: OrderStatus = order.status;
+const fitsOrder: Order = order;
+
+// @ts-expect-error: "refunded" is not a status
+order.status = "refunded";
+
+console.log(statusIsNarrow, fitsOrder.id);
+</example>
+<output>
+pending 1
+</output>
+<p>If someone later removes <code>as OrderStatus</code> from <code>createOrder</code>, the status widens to <code>string</code>. Then <code>statusIsNarrow</code> fails to compile, and the <code>@ts-expect-error</code> becomes unused and fails too. <code>npm run check</code> catches the change before anyone ships it. (Here <code>as OrderStatus</code> is safe because <code>"pending"</code> really is a status; it would be cleaner still to annotate the return type as <code>Order</code>, which is the lesson of the previous section.)</p>
+</section>
+
+<section>
+<h2 id="production">In production code</h2>
+<ul>
+<li><strong>Annotate every exported function's parameters and return type.</strong> The <code>isolatedDeclarations</code> setting in <code>tsconfig.json</code> enforces this, so that tools can write <code>.d.ts</code> files for each file without running the whole checker. Large monorepos turn it on for faster builds.</li>
+<li><strong>Name your domain types</strong> (<code>Order</code>, <code>OrderStatus</code>) and annotate objects that must match them, instead of relying on a literal staying narrow.</li>
+<li><strong>Do not annotate what inference already says exactly.</strong> <code>const total: number = subtotal + vat</code> adds noise and can hide a more precise type.</li>
+<li><strong>Be careful with <code>Record&lt;string, …&gt;</code></strong> for data whose keys you know. It turns typos into <code>undefined</code> at runtime.</li>
+<li><strong>Inference never looks at runtime data.</strong> The type of <code>JSON.parse(body)</code> is <code>any</code> however carefully you annotate around it. Validation is a separate job (<a href="/learn/ts-validation">Runtime validation</a>).</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Make the config compile">
+<p>This payment config does not compile when it is passed to <code>connect</code>. Explain why, then fix it in two different ways: once with an annotation, once without one.</p>
+<example file="config.ts" project="ex-config" check="tsc-error">
+type Provider = "paystack" | "flutterwave";
+
+interface GatewayConfig {
+  provider: Provider;
+  timeoutMs: number;
+}
+
+function connect(config: GatewayConfig): string {
+  return `${config.provider} (${config.timeoutMs}ms)`;
+}
+
+const config = { provider: "paystack", timeoutMs: 5000 };
+console.log(connect(config));
+</example>
+<output kind="tsc">
+config.ts:13:21 - error TS2345: Argument of type '{ provider: string; timeoutMs: number; }' is not assignable to parameter of type 'GatewayConfig'.
+  Types of property 'provider' are incompatible.
+    Type 'string' is not assignable to type 'Provider'.
+
+13 console.log(connect(config));
+                       ~~~~~~
+
+
+Found 1 error in config.ts:13
+</output>
+<solution>
+<p><code>config</code> is inferred on its own line, before TypeScript knows it will go to <code>connect</code>, so <code>provider</code> widens to <code>string</code>. Fix it by annotating, or by keeping the literal with <code>as const</code>:</p>
+<example file="config.ts" project="ex-config">
+type Provider = "paystack" | "flutterwave";
+
+interface GatewayConfig {
+  provider: Provider;
+  timeoutMs: number;
+}
+
+function connect(config: GatewayConfig): string {
+  return `${config.provider} (${config.timeoutMs}ms)`;
+}
+
+const annotated: GatewayConfig = { provider: "paystack", timeoutMs: 5000 };
+const frozen = { provider: "flutterwave", timeoutMs: 8000 } as const;
+
+console.log(connect(annotated));
+console.log(connect(frozen));
+</example>
+<output>
+paystack (5000ms)
+flutterwave (8000ms)
+</output>
+<p>The annotation is the better default: the object is checked where it is written, including missing and misspelt properties. <code>as const</code> suits a value that never changes, and also makes it <code>readonly</code>.</p>
+</solution>
+</exercise>
+<exercise title="Move the error to where the bug is">
+<p>This compiles, but prints something wrong. Find the bug, then add the one annotation that makes the compiler point at it, and fix it.</p>
+<example file="shipping.ts" project="ex-shipping">
+function shippingFee(state: string, weightKg: number) {
+  if (state === "Lagos") return weightKg <= 5 ? 1500 : 3000;
+  if (state === "Abuja") return weightKg <= 5 ? 2500 : 4500;
+}
+
+const fee = shippingFee("Kano", 3);
+console.log(`Shipping: ₦${fee}`);
+</example>
+<output>
+Shipping: ₦undefined
+</output>
+<solution>
+<p>For every state except Lagos and Abuja the function falls off the end, so its inferred return type is <code>number | undefined</code>, and the template string happily prints <code>undefined</code>. Annotate the return type as <code>number</code> and TS2366 appears inside <code>shippingFee</code>. Then add the missing case:</p>
+<example file="shipping.ts" project="ex-shipping">
+function shippingFee(state: string, weightKg: number): number {
+  if (state === "Lagos") return weightKg <= 5 ? 1500 : 3000;
+  if (state === "Abuja") return weightKg <= 5 ? 2500 : 4500;
+  return weightKg <= 5 ? 3500 : 6000;
+}
+
+const fee = shippingFee("Kano", 3);
+console.log(`Shipping: ₦${fee}`);
+</example>
+<output>
+Shipping: ₦3500
+</output>
+</solution>
+</exercise>
+<exercise title="Handlers without annotations">
+<p>Write a <code>notifiers</code> object with one function per channel, <code>"sms"</code>, <code>"email"</code> and <code>"push"</code>, each taking <code>(to: string, message: string)</code> and returning a string. Type the object once, so that none of the three functions needs a parameter annotation, and so that forgetting a channel is an error.</p>
+<solution>
+<example file="notify.ts" project="ex-notify">
+type Channel = "sms" | "email" | "push";
+
+const notifiers: Record<Channel, (to: string, message: string) => string> = {
+  sms: (to, message) => `SMS to ${to}: ${message.slice(0, 20)}`,
+  email: (to, message) => `Email to ${to}: ${message}`,
+  push: (to, message) => `Push to device ${to}: ${message}`,
+};
+
+const channels: Channel[] = ["sms", "email"];
+for (const channel of channels) {
+  console.log(notifiers[channel]("Ada", "Your transfer of ₦25,000 was successful"));
+}
+</example>
+<output>
+SMS to Ada: Your transfer of ₦25
+Email to Ada: Your transfer of ₦25,000 was successful
+</output>
+<p>The <code>Record&lt;Channel, …&gt;</code> annotation gives every function its parameter types through contextual typing, and requires exactly one entry per channel. Here <code>Record</code> is the right choice, unlike the fee table earlier, because the keys are a fixed union, not <code>string</code>.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Inference describes a value; an annotation declares a type, checks the value against it, and wins. Use a <code>never</code> probe or your editor to see an inferred type.</li>
+<li><code>const</code> primitives keep literal types. <code>let</code> variables, object properties and array elements widen, because they can change.</li>
+<li>Stop widening with an annotation of a named type (usually best), with <code>as const</code> (for values that never change), or by writing the value where an expected type exists.</li>
+<li>Contextual typing gives inline callbacks and object literals their types. A callback moved into its own variable loses that context.</li>
+<li>Inferred return types move errors to callers and change with the body. Annotate exported functions' return types.</li>
+<li>Annotate at boundaries (parameters, exports, empty containers, <code>null</code> starts), infer inside. An annotation that is too wide, like <code>Record&lt;string, number&gt;</code>, throws information away; <code>satisfies</code> checks without widening.</li>
+<li>Write <code>string</code>, <code>number</code> and <code>boolean</code>, never the wrapper types <code>String</code>, <code>Number</code> and <code>Boolean</code>.</li>
+</ul>
+<p>Next: <a href="/learn/ts-functions">Typing functions</a>, where parameters, return types and callbacks get the full treatment.</p>
+</section>
