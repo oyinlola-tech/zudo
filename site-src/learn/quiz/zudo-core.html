@@ -1,0 +1,865 @@
+<question id="core-what" type="choice">
+<q>Which statement describes <code>@zudojs/core</code> best?</q>
+<option>An HTTP framework with routing and middleware</option>
+<option correct>The kernel: the module contract, the execution context, and <code>createApplication</code>, which wires a complete application stack</option>
+<option>A thin wrapper that re-exports <code>@zudojs/runtime</code> and <code>@zudojs/lifecycle</code></option>
+<option>The package the CLI uses to parse commands</option>
+<explain><p>The core defines <code>Module</code>/<code>BaseModule</code> and <code>ContextStorage</code>, and <code>createApplication</code> builds a container, configuration, logger and runtime for you. It depends only on <code>@zudojs/errors</code> and <code>@zudojs/constants</code>.</p></explain>
+</question>
+
+<question id="core-cli-uses" type="choice">
+<q>A project made by <code>zudojs create</code>: which package runs its modules, and where does its <code>BaseModule</code> come from?</q>
+<option>Both from <code>@zudojs/core</code>'s <code>createApplication</code></option>
+<option correct><code>@zudojs/runtime</code>'s <code>createRuntime</code> runs them; <code>BaseModule</code> comes from <code>@zudojs/core</code></option>
+<option><code>@zudojs/lifecycle</code> runs them; <code>BaseModule</code> comes from <code>@zudojs/runtime</code></option>
+<option>The CLI runs them itself</option>
+<explain><p>The generated <code>src/app.ts</code> calls <code>createRuntime</code>, and the generated modules extend the core's <code>BaseModule</code>. The module contract is shared; the orchestrator differs.</p></explain>
+</question>
+
+<question id="core-same-names" type="choice">
+<q>Why should you check the package of an import like <code>createRuntime</code> or <code>Container</code>?</q>
+<option>Because one of them is deprecated</option>
+<option correct>The core exports its own <code>createRuntime</code>, <code>Container</code> and <code>LifecycleManager</code>, which differ from the ones in <code>@zudojs/runtime</code>, <code>@zudojs/container</code> and <code>@zudojs/lifecycle</code></option>
+<option>Because TypeScript cannot tell them apart</option>
+<option>It does not matter; they are aliases</option>
+<explain><p>The names overlap but the APIs do not: <code>@zudojs/runtime</code>'s <code>createRuntime(services, options)</code> is not the core's, and the core's <code>Container</code> uses <code>register(token, { useValue })</code> rather than <code>registerValue</code>.</p></explain>
+</question>
+
+<question id="core-definition" type="choice">
+<q>What is the difference between a module and a module <strong>definition</strong> (<code>defineModule</code>)?</q>
+<option>None; <code>defineModule</code> is just an alias</option>
+<option correct>A definition describes a module and holds a <code>factory</code> that builds it; the application builds instances when it starts, and can build fresh ones after a restart</option>
+<option>A definition is the TypeScript type of a module</option>
+<option>A definition is a module that has no hooks</option>
+<explain><p>Definitions are frozen descriptions. Because the application builds modules from factories, a stopped application can start again with new instances instead of reusing half-stopped ones.</p></explain>
+</question>
+
+<question id="core-initialized" type="choice">
+<q>What is <code>app.state</code> right after <code>await createApplication({ … })</code> returns?</q>
+<option><code>created</code></option>
+<option correct><code>initialized</code></option>
+<option><code>running</code></option>
+<option><code>starting</code></option>
+<explain><p><code>createApplication</code> initializes the application (and its participants) before returning. It starts nothing unless you pass <code>autoStart: true</code>; you call <code>start()</code>.</p></explain>
+</question>
+
+<question id="core-order" type="choice">
+<q>Definitions are listed as <code>payments</code> (needs orders), <code>orders</code> (needs inventory), <code>inventory</code>. In which order do the <code>onInitialize</code> hooks run?</q>
+<option>payments, orders, inventory</option>
+<option correct>inventory, orders, payments</option>
+<option>All at the same time</option>
+<option>Alphabetical: inventory, orders, payments, by coincidence</option>
+<explain><p>The order comes from the dependencies, not from the list. Each module initializes after the modules it depends on; stopping reverses it.</p></explain>
+</question>
+
+<question id="core-undeclared" type="choice">
+<q>The <code>orders</code> module declares only <code>inventory</code>. In its hook it calls <code>context.getModuleContext("payments")</code>, and <code>payments</code> is registered. What happens?</q>
+<option>It returns the payments context</option>
+<option>It returns <code>undefined</code></option>
+<option correct>It throws <code>MissingModuleDependencyError</code></option>
+<option>It adds <code>payments</code> to the dependencies automatically</option>
+<explain><p>Only declared dependencies are reachable, so the declared graph is the real graph. <code>hasModule("payments")</code> answers <code>false</code> for the same reason.</p></explain>
+</question>
+
+<question id="core-undeclared-why" type="choice">
+<q>Why is reaching an undeclared module forbidden rather than allowed "because it is there anyway"?</q>
+<option>For performance</option>
+<option correct>The start order is computed from declared dependencies; an undeclared module might not be initialized yet, and the hidden coupling would break when modules change</option>
+<option>Because modules run in separate processes</option>
+<option>Because TypeScript cannot type it</option>
+<explain><p>Declaring a dependency does two jobs: it orders startup and it documents the coupling. Access without declaring would defeat both.</p></explain>
+</question>
+
+<question id="core-config" type="choice">
+<q>What is the difference between <code>context.getConfig("orders.maxItems")</code> and <code>context.requireConfig("orders.maxItems")</code>?</q>
+<option>None</option>
+<option correct><code>getConfig</code> returns <code>undefined</code> when the setting is missing; <code>requireConfig</code> throws</option>
+<option><code>requireConfig</code> loads the value from disk</option>
+<option><code>getConfig</code> only works in <code>onReady</code></option>
+<explain><p>Use <code>requireConfig</code> for settings the module cannot run without, so a missing value fails at startup instead of halfway through a request.</p></explain>
+</question>
+
+<question id="core-execution-context" type="choice">
+<q>What problem does the execution context solve?</q>
+<option>It makes async code run faster</option>
+<option correct>Any function running on behalf of a request can read that request's ids (and values) without them being passed through every call</option>
+<option>It serializes requests so they never overlap</option>
+<option>It stores data between requests</option>
+<explain><p>Built on <code>AsyncLocalStorage</code>, it follows the async work started inside <code>run()</code>, so a deep <code>log()</code> call knows its correlation id.</p></explain>
+</question>
+
+<question id="core-run-reach" type="choice">
+<q>Inside <code>storage.run(ctx, async () =&gt; { … })</code>, which of these does <strong>not</strong> see <code>ctx</code> automatically?</q>
+<option>Code after an <code>await</code></option>
+<option>A <code>setTimeout</code> callback scheduled inside the run</option>
+<option>Both branches of a <code>Promise.all</code></option>
+<option correct>A function you store in an array and call later from a worker loop outside the run</option>
+<explain><p>Async propagation follows promises, timers and callbacks scheduled within the run. Your own data structures are not async resources, so a job stored and run later needs <code>capture()</code> and <code>runSnapshot()</code>.</p></explain>
+</question>
+
+<question id="core-derived" type="choice">
+<q>What does <code>storage.runDerived({ operation: "reserve-stock" }, fn)</code> keep from the current context?</q>
+<option>Nothing; it starts a new execution</option>
+<option correct>The same <code>executionId</code> and <code>correlationId</code>, with the new <code>operation</code> and merged metadata</option>
+<option>Only the metadata</option>
+<option>Only the <code>principalId</code></option>
+<explain><p>A derived context marks a stage of the same execution. It throws when no context is active, because there is nothing to derive from.</p></explain>
+</question>
+
+<question id="core-get-vs-require" type="choice">
+<q>When should code call <code>storage.require()</code> instead of <code>storage.get()</code>?</q>
+<option>Always; <code>get()</code> is deprecated</option>
+<option correct>Where running outside an execution context is a bug, so it should fail loudly with <code>ExecutionContextNotFoundError</code></option>
+<option>Only in tests</option>
+<option>When the context has metadata</option>
+<explain><p><code>get()</code> returns <code>undefined</code> outside a context, which is normal for start-up code. <code>require()</code> turns a missing context into an immediate error.</p></explain>
+</question>
+
+<question id="core-values-immutable" type="choice">
+<q><code>const b = a.set(USER, user)</code> where <code>a</code> is a <code>ContextValues</code>. What is true?</q>
+<option><code>a</code> and <code>b</code> are the same object</option>
+<option correct><code>b</code> is a new collection with the value; <code>a</code> is unchanged</option>
+<option><code>a</code> now contains the user and <code>b</code> is <code>undefined</code></option>
+<option>It throws because values are frozen</option>
+<explain><p>Immutable updates mean code that received <code>a</code> never sees it change underneath it, which matters when collections are shared across async work.</p></explain>
+</question>
+
+<question id="core-values-no-leak" type="choice">
+<q>During a request that has a current user in its <code>ContextValues</code>, an event listener starts a new execution with <code>storage.run(newContext, …)</code>. Does the listener see the request's user?</q>
+<option>Yes, values always flow into nested runs</option>
+<option correct>No: a new execution starts without values, so one request's user or transaction cannot leak into unrelated work</option>
+<option>Only if the listener is async</option>
+<option>It throws</option>
+<explain><p>Carrying values into new work must be a decision: use <code>runDerived</code>, <code>runWithValues</code> or a snapshot.</p></explain>
+</question>
+
+<question id="core-context-key" type="choice">
+<q>Why is <code>createContextKey&lt;CurrentUser&gt;("current-user")</code> better than using the string <code>"current-user"</code> as a key?</q>
+<option>Strings are slower</option>
+<option correct>The key carries the value's type, so <code>values.require(KEY)</code> returns a <code>CurrentUser</code> without a cast, and its inner <code>symbol</code> cannot collide with another key of the same name</option>
+<option>Strings are not allowed as object keys</option>
+<option>It encrypts the value</option>
+<explain><p>Two libraries can both name a key "user"; two symbols are always different. And the type parameter makes the lookup type-safe.</p></explain>
+</question>
+
+<question id="core-scoped" type="choice">
+<q>A cart provider is registered as <code>"scoped"</code> in the application's container. What do two concurrent requests get, and what happens outside any request?</q>
+<option>One shared cart; outside a request, the same cart</option>
+<option correct>One cart per request (the same one for every <code>resolve</code> inside it); outside a request, <code>resolve</code> throws <code>DependencyResolutionError</code></option>
+<option>A new cart for every <code>resolve</code></option>
+<option>One cart per module</option>
+<explain><p><code>createApplication</code>'s container uses the current execution context as the scope. Failing outside any scope prevents one cart being shared by every customer.</p></explain>
+</question>
+
+<question id="core-failed-restart" type="choice">
+<q>A module fails during <code>start()</code>. The application is <code>failed</code>. How do you try again?</q>
+<option>Call <code>start()</code> again</option>
+<option correct>Call <code>stop()</code> first (state becomes <code>stopped</code>), then <code>start()</code>, which builds a fresh runtime and fresh modules</option>
+<option>Create a new module registry</option>
+<option>It is impossible; create a new application</option>
+<explain><p><code>start()</code> from <code>failed</code> throws <code>InvalidStateError</code>. <code>stop()</code> cleans up, including participants, and a stopped application can start again.</p></explain>
+</question>
+
+<question id="core-destroy-never-started" type="choice">
+<q>In the published core, <code>database</code> fails to initialize, and <code>orders</code> (which depends on it) never initialized. Which <code>onDestroy</code> hooks run in the rollback?</q>
+<option>Only <code>database</code>'s</option>
+<option>None</option>
+<option correct><code>database</code>'s and <code>orders</code>'s, even though <code>orders</code> never initialized</option>
+<option>Only <code>orders</code>'s</option>
+<explain><p>That is how the published version behaves, so every <code>onDestroy</code> must be safe for a module that never initialized: check that a resource exists before releasing it.</p></explain>
+</question>
+
+<question id="core-cause" type="choice">
+<q><code>start()</code> rejects with <code>RuntimeInitializationError: Runtime module initializing failed.</code> Where is the useful information?</q>
+<option>In the stack trace only</option>
+<option correct>In <code>error.cause</code>, which names the module and carries the original error message</option>
+<option>In <code>app.state</code></option>
+<option>Nowhere; the original error is discarded</option>
+<explain><p>The wrapper's message is generic. Log the cause chain, or you will read "initializing failed" without knowing that the database refused the connection.</p></explain>
+</question>
+
+<question id="core-signal-target" type="choice">
+<q>Why does a test pass <code>signalTarget</code> to <code>createApplication</code>?</q>
+<option>To make signals faster</option>
+<option correct>So the test can deliver a fake <code>SIGTERM</code> and check graceful shutdown without the real process handling it</option>
+<option>Because signals are disabled in tests</option>
+<option>To send signals to other processes</option>
+<explain><p>With a fake target, the runtime registers its listeners there. The test calls them, checks the modules stopped, and the test runner keeps running.</p></explain>
+</question>
+
+<question id="core-own-storage" type="choice">
+<q>Why give each test application its own <code>contextStorage: createContextStorage()</code>?</q>
+<option>The default storage does not work in tests</option>
+<option correct>By default every application, logger and container share one process-wide storage; tests running applications in parallel could observe each other's contexts</option>
+<option>It is required for <code>defineModule</code></option>
+<option>It turns logging off</option>
+<explain><p><code>getDefaultContextStorage()</code> is shared on purpose, so all framework pieces agree in a normal app. Isolation is something you opt into.</p></explain>
+</question>
+
+<question id="core-redact" type="choice">
+<q>A handler logs <code>logger.info("login", { email, password })</code> with the core's <code>ConsoleLogger</code> created with default options. What appears in the log?</q>
+<option>The password as <code>[REDACTED]</code></option>
+<option correct>The password in plain text, unless the logger was created with <code>redact: createLogRedactor()</code></option>
+<option>Nothing; fields named password are dropped</option>
+<option>An error</option>
+<explain><p>Redaction is opt-in for the core logger. <code>createLogRedactor()</code> replaces values under sensitive names such as <code>password</code>, <code>secret</code> and <code>token</code>.</p></explain>
+</question>
+
+<question id="core-startup-timeout" type="choice">
+<q>What is the default startup deadline of the core's runtime, and what is the risk?</q>
+<option>30 seconds; too short for migrations</option>
+<option correct>0, meaning none: a hook that hangs on an unreachable service hangs the whole start</option>
+<option>60 seconds, like <code>@zudojs/runtime</code></option>
+<option>It depends on <code>NODE_ENV</code></option>
+<explain><p><code>startup.timeoutMs</code> defaults to 0. Set a limit so a stuck start fails with <code>RuntimeTimeoutError</code> and your process manager can react.</p></explain>
+</question>
+
+<question id="core-out-propagation" type="output">
+<q>What does this print?</q>
+<code file="propagation.ts" browser="no">
+import { createContextStorage, createExecutionContext } from "@zudojs/core";
+
+const storage = createContextStorage();
+const id = () => storage.get()?.correlationId ?? "none";
+
+await storage.run(createExecutionContext({ correlationId: "req-1" }), async () => {
+  setTimeout(() => console.log("timer:", id()), 0);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  console.log("after await:", id());
+});
+console.log("outside:", id());
+</code>
+<option correct>timer: req-1
+after await: req-1
+outside: none</option>
+<option>timer: none
+after await: req-1
+outside: none</option>
+<option>timer: req-1
+after await: none
+outside: none</option>
+<option>after await: req-1
+outside: none
+timer: req-1</option>
+<explain><p>The timer was scheduled inside the run, so it keeps the context, and it fires first (0 ms before 5 ms). After the run returns, no context is active.</p></explain>
+</question>
+
+<question id="core-out-derived" type="output">
+<q>What does this print?</q>
+<code file="derived.ts" browser="no">
+import { createContextStorage, createExecutionContext } from "@zudojs/core";
+
+const storage = createContextStorage();
+const root = createExecutionContext({ correlationId: "req-5", operation: "POST /orders", metadata: { channel: "web" } });
+storage.run(root, () => {
+  storage.runDerived({ operation: "charge-card", metadata: { amountKobo: 250000 } }, () => {
+    const c = storage.require();
+    console.log(c.correlationId, c.operation, JSON.stringify(c.metadata), c.executionId === root.executionId);
+  });
+  console.log(storage.require().operation);
+});
+</code>
+<option correct>req-5 charge-card {"channel":"web","amountKobo":250000} true
+POST /orders</option>
+<option>req-5 charge-card {"amountKobo":250000} false
+POST /orders</option>
+<option>req-5 charge-card {"channel":"web","amountKobo":250000} true
+charge-card</option>
+<option>undefined charge-card {"amountKobo":250000} false
+POST /orders</option>
+<explain><p>The derived context keeps the ids, overrides <code>operation</code> and merges metadata. It only applies inside its callback; afterwards the original context is current again.</p></explain>
+</question>
+
+<question id="core-out-values" type="output">
+<q>What does this print?</q>
+<code file="values.ts" browser="no">
+import { createContextKey, createContextValues } from "@zudojs/core";
+
+const USER = createContextKey<string>("user");
+const TENANT = createContextKey<string>("tenant");
+const a = createContextValues().set(USER, "user_7");
+const b = a.set(TENANT, "shop-ng");
+console.log(a.size(), b.size(), a.has(TENANT), b.get(USER));
+</code>
+<option correct>1 2 false user_7</option>
+<option>2 2 true user_7</option>
+<option>1 2 true user_7</option>
+<option>1 1 false undefined</option>
+<explain><p><code>set</code> returns a new collection. <code>a</code> keeps its one value; <code>b</code> has both.</p></explain>
+</question>
+
+<question id="core-out-no-leak" type="output">
+<q>What does this print?</q>
+<code file="leak.ts" browser="no">
+import { createContextKey, createContextStorage, createContextValues, createExecutionContext } from "@zudojs/core";
+
+const USER = createContextKey<string>("user");
+const storage = createContextStorage();
+storage.runWithValues(createExecutionContext({ correlationId: "req-1" }), createContextValues().set(USER, "user_7"), () => {
+  console.log("request:", storage.getValues()?.get(USER));
+  storage.run(createExecutionContext({ correlationId: "listener" }), () => {
+    console.log("new execution:", storage.getValues()?.get(USER), storage.get()?.correlationId);
+  });
+});
+</code>
+<option correct>request: user_7
+new execution: undefined listener</option>
+<option>request: user_7
+new execution: user_7 listener</option>
+<option>request: user_7
+new execution: user_7 req-1</option>
+<option>request: undefined
+new execution: undefined listener</option>
+<explain><p>A new execution starts without the enclosing request's values, so data cannot leak into unrelated work by accident.</p></explain>
+</question>
+
+<question id="core-out-snapshot" type="output">
+<q>What does this print?</q>
+<code file="snap.ts" browser="no">
+import { createContextStorage, createExecutionContext } from "@zudojs/core";
+
+const storage = createContextStorage();
+const jobs: Array<() => void> = [];
+const report = (name: string) => console.log(name, storage.get()?.correlationId ?? "lost");
+
+storage.run(createExecutionContext({ correlationId: "req-3" }), () => {
+  const snapshot = storage.capture();
+  jobs.push(() => report("plain"));
+  jobs.push(() => storage.runSnapshot(snapshot, () => report("snapshot")));
+});
+jobs.forEach((job) => job());
+</code>
+<option correct>plain lost
+snapshot req-3</option>
+<option>plain req-3
+snapshot req-3</option>
+<option>plain lost
+snapshot lost</option>
+<option>snapshot req-3
+plain lost</option>
+<explain><p>The jobs run after the request, from outside it. Only the one wrapped in <code>runSnapshot</code> gets the captured context back.</p></explain>
+</question>
+
+<question id="core-out-require" type="output">
+<q>What does this print?</q>
+<code file="require.ts" browser="no">
+import { createContextStorage } from "@zudojs/core";
+
+const storage = createContextStorage();
+console.log(storage.get() === undefined, storage.has());
+try {
+  storage.require();
+} catch (error) {
+  console.log((error as Error).name);
+}
+</code>
+<option correct>true false
+ExecutionContextNotFoundError</option>
+<option>true false
+Error</option>
+<option>false true</option>
+<option>true true
+ExecutionContextNotFoundError</option>
+<explain><p>Outside any run there is no context: <code>get()</code> returns <code>undefined</code>, <code>has()</code> is false and <code>require()</code> throws the framework's specific error.</p></explain>
+</question>
+
+<question id="core-out-app-order" type="output">
+<q>What does this print?</q>
+<code file="order.ts" browser="no">
+import { createApplication, createModule, defineModule } from "@zudojs/core";
+
+const mod = (id: string, deps: string[] = []) =>
+  defineModule({ id, name: id, dependencies: deps, factory: () => createModule({ id, name: id, dependencies: deps, onReady: () => console.log("ready", id) }) });
+
+const app = await createApplication({
+  modules: [mod("receipts", ["payments"]), mod("payments", ["wallet"]), mod("wallet")],
+  logger: { level: "fatal" },
+  runtime: { signals: { handleSigint: false, handleSigterm: false } },
+});
+await app.start();
+console.log(app.state);
+await app.stop();
+</code>
+<option correct>ready wallet
+ready payments
+ready receipts
+running</option>
+<option>ready receipts
+ready payments
+ready wallet
+running</option>
+<option>ready wallet
+ready payments
+ready receipts
+initialized</option>
+<option>running
+ready wallet
+ready payments
+ready receipts</option>
+<explain><p>Dependencies decide the order: wallet, then payments, then receipts. <code>start()</code> resolves only after every module is ready, so <code>running</code> prints last.</p></explain>
+</question>
+
+<question id="core-out-has-module" type="output">
+<q>What does this print?</q>
+<code file="has.ts" browser="no">
+import { createApplication, createModule, defineModule } from "@zudojs/core";
+
+const orders = createModule({
+  id: "orders",
+  name: "orders",
+  dependencies: ["wallet"],
+  onInitialize: (context) => console.log(context.hasModule("wallet"), context.hasModule("mailer")),
+});
+const app = await createApplication({
+  modules: [
+    defineModule({ id: "wallet", name: "wallet", factory: () => createModule({ id: "wallet", name: "wallet" }) }),
+    defineModule({ id: "mailer", name: "mailer", factory: () => createModule({ id: "mailer", name: "mailer" }) }),
+    defineModule({ id: "orders", name: "orders", dependencies: ["wallet"], factory: () => orders }),
+  ],
+  logger: { level: "fatal" },
+  runtime: { signals: { handleSigint: false, handleSigterm: false } },
+});
+await app.start();
+await app.stop();
+</code>
+<option correct>true false</option>
+<option>true true</option>
+<option>false false</option>
+<option>It throws MissingModuleDependencyError</option>
+<explain><p><code>mailer</code> is registered but not declared by <code>orders</code>, so <code>hasModule</code> reports <code>false</code>. <code>hasModule</code> never throws; <code>getModuleContext</code> would.</p></explain>
+</question>
+
+<question id="core-out-failed" type="output">
+<q>What does this print?</q>
+<code file="failed.ts" browser="no">
+import { createApplication, createModule, defineModule } from "@zudojs/core";
+
+const app = await createApplication({
+  modules: [
+    defineModule({
+      id: "db",
+      name: "db",
+      factory: () => createModule({ id: "db", name: "db", onInitialize: () => { throw new Error("ECONNREFUSED"); } }),
+    }),
+  ],
+  logger: { level: "fatal" },
+  runtime: { signals: { handleSigint: false, handleSigterm: false } },
+});
+await app.start().catch((error: Error) => console.log(error.name));
+console.log(app.state);
+await app.start().catch((error: Error) => console.log(error.name));
+await app.stop();
+console.log(app.state);
+</code>
+<option correct>RuntimeInitializationError
+failed
+InvalidStateError
+stopped</option>
+<option>RuntimeInitializationError
+failed
+RuntimeInitializationError
+stopped</option>
+<option>Error
+failed
+InvalidStateError
+stopped</option>
+<option>RuntimeInitializationError
+stopped
+RuntimeInitializationError
+stopped</option>
+<explain><p>The first start fails and leaves the application <code>failed</code>. Starting again from <code>failed</code> is refused before any module runs. <code>stop()</code> brings it to <code>stopped</code>, from where it could start again.</p></explain>
+</question>
+
+<question id="core-out-scoped" type="output">
+<q>What does this print?</q>
+<code file="scoped.ts" browser="no">
+import { createApplication, createExecutionContext, createToken } from "@zudojs/core";
+
+const COUNTER = createToken<{ n: number }>("Counter");
+const app = await createApplication({ logger: { level: "fatal" }, runtime: { signals: { handleSigint: false, handleSigterm: false } } });
+const container = app.applicationContext!.getContainer();
+container.register(COUNTER, { useFactory: () => ({ n: 0 }) }, "scoped");
+const storage = app.applicationContext!.getContextStorage();
+
+for (const id of ["req-1", "req-2"]) {
+  storage.run(createExecutionContext({ correlationId: id }), () => {
+    container.resolve(COUNTER).n += 1;
+    container.resolve(COUNTER).n += 1;
+    console.log(id, container.resolve(COUNTER).n);
+  });
+}
+</code>
+<option correct>req-1 2
+req-2 2</option>
+<option>req-1 1
+req-2 1</option>
+<option>req-1 2
+req-2 4</option>
+<option>req-1 0
+req-2 0</option>
+<explain><p>Within one execution context every resolve returns the same counter, so it reaches 2. The second request has its own counter, which starts again at 0.</p></explain>
+</question>
+
+<question id="core-out-readable-log" type="output">
+<q>What does this print?</q>
+<code file="log.ts" browser="no">
+import { ConsoleLogger, createContextStorage, createExecutionContext } from "@zudojs/core";
+
+const storage = createContextStorage();
+const logger = new ConsoleLogger({ timestamps: false, structured: false, contextStorage: storage });
+logger.info("booting");
+storage.run(createExecutionContext({ executionId: "exec-9", correlationId: "req-9" }), () => logger.warn("stock low", { sku: "RICE-5KG" }));
+</code>
+<option correct>INFO: booting
+WARN: stock low executionId=exec-9 correlationId=req-9 sku=RICE-5KG</option>
+<option>INFO: booting executionId=undefined
+WARN: stock low sku=RICE-5KG</option>
+<option>INFO: booting
+WARN: stock low sku=RICE-5KG</option>
+<option>{"level":"info","message":"booting"}
+{"level":"warn","message":"stock low"}</option>
+<explain><p>The logger adds the current execution's ids by itself, before the fields you pass. Outside a context there is nothing to add.</p></explain>
+</question>
+
+<question id="core-code-derive" type="code" file="derive.js">
+<q><p>Write <code>derive(context, overrides)</code>: return a new frozen object with every field of <code>context</code>, the fields of <code>overrides</code> on top, and <code>metadata</code> merged (overrides win). <code>executionId</code> must never change, even if <code>overrides</code> contains one.</p></q>
+<starter>
+function derive(context, overrides) {
+  // your code here
+}
+
+const root = Object.freeze({ executionId: "e1", correlationId: "req-5", operation: "POST /orders", metadata: { channel: "web" } });
+const step = derive(root, { operation: "charge-card", executionId: "hacked", metadata: { amountKobo: 250000 } });
+console.log(JSON.stringify(step));
+console.log(Object.isFrozen(step), root.operation);
+</starter>
+<solution>
+function derive(context, overrides) {
+  return Object.freeze({
+    ...context,
+    ...overrides,
+    executionId: context.executionId,
+    metadata: { ...context.metadata, ...overrides.metadata },
+  });
+}
+
+const root = Object.freeze({ executionId: "e1", correlationId: "req-5", operation: "POST /orders", metadata: { channel: "web" } });
+const step = derive(root, { operation: "charge-card", executionId: "hacked", metadata: { amountKobo: 250000 } });
+console.log(JSON.stringify(step));
+console.log(Object.isFrozen(step), root.operation);
+</solution>
+<expected>{"executionId":"e1","correlationId":"req-5","operation":"charge-card","metadata":{"channel":"web","amountKobo":250000}}
+true POST /orders</expected>
+<explain><p>Spreading copies; the original stays untouched. Writing <code>executionId</code> after the spread guarantees a stage never pretends to be a different execution.</p></explain>
+</question>
+
+<question id="core-code-values" type="code" file="values.js">
+<q><p>Write a tiny immutable <code>Values</code> class: <code>new Values()</code> is empty, <code>set(key, value)</code> returns a <strong>new</strong> <code>Values</code>, <code>get(key)</code> returns the value or <code>undefined</code>, <code>size()</code> counts entries. Keys are symbols.</p></q>
+<starter>
+class Values {
+  // your code here
+}
+
+const USER = Symbol("user");
+const TENANT = Symbol("tenant");
+const a = new Values().set(USER, "user_7");
+const b = a.set(TENANT, "shop-ng");
+console.log(a.size(), b.size(), a.get(TENANT), b.get(USER));
+</starter>
+<solution>
+class Values {
+  #entries;
+  constructor(entries = new Map()) {
+    this.#entries = entries;
+  }
+  set(key, value) {
+    const copy = new Map(this.#entries);
+    copy.set(key, value);
+    return new Values(copy);
+  }
+  get(key) {
+    return this.#entries.get(key);
+  }
+  size() {
+    return this.#entries.size;
+  }
+}
+
+const USER = Symbol("user");
+const TENANT = Symbol("tenant");
+const a = new Values().set(USER, "user_7");
+const b = a.set(TENANT, "shop-ng");
+console.log(a.size(), b.size(), a.get(TENANT), b.get(USER));
+</solution>
+<expected>1 2 undefined user_7</expected>
+<explain><p>Copying the map on every <code>set</code> is what makes sharing safe: anyone holding <code>a</code> keeps seeing exactly what was in it. The private field stops outside code from changing the map directly.</p></explain>
+</question>
+
+<question id="core-code-snapshot" type="code" file="queue.js">
+<q><p>The storage below only works for synchronous code. Add <code>capture()</code> (returns the current context) and <code>runSnapshot(snapshot, fn)</code> (runs <code>fn</code> with that context current, then restores the previous one), and use them so the queued job prints <code>req-8</code>.</p></q>
+<starter>
+let current;
+function run(context, fn) {
+  const previous = current;
+  current = context;
+  try {
+    return fn();
+  } finally {
+    current = previous;
+  }
+}
+// your code here: capture and runSnapshot
+
+const jobs = [];
+run({ correlationId: "req-8" }, () => {
+  jobs.push(() => console.log("job sees", current?.correlationId ?? "nothing"));
+});
+jobs.forEach((job) => job());
+console.log("after", current?.correlationId ?? "nothing");
+</starter>
+<solution>
+let current;
+function run(context, fn) {
+  const previous = current;
+  current = context;
+  try {
+    return fn();
+  } finally {
+    current = previous;
+  }
+}
+const capture = () => current;
+const runSnapshot = (snapshot, fn) => run(snapshot, fn);
+
+const jobs = [];
+run({ correlationId: "req-8" }, () => {
+  const snapshot = capture();
+  jobs.push(() => runSnapshot(snapshot, () => console.log("job sees", current?.correlationId ?? "nothing")));
+});
+jobs.forEach((job) => job());
+console.log("after", current?.correlationId ?? "nothing");
+</solution>
+<expected>job sees req-8
+after nothing</expected>
+<explain><p>The snapshot is taken while the request is current and restored around the job. The <code>finally</code> puts the previous context back even if the job throws.</p></explain>
+</question>
+
+<question id="core-code-access" type="code" file="access.js">
+<q><p>Write <code>moduleContextFor(id, declared, registry)</code> returning an object with <code>hasModule(other)</code> (true only when <code>other</code> is declared <em>and</em> registered) and <code>getModule(other)</code> (throws <code>Error("Module \"ID\" did not declare \"OTHER\"")</code> for an undeclared module, otherwise returns <code>registry.get(other)</code>).</p></q>
+<starter>
+function moduleContextFor(id, declared, registry) {
+  // your code here
+}
+
+const registry = new Map([["wallet", { version: "1.4.0" }], ["mailer", { version: "0.3.0" }]]);
+const ctx = moduleContextFor("orders", ["wallet"], registry);
+console.log(ctx.hasModule("wallet"), ctx.hasModule("mailer"), ctx.getModule("wallet").version);
+try {
+  ctx.getModule("mailer");
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+function moduleContextFor(id, declared, registry) {
+  const allowed = new Set(declared);
+  return {
+    hasModule: (other) => allowed.has(other) && registry.has(other),
+    getModule(other) {
+      if (!allowed.has(other)) throw new Error(`Module "${id}" did not declare "${other}"`);
+      return registry.get(other);
+    },
+  };
+}
+
+const registry = new Map([["wallet", { version: "1.4.0" }], ["mailer", { version: "0.3.0" }]]);
+const ctx = moduleContextFor("orders", ["wallet"], registry);
+console.log(ctx.hasModule("wallet"), ctx.hasModule("mailer"), ctx.getModule("wallet").version);
+try {
+  ctx.getModule("mailer");
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>true false 1.4.0
+Module "orders" did not declare "mailer"</expected>
+<explain><p>The context is a narrow view: the registry holds everything, but a module only sees what it declared. Note how this message names the real mistake, unlike the published "requires missing module".</p></explain>
+</question>
+
+<question id="core-code-redact" type="code" file="redact.js">
+<q><p>Write <code>redact(fields)</code> that returns a copy of a flat object where every key containing <code>password</code>, <code>secret</code> or <code>token</code> (any capitalisation) has the value <code>"[REDACTED]"</code>.</p></q>
+<starter>
+function redact(fields) {
+  // your code here
+}
+
+console.log(JSON.stringify(redact({ email: "ada@shop.ng", password: "hunter2", apiToken: "tok_1", amountKobo: 250000 })));
+</starter>
+<solution>
+const SENSITIVE = /password|secret|token/i;
+
+function redact(fields) {
+  return Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, SENSITIVE.test(key) ? "[REDACTED]" : value]));
+}
+
+console.log(JSON.stringify(redact({ email: "ada@shop.ng", password: "hunter2", apiToken: "tok_1", amountKobo: 250000 })));
+</solution>
+<expected>{"email":"ada@shop.ng","password":"[REDACTED]","apiToken":"[REDACTED]","amountKobo":250000}</expected>
+<explain><p>Redact by key name before a line is written, because once a password is in a log file it is copied to every system that reads logs. The core's <code>createLogRedactor()</code> does this with word-boundary matching, so a key like <code>tokenizer</code> is left alone.</p></explain>
+</question>
+
+<question id="core-code-states" type="code" file="states.js">
+<q><p>Write <code>createApp(startModules)</code> with <code>state</code>, <code>start()</code> and <code>stop()</code>. <code>start()</code> is allowed only from <code>"initialized"</code> or <code>"stopped"</code> (otherwise throw <code>Error("cannot start from STATE")</code>); it sets <code>"running"</code>, or <code>"failed"</code> if <code>startModules()</code> throws (rethrow). <code>stop()</code> always sets <code>"stopped"</code>.</p></q>
+<starter>
+function createApp(startModules) {
+  // your code here
+}
+
+let dbUp = false;
+const app = createApp(() => { if (!dbUp) throw new Error("ECONNREFUSED"); });
+for (const step of ["start", "start", "stop", "fix", "start"]) {
+  if (step === "fix") { dbUp = true; continue; }
+  try {
+    app[step]();
+  } catch (error) {
+    console.log("error:", error.message);
+  }
+  console.log(step, "->", app.state);
+}
+</starter>
+<solution>
+function createApp(startModules) {
+  const app = {
+    state: "initialized",
+    start() {
+      if (app.state !== "initialized" && app.state !== "stopped") throw new Error(`cannot start from ${app.state}`);
+      try {
+        startModules();
+        app.state = "running";
+      } catch (error) {
+        app.state = "failed";
+        throw error;
+      }
+    },
+    stop() {
+      app.state = "stopped";
+    },
+  };
+  return app;
+}
+
+let dbUp = false;
+const app = createApp(() => { if (!dbUp) throw new Error("ECONNREFUSED"); });
+for (const step of ["start", "start", "stop", "fix", "start"]) {
+  if (step === "fix") { dbUp = true; continue; }
+  try {
+    app[step]();
+  } catch (error) {
+    console.log("error:", error.message);
+  }
+  console.log(step, "->", app.state);
+}
+</solution>
+<expected>error: ECONNREFUSED
+start -> failed
+error: cannot start from failed
+start -> failed
+stop -> stopped
+start -> running</expected>
+<explain><p>This is the application's rule in miniature: a failed start must be cleaned up with <code>stop()</code> before another attempt, so nothing half-started is started twice.</p></explain>
+</question>
+
+<question id="core-code-scoped" type="code" file="scope.js">
+<q><p>Write <code>scoped(factory)</code> returning <code>resolve(scopeKey)</code>: the first call for a key creates an instance with <code>factory()</code>, later calls with the same key return the same instance, and a missing key (<code>undefined</code>) throws <code>Error("no active scope")</code>.</p></q>
+<starter>
+function scoped(factory) {
+  // your code here
+}
+
+const cart = scoped(() => ({ items: [] }));
+const req1 = {};
+const req2 = {};
+cart(req1).items.push("Rice 5kg");
+cart(req1).items.push("Palm oil 1L");
+cart(req2).items.push("Garri 2kg");
+console.log(cart(req1).items.length, cart(req2).items.length);
+try {
+  cart(undefined);
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+function scoped(factory) {
+  const instances = new WeakMap();
+  return (scopeKey) => {
+    if (scopeKey === undefined) throw new Error("no active scope");
+    if (!instances.has(scopeKey)) instances.set(scopeKey, factory());
+    return instances.get(scopeKey);
+  };
+}
+
+const cart = scoped(() => ({ items: [] }));
+const req1 = {};
+const req2 = {};
+cart(req1).items.push("Rice 5kg");
+cart(req1).items.push("Palm oil 1L");
+cart(req2).items.push("Garri 2kg");
+console.log(cart(req1).items.length, cart(req2).items.length);
+try {
+  cart(undefined);
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>2 1
+no active scope</expected>
+<explain><p>A <code>WeakMap</code> keyed by the scope object (for the core, the execution context) lets each request's instance be garbage-collected when the request is gone.</p></explain>
+</question>
+
+<question id="core-code-destroy" type="code" file="destroy.js">
+<q><p>Write <code>connectionModule(open)</code> returning <code>{ initialize, destroy }</code>. <code>initialize()</code> stores <code>open()</code>'s result. <code>destroy()</code> calls its <code>close()</code> once and prints <code>closed</code>; if nothing is open it prints <code>nothing to close</code>. It must be safe to call <code>destroy()</code> before <code>initialize()</code> and twice in a row.</p></q>
+<starter>
+function connectionModule(open) {
+  // your code here
+}
+
+const open = () => ({ close: () => console.log("closed") });
+const a = connectionModule(open);
+a.destroy();
+const b = connectionModule(open);
+b.initialize();
+b.destroy();
+b.destroy();
+</starter>
+<solution>
+function connectionModule(open) {
+  let connection;
+  return {
+    initialize() {
+      connection = open();
+    },
+    destroy() {
+      if (connection === undefined) {
+        console.log("nothing to close");
+        return;
+      }
+      connection.close();
+      connection = undefined;
+    },
+  };
+}
+
+const open = () => ({ close: () => console.log("closed") });
+const a = connectionModule(open);
+a.destroy();
+const b = connectionModule(open);
+b.initialize();
+b.destroy();
+b.destroy();
+</solution>
+<expected>nothing to close
+closed
+nothing to close</expected>
+<explain><p>Rollbacks call destroy hooks on modules that may never have initialized, and shutdown paths may run twice. Guarding on the resource itself makes both harmless.</p></explain>
+</question>

@@ -304,6 +304,7 @@ TypeError: Cannot read properties of undefined (reading 'amount')
   at checkout (frames.js:13:10)
   at frames.js:17:3
 </output>
+<p>Three frames, newest first: <code>applyCoupon</code> read <code>.amount</code> from <code>undefined</code>, <code>checkout</code> passed it <code>order.coupon</code>, and the top level passed an order without a coupon. The fix belongs in <code>checkout</code> (an order without a coupon is normal), not in the line that crashed.</p>
 <p>How many frames are recorded is set by <code>Error.stackTraceLimit</code>, which is 10 by default in V8. Deep recursion or a long middleware chain can push the interesting frames off the bottom. For one debugging session you can raise it with <code>node --stack-trace-limit=50 app.js</code>:</p>
 <example file="limit.js" browser="no">
 function depth(n) {
@@ -326,6 +327,7 @@ limit 10: 10 frames recorded
 limit 3: 3 frames recorded
 limit 50: 35 frames recorded
 </output>
+<p>With a limit of 50, all 35 frames are kept: the 31 calls of <code>depth</code>, the top level, and a few Node.js frames. With the default 10, the top level of the file, the one frame that says who started the recursion, is cut off.</p>
 </section>
 
 <section>
@@ -644,7 +646,7 @@ log("order.total", { orderId: 1042, lines: 2, totalKobo: 66600 });
 <section>
 <h2 id="fix">Step 6: fix the cause</h2>
 <p>You could "fix" order 1042 by correcting the rice price in the database. That fixes one symptom. The next import breaks it again. You could also fix <code>parsePrice</code> by removing the first comma with <code>replace(",", "")</code>. That fixes this input and fails on ₦1,250,000.00, which has two. The <strong>root cause</strong> is that the parser silently accepts text it does not understand. The fix should make it understand every valid format and <em>refuse</em> everything else:</p>
-<example file="price-fixed.js" project="prices">
+<file name="price.js" project="prices">
 const PRICE = /^₦?(\d{1,3}(,\d{3})*|\d+)(\.\d{2})?$/;
 
 export function parsePrice(text) {
@@ -653,6 +655,9 @@ export function parsePrice(text) {
   const [naira, kobo = "00"] = trimmed.replace("₦", "").replaceAll(",", "").split(".");
   return Number(naira) * 100 + Number(kobo);
 }
+</file>
+<example file="price-check.js" project="prices">
+import { parsePrice } from "./price.js";
 
 for (const text of ["₦8,500.00", "₦650.00", "₦1,250,000.00", "650", " ₦2,400.50 "]) {
   console.log(JSON.stringify(text).padEnd(17), parsePrice(text));
@@ -689,7 +694,7 @@ Unrecognised price format: ""
 <p>Verifying has three parts. First, the original repro now gives the right answer. Second, a <strong>regression test</strong>, a test that pins the bug down so that it can never come back unnoticed, fails on the old code and passes on the new. Third, check the damage: which data did the bug already corrupt?</p>
 <example file="verify.js" project="prices" browser="no">
 import assert from "node:assert/strict";
-import { parsePrice } from "./price-fixed.js";
+import { parsePrice } from "./price.js";
 
 const cases = [
   ["₦8,500.00", 850000],
@@ -709,19 +714,10 @@ const order1042 = 2 * parsePrice("₦8,500.00") + parsePrice("₦650.00");
 console.log("order 1042 should cost ₦" + order1042 / 100);
 </example>
 <output>
-"₦8,500.00"       850000
-"₦650.00"         65000
-"₦1,250,000.00"   125000000
-"650"             65000
-" ₦2,400.50 "     240050
-Unrecognised price format: "N8,500.00"
-Unrecognised price format: "8.500,00"
-Unrecognised price format: "₦85,00.00"
-Unrecognised price format: ""
 6 regression checks pass
 order 1042 should cost ₦17650
 </output>
-<p>The import in <code>price-fixed.js</code> also ran its demonstration loops, which is why their lines appear first: a module's top-level code runs when it is imported. In a real project the demonstration would live in a test file, and these cases would be a test in your test runner (<a href="/learn/testing-basics">Testing basics</a>).</p>
+<p>In a real project these cases live in a test file and run with your test runner on every change (<a href="/learn/testing-basics">Testing basics</a>); the idea is the same.</p>
 <p>To prove the test catches the bug, run it once against the <em>old</em> <code>parsePrice</code>. A regression test that also passes on the buggy code tests nothing. You saw the old code fail exactly this way in the <a href="#reproduce">repro with assertions</a>.</p>
 <p>Then the damage. The fixed parser is run over yesterday's spreadsheet and compared with what the catalogue holds; every product priced ₦1,000 or more gets corrected. The 131 underpaid orders are a business decision for the owner, not a code change, but you give them the exact list, because your debugging log already says how to find them: imported after 15:39, containing any item at ₦1,000 or more.</p>
 <p>Finally, ask why nothing caught it sooner. The import had no validation and no sanity check ("rice dropped from ₦8,500 to ₦8, a 99.9% change: are you sure?"). Asking "why" several times, until you reach something you can change in the process, is <strong>root-cause analysis</strong>, and <a href="/learn/debug-practice#rca">Debug practice</a> does it properly with the "5 whys".</p>
