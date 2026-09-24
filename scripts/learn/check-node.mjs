@@ -203,7 +203,7 @@ export function checkNode(lessons, { log = console.log, only = null, root = null
       const target = join(dir, ex.file);
       mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, ex.code + "\n");
-      if (ex.tag === "file" || ex.check === "skip") return;
+      if (ex.tag === "file" || ex.check === "skip" || ex.runtime === "dom") return;
       const isTs = /\.(ts|mts)$/.test(ex.file);
       const label = `${lesson.slug} #${i} ${ex.file}`;
 

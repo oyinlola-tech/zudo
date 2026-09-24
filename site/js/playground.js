@@ -1361,6 +1361,10 @@
   function timerArgs(t) { return [t.setTimeout, t.clearTimeout, t.setInterval, t.clearInterval]; }
 
   var quietRun = false;
+  /* Extra names a run sees as globals, e.g. the preview frame's document for a
+     DOM example ({ names: [...], values: [...] }). exec() sets them; running the
+     same code again from the terminal keeps them; loading an example clears them. */
+  var runGlobals = null;
 
   function run() {
     if (running) return runPromise || Promise.resolve();
@@ -1384,7 +1388,7 @@
       session = makeSession();
       var fn;
       try {
-        fn = Function.apply(null, TIMER_PARAMS.concat([js + '\nreturn __zudo_main__();']));
+        fn = Function.apply(null, TIMER_PARAMS.concat(runGlobals ? runGlobals.names : [], [js + '\nreturn __zudo_main__();']));
       } catch (e) {
         throw Object.assign(e, { __phase: 'compile' });
       }
@@ -1394,7 +1398,7 @@
       window.addEventListener('unhandledrejection', onRejection);
       var start = performance.now();
       var finish = function () { window.removeEventListener('unhandledrejection', onRejection); currentTimers = null; };
-      return Promise.resolve().then(function () { return fn.apply(null, timerArgs(timers)); }).then(function (result) {
+      return Promise.resolve().then(function () { return fn.apply(null, timerArgs(timers).concat(runGlobals ? runGlobals.values : [])); }).then(function (result) {
         return timers.idle().then(function (state) {
           finish();
           if (state.error) throw state.error;
@@ -1443,7 +1447,9 @@
      the code the learner keeps in it (the editor and the tests use this). */
   function exec(code, name, opts) {
     var quiet = opts && opts.show === false;
+    var globals = (opts && opts.globals) || null;
     var run0 = function () {
+      runGlobals = globals;
       if (quiet) {
         var keep = { code: ta.value, file: fileEl.textContent, dirty: fileEl.classList.contains('is-dirty') };
         examplesSel.selectedIndex = -1;
@@ -1494,6 +1500,7 @@
   function toggle() { panel.classList.contains('is-open') ? close() : open(); }
 
   function loadExample(ex, force) {
+    runGlobals = null;
     currentExample = ex;
     examplesSel.value = ex.id;
     setFile(ex.file);

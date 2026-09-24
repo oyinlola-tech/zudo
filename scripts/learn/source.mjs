@@ -4,6 +4,9 @@
  *
  * Lesson source = front matter + HTML with these extra tags:
  *   <example file="a.ts" project="p" browser="no" check="skip|tsc-error">code</example>
+ *   <example file="app.js" runtime="dom" project="p">…</example>  (browser only: runs against a
+ *                                                            preview frame built from the project's
+ *                                                            .html/.css <file>s; Node skips it)
  *   <output [kind="tsc"] [mask="ms,iso"]>what it prints</output>  (right after an example;
  *                                                            mask: parts that differ per run,
  *                                                            see MASKS in check-node.mjs)
@@ -11,6 +14,7 @@
  *   <shell title="…">$ command\noutput</shell>              (run on your computer)
  *   <note>, <tip>, <warn>                                    (callouts)
  *   <exercise title="…"> … <solution> … </solution></exercise>
+ *   <reason title="…"> questions to think through … <answer> the reasoning </answer></reason>
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -50,23 +54,37 @@ export function readCourse(root) {
   const dir = join(root, "site-src", "learn");
   const course = JSON.parse(readFileSync(join(dir, "course.json"), "utf8"));
   const lessons = [];
+  const courseIds = new Set(course.courses.map((c) => c.id));
   let n = 0;
-  for (const part of course.parts) {
-    for (const slug of part.lessons) {
-      /* A lesson listed in course.json but not written yet is left out. */
-      if (!existsSync(join(dir, slug + ".html"))) continue;
-      n++;
-      const raw = readFileSync(join(dir, slug + ".html"), "utf8");
-      const fm = raw.match(/^---\n([\s\S]*?)\n---\n/);
-      if (!fm) throw new Error(`${slug}.html has no front matter`);
-      const meta = {};
-      for (const line of fm[1].split("\n")) {
-        const i = line.indexOf(":");
-        if (i > 0) meta[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+  for (const c of course.courses) {
+    const track = course.tracks.find((t) => t.courses.includes(c.id));
+    if (!track) throw new Error(`course ${c.id} is in no track`);
+    c.track = track;
+    c.lessons = [];
+    for (const [mi, mod] of c.modules.entries()) {
+      mod.index = mi;
+      for (const slug of mod.lessons) {
+        if (courseIds.has(slug)) throw new Error(`lesson slug "${slug}" is also a course id`);
+        /* A lesson listed in course.json but not written yet is left out. */
+        if (!existsSync(join(dir, slug + ".html"))) continue;
+        n++;
+        const raw = readFileSync(join(dir, slug + ".html"), "utf8");
+        const fm = raw.match(/^---\n([\s\S]*?)\n---\n/);
+        if (!fm) throw new Error(`${slug}.html has no front matter`);
+        const meta = {};
+        for (const line of fm[1].split("\n")) {
+          const i = line.indexOf(":");
+          if (i > 0) meta[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+        }
+        const tier = meta.tier || c.tier || "foundation";
+        if (course.tiers && !course.tiers[tier]) throw new Error(`${slug}.html: unknown tier "${tier}"`);
+        const lesson = {
+          slug, order: n, number: c.lessons.length + 1, course: c, module: mod, track,
+          tier, meta, body: raw.slice(fm[0].length),
+        };
+        c.lessons.push(lesson);
+        lessons.push(lesson);
       }
-      const tier = meta.tier || part.tier || "foundation";
-      if (course.tiers && !course.tiers[tier]) throw new Error(`${slug}.html: unknown tier "${tier}"`);
-      lessons.push({ slug, number: n, part: part.title, partId: part.id, tier, meta, body: raw.slice(fm[0].length) });
     }
   }
   return { course, lessons };
@@ -83,6 +101,7 @@ export function extractExamples(lesson) {
       file: a.file || a.name,
       project: a.project || null,
       browser: a.browser !== "no",
+      runtime: a.runtime || "node",
       check: a.check || null,
       code: dedent(m[3]),
       expected: m[4] ? dedent(m[6]) : null,
@@ -101,8 +120,9 @@ function renderExample(ex, highlight, index) {
   const src = ex.code.replace(/<\/(script)/gi, "<\\/$1");
   const isFile = ex.tag === "file";
   const runnable = !isFile && ex.browser;
-  const lang = /\.json$/.test(ex.file) ? "json" : /\.(m?js)$/.test(ex.file) ? "js" : "ts";
-  const code = lang === "json" ? escapeHtml(ex.code) + "\n" : highlight(ex.code);
+  const dom = ex.runtime === "dom";
+  const lang = /\.(json|html|css)$/.test(ex.file) ? "plain" : /\.(m?js)$/.test(ex.file) ? "js" : "ts";
+  const code = lang === "plain" ? escapeHtml(ex.code) + "\n" : highlight(ex.code);
   const action = isFile
     ? ""
     : runnable
@@ -111,15 +131,19 @@ function renderExample(ex, highlight, index) {
   let html =
     `<figure class="lx-example" data-index="${index}" data-file="${escapeAttr(ex.file)}"` +
     (ex.project ? ` data-project="${escapeAttr(ex.project)}"` : "") +
+    (dom ? ` data-runtime="dom"` : "") +
     `>\n<figcaption class="lx-bar"><span class="lx-file">${escapeHtml(ex.file)}</span>` +
-    `<button type="button" class="lx-edit" data-index="${index}" title="Open in the editor: change it, save it in this browser and run it">Edit</button>${action}</figcaption>\n` +
+    (dom ? "" : `<button type="button" class="lx-edit" data-index="${index}" title="Open in the editor: change it, save it in this browser and run it">Edit</button>`) +
+    `${action}</figcaption>\n` +
     `<pre class="lx-code"><code>${code}</code></pre>\n` +
     `<script type="text/plain" class="lx-src">${src}</script>\n`;
   if (ex.expected !== null) {
     const label =
       ex.outputKind === "tsc"
         ? `What <code>npx tsc --noEmit</code> prints`
-        : `Output of <code>${escapeHtml(runLabel(ex.file))}</code>${runnable ? " and of the browser terminal" : ""}`;
+        : dom
+          ? `What the browser terminal prints`
+          : `Output of <code>${escapeHtml(runLabel(ex.file))}</code>${runnable ? " and of the browser terminal" : ""}`;
     html +=
       `<div class="lx-out${ex.outputKind === "tsc" ? " lx-out-tsc" : ""}"><div class="lx-out-label">${label}</div>` +
       `<pre class="lx-no-copy">${escapeHtml(ex.expected)}</pre></div>\n`;
@@ -169,6 +193,7 @@ export function renderBody(lesson, highlight) {
         file: at.file || at.name,
         project: at.project || null,
         browser: at.browser !== "no",
+        runtime: at.runtime || "node",
         code: dedent(code),
         expected: hasOut ? dedent(expected) : null,
         outputKind: hasOut ? attrs(outAttrs).kind || "run" : null,
@@ -188,6 +213,14 @@ export function renderBody(lesson, highlight) {
     return (
       `<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>${title}</h3>${task.trim()}` +
       (solution ? `<details class="lx-solution"><summary>Show a solution</summary>${solution.replace(/<\/solution>/, "").trim()}</details>` : "") +
+      `</div>`
+    );
+  });
+  html = html.replace(/<reason\s+title="([^"]*)">([\s\S]*?)<\/reason>/g, (m, title, inner) => {
+    const [task, answer] = inner.split(/<answer>/);
+    return (
+      `<div class="lx-reason"><p class="lx-reason-label">REASON IT OUT</p><h3>${title}</h3>${task.trim()}` +
+      (answer ? `<details class="lx-solution"><summary>Show the reasoning</summary>${answer.replace(/<\/answer>/, "").trim()}</details>` : "") +
       `</div>`
     );
   });

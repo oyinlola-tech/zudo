@@ -2,6 +2,8 @@
  * Learn pages: wires each example's "Run in browser" button to the docked
  * terminal (js/playground.js), its "Edit" button to the editor (js/ide.js),
  * and remembers which lessons you finished (a passed test marks it too).
+ * Progress bars ([data-progress]) and "continue" buttons ([data-continue])
+ * on the academy and course pages are filled in from that same record.
  *
  * Public API (used by scripts/site-learn.mjs --browser):
  *   window.ZudoLearn.run(index) → Promise<{ kind, text }[]>
@@ -11,6 +13,7 @@
   'use strict';
 
   var DONE_KEY = 'zudo.learn.done';
+  var LAST_KEY = 'zudo.learn.last';
 
   function readDone() {
     try { return JSON.parse(localStorage.getItem(DONE_KEY) || '[]'); } catch (e) { return []; }
@@ -45,12 +48,62 @@
     });
   }
 
+  /* Browser globals a DOM example sees from its preview frame instead of this page. */
+  var DOM_GLOBALS = ['window', 'document', 'globalThis', 'self', 'location', 'history', 'navigator',
+    'localStorage', 'sessionStorage', 'getComputedStyle', 'requestAnimationFrame', 'cancelAnimationFrame',
+    'queueMicrotask', 'structuredClone', 'Node', 'Element', 'HTMLElement', 'HTMLInputElement',
+    'HTMLFormElement', 'HTMLButtonElement', 'HTMLTemplateElement', 'HTMLAnchorElement', 'Text', 'Comment',
+    'DocumentFragment', 'NodeList', 'HTMLCollection', 'Event', 'CustomEvent', 'MouseEvent', 'KeyboardEvent',
+    'InputEvent', 'FocusEvent', 'SubmitEvent', 'EventTarget', 'FormData', 'DOMParser', 'MutationObserver',
+    'IntersectionObserver', 'ResizeObserver', 'customElements', 'URL', 'URLSearchParams', 'AbortController'];
+
+  /* A DOM example runs against a frame built from its project's .html and .css files. */
+  function domFrame(fig) {
+    var files = projectFiles(fig);
+    var html = '<!DOCTYPE html><html><head></head><body></body></html>';
+    var css = '';
+    Object.keys(files).forEach(function (name) {
+      if (/\.html$/.test(name)) html = files[name];
+      if (/\.css$/.test(name)) css += files[name] + '\n';
+    });
+    if (css) html = html.replace(/<\/head>/i, '<style>' + css + '</style></head>');
+    var box = fig.querySelector('.lx-preview');
+    if (!box) {
+      box = document.createElement('div');
+      box.className = 'lx-preview';
+      box.innerHTML = '<div class="lx-out-label">Preview</div>';
+      var out = fig.querySelector('.lx-out');
+      fig.insertBefore(box, out || null);
+    }
+    var old = box.querySelector('iframe');
+    if (old) old.remove();
+    var frame = document.createElement('iframe');
+    frame.title = 'Preview of ' + fig.getAttribute('data-file');
+    frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-modals');
+    box.appendChild(frame);
+    return new Promise(function (resolve) {
+      frame.addEventListener('load', function () { resolve(frame.contentWindow); }, { once: true });
+      frame.srcdoc = html;
+    });
+  }
+
+  function domGlobals(win) {
+    var values = DOM_GLOBALS.map(function (name) {
+      var v = win[name];
+      return typeof v === 'function' && /^[a-z]/.test(name) ? v.bind(win) : v;
+    });
+    return { names: DOM_GLOBALS, values: values };
+  }
+
   function run(index) {
     var fig = document.querySelector('.lx-example[data-index="' + index + '"]');
     if (!fig) return Promise.reject(new Error('no example ' + index));
     return ready().then(function (pg) {
       pg.registerFiles(projectFiles(fig));
-      return pg.exec(source(fig), fig.getAttribute('data-file'));
+      if (fig.getAttribute('data-runtime') !== 'dom') return pg.exec(source(fig), fig.getAttribute('data-file'));
+      return domFrame(fig).then(function (win) {
+        return pg.exec(source(fig), fig.getAttribute('data-file'), { globals: domGlobals(win) });
+      });
     });
   }
 
@@ -76,8 +129,39 @@
     paintDone();
   }
 
+  function paintProgress(done) {
+    document.querySelectorAll('[data-progress]').forEach(function (el) {
+      var slugs = el.getAttribute('data-progress').split(' ');
+      var n = slugs.filter(function (s) { return done.indexOf(s) !== -1; }).length;
+      var bar = el.querySelector('.lx-progress-bar span');
+      if (bar) bar.style.width = Math.round((n / slugs.length) * 100) + '%';
+      var text = el.querySelector('.lx-progress-text');
+      if (text) text.textContent = n + ' of ' + slugs.length + (/lessons done/.test(text.textContent) ? ' lessons done' : ' done');
+      el.classList.toggle('is-started', n > 0);
+      el.classList.toggle('is-complete', n === slugs.length);
+    });
+    var last = null;
+    try { last = localStorage.getItem(LAST_KEY); } catch (e) {}
+    document.querySelectorAll('[data-continue]').forEach(function (a) {
+      var slugs = a.getAttribute('data-continue').split(' ');
+      var started = slugs.some(function (s) { return done.indexOf(s) !== -1 || s === last; });
+      if (!started) return;
+      var target = last && slugs.indexOf(last) !== -1 && done.indexOf(last) === -1
+        ? last
+        : slugs.filter(function (s) { return done.indexOf(s) === -1; })[0];
+      if (target) {
+        a.href = '/learn/' + target;
+        a.textContent = 'Continue where you left off →';
+      } else {
+        a.href = '/learn/' + slugs[0];
+        a.textContent = 'All done. Review from lesson 1 →';
+      }
+    });
+  }
+
   function paintDone() {
     var done = readDone();
+    paintProgress(done);
     document.querySelectorAll('[data-lesson]').forEach(function (el) {
       if (el.classList.contains('lx-main')) return;
       el.classList.toggle('is-done', done.indexOf(el.getAttribute('data-lesson')) !== -1);
@@ -105,6 +189,8 @@
   }
 
   function init() {
+    var main = document.querySelector('.lx-main[data-lesson]');
+    if (main) { try { localStorage.setItem(LAST_KEY, main.getAttribute('data-lesson')); } catch (e) {} }
     document.addEventListener('click', function (e) {
       var btn = e.target.closest && e.target.closest('.lx-run');
       if (btn) {

@@ -6,6 +6,10 @@
  * them at random. Pass with 4 or more; otherwise try again with 5 others.
  * Code questions run in the browser terminal (js/playground.js), exactly like
  * the lesson examples. Progress is kept in localStorage.
+ *
+ * A course page has a "Course checkpoint" (.lx-exam): the same test, drawn
+ * from the banks of every lesson in the course, with data-size questions
+ * and a pass mark of 80%. Its result is stored under "exam:<course id>".
  */
 (function () {
   'use strict';
@@ -79,10 +83,14 @@
 
   var TYPE_LABEL = { choice: 'Choose one answer', output: 'What does this code print?', code: 'Write code, then run it' };
 
+  var EXAM_PASS_RATIO = 0.8;
+
   function Test(root) {
     this.root = root;
-    this.slug = root.getAttribute('data-lesson');
+    this.exam = root.getAttribute('data-exam');
+    this.slug = this.exam ? 'exam:' + root.getAttribute('data-course') : root.getAttribute('data-lesson');
     this.url = root.getAttribute('data-quiz');
+    this.size = Number(root.getAttribute('data-size')) || 5;
     this.body = root.querySelector('.lx-quiz-body');
     this.data = null;
     this.current = [];
@@ -100,22 +108,38 @@
 
   Test.prototype.paintIntro = function () {
     var st = stateFor(this.slug);
+    var of = ' of ' + this.size;
     var status = st.passed
-      ? '<p class="lx-quiz-status is-passed">✓ Passed. Best score ' + st.best + ' of 5, after ' + st.attempts + ' attempt' + (st.attempts === 1 ? '' : 's') + '.</p>'
+      ? '<p class="lx-quiz-status is-passed">✓ Passed. Best score ' + st.best + of + ', after ' + st.attempts + ' attempt' + (st.attempts === 1 ? '' : 's') + '.</p>'
       : st.attempts
-        ? '<p class="lx-quiz-status">Not passed yet. Best score ' + st.best + ' of 5, ' + st.attempts + ' attempt' + (st.attempts === 1 ? '' : 's') + '.</p>'
+        ? '<p class="lx-quiz-status">Not passed yet. Best score ' + st.best + of + ', ' + st.attempts + ' attempt' + (st.attempts === 1 ? '' : 's') + '.</p>'
         : '';
+    var what = this.exam ? 'checkpoint' : 'test';
     this.body.innerHTML = status +
-      '<button type="button" class="lx-quiz-btn" data-act="start">' + (st.attempts ? 'Take a new test' : 'Start the test') + '</button>';
+      '<button type="button" class="lx-quiz-btn" data-act="start">' + (st.attempts ? 'Take a new ' + what : 'Start the ' + what) + '</button>';
   };
 
   Test.prototype.load = function () {
     var self = this;
     if (this.data) return Promise.resolve(this.data);
-    return fetch(this.url).then(function (r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
-    }).then(function (d) { self.data = d; return d; });
+    var get = function (url) {
+      return fetch(url).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      });
+    };
+    if (!this.exam) return get(this.url).then(function (d) { self.data = d; return d; });
+    var urls = this.exam.split(' ');
+    return Promise.all(urls.map(get)).then(function (banks) {
+      var questions = [];
+      banks.forEach(function (b, i) {
+        var lesson = urls[i].replace(/^.*\/|\.json$/g, '');
+        b.questions.forEach(function (q) { questions.push(Object.assign({}, q, { id: lesson + '/' + q.id })); });
+      });
+      var size = Math.min(self.size, questions.length);
+      self.data = { questions: questions, size: size, pass: Math.round(size * EXAM_PASS_RATIO) };
+      return self.data;
+    });
   };
 
   Test.prototype.start = function () {
@@ -242,13 +266,17 @@
     st.best = Math.max(st.best || 0, score);
     if (passed) st.passed = true;
     saveState(this.slug, st);
-    if (passed && window.ZudoLearn && window.ZudoLearn.markDone) window.ZudoLearn.markDone(this.slug);
+    if (passed && !this.exam && window.ZudoLearn && window.ZudoLearn.markDone) window.ZudoLearn.markDone(this.slug);
     var foot = this.body.querySelector('.lx-quiz-foot');
+    var passedNote = this.exam ? ' You have passed this course checkpoint.' : ' This lesson is now marked as done.';
+    var failedNote = this.exam
+      ? ' Read the explanations, revisit the lessons they come from, then take a new checkpoint with different questions.'
+      : ' Read the explanations, look at the lesson again, then take a new test with 5 different questions.';
     foot.innerHTML =
       '<p class="lx-quiz-score ' + (passed ? 'is-passed' : 'is-failed') + '">' +
       (passed ? '✓ Passed: ' : '✗ Not passed: ') + score + ' of ' + total + ' correct.' +
-      (passed ? ' This lesson is now marked as done.' : ' Read the explanations, look at the lesson again, then take a new test with 5 different questions.') +
-      '</p><button type="button" class="lx-quiz-btn" data-act="start">' + (passed ? 'Take another test' : 'Try again with new questions') + '</button>';
+      (passed ? passedNote : failedNote) +
+      '</p><button type="button" class="lx-quiz-btn" data-act="start">' + (passed ? 'Take another one' : 'Try again with new questions') + '</button>';
     foot.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     document.dispatchEvent(new CustomEvent('zudo:test-finished', { detail: { slug: this.slug, score: score, passed: passed } }));
   };
@@ -277,7 +305,7 @@
   };
 
   function init() {
-    document.querySelectorAll('.lx-quiz[data-quiz]').forEach(function (root) { new Test(root); });
+    document.querySelectorAll('.lx-quiz[data-quiz], .lx-quiz[data-exam]').forEach(function (root) { new Test(root); });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
