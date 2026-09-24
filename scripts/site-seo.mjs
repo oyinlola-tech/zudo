@@ -16,6 +16,8 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../site/", import.meta.url));
+/* ZudoJS Academy structure, for lesson breadcrumbs (Academy › course › lesson). */
+const ACADEMY = JSON.parse(readFileSync(fileURLToPath(new URL("../site-src/learn/course.json", import.meta.url)), "utf8"));
 const BASE = (process.env.SITE_URL || "https://zudojs.oyinlola.site").replace(
   /\/+$/,
   "",
@@ -155,7 +157,10 @@ function homeLd() {
 function breadcrumbLd(rel, title) {
   const crumbs = [["ZudoJS", `${BASE}/`]];
   if (rel.startsWith("learn/") && rel !== "learn/index.html") {
-    crumbs.push(["Learn", `${BASE}/learn`]);
+    crumbs.push(["Academy", `${BASE}/learn`]);
+    const slug = rel.slice("learn/".length).replace(/\.html$/, "");
+    const c = ACADEMY.courses.find((x) => x.modules.some((m) => m.lessons.includes(slug)));
+    if (c) crumbs.push([c.title, `${BASE}/learn/${c.id}`]);
   }
   if (rel.startsWith("docs/")) {
     if (rel !== "docs/getting-started.html")

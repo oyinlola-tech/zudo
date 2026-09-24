@@ -130,9 +130,11 @@ export function ensureDeps(lessons, log, root) {
   while (!existsSync(done)) {
     try {
       mkdirSync(lock);
+      writeFileSync(join(lock, "pid"), String(process.pid));
     } catch {
-      /* another check is installing: wait for it (a lock older than 10 minutes is stale) */
-      if (Date.now() - statSync(lock).mtimeMs > 600000) rmSync(lock, { recursive: true, force: true });
+      /* Another check is installing: wait for it. The lock is stale only when the
+         process that holds it has died (an install can take well over 10 minutes). */
+      if (lockIsStale(lock)) rmSync(lock, { recursive: true, force: true });
       else sleepSync(1000);
       continue;
     }
@@ -148,6 +150,25 @@ export function ensureDeps(lessons, log, root) {
     }
   }
   return dir;
+}
+
+function lockIsStale(lock) {
+  try {
+    const pid = Number(readFileSync(join(lock, "pid"), "utf8"));
+    process.kill(pid, 0);
+    return false;
+  } catch (e) {
+    if (e.code === "EPERM") return false;
+    /* No pid file yet: the holder is between mkdir and write, unless that was long ago. */
+    if (e.code === "ENOENT") {
+      try {
+        return Date.now() - statSync(lock).mtimeMs > 60000;
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  }
 }
 
 /* Merged stdout+stderr in write order: run through a shell with 2>&1. */

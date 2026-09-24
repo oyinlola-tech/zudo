@@ -309,7 +309,7 @@ function pageInfo(file, dir = DOCS) {
 const TOP_PAGES = ["brand.html", "sponsors.html"];
 
 const GROUPS = [
-  ["Learn (course, in order)", (s, p) => p.learn],
+  ["ZudoJS Academy (courses and lessons, in order)", (s, p) => p.learn],
   ["Getting started", (s) => s.startsWith("getting-started")],
   ["Concepts", (s) => s.startsWith("concepts")],
   ["Architecture", (s) => s.startsWith("architecture")],
@@ -364,12 +364,13 @@ for (const file of files) {
   if (html !== info.html) writeFileSync(join(DOCS, file), html);
 }
 
-/* The Learn course: index first, then lessons in course order. */
+/* ZudoJS Academy (/learn): in course order. */
 const LEARN = join(ROOT, "learn");
 const course = JSON.parse(
   readFileSync(fileURLToPath(new URL("../site-src/learn/course.json", import.meta.url)), "utf8"),
 );
-const learnSlugs = ["index", ...course.parts.flatMap((p) => p.lessons)];
+/* Academy home, then each course page followed by its lessons. */
+const learnSlugs = ["index", ...course.courses.flatMap((c) => [c.id, ...c.modules.flatMap((m) => m.lessons)])];
 learnSlugs.forEach((slug, order) => {
   const file = slug + ".html";
   if (!existsSync(join(LEARN, file))) return;
