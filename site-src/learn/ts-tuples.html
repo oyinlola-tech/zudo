@@ -17,6 +17,14 @@ const amount = row[2];
 console.log(amount.toFixed(2));
 </example>
 <output kind="tsc">
+row.ts:4:20 - error TS2339: Property 'toFixed' does not exist on type 'string | number'.
+  Property 'toFixed' does not exist on type 'string'.
+
+4 console.log(amount.toFixed(2));
+                     ~~~~~~~
+
+
+Found 1 error in row.ts:4
 </output>
 <p>You can see that position 2 holds a number. TypeScript cannot, because it inferred <code>row</code> as <code>(string | number)[]</code>: an array of any length where <em>every</em> element could be a string or a number. It has no idea which position holds which. For a list of similar things (a list of prices, a list of names), that is exactly right. For a small, fixed record where each position means something different, you need a <strong>tuple</strong>: an array type with a fixed number of elements, each with its own type.</p>
 <example file="row.ts" project="problem">
@@ -26,6 +34,7 @@ const [date, description, amount] = row;
 console.log(date, amount.toFixed(2), description.length);
 </example>
 <output>
+2026-09-01 -2500.00 28
 </output>
 <p>You met tuples briefly in <a href="/learn/ts-types#tuples">Basic types</a>. This lesson covers the whole feature: optional and rest elements, labels, <code>readonly</code>, how TypeScript decides between an array and a tuple, and the places where tuples are the best design, and where they are not.</p>
 </section>
@@ -41,6 +50,7 @@ const [from, to, kobo] = transfer;
 console.log(`${from} -> ${to}: ₦${(kobo / 100).toLocaleString("en-NG")}`, size);
 </example>
 <output>
+ACC-001 -> ACC-002: ₦2,500 3
 </output>
 <p><code>transfer.length</code> has the literal type <code>3</code>, not <code>number</code>. Reading or destructuring past the end is a compile error:</p>
 <example file="past-end.ts" project="basics" check="tsc-error">
@@ -50,6 +60,18 @@ const [from, to, kobo, fee] = transfer;
 console.log(transfer[3]);
 </example>
 <output kind="tsc">
+past-end.ts:3:24 - error TS2493: Tuple type '[string, string, number]' of length '3' has no element at index '3'.
+
+3 const [from, to, kobo, fee] = transfer;
+                         ~~~
+
+past-end.ts:4:22 - error TS2493: Tuple type '[string, string, number]' of length '3' has no element at index '3'.
+
+4 console.log(transfer[3]);
+                       ~
+
+
+Found 2 errors in the same file, starting at: past-end.ts:3
 </output>
 <p>Under the hood a tuple is an ordinary JavaScript array. Nothing at runtime knows it is a tuple, which matters in a moment.</p>
 <h3>Named elements</h3>
@@ -78,6 +100,9 @@ const size: 2 | 3 = first.length;
 console.log(size);
 </example>
 <output>
+SMS alert: ₦4
+Transfer fee: ₦10.75 (free for Premium)
+2
 </output>
 <p>Inside the loop, <code>waivedFor</code> is <code>string | undefined</code>, so you must narrow it before use, exactly as with an optional property.</p>
 <h3>Rest elements</h3>
@@ -97,6 +122,9 @@ for (const [branch, ...daily] of rows) {
 }
 </example>
 <output>
+Lekki: 3 days, ₦36,600
+Ikeja: 1 days, ₦21,000
+Wuse: 0 days, ₦0
 </output>
 <p>The rest element can also sit at the start or in the middle, as long as there is only one. <code>[...path: string[], amount: number]</code> describes "any number of strings, then exactly one number at the end", which fits a ledger path like <code>["assets", "bank", "gtbank", 500000]</code>:</p>
 <example file="leading-rest.ts" project="optional-rest">
@@ -112,6 +140,8 @@ console.log(describe(["assets", "bank", "gtbank", 500000]));
 console.log(describe(["expenses", 2500]));
 </example>
 <output>
+assets:bank:gtbank = 500000
+expenses = 2500
 </output>
 <p>TypeScript knows only the <em>shape</em> here, not every index: <code>entry[entry.length - 1]</code> is typed <code>string | number</code>, and the template literal accepts both. When a type starts needing this much care, an object like <code>{ path: string[]; kobo: number }</code> is often clearer; you will see that trade-off again at the end of the lesson.</p>
 </section>
@@ -128,6 +158,7 @@ const [currency, value] = rate;
 console.log(currency, value, rate.length, rate);
 </example>
 <output>
+USD 1550 3 [ 'USD', 1550, 1600 ]
 </output>
 <p>This compiles. The type still says "two elements" while the array now has three. A <strong>readonly tuple</strong> removes <code>push</code>, <code>pop</code>, <code>sort</code>, <code>splice</code> and assignment to elements, so the shape cannot drift:</p>
 <example file="readonly.ts" project="readonly" check="tsc-error">
@@ -137,6 +168,18 @@ rate.push(1600);
 rate[1] = 1600;
 </example>
 <output kind="tsc">
+readonly.ts:3:6 - error TS2339: Property 'push' does not exist on type 'readonly [currency: string, nairaPerUnit: number]'.
+
+3 rate.push(1600);
+       ~~~~
+
+readonly.ts:4:6 - error TS2540: Cannot assign to '1' because it is a read-only property.
+
+4 rate[1] = 1600;
+       ~
+
+
+Found 2 errors in the same file, starting at: readonly.ts:3
 </output>
 <p>Write <code>readonly</code> on tuples you do not intend to change, which is almost all of them. A function parameter typed <code>readonly [string, number]</code> accepts both mutable and readonly tuples, so it is the friendlier choice for inputs too. To "change" a readonly tuple, make a new one: <code>const next = [rate[0], 1600] as const</code>.</p>
 <h3>Sorting in place</h3>
@@ -148,6 +191,7 @@ const ascending = topUps.toSorted((a, b) => a - b);
 console.log(ascending, topUps);
 </example>
 <output>
+[ 1000, 5000, 20000 ] [ 5000, 1000, 20000 ]
 </output>
 <p>Note the result type: <code>toSorted</code> returns <code>number[]</code>, not a tuple. After sorting, TypeScript no longer promises which value is where, which is honest.</p>
 </section>
@@ -173,6 +217,7 @@ const generic = tuple("GBP", 2050, true);
 console.log(inferred.length, annotated.length, constant.length, returned.length, generic.length);
 </example>
 <output>
+2 2 2 2 3
 </output>
 <ul>
 <li><code>inferred</code> is <code>(string | number)[]</code>: an array.</li>
@@ -191,6 +236,14 @@ const [code, rate] = exchangeRate("USD");
 console.log(rate.toFixed(2));
 </example>
 <output kind="tsc">
+no-return-type.ts:6:18 - error TS2339: Property 'toFixed' does not exist on type 'string | number'.
+  Property 'toFixed' does not exist on type 'string'.
+
+6 console.log(rate.toFixed(2));
+                   ~~~~~~~
+
+
+Found 1 error in no-return-type.ts:6
 </output>
 </section>
 
@@ -217,6 +270,7 @@ setCoupon("SAVE10");
 console.log(itemCount(), coupon());
 </example>
 <output>
+4 SAVE10
 </output>
 <ul>
 <li>The return type is a readonly tuple with labels, so callers see <code>get</code> and <code>set</code> in their editor, then pick their own names.</li>
@@ -242,6 +296,10 @@ const [user, account] = await Promise.all([
 console.log(user.name, account.kobo);
 </example>
 <output>
+ACC-001 125000
+ACC-002 0
+[ 'transfer', 1075 ]
+Ada 125000
 </output>
 <p><code>Object.entries</code> gives <code>[string, number][]</code>, an array of pairs. A <code>Map</code> is built from pairs. <code>Promise.all</code> on a tuple of promises returns a tuple of results, so <code>user</code> and <code>account</code> each get their own type; with a plain array, both would be a union.</p>
 <h3>Tuples as parameter lists</h3>
@@ -261,6 +319,8 @@ const queued: TransferArgs[] = [
 for (const args of queued) console.log(transfer(...args));
 </example>
 <output>
+ACC-001 -> ACC-002: 250000
+ACC-003 -> ACC-001: 1000
 </output>
 <p><code>TransferArgs</code> is <code>[from: string, to: string, kobo: number]</code>, labels included. Spreading a tuple into a call type-checks each argument by position, which is what makes a queue of saved calls safe.</p>
 </section>
@@ -286,7 +346,7 @@ export type ParseResult = readonly [error: string, row: null] | readonly [error:
 export function parseLine(line: string): ParseResult {
   const cells = line.split(",").map((cell) => cell.trim());
   if (cells.length < 3 || cells.length > 4) return [`expected 3 or 4 columns, got ${cells.length}`, null];
-  const [date = "", description = "", amount = "", reference] = cells;
+  const [date, description, amount, reference] = cells;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return [`bad date "${date}"`, null];
   const naira = Number(amount);
   if (amount === "" || !Number.isFinite(naira)) return [`bad amount "${amount}"`, null];
@@ -314,11 +374,17 @@ for (const [lineNo, line] of csv.split("\n").entries()) {
 console.log(`balance: ₦${(balance / 100).toFixed(2)}`);
 </example>
 <output>
+2026-09-01 POS purchase       -250000
+2026-09-02 Salary            45000000 PAY-0925
+line 3: expected 3 or 4 columns, got 2
+line 4: bad amount "abc"
+line 5: bad amount "Yaba"
+balance: ₦447500.00
 </output>
 <p>Read how the tuples work together:</p>
 <ul>
 <li><code>ParseResult</code> is a union of two tuples, and the first element is <code>string</code> in one and <code>null</code> in the other. <code>null</code> is a unit type, so it works as a discriminant: after <code>if (error !== null) continue</code>, TypeScript knows <code>row</code> is a <code>Row</code>, even though both came from destructuring.</li>
-<li>The destructuring defaults <code>date = ""</code> are needed because <code>cells</code> is a <code>string[]</code>; with <code>noUncheckedIndexedAccess</code> on, each element would be <code>string | undefined</code>. The length check above makes the defaults unreachable, but the compiler cannot connect the two.</li>
+<li><code>cells</code> is a <code>string[]</code>, not a tuple, so destructuring it gives four <code>string</code>s. That is not quite true: on a three-column line, <code>reference</code> is <code>undefined</code>. The truthiness check <code>reference ? … : …</code> handles it (an empty reference counts as none), but the compiler did not make you write it. The <code>noUncheckedIndexedAccess</code> option, covered in <a href="/learn/ts-tsconfig">tsconfig in depth</a>, makes every such element <code>string | undefined</code> so you cannot forget.</li>
 <li>The last line has a comma inside the description and produced four columns: <code>" Yaba"</code> became the amount and was refused. Without the column count and amount checks, it would have been stored as a real transaction. Supporting quoted CSV properly is a job for a CSV library.</li>
 </ul>
 </section>
@@ -343,6 +409,17 @@ for (const [line, expected] of cases) {
 }
 </example>
 <output>
+2026-09-01 POS purchase       -250000
+2026-09-02 Salary            45000000 PAY-0925
+line 3: expected 3 or 4 columns, got 2
+line 4: bad amount "abc"
+line 5: bad amount "Yaba"
+balance: ₦447500.00
+PASS 2026-09-01,POS purchase,-2500.00
+PASS 2026-09-02,Salary,450000,PAY-1
+PASS 2026-09-03,Airtime
+PASS 01/09/2026,Rent,-100000
+PASS 2026-09-04,Refund,
 </output>
 <p>Notice <code>"2026-09-04,Refund,"</code>: <code>Number("")</code> is <code>0</code>, not <code>NaN</code>, so without the explicit <code>amount === ""</code> check an empty amount would have become a ₦0 transaction. The test table is where you find out. In a Vitest suite, <code>expect(parseLine(line)).toEqual(expected)</code> does the deep comparison for you.</p>
 </section>
@@ -384,6 +461,8 @@ if (result !== null) {
 console.log(range([]));
 </example>
 <output>
+800 20000
+null
 </output>
 <p>The return type makes the returned literal a tuple, and the caller chooses the names. <code>null</code> for an empty list is part of the type, so the caller must narrow before destructuring.</p>
 </solution>
@@ -405,6 +484,9 @@ toggleBalance();
 console.log(showBalance());
 </example>
 <output>
+false
+true
+false
 </output>
 <p>Both functions close over the same <code>on</code> variable, so the toggle is visible through the getter. The caller named them <code>showBalance</code> and <code>toggleBalance</code>, which an object return would not have allowed without renaming.</p>
 </solution>
