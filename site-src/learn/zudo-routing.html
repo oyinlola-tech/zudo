@@ -1,0 +1,1039 @@
+---
+title: Routing in depth
+description: Control exactly which handler answers a request in @zudojs/http. Learn path patterns, matching order, route middleware, groups, repeated query keys and canonical request targets.
+minutes: 50
+youNeed: Routes, requests and responses
+youBuild: A GET /tasks/stats route that filters by repeated query keys, and a route-table check that proves every Task API route is reachable and hostile paths are refused
+keywords: zudojs router, createRouter, route parameters, optional parameter, parameter constraint, wildcard route, route matching order, route specificity, RouteConflictError, route middleware, router group, api versioning, repeated query parameters, parameter pollution, queryArray, path normalisation, trailing slash, case sensitive routing, canonical request target, dot segments, buildRoutePath
+objectives: Write route patterns with required, optional, constrained, brace and wildcard parameters, and predict the decoded values | Predict which route answers a request when several patterns match, and find routes that can never run | Attach middleware to a single route or to a group, and explain the order it runs in | Handle repeated query keys deliberately instead of crashing or trusting the first value | Explain how the router normalises paths and why the adapter refuses dot segments and backslashes before routing
+---
+<section>
+<h2 id="why">The problem: two bugs in a four-line router</h2>
+<p>In <a href="/learn/zudo-http">Routes, requests and responses</a> you registered a handful of routes and everything behaved. Real route tables grow to dozens of entries written by different people, and then routing itself starts causing bugs. Here are two, both from a Task API that compiles cleanly:</p>
+<file name="hit.ts" project="routing">
+import { createRequestContext } from "@zudojs/http";
+import type { HttpRouter } from "@zudojs/http";
+
+/** Sends one request through a router, without a server, and prints the answer. */
+export async function hit(router: HttpRouter, method: string, url: string, headers: Record<string, string> = {}): Promise<void> {
+  try {
+    const { response, route } = await router.dispatch(createRequestContext({ method, url, headers }));
+    const body = typeof response.body === "string" ? response.body : (JSON.stringify(response.body) ?? "");
+    console.log(`${method} ${url} -> ${response.status} ${body}`.trimEnd(), route ? `[${route.path}]` : "");
+  } catch (error) {
+    // dispatch rethrows; a server answers an exposed HttpError with its status, anything else with 500
+    const e = error as Error & { statusCode?: number; expose?: boolean };
+    const status = e.expose === true && e.statusCode !== undefined ? e.statusCode : 500;
+    console.log(`${method} ${url} -> ${status} (thrown ${e.name}: ${e.message})`);
+  }
+}
+</file>
+<example file="two-bugs.ts" project="routing" browser="no">
+import { createRouter } from "@zudojs/http";
+import { hit } from "./hit.js";
+
+const router = createRouter();
+router.get("/tasks/:slug", (ctx) => ({ found: "by slug", slug: ctx.params.slug }));
+router.get("/tasks/:id(\\d+)", (ctx) => ({ found: "by id", id: Number(ctx.params.id) }));
+router.get("/tasks", (ctx) => {
+  const status = ctx.query.status as string;
+  return { filter: status.toUpperCase() };
+});
+
+await hit(router, "GET", "/tasks/42");
+await hit(router, "GET", "/tasks?status=open");
+await hit(router, "GET", "/tasks?status=open&status=done");
+</example>
+<output>
+GET /tasks/42 -> 200 {"found":"by slug","slug":"42"} [/tasks/:slug]
+GET /tasks?status=open -> 200 {"filter":"OPEN"} [/tasks]
+GET /tasks?status=open&status=done -> 500 (thrown TypeError: status.toUpperCase is not a function)
+</output>
+<ul>
+<li>The <code>:id(\\d+)</code> route never runs. Its author expected "digits only" to make it the better match for <code>/tasks/42</code>, but the slug route was registered first and also matches. No error, no warning: the id route is dead code.</li>
+<li>A client repeated a query key, the value became an array, and <code>toUpperCase</code> crashed. <code>as string</code> told TypeScript to stop checking. In a server that is a 500 for a request any client can send.</li>
+</ul>
+<p>The helper <code>hit</code> sends a request through <code>router.dispatch</code> without a server and prints the status, the body and, in brackets, the pattern that answered. <code>dispatch</code> does not turn a thrown error into a response; the server does that. So <code>hit</code> prints a thrown error the way the server would answer it: an exposed <code>HttpError</code> with its own status, anything else as 500. Every example in this lesson uses it, so you can see which route won. This lesson explains how the router registers, parses, orders and matches routes, so that you can predict the winner before a user finds out.</p>
+</section>
+
+<section>
+<h2 id="registration">Registering routes</h2>
+<p>A router is a table of <strong>routes</strong>: a method, a path <strong>pattern</strong>, a handler, and options. You have used <code>router.get</code> and <code>router.post</code>. The full set:</p>
+<ul>
+<li>One method each: <code>get</code>, <code>post</code>, <code>put</code>, <code>patch</code>, <code>delete</code>, <code>head</code>, <code>options</code>, <code>connect</code>, <code>trace</code>.</li>
+<li><code>all(path, handler)</code> for every method, and <code>on(method, path, handler)</code> with a method name.</li>
+<li><code>add({ method, path, handler, ... })</code> with a definition object, where <code>method</code> may be a list such as <code>["PUT", "PATCH"]</code>.</li>
+</ul>
+<p>Each takes an optional last argument with route <strong>options</strong>: a <code>name</code>, free-form <code>metadata</code>, a list of <code>middleware</code>, <code>strictTrailingSlash</code>, and the <code>openapi</code> documentation you will meet in <a href="/learn/zudo-openapi">OpenAPI documents</a>. Each also returns a function that removes the route again:</p>
+<example file="registration.ts" project="routing" browser="no">
+import { createRouter, isRouteConflictError } from "@zudojs/http";
+import { hit } from "./hit.js";
+
+const router = createRouter();
+router.get("/tasks", () => [], { name: "tasks.list", metadata: { owner: "tasks-team" } });
+router.add({ method: ["PUT", "PATCH"], path: "/tasks/:id", handler: (ctx) => ({ updated: ctx.params.id }) });
+const removeDebug = router.all("/debug", (ctx) => ({ method: ctx.request.method }));
+
+console.log(router.list().map((route) => `${route.method} ${route.path} ${route.name ?? ""}`.trimEnd()));
+
+await hit(router, "PATCH", "/tasks/7");
+await hit(router, "DELETE", "/debug");
+removeDebug();
+await hit(router, "DELETE", "/debug");
+
+for (const register of [
+  () => router.get("/tasks", () => []),
+  () => router.get("/tasks/:id(", () => null),
+]) {
+  try {
+    register();
+  } catch (error) {
+    console.log((error as Error).name, "-", (error as Error).message, "| conflict:", isRouteConflictError(error));
+  }
+}
+</example>
+<output>
+[
+  'PUT /tasks/:id',
+  'PATCH /tasks/:id',
+  'GET /tasks tasks.list',
+  '* /debug'
+]
+PATCH /tasks/7 -> 200 {"updated":"7"} [/tasks/:id]
+DELETE /debug -> 200 {"method":"DELETE"} [/debug]
+DELETE /debug -> 404 {"error":"Not Found","method":"DELETE","path":"/debug"}
+RouteConflictError - A route for GET /tasks is already registered. | conflict: true
+InvalidRoutePatternError - Invalid route pattern "/tasks/:id(": Invalid parameter name "id(". | conflict: false
+</output>
+<ul>
+<li><code>list()</code> shows every route, including the two that <code>add</code> created from one definition, and the <code>*</code> method of <code>all</code>.</li>
+<li>Registering the same method and pattern twice throws a <code>RouteConflictError</code>, and a malformed pattern throws an <code>InvalidRoutePatternError</code>, both when the app starts. Registration errors are loud; you will see shortly that <em>overlapping</em> routes are not.</li>
+<li>Removing routes at run time is rarely what you want in production. It exists for tests and for plugins that are switched off. The Task API registers everything at startup.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="patterns">Path patterns and parameters</h2>
+<p>A pattern is split into <strong>segments</strong> at every <code>/</code>. Each segment is a literal (<code>tasks</code>) or a parameter. The router understands five parameter forms:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Pattern</th><th>Meaning</th><th>Matches</th></tr></thead>
+<tbody>
+<tr><td><code>/tasks/:id</code></td><td>Required parameter: exactly one segment</td><td><code>/tasks/42</code>, <code>/tasks/buy-milk</code></td></tr>
+<tr><td><code>/reports/:year/:month?</code></td><td>Optional parameter: may be missing</td><td><code>/reports/2026</code>, <code>/reports/2026/09</code></td></tr>
+<tr><td><code>/tasks/:id(\\d+)</code></td><td>Constrained: the segment must match a regular expression</td><td><code>/tasks/42</code> but not <code>/tasks/abc</code></td></tr>
+<tr><td><code>/users/{userId}/tasks</code></td><td>Brace form, same as <code>:userId</code>; <code>{code?:[A-Z]+}</code> is optional and constrained</td><td><code>/users/7/tasks</code></td></tr>
+<tr><td><code>/files/*path</code></td><td>Wildcard: the rest of the path, slashes included</td><td><code>/files/</code>, <code>/files/2026/report.pdf</code></td></tr>
+</tbody>
+</table></div>
+<p>In a TypeScript string the regular expression needs a double backslash: <code>"/tasks/:id(\\d+)"</code> is the pattern <code>/tasks/:id(\d+)</code>.</p>
+<reason title="What can arrive in a parameter?">
+<p>Before running the next example, think about <code>/tasks/:id</code> and the values a client controls. What type does <code>ctx.params.id</code> have? What should happen for <code>/tasks/caf%C3%A9</code>, which is percent-encoded UTF-8? For <code>/tasks/a%2Fb</code>, where <code>%2F</code> is an encoded slash? For <code>/tasks/%2e%2e</code>, an encoded <code>..</code>? For <code>/reports/2026</code> on the optional pattern, is <code>month</code> an empty string or missing?</p>
+<answer>
+<ul>
+<li>Always a <strong>string</strong>, already percent-decoded. A number, a date or an enum is your job to parse and check, as <code>parseId</code> does.</li>
+<li><code>caf%C3%A9</code> decodes to <code>café</code>. Decoding is correct: <code>%C3%A9</code> is just how a URL spells <code>é</code>.</li>
+<li>An encoded slash must <em>not</em> become a <code>/</code> inside one parameter. A handler that joins the value into a file path or another URL would then address something the route was never meant to reach. The router refuses such a segment, so the route does not match.</li>
+<li>The same goes for <code>.</code> and <code>..</code>, plain or encoded: they mean "this folder" and "the parent folder" and are the raw material of path traversal attacks.</li>
+<li>A missing optional parameter is <strong>absent</strong> from <code>ctx.params</code>, not an empty string. Check it with <code>=== undefined</code>.</li>
+</ul>
+</answer>
+</reason>
+<example file="patterns.ts" project="routing" browser="no">
+import { createRouter } from "@zudojs/http";
+import { hit } from "./hit.js";
+
+const router = createRouter();
+router.get("/tasks/:id", (ctx) => ctx.params);
+router.get("/reports/:year/:month?", (ctx) => ctx.params);
+router.get("/invoices/:number(\\d{6})", (ctx) => ctx.params);
+router.get("/users/{userId}/tasks", (ctx) => ctx.params);
+router.get("/files/*path", (ctx) => ctx.params);
+
+for (const url of [
+  "/tasks/caf%C3%A9",
+  "/tasks/a%2Fb",
+  "/tasks/%2e%2e",
+  "/reports/2026",
+  "/reports/2026/09",
+  "/invoices/000123",
+  "/invoices/123",
+  "/users/7/tasks",
+  "/files/2026/q3/report.pdf",
+]) {
+  await hit(router, "GET", url);
+}
+</example>
+<output>
+GET /tasks/caf%C3%A9 -> 200 {"id":"café"} [/tasks/:id]
+GET /tasks/a%2Fb -> 404 {"error":"Not Found","method":"GET","path":"/tasks/a%2Fb"}
+GET /tasks/%2e%2e -> 404 {"error":"Not Found","method":"GET","path":"/"}
+GET /reports/2026 -> 200 {"year":"2026"} [/reports/:year/:month?]
+GET /reports/2026/09 -> 200 {"year":"2026","month":"09"} [/reports/:year/:month?]
+GET /invoices/000123 -> 200 {"number":"000123"} [/invoices/:number(\d{6})]
+GET /invoices/123 -> 404 {"error":"Not Found","method":"GET","path":"/invoices/123"}
+GET /users/7/tasks -> 200 {"userId":"7"} [/users/{userId}/tasks]
+GET /files/2026/q3/report.pdf -> 200 {"path":"2026/q3/report.pdf"} [/files/*path]
+</output>
+<p>Read the refusals: the encoded slash and the encoded <code>..</code> found no route, and neither did an invoice number with three digits instead of six. The wildcard kept the slashes of the rest of the path, and the missing month is simply not in the object.</p>
+<h3>Building paths from patterns</h3>
+<p>The reverse job, turning a pattern and values into a path, is <code>buildRoutePath</code>. It encodes each value, so a title with a space or a slash cannot break the path. Use it for <code>Location</code> headers and links instead of gluing strings together:</p>
+<example file="build.ts" browser="no">
+import { buildRoutePath } from "@zudojs/http";
+
+console.log(buildRoutePath("/tasks/:id", { id: 42 }));
+console.log(buildRoutePath("/users/:userId/tasks/:slug", { userId: 7, slug: "buy milk/eggs" }));
+try {
+  buildRoutePath("/tasks/:id", {});
+} catch (error) {
+  console.log((error as Error).message);
+}
+</example>
+<output>
+/tasks/42
+/users/7/tasks/buy%20milk%2Feggs
+Missing route parameter "id".
+</output>
+</section>
+
+<section>
+<h2 id="matching">Matching order</h2>
+<p>A request path usually matches more than one pattern. <code>/tasks/stats</code> fits both <code>/tasks/stats</code> and <code>/tasks/:id</code>. Some routers, such as Express, try routes in the order you registered them. <code>@zudojs/http</code> does not: it sorts routes by <strong>specificity</strong>, comparing segment by segment from the left:</p>
+<ol>
+<li>A literal segment beats a parameter.</li>
+<li>A parameter beats a wildcard.</li>
+<li>When two routes are equally specific, the one registered first wins.</li>
+</ol>
+<example file="order.ts" project="routing" browser="no">
+import { createRouter } from "@zudojs/http";
+import { hit } from "./hit.js";
+
+const router = createRouter();
+router.get("/tasks/*rest", (ctx) => ({ route: "catch-all", rest: ctx.params.rest }));
+router.get("/tasks/:id", (ctx) => ({ route: "one task", id: ctx.params.id }));
+router.get("/tasks/stats", () => ({ route: "stats" }));
+
+await hit(router, "GET", "/tasks/stats");
+await hit(router, "GET", "/tasks/42");
+await hit(router, "GET", "/tasks/42/notes");
+await hit(router, "GET", "/tasks");
+</example>
+<output>
+GET /tasks/stats -> 200 {"route":"stats"} [/tasks/stats]
+GET /tasks/42 -> 200 {"route":"one task","id":"42"} [/tasks/:id]
+GET /tasks/42/notes -> 200 {"route":"catch-all","rest":"42/notes"} [/tasks/*rest]
+GET /tasks -> 200 {"route":"catch-all","rest":""} [/tasks/*rest]
+</output>
+<p>The routes were registered in the worst possible order, and each request still reached the most specific one. Look at the last line: a wildcard also matches an <em>empty</em> rest, so <code>/tasks/*rest</code> answered <code>/tasks</code> itself. If you also have a <code>GET /tasks</code> route, it wins, being more specific; without one, the catch-all takes the request.</p>
+<h3>Ties and dead routes</h3>
+<p>Rule 3 explains the first bug of this lesson. A regular-expression constraint does not make a parameter more specific: <code>:slug</code> and <code>:id(\\d+)</code> are equally specific, so registration order decides. And the router only rejects routes with the <em>same</em> pattern. A route that can never win is accepted without a word:</p>
+<example file="ties.ts" project="routing" browser="no">
+import { createRouter } from "@zudojs/http";
+import { hit } from "./hit.js";
+
+const fixed = createRouter();
+fixed.get("/tasks/:id(\\d+)", (ctx) => ({ found: "by id", id: Number(ctx.params.id) }));
+fixed.get("/tasks/:slug", (ctx) => ({ found: "by slug", slug: ctx.params.slug }));
+fixed.get("/tasks/:taskId", () => ({ found: "never" }));
+
+await hit(fixed, "GET", "/tasks/42");
+await hit(fixed, "GET", "/tasks/buy-milk");
+
+const samples: [pattern: string, sample: string][] = [
+  ["/tasks/:id(\\d+)", "/tasks/42"],
+  ["/tasks/:slug", "/tasks/buy-milk"],
+  ["/tasks/:taskId", "/tasks/anything"],
+];
+for (const [pattern, sample] of samples) {
+  const answered = fixed.match("GET", sample).route?.path;
+  console.log(answered === pattern ? `${sample} -> ${answered}` : `${sample} -> ${answered}, so ${pattern} is dead`);
+}
+</example>
+<output>
+GET /tasks/42 -> 200 {"found":"by id","id":42} [/tasks/:id(\d+)]
+GET /tasks/buy-milk -> 200 {"found":"by slug","slug":"buy-milk"} [/tasks/:slug]
+/tasks/42 -> /tasks/:id(\d+)
+/tasks/buy-milk -> /tasks/:slug
+/tasks/anything -> /tasks/:slug, so /tasks/:taskId is dead
+</output>
+<p>Registering the constrained route first fixes the first bug, because it now wins the tie for digits and refuses everything else. The third route is dead: <code>:slug</code> already takes every single segment. <code>router.match(method, path)</code> tells you which route <em>would</em> answer without running anything, so a test can check your own sample path for each route. You will build that test for the Task API at the end of this lesson.</p>
+<tip>Avoid overlapping parameter routes altogether when you can. <code>/tasks/:id</code> and <code>/tasks/by-slug/:slug</code> can never compete. When they must overlap, register the constrained one first and write a test for both.</tip>
+<h3>HEAD, OPTIONS and 405</h3>
+<p>Three answers come from the router itself, without a route of their own:</p>
+<example file="methods.ts" browser="no">
+import { createRequestContext, createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/tasks/:id", (ctx) => ({ id: ctx.params.id }));
+router.patch("/tasks/:id", () => ({ updated: true }));
+
+for (const method of ["HEAD", "OPTIONS", "DELETE"]) {
+  const { response } = await router.dispatch(createRequestContext({ method, url: "/tasks/1" }));
+  console.log(method, response.status, "allow:", response.headers["allow"]);
+}
+</example>
+<output>
+HEAD 200 allow: undefined
+OPTIONS 204 allow: GET, PATCH, HEAD, OPTIONS
+DELETE 405 allow: GET, PATCH
+</output>
+<ul>
+<li><strong>HEAD</strong> runs the <code>GET</code> route. The server then sends the headers without the body, which is what HEAD means.</li>
+<li><strong>OPTIONS</strong> answers 204 with an <code>Allow</code> header listing every method the path supports.</li>
+<li>A method the path does not support gets <strong>405</strong> with an <code>Allow</code> header. Notice that it lists only the methods you registered; the automatic HEAD and OPTIONS are left out, although they work.</li>
+</ul>
+<p>Turn the first two off with <code>createRouter({ automaticHead: false, automaticOptions: false })</code> if you need to handle them yourself. A CORS preflight is also an OPTIONS request, but the CORS middleware from <a href="/learn/zudo-middleware#cors">the middleware lesson</a> answers it before the router is reached.</p>
+</section>
+
+<section>
+<h2 id="route-middleware">Route middleware</h2>
+<p>Pipeline middleware, from <a href="/learn/zudo-middleware">the middleware lesson</a>, runs for every request. Some checks belong to a few routes only: "this route needs an API key", "this route works on a task that must exist". <strong>Route middleware</strong> is listed in the route's <code>middleware</code> option and runs after the route has matched, so it can read the route parameters:</p>
+<example file="route-middleware.ts" project="routing" browser="no">
+import { createResponseContext, createRouter } from "@zudojs/http";
+import type { HttpMiddleware } from "@zudojs/http";
+import { hit } from "./hit.js";
+
+const tasks = new Map([[1, { id: 1, title: "Pay the ₦45,000 electricity bill", done: false }]]);
+
+const requireApiKey: HttpMiddleware = async (context, next) => {
+  if (context.request.getHeader("x-api-key") !== "demo-key") {
+    return createResponseContext({ status: 401 }).json({ error: "API key required" });
+  }
+  return next();
+};
+
+const loadTask: HttpMiddleware = async (context, next) => {
+  const task = tasks.get(Number(context.request.getParam("id")));
+  if (!task) {
+    return createResponseContext({ status: 404 }).json({ error: "No such task" });
+  }
+  context.state.set("task", task);
+  return next();
+};
+
+const router = createRouter();
+router.get("/tasks/:id", (ctx) => ctx.state.get("task") as object, { middleware: [loadTask] });
+router.patch(
+  "/tasks/:id/done",
+  (ctx) => {
+    const task = ctx.state.get("task") as { done: boolean };
+    task.done = true;
+    return task;
+  },
+  { middleware: [requireApiKey, loadTask] },
+);
+
+await hit(router, "GET", "/tasks/1");
+await hit(router, "GET", "/tasks/9");
+await hit(router, "PATCH", "/tasks/1/done");
+await hit(router, "PATCH", "/tasks/1/done", { "x-api-key": "demo-key" });
+</example>
+<output>
+GET /tasks/1 -> 200 {"id":1,"title":"Pay the ₦45,000 electricity bill","done":false} [/tasks/:id]
+GET /tasks/9 -> 404 {"error":"No such task"} [/tasks/:id]
+PATCH /tasks/1/done -> 401 {"error":"API key required"} [/tasks/:id/done]
+PATCH /tasks/1/done -> 200 {"id":1,"title":"Pay the ₦45,000 electricity bill","done":true} [/tasks/:id/done]
+</output>
+<ul>
+<li><code>context.request.getParam("id")</code> works inside route middleware: the router copies the parameters onto the request before the first middleware runs.</li>
+<li><code>context.state</code> in the middleware and <code>ctx.state</code> in the handler are the same store, so <code>loadTask</code> hands the task over and the handler never deals with "not found".</li>
+<li>Middleware runs in list order: the key check happens before any task is loaded, so an unauthenticated client cannot even learn which task ids exist.</li>
+</ul>
+<p>The order across both kinds: every pipeline middleware runs first, then the router matches, then the route middleware, then the handler. A pipeline middleware cannot read route parameters, because no route has matched yet when it runs.</p>
+</section>
+
+<section>
+<h2 id="groups">Groups</h2>
+<p>When many routes share a path prefix and the same middleware, repeating both on every route invites mistakes: one forgotten <code>requireApiKey</code> is an open door. A <strong>group</strong> registers routes under a prefix with shared options. Groups nest, and their middleware lists add up from the outside in:</p>
+<example file="groups.ts" project="routing" browser="no">
+import { createRouter } from "@zudojs/http";
+import type { HttpMiddleware } from "@zudojs/http";
+import { hit } from "./hit.js";
+
+function trace(name: string): HttpMiddleware {
+  return async (context, next) => {
+    console.log(`  ${name}`);
+    return next();
+  };
+}
+
+const router = createRouter();
+router.group(
+  "/api/v1",
+  (v1) => {
+    v1.get("/health", () => ({ ok: true }));
+    v1.group(
+      "/tasks",
+      (tasks) => {
+        tasks.get("/", () => [{ id: 1, title: "Buy milk" }]);
+        tasks.get("/:id", (ctx) => ({ id: ctx.params.id }), { middleware: [trace("route: load task")] });
+      },
+      { middleware: [trace("group: require API key")] },
+    );
+  },
+  { middleware: [trace("group: count v1 calls")] },
+);
+
+console.log(router.list().map((route) => `${route.method} ${route.path} (${route.middleware.length} middleware)`));
+await hit(router, "GET", "/api/v1/tasks/7");
+await hit(router, "GET", "/api/v1/health");
+</example>
+<output>
+[
+  'GET /api/v1/tasks/:id (3 middleware)',
+  'GET /api/v1/health (1 middleware)',
+  'GET /api/v1/tasks (2 middleware)'
+]
+  group: count v1 calls
+  group: require API key
+  route: load task
+GET /api/v1/tasks/7 -> 200 {"id":"7"} [/api/v1/tasks/:id]
+  group: count v1 calls
+GET /api/v1/health -> 200 {"ok":true} [/api/v1/health]
+</output>
+<p>A group is only a registration helper: the router ends up with ordinary routes whose paths include the prefix and whose middleware lists include the group's. <code>tasks.get("/")</code> became <code>/api/v1/tasks</code>. The generated example resource uses exactly this shape of path, <code>/api/v1/examples</code>, for <strong>versioning</strong>: when an incompatible v2 arrives, it gets its own group and v1 keeps working for old clients.</p>
+</section>
+
+<section>
+<h2 id="query">Query parameters, including repeated ones</h2>
+<p><code>ctx.query</code> holds the parsed query string. You already know the two basic rules: every value is a string, and a key given twice becomes an array. A few more details matter once clients get creative:</p>
+<example file="query.ts" project="routing" browser="no">
+import { createRouter, toRouterContext } from "@zudojs/http";
+import { hit } from "./hit.js";
+
+const router = createRouter();
+router.get("/tasks", (ctx) => {
+  const query = toRouterContext(ctx);
+  return {
+    raw: ctx.query,
+    tags: query.queryArray("tag"),
+    status: query.queryString("status") ?? null,
+    prototype: Object.getPrototypeOf(ctx.query),
+  };
+});
+
+await hit(router, "GET", "/tasks?tag=home&tag=urgent&status=open");
+await hit(router, "GET", "/tasks?tag=home&status=open&status=done");
+await hit(router, "GET", "/tasks?q=buy+milk&tag=a,b&flag&empty=");
+await hit(router, "GET", "/tasks?q=%ZZ&__proto__=admin&constructor=x");
+</example>
+<output>
+GET /tasks?tag=home&tag=urgent&status=open -> 200 {"raw":{"tag":["home","urgent"],"status":"open"},"tags":["home","urgent"],"status":"open","prototype":null} [/tasks]
+GET /tasks?tag=home&status=open&status=done -> 200 {"raw":{"tag":"home","status":["open","done"]},"tags":["home"],"status":"open","prototype":null} [/tasks]
+GET /tasks?q=buy+milk&tag=a,b&flag&empty= -> 200 {"raw":{"q":"buy milk","tag":"a,b","flag":"","empty":""},"tags":["a,b"],"status":null,"prototype":null} [/tasks]
+GET /tasks?q=%ZZ&__proto__=admin&constructor=x -> 200 {"raw":{"q":"%ZZ"},"tags":[],"status":null,"prototype":null} [/tasks]
+</output>
+<ul>
+<li><code>toRouterContext(ctx)</code> wraps the handler's context with helpers. <code>queryArray(name)</code> always gives an array (empty, one value or many), so code that accepts several values never checks the type. <code>queryString(name)</code> always gives one string or <code>undefined</code>.</li>
+<li>For a repeated key, <code>queryString</code> returns the <strong>first</strong> value, silently. <code>status=open&amp;status=done</code> became <code>"open"</code>.</li>
+<li><code>+</code> is a space, a comma is just a character (<code>a,b</code> is one tag), and a key without <code>=</code> is an empty string.</li>
+<li>A broken escape such as <code>%ZZ</code> is kept as it arrived instead of crashing. The keys <code>__proto__</code>, <code>constructor</code> and <code>prototype</code> are dropped, and the object has no prototype, so a query can never inject properties into your objects (<strong>prototype pollution</strong>).</li>
+</ul>
+<h3>Choose a policy for repeated keys</h3>
+<p>Sending the same key twice to confuse a server is called <strong>HTTP parameter pollution</strong>. It becomes a vulnerability when two layers pick different values: a proxy or a permission check reads the last <code>status</code>, your handler reads the first. The safe rule is to decide per parameter:</p>
+<ul>
+<li>Parameters that are naturally lists (<code>tag</code>, <code>priority</code>, <code>id</code>): accept repeats with <code>queryArray</code>.</li>
+<li>Parameters that must have one value (<code>status</code>, <code>page</code>, <code>sort</code>): <strong>refuse</strong> a repeat with 400, rather than silently choosing one.</li>
+</ul>
+<example file="policy.ts" project="routing" browser="no">
+import { badRequest, createRouter, toRouterContext } from "@zudojs/http";
+import type { HttpRouterContext } from "@zudojs/http";
+import { hit } from "./hit.js";
+
+function single(ctx: HttpRouterContext, name: string): string | undefined {
+  const values = toRouterContext(ctx).queryArray(name);
+  if (values.length > 1) {
+    throw badRequest(`Send "${name}" at most once`);
+  }
+  return values[0];
+}
+
+const router = createRouter();
+router.get("/tasks", (ctx) => ({
+  status: single(ctx, "status") ?? "any",
+  tags: toRouterContext(ctx).queryArray("tag"),
+}));
+
+await hit(router, "GET", "/tasks?tag=home&tag=urgent");
+await hit(router, "GET", "/tasks?status=open&tag=home");
+await hit(router, "GET", "/tasks?status=open&status=done");
+</example>
+<output>
+GET /tasks?tag=home&tag=urgent -> 200 {"status":"any","tags":["home","urgent"]} [/tasks]
+GET /tasks?status=open&tag=home -> 200 {"status":"open","tags":["home"]} [/tasks]
+GET /tasks?status=open&status=done -> 400 (thrown HttpError: Send "status" at most once)
+</output>
+<p>The polluted request is refused with a 400 that names the parameter. <a href="/learn/zudo-validation#coercion">Schemas and validation in depth</a> gets the same result from a schema: a schema field for one number refuses an array.</p>
+<p>The parser also has <strong>limits</strong>: at most 1000 parameters, 4096 characters per name, 16,384 per value, 1 MiB in total. A request over a limit never reaches your routes; <a href="#canonical">the next section</a> shows what the server answers.</p>
+</section>
+
+<section>
+<h2 id="normalisation">Path normalisation</h2>
+<p>Many different spellings can mean the same path. <strong>Normalisation</strong> turns them into one form before matching. By default the router is forgiving:</p>
+<example file="normalise.ts" project="routing" browser="no">
+import { createRouter } from "@zudojs/http";
+import { hit } from "./hit.js";
+
+const relaxed = createRouter();
+relaxed.get("/tasks/:id", (ctx) => ({ id: ctx.params.id }));
+
+const strict = createRouter({ caseSensitive: true, strictTrailingSlash: true });
+strict.get("/tasks/:id", (ctx) => ({ id: ctx.params.id }));
+
+for (const url of ["/tasks/7", "/TASKS/7", "/tasks/7/", "//tasks//7"]) {
+  await hit(relaxed, "GET", url);
+}
+console.log("--- strict");
+for (const url of ["/TASKS/7", "/tasks/7/", "//tasks//7"]) {
+  await hit(strict, "GET", url);
+}
+</example>
+<output>
+GET /tasks/7 -> 200 {"id":"7"} [/tasks/:id]
+GET /TASKS/7 -> 200 {"id":"7"} [/tasks/:id]
+GET /tasks/7/ -> 200 {"id":"7"} [/tasks/:id]
+GET //tasks//7 -> 200 {"id":"7"} [/tasks/:id]
+--- strict
+GET /TASKS/7 -> 404 {"error":"Not Found","method":"GET","path":"/TASKS/7"}
+GET /tasks/7/ -> 404 {"error":"Not Found","method":"GET","path":"/tasks/7/"}
+GET //tasks//7 -> 200 {"id":"7"} [/tasks/:id]
+</output>
+<ul>
+<li>Repeated slashes are always collapsed: <code>//tasks//7</code> is <code>/tasks/7</code>.</li>
+<li>By default the literal parts of a pattern ignore case, and a trailing slash is ignored. <code>caseSensitive: true</code> and <code>strictTrailingSlash: true</code> make both significant. A single route can also set <code>strictTrailingSlash</code> in its options.</li>
+<li>Parameter values keep their case either way.</li>
+</ul>
+<p>Which is right? Forgiving routing is friendly to people typing URLs. Strict routing gives every resource exactly one URL, which matters for caches and for rules written elsewhere: a CDN rule for <code>/tasks/*</code> does not know that your server also answers <code>/TASKS/7</code>. For a JSON API used by programs, either works, as long as you pick one and know which.</p>
+</section>
+
+<section>
+<h2 id="canonical">Canonical request targets</h2>
+<p>The <strong>request target</strong> is the text after the method in the first line of an HTTP request, as in <code>GET /tasks/7?x=1 HTTP/1.1</code>. Browsers and <code>fetch</code> clean it up before sending. An attacker's script sends it raw, and a raw target can hide tricks:</p>
+<ul>
+<li><code>/tasks/../admin</code>: a <strong>dot segment</strong>. URL parsing resolves it to <code>/admin</code>. If a proxy in front of your app blocks <code>/admin*</code> by looking at the raw text, it lets this through, and a router that resolves the dots then serves <code>/admin</code>. Two layers disagreeing about the same request is the root of many real attacks. <code>%2e%2e</code> is the same thing, encoded.</li>
+<li><code>/tasks\..\admin</code>: URL parsing treats a backslash as a slash, so this is the same trick in Windows spelling.</li>
+<li><code>//evil.example/admin</code>: a naive <code>new URL(target, base)</code> reads it as a link to the host <code>evil.example</code>, and the path becomes <code>/admin</code>.</li>
+</ul>
+<p>A <strong>canonical</strong> request target is the one agreed form every layer uses. The Node adapter checks each target before any middleware or route runs, and refuses the ambiguous ones with 400. This example sends raw targets with <code>node:http</code>, which does not clean them up like <code>fetch</code> does:</p>
+<example file="canonical.ts" browser="no">
+import { request } from "node:http";
+import { createHttpServer, createNodeHttpAdapter, createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/tasks/:id", (ctx) => ({ id: ctx.params.id, path: ctx.request.path }));
+router.get("/admin", () => ({ secret: "admin area" }));
+router.get("/tasks", (ctx) => ({ query: ctx.query }));
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (req) => (await router.dispatch(req)).response,
+});
+await server.start();
+
+function rawGet(target: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: "127.0.0.1", port: server.address?.port, method: "GET", path: target }, (res) => {
+      let body = "";
+      res.on("data", (chunk) => (body += chunk));
+      res.on("end", () => resolve(`${res.statusCode} ${body}`));
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+const tooManyKeys = "/tasks?" + Array.from({ length: 1001 }, (_, i) => `k${i}=1`).join("&");
+for (const target of [
+  "/tasks/7",
+  "//tasks//7",
+  "/tasks/../admin",
+  "/tasks/%2e%2e/admin",
+  "/tasks\\..\\admin",
+  "//evil.example/admin",
+  "http://tasks.example.com/tasks/9",
+  tooManyKeys,
+]) {
+  console.log(target.slice(0, 32).padEnd(33), await rawGet(target));
+}
+await server.stop();
+</example>
+<output>
+/tasks/7                          200 {"id":"7","path":"/tasks/7"}
+//tasks//7                        200 {"id":"7","path":"/tasks/7"}
+/tasks/../admin                   400 {"error":"Bad Request"}
+/tasks/%2e%2e/admin               400 {"error":"Bad Request"}
+/tasks\..\admin                   400 {"error":"Bad Request"}
+//evil.example/admin              404 {"error":"Not Found","method":"GET","path":"/evil.example/admin"}
+http://tasks.example.com/tasks/9  200 {"id":"9","path":"/tasks/9"}
+/tasks?k0=1&k1=1&k2=1&k3=1&k4=1&  400 {"error":"Bad Request"}
+</output>
+<ul>
+<li>Every dot segment and the backslash were refused with 400 before routing, so <code>/admin</code> was never reached by a trick.</li>
+<li><code>//evil.example/admin</code> stayed a <em>path</em>: it found no route and got 404. No other host was involved.</li>
+<li>The <strong>absolute form</strong>, a full URL as the target, is allowed; proxies send it. Its path is used.</li>
+<li>The query with 1001 parameters was refused with 400 before any route ran.</li>
+</ul>
+<p>The adapter uses exported helpers, which you can call in your own code, for example in a proxy or a tool that must agree with the server. <code>getCanonicalPath(target)</code> gives the path every layer will route on; <code>findRequestTargetViolation(target)</code> explains a refusal:</p>
+<example file="canonical-helpers.ts" browser="no">
+import { findRequestTargetViolation, getCanonicalPath } from "@zudojs/http";
+
+for (const target of ["//tasks//7?x=1", "/tasks/../admin", "/tasks\\admin", "tasks/7", "http://api.example.com/tasks/9"]) {
+  console.log(target.padEnd(32), getCanonicalPath(target).padEnd(15), findRequestTargetViolation(target) ?? "ok");
+}
+</example>
+<output>
+//tasks//7?x=1                   /tasks/7        ok
+/tasks/../admin                  /admin          Request target contains a dot segment.
+/tasks\admin                     /tasks/admin    Request target contains a backslash.
+tasks/7                          /tasks/7        Request target is not in origin-form or absolute-form.
+http://api.example.com/tasks/9   /tasks/9        ok
+</output>
+<warn title="THE CHECK LIVES IN THE ADAPTER">Only the Node adapter refuses non-canonical targets. <code>router.dispatch</code> on its own, as in the <code>hit</code> helper, trusts the request it is given, and a request context built from <code>/tasks/%2e%2e</code> has already had its dots resolved away. In production that is fine, because every request comes through the adapter. In tests of path handling, go through a real server as above.</warn>
+</section>
+
+<section>
+<h2 id="testing">Testing the route table</h2>
+<p>Routing bugs hide well: every handler can pass its own tests while the route table as a whole is wrong. Three kinds of test catch them:</p>
+<ul>
+<li><strong>A route-table test.</strong> For each route you expect, check that it is registered (<code>router.list()</code>) and that <code>router.match</code> sends a sample path to it. This catches dead routes and forgotten registrations.</li>
+<li><strong>Edge requests.</strong> Wrong method (405), unknown path (404), repeated keys, encoded slashes, trailing slash and case, whichever policy you chose.</li>
+<li><strong>Raw targets through a real server.</strong> Dot segments and backslashes must be refused, as shown above.</li>
+</ul>
+<p>The first kind needs no server at all:</p>
+<example file="route-table.ts" project="routing" browser="no">
+import { createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/tasks", () => []);
+router.get("/tasks/stats", () => ({}));
+router.get("/tasks/:id(\\d+)", () => ({}));
+router.post("/tasks", () => ({}));
+
+const expected: [method: string, sample: string, pattern: string][] = [
+  ["GET", "/tasks", "/tasks"],
+  ["GET", "/tasks/stats", "/tasks/stats"],
+  ["GET", "/tasks/42", "/tasks/:id(\\d+)"],
+  ["POST", "/tasks", "/tasks"],
+  ["DELETE", "/tasks/42", "/tasks/:id"],
+];
+
+for (const [method, sample, pattern] of expected) {
+  const match = router.match(method, sample);
+  const ok = match.route?.path === pattern;
+  console.log(`${ok ? "PASS" : "FAIL"} ${method} ${sample} -> ${match.route?.path ?? `no route (allowed: ${match.allowedMethods.join(", ") || "none"})`}`);
+}
+</example>
+<output>
+PASS GET /tasks -> /tasks
+PASS GET /tasks/stats -> /tasks/stats
+PASS GET /tasks/42 -> /tasks/:id(\d+)
+PASS POST /tasks -> /tasks
+FAIL DELETE /tasks/42 -> no route (allowed: GET)
+</output>
+<p>The last line is a deliberate failure: the table has no <code>DELETE</code> route, and the test says so, naming the methods the path does allow. A table like <code>expected</code> doubles as documentation of your API's surface.</p>
+</section>
+
+<section>
+<h2 id="task-api">Put it in the Task API</h2>
+<p>The Task API gets a statistics route: <code>GET /tasks/stats</code> answers how many tasks are open and done, optionally only for some priorities: <code>?priority=high&amp;priority=normal</code>. It shows three ideas from this lesson: a literal route next to <code>/tasks/:id</code>, a repeated query key as a list, and a route that is proven reachable by a test.</p>
+<p>Counting belongs in a service, not in the route file. The route reads the request, the service reads the store. Create <code>src/services/tasks.stats.service.ts</code>. It reads the <code>TaskStore</code> you have had since <a href="/learn/zudo-runtime#task-api">the runtime lesson</a>:</p>
+<details class="lx-solution"><summary>Show the unchanged task store</summary>
+<file name="src/repositories/tasks.store.ts" project="task-api">
+export type Priority = "low" | "normal" | "high";
+
+export interface StoredTask {
+  readonly id: number;
+  readonly title: string;
+  readonly done: boolean;
+  readonly priority: Priority;
+  readonly createdAt: string;
+}
+
+export class TaskStore {
+  public readonly tasks = new Map<number, StoredTask>();
+  public connected = false;
+  private lastId = 0;
+
+  public nextId(): number {
+    this.lastId += 1;
+    return this.lastId;
+  }
+}
+</file>
+</details>
+<example file="src/services/tasks.stats.service.ts" project="task-api" browser="no">
+import type { Priority, TaskStore } from "../repositories/tasks.store.js";
+
+export const PRIORITIES: readonly Priority[] = ["low", "normal", "high"];
+
+export interface TaskStats {
+  readonly priorities: readonly Priority[];
+  readonly total: number;
+  readonly open: number;
+  readonly done: number;
+}
+
+export class TaskStatsService {
+  public constructor(private readonly store: TaskStore) {}
+
+  public count(priorities: readonly Priority[] = PRIORITIES): TaskStats {
+    const matching = [...this.store.tasks.values()].filter((task) => priorities.includes(task.priority));
+    const done = matching.filter((task) => task.done).length;
+    return { priorities, total: matching.length, open: matching.length - done, done };
+  }
+}
+</example>
+<p>Then the route, in its own file <code>src/routes/tasks.stats.routes.ts</code>. <code>queryArray</code> accepts zero, one or several <code>priority</code> keys; anything that is not a priority is a 400, and duplicates are removed:</p>
+<example file="src/routes/tasks.stats.routes.ts" project="task-api" browser="no">
+import { badRequest, toRouterContext } from "@zudojs/http";
+import type { HttpRouter } from "@zudojs/http";
+import type { Priority } from "../repositories/tasks.store.js";
+import { PRIORITIES } from "../services/tasks.stats.service.js";
+import type { TaskStatsService } from "../services/tasks.stats.service.js";
+
+function isPriority(value: string): value is Priority {
+  return (PRIORITIES as readonly string[]).includes(value);
+}
+
+/** GET /tasks/stats?priority=high&priority=normal: open and done counts. */
+export function registerTaskStatsRoutes(router: HttpRouter, stats: TaskStatsService): void {
+  router.get(
+    "/tasks/stats",
+    (ctx) => {
+      const requested = toRouterContext(ctx).queryArray("priority");
+      if (!requested.every(isPriority)) {
+        throw badRequest("priority must be low, normal or high");
+      }
+      return stats.count(requested.length > 0 ? [...new Set(requested)] : PRIORITIES);
+    },
+    { name: "tasks.stats" },
+  );
+}
+</example>
+<p>The error message lists the allowed values and does not repeat what the client sent. Now wire both in, as <a href="/learn/zudo-di-architecture">the DI architecture lesson</a> taught: the container builds the service, the composition root hands it to the routes. In <code>src/container.ts</code>, import <code>TaskStatsService</code>, register it in <code>registerServices</code>, and resolve it in <code>createDependencies</code>:</p>
+<example file="src/container.ts (part)" browser="no" check="skip">
+import { TaskStatsService } from "./services/tasks.stats.service.js";
+
+// in registerServices():
+  container.registerFactory(TaskStatsService, (store) => new TaskStatsService(store), [TaskStore], {
+    scope: ContainerScope.SINGLETON,
+  });
+
+// in createDependencies(), next to tasks:
+    tasks: options.container.resolve(TaskService),
+    taskStats: options.container.resolve(TaskStatsService),
+</example>
+<p>In <code>src/routes/index.ts</code>, register the route next to the task routes, outside the markers:</p>
+<example file="src/routes/index.ts (part)" browser="no" check="skip">
+import { registerTaskStatsRoutes } from "./tasks.stats.routes.js";
+
+  registerTaskRoutes(router, deps.tasks);
+  registerTaskStatsRoutes(router, deps.taskStats);
+</example>
+<p>The order of the two calls does not matter: <code>/tasks/stats</code> is a literal and beats <code>/tasks/:id</code> either way. The startup check from <a href="/learn/zudo-di-architecture#production">DI architecture</a> now covers <code>TaskStatsService</code> too. A check script builds the task routes on one store and proves the table, the statistics and the refusals. The route and service files from <a href="/learn/zudo-http#task-api">the HTTP lesson</a> are unchanged:</p>
+<details class="lx-solution"><summary>Show the unchanged files</summary>
+<file name="src/dtos/tasks.dto.ts" project="task-api">
+import { schema } from "@zudojs/schema";
+import type { Infer } from "@zudojs/schema";
+
+export const NewTaskSchema = schema.object({
+  title: schema.string().trim().min(3).max(100),
+  done: schema.default(schema.boolean(), false),
+  priority: schema.default(schema.enum(["low", "normal", "high"] as const), "normal"),
+});
+
+export type NewTask = Infer<typeof NewTaskSchema>;
+</file>
+<file name="src/services/tasks.service.ts" project="task-api">
+import { ConflictError, NotFoundError } from "@zudojs/errors";
+import { NewTaskSchema } from "../dtos/tasks.dto.js";
+import type { StoredTask, TaskStore } from "../repositories/tasks.store.js";
+
+export interface Clock {
+  now(): Date;
+}
+
+export class TaskService {
+  public constructor(private readonly store: TaskStore, private readonly clock: Clock) {}
+
+  public create(input: unknown): StoredTask {
+    const data = NewTaskSchema.parse(input);
+    const clash = [...this.store.tasks.values()].some((t) => t.title === data.title);
+    if (clash) {
+      throw new ConflictError(`A task called "${data.title}" already exists`);
+    }
+    const task: StoredTask = { id: this.store.nextId(), ...data, createdAt: this.clock.now().toISOString() };
+    this.store.tasks.set(task.id, task);
+    return task;
+  }
+
+  public list(): StoredTask[] {
+    return [...this.store.tasks.values()];
+  }
+
+  public get(id: number): StoredTask {
+    const task = this.store.tasks.get(id);
+    if (!task) {
+      throw new NotFoundError(`Task ${id} not found`);
+    }
+    return task;
+  }
+}
+</file>
+<file name="src/utils/http.ts" project="task-api">
+import { HttpError, badRequest, createResponseContext } from "@zudojs/http";
+import type { HttpResponseContext, HttpRouterContext } from "@zudojs/http";
+
+/** A JSON response with `status`. */
+export function json(status: number, data: unknown): HttpResponseContext {
+  return createResponseContext({ status }).json(data);
+}
+
+/**
+ * The request body parsed as JSON; `undefined` when there is none.
+ * A body that is not sent as JSON is answered with 415, malformed JSON with 400.
+ */
+export function readJsonBody(ctx: HttpRouterContext): unknown {
+  const body: unknown = ctx.request.body;
+  if (body === undefined || body === null) return undefined;
+  const text =
+    body instanceof Uint8Array
+      ? new TextDecoder().decode(body)
+      : typeof body === "string"
+        ? body
+        : undefined;
+  if (text === undefined) return body;
+  if (text.trim() === "") return undefined;
+  const type = ctx.request.getHeader("content-type") ?? "";
+  if (!type.toLowerCase().startsWith("application/json")) {
+    throw new HttpError(415, "Send JSON with Content-Type: application/json");
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw badRequest("The request body is not valid JSON.");
+  }
+}
+
+/** A task id from the path; anything but a positive whole number is answered with 400. */
+export function parseId(raw: string | undefined): number {
+  const id = Number(raw);
+  if (!Number.isSafeInteger(id) || id < 1) {
+    throw badRequest("The task id must be a positive whole number");
+  }
+  return id;
+}
+</file>
+<file name="src/routes/tasks.routes.ts" project="task-api">
+import type { HttpRouter } from "@zudojs/http";
+import type { TaskService } from "../services/tasks.service.js";
+import { json, parseId, readJsonBody } from "../utils/http.js";
+
+export function registerTaskRoutes(router: HttpRouter, tasks: TaskService): void {
+  router.get("/tasks", () => tasks.list());
+
+  router.get("/tasks/:id", (ctx) => tasks.get(parseId(ctx.params.id)));
+
+  router.post("/tasks", (ctx) => {
+    const task = tasks.create(readJsonBody(ctx));
+    return json(201, task).setHeader("location", `/tasks/${task.id}`);
+  });
+}
+</file>
+</details>
+<p>This page shows only the parts of <code>src/utils/http.ts</code> the routes use; your file keeps its other helpers. Save the script as <code>src/check-routes.ts</code>:</p>
+<example file="src/check-routes.ts" project="task-api" browser="no">
+import { request } from "node:http";
+import { createHttpServer, createNodeHttpAdapter, createRouter } from "@zudojs/http";
+import { TaskStore } from "./repositories/tasks.store.js";
+import { registerTaskStatsRoutes } from "./routes/tasks.stats.routes.js";
+import { registerTaskRoutes } from "./routes/tasks.routes.js";
+import { TaskStatsService } from "./services/tasks.stats.service.js";
+import { TaskService } from "./services/tasks.service.js";
+
+const store = new TaskStore();
+const tasks = new TaskService(store, { now: () => new Date("2026-09-24T09:00:00Z") });
+const router = createRouter();
+registerTaskRoutes(router, tasks);
+registerTaskStatsRoutes(router, new TaskStatsService(store));
+
+console.log("route table:");
+for (const [method, sample, pattern] of [
+  ["GET", "/tasks", "/tasks"],
+  ["GET", "/tasks/stats", "/tasks/stats"],
+  ["GET", "/tasks/42", "/tasks/:id"],
+  ["POST", "/tasks", "/tasks"],
+]) {
+  const answered = router.match(method, sample).route?.path;
+  console.log(`  ${answered === pattern ? "PASS" : "FAIL"} ${method} ${sample} -> ${answered}`);
+}
+
+tasks.create({ title: "Pay the ₦45,000 electricity bill", priority: "high" });
+tasks.create({ title: "Buy milk", done: true });
+tasks.create({ title: "Book the plumber", priority: "high", done: true });
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (req) => (await router.dispatch(req)).response,
+});
+await server.start();
+function rawGet(target: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: "127.0.0.1", port: server.address?.port, path: target }, (res) => {
+      let body = "";
+      res.on("data", (chunk) => (body += chunk));
+      res.on("end", () => resolve(`${res.statusCode} ${body}`));
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+console.log("requests:");
+for (const target of [
+  "/tasks/stats",
+  "/tasks/stats?priority=high",
+  "/tasks/stats?priority=high&priority=normal&priority=high",
+  "/tasks/stats?priority=urgent",
+  "/tasks/1",
+  "/tasks/../tasks/stats",
+]) {
+  console.log(" ", target, "->", await rawGet(target));
+}
+await server.stop();
+</example>
+<output>
+route table:
+  PASS GET /tasks -> /tasks
+  PASS GET /tasks/stats -> /tasks/stats
+  PASS GET /tasks/42 -> /tasks/:id
+  PASS POST /tasks -> /tasks
+requests:
+  /tasks/stats -> 200 {"priorities":["low","normal","high"],"total":3,"open":1,"done":2}
+  /tasks/stats?priority=high -> 200 {"priorities":["high"],"total":2,"open":1,"done":1}
+  /tasks/stats?priority=high&priority=normal&priority=high -> 200 {"priorities":["high","normal"],"total":3,"open":1,"done":2}
+  /tasks/stats?priority=urgent -> 400 {"error":"priority must be low, normal or high","code":"BAD_REQUEST"}
+  /tasks/1 -> 200 {"id":1,"title":"Pay the ₦45,000 electricity bill","done":false,"priority":"high","createdAt":"2026-09-24T09:00:00.000Z"}
+  /tasks/../tasks/stats -> 400 {"error":"Bad Request"}
+</output>
+<p>The table test passes for all four routes, including the literal <code>/tasks/stats</code> next to <code>/tasks/:id</code>. The repeated <code>high</code> was counted once, the unknown priority got a 400, and the dot-segment trick was refused before routing. Run it in your project, and check that the app still type-checks:</p>
+<shell title="Terminal on your computer">
+$ npx tsc --noEmit
+$ npx tsx src/check-routes.ts
+</shell>
+<p>It prints the same lines as above. With <code>npm run dev</code> running, <code>curl "http://localhost:3000/tasks/stats?priority=high&amp;priority=normal"</code> answers from the real store, which starts with the one task the <code>tasks</code> module adds.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Find the dead route">
+<p>A teammate's route table is below. Without running it, predict which handler answers each of <code>GET /orders/latest</code>, <code>GET /orders/2026-09</code>, <code>GET /orders/17</code> and <code>GET /orders/17/items</code>, and which route can never run. Then run it and use <code>router.match</code> to prove your answer.</p>
+<solution>
+<example file="orders.ts" project="routing" browser="no">
+import { createRouter } from "@zudojs/http";
+import { hit } from "./hit.js";
+
+const router = createRouter();
+router.get("/orders/:month(\\d{4}-\\d{2})", (ctx) => ({ route: "by month", month: ctx.params.month }));
+router.get("/orders/:id", (ctx) => ({ route: "one order", id: ctx.params.id }));
+router.get("/orders/:number(\\d+)", (ctx) => ({ route: "by number", number: ctx.params.number }));
+router.get("/orders/latest", () => ({ route: "latest" }));
+router.get("/orders/*rest", (ctx) => ({ route: "catch-all", rest: ctx.params.rest }));
+
+for (const url of ["/orders/latest", "/orders/2026-09", "/orders/17", "/orders/17/items"]) {
+  await hit(router, "GET", url);
+}
+console.log("by number reachable:", router.match("GET", "/orders/17").route?.path === "/orders/:number(\\d+)");
+</example>
+<output>
+GET /orders/latest -> 200 {"route":"latest"} [/orders/latest]
+GET /orders/2026-09 -> 200 {"route":"by month","month":"2026-09"} [/orders/:month(\d{4}-\d{2})]
+GET /orders/17 -> 200 {"route":"one order","id":"17"} [/orders/:id]
+GET /orders/17/items -> 200 {"route":"catch-all","rest":"17/items"} [/orders/*rest]
+by number reachable: false
+</output>
+<p>The literal <code>latest</code> wins over every parameter. <code>2026-09</code> matches both the month route and <code>:id</code>; the month route was registered first, so it wins. <code>17</code> matches <code>:id</code> and <code>:number(\\d+)</code>, which tie, and <code>:id</code> came first: the <code>by number</code> route is dead. Two segments reach only the wildcard. Fix it by moving the <code>:number</code> route above <code>:id</code>, or better, by deleting one of them.</p>
+</solution>
+</exercise>
+<exercise title="A strict, versioned group">
+<p>Build a router with a <code>/api/v2</code> group containing <code>GET /bookings</code> and <code>GET /bookings/:id</code>. The group must require a header <code>x-client: mobile</code> (401 otherwise), and <code>:id</code> must be a UUID-like value of hex digits and dashes (<code>[0-9a-f-]{36}</code>). Show a good request, a missing header, and a bad id.</p>
+<solution>
+<example file="bookings.ts" project="routing" browser="no">
+import { createResponseContext, createRouter } from "@zudojs/http";
+import type { HttpMiddleware } from "@zudojs/http";
+import { hit } from "./hit.js";
+
+const mobileOnly: HttpMiddleware = async (context, next) =>
+  context.request.getHeader("x-client") === "mobile"
+    ? next()
+    : createResponseContext({ status: 401 }).json({ error: "Unknown client" });
+
+const router = createRouter();
+router.group(
+  "/api/v2",
+  (v2) => {
+    v2.get("/bookings", () => [{ id: "7d9f0c7a-2b1e-4c5a-9f3e-1a2b3c4d5e6f", room: "Ikoyi suite" }]);
+    v2.get("/bookings/:id([0-9a-f-]{36})", (ctx) => ({ id: ctx.params.id, room: "Ikoyi suite" }));
+  },
+  { middleware: [mobileOnly] },
+);
+
+const mobile = { "x-client": "mobile" };
+await hit(router, "GET", "/api/v2/bookings/7d9f0c7a-2b1e-4c5a-9f3e-1a2b3c4d5e6f", mobile);
+await hit(router, "GET", "/api/v2/bookings");
+await hit(router, "GET", "/api/v2/bookings/42", mobile);
+</example>
+<output>
+GET /api/v2/bookings/7d9f0c7a-2b1e-4c5a-9f3e-1a2b3c4d5e6f -> 200 {"id":"7d9f0c7a-2b1e-4c5a-9f3e-1a2b3c4d5e6f","room":"Ikoyi suite"} [/api/v2/bookings/:id([0-9a-f-]{36})]
+GET /api/v2/bookings -> 401 {"error":"Unknown client"} [/api/v2/bookings]
+GET /api/v2/bookings/42 -> 404 {"error":"Not Found","method":"GET","path":"/api/v2/bookings/42"}
+</output>
+<p>The middleware belongs to the group, so no route can forget it. The id that does not fit the constraint matches no route at all, which is a 404: from the client's point of view, there is no such booking URL.</p>
+</solution>
+</exercise>
+<exercise title="Refuse polluted parameters">
+<p>Write <code>pageOf(ctx)</code> for <code>GET /tasks?page=N</code>: missing means 1; repeated means 400; anything but a whole number from 1 to 1000 means 400. Test <code>?page=3</code>, no page, <code>?page=2&amp;page=9</code> and <code>?page=0</code>.</p>
+<solution>
+<example file="page.ts" project="routing" browser="no">
+import { badRequest, createRouter, toRouterContext } from "@zudojs/http";
+import type { HttpRouterContext } from "@zudojs/http";
+import { hit } from "./hit.js";
+
+function pageOf(ctx: HttpRouterContext): number {
+  const values = toRouterContext(ctx).queryArray("page");
+  if (values.length > 1) throw badRequest('Send "page" at most once');
+  if (values.length === 0) return 1;
+  const page = /^\d{1,4}$/.test(values[0] ?? "") ? Number(values[0]) : NaN;
+  if (!(page >= 1 && page <= 1000)) throw badRequest("page must be a whole number from 1 to 1000");
+  return page;
+}
+
+const router = createRouter();
+router.get("/tasks", (ctx) => ({ page: pageOf(ctx) }));
+
+for (const url of ["/tasks?page=3", "/tasks", "/tasks?page=2&page=9", "/tasks?page=0"]) {
+  await hit(router, "GET", url);
+}
+</example>
+<output>
+GET /tasks?page=3 -> 200 {"page":3} [/tasks]
+GET /tasks -> 200 {"page":1} [/tasks]
+GET /tasks?page=2&page=9 -> 400 (thrown HttpError: Send "page" at most once)
+GET /tasks?page=0 -> 400 (thrown HttpError: page must be a whole number from 1 to 1000)
+</output>
+<p>Handling the three cases (none, one, several) explicitly is what <code>queryArray</code> makes easy. The regular expression refuses signs, decimals and spaces before <code>Number</code> ever sees them.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Register with the method helpers, <code>all</code>, <code>on</code> or <code>add</code>. Exact duplicates throw <code>RouteConflictError</code>, bad patterns <code>InvalidRoutePatternError</code>; every registration returns a remover.</li>
+<li>Patterns: <code>:id</code>, <code>:id?</code>, <code>:id(\\d+)</code>, <code>{id}</code> and a trailing <code>*rest</code>. Parameters are decoded strings; encoded slashes and dot segments never match. <code>buildRoutePath</code> goes the other way, with encoding.</li>
+<li>Matching is by specificity, literal over parameter over wildcard, segment by segment. Ties, including a constrained against an unconstrained parameter, go to the first registered route, and shadowed routes are not reported: test them with <code>router.match</code>.</li>
+<li>HEAD and OPTIONS are automatic; a wrong method gets 405 with <code>Allow</code>.</li>
+<li>Route middleware runs after matching and can read parameters; <code>state</code> is shared with the handler. Groups add a prefix and middleware to many routes at once, outer group first.</li>
+<li>Repeated query keys become arrays. Use <code>queryArray</code> for lists and refuse repeats for single values; the parser drops <code>__proto__</code> and enforces size limits.</li>
+<li>The router collapses slashes and, by default, ignores case and trailing slashes. The Node adapter refuses dot segments, backslashes and other non-canonical targets with 400 before anything else runs.</li>
+</ul>
+<p>Next, <a href="/learn/zudo-middleware">Middleware, CORS, security headers and graceful shutdown</a> looks at the pipeline around the router: the middleware every request passes through before any route is matched.</p>
+</section>

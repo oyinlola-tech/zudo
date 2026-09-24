@@ -1,0 +1,809 @@
+<question id="saas-tenant-term" type="choice">
+<q>In InvoiceHub, what is the <strong>tenant</strong>?</q>
+<option>Each user account</option>
+<option correct>Each organization, such as Ada's Bakery</option>
+<option>Each invoice</option>
+<option>Each database connection</option>
+<explain><p>A tenant is one customer of the shared application, and InvoiceHub's customers are businesses. Users are global and can belong to several organizations, so they cannot be the tenant.</p></explain>
+</question>
+
+<question id="saas-role-location" type="choice">
+<q>Ada owns Ada's Bakery and is a viewer at Kola Motors. Where should her role be stored?</q>
+<option>On the <code>users</code> row, as <code>role = 'owner'</code></option>
+<option>In the login token's <code>roles</code> claim</option>
+<option correct>On each <code>memberships</code> row: (user, organization, role)</option>
+<option>In a cookie the browser sends with each request</option>
+<explain><p>A role only means something together with an organization. The user row and the token have one role for all organizations, and a cookie is written by the client. The membership row is the only place where "owner of the bakery, viewer at Kola Motors" fits.</p></explain>
+</question>
+
+<question id="saas-unique-number" type="choice">
+<q>Both organizations want their first invoice to be <code>INV-0001</code>. Which constraint is right?</q>
+<option><code>unique (number)</code></option>
+<option correct><code>unique (org_id, number)</code></option>
+<option><code>primary key (number)</code></option>
+<option>No constraint: check for duplicates in the code before inserting</option>
+<explain><p>Numbers are unique per organization, so the pair is unique. A global <code>unique (number)</code> would refuse Kola Motors' first invoice. Checking in code first has a race: two requests can both see "free" and both insert.</p></explain>
+</question>
+
+<question id="saas-composite-fk" type="choice">
+<q>Why does <code>invoices</code> use <code>foreign key (org_id, customer_id) references customers (org_id, id)</code> instead of <code>customer_id references customers (id)</code>?</q>
+<option>It makes lookups faster</option>
+<option correct>The database then refuses an invoice of one organization that points at another organization's customer</option>
+<option>PostgreSQL does not allow single-column foreign keys on serial ids</option>
+<option>It lets two customers share the same id</option>
+<explain><p>With the plain key, Kola Motors could bill the bakery's customer 1: that id exists. With the composite key the pair (kola-motors, 1) must exist, and it does not. The rule lives in the database, so no future code change can break it.</p></explain>
+</question>
+
+<question id="saas-unique-pair" type="choice">
+<q>Why does <code>customers</code> declare <code>unique (org_id, id)</code> although <code>id</code> is already its primary key?</q>
+<option>To speed up <code>count(*)</code></option>
+<option>To stop two organizations from having customers with the same name</option>
+<option correct>A foreign key must point at columns declared unique together, and the invoice's composite key points at that pair</option>
+<option>Row-level security needs it</option>
+<explain><p>PostgreSQL only accepts a foreign key whose target columns have a unique constraint or primary key as a group. The pair is trivially unique because <code>id</code> is, but it has to be declared.</p></explain>
+</question>
+
+<question id="saas-rls-owner" type="choice">
+<q>InvoiceHub turned on row-level security, yet the seed code and <code>db.query(...)</code> outside <code>inTenant</code> still see every organization's rows. Why?</q>
+<option>Row-level security only applies to <code>insert</code></option>
+<option correct>They run as the owner of the tables, and the owner (like any superuser) is not bound by the policies</option>
+<option>PGlite does not support row-level security</option>
+<option>The policy only applies after a restart</option>
+<explain><p>Table owners and superusers bypass policies. That is why <code>inTenant</code> switches to the ordinary role <code>app_user</code>, and why only migrations and seeds should ever run as the owner.</p></explain>
+</question>
+
+<question id="saas-rls-missing" type="choice">
+<q>A new route calls <code>inTenant(db, "", …)</code> by mistake: the organization id is empty. What does <code>select * from invoices</code> return inside it?</q>
+<option>Every invoice, because the filter is empty</option>
+<option>An error: <code>app.org_id</code> is not set</option>
+<option correct>No rows: the policy compares <code>org_id</code> with an empty value and matches nothing</option>
+<option>Only the invoices that have no organization</option>
+<explain><p><code>current_setting('app.org_id', true)</code> returns an empty value instead of throwing, and no row has an empty <code>org_id</code>. The mistake fails closed: the client sees an empty list, not somebody else's data.</p></explain>
+</question>
+
+<question id="saas-set-local" type="choice">
+<q>Why does <code>inTenant</code> use <code>set local role</code> and <code>set_config(..., true)</code> inside a transaction, instead of a plain <code>set</code> once per connection?</q>
+<option>Plain <code>set</code> is not valid SQL in PostgreSQL</option>
+<option correct>Local settings end with the transaction, so they cannot leak into the next request that reuses the same pooled connection</option>
+<option>Local settings are faster to read</option>
+<option>So that the seed data is also filtered</option>
+<explain><p>With a connection pool, the next request that borrows the connection could be another tenant. A session-level setting would still say the previous organization. <code>local</code> scope ends at commit or rollback, so every transaction starts clean.</p></explain>
+</question>
+
+<question id="saas-trust-header" type="choice">
+<q>A mobile developer asks to send the chosen organization in an <code>x-tenant-id</code> header on every request, "to save a database lookup". What is the problem?</q>
+<option>Headers cannot contain hyphens</option>
+<option correct>The client writes the header, so any logged-in user could name any organization; it is untrusted</option>
+<option>Headers are not sent over HTTPS</option>
+<option>There is no problem if the value is validated with <code>tryCreateTenantId</code></option>
+<explain><p>Validating the format only proves the value <em>looks</em> like a tenant id. It says nothing about whether this user may use that organization. InvoiceHub takes the organization from a record the server wrote after checking the membership.</p></explain>
+</question>
+
+<question id="saas-token-roles" type="choice">
+<q>Why does InvoiceHub give every user <code>roles: []</code> in the auth service, instead of putting their role in the login token?</q>
+<option>The auth service does not support roles</option>
+<option>Tokens with roles are larger than 8 KB</option>
+<option correct>A token-wide role has no organization attached, and a role in a token cannot be revoked until the token expires</option>
+<option>Roles in tokens are encrypted and cannot be read by the server</option>
+<explain><p>"Owner" in a token does not say owner <em>of what</em>. And a demoted accountant would keep the old role for the token's whole lifetime. Reading the role from the membership row on every request fixes both.</p></explain>
+</question>
+
+<question id="saas-membership-each-request" type="choice">
+<q>The membership is checked at login. Why does <code>loadMembership</code> check it again on every request?</q>
+<option>To make requests slower on purpose, as a rate limit</option>
+<option correct>A member can be removed or demoted while their token and session are still valid; the next request must see that</option>
+<option>Because the tenancy middleware forgets the organization</option>
+<option>Because tokens are not signed</option>
+<explain><p>Tokens live for 15 minutes and sessions longer. The failure demo removed Bisi and promoted Tunde between two requests, and both changes applied at once, because the role is read from the database each time.</p></explain>
+</question>
+
+<question id="saas-404-vs-403" type="choice">
+<q>Kola asks for <code>GET /invoices/1</code>, which belongs to Ada's Bakery. Which answer is best?</q>
+<option><code>403 Forbidden</code>: he is not allowed</option>
+<option correct><code>404 Not Found</code>: the same answer as for an id that does not exist</option>
+<option><code>200</code> with an empty body</option>
+<option><code>401 Unauthorized</code></option>
+<explain><p>A 403 confirms that invoice 1 exists, which leaks information about another customer. For the attacker, "not yours" and "does not exist" must look the same.</p></explain>
+</question>
+
+<question id="saas-login-nonmember" type="choice">
+<q>At login, a user names an organization they do not belong to. What should InvoiceHub answer when the organization exists, compared with when it does not?</q>
+<option>404 when it does not exist, 403 when it exists</option>
+<option correct>The same 403 in both cases, and the session that was just created is ended</option>
+<option>A 200 with the list of organizations the user does belong to</option>
+<option>A redirect to the organization's login page</option>
+<explain><p>Different answers would turn the login form into a way to discover which businesses use InvoiceHub. Ending the session means the refused login leaves nothing behind.</p></explain>
+</question>
+
+<question id="saas-deny-rule" type="choice">
+<q>The engine has a global rule <code>{ effect: "deny", resource: "*", action: "*", condition: not(tenantIsolation("orgId", "orgId")) }</code>. What happens when a route calls <code>engine.can(actor, "invoice:create")</code> with no resource?</q>
+<option>Allowed, because an accountant has <code>invoice:create</code></option>
+<option correct>Denied: <code>tenantIsolation</code> returns false when the resource is missing, so <code>not(...)</code> is true and the deny rule applies</option>
+<option>An exception is thrown</option>
+<option>Allowed, because deny rules only look at resources that exist</option>
+<explain><p>Missing data means no. That is why every InvoiceHub check passes a resource, even for "create" and "list": <code>{ orgId: currentOrg().id }</code>, the organization's collection.</p></explain>
+</question>
+
+<question id="saas-metadata-source" type="choice">
+<q>Where must <code>metadata.orgId</code> in the permission check come from?</q>
+<option>The request body's <code>orgId</code> field</option>
+<option>The invoice being checked</option>
+<option correct>The tenant context, which the server set from the verified session</option>
+<option>The <code>x-tenant-id</code> header</option>
+<explain><p>The deny rule compares the resource's organization with the request's organization. If the request's side came from the client or from the resource itself, the comparison would prove nothing.</p></explain>
+</question>
+
+<question id="saas-repo-no-param" type="choice">
+<q>Why does <code>InvoiceRepository.list()</code> take no <code>orgId</code> parameter?</q>
+<option>Because the invoices table has no <code>org_id</code> column</option>
+<option correct>It reads the organization from the tenant context, so a caller has nothing to pass and nothing to get wrong</option>
+<option>Because PostgreSQL adds the filter automatically without a policy</option>
+<option>Parameters are slower than globals</option>
+<explain><p>A parameter can be filled from the wrong place, such as the query string. The context is set once, by the middleware, from a trusted source. Outside a context the repository throws <code>TenantContextMissingError</code>.</p></explain>
+</question>
+
+<question id="saas-cache-tenantkey" type="choice">
+<q>Why does InvoiceHub use <code>namespace: orgId</code> with @zudojs/cache instead of a key from <code>tenantKey(tenantId, "dashboard.totals")</code>?</q>
+<option><code>tenantKey</code> is slower</option>
+<option correct><code>tenantKey</code> builds <code>tenant:kola-motors:dashboard.totals</code>, and the cache refuses keys that contain a colon</option>
+<option>Namespaces are encrypted</option>
+<option><code>tenantKey</code> ignores the tenant id</option>
+<explain><p>The cache uses <code>:</code> to separate prefix, namespace and key, so it refuses it inside a key part. A tenant id is a valid namespace, because both allow only letters, digits, <code>-</code> and <code>_</code>.</p></explain>
+</question>
+
+<question id="saas-flag-unit" type="choice">
+<q>The founders want "bulk reminders" for about 10% of <em>organizations</em>. Which evaluation context is right?</q>
+<option><code>{ userId: user.id }</code></option>
+<option><code>{ userId: user.id, tenantId: org.id }</code></option>
+<option correct><code>{ tenantId: org.id, attributes: { plan } }</code></option>
+<option><code>{ sessionId: session.id }</code></option>
+<explain><p>The percentage rule buckets by <code>userId</code> first, then <code>tenantId</code>, then <code>sessionId</code>. With the user in the context, members of one organization land in different buckets and disagree. For an organization feature, leave the user out.</p></explain>
+</question>
+
+<question id="saas-flag-404" type="choice">
+<q>Why does <code>POST /reminders/bulk</code> answer <code>404</code> for an organization outside the beta, rather than <code>403</code>?</q>
+<option>Because 403 is only for tenants</option>
+<option correct>A feature that is not released should look like one that does not exist; 403 would say "this exists, but not for you"</option>
+<option>Because the flag store threw an error</option>
+<option>Because the route has no permission check</option>
+<explain><p>Unreleased features often carry names you have not announced. The route still checks <code>invoice:send</code> after the flag: a flag is not a permission.</p></explain>
+</question>
+
+<question id="saas-suspended-same" type="choice">
+<q>InvoiceHub sets <code>notFoundResponse</code> on the tenancy middleware so that an unknown, a suspended and a "no longer a member" organization all answer <code>404 Organization not found</code>. What does that protect?</q>
+<option>It makes the response smaller</option>
+<option correct>A caller cannot learn from the API which organizations exist or which are suspended</option>
+<option>It stops the suspended organization's owner from logging in</option>
+<option>It lets the cache store the error</option>
+<explain><p>Different messages ("Tenant not found" from the middleware, "Organization not found" from <code>loadMembership</code>) would let anyone with a token probe the state of other organizations. The owner of a suspended organization learns why by e-mail, not from a 404.</p></explain>
+</question>
+
+<question id="saas-job-no-context" type="choice">
+<q>A nightly job must e-mail every organization's overdue invoices. Which design keeps isolation?</q>
+<option>Run <code>select * from invoices where status = 'sent'</code> once as the table owner and group the rows in code</option>
+<option>Pass the organization id in an <code>x-tenant-id</code> header to the API</option>
+<option correct>Loop over the organizations and, for each one, call <code>tenantContext.run(org, …)</code> and use the repository</option>
+<option>Turn off row-level security for the job's transaction</option>
+<explain><p>Inside <code>tenantContext.run</code> the job uses the same two walls as a request. One big owner query puts every organization's rows in one loop, where one bug (or one log line) mixes them up.</p></explain>
+</question>
+
+<question id="saas-test-empty" type="choice">
+<q>The isolation test starts with <code>expect(ids.length).toBeGreaterThan(0)</code>. Why?</q>
+<option>To make Vitest count the test as passed</option>
+<option correct>A loop over an empty list of victim ids would pass without testing anything</option>
+<option>Because Vitest fails on empty arrays</option>
+<option>To warm the cache</option>
+<explain><p>If a seed change left the victim without invoices, the attack loop would never run, and the suite would still be green. The guard makes that situation fail loudly.</p></explain>
+</question>
+
+<question id="saas-test-cache-warm" type="choice">
+<q>Why does the "never lists or counts" test load the <em>victim's</em> dashboard before the attacker's?</q>
+<option>To log the victim in</option>
+<option correct>A cache keyed without the tenant only leaks when another organization filled the entry first; testing one tenant at a time never shows it</option>
+<option>To make the test faster</option>
+<option>Because the dashboard route needs a warm-up request</option>
+<explain><p>The caching leak depends on order: whoever fills the shared key first decides what everybody sees. The test creates exactly that order, and the mutation run showed it fail when <code>namespace</code> was removed.</p></explain>
+</question>
+
+<question id="saas-three-walls" type="choice">
+<q>Someone removes both the <code>org_id</code> filter and <code>inTenant</code> from <code>InvoiceRepository.get</code>. Kola requests the bakery's invoice 1. What happens, and why does the test still fail?</q>
+<option>200 with the invoice; the test fails because the body contains the bakery's <code>orgId</code></option>
+<option correct>403 from the permission engine's <code>same-org-only</code> rule; the test fails because it expects 404, and a 403 confirms the invoice exists</option>
+<option>404; the test passes</option>
+<option>500, because the query has no parameters</option>
+<explain><p>The deny rule is a third wall: the foreign invoice is loaded but refused. The answer is still wrong, because it tells the attacker that invoice 1 exists, and the suite catches it.</p></explain>
+</question>
+
+<question id="saas-output-cache-leak" type="output">
+<q>What does this print?</q>
+<code file="leak.ts">
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+const invoicesPerOrg: Record<string, number> = { "adas-bakery": 2, "kola-motors": 1 };
+
+async function count(orgId: string): Promise<number> {
+  const result = await cache.getOrSet("invoices.count", async () => invoicesPerOrg[orgId] ?? 0);
+  return result.value;
+}
+
+console.log(await count("kola-motors"), await count("adas-bakery"));
+</code>
+<option correct>1 1</option>
+<option>1 2</option>
+<option>2 2</option>
+<option>0 0</option>
+<explain><p>The key has no organization in it. Kola Motors filled <code>invoices.count</code> first with 1, and the bakery was served that entry. Add <code>{ namespace: orgId }</code>.</p></explain>
+</question>
+
+<question id="saas-output-cache-namespace" type="output">
+<q>What does this print?</q>
+<code file="scoped.ts">
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+const saved = await cache.set("dashboard.totals", { invoices: 1 }, { namespace: "kola-motors" });
+console.log(saved.key);
+console.log((await cache.get("dashboard.totals", { namespace: "adas-bakery" })).hit);
+</code>
+<option correct>zudojs:kola-motors:dashboard.totals
+false</option>
+<option>kola-motors:dashboard.totals
+true</option>
+<option>zudojs:dashboard.totals
+true</option>
+<option>dashboard.totals
+false</option>
+<explain><p>The full key is <code>prefix:namespace:key</code>, with the default prefix <code>zudojs</code>. The same key in another namespace is a different entry, so the bakery gets a miss.</p></explain>
+</question>
+
+<question id="saas-output-tag-namespace" type="output">
+<q>After a new invoice, this code clears the bakery's dashboard. What does it print?</q>
+<code file="tags.ts">
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+await cache.set("dashboard.totals", { invoices: 2 }, { namespace: "adas-bakery", tags: ["invoices"] });
+
+console.log(await cache.invalidateByTag(["invoices"]));
+console.log(await cache.invalidateByTag(["invoices"], { namespace: "adas-bakery" }));
+</code>
+<option correct>{ cleared: 0 }
+{ cleared: 1 }</option>
+<option>{ cleared: 1 }
+{ cleared: 0 }</option>
+<option>{ cleared: 1 }
+{ cleared: 1 }</option>
+<option>{ cleared: 0 }
+{ cleared: 0 }</option>
+<explain><p>Tags live inside a namespace. Without the namespace, nothing matches and nothing is cleared, silently. That is why <code>invoicesChanged()</code> takes the namespace from the tenant context, like the read does.</p></explain>
+</question>
+
+<question id="saas-output-key-collision" type="output">
+<q>A developer builds cache keys by joining the organization and the key with a colon. What does this print?</q>
+<code file="collision.js">
+const keyFor = (orgId, key) => `${orgId}:${key}`;
+
+const a = keyFor("acme", "invoices:list");
+const b = keyFor("acme:invoices", "list");
+console.log(a);
+console.log(a === b);
+</code>
+<option correct>acme:invoices:list
+true</option>
+<option>acme:invoices:list
+false</option>
+<option>acme:invoices\:list
+false</option>
+<option>acme/invoices:list
+true</option>
+<explain><p>Two different (organization, key) pairs produce the same string, so one can read or overwrite the other's entry. That is why @zudojs/cache refuses <code>:</code> inside key parts and tenant ids only allow letters, digits, <code>-</code> and <code>_</code>.</p></explain>
+</question>
+
+<question id="saas-output-deny-rule" type="output">
+<q>What does this print?</q>
+<code file="deny.ts">
+import { createPermissionActor, createPermissionEngine, not, tenantIsolation } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{ name: "owner", permissions: ["invoice:*"] }],
+  rules: [{ name: "same-org-only", effect: "deny", resource: "*", action: "*", condition: not(tenantIsolation("orgId", "orgId")) }],
+});
+const ada = createPermissionActor("ada", { roles: ["owner"] });
+const inBakery = { metadata: { orgId: "adas-bakery" } };
+
+console.log(await engine.can(ada, "invoice:read", { orgId: "adas-bakery" }, inBakery));
+console.log(await engine.can(ada, "invoice:read", { orgId: "kola-motors" }, inBakery));
+console.log(await engine.can(ada, "invoice:read", { orgId: "adas-bakery" }));
+</code>
+<option correct>true
+false
+false</option>
+<option>true
+false
+true</option>
+<option>true
+true
+true</option>
+<option>false
+false
+false</option>
+<explain><p>The first check is her own organization. The second is another organization's invoice: the deny rule wins over <code>invoice:*</code>. The third has no <code>orgId</code> in the metadata, so <code>tenantIsolation</code> cannot confirm a match and the deny rule applies: missing data means no.</p></explain>
+</question>
+
+<question id="saas-output-role-per-org" type="output">
+<q>Roles come from a memberships table. What does this print?</q>
+<code file="memberships.ts">
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [
+    { name: "viewer", permissions: ["invoice:read"] },
+    { name: "owner", permissions: ["invoice:*"], inherits: ["viewer"] },
+  ],
+});
+const memberships = new Map([["ada@adas-bakery", "owner"], ["ada@kola-motors", "viewer"]]);
+
+for (const org of ["adas-bakery", "kola-motors", "chidi-pharmacy"]) {
+  const role = memberships.get(`ada@${org}`);
+  const actor = createPermissionActor("ada", { roles: role ? [role] : [] });
+  console.log(org, await engine.can(actor, "invoice:create"));
+}
+</code>
+<option correct>adas-bakery true
+kola-motors false
+chidi-pharmacy false</option>
+<option>adas-bakery true
+kola-motors true
+chidi-pharmacy false</option>
+<option>adas-bakery true
+kola-motors true
+chidi-pharmacy true</option>
+<option>adas-bakery true
+kola-motors false
+chidi-pharmacy true</option>
+<explain><p>The same person gets a different actor in each organization. With no membership, the actor has no roles, and everything is denied by default.</p></explain>
+</question>
+
+<question id="saas-output-flag-user" type="output">
+<q>The flag rolls out to 10%. The bakery's bucket for this flag is 337, Ada's is 2129 (a bucket below 1000 is inside 10%). What does this print?</q>
+<code file="flag.ts">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "bulk-reminders", enabled: true, defaultValue: false,
+    rules: [{ type: "percentage", percentage: 10, value: true }],
+  }]),
+});
+
+console.log(await flags.isEnabled("bulk-reminders", { tenantId: "adas-bakery" }));
+console.log(await flags.isEnabled("bulk-reminders", { userId: "ada", tenantId: "adas-bakery" }));
+</code>
+<option correct>true
+false</option>
+<option>true
+true</option>
+<option>false
+false</option>
+<option>false
+true</option>
+<explain><p>The percentage rule buckets by <code>userId</code> when there is one, and only falls back to <code>tenantId</code> without it. Adding the user changed the subject from the bakery (in) to Ada (out).</p></explain>
+</question>
+
+<question id="saas-output-flag-pilot" type="output">
+<q>What does this print?</q>
+<code file="pilot.ts">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "bulk-reminders", enabled: false, defaultValue: false,
+    rules: [{ type: "tenant", tenants: ["kola-motors"], value: true }],
+  }]),
+});
+
+const result = await flags.evaluate("bulk-reminders", { tenantId: "kola-motors" });
+console.log(result.value, result.reason);
+</code>
+<option correct>false disabled</option>
+<option>true target_match</option>
+<option>true rule_match</option>
+<option>false default</option>
+<explain><p><code>enabled: false</code> is the kill switch: the flag ignores its rules and serves its off value, even for the pilot organization.</p></explain>
+</question>
+
+<question id="saas-output-orgsin" type="output">
+<q>The isolation test's helper finds every <code>orgId</code> in a response body. What does this print?</q>
+<code file="orgs-in.js">
+function orgsIn(body) {
+  return [...JSON.stringify(body).matchAll(/"orgId":"([^"]+)"/g)].map((match) => match[1]);
+}
+
+const body = {
+  orgId: "kola-motors",
+  invoices: [{ number: "INV-0001", orgId: "kola-motors" }],
+  related: { customer: { name: "Grace Hotel", orgId: "adas-bakery" } },
+};
+console.log(orgsIn(body));
+console.log(orgsIn(body).includes("adas-bakery"));
+</code>
+<option correct>[ 'kola-motors', 'kola-motors', 'adas-bakery' ]
+true</option>
+<option>[ 'kola-motors' ]
+false</option>
+<option>[ 'kola-motors', 'kola-motors' ]
+false</option>
+<option>[ 'kola-motors', 'adas-bakery' ]
+true</option>
+<explain><p>Searching the JSON text finds the nested customer too. A test that only compared the top-level <code>orgId</code> would miss this leak.</p></explain>
+</question>
+
+<question id="saas-output-forgotten-filter" type="output">
+<q>A repository is written two ways. What does this print?</q>
+<code file="repo.js">
+const invoices = [
+  { id: 1, orgId: "adas-bakery", number: "INV-0001" },
+  { id: 3, orgId: "kola-motors", number: "INV-0001" },
+];
+let currentOrg = "kola-motors";
+
+const getBuggy = (id) => invoices.find((i) => i.id === id);
+const getScoped = (id) => invoices.find((i) => i.id === id && i.orgId === currentOrg);
+
+console.log(getBuggy(1)?.orgId, getScoped(1)?.orgId, getScoped(3)?.number);
+</code>
+<option correct>adas-bakery undefined INV-0001</option>
+<option>undefined undefined INV-0001</option>
+<option>adas-bakery adas-bakery INV-0001</option>
+<option>kola-motors undefined undefined</option>
+<explain><p>Looking up by id alone returns another organization's invoice. Putting the organization in the lookup itself makes a foreign id behave exactly like a missing one.</p></explain>
+</question>
+
+<question id="saas-output-invoice-number" type="output">
+<q>InvoiceHub numbers invoices per organization. What does this print?</q>
+<code file="numbers.js">
+const counts = new Map([["adas-bakery", 2], ["kola-motors", 1]]);
+
+function nextNumber(orgId) {
+  const next = (counts.get(orgId) ?? 0) + 1;
+  counts.set(orgId, next);
+  return "INV-" + String(next).padStart(4, "0");
+}
+
+console.log(nextNumber("adas-bakery"), nextNumber("kola-motors"), nextNumber("eko-prints"));
+</code>
+<option correct>INV-0003 INV-0002 INV-0001</option>
+<option>INV-0003 INV-0004 INV-0005</option>
+<option>INV-3 INV-2 INV-1</option>
+<option>INV-0002 INV-0001 INV-0000</option>
+<explain><p>Each organization has its own sequence, and <code>padStart(4, "0")</code> pads to four digits. A new organization starts at 1. In the database, <code>unique (org_id, number)</code> backs this up.</p></explain>
+</question>
+
+<question id="saas-output-context-closure" type="output">
+<q>This sketch mimics the tenant context with a variable that a <code>run</code> function sets and restores. What does it print?</q>
+<code file="context.js">
+let current;
+function run(org, work) {
+  const previous = current;
+  current = org;
+  try {
+    return work();
+  } finally {
+    current = previous;
+  }
+}
+function requireOrg() {
+  if (!current) throw new Error("no tenant");
+  return current;
+}
+
+console.log(run("kola-motors", () => requireOrg()));
+try {
+  requireOrg();
+} catch (error) {
+  console.log(error.message);
+}
+</code>
+<option correct>kola-motors
+no tenant</option>
+<option>kola-motors
+kola-motors</option>
+<option>undefined
+no tenant</option>
+<option>no tenant
+no tenant</option>
+<explain><p>Inside <code>run</code> the organization is set; after it, it is restored to "none", and code that needs a tenant fails loudly. A plain variable breaks as soon as two requests overlap across an <code>await</code>, which is why the real context uses AsyncLocalStorage.</p></explain>
+</question>
+
+<question id="saas-code-scoped-cache" type="code" file="scoped-cache.ts">
+<q>Write <code>orgTotals(orgId)</code> that returns the organization's invoice count through <code>cache.getOrSet</code>, loading it from <code>countInDb</code>, so that each organization gets its own entry. Print the bakery's count, Kola Motors' count, and then the bakery's again with whether it came from the cache.</q>
+<starter>
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+const countInDb: Record<string, number> = { "adas-bakery": 2, "kola-motors": 1 };
+
+async function orgTotals(orgId: string) {
+  // your code: return { invoices, cached }
+}
+</starter>
+<solution>
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+const countInDb: Record<string, number> = { "adas-bakery": 2, "kola-motors": 1 };
+
+async function orgTotals(orgId: string) {
+  const result = await cache.getOrSet("dashboard.totals", async () => countInDb[orgId] ?? 0, { namespace: orgId });
+  return { invoices: result.value, cached: result.cached };
+}
+
+console.log(await orgTotals("adas-bakery"));
+console.log(await orgTotals("kola-motors"));
+console.log(await orgTotals("adas-bakery"));
+</solution>
+<expected>
+{ invoices: 2, cached: false }
+{ invoices: 1, cached: false }
+{ invoices: 2, cached: true }
+</expected>
+<explain><p>The namespace puts the organization into the key, so Kola Motors misses and loads its own count instead of receiving the bakery's cached one.</p></explain>
+</question>
+
+<question id="saas-code-same-org" type="code" file="same-org.js">
+<q>Write <code>sameOrg(resource, orgId)</code> for a hand-written check. It returns <code>true</code> only when both the resource's <code>orgId</code> and the given <code>orgId</code> are present and equal. Missing data on either side must mean <code>false</code>. Print the four cases.</q>
+<starter>
+function sameOrg(resource, orgId) {
+  // your code
+}
+</starter>
+<solution>
+function sameOrg(resource, orgId) {
+  if (!resource || resource.orgId == null || orgId == null) return false;
+  return resource.orgId === orgId;
+}
+
+console.log(sameOrg({ orgId: "kola-motors" }, "kola-motors"));
+console.log(sameOrg({ orgId: "kola-motors" }, "adas-bakery"));
+console.log(sameOrg({}, undefined));
+console.log(sameOrg(undefined, "kola-motors"));
+</solution>
+<expected>
+true
+false
+false
+false
+</expected>
+<explain><p>The third case is the classic bug: <code>undefined === undefined</code> is <code>true</code>, so a naive comparison lets a request with no organization read every row that has none. Check that both values exist first, as <code>tenantIsolation</code> does.</p></explain>
+</question>
+
+<question id="saas-code-repo" type="code" file="repository.js">
+<q>Write a <code>createInvoiceRepository(rows, currentOrg)</code> factory whose <code>list()</code> and <code>get(id)</code> only ever return rows of <code>currentOrg()</code>; outside an organization (<code>currentOrg()</code> returns <code>undefined</code>) both must throw <code>"no tenant"</code>. Print the list for Kola Motors, then <code>get(1)</code> for Kola Motors, then the error message outside a tenant.</q>
+<starter>
+const rows = [
+  { id: 1, orgId: "adas-bakery", number: "INV-0001" },
+  { id: 2, orgId: "adas-bakery", number: "INV-0002" },
+  { id: 3, orgId: "kola-motors", number: "INV-0001" },
+];
+
+function createInvoiceRepository(rows, currentOrg) {
+  // your code
+}
+</starter>
+<solution>
+const rows = [
+  { id: 1, orgId: "adas-bakery", number: "INV-0001" },
+  { id: 2, orgId: "adas-bakery", number: "INV-0002" },
+  { id: 3, orgId: "kola-motors", number: "INV-0001" },
+];
+
+function createInvoiceRepository(rows, currentOrg) {
+  const org = () => {
+    const id = currentOrg();
+    if (!id) throw new Error("no tenant");
+    return id;
+  };
+  return {
+    list: () => rows.filter((row) => row.orgId === org()),
+    get: (id) => rows.find((row) => row.id === id && row.orgId === org()),
+  };
+}
+
+let current = "kola-motors";
+const invoices = createInvoiceRepository(rows, () => current);
+console.log(invoices.list());
+console.log(invoices.get(1));
+current = undefined;
+try {
+  invoices.list();
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>
+[ { id: 3, orgId: 'kola-motors', number: 'INV-0001' } ]
+undefined
+no tenant
+</expected>
+<explain><p>The organization is read inside every method, from one trusted source, and callers never pass it. A foreign id comes back as <code>undefined</code>, which the API turns into a 404.</p></explain>
+</question>
+
+<question id="saas-code-flag-context" type="code" file="org-flags.ts">
+<q>Write <code>orgFlagContext(org)</code> that returns an evaluation context for an organization-level feature: the organization's id and its plan as an attribute, and no user. Then print whether <code>priority-support</code> is on for each organization. The flag is on for organizations on the <code>pro</code> plan.</q>
+<starter>
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "priority-support", enabled: true, defaultValue: false,
+    rules: [{ type: "attribute", attribute: "plan", operator: "equals", value: "pro" }],
+  }]),
+});
+const orgs = [{ id: "adas-bakery", plan: "pro" }, { id: "kola-motors", plan: "free" }];
+
+function orgFlagContext(org: { id: string; plan: string }) {
+  // your code
+}
+</starter>
+<solution>
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "priority-support", enabled: true, defaultValue: false,
+    rules: [{ type: "attribute", attribute: "plan", operator: "equals", value: "pro" }],
+  }]),
+});
+const orgs = [{ id: "adas-bakery", plan: "pro" }, { id: "kola-motors", plan: "free" }];
+
+function orgFlagContext(org: { id: string; plan: string }) {
+  return { tenantId: org.id, attributes: { plan: org.plan } };
+}
+
+for (const org of orgs) {
+  console.log(org.id, await flags.isEnabled("priority-support", orgFlagContext(org)));
+}
+</solution>
+<expected>
+adas-bakery true
+kola-motors false
+</expected>
+<explain><p>The plan comes from the organization row on the server, never from the request. Without a <code>userId</code>, any percentage rule you add later buckets by the organization as well.</p></explain>
+</question>
+
+<question id="saas-code-login-decision" type="code" file="login.js">
+<q>Write <code>loginDecision(memberships, userId, org)</code> for the login route. It returns <code>{ status: 200, role }</code> when the user is a member of <code>org</code>, and otherwise exactly <code>{ status: 403, error: "You are not a member of that organization" }</code>, whether or not the organization exists. Print three cases as JSON.</q>
+<starter>
+const memberships = [
+  { userId: "ada", org: "adas-bakery", role: "owner" },
+  { userId: "ada", org: "kola-motors", role: "viewer" },
+  { userId: "kola", org: "kola-motors", role: "owner" },
+];
+
+function loginDecision(memberships, userId, org) {
+  // your code
+}
+</starter>
+<solution>
+const memberships = [
+  { userId: "ada", org: "adas-bakery", role: "owner" },
+  { userId: "ada", org: "kola-motors", role: "viewer" },
+  { userId: "kola", org: "kola-motors", role: "owner" },
+];
+
+function loginDecision(memberships, userId, org) {
+  const member = memberships.find((m) => m.userId === userId && m.org === org);
+  if (!member) return { status: 403, error: "You are not a member of that organization" };
+  return { status: 200, role: member.role };
+}
+
+console.log(JSON.stringify(loginDecision(memberships, "ada", "kola-motors")));
+console.log(JSON.stringify(loginDecision(memberships, "kola", "adas-bakery")));
+console.log(JSON.stringify(loginDecision(memberships, "kola", "no-such-org")));
+</solution>
+<expected>
+{"status":200,"role":"viewer"}
+{"status":403,"error":"You are not a member of that organization"}
+{"status":403,"error":"You are not a member of that organization"}
+</expected>
+<explain><p>The decision never looks at whether the organization exists, so the two refusals are identical and the login form reveals nothing about other customers.</p></explain>
+</question>
+
+<question id="saas-code-engine" type="code" file="engine.ts">
+<q>Build a permission engine with the roles <code>viewer</code> (<code>invoice:read</code>) and <code>accountant</code> (inherits viewer, plus <code>invoice:create</code>), and a deny rule named <code>same-org-only</code> that refuses any permission on a resource of another organization, using <code>not</code> and <code>tenantIsolation("orgId", "orgId")</code>. Print the three checks shown in the starter.</q>
+<starter>
+import { createPermissionActor, createPermissionEngine, not, tenantIsolation } from "@zudojs/permissions";
+
+// const engine = createPermissionEngine({ ... });
+
+const bisi = createPermissionActor("bisi", { roles: ["accountant"] });
+const tunde = createPermissionActor("tunde", { roles: ["viewer"] });
+const inBakery = { metadata: { orgId: "adas-bakery" } };
+// print:
+// engine.can(bisi, "invoice:create", { orgId: "adas-bakery" }, inBakery)
+// engine.can(tunde, "invoice:create", { orgId: "adas-bakery" }, inBakery)
+// engine.can(bisi, "invoice:read", { orgId: "kola-motors" }, inBakery)
+</starter>
+<solution>
+import { createPermissionActor, createPermissionEngine, not, tenantIsolation } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [
+    { name: "viewer", permissions: ["invoice:read"] },
+    { name: "accountant", permissions: ["invoice:create"], inherits: ["viewer"] },
+  ],
+  rules: [{ name: "same-org-only", effect: "deny", resource: "*", action: "*", condition: not(tenantIsolation("orgId", "orgId")) }],
+});
+
+const bisi = createPermissionActor("bisi", { roles: ["accountant"] });
+const tunde = createPermissionActor("tunde", { roles: ["viewer"] });
+const inBakery = { metadata: { orgId: "adas-bakery" } };
+console.log(await engine.can(bisi, "invoice:create", { orgId: "adas-bakery" }, inBakery));
+console.log(await engine.can(tunde, "invoice:create", { orgId: "adas-bakery" }, inBakery));
+console.log(await engine.can(bisi, "invoice:read", { orgId: "kola-motors" }, inBakery));
+</solution>
+<expected>
+true
+false
+false
+</expected>
+<explain><p>Roles answer "may this person do this kind of thing here?", and the deny rule answers "is this thing from here at all?". Both must say yes.</p></explain>
+</question>
+
+<question id="saas-code-isolation-check" type="code" file="isolation-check.js">
+<q>Write <code>checkIsolation(responses, attacker)</code>. <code>responses</code> is a list of <code>{ label, status, body }</code> that a member of <code>attacker</code> received while probing another organization's ids. It returns the labels that failed: any status other than 404, or any <code>orgId</code> in the body (at any depth) that is not <code>attacker</code>. Print the result.</q>
+<starter>
+const responses = [
+  { label: "GET /invoices/1", status: 404, body: { error: "Invoice not found" } },
+  { label: "POST /invoices/1/send", status: 403, body: { error: "Access denied" } },
+  { label: "GET /invoices/2", status: 404, body: { error: "Invoice not found", hint: { orgId: "adas-bakery" } } },
+];
+
+function checkIsolation(responses, attacker) {
+  // your code
+}
+</starter>
+<solution>
+const responses = [
+  { label: "GET /invoices/1", status: 404, body: { error: "Invoice not found" } },
+  { label: "POST /invoices/1/send", status: 403, body: { error: "Access denied" } },
+  { label: "GET /invoices/2", status: 404, body: { error: "Invoice not found", hint: { orgId: "adas-bakery" } } },
+];
+
+function checkIsolation(responses, attacker) {
+  const orgsIn = (body) => [...JSON.stringify(body).matchAll(/"orgId":"([^"]+)"/g)].map((m) => m[1]);
+  return responses
+    .filter((r) => r.status !== 404 || orgsIn(r.body).some((org) => org !== attacker))
+    .map((r) => r.label);
+}
+
+console.log(checkIsolation(responses, "kola-motors"));
+</solution>
+<expected>
+[ 'POST /invoices/1/send', 'GET /invoices/2' ]
+</expected>
+<explain><p>The 403 confirms the invoice exists, and the second 404 still carries the victim's organization in a nested field. Both are leaks; a check on the status alone would catch only one of them.</p></explain>
+</question>
+
+<question id="saas-code-rollout-share" type="code" file="rollout.ts">
+<q>Use <code>isInRollout(flagKey, subject, percentage)</code> from @zudojs/feature-flags to count how many of 1,000 organizations (<code>org-0</code> to <code>org-999</code>) are inside a 10% rollout of <code>bulk-reminders</code>, and print whether the count is between 80 and 120.</q>
+<starter>
+import { isInRollout } from "@zudojs/feature-flags";
+
+// count org-0 … org-999 inside a 10% rollout of "bulk-reminders"
+</starter>
+<solution>
+import { isInRollout } from "@zudojs/feature-flags";
+
+let inside = 0;
+for (let i = 0; i < 1000; i++) {
+  if (isInRollout("bulk-reminders", `org-${i}`, 10)) inside += 1;
+}
+console.log("about 10%:", inside >= 80 && inside <= 120);
+</solution>
+<expected>
+about 10%: true
+</expected>
+<explain><p>Bucketing is deterministic, so the same organizations are in every time, and the share is close to the percentage. Printing a range instead of the exact number keeps the check about the idea, not about one hash function.</p></explain>
+</question>

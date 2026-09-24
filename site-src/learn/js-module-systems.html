@@ -1,0 +1,881 @@
+---
+title: Module systems in depth
+description: See how ES modules and CommonJS load and interoperate in Node.js 24, resolve packages via exports, load plugins with import(), and untangle circular imports.
+minutes: 60
+youNeed: Modules, Designing error handling, Symbols and npm packages
+youBuild: A shipping-carrier plugin loader that imports carriers by name with dynamic import(), validates them, reports failures with causes, and is tested with good and broken plugins
+keywords: javascript module systems, es modules vs commonjs, esm cjs interop, require esm node 24, ERR_REQUIRE_ASYNC_MODULE, module.exports, named exports commonjs, live bindings, module resolution, bare specifier, node_modules, package.json exports, conditional exports, imports field, subpath, ERR_PACKAGE_PATH_NOT_EXPORTED, dual package hazard, dynamic import, plugins, top-level await, circular dependency, import.meta, createRequire
+objectives: Explain how ESM (parse, link, evaluate) and CommonJS (run on require) load code, and predict the consequences | Decide which system Node uses for a file, and mix the two: import CommonJS from ESM and require ESM from CommonJS in Node 24 | Tell live bindings from copied values | Resolve relative, bare and #imports specifiers, and design a package.json exports map | Load plugins with dynamic import() safely, and know what top-level await costs | Diagnose circular imports in both systems from their symptoms and break the cycle
+---
+<section>
+<h2 id="problem">The import that works in one file and not in another</h2>
+<p>A shop's backend is moving to ES modules. The payment code is an older CommonJS file that nobody wants to touch yet. The new checkout imports two functions from it, and crashes before running a single line:</p>
+<file name="package.json" project="interop">
+{ "type": "module" }
+</file>
+<example file="payments.cjs" project="interop" browser="no">
+function charge(orderId, kobo) {
+  return `charged ${orderId} ₦${kobo / 100}`;
+}
+function refund(chargeId) {
+  return `refunded ${chargeId}`;
+}
+
+exports.charge = charge;
+for (const [name, fn] of Object.entries({ refund })) module.exports[name] = fn;
+</example>
+<example file="checkout.js" project="interop" browser="no">
+import { charge, refund } from "./payments.cjs";
+
+console.log(charge("ORD-7", 2327850), refund("ch_1"));
+</example>
+<example file="main.js" project="interop" browser="no">
+try {
+  await import("./checkout.js");
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+
+import payments, { charge } from "./payments.cjs";
+console.log(Object.keys(payments), typeof charge);
+</example>
+<output>
+SyntaxError: Named export 'refund' not found. The requested module './payments.cjs' is a CommonJS module, which may not support all module.exports as named exports.
+CommonJS modules can always be imported via the default export, for example using:
+
+import pkg from './payments.cjs';
+const { charge, refund } = pkg;
+
+[ 'charge', 'refund' ] function
+</output>
+<p>Both functions exist at run time: the default import shows them. Yet the named import of <code>charge</code> works and the named import of <code>refund</code> does not. Nothing about <code>refund</code> is broken; it was just added in a way the loader could not <em>see</em>, because it was added by a loop instead of a plain <code>exports.refund = …</code> line.</p>
+<p><a href="/learn/js-modules">Modules</a> taught you to write ES modules, read CommonJS, and avoid circular imports. This lesson explains the machinery underneath: two module systems that load code in fundamentally different ways, how Node.js 24 lets them work together (including <code>require</code> of an ES module, new in recent versions), how a name like <code>"@zudojs/errors"</code> becomes a file, how to load code whose name you only learn at run time, and why circular imports fail the way they do. Every message you meet in this lesson, like the one above, comes from real runs. By the end you can read each one and know what to change.</p>
+</section>
+
+<section>
+<h2 id="two-systems">Two systems, side by side</h2>
+<p>JavaScript had no module system until ES2015. Node.js, which needed one from the start, invented <strong>CommonJS</strong> (CJS): a <code>require</code> function and a <code>module.exports</code> object. The language later standardised <strong>ES modules</strong> (ESM): <code>import</code> and <code>export</code> syntax, which browsers and Node.js both support. Node.js runs both, and a large part of the npm ecosystem is still CommonJS, so you will work with both for years.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th></th><th>ES modules</th><th>CommonJS</th></tr></thead>
+<tbody>
+<tr><td>Syntax</td><td><code>import</code> / <code>export</code> (keywords)</td><td><code>require()</code> / <code>module.exports</code> (a function and an object)</td></tr>
+<tr><td>When imports are found</td><td>Before any code runs: the file is parsed and every import is known</td><td>While the code runs, when execution reaches a <code>require</code> call</td></tr>
+<tr><td>Loading</td><td>Asynchronous-capable; supports top-level <code>await</code></td><td>Synchronous: <code>require</code> returns when the file has run</td></tr>
+<tr><td>What you receive</td><td><strong>Live bindings</strong> to the exporter's variables</td><td>The value of <code>module.exports</code> at that moment</td></tr>
+<tr><td>Strict mode</td><td>Always</td><td>Only with <code>"use strict"</code></td></tr>
+<tr><td>Top-level <code>this</code></td><td><code>undefined</code></td><td><code>module.exports</code></td></tr>
+<tr><td>File location</td><td><code>import.meta.url</code>, <code>import.meta.dirname</code>, <code>import.meta.filename</code></td><td><code>__dirname</code>, <code>__filename</code></td></tr>
+<tr><td>Relative paths</td><td>Must include the extension: <code>"./money.js"</code></td><td>Extension optional; <code>"./money"</code> tries <code>.js</code>, <code>.json</code>, <code>/index.js</code></td></tr>
+<tr><td>Runs in browsers</td><td>Yes, natively</td><td>Only through a bundler</td></tr>
+</tbody>
+</table></div>
+<p>The differences are easy to see side by side. The same three checks, in one file of each kind:</p>
+<example file="where.cjs" project="differences" browser="no">
+total = 5;
+console.log("cjs: sloppy mode allowed a global:", total);
+console.log("cjs: this is module.exports:", this === module.exports);
+console.log("cjs: file helpers:", typeof __dirname, typeof require);
+</example>
+<output>
+cjs: sloppy mode allowed a global: 5
+cjs: this is module.exports: true
+cjs: file helpers: string function
+</output>
+<example file="where.js" project="differences" browser="no">
+try {
+  total = 5;
+} catch (error) {
+  console.log(`esm: ${error.name}: ${error.message}`);
+}
+console.log("esm: this is", this);
+console.log("esm: file helpers:", typeof import.meta.dirname, typeof require, import.meta.filename.endsWith("where.js"));
+</example>
+<output>
+esm: ReferenceError: total is not defined
+esm: this is undefined
+esm: file helpers: string undefined true
+</output>
+<p>The CommonJS file silently created a global variable from a typo-like assignment; the ES module refused, because modules are always strict. <code>require</code> and <code>__dirname</code> simply do not exist in an ES module; <code>import.meta</code> replaces them.</p>
+<h3>How Node.js decides which system a file uses</h3>
+<ol>
+<li><code>.mjs</code> files are always ES modules; <code>.cjs</code> files are always CommonJS.</li>
+<li>A <code>.js</code> file follows the <code>"type"</code> field of the nearest <code>package.json</code> above it: <code>"module"</code> means ESM, <code>"commonjs"</code> (or no field) means CommonJS.</li>
+<li>With no <code>"type"</code> field, Node.js 24 also looks at the syntax: a <code>.js</code> file that uses <code>import</code>/<code>export</code> and cannot be CommonJS is run as ESM, with a warning suggesting you add <code>"type"</code>. Do not rely on this guess; set the field.</li>
+</ol>
+<p>So the same code can mean different things depending on a file you are not looking at. Here a project's <code>package.json</code> has no <code>"type"</code>, so <code>report.js</code> is CommonJS:</p>
+<file name="package.json" project="typeless">
+{ "name": "legacy-reports", "version": "1.0.0" }
+</file>
+<example file="report.js" project="typeless" browser="no">
+const { format } = require("node:util");
+console.log(format("module system: %s", typeof module === "object" ? "CommonJS" : "ESM"));
+</example>
+<output>
+module system: CommonJS
+</output>
+<tip>Set <code>"type": "module"</code> in every new project, use <code>.cjs</code> for the occasional CommonJS file (some tools' config files still need it), and never leave the choice to detection.</tip>
+</section>
+
+<section>
+<h2 id="phases">ESM: parse, link, evaluate</h2>
+<p>ES modules load in three phases, and nearly every ESM behaviour follows from them:</p>
+<ol>
+<li><strong>Parse</strong>: read each file and find its <code>import</code> and <code>export</code> declarations, without running anything. Because they are keywords at the top level, not function calls, they can be found by reading. That is why an <code>import</code> cannot be inside an <code>if</code>.</li>
+<li><strong>Link</strong>: follow every import to its file, parse those, and connect each imported name to the exporting module's variable. If a name is not exported, loading stops here, before any code runs.</li>
+<li><strong>Evaluate</strong>: run the module bodies, dependencies first, each exactly once.</li>
+</ol>
+<p>CommonJS has no separate phases: <code>require</code> is a function that runs the other file when execution reaches it. The difference shows when an import is wrong. The ES module fails before its first line runs; the CommonJS file runs until it trips over the missing value:</p>
+<example file="orders.js" project="phases" browser="no">
+export function createOrder(id) {
+  return { id, status: "new" };
+}
+</example>
+<example file="orders.cjs" project="phases" browser="no">
+exports.createOrder = (id) => ({ id, status: "new" });
+</example>
+<example file="app-esm.js" project="phases" browser="no">
+console.log("app-esm.js started");
+import { createOrder, cancelOrder } from "./orders.js";
+cancelOrder(createOrder("ORD-7"));
+</example>
+<example file="app-cjs.cjs" project="phases" browser="no">
+console.log("app-cjs.cjs started");
+const { createOrder, cancelOrder } = require("./orders.cjs");
+console.log("cancelOrder is", typeof cancelOrder);
+try {
+  cancelOrder(createOrder("ORD-7"));
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<example file="run-both.js" project="phases" browser="no">
+try {
+  await import("./app-esm.js");
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+await import("./app-cjs.cjs");
+</example>
+<output>
+SyntaxError: The requested module './orders.js' does not provide an export named 'cancelOrder'
+app-cjs.cjs started
+cancelOrder is undefined
+TypeError: cancelOrder is not a function
+</output>
+<p>The ES module's <code>console.log</code> never ran, even though it is the first line: the link phase found that <code>orders.js</code> has no <code>cancelOrder</code> and refused to evaluate anything. (Imports are also <strong>hoisted</strong>: wherever you write them in the file, they are processed before the body.) The CommonJS version started, destructured <code>undefined</code> without complaint, and only failed at the call, one step further from the real mistake. Static structure is what lets ESM catch this early, and what lets bundlers and editors know exactly what each file uses.</p>
+</section>
+
+<section>
+<h2 id="bindings">Live bindings versus copied values</h2>
+<p>An ES module import is not a copy of a value. It is a <strong>live binding</strong>: a read-only view of the exporting module's variable. When the exporter changes the variable, every importer sees the new value. A CommonJS <code>require</code> returns an object, and destructuring it copies the current values out:</p>
+<example file="stats.js" project="bindings" browser="no">
+export let ordersToday = 0;
+
+export function recordOrder() {
+  ordersToday += 1;
+}
+</example>
+<example file="stats.cjs" project="bindings" browser="no">
+let ordersToday = 0;
+
+function recordOrder() {
+  ordersToday += 1;
+  module.exports.ordersToday = ordersToday;
+}
+
+module.exports = { ordersToday, recordOrder };
+</example>
+<example file="compare.js" project="bindings" browser="no">
+import { ordersToday, recordOrder } from "./stats.js";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const cjsStats = require("./stats.cjs");
+const { ordersToday: copied } = cjsStats;
+
+recordOrder();
+recordOrder();
+cjsStats.recordOrder();
+cjsStats.recordOrder();
+
+console.log("esm live binding:", ordersToday);
+console.log("cjs destructured copy:", copied);
+console.log("cjs property read now:", cjsStats.ordersToday);
+
+try {
+  ordersToday = 99;
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+esm live binding: 2
+cjs destructured copy: 0
+cjs property read now: 2
+TypeError: Assignment to constant variable.
+</output>
+<ul>
+<li>The ESM import saw both increments without doing anything: it is a view of the variable in <code>stats.js</code>.</li>
+<li>The destructured CommonJS value was copied when the line ran, and stays 0 forever. Only reading the property again sees the update, and only because <code>recordOrder</code> remembered to write it back to <code>module.exports</code>.</li>
+<li>Imports are read-only. Only the module that owns a variable can change it, which keeps "who changes this?" answerable.</li>
+<li><code>createRequire(import.meta.url)</code> is how an ES module gets a real <code>require</code> function when it needs one, for example to load a CommonJS file synchronously or to use <code>require.resolve</code>.</li>
+</ul>
+<p>Live bindings are also what make ESM circular imports behave better than CommonJS ones, as you will see <a href="#circular">below</a>.</p>
+</section>
+
+<section>
+<h2 id="interop">Mixing the two in Node.js 24</h2>
+<h3>ESM importing CommonJS</h3>
+<p>An ES module can always <code>import</code> a CommonJS file. The <strong>default import</strong> is the whole <code>module.exports</code> object, always. For <strong>named imports</strong>, Node.js has to know the export names during the link phase, before the CommonJS file has run. It gets them by scanning the CommonJS source text for simple patterns such as <code>exports.charge = …</code>, <code>module.exports.refund = …</code> or <code>module.exports = { charge, refund }</code>. Anything computed at run time, like the loop in the opening example, is invisible to that scan. That is the whole explanation of the first error in this lesson, and the fix the error message suggests is the reliable one:</p>
+<example file="checkout-fixed.js" project="interop" browser="no">
+import payments from "./payments.cjs";
+
+const { charge, refund } = payments;
+console.log(charge("ORD-7", 2327850), "|", refund("ch_1"));
+</example>
+<output>
+charged ORD-7 ₦23278.5 | refunded ch_1
+</output>
+<p>The other fix is in the CommonJS file: assign exports with plain, visible statements (<code>module.exports = { charge, refund }</code>). If you maintain the CommonJS package, do that; if you only consume it, use the default import.</p>
+<h3>CommonJS requiring ESM: require(esm)</h3>
+<p>For years the reverse was impossible: <code>require</code> is synchronous, and an ES module might need to <code>await</code>. The only option was the asynchronous <code>import()</code>, which forced CommonJS callers to become asynchronous. Node.js 22.12 and 20.19 changed that, and in Node.js 24 it works without any flag or warning: <code>require()</code> can load an ES module, <strong>as long as that module and everything it imports have no top-level <code>await</code></strong>. It returns the module's <strong>namespace object</strong>, whose properties are the named exports, with the default export under <code>.default</code>:</p>
+<example file="money.js" project="require-esm" browser="no">
+export const VAT_RATE = 0.075;
+
+export function toNaira(kobo) {
+  return `₦${(kobo / 100).toFixed(2)}`;
+}
+
+export default function addVat(kobo) {
+  return Math.round(kobo * (1 + VAT_RATE));
+}
+</example>
+<example file="settings.js" project="require-esm" browser="no">
+const loaded = await Promise.resolve({ currency: "NGN" });
+export const currency = loaded.currency;
+</example>
+<example file="legacy-report.cjs" project="require-esm" browser="no">
+const money = require("./money.js");
+console.log(Object.keys(money), money[Symbol.toStringTag]);
+console.log(money.toNaira(money.default(1000000)));
+console.log("require(esm) supported:", process.features.require_module);
+
+try {
+  require("./settings.js");
+} catch (error) {
+  console.log(error.code);
+  console.log(error.message.split(". ")[0]);
+}
+
+import("./settings.js").then((settings) => console.log("import() works:", settings.currency));
+</example>
+<output>
+[ 'VAT_RATE', '__esModule', 'default', 'toNaira' ] Module
+₦10750.00
+require(esm) supported: true
+ERR_REQUIRE_ASYNC_MODULE
+require() cannot be used on an ESM graph with top-level await
+import() works: NGN
+</output>
+<p>The namespace also contains <code>__esModule</code>, a marker Node.js adds when the module has a default export, so that code compiled by older tools (which used the same marker) finds the default export where it expects it. The top-level <code>await</code> in <code>settings.js</code> made <code>require</code> refuse it, while <code>import()</code> loaded it without trouble. The rules for mixing, in one place:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>From</th><th>To</th><th>How</th><th>Watch out for</th></tr></thead>
+<tbody>
+<tr><td>ESM</td><td>CJS</td><td><code>import pkg from "./x.cjs"</code></td><td>Named imports only for exports the scanner can see</td></tr>
+<tr><td>ESM</td><td>CJS or JSON, synchronously</td><td><code>createRequire(import.meta.url)</code></td><td>Rarely needed; <code>import … with { type: "json" }</code> loads JSON</td></tr>
+<tr><td>CJS</td><td>ESM</td><td><code>require("./x.js")</code> (Node.js 20.19+, 22.12+)</td><td>Fails with <code>ERR_REQUIRE_ASYNC_MODULE</code> if top-level <code>await</code> is anywhere in its graph; default export is <code>.default</code></td></tr>
+<tr><td>CJS</td><td>ESM, always</td><td><code>await import("./x.js")</code></td><td>Asynchronous: the caller must handle a promise</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="resolution">Module resolution: from specifier to file</h2>
+<p>The string after <code>from</code> or inside <code>require()</code> is a <strong>specifier</strong>. <strong>Resolution</strong> is the process that turns it into one file. There are four kinds of specifier:</p>
+<ul>
+<li><strong>Relative</strong>: starts with <code>./</code> or <code>../</code>, and is resolved against the importing file's location, not the current directory. ESM requires the full file name including the extension; CommonJS will try adding <code>.js</code>, <code>.json</code>, <code>.node</code> and <code>/index.js</code>.</li>
+<li><strong>Absolute</strong>: a <code>file://</code> URL (in ESM) or an absolute path. Rare in application code.</li>
+<li><strong>Built-in</strong>: <code>node:fs</code>, <code>node:crypto</code>. Always write the <code>node:</code> prefix: it cannot be confused with an npm package of the same name.</li>
+<li><strong>Bare</strong>: a package name, such as <code>zod</code> or <code>@zudojs/errors</code>, optionally followed by a subpath (<code>@zudojs/errors/http</code>).</li>
+</ul>
+<h3>Finding a bare specifier</h3>
+<p>For <code>import { z } from "zod"</code> in <code>/app/src/orders/create.js</code>, Node.js looks for a folder named <code>zod</code> in <code>node_modules</code>, starting next to the importing file and walking up one directory at a time:</p>
+<figure class="lx-diagram">
+<pre>
+ /app/src/orders/node_modules/zod     not found
+ /app/src/node_modules/zod            not found
+ /app/node_modules/zod                found → read /app/node_modules/zod/package.json
+                                              → "exports" decides which file is the entry
+</pre>
+<figcaption>Bare specifiers are found by walking up through node_modules folders; package.json then picks the file.</figcaption>
+</figure>
+<p>That walk is why a monorepo's packages can share one <code>node_modules</code> at the root, and also why two different versions of a package can be installed at different levels and both be used (the <a href="/learn/js-symbols#registry">Symbols</a> lesson showed what that does to brand checks).</p>
+<h3>The exports field: a package's public door</h3>
+<p>Once the package folder is found, its <code>package.json</code> <code>"exports"</code> field maps <strong>subpaths</strong> (what importers write after the package name) to files. It does two jobs: it chooses the file, and it <em>hides everything not listed</em>. A package can also import itself by its own name, which lets you try an exports map without publishing anything. Here is a small shop library with a main entry, a public <code>money</code> subpath, a private internal module, and an <code>"imports"</code> map (names starting with <code>#</code>) for its own internal shortcuts:</p>
+<file name="package.json" project="exports">
+{
+  "name": "shop-core",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./money": "./src/money.js",
+    "./package.json": "./package.json"
+  },
+  "imports": {
+    "#rates": "./src/internal/rates.js"
+  }
+}
+</file>
+<example file="src/internal/rates.js" project="exports" browser="no">
+export const VAT_RATE = 0.075;
+</example>
+<example file="src/money.js" project="exports" browser="no">
+import { VAT_RATE } from "#rates";
+
+export const addVat = (kobo) => Math.round(kobo * (1 + VAT_RATE));
+</example>
+<example file="src/index.js" project="exports" browser="no">
+export { addVat } from "./money.js";
+export const name = "shop-core";
+</example>
+<example file="consumer.js" project="exports" browser="no">
+import { name } from "shop-core";
+import { addVat } from "shop-core/money";
+
+console.log(name, addVat(1000000));
+
+for (const specifier of ["shop-core/src/internal/rates.js", "shop-core/rates", "#rates"]) {
+  try {
+    const loaded = await import(specifier);
+    console.log(specifier, "->", Object.keys(loaded));
+  } catch (error) {
+    console.log(specifier, "->", error.code);
+  }
+}
+</example>
+<output>
+shop-core 1075000
+shop-core/src/internal/rates.js -> ERR_PACKAGE_PATH_NOT_EXPORTED
+shop-core/rates -> ERR_PACKAGE_PATH_NOT_EXPORTED
+#rates -> [ 'VAT_RATE' ]
+</output>
+<p>The internal file exists on disk, but <code>"shop-core/src/internal/rates.js"</code> is refused with <code>ERR_PACKAGE_PATH_NOT_EXPORTED</code>: it is not in the map. That is <strong>encapsulation</strong> for packages. Consumers cannot depend on your internal files, so you can move and rename them freely; only the listed subpaths are your public API. <code>"#rates"</code> works here because <code>consumer.js</code> is inside the package; code in another package could not use this package's <code>#</code> names.</p>
+<h3>Conditional exports</h3>
+<p>An exports entry can be an object of <strong>conditions</strong> instead of one path. Node.js picks the first condition that matches, in the order written. The common ones are <code>"import"</code> (loaded with <code>import</code>), <code>"require"</code> (loaded with <code>require</code>), <code>"node"</code>, <code>"browser"</code>, <code>"types"</code> (for TypeScript) and <code>"default"</code> (always matches, so it goes last). A package that ships both an ESM and a CJS build uses them:</p>
+<file name="package.json" project="dual">
+{
+  "name": "shop-errors",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./esm/index.js",
+      "require": "./cjs/index.cjs"
+    }
+  }
+}
+</file>
+<example file="esm/index.js" project="dual" browser="no">
+export class PaymentError extends Error {
+  name = "PaymentError";
+}
+export const build = "esm";
+</example>
+<example file="cjs/index.cjs" project="dual" browser="no">
+class PaymentError extends Error {
+  name = "PaymentError";
+}
+module.exports = { PaymentError, build: "cjs" };
+</example>
+<example file="hazard.js" project="dual" browser="no">
+import { PaymentError, build } from "shop-errors";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const fromRequire = require("shop-errors");
+
+console.log("import got:", build, "| require got:", fromRequire.build);
+
+const thrownByCjsCode = new fromRequire.PaymentError("card declined");
+console.log(thrownByCjsCode instanceof PaymentError);
+console.log(thrownByCjsCode.name === "PaymentError");
+</example>
+<output>
+import got: esm | require got: cjs
+false
+true
+</output>
+<p>Each way of loading got its own build, which is the point of conditional exports. It also shows the <strong>dual package hazard</strong>: when one application loads a package both ways (your ESM code imports it, while an older dependency requires it), two separate copies of every class exist. An error thrown by the CommonJS copy fails the <code>instanceof</code> check written against the ESM copy. Defences: ship a single implementation (for example ESM only, which Node.js 24 CommonJS users can <code>require</code>), keep shared state in one of the builds, or check errors by <code>name</code>, a <code>code</code> or a <code>Symbol.for</code> brand instead of <code>instanceof</code> (<a href="/learn/js-symbols#registry">Symbols</a>).</p>
+</section>
+
+<section>
+<h2 id="dynamic">Dynamic import(): loading code at run time</h2>
+<p><code>import</code> declarations are static: the file must be known before the program starts. <code>import(specifier)</code> is an expression that can be called anywhere, with any string, at any time. It returns a promise for the module's namespace object. It works in ES modules and in CommonJS, and in browsers. Uses:</p>
+<ul>
+<li><strong>Plugins</strong>: which carriers, payment providers or report formats to load is decided by configuration.</li>
+<li><strong>Lazy loading</strong>: a PDF library that only the monthly-invoice command needs should not slow down every server start.</li>
+<li><strong>ESM from CommonJS</strong>, when <code>require</code> cannot be used (top-level <code>await</code>).</li>
+</ul>
+<p>A module loaded dynamically is still loaded and evaluated only once. Importing it again, statically or dynamically, returns the same namespace object:</p>
+<example file="pdf.js" project="lazy" browser="no">
+console.log("  (pdf.js evaluated: expensive setup happens here)");
+export const renderInvoice = (id) => `%PDF invoice ${id}`;
+</example>
+<example file="cli.js" project="lazy" browser="no">
+console.log("cli started");
+
+async function command(name) {
+  if (name === "invoice") {
+    const { renderInvoice } = await import("./pdf.js");
+    return renderInvoice("INV-2026-00098");
+  }
+  return `ran ${name} without loading the PDF code`;
+}
+
+console.log(await command("stats"));
+console.log(await command("invoice"));
+console.log(await command("invoice"));
+const first = await import("./pdf.js");
+const second = await import("./pdf.js");
+console.log("same namespace object:", first === second);
+</example>
+<output>
+cli started
+ran stats without loading the PDF code
+  (pdf.js evaluated: expensive setup happens here)
+%PDF invoice INV-2026-00098
+%PDF invoice INV-2026-00098
+same namespace object: true
+</output>
+<p>The PDF module was evaluated once, at the first moment it was needed, and never for the <code>stats</code> command.</p>
+<warn title="Never import a path built from user input">An import runs the file's code with your program's full permissions. Building a specifier from a request (<code>import(`./carriers/${req.query.carrier}.js`)</code>) lets an attacker choose which file runs, including ones outside the folder via <code>../</code>. Resolve names against an allow-list first, as the build below does.</warn>
+</section>
+
+<section>
+<h2 id="top-level-await">Top-level await</h2>
+<p>In an ES module, <code>await</code> can be used at the top level, outside any function. The module's evaluation pauses there, and <em>every module that imports it waits</em> until it finishes. That is convenient for a configuration module that must load before anything uses it:</p>
+<example file="config.js" project="tla" browser="no">
+console.log("config: loading");
+const loaded = await new Promise((resolve) => setTimeout(() => resolve({ vatRate: 0.075, currency: "NGN" }), 20));
+console.log("config: ready");
+
+export const config = Object.freeze(loaded);
+</example>
+<example file="prices.js" project="tla" browser="no">
+import { config } from "./config.js";
+
+console.log("prices: evaluating, vat is", config.vatRate);
+export const withVat = (kobo) => Math.round(kobo * (1 + config.vatRate));
+</example>
+<example file="app.js" project="tla" browser="no">
+import { withVat } from "./prices.js";
+
+console.log("app: evaluating", withVat(1000000));
+</example>
+<output>
+config: loading
+config: ready
+prices: evaluating, vat is 0.075
+app: evaluating 1075000
+</output>
+<p><code>prices.js</code> did not run until <code>config.js</code> had finished waiting, so it never saw a half-loaded configuration. The costs are real, though:</p>
+<ul>
+<li><strong>Everything above it waits.</strong> A slow top-level <code>await</code> in a widely imported module delays the whole application's start, and a network call that hangs there hangs startup.</li>
+<li><strong>It blocks <code>require()</code>.</strong> A module with top-level <code>await</code> anywhere in its imports cannot be loaded with <code>require(esm)</code>, as you saw above. A library that adds one breaks its CommonJS users.</li>
+<li><strong>Errors happen at import time.</strong> A rejected top-level <code>await</code> makes the import itself fail; there is no function call to wrap in <code>try</code>.</li>
+</ul>
+<p>Use it in application entry points and small configuration modules, not in libraries. For resources such as database connections, an explicit <code>await db.connect()</code> during startup, managed by a lifecycle (<a href="/learn/zudo-runtime">the ZudoJS runtime</a>), is easier to control and to shut down.</p>
+</section>
+
+<section>
+<h2 id="circular">Circular imports, precisely</h2>
+<p><a href="/learn/js-modules#circular">Modules</a> showed the classic symptom: <code>Cannot access 'X' before initialization</code> in ESM, a silent <code>undefined</code> in CommonJS. With the load phases in mind, you can predict exactly which cycles fail and why. When a module is imported while it is still being loaded (a cycle), the loader does not start it again. It hands out what exists so far:</p>
+<ul>
+<li>In <strong>ESM</strong>, the binding exists (linking created it) but may not be initialised yet. <strong>Function declarations</strong> are initialised during linking, so they can be called across a cycle. <code>const</code>, <code>let</code> and <code>class</code> are in the temporal dead zone until their line runs, so reading them early throws.</li>
+<li>In <strong>CommonJS</strong>, <code>require</code> returns the <code>module.exports</code> object as it is at that moment: often empty. Destructuring from it copies <code>undefined</code>.</li>
+</ul>
+<example file="format.js" project="cycle-esm" browser="no">
+import { taxFor } from "./tax.js";
+
+export function formatNaira(kobo) {
+  return `₦${(kobo / 100).toFixed(2)}`;
+}
+export const RECEIPT_TITLE = "Shop receipt";
+
+console.log("format.js runs:", taxFor(1000000));
+</example>
+<example file="tax.js" project="cycle-esm" browser="no">
+import { formatNaira, RECEIPT_TITLE } from "./format.js";
+
+export function taxFor(kobo) {
+  return formatNaira(Math.round(kobo * 0.075));
+}
+
+console.log("tax.js runs, function works across the cycle:", formatNaira(500));
+try {
+  console.log(RECEIPT_TITLE);
+} catch (error) {
+  console.log(`tax.js: ${error.name}: ${error.message}`);
+}
+</example>
+<example file="main.js" project="cycle-esm" browser="no">
+import "./format.js";
+</example>
+<output>
+tax.js runs, function works across the cycle: ₦5.00
+tax.js: ReferenceError: Cannot access 'RECEIPT_TITLE' before initialization
+format.js runs: ₦750.00
+</output>
+<p><code>format.js</code> imports <code>tax.js</code>, so <code>tax.js</code> is evaluated first, while <code>format.js</code> has not run a line. Calling <code>formatNaira</code> worked (a hoisted function declaration); reading <code>RECEIPT_TITLE</code> threw (a <code>const</code> not yet initialised). Had <code>formatNaira</code> been written as <code>export const formatNaira = (kobo) =&gt; …</code>, the call would have thrown too. Changing a function declaration into an arrow function can therefore "break" a cycle that had been hiding for months.</p>
+<p>The CommonJS version of a common cycle, two classes that refer to each other, fails with a message that does not mention cycles at all:</p>
+<example file="base-payment.cjs" project="cycle-cjs" browser="no">
+const { CardPayment } = require("./card-payment.cjs");
+
+class BasePayment {
+  static fromMethod(method) {
+    if (method === "card") return new CardPayment();
+    throw new Error(`unknown method ${method}`);
+  }
+}
+
+module.exports = { BasePayment };
+</example>
+<example file="card-payment.cjs" project="cycle-cjs" browser="no">
+const { BasePayment } = require("./base-payment.cjs");
+
+console.log("card-payment.cjs sees BasePayment as", typeof BasePayment);
+class CardPayment extends BasePayment {}
+
+module.exports = { CardPayment };
+</example>
+<example file="main.cjs" project="cycle-cjs" browser="no">
+try {
+  require("./base-payment.cjs");
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+card-payment.cjs sees BasePayment as undefined
+TypeError: Class extends value undefined is not a constructor or null
+</output>
+<p><code>base-payment.cjs</code> started, and at its first line required <code>card-payment.cjs</code>, which required <code>base-payment.cjs</code> back. That returned the half-finished, still empty <code>module.exports</code>, so <code>BasePayment</code> was <code>undefined</code> and <code>extends undefined</code> failed. (Node.js also prints a warning about "accessing non-existent property … inside circular dependency" for this pattern; the checker on this site hides warnings.)</p>
+<h3>Symptoms and fixes</h3>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Symptom</th><th>Likely cause</th></tr></thead>
+<tbody>
+<tr><td>ESM: <code>ReferenceError: Cannot access 'X' before initialization</code> where X is imported</td><td>A cycle; X is a <code>const</code>, <code>let</code> or <code>class</code> read during evaluation</td></tr>
+<tr><td>CJS: <code>X is not a function</code>, <code>X is not a constructor</code>, <code>Class extends value undefined</code></td><td>A cycle; X was destructured from a half-finished <code>module.exports</code></td></tr>
+<tr><td>Works or breaks depending on which file is imported first</td><td>A cycle; the entry point decides which module in it runs first</td></tr>
+</tbody>
+</table></div>
+<p>The fixes from <a href="/learn/js-modules#circular">Modules</a> still apply: move what both modules need into a third module, pass a dependency in as an argument, or, for a factory like <code>fromMethod</code>, look the class up when the function <em>runs</em> rather than when the module loads. Tools can find cycles for you before they bite:</p>
+<shell title="Terminal on your computer (example output)">
+$ npx madge --circular src/
+Processed 42 files (812ms)
+
+✖ Found 1 circular dependency!
+
+1) payments/base-payment.js > payments/card-payment.js
+</shell>
+</section>
+
+<section>
+<h2 id="browser">Modules in the browser</h2>
+<p>Browsers only speak ESM. A page loads a module with <code>&lt;script type="module" src="/app.js"&gt;</code>, and each <code>import</code> becomes a network request for a URL. Three consequences:</p>
+<ul>
+<li>Relative specifiers must be full URLs or paths with extensions, as in Node's ESM.</li>
+<li>Bare specifiers like <code>"zod"</code> mean nothing to a browser, which has no <code>node_modules</code> walk. An <strong>import map</strong> (<code>&lt;script type="importmap"&gt;</code>) can map names to URLs, but most projects use a <strong>bundler</strong>, which resolves everything at build time the way Node.js would and produces a few files. <code>require</code> and CommonJS packages only work in the browser through a bundler.</li>
+<li>The <code>"browser"</code> export condition lets a package give browsers a different file, for example one without <code>node:fs</code>.</li>
+</ul>
+<p><a href="/learn/js-tooling">Tooling</a> covers bundlers. Server code in this course runs in Node.js, where everything in this lesson applies directly.</p>
+</section>
+
+<section>
+<h2 id="reason">Before you build: a carrier plugin loader</h2>
+<reason title="Design the plugin loader">
+<p>The shop supports several delivery carriers. Each is a module in <code>carriers/</code> that exports <code>name</code> and a <code>quote(order)</code> function. Which carriers are active comes from configuration (for example <code>ENABLED_CARRIERS=gig,kwik</code>), so they must be loaded at run time. Before reading the code, decide:</p>
+<ul>
+<li>How do you turn a configured name into a file safely?</li>
+<li>What should happen when a configured carrier's file does not exist? When the file exists but has no <code>quote</code> function? When the file throws while loading?</li>
+<li>Should one broken carrier stop the shop from starting, or should the others still load?</li>
+<li>How does the loader avoid importing the same carrier twice?</li>
+<li>How would you test all of this without real carrier code?</li>
+</ul>
+<answer>
+<ul>
+<li><strong>Names to files</strong>: through an allow-list, a map from known names to relative paths. A name not in the map is refused before any import happens. Nothing from configuration or a request is ever pasted into a path.</li>
+<li><strong>Failures</strong>: each is a different problem, so the loader reports it precisely, wrapped with the carrier name and the original error as <code>cause</code> (<a href="/learn/js-error-design#cause">cause chains</a>): unknown name (a configuration mistake), module not found (a deployment mistake), missing <code>quote</code> (a plugin bug), and an error during evaluation (a plugin bug with its own cause).</li>
+<li><strong>One broken carrier</strong>: the loader loads every carrier independently and collects failures. It returns the carriers that loaded plus an <code>AggregateError</code> describing the rest, and the caller decides: a checkout can run with two of three carriers, but startup should log loudly. If <em>no</em> carrier loads, that is fatal.</li>
+<li><strong>Loading twice</strong>: the module system already caches modules, so a second <code>import()</code> of the same file returns the same namespace. The loader only needs to avoid duplicate names in the configuration.</li>
+<li><strong>Testing</strong>: the allow-list is a parameter, so tests pass their own, pointing at small fake carrier files, including deliberately broken ones.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="build">Build: a carrier plugin loader</h2>
+<p>Four carrier files: two good ones, one without <code>quote</code>, and one that throws while it loads:</p>
+<example file="carriers/gig.js" project="plugins" browser="no">
+export const name = "GIG Logistics";
+export function quote(order) {
+  return 150000 + Math.ceil(order.weightKg) * 20000;
+}
+</example>
+<example file="carriers/kwik.js" project="plugins" browser="no">
+export const name = "Kwik";
+export const quote = (order) => (order.city === "Lagos" ? 120000 : null);
+</example>
+<example file="carriers/broken-shape.js" project="plugins" browser="no">
+export const name = "No quote function";
+export const qoute = () => 0;
+</example>
+<example file="carriers/broken-init.js" project="plugins" browser="no">
+const apiKey = process.env.CARRIER_X_KEY_THAT_IS_NOT_SET;
+if (!apiKey) throw new Error("CARRIER_X_KEY_THAT_IS_NOT_SET is missing");
+export const name = "Carrier X";
+export const quote = () => 0;
+</example>
+<p>The loader. <code>import()</code> resolves a relative specifier against the file that calls it, so the paths in the allow-list are relative to <code>loader.js</code>:</p>
+<example file="loader.js" project="plugins" browser="no">
+export const KNOWN_CARRIERS = Object.freeze({
+  gig: "./carriers/gig.js",
+  kwik: "./carriers/kwik.js",
+});
+
+class CarrierLoadError extends Error {
+  name = "CarrierLoadError";
+  constructor(carrier, problem, options) {
+    super(`carrier "${carrier}": ${problem}`, options);
+    this.carrier = carrier;
+  }
+}
+
+async function loadOne(carrier, known) {
+  if (!Object.hasOwn(known, carrier)) throw new CarrierLoadError(carrier, "not an allowed carrier");
+  let plugin;
+  try {
+    plugin = await import(known[carrier]);
+  } catch (error) {
+    const problem = error.code === "ERR_MODULE_NOT_FOUND" ? "module file not found" : "failed while loading";
+    throw new CarrierLoadError(carrier, problem, { cause: error });
+  }
+  if (typeof plugin.quote !== "function" || typeof plugin.name !== "string") {
+    throw new CarrierLoadError(carrier, "must export name and quote()");
+  }
+  return { id: carrier, name: plugin.name, quote: plugin.quote };
+}
+
+export async function loadCarriers(enabled, known = KNOWN_CARRIERS) {
+  const names = [...new Set(enabled.map((n) => n.trim()).filter(Boolean))];
+  const results = await Promise.allSettled(names.map((carrier) => loadOne(carrier, known)));
+  const carriers = results.filter((r) => r.status === "fulfilled").map((r) => r.value);
+  const failures = results.filter((r) => r.status === "rejected").map((r) => r.reason);
+  if (carriers.length === 0 && names.length > 0) {
+    throw new AggregateError(failures, "no carrier could be loaded");
+  }
+  return { carriers, problems: failures.length ? new AggregateError(failures, `${failures.length} carrier(s) failed to load`) : null };
+}
+</example>
+<example file="main.js" project="plugins" browser="no">
+import { loadCarriers } from "./loader.js";
+
+const enabled = "gig, kwik, gig, dhl".split(",");
+const { carriers, problems } = await loadCarriers(enabled);
+
+const order = { city: "Abuja", weightKg: 2.4 };
+for (const carrier of carriers) {
+  const kobo = carrier.quote(order);
+  console.log(`${carrier.name}: ${kobo === null ? "does not deliver there" : `₦${kobo / 100}`}`);
+}
+if (problems) {
+  console.log(problems.message);
+  for (const problem of problems.errors) console.log("  -", problem.message);
+}
+</example>
+<output>
+GIG Logistics: ₦2100
+Kwik: does not deliver there
+1 carrier(s) failed to load
+  - carrier "dhl": not an allowed carrier
+</output>
+<p>The duplicate <code>gig</code> was loaded once, <code>dhl</code> was refused by the allow-list before any import, and the shop kept working with the carriers that loaded. The startup log gets one clear message per problem.</p>
+<h3>Testing the loader</h3>
+<p>The allow-list is a parameter, so tests point it at the deliberately broken carriers and check that each failure is reported for what it is:</p>
+<example file="loader.test.js" project="plugins" browser="no">
+import { loadCarriers } from "./loader.js";
+
+function check(label, actual, expected) {
+  const same = JSON.stringify(actual) === JSON.stringify(expected);
+  console.log(`${same ? "PASS" : "FAIL"} ${label} -> ${JSON.stringify(actual)}`);
+}
+
+const TEST_CARRIERS = {
+  gig: "./carriers/gig.js",
+  shape: "./carriers/broken-shape.js",
+  init: "./carriers/broken-init.js",
+  ghost: "./carriers/does-not-exist.js",
+};
+
+const { carriers, problems } = await loadCarriers(["gig", "shape", "init", "ghost", "../../etc/passwd"], TEST_CARRIERS);
+check("good carrier loads", carriers.map((c) => c.id), ["gig"]);
+check("each failure is described", problems.errors.map((e) => e.message), [
+  'carrier "shape": must export name and quote()',
+  'carrier "init": failed while loading',
+  'carrier "ghost": module file not found',
+  'carrier "../../etc/passwd": not an allowed carrier',
+]);
+check("load error keeps its cause", problems.errors[1].cause.message, "CARRIER_X_KEY_THAT_IS_NOT_SET is missing");
+check("missing file keeps the code", problems.errors[2].cause.code, "ERR_MODULE_NOT_FOUND");
+
+let fatal = null;
+try {
+  await loadCarriers(["shape"], TEST_CARRIERS);
+} catch (error) {
+  fatal = [error.name, error.message];
+}
+check("no carriers at all is fatal", fatal, ["AggregateError", "no carrier could be loaded"]);
+check("empty configuration is allowed", (await loadCarriers([], TEST_CARRIERS)).carriers, []);
+
+const a = await import("./carriers/gig.js");
+const again = await loadCarriers(["gig"], TEST_CARRIERS);
+check("module cache: same function", again.carriers[0].quote === a.quote, true);
+</example>
+<output>
+PASS good carrier loads -> ["gig"]
+PASS each failure is described -> ["carrier \"shape\": must export name and quote()","carrier \"init\": failed while loading","carrier \"ghost\": module file not found","carrier \"../../etc/passwd\": not an allowed carrier"]
+PASS load error keeps its cause -> "CARRIER_X_KEY_THAT_IS_NOT_SET is missing"
+PASS missing file keeps the code -> "ERR_MODULE_NOT_FOUND"
+PASS no carriers at all is fatal -> ["AggregateError","no carrier could be loaded"]
+PASS empty configuration is allowed -> []
+PASS module cache: same function -> true
+</output>
+<p>The path-traversal attempt is the most important line in that test: it never reached <code>import()</code>. Note also that the module that threw during loading is not cached as a success; a later import would try, and fail, again, which is what you want once the missing environment variable is fixed and the process restarted.</p>
+<h3>In production</h3>
+<ul>
+<li><strong>Decide at startup, not per request.</strong> Load plugins once while the service starts, fail fast if none load, and keep the loaded list. Importing on the first request makes that request slow and turns a deployment mistake into a customer-facing error.</li>
+<li><strong>Plugins run with full trust.</strong> An imported module can read environment variables, files and the network. Only load code you deploy yourself or have reviewed; the allow-list is a guard against mistakes and attacks, not a sandbox.</li>
+<li><strong>Pick one module system per package.</strong> New packages: ESM only, with an <code>"exports"</code> map. Node.js 24 CommonJS users can still <code>require</code> it, as long as you avoid top-level <code>await</code> in it.</li>
+<li><strong>Watch for cycles in CI.</strong> A cycle check such as <code>madge --circular</code> in the build catches them before the symptoms appear. ZudoJS checks package boundaries the same way, so shared packages never import the features that use them.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Break the payment cycle">
+<p>Fix the circular dependency between <code>base-payment.cjs</code> and <code>card-payment.cjs</code> from the lesson, so that <code>BasePayment.fromMethod("card")</code> returns a <code>CardPayment</code> that is also an instance of <code>BasePayment</code>. Keep CommonJS.</p>
+<solution>
+<p>The factory only needs <code>CardPayment</code> when it <em>runs</em>, not when the module loads. Move the <code>require</code> into the function, so it happens after both modules have finished loading:</p>
+<example file="base-payment.cjs" project="cycle-fixed" browser="no">
+class BasePayment {
+  static fromMethod(method) {
+    if (method === "card") {
+      const { CardPayment } = require("./card-payment.cjs");
+      return new CardPayment();
+    }
+    throw new Error(`unknown method ${method}`);
+  }
+}
+
+module.exports = { BasePayment };
+</example>
+<example file="card-payment.cjs" project="cycle-fixed" browser="no">
+const { BasePayment } = require("./base-payment.cjs");
+
+class CardPayment extends BasePayment {}
+
+module.exports = { CardPayment };
+</example>
+<example file="main.cjs" project="cycle-fixed" browser="no">
+const { BasePayment } = require("./base-payment.cjs");
+
+const payment = BasePayment.fromMethod("card");
+console.log(payment.constructor.name, payment instanceof BasePayment);
+</example>
+<output>
+CardPayment true
+</output>
+<p>Now <code>base-payment.cjs</code> loads completely without touching <code>card-payment.cjs</code>, so when <code>card-payment.cjs</code> requires it, <code>BasePayment</code> is there. A cleaner long-term fix is a third module (a <code>paymentFactory</code>) that imports both classes, so the base class does not need to know its subclasses at all.</p>
+</solution>
+</exercise>
+<exercise title="An exports map that hides internals">
+<p>Write the <code>package.json</code> for a package <code>shop-tax</code> whose public API is the main entry (<code>src/index.js</code>, exporting <code>vatFor</code>) and a <code>shop-tax/rates</code> subpath (<code>src/rates.js</code>). Its helper <code>src/round.js</code> must not be importable from outside. Prove it with a file that imports the package by its own name.</p>
+<solution>
+<file name="package.json" project="tax-exports">
+{
+  "name": "shop-tax",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./rates": "./src/rates.js"
+  }
+}
+</file>
+<example file="src/round.js" project="tax-exports" browser="no">
+export const roundKobo = (value) => Math.round(value);
+</example>
+<example file="src/rates.js" project="tax-exports" browser="no">
+export const RATES = Object.freeze({ NG: 0.075, GH: 0.15 });
+</example>
+<example file="src/index.js" project="tax-exports" browser="no">
+import { RATES } from "./rates.js";
+import { roundKobo } from "./round.js";
+
+export const vatFor = (country, kobo) => roundKobo(kobo * RATES[country]);
+</example>
+<example file="check.js" project="tax-exports" browser="no">
+import { vatFor } from "shop-tax";
+import { RATES } from "shop-tax/rates";
+
+console.log(vatFor("NG", 1000000), RATES.GH);
+try {
+  await import("shop-tax/src/round.js");
+} catch (error) {
+  console.log(error.code);
+}
+</example>
+<output>
+75000 0.15
+ERR_PACKAGE_PATH_NOT_EXPORTED
+</output>
+<p>Inside the package, <code>index.js</code> still imports <code>./round.js</code> with a relative path; the exports map only controls what <em>other</em> code can reach through the package name.</p>
+</solution>
+</exercise>
+<exercise title="Use an ESM library from an old CommonJS script">
+<p>A CommonJS script, <code>nightly.cjs</code>, must use the ESM module <code>invoice.js</code>, which has a default export and a named export. Use <code>require</code> (Node.js 24). Then explain what you would do if <code>invoice.js</code> started using top-level <code>await</code>.</p>
+<solution>
+<example file="invoice.js" project="nightly" browser="no">
+export const PREFIX = "INV-2026";
+
+export default function invoiceNumber(n) {
+  return `${PREFIX}-${String(n).padStart(5, "0")}`;
+}
+</example>
+<example file="nightly.cjs" project="nightly" browser="no">
+const invoice = require("./invoice.js");
+const invoiceNumber = invoice.default;
+
+console.log(invoice.PREFIX, invoiceNumber(98), invoiceNumber(99));
+</example>
+<output>
+INV-2026 INV-2026-00098 INV-2026-00099
+</output>
+<p><code>require</code> returns the namespace object, so the default export is <code>invoice.default</code>. If <code>invoice.js</code> (or anything it imports) gained a top-level <code>await</code>, <code>require</code> would throw <code>ERR_REQUIRE_ASYNC_MODULE</code>. The script would then switch to <code>const invoice = await import("./invoice.js")</code> inside an <code>async</code> function, or, better, be converted to ESM itself.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>ES modules are parsed and linked before any code runs, so imports are static, hoisted and checked early; CommonJS runs a file when <code>require</code> is called and returns <code>module.exports</code>.</li>
+<li><code>.mjs</code> is ESM and <code>.cjs</code> is CommonJS; <code>.js</code> follows the nearest <code>package.json</code> <code>"type"</code>. Set it explicitly.</li>
+<li>ESM imports are read-only live bindings; destructuring a <code>require</code> copies values.</li>
+<li>ESM can import CommonJS: the default import is <code>module.exports</code>, and named imports only work for exports visible to Node's scan. In Node.js 24, CommonJS can <code>require</code> ESM without top-level <code>await</code>; <code>import()</code> always works.</li>
+<li>Bare specifiers are found by walking up <code>node_modules</code>; the package's <code>"exports"</code> map chooses the file, hides everything else, and can pick builds by condition. Loading a dual package both ways creates two copies of its classes.</li>
+<li><code>import()</code> loads modules at run time for plugins and lazy loading; modules are cached; never build a specifier from user input. Top-level <code>await</code> makes importers wait and blocks <code>require</code>.</li>
+<li>In a cycle, ESM hands out bindings that may still be uninitialised (function declarations work, <code>const</code> and classes throw); CommonJS hands out a half-filled exports object. Break cycles by extracting shared code, passing dependencies in, or looking things up at call time.</li>
+</ul>
+<p>This is the last lesson of Advanced JavaScript. Next: <a href="/learn/node-runtime">What Node.js is</a>, the runtime these modules run in on the server.</p>
+</section>

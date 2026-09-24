@@ -1,0 +1,704 @@
+<question id="ut-partial-patch" type="choice">
+<q>Why is <code>Partial&lt;User&gt;</code> a poor type for the body of a "customer edits their profile" request?</q>
+<option>Because <code>Partial</code> makes the properties <code>readonly</code></option>
+<option correct>Because it allows every field of <code>User</code>, including <code>role</code> and <code>id</code>, so the type itself permits privilege escalation</option>
+<option>Because <code>Partial</code> removes the property types</option>
+<option>Because <code>Partial</code> cannot be used on interfaces</option>
+<explain><p><code>Partial</code> keeps every key and makes it optional. A profile patch should allow only the editable fields: <code>Partial&lt;Pick&lt;User, "name" | "phone"&gt;&gt;</code>, backed by runtime code that copies only those fields.</p></explain>
+</question>
+
+<question id="ut-required-undefined" type="choice">
+<q>For <code>interface Options { pageSize?: number }</code>, what is <code>Required&lt;Options&gt;["pageSize"]</code>?</q>
+<option><code>number | undefined</code></option>
+<option correct><code>number</code></option>
+<option><code>undefined</code></option>
+<option><code>never</code></option>
+<explain><p><code>Required</code> is <code>{ [K in keyof T]-?: T[K] }</code>. The <code>-?</code> modifier removes the optional mark and the <code>undefined</code> that it added.</p></explain>
+</question>
+
+<question id="ut-readonly-shallow" type="choice">
+<q><code>const user: Readonly&lt;User&gt;</code>, where <code>User</code> has <code>name: string</code> and <code>address: { city: string }</code>. Which line compiles?</q>
+<option><code>user.name = "Grace";</code></option>
+<option><code>user.address = { city: "Abuja" };</code></option>
+<option correct><code>user.address.city = "Abuja";</code></option>
+<option>None of them</option>
+<explain><p><code>Readonly</code> is shallow: it marks the properties of <code>User</code>, so <code>address</code> cannot be replaced, but the object inside it keeps its own, writable <code>city</code>.</p></explain>
+</question>
+
+<question id="ut-readonly-runtime" type="choice">
+<q>What does <code>Readonly&lt;T&gt;</code> do at runtime?</q>
+<option>It calls <code>Object.freeze</code> on the value</option>
+<option>It makes assignments throw a <code>TypeError</code></option>
+<option correct>Nothing: it is erased, and only stops assignments at compile time</option>
+<option>It copies the object</option>
+<explain><p>All types are erased. For a runtime guarantee, use <code>Object.freeze</code> (which is also shallow).</p></explain>
+</question>
+
+<question id="ut-omit-unchecked" type="choice">
+<q>What happens with <code>type PublicUser = Omit&lt;User, "passwrodHash"&gt;</code> (a typo)?</q>
+<option>A compile error: the key does not exist</option>
+<option correct>It compiles, omits nothing, and <code>PublicUser</code> still has <code>passwordHash</code></option>
+<option>It omits every key that starts with <code>"pass"</code></option>
+<option>It produces <code>never</code></option>
+<explain><p><code>Omit</code>'s key parameter is constrained to <code>keyof any</code>, not <code>keyof T</code>, so any string is accepted. <code>Pick</code> checks its keys. A <code>StrictOmit&lt;T, K extends keyof T&gt;</code> fixes it.</p></explain>
+</question>
+
+<question id="ut-omit-def" type="choice">
+<q>Which definition matches the standard library's <code>Omit</code>?</q>
+<option><code>type Omit&lt;T, K&gt; = { [P in K]: T[P] }</code></option>
+<option correct><code>type Omit&lt;T, K extends keyof any&gt; = Pick&lt;T, Exclude&lt;keyof T, K&gt;&gt;</code></option>
+<option><code>type Omit&lt;T, K&gt; = T extends K ? never : T</code></option>
+<option><code>type Omit&lt;T, K extends keyof T&gt; = Exclude&lt;T, K&gt;</code></option>
+<explain><p>"Omit these keys" is "pick every key that is not one of them". <code>Exclude</code> removes the omitted keys from the key union, and <code>Pick</code> builds the object.</p></explain>
+</question>
+
+<question id="ut-omit-union" type="choice">
+<q><code>type Payment = { id: string; kind: "card"; last4: string } | { id: string; kind: "wallet"; phone: string }</code>. What is <code>Omit&lt;Payment, "id"&gt;</code>?</q>
+<option><code>{ kind: "card"; last4: string } | { kind: "wallet"; phone: string }</code></option>
+<option correct><code>{ kind: "card" | "wallet" }</code></option>
+<option><code>never</code></option>
+<option>A compile error</option>
+<explain><p><code>keyof</code> of a union gives only the shared keys (<code>id</code> and <code>kind</code>), so the result is one flattened object with just <code>kind</code>. The union and its member-specific fields are lost. A distributive version applies <code>Omit</code> to each member.</p></explain>
+</question>
+
+<question id="ut-distributive" type="choice">
+<q>Why does <code>type DistributiveOmit&lt;T, K extends keyof any&gt; = T extends unknown ? Omit&lt;T, K&gt; : never</code> keep the union intact?</q>
+<option>Because <code>unknown</code> removes the union</option>
+<option correct>Because a conditional type on a bare type parameter is applied to each union member separately, so each member is omitted on its own</option>
+<option>Because <code>never</code> merges the members back together</option>
+<option>Because <code>Omit</code> is distributive already</option>
+<explain><p><code>T extends unknown</code> is always true; its only job is to trigger distribution. The results for each member are joined back into a union.</p></explain>
+</question>
+
+<question id="ut-record-keys" type="choice">
+<q><code>const labels: Record&lt;"customer" | "staff" | "admin", string&gt; = { customer: "Customer", staff: "Staff" };</code> What does the compiler say?</q>
+<option>Nothing; missing keys are allowed</option>
+<option correct>That property <code>admin</code> is missing: a <code>Record</code> over a union of keys needs every key</option>
+<option>That <code>Record</code> cannot use string literal keys</option>
+<option>That <code>labels</code> must be declared <code>as const</code></option>
+<explain><p><code>Record&lt;K, V&gt;</code> is <code>{ [P in K]: V }</code>: one required property per key. That is why it is great for lookup tables over a union: adding a role forces a new label.</p></explain>
+</question>
+
+<question id="ut-record-string" type="choice">
+<q>With <code>const stock: Record&lt;string, number&gt; = { rice: 12 };</code>, what is the type of <code>stock.garri</code> (without <code>noUncheckedIndexedAccess</code>)?</q>
+<option><code>number | undefined</code></option>
+<option correct><code>number</code>, even though it is <code>undefined</code> at runtime</option>
+<option>A compile error: <code>garri</code> does not exist</option>
+<option><code>never</code></option>
+<explain><p><code>Record&lt;string, number&gt;</code> promises a number for every string key. The promise is false for missing keys. <code>noUncheckedIndexedAccess</code> adds <code>| undefined</code> to such reads; a <code>Map</code> is another option.</p></explain>
+</question>
+
+<question id="ut-exclude-steps" type="choice">
+<q>What is <code>Exclude&lt;"pending" | "paid" | "cancelled", "cancelled" | "refunded"&gt;</code>?</q>
+<option correct><code>"pending" | "paid"</code></option>
+<option><code>"pending" | "paid" | "refunded"</code></option>
+<option><code>"cancelled"</code></option>
+<option>A compile error, because <code>"refunded"</code> is not in the first union</option>
+<explain><p>Each member of the first union is tested: kept unless it is assignable to the second. <code>"refunded"</code> is simply never matched; <code>Exclude</code> does not check that the excluded members exist.</p></explain>
+</question>
+
+<question id="ut-extract-shape" type="choice">
+<q>What does <code>Extract&lt;Payment, { kind: "card" }&gt;</code> give, for a discriminated union <code>Payment</code>?</q>
+<option>The <code>kind</code> property's type</option>
+<option correct>The member of <code>Payment</code> whose <code>kind</code> is <code>"card"</code>, with all its fields</option>
+<option><code>{ kind: "card" }</code> exactly</option>
+<option>Every member except the card</option>
+<explain><p><code>Extract</code> keeps the members assignable to the second type. The card member has <code>kind: "card"</code> plus other fields, so it is assignable to <code>{ kind: "card" }</code> and is kept whole.</p></explain>
+</question>
+
+<question id="ut-nonnullable-def" type="choice">
+<q>The standard library defines <code>NonNullable&lt;T&gt;</code> as <code>T &amp; {}</code>. Why does that work?</q>
+<option>Because <code>{}</code> means "an empty object", which has no <code>null</code></option>
+<option correct>Because <code>{}</code> is every value except <code>null</code> and <code>undefined</code>, so the intersection removes exactly those two</option>
+<option>Because <code>&amp;</code> removes all falsy values</option>
+<option>Because <code>{}</code> is the same as <code>never</code></option>
+<explain><p><code>{}</code> accepts strings, numbers, objects and every other non-nullish value. Intersecting with it keeps those and drops <code>null</code> and <code>undefined</code>, even for a type parameter that is not known yet.</p></explain>
+</question>
+
+<question id="ut-returntype-overload" type="choice">
+<q>A function has two overloads: <code>(id: string): Booking</code> and <code>(ids: string[]): Booking[]</code>, in that order. What is its <code>ReturnType</code>?</q>
+<option><code>Booking</code></option>
+<option correct><code>Booking[]</code></option>
+<option><code>Booking | Booking[]</code></option>
+<option><code>never</code></option>
+<explain><p>When <code>infer</code> matches an overloaded function type, it uses the last signature. If you need the other result type, name it directly.</p></explain>
+</question>
+
+<question id="ut-parameters-tuple" type="choice">
+<q>What is <code>Parameters&lt;typeof quote&gt;</code> for <code>function quote(zone: "lagos" | "abuja", weightKg: number, express = false)</code>?</q>
+<option><code>["lagos" | "abuja", number, boolean]</code></option>
+<option correct><code>[zone: "lagos" | "abuja", weightKg: number, express?: boolean]</code></option>
+<option><code>{ zone: string; weightKg: number; express: boolean }</code></option>
+<option><code>(string | number | boolean)[]</code></option>
+<explain><p><code>Parameters</code> gives a labelled tuple. A parameter with a default value becomes an optional element, because callers may leave it out.</p></explain>
+</question>
+
+<question id="ut-typeof-needed" type="choice">
+<q>Why is <code>ReturnType&lt;quoteDelivery&gt;</code> an error, when <code>quoteDelivery</code> is a function?</q>
+<option>Because <code>ReturnType</code> only works on arrow functions</option>
+<option correct>Because <code>quoteDelivery</code> is a value; the type argument must be a type, so write <code>ReturnType&lt;typeof quoteDelivery&gt;</code></option>
+<option>Because the function has no return annotation</option>
+<option>Because <code>ReturnType</code> needs two type arguments</option>
+<explain><p>Utility types take types. <code>typeof</code> turns the function's name into its function type.</p></explain>
+</question>
+
+<question id="ut-class-utilities" type="choice">
+<q>For <code>class Room { constructor(name: string, priceKobo: number) {} }</code>, what are <code>ConstructorParameters&lt;typeof Room&gt;</code> and <code>InstanceType&lt;typeof Room&gt;</code>?</q>
+<option correct><code>[name: string, priceKobo: number]</code> and <code>Room</code></option>
+<option><code>Room</code> and <code>[name: string, priceKobo: number]</code></option>
+<option><code>[string, number]</code> and <code>typeof Room</code></option>
+<option>Both are errors, because <code>Room</code> is a class</option>
+<explain><p>Both take the constructor type, <code>typeof Room</code>: one extracts what <code>new</code> takes, the other what <code>new</code> gives, which is the instance type <code>Room</code>.</p></explain>
+</question>
+
+<question id="ut-awaited-recursive" type="choice">
+<q>In <code>type MyAwaited&lt;T&gt; = T extends PromiseLike&lt;infer V&gt; ? MyAwaited&lt;V&gt; : T</code>, why does the true branch use <code>MyAwaited&lt;V&gt;</code> rather than <code>V</code>?</q>
+<option>To make the type slower to compute</option>
+<option correct>So that nested promises are unwrapped repeatedly until no promise is left, like <code>await</code></option>
+<option>Because <code>V</code> alone is a syntax error</option>
+<option>To remove <code>null</code> and <code>undefined</code></option>
+<explain><p>With just <code>V</code>, <code>Promise&lt;Promise&lt;number&gt;&gt;</code> would give <code>Promise&lt;number&gt;</code>. The recursion keeps unwrapping; <code>Awaited&lt;Promise&lt;Promise&lt;number&gt;&gt;&gt;</code> is <code>number</code>.</p></explain>
+</question>
+
+<question id="ut-thistype" type="choice">
+<q>What does <code>ThisType&lt;S &amp; A&gt;</code> do when it appears in the type of an object literal's contextual type?</q>
+<option>It binds the methods' <code>this</code> at runtime</option>
+<option correct>It tells the compiler that <code>this</code> inside the literal's methods has type <code>S &amp; A</code></option>
+<option>It adds the properties of <code>S</code> to the object at runtime</option>
+<option>It makes the object readonly</option>
+<explain><p><code>ThisType</code> is an empty marker interface the compiler recognises (with <code>noImplicitThis</code>). It changes only the type of <code>this</code>; the runtime value of <code>this</code> still depends on how a method is called.</p></explain>
+</question>
+
+<question id="ut-allow-list" type="choice">
+<q>For the public view of a user, why does the lesson prefer <code>Pick&lt;User, "id" | "name" | "role"&gt;</code> to <code>Omit&lt;User, "passwordHash"&gt;</code>?</q>
+<option>Because <code>Pick</code> is faster to compile</option>
+<option correct>Because with an allow-list, a field added to <code>User</code> later (say, a reset token) is not public until someone chooses to add it</option>
+<option>Because <code>Omit</code> cannot remove string properties</option>
+<option>Because <code>Pick</code> removes the fields from the object at runtime</option>
+<explain><p>Deny-lists fail open: a new secret leaks until someone remembers to omit it. Allow-lists fail closed. Neither type changes the data; the view must still be built field by field.</p></explain>
+</question>
+
+<question id="ut-compose" type="choice">
+<q><code>findUser</code> is <code>(id: string) =&gt; Promise&lt;User | undefined&gt;</code>. What is <code>NonNullable&lt;Awaited&lt;ReturnType&lt;typeof findUser&gt;&gt;&gt;</code>?</q>
+<option><code>Promise&lt;User&gt;</code></option>
+<option><code>User | undefined</code></option>
+<option correct><code>User</code></option>
+<option><code>never</code></option>
+<explain><p>Read from the inside out: <code>ReturnType</code> gives <code>Promise&lt;User | undefined&gt;</code>, <code>Awaited</code> removes the promise, and <code>NonNullable</code> removes <code>undefined</code>.</p></explain>
+</question>
+
+<question id="ut-any-constraint" type="choice">
+<q>Why is <code>ReturnType</code>'s constraint <code>T extends (...args: any) =&gt; any</code> rather than <code>(...args: unknown[]) =&gt; unknown</code>?</q>
+<option>Because <code>unknown</code> did not exist when it was written</option>
+<option correct>Because a function that takes specific parameters, such as <code>(id: string) =&gt; User</code>, is not assignable to one that must accept any <code>unknown</code> argument</option>
+<option>Because <code>any</code> makes the result more precise</option>
+<option>There is no reason; both work the same</option>
+<explain><p>Parameters are compared contravariantly: a function that needs a <code>string</code> cannot stand in for one that promises to accept anything. <code>any</code> in the parameter position switches that check off, so every function fits.</p></explain>
+</question>
+
+<question id="ut-out-patch-spread" type="output">
+<q>What does this print?</q>
+<code file="spread.ts">
+interface Account {
+  id: string;
+  owner: string;
+  role: "customer" | "admin";
+}
+
+function update(account: Account, patch: Partial<Account>): Account {
+  return { ...account, ...patch };
+}
+
+const before: Account = { id: "A-1", owner: "Ada", role: "customer" };
+const after = update(before, { owner: "Ada Obi", role: "admin" });
+console.log(before.role, after.role, after.owner);
+</code>
+<option correct>customer admin Ada Obi</option>
+<option>admin admin Ada Obi</option>
+<option>customer customer Ada Obi</option>
+<option>It does not compile: <code>role</code> may not be patched</option>
+<explain><p><code>Partial&lt;Account&gt;</code> allows <code>role</code>, so the spread overwrites it in the new object. The original is untouched because the function returns a copy.</p></explain>
+</question>
+
+<question id="ut-out-readonly-nested" type="output">
+<q>What does this print?</q>
+<code file="nested.ts">
+interface Order {
+  id: string;
+  delivery: { city: string };
+}
+
+const order: Readonly<Order> = { id: "ORD-1", delivery: { city: "Lagos" } };
+order.delivery.city = "Kano";
+console.log(order.delivery.city, Object.isFrozen(order));
+</code>
+<option correct>Kano false</option>
+<option>Lagos true</option>
+<option>Lagos false</option>
+<option>It does not compile</option>
+<explain><p><code>Readonly</code> is shallow and compile-time only, so writing a nested property compiles and runs, and the object is not frozen.</p></explain>
+</question>
+
+<question id="ut-out-pick-runtime" type="output">
+<q>What does this print?</q>
+<code file="pick-runtime.ts">
+interface User {
+  id: string;
+  name: string;
+  passwordHash: string;
+}
+
+const user: User = { id: "U-7", name: "Ada", passwordHash: "(hash)" };
+const view: Pick<User, "id" | "name"> = user;
+console.log(Object.keys(view).length, JSON.stringify(view).includes("hash"));
+</code>
+<option correct>3 true</option>
+<option>2 false</option>
+<option>2 true</option>
+<option>3 false</option>
+<explain><p>A type annotation does not remove data. <code>view</code> is the same object as <code>user</code>, with all three properties; <code>Pick</code> only limits what the compiler lets you read.</p></explain>
+</question>
+
+<question id="ut-out-defaults" type="output">
+<q>What does this print?</q>
+<code file="defaults.ts">
+interface ExportOptions {
+  format?: "csv" | "json";
+  includeRefunds?: boolean;
+  pageSize?: number;
+}
+
+function resolve(options: ExportOptions): Required<ExportOptions> {
+  return {
+    format: options.format ?? "csv",
+    includeRefunds: options.includeRefunds ?? false,
+    pageSize: options.pageSize ?? 100,
+  };
+}
+
+console.log(resolve({ includeRefunds: true, pageSize: 0 }));
+</code>
+<option correct>{ format: 'csv', includeRefunds: true, pageSize: 0 }</option>
+<option>{ format: 'csv', includeRefunds: true, pageSize: 100 }</option>
+<option>{ includeRefunds: true, pageSize: 0 }</option>
+<option>{ format: undefined, includeRefunds: true, pageSize: 0 }</option>
+<explain><p><code>??</code> only replaces <code>null</code> and <code>undefined</code>, so a page size of 0 is kept. <code>Required&lt;ExportOptions&gt;</code> makes the compiler insist every option is filled in.</p></explain>
+</question>
+
+<question id="ut-out-wrapper" type="output">
+<q>What does this print?</q>
+<code file="wrapper.ts">
+function logged<F extends (...args: any[]) => any>(name: string, fn: F): (...args: Parameters<F>) => ReturnType<F> {
+  return (...args) => {
+    console.log(`-> ${name}(${args.join(", ")})`);
+    return fn(...args);
+  };
+}
+
+const fee = logged("fee", (kobo: number, rate: number) => Math.round(kobo * rate));
+console.log(fee(200_000, 0.015));
+</code>
+<option correct>-> fee(200000, 0.015)
+3000</option>
+<option>3000
+-> fee(200000, 0.015)</option>
+<option>-> fee(200000, 0.015)
+3000.0</option>
+<option>-> fee(kobo, rate)
+3000</option>
+<explain><p>The wrapper logs first, then calls the original and returns its result. <code>Parameters</code> and <code>ReturnType</code> give <code>fee</code> the type <code>(kobo: number, rate: number) =&gt; number</code>.</p></explain>
+</question>
+
+<question id="ut-out-factory" type="output">
+<q>What does this print?</q>
+<code file="factory.ts">
+function build<C extends new (...args: any[]) => any>(Class: C, ...args: ConstructorParameters<C>): InstanceType<C> {
+  return new Class(...args);
+}
+
+class Coupon {
+  constructor(readonly code: string, readonly percentOff: number) {}
+  apply(kobo: number): number {
+    return kobo - (kobo * this.percentOff) / 100;
+  }
+}
+
+const coupon = build(Coupon, "WELCOME10", 10);
+console.log(coupon.code, coupon.apply(500_000));
+</code>
+<option correct>WELCOME10 450000</option>
+<option>WELCOME10 50000</option>
+<option>undefined 450000</option>
+<option>WELCOME10 499990</option>
+<explain><p><code>build</code> takes exactly the constructor's arguments and returns an instance, so <code>coupon</code> is a <code>Coupon</code>. Ten percent off ₦5,000 (500,000 kobo) is 450,000 kobo.</p></explain>
+</question>
+
+<question id="ut-out-allow-list" type="output">
+<q>What does this print?</q>
+<code file="allow-list.ts">
+interface Profile {
+  name: string;
+  phone: string;
+  role: string;
+}
+
+const EDITABLE = ["name", "phone"] as const;
+type ProfilePatch = Partial<Pick<Profile, (typeof EDITABLE)[number]>>;
+
+function toPatch(body: Record<string, unknown>): ProfilePatch {
+  const patch: ProfilePatch = {};
+  for (const field of EDITABLE) {
+    const value = body[field];
+    if (typeof value === "string") patch[field] = value;
+  }
+  return patch;
+}
+
+console.log(toPatch({ name: "Grace", role: "admin", phone: 8031234567 }));
+</code>
+<option correct>{ name: 'Grace' }</option>
+<option>{ name: 'Grace', role: 'admin' }</option>
+<option>{ name: 'Grace', phone: 8031234567 }</option>
+<option>{ name: 'Grace', role: 'admin', phone: 8031234567 }</option>
+<explain><p>Only fields in the allow-list are read, so <code>role</code> is ignored, and the phone is skipped because it is not a string. The runtime list and the <code>Pick</code> type come from the same array.</p></explain>
+</question>
+
+<question id="ut-out-store" type="output">
+<q>What does this print?</q>
+<code file="store.ts">
+function defineStore<S extends object, A extends object>(def: { state: S; actions: A & ThisType<S & A> }): S & A {
+  return Object.assign({}, def.state, def.actions);
+}
+
+const cart = defineStore({
+  state: { items: 0, totalKobo: 0 },
+  actions: {
+    add(priceKobo: number) {
+      this.items += 1;
+      this.totalKobo += priceKobo;
+    },
+  },
+});
+
+cart.add(450_000);
+cart.add(180_000);
+console.log(cart.items, cart.totalKobo);
+</code>
+<option correct>2 630000</option>
+<option>0 0</option>
+<option>1 180000</option>
+<option>2 450000</option>
+<explain><p><code>cart.add(…)</code> calls the method on the merged object, so <code>this</code> is <code>cart</code> at runtime, and <code>ThisType</code> made the compiler agree.</p></explain>
+</question>
+
+<question id="ut-out-detached" type="output">
+<q>Same store as before. What does this print?</q>
+<code file="detached.ts">
+function defineStore<S extends object, A extends object>(def: { state: S; actions: A & ThisType<S & A> }): S & A {
+  return Object.assign({}, def.state, def.actions);
+}
+
+const wallet = defineStore({
+  state: { balanceKobo: 1000 },
+  actions: {
+    balance() {
+      return this.balanceKobo;
+    },
+  },
+});
+
+const { balance } = wallet;
+try {
+  console.log(balance());
+} catch (error) {
+  console.log(error instanceof TypeError ? "TypeError" : "other error");
+}
+console.log(wallet.balance());
+</code>
+<option correct>TypeError
+1000</option>
+<option>1000
+1000</option>
+<option>undefined
+1000</option>
+<option>TypeError
+TypeError</option>
+<explain><p><code>ThisType</code> only types <code>this</code>; it does not bind it. A method taken off its object and called on its own has <code>this</code> set to <code>undefined</code> in a module, so reading <code>balanceKobo</code> throws. Called as <code>wallet.balance()</code>, it works.</p></explain>
+</question>
+
+<question id="ut-code-defaults" type="code" file="defaults.ts">
+<q><p>Finish <code>withDefaults(options: Partial&lt;ReportSettings&gt;): Required&lt;ReportSettings&gt;</code>. Defaults: <code>currency</code> <code>"NGN"</code>, <code>includeTax</code> <code>true</code>, <code>rounding</code> <code>2</code>. Keep falsy values that were given (such as <code>0</code> and <code>false</code>).</p></q>
+<starter>
+interface ReportSettings {
+  currency: "NGN" | "USD";
+  includeTax: boolean;
+  rounding: number;
+}
+
+function withDefaults(options: Partial<ReportSettings>): Required<ReportSettings> {
+  return { currency: "NGN", includeTax: true, rounding: 2 };
+}
+
+console.log(withDefaults({ includeTax: false, rounding: 0 }));
+console.log(withDefaults({ currency: "USD" }));
+</starter>
+<solution>
+interface ReportSettings {
+  currency: "NGN" | "USD";
+  includeTax: boolean;
+  rounding: number;
+}
+
+function withDefaults(options: Partial<ReportSettings>): Required<ReportSettings> {
+  return {
+    currency: options.currency ?? "NGN",
+    includeTax: options.includeTax ?? true,
+    rounding: options.rounding ?? 2,
+  };
+}
+
+console.log(withDefaults({ includeTax: false, rounding: 0 }));
+console.log(withDefaults({ currency: "USD" }));
+</solution>
+<expected>
+{ currency: 'NGN', includeTax: false, rounding: 0 }
+{ currency: 'USD', includeTax: true, rounding: 2 }
+</expected>
+<explain><p><code>Partial</code> for what callers pass, <code>Required</code> for what the rest of the code receives. <code>??</code> keeps <code>false</code> and <code>0</code>; <code>||</code> would replace them.</p></explain>
+</question>
+
+<question id="ut-code-pick" type="code" file="pick-fields.ts">
+<q><p>Write <code>pickFields&lt;T, K extends keyof T&gt;(item: T, keys: readonly K[]): Pick&lt;T, K&gt;</code> that builds a new object with only those keys, and use it for a room's public listing.</p></q>
+<starter>
+function pickFields<T, K extends keyof T>(item: T, keys: readonly K[]): Pick<T, K> {
+  return item;
+}
+
+const room = { id: "R-12", name: "Deluxe", priceKobo: 4_500_000, cleanerNotes: "stain on carpet" };
+const listing = pickFields(room, ["name", "priceKobo"]);
+console.log(listing);
+</starter>
+<solution>
+function pickFields<T, K extends keyof T>(item: T, keys: readonly K[]): Pick<T, K> {
+  const result = {} as Pick<T, K>;
+  for (const key of keys) result[key] = item[key];
+  return result;
+}
+
+const room = { id: "R-12", name: "Deluxe", priceKobo: 4_500_000, cleanerNotes: "stain on carpet" };
+const listing = pickFields(room, ["name", "priceKobo"]);
+console.log(listing);
+</solution>
+<expected>{ name: 'Deluxe', priceKobo: 4500000 }</expected>
+<explain><p>The starter returned the whole object, which the type allows, and leaked the cleaner's notes. The runtime copy makes the <code>Pick</code> type true. The one assertion is for the empty object that the loop fills.</p></explain>
+</question>
+
+<question id="ut-code-omit" type="code" file="omit-fields.ts">
+<q><p>Write <code>omitFields&lt;T extends object, K extends keyof T&gt;(item: T, keys: readonly K[]): Omit&lt;T, K&gt;</code> that returns a copy without the given keys.</p></q>
+<starter>
+function omitFields<T extends object, K extends keyof T>(item: T, keys: readonly K[]): Omit<T, K> {
+  return item;
+}
+
+const user = { id: "U-7", name: "Ada", passwordHash: "(hash)", resetToken: "abc123" };
+console.log(omitFields(user, ["passwordHash", "resetToken"]));
+</starter>
+<solution>
+function omitFields<T extends object, K extends keyof T>(item: T, keys: readonly K[]): Omit<T, K> {
+  const copy = { ...item };
+  for (const key of keys) delete copy[key];
+  return copy;
+}
+
+const user = { id: "U-7", name: "Ada", passwordHash: "(hash)", resetToken: "abc123" };
+console.log(omitFields(user, ["passwordHash", "resetToken"]));
+</solution>
+<expected>{ id: 'U-7', name: 'Ada' }</expected>
+<explain><p>Copy, then delete from the copy, so the original is untouched. The <code>K extends keyof T</code> constraint makes a misspelt key a compile error, unlike the built-in <code>Omit</code>.</p></explain>
+</question>
+
+<question id="ut-code-record" type="code" file="count-by.ts">
+<q><p>Count orders per status into a <code>Record&lt;OrderStatus, number&gt;</code> that has an entry for every status, including those with no orders.</p></q>
+<starter>
+const STATUSES = ["pending", "paid", "shipped", "cancelled"] as const;
+type OrderStatus = (typeof STATUSES)[number];
+
+function countByStatus(orders: { status: OrderStatus }[]): Record<OrderStatus, number> {
+  const counts: Partial<Record<OrderStatus, number>> = {};
+  for (const order of orders) counts[order.status] = (counts[order.status] ?? 0) + 1;
+  return counts as Record<OrderStatus, number>;
+}
+
+console.log(countByStatus([{ status: "paid" }, { status: "pending" }, { status: "paid" }]));
+</starter>
+<solution>
+const STATUSES = ["pending", "paid", "shipped", "cancelled"] as const;
+type OrderStatus = (typeof STATUSES)[number];
+
+function countByStatus(orders: { status: OrderStatus }[]): Record<OrderStatus, number> {
+  const counts: Record<OrderStatus, number> = { pending: 0, paid: 0, shipped: 0, cancelled: 0 };
+  for (const order of orders) counts[order.status] += 1;
+  return counts;
+}
+
+console.log(countByStatus([{ status: "paid" }, { status: "pending" }, { status: "paid" }]));
+</solution>
+<expected>{ pending: 1, paid: 2, shipped: 0, cancelled: 0 }</expected>
+<explain><p>The starter's <code>as</code> claimed every status had a count when two were missing. Starting from a full <code>Record</code> makes the claim true, and the compiler checks that every status is initialized.</p></explain>
+</question>
+
+<question id="ut-code-extract" type="code" file="extract.ts">
+<q><p>Name the refund event with <code>Extract</code>, write the type guard <code>isRefund</code>, and print the total refunded kobo.</p></q>
+<starter>
+type PaymentEvent =
+  | { type: "captured"; amountKobo: number }
+  | { type: "refunded"; amountKobo: number; reason: string }
+  | { type: "failed"; code: string };
+
+type RefundEvent = PaymentEvent;
+
+function isRefund(event: PaymentEvent): boolean {
+  return true;
+}
+
+const events: PaymentEvent[] = [
+  { type: "captured", amountKobo: 500_000 },
+  { type: "refunded", amountKobo: 120_000, reason: "late delivery" },
+  { type: "failed", code: "card_declined" },
+  { type: "refunded", amountKobo: 30_000, reason: "damaged" },
+];
+console.log(events.filter(isRefund).length);
+</starter>
+<solution>
+type PaymentEvent =
+  | { type: "captured"; amountKobo: number }
+  | { type: "refunded"; amountKobo: number; reason: string }
+  | { type: "failed"; code: string };
+
+type RefundEvent = Extract<PaymentEvent, { type: "refunded" }>;
+
+function isRefund(event: PaymentEvent): event is RefundEvent {
+  return event.type === "refunded";
+}
+
+const events: PaymentEvent[] = [
+  { type: "captured", amountKobo: 500_000 },
+  { type: "refunded", amountKobo: 120_000, reason: "late delivery" },
+  { type: "failed", code: "card_declined" },
+  { type: "refunded", amountKobo: 30_000, reason: "damaged" },
+];
+console.log(events.filter(isRefund).reduce((sum, refund) => sum + refund.amountKobo, 0));
+</solution>
+<expected>150000</expected>
+<explain><p><code>Extract</code> picks the refund member by its discriminant, and the type predicate lets <code>filter</code> return <code>RefundEvent[]</code>, so <code>refund.amountKobo</code> needs no check.</p></explain>
+</question>
+
+<question id="ut-code-count-calls" type="code" file="count-calls.ts">
+<q><p>Write <code>counted&lt;F extends (...args: any[]) =&gt; any&gt;(fn: F): { call: (...args: Parameters&lt;F&gt;) =&gt; ReturnType&lt;F&gt;; calls: () =&gt; number }</code> that counts how often the wrapped function is called.</p></q>
+<starter>
+function counted<F extends (...args: any[]) => any>(fn: F): { call: (...args: Parameters<F>) => ReturnType<F>; calls: () => number } {
+  return { call: (...args) => fn(...args), calls: () => 0 };
+}
+
+const vat = counted((kobo: number) => Math.round(kobo * 0.075));
+console.log(vat.call(100_000), vat.call(40_000), "calls:", vat.calls());
+</starter>
+<solution>
+function counted<F extends (...args: any[]) => any>(fn: F): { call: (...args: Parameters<F>) => ReturnType<F>; calls: () => number } {
+  let count = 0;
+  return {
+    call: (...args) => {
+      count += 1;
+      return fn(...args);
+    },
+    calls: () => count,
+  };
+}
+
+const vat = counted((kobo: number) => Math.round(kobo * 0.075));
+console.log(vat.call(100_000), vat.call(40_000), "calls:", vat.calls());
+</solution>
+<expected>7500 3000 calls: 2</expected>
+<explain><p><code>Parameters&lt;F&gt;</code> and <code>ReturnType&lt;F&gt;</code> copy the wrapped function's signature, so <code>vat.call</code> is typed <code>(kobo: number) =&gt; number</code>. A closure keeps the count.</p></explain>
+</question>
+
+<question id="ut-code-build-all" type="code" file="build-all.ts">
+<q><p>Write <code>buildAll&lt;C extends new (...args: any[]) =&gt; any&gt;(Class: C, rows: ConstructorParameters&lt;C&gt;[]): InstanceType&lt;C&gt;[]</code> and use it to create products, then print their labels.</p></q>
+<starter>
+function buildAll<C extends new (...args: any[]) => any>(Class: C, rows: ConstructorParameters<C>[]): InstanceType<C>[] {
+  return [];
+}
+
+class Product {
+  constructor(readonly name: string, readonly priceKobo: number) {}
+  label(): string {
+    return `${this.name} ₦${this.priceKobo / 100}`;
+  }
+}
+
+const products = buildAll(Product, [["Tote bag", 450_000], ["Mug", 180_000]]);
+console.log(products.map((product) => product.label()).join(" | "));
+</starter>
+<solution>
+function buildAll<C extends new (...args: any[]) => any>(Class: C, rows: ConstructorParameters<C>[]): InstanceType<C>[] {
+  return rows.map((row) => new Class(...row));
+}
+
+class Product {
+  constructor(readonly name: string, readonly priceKobo: number) {}
+  label(): string {
+    return `${this.name} ₦${this.priceKobo / 100}`;
+  }
+}
+
+const products = buildAll(Product, [["Tote bag", 450_000], ["Mug", 180_000]]);
+console.log(products.map((product) => product.label()).join(" | "));
+</solution>
+<expected>Tote bag ₦4500 | Mug ₦1800</expected>
+<explain><p>Each row must match the constructor's parameters, and the result is typed <code>Product[]</code>, so <code>product.label()</code> is checked.</p></explain>
+</question>
+
+<question id="ut-code-safe-patch" type="code" file="safe-patch.ts">
+<q><p>Finish <code>applyProfilePatch</code> so it copies only <code>name</code> and <code>city</code> from the untrusted body, and only when they are strings. <code>role</code> in the body must be ignored.</p></q>
+<starter>
+interface Customer {
+  id: string;
+  name: string;
+  city: string;
+  role: "customer" | "admin";
+}
+
+const EDITABLE = ["name", "city"] as const;
+
+function applyProfilePatch(customer: Customer, body: Record<string, unknown>): Customer {
+  return { ...customer, ...(body as Partial<Customer>) };
+}
+
+const tunde: Customer = { id: "C-3", name: "Tunde", city: "Ibadan", role: "customer" };
+console.log(applyProfilePatch(tunde, { city: "Lagos", role: "admin", name: 42 }));
+</starter>
+<solution>
+interface Customer {
+  id: string;
+  name: string;
+  city: string;
+  role: "customer" | "admin";
+}
+
+const EDITABLE = ["name", "city"] as const;
+
+function applyProfilePatch(customer: Customer, body: Record<string, unknown>): Customer {
+  const patch: Partial<Pick<Customer, (typeof EDITABLE)[number]>> = {};
+  for (const field of EDITABLE) {
+    const value = body[field];
+    if (typeof value === "string") patch[field] = value;
+  }
+  return { ...customer, ...patch };
+}
+
+const tunde: Customer = { id: "C-3", name: "Tunde", city: "Ibadan", role: "customer" };
+console.log(applyProfilePatch(tunde, { city: "Lagos", role: "admin", name: 42 }));
+</solution>
+<expected>{ id: 'C-3', name: 'Tunde', city: 'Lagos', role: 'customer' }</expected>
+<explain><p>The starter spread the whole body, so the customer became an admin and got a numeric name. The allow-list is the runtime half of <code>Pick</code>: fields outside it are never read.</p></explain>
+</question>

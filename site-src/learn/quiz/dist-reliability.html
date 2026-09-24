@@ -1,0 +1,860 @@
+<question id="rel-worst-row" type="choice">
+<q>In the naive failure matrix, why is "queue down" worse than "database down", although both answered 500?</q>
+<option>Queues are more important than databases</option>
+<option correct>The order had already been saved, so the customer was told it failed although it exists, and pressing "Pay" again creates a second order</option>
+<option>A queue outage lasts longer than a database outage</option>
+<option>The 500 from the queue leaked a stack trace</option>
+<explain><p>A failure after a side effect is the dangerous kind: the answer says "nothing happened" when something did. The customer's natural retry turns it into a duplicate.</p></explain>
+</question>
+
+<question id="rel-first-step" type="choice">
+<q>Before adding timeouts, retries or breakers, what does the lesson ask you to decide for each dependency?</q>
+<option>Which cloud region it runs in</option>
+<option correct>Whether it is needed for a correct answer, what users can still get when it is down, and whether calling it twice is safe</option>
+<option>How many retries it can survive</option>
+<option>Which programming language it is written in</option>
+<explain><p>Those three answers decide the mechanism: fail fast for critical dependencies, a fallback for optional ones, retries only for safe operations. They are business decisions, so they come first.</p></explain>
+</question>
+
+<question id="rel-zombie" type="choice">
+<q>A timeout wrapper uses only <code>Promise.race</code> with a timer and never aborts anything. What goes wrong?</q>
+<option>The caller waits forever</option>
+<option correct>The caller is answered on time, but the work keeps running: it still holds connections and may still write data</option>
+<option>The work is cancelled twice</option>
+<option>Nothing: <code>Promise.race</code> cancels the losing promise</option>
+<explain><p>Promises cannot be cancelled from outside. Giving up waiting is not stopping the work; only a signal the work listens to (or a driver's cancel call) stops it.</p></explain>
+</question>
+
+<question id="rel-deadline" type="choice">
+<q>Checkout calls four services in a row, each with a 2-second timeout, and the checkout page promises an answer within 2 seconds. What is the fix?</q>
+<option>Lower every timeout to 500 ms</option>
+<option>Raise the checkout budget to 8 seconds</option>
+<option correct>Give the request a deadline and give each call <code>min(its own limit, time left)</code>, cancelling everything when the deadline passes</option>
+<option>Call the four services with retries</option>
+<explain><p>Separate timeouts add up. A deadline is shared by the whole request, so the total wait is bounded no matter how many calls it makes.</p></explain>
+</question>
+
+<question id="rel-timeout-size" type="choice">
+<q>How should you choose a dependency's timeout?</q>
+<option>Always 30 seconds, the common default</option>
+<option>As short as possible, such as 1 ms</option>
+<option correct>A little above the slow tail of normal latency (for example the 99th percentile), measured, and reviewed when latency changes</option>
+<option>Twice the average latency</option>
+<explain><p>Below normal latency, the timeout fails healthy calls; far above it, it protects nothing. The slow tail, not the average, is what normal traffic actually needs.</p></explain>
+</question>
+
+<question id="rel-transient" type="choice">
+<q>Which failure is worth retrying?</q>
+<option>400 Bad Request: the body is missing a field</option>
+<option>404 Not Found: the order id does not exist</option>
+<option>402: the card was declined</option>
+<option correct>503 Service Unavailable from an instance that is restarting</option>
+<explain><p>Only transient failures can succeed on a later attempt. Invalid input, missing records and declined cards will fail the same way every time.</p></explain>
+</question>
+
+<question id="rel-jitter" type="choice">
+<q>Why add jitter to exponential backoff?</q>
+<option>It makes each retry faster</option>
+<option correct>Clients that failed together would otherwise retry together, hitting the recovering service in synchronized waves</option>
+<option>It reduces the number of attempts</option>
+<option>It is required for idempotency</option>
+<explain><p>Without randomness, every client computes the same waits. Jitter spreads the retries over time, turning spikes into a trickle.</p></explain>
+</question>
+
+<question id="rel-amplify" type="choice">
+<q>The browser, the gateway and the orders service each retry up to 3 attempts. The database is down. How many database calls can one click cause, and what is the usual fix?</q>
+<option>3; nothing needs fixing</option>
+<option>9; add jitter</option>
+<option correct>27; retry at one layer only and let the others fail fast</option>
+<option>27; add a fourth layer of retries</option>
+<explain><p>Retries multiply across layers: 3 × 3 × 3. Retrying at the layer closest to the dependency, with a retry budget, keeps an outage from tripling its own load.</p></explain>
+</question>
+
+<question id="rel-retry-post" type="choice">
+<q>A <code>POST /orders</code> call times out. Why must the client not simply retry it?</q>
+<option>POST requests cannot be sent twice</option>
+<option correct>The server may have created the order before the answer was lost, so a retry can create a second one, unless the request carries an idempotency key</option>
+<option>The server will reject the second request automatically</option>
+<option>Timeouts only happen for GET requests</option>
+<explain><p>After a timeout the client cannot know whether the work happened. Retrying a non-idempotent write is only safe when the server can recognise the repeat.</p></explain>
+</question>
+
+<question id="rel-breaker-purpose" type="choice">
+<q>What does a circuit breaker add that a timeout does not?</q>
+<option>It makes each call faster when the dependency is healthy</option>
+<option correct>During an outage it fails calls immediately without touching the dependency, so callers do not wait and the dependency gets room to recover</option>
+<option>It retries failed calls automatically</option>
+<option>It caches the last successful answer</option>
+<explain><p>A timeout still makes every call wait for the limit. An open breaker skips the call entirely, which protects both sides.</p></explain>
+</question>
+
+<question id="rel-window" type="choice">
+<q>Why does the lesson's breaker use a rolling window of recent results instead of "open after 3 failures in a row"?</q>
+<option>Rolling windows use less memory</option>
+<option correct>A single success between failures resets a consecutive counter, so a dependency failing 90% of calls might never trip it</option>
+<option>Consecutive counters cannot be tested</option>
+<option>The window makes the breaker open sooner in every case</option>
+<explain><p>A failure <em>rate</em> over recent calls describes health much better than a streak. <code>minimumCalls</code> stops it from judging on too few results.</p></explain>
+</question>
+
+<question id="rel-half-open" type="choice">
+<q>Why does the half-open breaker let exactly one probe through?</q>
+<option>To save memory</option>
+<option correct>If every waiting call went through at once, a service that has just recovered would be hit by a flood and could fail again</option>
+<option>Because JavaScript cannot run two calls at once</option>
+<option>To make the breaker close faster</option>
+<explain><p>The probe asks "are you back?" gently. Only when it succeeds does full traffic return.</p></explain>
+</question>
+
+<question id="rel-classify" type="choice">
+<q>A breaker around the payments API opens whenever a card is declined (402). What is wrong?</q>
+<option>Nothing: any error is a failure</option>
+<option correct>A decline means the API is working correctly; counting it lets a few customers with expired cards cut payments off for everyone</option>
+<option>402 should retry, not open the breaker</option>
+<option>The window is too large</option>
+<explain><p>Only errors that indicate an unhealthy dependency (5xx, timeouts, refused connections, and 429) should count. Business outcomes are successes from the breaker's point of view.</p></explain>
+</question>
+
+<question id="rel-bulkhead" type="choice">
+<q>The rates API hangs and ShopFlow's single pool of outgoing calls is full of rate requests. Checkout, which needs only the healthy database, is refused. What prevents this?</q>
+<option>A longer timeout for the rates API</option>
+<option>More retries for checkout</option>
+<option correct>A bulkhead: a separate limited pool per dependency, so the rates API can only fill its own</option>
+<option>A cache in front of the database</option>
+<explain><p>Bulkheads isolate capacity, like watertight compartments in a ship. One slow dependency floods its compartment, not the whole service.</p></explain>
+</question>
+
+<question id="rel-fast-no" type="choice">
+<q>With a full bulkhead, extra rate requests were "rejected at once" instead of waiting. Why is that good?</q>
+<option>Rejected requests are retried automatically</option>
+<option correct>A fast rejection frees the server for work it can do, and the page can fall back (for example to naira only) immediately</option>
+<option>It makes the rates API recover sooner</option>
+<option>Browsers prefer errors to slow answers</option>
+<explain><p>Waiting in line for a dependency that is not answering only spreads the outage. A quick "no" plus a fallback keeps the rest of the page fast.</p></explain>
+</question>
+
+<question id="rel-fallback-auth" type="choice">
+<q>The permissions service is down. What is the right fallback for "can this user refund an order?"</q>
+<option>Allow it, so customers are not blocked</option>
+<option>Allow it for users who were allowed yesterday</option>
+<option correct>Deny (or hold for later), and tell the user the action is temporarily unavailable</option>
+<option>Retry until the permissions service answers</option>
+<explain><p>Degrade features, never security. A fallback that grants access during an outage is an attacker's favourite outage.</p></explain>
+</question>
+
+<question id="rel-liveness" type="choice">
+<q>Why must a liveness probe not check the database?</q>
+<option>Database checks are too slow</option>
+<option correct>When the database fails, every instance fails liveness and the platform restarts them all in a loop, which cannot fix the database and adds a restart storm</option>
+<option>Liveness probes cannot open network connections</option>
+<option>The database has its own liveness probe</option>
+<explain><p>Liveness answers "is this process stuck?", and a restart is its remedy. Readiness answers "should I get traffic?", which is where dependency checks belong.</p></explain>
+</question>
+
+<question id="rel-shutdown-order" type="choice">
+<q>An instance receives SIGTERM during a deploy. What should it do first?</q>
+<option>Close the database connection</option>
+<option>Exit immediately with code 0</option>
+<option correct>Stop reporting ready, and keep serving briefly while the load balancer notices</option>
+<option>Reject all in-flight requests</option>
+<explain><p>New traffic must stop arriving before the instance stops accepting it. Then it finishes in-flight work, drains workers, and closes dependencies last.</p></explain>
+</question>
+
+<question id="rel-ready-state" type="choice">
+<q>In the published <code>@zudojs/runtime</code>, why did the lesson's <code>/ready</code> probe check <code>runtime.state === "running"</code> as well as <code>runtime.ready</code>?</q>
+<option>Because <code>runtime.ready</code> is always false</option>
+<option correct>Running the readiness checks during shutdown recomputes <code>ready</code> from the checks alone, so a stopping instance with a healthy database would report ready</option>
+<option>Because <code>runtime.state</code> is faster to read</option>
+<option>It is only a style preference</option>
+<explain><p>Readiness means "my dependencies are fine <em>and</em> I intend to serve". The lifecycle state carries the second half, so the probe must include it.</p></explain>
+</question>
+
+<question id="rel-stalled" type="choice">
+<q>A worker claims a job and its process is killed. <code>stalledAfter</code> returns the job to the queue and another worker runs it. What must the job handler therefore be?</q>
+<option>Fast</option>
+<option correct>Idempotent, because the dead worker may have done part or all of the work before it died</option>
+<option>Written in TypeScript</option>
+<option>Registered twice</option>
+<explain><p>Crash recovery means running the job again. Store what you did (a booking reference, a payment id) and check it first, so a second run does not repeat the side effect.</p></explain>
+</question>
+
+<question id="rel-critical" type="choice">
+<q>What does registering the loyalty plugin's component with <code>critical: false</code> change?</q>
+<option>The plugin starts faster</option>
+<option correct>If it fails to start, the application still starts without it; you must alert on the failure and make the code that uses it cope with its absence</option>
+<option>The plugin is retried forever</option>
+<option>The plugin runs in a separate process</option>
+<explain><p>Optional means the application is useful without it. The <code>component:failed</code> event is where the alert goes, and every caller must check whether the plugin is running.</p></explain>
+</question>
+
+<question id="rel-config" type="choice">
+<q>Why validate configuration at startup, before the instance reports ready?</q>
+<option>Validation is faster at startup</option>
+<option correct>A new instance that never becomes ready stops a rolling deploy while old instances keep serving, turning a bad setting into a failed deploy instead of an outage</option>
+<option>Configuration cannot be read later</option>
+<option>So the error message includes a stack trace</option>
+<explain><p>Failing fast is most useful when the platform can see it. Readiness is the signal the deploy system uses to continue or stop the rollout.</p></explain>
+</question>
+
+<question id="rel-disconnect" type="choice">
+<q>A customer closes the tab while a sales report is being built. With <code>@zudojs/http</code>, how does the server stop the work?</q>
+<option>It cannot; the report always finishes</option>
+<option correct>The request's <code>signal</code> aborts when the client disconnects; passing it to every call (timers, fetch, queries) stops the remaining work</option>
+<option>The server sends a 499 status</option>
+<option>The report is cached for later</option>
+<explain><p>Cancellation only works if the signal is passed all the way down. Each call that accepts it stops when the customer leaves.</p></explain>
+</question>
+
+<question id="rel-seed" type="choice">
+<q>Why does the chaos test use a seeded random generator instead of <code>Math.random</code>?</q>
+<option>Seeded generators are more random</option>
+<option>Math.random is not available in Node.js</option>
+<option correct>The same seed produces the same faults every run, so a failure found once can be reproduced and kept as a regression test</option>
+<option>It makes the test run faster</option>
+<explain><p>Randomness finds unexpected combinations; the seed makes them repeatable. Print the seed of every random run so you can replay it.</p></explain>
+</question>
+
+<question id="rel-invariant" type="choice">
+<q>Which of these is an <strong>invariant</strong> for the checkout chaos test?</q>
+<option>The database is always up</option>
+<option>Checkout returns 201 in every run</option>
+<option correct>Every 503 answer saved no order, so a customer's retry cannot create a duplicate</option>
+<option>Each run takes less than 10 ms</option>
+<explain><p>An invariant must hold whatever breaks. Outcomes such as 201 vary with the faults; what must never vary is the relationship between the answer and the saved state.</p></explain>
+</question>
+
+<question id="rel-out-backoff" type="output">
+<q>What does this print?</q>
+<code file="backoff.js">
+import { calculateRetryDelay } from "@zudojs/queue";
+
+const waits = [1, 2, 3, 4, 5, 6].map((attempt) =>
+  calculateRetryDelay(attempt, { type: "exponential", delay: 100, maxDelay: 1000 }),
+);
+console.log(waits.join(" "));
+</code>
+<option correct>100 200 400 800 1000 1000</option>
+<option>100 200 400 800 1600 3200</option>
+<option>200 400 800 1000 1000 1000</option>
+<option>100 200 300 400 500 600</option>
+<explain><p>The delay doubles from attempt to attempt, starting at the base (attempt 1 uses 2⁰), and <code>maxDelay</code> caps it at 1,000. Without jitter, this is deterministic.</p></explain>
+</question>
+
+<question id="rel-out-fixed" type="output">
+<q>What does this print?</q>
+<code file="fixed.js">
+import { calculateRetryDelay } from "@zudojs/queue";
+
+console.log([1, 2, 3].map((attempt) => calculateRetryDelay(attempt, { type: "fixed", delay: 250 })).join(" "));
+</code>
+<option correct>250 250 250</option>
+<option>250 500 1000</option>
+<option>250 500 750</option>
+<option>0 250 500</option>
+<explain><p>A fixed backoff waits the same time before every retry. It is simple, but many clients failing together keep retrying together.</p></explain>
+</question>
+
+<question id="rel-out-jitter" type="output">
+<q>Full jitter with a fake random generator. What does this print?</q>
+<code file="jitter.js">
+const values = [0.5, 0.1, 0.9];
+let i = 0;
+const random = () => values[i++];
+
+const ceilings = [100, 200, 400];
+console.log(ceilings.map((ceiling) => Math.round(random() * ceiling)).join(" "));
+</code>
+<option correct>50 20 360</option>
+<option>100 200 400</option>
+<option>50 100 200</option>
+<option>150 220 760</option>
+<explain><p>Full jitter picks a wait between 0 and the backoff ceiling. With a controlled generator the result is predictable, which is exactly why the lesson passes the generator in.</p></explain>
+</question>
+
+<question id="rel-out-amplify" type="output">
+<q>What does this print?</q>
+<code file="amplify.js">
+let calls = 0;
+async function retry(work, attempts) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await work();
+    } catch (error) {
+      if (attempt >= attempts) throw error;
+    }
+  }
+}
+
+const database = async () => { calls++; throw new Error("down"); };
+const service = () => retry(database, 4);
+const gateway = () => retry(service, 2);
+
+await gateway().catch(() => {});
+console.log(calls);
+</code>
+<option correct>8</option>
+<option>6</option>
+<option>4</option>
+<option>16</option>
+<explain><p>The gateway tries the service twice, and each service attempt tries the database 4 times: 2 × 4 = 8 calls for one request.</p></explain>
+</question>
+
+<question id="rel-out-breaker" type="output">
+<q>A breaker that opens after 2 consecutive failures, on a fake clock. What does this print?</q>
+<code file="breaker.js">
+let clock = 0;
+let state = "closed";
+let failures = 0;
+let openedAt = 0;
+
+async function call(work) {
+  if (state === "open") {
+    if (clock - openedAt < 1000) return "fast-fail";
+    state = "half-open";
+  }
+  try {
+    await work();
+    state = "closed";
+    failures = 0;
+    return "ok";
+  } catch {
+    failures++;
+    if (state === "half-open" || failures >= 2) {
+      state = "open";
+      openedAt = clock;
+    }
+    return "error";
+  }
+}
+
+const down = async () => { throw new Error("503"); };
+const up = async () => {};
+const log = [];
+log.push(await call(down), await call(down), await call(up));
+clock = 1500;
+log.push(await call(down), await call(up));
+clock = 3000;
+log.push(await call(up));
+console.log(log.join(" "), state);
+</code>
+<option correct>error error fast-fail error fast-fail ok closed</option>
+<option>error error ok error ok ok closed</option>
+<option>error error fast-fail ok ok ok closed</option>
+<option>error error fast-fail error fast-fail ok open</option>
+<explain><p>Two failures open it; the third call fails fast. At 1500 the probe fails, so it reopens at 1500 and the next call fails fast. At 3000 the pause is over again, the probe succeeds and it closes.</p></explain>
+</question>
+
+<question id="rel-out-race" type="output">
+<q>What does this print?</q>
+<code file="race.js">
+const sleep = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error("timed out")), ms));
+
+let finished = false;
+const slowWork = sleep(60).then(() => { finished = true; return "report"; });
+
+try {
+  console.log(await Promise.race([slowWork, timeout(20)]));
+} catch (error) {
+  console.log(error.message, finished);
+}
+await sleep(100);
+console.log("finished later:", finished);
+</code>
+<option correct>timed out false
+finished later: true</option>
+<option>timed out false
+finished later: false</option>
+<option>report
+finished later: true</option>
+<option>timed out true
+finished later: true</option>
+<explain><p>The race rejected after 20 ms, but nothing stopped the slow work, which finished at 60 ms anyway. That is zombie work: the caller gave up, the work did not.</p></explain>
+</question>
+
+<question id="rel-out-abort" type="output">
+<q>What does this print?</q>
+<code file="abort.js">
+const controller = new AbortController();
+const signal = controller.signal;
+const steps = [];
+
+async function report(signal) {
+  for (let step = 1; step <= 3; step++) {
+    if (signal.aborted) throw signal.reason;
+    steps.push(step);
+    if (step === 2) controller.abort(new Error("client disconnected"));
+  }
+  return "done";
+}
+
+try {
+  console.log(await report(signal));
+} catch (error) {
+  console.log(error.message, steps.join(","));
+}
+</code>
+<option correct>client disconnected 1,2</option>
+<option>done 1,2,3</option>
+<option>client disconnected 1,2,3</option>
+<option>AbortError 1,2</option>
+<explain><p>The work checks the signal before each step. After step 2 the signal is aborted with a custom reason, so step 3 never runs and the reason is thrown.</p></explain>
+</question>
+
+<question id="rel-out-bulkhead" type="output">
+<q>What does this print?</q>
+<code file="bulkhead.js">
+let active = 0;
+async function bulkhead(work) {
+  if (active >= 2) return "rejected";
+  active++;
+  try {
+    return await work();
+  } finally {
+    active--;
+  }
+}
+
+const slow = () => new Promise((resolve) => setTimeout(() => resolve("ok"), 20));
+const results = await Promise.all([bulkhead(slow), bulkhead(slow), bulkhead(slow), bulkhead(slow)]);
+console.log(results.join(" "), "| later:", await bulkhead(slow));
+</code>
+<option correct>ok ok rejected rejected | later: ok</option>
+<option>ok ok ok ok | later: ok</option>
+<option>ok rejected rejected rejected | later: ok</option>
+<option>ok ok rejected rejected | later: rejected</option>
+<explain><p>Two calls fill the bulkhead; the next two are rejected at once. When the first two finish, capacity is free again.</p></explain>
+</question>
+
+<question id="rel-out-fallback" type="output">
+<q>What does this print?</q>
+<code file="fallback.js">
+const now = () => 5_000_000;
+let lastRate = { value: 104, at: 1_000_000 };
+
+async function rate(fetchRate) {
+  try {
+    const value = await fetchRate();
+    lastRate = { value, at: now() };
+    return `${value} (live)`;
+  } catch {
+    if (now() - lastRate.at > 3_600_000) return "naira only";
+    return `${lastRate.value} (last known)`;
+  }
+}
+
+console.log(await rate(async () => { throw new Error("timeout"); }));
+console.log(await rate(async () => 105));
+console.log(await rate(async () => { throw new Error("timeout"); }));
+</code>
+<option correct>naira only
+105 (live)
+105 (last known)</option>
+<option>104 (last known)
+105 (live)
+105 (last known)</option>
+<option>naira only
+105 (live)
+naira only</option>
+<option>104 (last known)
+105 (live)
+104 (last known)</option>
+<explain><p>The first stored rate is 4,000,000 ms old, more than an hour, so it is too stale to use. The live call refreshes it; the next failure can then fall back to a rate that is 0 ms old.</p></explain>
+</question>
+
+<question id="rel-out-seeded" type="output">
+<q>What does this print?</q>
+<code file="seeded.js">
+function seeded(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const a = seeded(42), b = seeded(42), c = seeded(43);
+const take = (next) => [next(), next(), next()].join();
+console.log(take(a) === take(b), take(seeded(42)) === take(c));
+</code>
+<option correct>true false</option>
+<option>false false</option>
+<option>true true</option>
+<option>false true</option>
+<explain><p>The same seed always gives the same sequence; a different seed gives a different one. That is what makes a chaos run reproducible.</p></explain>
+</question>
+
+<question id="rel-out-classify" type="output">
+<q>What does this print?</q>
+<code file="classify.js">
+import { ServiceUnavailableError, TimeoutError, ValidationError } from "@zudojs/errors";
+
+const isTransient = (error) => error instanceof ServiceUnavailableError || error instanceof TimeoutError;
+const errors = [new ServiceUnavailableError("db down"), new ValidationError("bad sku"), new TimeoutError("slow"), new Error("bug")];
+console.log(errors.map((error) => `${error.name}:${isTransient(error)}`).join(" "));
+</code>
+<option correct>ServiceUnavailableError:true ValidationError:false TimeoutError:true Error:false</option>
+<option>ServiceUnavailableError:true ValidationError:true TimeoutError:true Error:true</option>
+<option>ServiceUnavailableError:true ValidationError:false TimeoutError:false Error:false</option>
+<option>ServiceUnavailableError:false ValidationError:false TimeoutError:true Error:false</option>
+<explain><p>Classifying by error class keeps retry and breaker decisions out of message text. A plain <code>Error</code> is most likely a bug in your own code: retrying it only repeats the bug.</p></explain>
+</question>
+
+<question id="rel-out-hedge" type="output">
+<q>What does this print?</q>
+<code file="hedge.js">
+const sleep = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+const failing = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error("down")), ms));
+
+console.log(await Promise.any([sleep(40, "cache"), sleep(10, "database")]));
+console.log(await Promise.any([failing(5), sleep(20, "database")]));
+console.log(await Promise.race([failing(5), sleep(20, "database")]).catch((error) => error.message));
+</code>
+<option correct>database
+database
+down</option>
+<option>cache
+database
+database</option>
+<option>database
+down
+down</option>
+<option>database
+database
+database</option>
+<explain><p><code>Promise.any</code> takes the first <em>success</em> and ignores failures, which suits hedged reads. <code>Promise.race</code> takes the first settlement, success or failure.</p></explain>
+</question>
+
+<question id="rel-code-retry" type="code" file="retry.js">
+<q><p>Write <code>retry(work, attempts, isRetryable)</code>. It calls <code>work(attempt)</code> until it succeeds, the error is not retryable, or <code>attempts</code> is used up, and logs <code>attempt N failed: MESSAGE</code> for each failure that will be retried. (No waiting is needed here.)</p></q>
+<starter>
+async function retry(work, attempts, isRetryable) {
+  // your code here
+}
+
+const transient = (error) => error.message.startsWith("503");
+let calls = 0;
+console.log(await retry(async () => {
+  calls++;
+  if (calls < 3) throw new Error("503 rates unavailable");
+  return "rate 105";
+}, 5, transient));
+
+await retry(async () => { throw new Error("400 currency XYZ unknown"); }, 5, transient)
+  .catch((error) => console.log("gave up:", error.message));
+</starter>
+<solution>
+async function retry(work, attempts, isRetryable) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await work(attempt);
+    } catch (error) {
+      if (attempt >= attempts || !isRetryable(error)) throw error;
+      console.log(`attempt ${attempt} failed: ${error.message}`);
+    }
+  }
+}
+
+const transient = (error) => error.message.startsWith("503");
+let calls = 0;
+console.log(await retry(async () => {
+  calls++;
+  if (calls < 3) throw new Error("503 rates unavailable");
+  return "rate 105";
+}, 5, transient));
+
+await retry(async () => { throw new Error("400 currency XYZ unknown"); }, 5, transient)
+  .catch((error) => console.log("gave up:", error.message));
+</solution>
+<expected>
+attempt 1 failed: 503 rates unavailable
+attempt 2 failed: 503 rates unavailable
+rate 105
+gave up: 400 currency XYZ unknown
+</expected>
+<explain><p>The permanent error is thrown on its first occurrence. Checking "retryable" before "attempts left" or after makes no difference to the result, but logging only retried failures keeps the log honest.</p></explain>
+</question>
+
+<question id="rel-code-timeout" type="code" file="timeout.js">
+<q><p>Write <code>withTimeout(ms, work)</code>: it creates an <code>AbortController</code>, aborts it after <code>ms</code> with <code>new Error("timed out")</code>, passes the signal to <code>work</code>, and rejects as soon as the signal aborts even if the work ignores it. Clear the timer when done.</p></q>
+<starter>
+async function withTimeout(ms, work) {
+  // your code here
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+console.log(await withTimeout(50, async () => { await sleep(5); return "fast"; }));
+console.log(await withTimeout(20, async () => { await sleep(80); return "slow"; }).catch((e) => e.message));
+console.log(await withTimeout(20, async (signal) => {
+  await sleep(40);
+  return signal.aborted ? "saw the abort" : "missed it";
+}).catch((e) => e.message));
+</starter>
+<solution>
+async function withTimeout(ms, work) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error("timed out")), ms);
+  const aborted = new Promise((_, reject) => {
+    controller.signal.addEventListener("abort", () => reject(controller.signal.reason), { once: true });
+  });
+  try {
+    return await Promise.race([work(controller.signal), aborted]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+console.log(await withTimeout(50, async () => { await sleep(5); return "fast"; }));
+console.log(await withTimeout(20, async () => { await sleep(80); return "slow"; }).catch((e) => e.message));
+console.log(await withTimeout(20, async (signal) => {
+  await sleep(40);
+  return signal.aborted ? "saw the abort" : "missed it";
+}).catch((e) => e.message));
+</solution>
+<expected>
+fast
+timed out
+timed out
+</expected>
+<explain><p>The caller gets "timed out" in both slow cases, on time. The third work function would have seen the abort, but its answer arrives after the race has already rejected: work that checks the signal should stop, not return.</p></explain>
+</question>
+
+<question id="rel-code-breaker" type="code" file="breaker.js">
+<q><p>Complete <code>createBreaker(maxFailures, openMs, now)</code>. It returns <code>call(work)</code> and <code>state()</code>. After <code>maxFailures</code> consecutive failures it opens: calls throw <code>new Error("open")</code> without running <code>work</code> until <code>openMs</code> have passed; then one call is tried (half-open), which closes it on success or reopens it on failure.</p></q>
+<starter>
+function createBreaker(maxFailures, openMs, now) {
+  // your code here
+}
+
+let clock = 0;
+const breaker = createBreaker(2, 100, () => clock);
+const down = async () => { throw new Error("503"); };
+const up = async () => "ok";
+const run = (work) => breaker.call(work).catch((e) => e.message);
+
+const log = [await run(down), await run(down), await run(up)];
+clock = 150;
+log.push(await run(up), await run(up));
+console.log(log.join(" "), breaker.state());
+</starter>
+<solution>
+function createBreaker(maxFailures, openMs, now) {
+  let state = "closed";
+  let failures = 0;
+  let openedAt = 0;
+  return {
+    state: () => state,
+    async call(work) {
+      if (state === "open") {
+        if (now() - openedAt < openMs) throw new Error("open");
+        state = "half-open";
+      }
+      try {
+        const result = await work();
+        state = "closed";
+        failures = 0;
+        return result;
+      } catch (error) {
+        failures++;
+        if (state === "half-open" || failures >= maxFailures) {
+          state = "open";
+          openedAt = now();
+        }
+        throw error;
+      }
+    },
+  };
+}
+
+let clock = 0;
+const breaker = createBreaker(2, 100, () => clock);
+const down = async () => { throw new Error("503"); };
+const up = async () => "ok";
+const run = (work) => breaker.call(work).catch((e) => e.message);
+
+const log = [await run(down), await run(down), await run(up)];
+clock = 150;
+log.push(await run(up), await run(up));
+console.log(log.join(" "), breaker.state());
+</solution>
+<expected>503 503 open ok ok closed</expected>
+<explain><p>The third call failed fast although the dependency had recovered: that is the cost of the pause. After 100 ms of fake time the probe succeeded and normal traffic resumed. A fake clock makes the whole scenario instant and repeatable.</p></explain>
+</question>
+
+<question id="rel-code-bulkhead" type="code" file="bulkhead.js">
+<q><p>Write <code>createBulkhead(max)</code> returning <code>run(work)</code>: at most <code>max</code> works run at once; any extra call rejects immediately with <code>new Error("full")</code>. Capacity must be released even when the work fails.</p></q>
+<starter>
+function createBulkhead(max) {
+  // your code here
+}
+
+const rates = createBulkhead(1);
+const slow = (value) => () => new Promise((resolve) => setTimeout(() => resolve(value), 10));
+const failing = () => Promise.reject(new Error("503"));
+
+const first = await Promise.all([rates.run(slow("a")), rates.run(slow("b")).catch((e) => e.message)]);
+const second = await rates.run(failing).catch((e) => e.message);
+const third = await rates.run(slow("c"));
+console.log(first.join(" "), second, third);
+</starter>
+<solution>
+function createBulkhead(max) {
+  let active = 0;
+  return {
+    async run(work) {
+      if (active >= max) throw new Error("full");
+      active++;
+      try {
+        return await work();
+      } finally {
+        active--;
+      }
+    },
+  };
+}
+
+const rates = createBulkhead(1);
+const slow = (value) => () => new Promise((resolve) => setTimeout(() => resolve(value), 10));
+const failing = () => Promise.reject(new Error("503"));
+
+const first = await Promise.all([rates.run(slow("a")), rates.run(slow("b")).catch((e) => e.message)]);
+const second = await rates.run(failing).catch((e) => e.message);
+const third = await rates.run(slow("c"));
+console.log(first.join(" "), second, third);
+</solution>
+<expected>a full 503 c</expected>
+<explain><p>The <code>finally</code> is what releases the slot after the failure; without it, one failed call would leave the bulkhead full forever and "c" would be rejected.</p></explain>
+</question>
+
+<question id="rel-code-schedule" type="code" file="schedule.js">
+<q><p>Use <code>calculateRetryDelay</code> from <code>@zudojs/queue</code> (exponential, base 100, max 800) and the given fake random values to print the full-jitter wait for attempts 1 to 5, each rounded, joined by spaces.</p></q>
+<starter>
+import { calculateRetryDelay } from "@zudojs/queue";
+
+const randomValues = [0.5, 0.25, 1, 0.1, 0.75];
+
+// your code here
+</starter>
+<solution>
+import { calculateRetryDelay } from "@zudojs/queue";
+
+const randomValues = [0.5, 0.25, 1, 0.1, 0.75];
+
+const waits = randomValues.map((r, index) => {
+  const ceiling = calculateRetryDelay(index + 1, { type: "exponential", delay: 100, maxDelay: 800 });
+  return Math.round(r * ceiling);
+});
+console.log(waits.join(" "));
+</solution>
+<expected>50 50 400 80 600</expected>
+<explain><p>The ceilings are 100, 200, 400, 800 and 800 (capped). Full jitter multiplies each by a random number between 0 and 1. Passing the random values in makes the schedule testable.</p></explain>
+</question>
+
+<question id="rel-code-ready" type="code" file="ready.js">
+<q><p>Write <code>readyStatus(checks, lifecycle)</code>. <code>checks</code> maps names to booleans; <code>lifecycle</code> is a state such as <code>"running"</code> or <code>"stopping"</code>. Return <code>"200"</code> when every check passes and the state is <code>"running"</code>; otherwise <code>"503 "</code> followed by the reasons joined with <code>", "</code> (failed checks by name, then <code>state=STATE</code> if not running).</p></q>
+<starter>
+function readyStatus(checks, lifecycle) {
+  // your code here
+}
+
+console.log(readyStatus({ database: true, migrations: true }, "running"));
+console.log(readyStatus({ database: false, migrations: true }, "running"));
+console.log(readyStatus({ database: true, migrations: true }, "stopping"));
+console.log(readyStatus({ database: false, migrations: false }, "starting"));
+</starter>
+<solution>
+function readyStatus(checks, lifecycle) {
+  const reasons = Object.entries(checks).filter(([, ok]) => !ok).map(([name]) => name);
+  if (lifecycle !== "running") reasons.push(`state=${lifecycle}`);
+  return reasons.length === 0 ? "200" : `503 ${reasons.join(", ")}`;
+}
+
+console.log(readyStatus({ database: true, migrations: true }, "running"));
+console.log(readyStatus({ database: false, migrations: true }, "running"));
+console.log(readyStatus({ database: true, migrations: true }, "stopping"));
+console.log(readyStatus({ database: false, migrations: false }, "starting"));
+</solution>
+<expected>
+200
+503 database
+503 state=stopping
+503 database, migrations, state=starting
+</expected>
+<explain><p>Readiness has two halves: dependencies are fine, and the instance intends to serve. A stopping instance with a healthy database must still answer 503, or the load balancer keeps sending it customers.</p></explain>
+</question>
+
+<question id="rel-code-invariants" type="code" file="invariants.js">
+<q><p>Each chaos run produced <code>{ run, status, orders, receipts }</code>. Print every violation of these invariants: a <code>201</code> must have exactly 1 order and 1 receipt; a <code>503</code> must have 0 orders. Print <code>run N: PROBLEM</code> lines, then <code>violations: COUNT</code>.</p></q>
+<starter>
+const runs = [
+  { run: 1, status: 201, orders: 1, receipts: 1 },
+  { run: 2, status: 503, orders: 0, receipts: 0 },
+  { run: 3, status: 503, orders: 1, receipts: 0 },
+  { run: 4, status: 201, orders: 1, receipts: 0 },
+  { run: 5, status: 201, orders: 1, receipts: 1 },
+];
+
+// your code here
+</starter>
+<solution>
+const runs = [
+  { run: 1, status: 201, orders: 1, receipts: 1 },
+  { run: 2, status: 503, orders: 0, receipts: 0 },
+  { run: 3, status: 503, orders: 1, receipts: 0 },
+  { run: 4, status: 201, orders: 1, receipts: 0 },
+  { run: 5, status: 201, orders: 1, receipts: 1 },
+];
+
+let violations = 0;
+for (const { run, status, orders, receipts } of runs) {
+  let problem = "";
+  if (status === 201 && (orders !== 1 || receipts !== 1)) problem = `201 with ${orders} orders and ${receipts} receipts`;
+  if (status === 503 && orders !== 0) problem = "503 but an order was saved";
+  if (problem) {
+    violations++;
+    console.log(`run ${run}: ${problem}`);
+  }
+}
+console.log(`violations: ${violations}`);
+</solution>
+<expected>
+run 3: 503 but an order was saved
+run 4: 201 with 1 orders and 0 receipts
+violations: 2
+</expected>
+<explain><p>Run 3 is the double-order bug; run 4 is a lost receipt. Invariants check relationships between the answer and the saved state, which is why they catch bugs that "did it return 201?" never would.</p></explain>
+</question>
+
+<question id="rel-code-stale" type="code" file="stale.js">
+<q><p>Write <code>priceLabel(kobo, rate, now)</code> where <code>rate</code> is <code>{ ngnPerGhs, at }</code> or <code>undefined</code>. Show <code>₦X.XX</code>, and add <code> (about GH₵Y.YY)</code> only when a rate exists and is at most one hour (3,600,000 ms) old.</p></q>
+<starter>
+function priceLabel(kobo, rate, now) {
+  // your code here
+}
+
+console.log(priceLabel(1_250_000, { ngnPerGhs: 105, at: 1_000 }, 2_000));
+console.log(priceLabel(1_250_000, { ngnPerGhs: 105, at: 1_000 }, 5_000_000));
+console.log(priceLabel(990_000, undefined, 2_000));
+</starter>
+<solution>
+function priceLabel(kobo, rate, now) {
+  const naira = kobo / 100;
+  const fresh = rate !== undefined && now - rate.at <= 3_600_000;
+  return `₦${naira.toFixed(2)}${fresh ? ` (about GH₵${(naira / rate.ngnPerGhs).toFixed(2)})` : ""}`;
+}
+
+console.log(priceLabel(1_250_000, { ngnPerGhs: 105, at: 1_000 }, 2_000));
+console.log(priceLabel(1_250_000, { ngnPerGhs: 105, at: 1_000 }, 5_000_000));
+console.log(priceLabel(990_000, undefined, 2_000));
+</solution>
+<expected>
+₦12500.00 (about GH₵119.05)
+₦12500.00
+₦9900.00
+</expected>
+<explain><p>A stale fallback needs a limit. An hour-old exchange rate is a fair courtesy price; a week-old one is wrong. Beyond the limit, degrade further: show naira only.</p></explain>
+</question>

@@ -1,0 +1,1085 @@
+<question id="ac-dependency-rule" type="choice">
+<q>In clean architecture, which import breaks the dependency rule?</q>
+<option>An HTTP adapter imports the <code>PlaceOrder</code> use case</option>
+<option>A use case imports the <code>Order</code> entity</option>
+<option correct>The <code>Order</code> entity imports a function from the HTTP adapter to format its total</option>
+<option>The composition root imports the in-memory repository</option>
+<explain><p>Dependencies must point inward: adapters → application → domain. The domain importing an adapter points outward, so a change in HTTP formatting could now break the business rules. The composition root is allowed to import everything; that is its job.</p></explain>
+</question>
+
+<question id="ac-port-owner" type="choice">
+<q>Who owns (declares) the <code>OrderRepository</code> interface, and why?</q>
+<option>The database adapter, because it knows how orders are stored</option>
+<option correct>The application, because the interface describes what the use cases need, and the adapter must implement it</option>
+<option>The HTTP adapter, because it receives the orders first</option>
+<option>Nobody; interfaces are erased, so ownership does not matter</option>
+<explain><p>A port is written from the application's point of view. The adapter imports the port and implements it, so the import points inward even though the call goes outward at runtime. That reversal is dependency inversion. Types are erased at runtime, but the source dependency, which is what the rule is about, is real.</p></explain>
+</question>
+
+<question id="ac-driving-driven" type="choice">
+<q>Which of these is a <strong>driving</strong> (primary) adapter?</q>
+<option>A PGlite implementation of <code>OrderRepository</code></option>
+<option>A <code>FakePayments</code> gateway</option>
+<option correct>A background job that calls <code>ExpireUnpaidOrders.execute()</code> every minute</option>
+<option>A <code>ManualClock</code></option>
+<explain><p>A driving adapter starts an action by calling into the application: HTTP handlers, CLIs, scheduled jobs and queue consumers. Repositories, payment gateways and clocks are driven: the application calls them.</p></explain>
+</question>
+
+<question id="ac-clock-port" type="choice">
+<q>Why does <code>Order.place</code> take <code>now: Date</code> as an argument instead of calling <code>new Date()</code> itself?</q>
+<option>Because <code>new Date()</code> is not allowed in TypeScript classes</option>
+<option>Because the domain must not allocate objects</option>
+<option correct>Reading the clock is a hidden input; passing the time in keeps the domain deterministic and lets tests control time</option>
+<option>Because a <code>Date</code> cannot be stored in a private field</option>
+<explain><p>A function that reads the clock gives different results on each run, so its tests cannot pin the output. The application gets the time from a <code>Clock</code> port, and tests give it a <code>ManualClock</code>, which is how the expiry test moved time forward 35 minutes instantly.</p></explain>
+</question>
+
+<question id="ac-value-object" type="choice">
+<q>What makes <code>Money</code> a <strong>value object</strong> rather than an entity?</q>
+<option>It is stored in the database</option>
+<option correct>It has no identity of its own: two <code>Money</code> values with the same kobo are interchangeable, and it never changes after creation</option>
+<option>It has a private constructor</option>
+<option>It has methods</option>
+<explain><p>An entity (like an order) keeps its identity while its data changes. A value object is defined by its value and is immutable: <code>plus</code> returns a new <code>Money</code>. The private constructor is how <code>Money</code> guarantees validity, but it is not what makes it a value object.</p></explain>
+</question>
+
+<question id="ac-private-constructor" type="choice">
+<q>What does the private constructor of <code>Money</code> buy you?</q>
+<option>Faster object creation</option>
+<option correct>Every <code>Money</code> in the program went through <code>ofKobo</code>, so no code has to check for fractions or negative amounts again</option>
+<option>It hides the <code>kobo</code> field from other code</option>
+<option>It makes <code>Money</code> a singleton</option>
+<explain><p>If the only way in is a factory that validates, every instance is valid by construction. <code>kobo</code> is still readable (it is <code>readonly</code>, not private). This is the "make invalid states unrepresentable" idea applied to a class.</p></explain>
+</question>
+
+<question id="ac-anemic" type="choice">
+<q>The before-code's order was <code>{ status: string }</code> and any code could set <code>status = "paid"</code>. What is this called, and what went wrong?</q>
+<option>A rich domain model; it had too many rules</option>
+<option correct>An anemic domain model; the rule "only a placed order can be paid" lived outside the object, so a new caller could skip it</option>
+<option>A value object; it should have been an entity</option>
+<option>A DTO; it should have been validated</option>
+<explain><p>An anemic model holds data and leaves its rules to whoever touches it. The midnight job and <code>payOrder</code> each touched it differently. Putting the state transitions inside <code>Order</code> means every caller gets the same rule.</p></explain>
+</question>
+
+<question id="ac-output-model" type="choice">
+<q>Why do the use cases return an <code>OrderSummary</code> instead of the <code>Order</code> entity?</q>
+<option>Because entities cannot be serialised to JSON</option>
+<option>Because <code>OrderSummary</code> is faster to create</option>
+<option correct>An adapter holding the entity could call <code>order.cancel()</code> directly, skipping the use case's ownership check, stock release and events</option>
+<option>Because TypeScript does not allow classes to cross module boundaries</option>
+<explain><p>The use case is the only path that performs all the steps of an action. Handing out the live entity gives callers a way around it. Plain read-only data can be shown but not acted on.</p></explain>
+</question>
+
+<question id="ac-not-found" type="choice">
+<q>Ada asks to pay <code>ord-3</code>, which exists but belongs to Tunde. <code>findOwn</code> answers <code>order_not_found</code>, not <code>forbidden</code>. Why?</q>
+<option>Because the repository cannot tell the two cases apart</option>
+<option correct>Answering "forbidden" would confirm that ord-3 exists, which leaks information about other customers' orders</option>
+<option>Because HTTP has no status code for forbidden</option>
+<option>It is a bug; it should be forbidden</option>
+<explain><p>For resources that belong to someone, "not found" for both cases is a common, deliberate choice: a caller cannot probe which ids exist. HTTP does have 403; the choice is about what the answer reveals.</p></explain>
+</question>
+
+<question id="ac-auth-where" type="choice">
+<q>Where should "the customer id comes from a verified session token" and "a customer may only pay their own order" live?</q>
+<option>Both in the use case</option>
+<option>Both in the HTTP adapter</option>
+<option correct>Verifying the token in the driving adapter (authentication); checking ownership in the use case (authorization)</option>
+<option>Both in the domain</option>
+<explain><p>Tokens are an HTTP detail, so the adapter authenticates and passes a trusted <code>customerId</code>. The ownership rule must hold for every way in (web, CLI, job), so it lives in the use case, where all of them pass.</p></explain>
+</question>
+
+<question id="ac-reserve-all-or-nothing" type="choice">
+<q>The <code>Catalog</code> port promises that <code>reserve(items)</code> is all or nothing. Why must that promise be part of the port, not left to each caller?</q>
+<option>Because TypeScript checks it</option>
+<option correct>Only the adapter can make it atomic (for example with one database transaction); a caller reserving line by line could leave some copies held after a later line fails</option>
+<option>Because all-or-nothing is faster</option>
+<option>It does not matter; partial reservations are fine</option>
+<explain><p>Atomicity depends on the storage: a SQL transaction, a single conditional <code>UPDATE</code>, a lock. The port states the guarantee, every adapter must keep it, and a contract test can check it. Types cannot express it.</p></explain>
+</question>
+
+<question id="ac-compensation" type="choice">
+<q>In <code>PlaceOrder</code>, <code>save</code> throws after <code>reserve</code> succeeded. What does the <code>catch</code> block do, and what is it called?</q>
+<option>It retries the save; this is called a circuit breaker</option>
+<option correct>It releases the reserved copies and rethrows; this is a compensating action</option>
+<option>It swallows the error so the customer sees success</option>
+<option>It publishes an <code>OrderFailed</code> event; this is called an outbox</option>
+<explain><p>Without one transaction around both steps, the use case undoes the first step by hand. It rethrows because the order really failed. Compensation is imperfect (the release can fail too), which is why a database adapter would rather use a transaction.</p></explain>
+</question>
+
+<question id="ac-publish-fails" type="choice">
+<q><code>save</code> succeeded, then <code>events.publish</code> throws. Why is "just retry the whole <code>PlaceOrder</code>" a bad fix?</q>
+<option>Because events cannot be retried</option>
+<option correct>The order is already saved, so retrying places a second order; the standard fix stores the events with the order and publishes them later (an outbox)</option>
+<option>Because the clock will have moved</option>
+<option>It is a good fix</option>
+<explain><p>Retrying a whole use case that already has side effects duplicates them. Saving the events in the same transaction as the order, then publishing from that table, makes "saved but not announced" impossible.</p></explain>
+</question>
+
+<question id="ac-records-not-objects" type="choice">
+<q>Why does <code>InMemoryOrders</code> store <code>OrderRecord</code>s made by <code>toRecord</code> instead of the <code>Order</code> objects themselves?</q>
+<option>To save memory</option>
+<option>Because <code>Map</code> cannot hold class instances</option>
+<option correct>So a change to a loaded order is invisible until <code>save</code>, as with a real database; otherwise tests pass on the fake and fail in production</option>
+<option>Because records are faster to search</option>
+<option>Because the domain forbids it</option>
+<explain><p>A fake that stores live objects silently "saves" every mutation. Code that forgets to call <code>save</code> works in tests and loses data in production. The contract test's "changes count only after save" catches this.</p></explain>
+</question>
+
+<question id="ac-mapper-location" type="choice">
+<q>Where does the persistence mapper (<code>toRecord</code>/<code>fromRecord</code>) belong?</q>
+<option>In the domain, next to <code>Order</code></option>
+<option>In the application, next to the ports</option>
+<option correct>In the adapters, because it knows the storage format (column names, ISO strings)</option>
+<option>In the composition root</option>
+<explain><p>Column names like <code>customer_id</code> and <code>unit_price_kobo</code> are storage details. Putting the mapper in the domain would make the domain depend on the database schema.</p></explain>
+</question>
+
+<question id="ac-format-location" type="choice">
+<q>A new e-mail adapter wants totals as "₦16,500" (no kobo). Where should that formatting go?</q>
+<option>A new method <code>Money.formatForEmail()</code></option>
+<option>A new field on <code>OrderSummary</code></option>
+<option correct>In the e-mail adapter, from <code>totalKobo</code></option>
+<option>In <code>Order.total</code></option>
+<explain><p>Presentation differs per adapter: JSON, CLI and e-mail all want their own format. Keeping it out of the domain and the application means a new format never touches the rules.</p></explain>
+</question>
+
+<question id="ac-status-table" type="choice">
+<q>The HTTP adapter's status table is typed <code>Record&lt;OrderFailure["code"], number&gt;</code>. What happens when someone adds <code>{ code: "book_withdrawn" }</code> to <code>OrderFailure</code>?</q>
+<option>The table silently returns <code>undefined</code> for it, and the response has no status</option>
+<option correct>The adapter no longer compiles until <code>book_withdrawn</code> gets a status</option>
+<option>It falls back to 500</option>
+<option>It is mapped to 400 automatically</option>
+<explain><p>A <code>Record</code> over a union of keys requires every key. The compiler turns "forgot to map the new failure" into an error in the one place that must change.</p></explain>
+</question>
+
+<question id="ac-contract-test" type="choice">
+<q>What is a <strong>contract test</strong> for a port?</q>
+<option>A test that checks the port's TypeScript types compile</option>
+<option correct>One set of behaviour checks that is run against every adapter implementing the port</option>
+<option>A test that calls the real payment provider</option>
+<option>A legal agreement between teams</option>
+<explain><p>The same tests run against the in-memory and the PGlite repository. If both pass, tests written against the fast fake say something true about the real database.</p></explain>
+</question>
+
+<question id="ac-regex-limits" type="choice">
+<q>Which import would the lesson's regex-based checker <strong>miss</strong>?</q>
+<option><code>import type { Order } from "../domain/order.js";</code></option>
+<option><code>export * from "../adapters/http.js";</code></option>
+<option correct><code>const { PGlite } = require("@electric-sql/pglite");</code></option>
+<option><code>const helper = await import("../adapters/cli.js");</code></option>
+<explain><p>The pattern looks for <code>import</code>/<code>export … from</code>, side-effect imports and <code>import("…")</code>. <code>require</code> is not matched, and neither is an import built from a variable. Tools that parse the code (dependency-cruiser, eslint-plugin-boundaries) do not have these gaps.</p></explain>
+</question>
+
+<question id="ac-when-not" type="choice">
+<q>For which feature is full clean architecture (entity, use case, ports, mappers) most likely <strong>ceremony</strong>?</q>
+<option>Placing and paying orders with stock, payments and expiry</option>
+<option>Bank transfers with limits, fees and fraud checks</option>
+<option correct>An admin page that lists and edits the shop's opening hours</option>
+<option>Bookings with overlapping-time rules and cancellations</option>
+<explain><p>Layers pay off where there are rules to protect and technologies to swap. Opening hours are plain data with no transitions; a simple CRUD handler is clearer there, even inside a clean codebase.</p></explain>
+</question>
+
+<question id="ac-generic-repo" type="choice">
+<q>A teammate proposes <code>interface Repository&lt;T&gt; { findWhere(filter: Partial&lt;T&gt;): Promise&lt;T[]&gt;; update(id: string, changes: Partial&lt;T&gt;): Promise&lt;void&gt; }</code> for every entity. What is the main problem?</q>
+<option>Generics are slow</option>
+<option correct>It lets any use case change any field directly, bypassing the entity's rules, and forces every adapter to support arbitrary queries</option>
+<option>It cannot be implemented in memory</option>
+<option>Nothing; it is the recommended pattern</option>
+<explain><p><code>update(id, { status: "paid" })</code> is the anemic model again, through the repository. Ports should offer only what the use cases need, like <code>save(order)</code> and <code>listPlacedBefore(time)</code>.</p></explain>
+</question>
+
+<question id="ac-out-money" type="output">
+<q>What does this print?</q>
+<code file="money.ts">
+class Money {
+  private constructor(readonly kobo: number) {}
+  static ofKobo(kobo: number): Money {
+    if (!Number.isSafeInteger(kobo) || kobo < 0) throw new RangeError(`bad amount ${kobo}`);
+    return new Money(kobo);
+  }
+  plus(other: Money): Money {
+    return Money.ofKobo(this.kobo + other.kobo);
+  }
+}
+
+const a = Money.ofKobo(450_000);
+const b = a.plus(Money.ofKobo(50));
+console.log(a.kobo, b.kobo, a === b);
+try {
+  Money.ofKobo(0.1 + 0.2);
+} catch (error) {
+  console.log((error as Error).name);
+}
+</code>
+<option correct>450000 450050 false
+RangeError</option>
+<option>450050 450050 true
+RangeError</option>
+<option>450000 450050 false
+Error</option>
+<option>450000 450050 false</option>
+<explain><p><code>plus</code> returns a new value, so <code>a</code> is unchanged and the two are different objects. <code>0.1 + 0.2</code> is not an integer, so <code>ofKobo</code> throws a <code>RangeError</code>.</p></explain>
+</question>
+
+<question id="ac-out-cancel-pay" type="output">
+<q>What does this print?</q>
+<code file="order.ts">
+type Status = "placed" | "paid" | "cancelled";
+
+class Order {
+  #status: Status = "placed";
+  get status() {
+    return this.#status;
+  }
+  pay(): string {
+    if (this.#status !== "placed") return `cannot pay: ${this.#status}`;
+    this.#status = "paid";
+    return "paid";
+  }
+  cancel(): string {
+    if (this.#status !== "placed") return `cannot cancel: ${this.#status}`;
+    this.#status = "cancelled";
+    return "cancelled";
+  }
+}
+
+const order = new Order();
+console.log(order.cancel());
+console.log(order.pay());
+console.log(order.cancel());
+console.log(order.status);
+</code>
+<option correct>cancelled
+cannot pay: cancelled
+cannot cancel: cancelled
+cancelled</option>
+<option>cancelled
+paid
+cannot cancel: paid
+paid</option>
+<option>cancelled
+cannot pay: cancelled
+cancelled
+cancelled</option>
+<option>cancelled
+cannot pay: placed
+cannot cancel: placed
+placed</option>
+<explain><p>Only a placed order can move. After <code>cancel</code>, the status is <code>cancelled</code>, and both later calls refuse without changing anything. This is the rule the before-code's job skipped.</p></explain>
+</question>
+
+<question id="ac-out-events" type="output">
+<q>What does this print?</q>
+<code file="events.ts">
+class Order {
+  #events: string[] = [];
+  pay() {
+    this.#events.push("OrderPaid");
+  }
+  pullEvents(): string[] {
+    const events = this.#events;
+    this.#events = [];
+    return events;
+  }
+}
+
+const order = new Order();
+order.pay();
+const first = order.pullEvents();
+order.pay();
+const second = order.pullEvents();
+console.log(first, second, order.pullEvents().length);
+</code>
+<option correct>[ 'OrderPaid' ] [ 'OrderPaid' ] 0</option>
+<option>[ 'OrderPaid', 'OrderPaid' ] [ 'OrderPaid' ] 0</option>
+<option>[] [ 'OrderPaid' ] 0</option>
+<option>[ 'OrderPaid' ] [ 'OrderPaid' ] 2</option>
+<explain><p><code>pullEvents</code> hands over the current list and starts a new empty one, so each event is published once. <code>first</code> keeps its own array; the second <code>pay</code> goes into the new one.</p></explain>
+</question>
+
+<question id="ac-out-resolve" type="output">
+<q>What does this print?</q>
+<code file="resolve.ts">
+function resolveImport(from: string, spec: string): string {
+  const parts = from.split("/").slice(0, -1);
+  for (const part of spec.split("/")) {
+    if (part === "..") parts.pop();
+    else if (part !== ".") parts.push(part);
+  }
+  return parts.join("/").replace(/\.js$/, ".ts");
+}
+
+console.log(resolveImport("src/application/place-order.ts", "../domain/order.js"));
+console.log(resolveImport("src/adapters/http.ts", "./cli.js"));
+console.log(resolveImport("src/main.ts", "../scripts/seed.js"));
+</code>
+<option correct>src/domain/order.ts
+src/adapters/cli.ts
+scripts/seed.ts</option>
+<option>src/application/domain/order.ts
+src/adapters/cli.ts
+src/scripts/seed.ts</option>
+<option>src/domain/order.js
+src/adapters/cli.js
+scripts/seed.js</option>
+<option>domain/order.ts
+adapters/cli.ts
+scripts/seed.ts</option>
+<explain><p>The importer's folder is the starting point (<code>slice(0, -1)</code> drops the file name). <code>..</code> climbs one folder, <code>.</code> stays. From <code>src/main.ts</code>, <code>..</code> leaves <code>src</code> entirely, which the checker reports as "outside every layer".</p></explain>
+</question>
+
+<question id="ac-out-layer-check" type="output">
+<q>What does this print?</q>
+<code file="rules.ts">
+type Layer = "domain" | "application" | "adapters";
+const MAY_IMPORT: Record<Layer, Layer[]> = {
+  domain: ["domain"],
+  application: ["domain", "application"],
+  adapters: ["domain", "application", "adapters"],
+};
+
+const imports: [Layer, Layer][] = [
+  ["adapters", "domain"],
+  ["domain", "application"],
+  ["application", "application"],
+  ["application", "adapters"],
+];
+
+for (const [from, to] of imports) {
+  console.log(`${from} -> ${to}: ${MAY_IMPORT[from].includes(to) ? "ok" : "violation"}`);
+}
+</code>
+<option correct>adapters -> domain: ok
+domain -> application: violation
+application -> application: ok
+application -> adapters: violation</option>
+<option>adapters -> domain: violation
+domain -> application: ok
+application -> application: ok
+application -> adapters: ok</option>
+<option>adapters -> domain: ok
+domain -> application: ok
+application -> application: ok
+application -> adapters: violation</option>
+<option>adapters -> domain: ok
+domain -> application: violation
+application -> application: violation
+application -> adapters: violation</option>
+<explain><p>Outer rings may import inner ones and their own ring. The domain importing the application and the application importing an adapter both point outward.</p></explain>
+</question>
+
+<question id="ac-out-live-object" type="output">
+<q>This fake repository stores live objects. What does this print?</q>
+<code file="live.ts">
+class Order {
+  constructor(readonly id: string, public status: string) {}
+}
+
+class LeakyOrders {
+  #orders = new Map<string, Order>();
+  async save(order: Order) {
+    this.#orders.set(order.id, order);
+  }
+  async get(id: string) {
+    return this.#orders.get(id);
+  }
+}
+
+const repo = new LeakyOrders();
+await repo.save(new Order("ord-1", "placed"));
+const loaded = await repo.get("ord-1");
+if (loaded) loaded.status = "paid";
+console.log((await repo.get("ord-1"))?.status);
+</code>
+<option correct>paid</option>
+<option>placed</option>
+<option>undefined</option>
+<option>It throws, because status is readonly</option>
+<explain><p>The map holds the same object that <code>get</code> returned, so the change is "saved" without calling <code>save</code>. A real database would still say <code>placed</code>. That difference is what the contract test catches.</p></explain>
+</question>
+
+<question id="ac-out-record" type="output">
+<q>What does this print?</q>
+<code file="record.ts">
+class Order {
+  constructor(readonly id: string, public status: string) {}
+}
+
+class Orders {
+  #records = new Map<string, { id: string; status: string }>();
+  async save(order: Order) {
+    this.#records.set(order.id, { id: order.id, status: order.status });
+  }
+  async get(id: string) {
+    const record = this.#records.get(id);
+    return record && new Order(record.id, record.status);
+  }
+}
+
+const repo = new Orders();
+const order = new Order("ord-1", "placed");
+await repo.save(order);
+order.status = "paid";
+const before = (await repo.get("ord-1"))?.status;
+await repo.save(order);
+console.log(before, (await repo.get("ord-1"))?.status);
+</code>
+<option correct>placed paid</option>
+<option>paid paid</option>
+<option>placed placed</option>
+<option>undefined paid</option>
+<explain><p>The repository copies the data into a record on <code>save</code> and builds a new object on <code>get</code>. The change is stored only by the second <code>save</code>.</p></explain>
+</question>
+
+<question id="ac-out-result" type="output">
+<q>What does this print?</q>
+<code file="result.ts">
+type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+
+function place(quantity: number): Result<number, string> {
+  if (quantity < 1 || quantity > 5) return { ok: false, error: "bad_quantity" };
+  return { ok: true, value: quantity * 450_000 };
+}
+
+for (const q of [2, 0, 6, 5]) {
+  const result = place(q);
+  console.log(result.ok ? `total ${result.value}` : `refused ${result.error}`);
+}
+</code>
+<option correct>total 900000
+refused bad_quantity
+refused bad_quantity
+total 2250000</option>
+<option>total 900000
+total 0
+refused bad_quantity
+total 2250000</option>
+<option>total 900000
+refused bad_quantity
+refused bad_quantity
+refused bad_quantity</option>
+<option>total 900000
+refused bad_quantity
+total 2700000
+total 2250000</option>
+<explain><p>0 and 6 are outside 1 to 5, so they are refused; 5 is inside. The caller narrows on <code>ok</code> before reading <code>value</code> or <code>error</code>.</p></explain>
+</question>
+
+<question id="ac-out-idempotent" type="output">
+<q>What does this print?</q>
+<code file="payments.ts">
+class FakePayments {
+  #byKey = new Map<string, string>();
+  charges = 0;
+  charge(key: string, amountKobo: number): string {
+    const earlier = this.#byKey.get(key);
+    if (earlier !== undefined) return earlier;
+    this.charges++;
+    const reference = `ref-${this.charges}`;
+    this.#byKey.set(key, reference);
+    return reference;
+  }
+}
+
+const payments = new FakePayments();
+console.log(payments.charge("pay-ord-1", 900_000));
+console.log(payments.charge("pay-ord-1", 900_000));
+console.log(payments.charge("pay-ord-2", 450_000));
+console.log(payments.charges);
+</code>
+<option correct>ref-1
+ref-1
+ref-2
+2</option>
+<option>ref-1
+ref-2
+ref-3
+3</option>
+<option>ref-1
+ref-1
+ref-3
+3</option>
+<option>ref-1
+ref-1
+ref-2
+3</option>
+<explain><p>The second call with the same key returns the first reference and charges nothing. That is why <code>PayOrder</code> sends a stable key: two racing requests for the same order cannot charge twice.</p></explain>
+</question>
+
+<question id="ac-out-compensate" type="output">
+<q>What does this print?</q>
+<code file="compensate.ts">
+let stock = 3;
+const log: string[] = [];
+
+async function reserve(n: number) { stock -= n; log.push(`reserve ${n}`); }
+async function release(n: number) { stock += n; log.push(`release ${n}`); }
+async function save() { throw new Error("disk full"); }
+
+async function placeOrder(n: number) {
+  await reserve(n);
+  try {
+    await save();
+  } catch (error) {
+    await release(n);
+    throw error;
+  }
+}
+
+try {
+  await placeOrder(2);
+} catch (error) {
+  log.push((error as Error).message);
+}
+console.log(log.join(", "), "| stock:", stock);
+</code>
+<option correct>reserve 2, release 2, disk full | stock: 3</option>
+<option>reserve 2, disk full | stock: 1</option>
+<option>reserve 2, release 2 | stock: 3</option>
+<option>disk full | stock: 3</option>
+<explain><p>The save fails after the reservation, so the <code>catch</code> gives the copies back, then rethrows, and the caller records the error. Stock ends where it started.</p></explain>
+</question>
+
+<question id="ac-out-expire" type="output">
+<q>Orders were placed at these minutes past 9:00. It is now 9:35 and orders unpaid for more than 30 minutes expire. What does this print?</q>
+<code file="expire.ts">
+const orders = [
+  { id: "ord-1", placedAt: 0, status: "placed" },
+  { id: "ord-2", placedAt: 2, status: "paid" },
+  { id: "ord-3", placedAt: 5, status: "placed" },
+  { id: "ord-4", placedAt: 20, status: "placed" },
+];
+const now = 35;
+const cutoff = now - 30;
+const due = orders.filter((order) => order.status === "placed" && order.placedAt < cutoff);
+console.log(due.map((order) => order.id));
+</code>
+<option correct>[ 'ord-1' ]</option>
+<option>[ 'ord-1', 'ord-3' ]</option>
+<option>[ 'ord-1', 'ord-2' ]</option>
+<option>[ 'ord-1', 'ord-2', 'ord-3' ]</option>
+<explain><p>The cutoff is minute 5. <code>ord-3</code> was placed exactly at minute 5, and <code>&lt;</code> is strict, so it is not yet due. <code>ord-2</code> is paid. Boundaries like this are why the expiry test controls the clock.</p></explain>
+</question>
+
+<question id="ac-out-exhaustive" type="output">
+<q>What does this print?</q>
+<code file="status.ts">
+type Failure = { code: "out_of_stock" } | { code: "wrong_status" } | { code: "order_not_found" };
+
+const STATUS: Record<Failure["code"], number> = {
+  out_of_stock: 409,
+  wrong_status: 409,
+  order_not_found: 404,
+};
+
+const failures: Failure[] = [{ code: "order_not_found" }, { code: "wrong_status" }];
+console.log(failures.map((failure) => STATUS[failure.code]).join(" "));
+console.log(Object.keys(STATUS).length);
+</code>
+<option correct>404 409
+3</option>
+<option>404 409
+2</option>
+<option>409 404
+3</option>
+<option>404 409
+undefined</option>
+<explain><p>Each failure's code picks its status from the table. The table has exactly one entry per member of the union, which the compiler enforces.</p></explain>
+</question>
+
+<question id="ac-code-money-times" type="code" file="money.ts">
+<q><p>Add a <code>times(quantity)</code> method to <code>Money</code> that returns a new <code>Money</code>, and make <code>ofKobo</code> refuse negative or fractional amounts with a <code>RangeError</code>. The program should print <code>1350000</code>, then <code>450000</code>, then <code>RangeError</code>.</p></q>
+<starter>
+class Money {
+  private constructor(readonly kobo: number) {}
+
+  static ofKobo(kobo: number): Money {
+    return new Money(kobo);
+  }
+}
+
+const price = Money.ofKobo(450_000);
+// print price.times(3).kobo, then price.kobo,
+// then try Money.ofKobo(-1) and print the error's name
+</starter>
+<solution>
+class Money {
+  private constructor(readonly kobo: number) {}
+
+  static ofKobo(kobo: number): Money {
+    if (!Number.isSafeInteger(kobo) || kobo < 0) throw new RangeError(`bad amount ${kobo}`);
+    return new Money(kobo);
+  }
+
+  times(quantity: number): Money {
+    return Money.ofKobo(this.kobo * quantity);
+  }
+}
+
+const price = Money.ofKobo(450_000);
+console.log(price.times(3).kobo);
+console.log(price.kobo);
+try {
+  Money.ofKobo(-1);
+} catch (error) {
+  console.log((error as Error).name);
+}
+</solution>
+<expected>
+1350000
+450000
+RangeError
+</expected>
+<explain><p><code>times</code> goes through <code>ofKobo</code>, so even a result is validated, and it returns a new value instead of changing <code>price</code>. A value object never changes after it is made.</p></explain>
+</question>
+
+<question id="ac-code-order-rules" type="code" file="booking.ts">
+<q><p>A booking can be <code>"held"</code>, <code>"confirmed"</code> or <code>"released"</code>. Write the <code>Booking</code> class so that <code>confirm()</code> and <code>release()</code> only work on a held booking and otherwise return <code>"cannot confirm: released"</code> (and so on). The program should print <code>released</code>, <code>cannot confirm: released</code>, <code>released</code>.</p></q>
+<starter>
+type BookingStatus = "held" | "confirmed" | "released";
+
+class Booking {
+  status: BookingStatus = "held";
+  // make status private and add confirm() and release()
+}
+
+const booking = new Booking();
+console.log(booking.release());
+console.log(booking.confirm());
+console.log(booking.status);
+</starter>
+<solution>
+type BookingStatus = "held" | "confirmed" | "released";
+
+class Booking {
+  #status: BookingStatus = "held";
+
+  get status(): BookingStatus {
+    return this.#status;
+  }
+
+  confirm(): string {
+    return this.#move("confirm", "confirmed");
+  }
+
+  release(): string {
+    return this.#move("release", "released");
+  }
+
+  #move(action: string, next: BookingStatus): string {
+    if (this.#status !== "held") return `cannot ${action}: ${this.#status}`;
+    this.#status = next;
+    return next;
+  }
+}
+
+const booking = new Booking();
+console.log(booking.release());
+console.log(booking.confirm());
+console.log(booking.status);
+</solution>
+<expected>
+released
+cannot confirm: released
+released
+</expected>
+<explain><p>With the status private and only readable through a getter, the transitions are the only way to change it, so no caller can confirm a released booking. That is the difference between a rich and an anemic model.</p></explain>
+</question>
+
+<question id="ac-code-port-fake" type="code" file="fake.ts">
+<q><p>The use case below depends on the <code>Clock</code> port. Write a <code>ManualClock</code> that starts at a given date and has <code>advance(minutes)</code>, and use it so the program prints <code>false</code> then <code>true</code>.</p></q>
+<starter>
+interface Clock {
+  now(): Date;
+}
+
+function isExpired(placedAt: Date, clock: Clock, maxAgeMinutes: number): boolean {
+  return clock.now().getTime() - placedAt.getTime() > maxAgeMinutes * 60_000;
+}
+
+const placedAt = new Date("2026-09-24T09:00:00Z");
+// create a ManualClock at 09:10, print isExpired(placedAt, clock, 30),
+// advance 25 minutes, print it again
+</starter>
+<solution>
+interface Clock {
+  now(): Date;
+}
+
+function isExpired(placedAt: Date, clock: Clock, maxAgeMinutes: number): boolean {
+  return clock.now().getTime() - placedAt.getTime() > maxAgeMinutes * 60_000;
+}
+
+class ManualClock implements Clock {
+  constructor(private time: Date) {}
+  now(): Date {
+    return this.time;
+  }
+  advance(minutes: number): void {
+    this.time = new Date(this.time.getTime() + minutes * 60_000);
+  }
+}
+
+const placedAt = new Date("2026-09-24T09:00:00Z");
+const clock = new ManualClock(new Date("2026-09-24T09:10:00Z"));
+console.log(isExpired(placedAt, clock, 30));
+clock.advance(25);
+console.log(isExpired(placedAt, clock, 30));
+</solution>
+<expected>
+false
+true
+</expected>
+<explain><p>Because <code>isExpired</code> asks a port for the time, a test can put the clock anywhere. With <code>new Date()</code> inside, this test would have to wait 35 real minutes.</p></explain>
+</question>
+
+<question id="ac-code-mapper" type="code" file="mapper.ts">
+<q><p>Write <code>toRecord(order)</code> and <code>fromRecord(record)</code> for this order. The record uses <code>snake_case</code> and an ISO string for the date. <code>fromRecord</code> must throw an <code>Error</code> for an unknown status. The program should print <code>{"id":"ord-1","customer_id":"ada","status":"placed","placed_at":"2026-09-24T09:00:00.000Z"}</code>, then <code>true</code>, then <code>unknown status "shipped"</code>.</p></q>
+<starter>
+type Status = "placed" | "paid" | "cancelled";
+interface Order { id: string; customerId: string; status: Status; placedAt: Date }
+interface OrderRecord { id: string; customer_id: string; status: string; placed_at: string }
+
+// write toRecord and fromRecord
+
+const order: Order = { id: "ord-1", customerId: "ada", status: "placed", placedAt: new Date("2026-09-24T09:00:00Z") };
+const record = toRecord(order);
+console.log(JSON.stringify(record));
+console.log(fromRecord(record).placedAt.getTime() === order.placedAt.getTime());
+try {
+  fromRecord({ ...record, status: "shipped" });
+} catch (error) {
+  console.log((error as Error).message);
+}
+</starter>
+<solution>
+type Status = "placed" | "paid" | "cancelled";
+interface Order { id: string; customerId: string; status: Status; placedAt: Date }
+interface OrderRecord { id: string; customer_id: string; status: string; placed_at: string }
+
+function isStatus(value: string): value is Status {
+  return value === "placed" || value === "paid" || value === "cancelled";
+}
+
+function toRecord(order: Order): OrderRecord {
+  return { id: order.id, customer_id: order.customerId, status: order.status, placed_at: order.placedAt.toISOString() };
+}
+
+function fromRecord(record: OrderRecord): Order {
+  if (!isStatus(record.status)) throw new Error(`unknown status "${record.status}"`);
+  return { id: record.id, customerId: record.customer_id, status: record.status, placedAt: new Date(record.placed_at) };
+}
+
+const order: Order = { id: "ord-1", customerId: "ada", status: "placed", placedAt: new Date("2026-09-24T09:00:00Z") };
+const record = toRecord(order);
+console.log(JSON.stringify(record));
+console.log(fromRecord(record).placedAt.getTime() === order.placedAt.getTime());
+try {
+  fromRecord({ ...record, status: "shipped" });
+} catch (error) {
+  console.log((error as Error).message);
+}
+</solution>
+<expected>
+{"id":"ord-1","customer_id":"ada","status":"placed","placed_at":"2026-09-24T09:00:00.000Z"}
+true
+unknown status "shipped"
+</expected>
+<explain><p>Storage is outside the program, so <code>fromRecord</code> checks what it reads, and the type guard lets the compiler accept the narrowed status without a cast. The mapper is the only code that knows both shapes.</p></explain>
+</question>
+
+<question id="ac-code-import-check" type="code" file="check.ts">
+<q><p>Write <code>checkImports(files)</code>: for each file under <code>src/domain/</code> or <code>src/application/</code>, report every import whose path contains <code>/adapters/</code> as <code>"&lt;file&gt; imports an adapter"</code>. Use a regular expression over <code>from "…"</code>. The program should print the two violations, one per line.</p></q>
+<starter>
+const files: Record<string, string> = {
+  "src/domain/order.ts": `import { Money } from "./money.js";`,
+  "src/application/pay.ts": `import type { Order } from "../domain/order.js";
+import { FakePayments } from "../adapters/memory.js";`,
+  "src/adapters/http.ts": `import { PayOrder } from "../application/pay.js";`,
+  "src/domain/money.ts": `import { formatNaira } from "../adapters/format.js";`,
+};
+
+// write checkImports and print each violation
+</starter>
+<solution>
+const files: Record<string, string> = {
+  "src/domain/order.ts": `import { Money } from "./money.js";`,
+  "src/application/pay.ts": `import type { Order } from "../domain/order.js";
+import { FakePayments } from "../adapters/memory.js";`,
+  "src/adapters/http.ts": `import { PayOrder } from "../application/pay.js";`,
+  "src/domain/money.ts": `import { formatNaira } from "../adapters/format.js";`,
+};
+
+function checkImports(all: Record<string, string>): string[] {
+  const violations: string[] = [];
+  for (const [file, source] of Object.entries(all)) {
+    if (!/^src\/(domain|application)\//.test(file)) continue;
+    for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
+      if (match[1]!.includes("/adapters/")) violations.push(`${file} imports an adapter`);
+    }
+  }
+  return violations;
+}
+
+for (const violation of checkImports(files)) console.log(violation);
+</solution>
+<expected>
+src/application/pay.ts imports an adapter
+src/domain/money.ts imports an adapter
+</expected>
+<explain><p>The adapter importing the application is legal, and so is the domain's own import. Run a check like this in CI and the dependency rule stops depending on everyone's memory.</p></explain>
+</question>
+
+<question id="ac-code-use-case" type="code" file="cancel.ts">
+<q><p>Write the <code>CancelBooking</code> use case: load the booking from the repository, answer <code>"not_found"</code> if it is missing or belongs to someone else, call <code>booking.cancel()</code>, save, and return <code>"cancelled"</code> or the domain's refusal. The program should print <code>not_found</code>, <code>cancelled</code>, <code>wrong_status</code>, <code>cancelled</code>.</p></q>
+<starter>
+interface Booking { id: string; guest: string; status: "held" | "cancelled" }
+interface BookingRepository {
+  get(id: string): Promise<Booking | undefined>;
+  save(booking: Booking): Promise<void>;
+}
+
+function cancel(booking: Booking): "cancelled" | "wrong_status" {
+  if (booking.status !== "held") return "wrong_status";
+  booking.status = "cancelled";
+  return "cancelled";
+}
+
+const stored = new Map<string, Booking>([["bk-1", { id: "bk-1", guest: "ada", status: "held" }]]);
+const repo: BookingRepository = {
+  get: async (id) => {
+    const b = stored.get(id);
+    return b && { ...b };
+  },
+  save: async (b) => {
+    stored.set(b.id, { ...b });
+  },
+};
+
+// write class CancelBooking with execute(guest, id)
+// then: execute("tunde", "bk-1"), execute("ada", "bk-1"), execute("ada", "bk-1"),
+// and print the stored status of bk-1
+</starter>
+<solution>
+interface Booking { id: string; guest: string; status: "held" | "cancelled" }
+interface BookingRepository {
+  get(id: string): Promise<Booking | undefined>;
+  save(booking: Booking): Promise<void>;
+}
+
+function cancel(booking: Booking): "cancelled" | "wrong_status" {
+  if (booking.status !== "held") return "wrong_status";
+  booking.status = "cancelled";
+  return "cancelled";
+}
+
+const stored = new Map<string, Booking>([["bk-1", { id: "bk-1", guest: "ada", status: "held" }]]);
+const repo: BookingRepository = {
+  get: async (id) => {
+    const b = stored.get(id);
+    return b && { ...b };
+  },
+  save: async (b) => {
+    stored.set(b.id, { ...b });
+  },
+};
+
+class CancelBooking {
+  constructor(private readonly bookings: BookingRepository) {}
+
+  async execute(guest: string, id: string): Promise<string> {
+    const booking = await this.bookings.get(id);
+    if (booking === undefined || booking.guest !== guest) return "not_found";
+    const result = cancel(booking);
+    if (result !== "cancelled") return result;
+    await this.bookings.save(booking);
+    return result;
+  }
+}
+
+const useCase = new CancelBooking(repo);
+console.log(await useCase.execute("tunde", "bk-1"));
+console.log(await useCase.execute("ada", "bk-1"));
+console.log(await useCase.execute("ada", "bk-1"));
+console.log(stored.get("bk-1")?.status);
+</solution>
+<expected>
+not_found
+cancelled
+wrong_status
+cancelled
+</expected>
+<explain><p>The use case does the application's steps (load, ownership check, save) and lets the domain function decide the rule. The repository copies on the way in and out, so the save is what makes the change stick.</p></explain>
+</question>
+
+<question id="ac-code-purity" type="code" file="purity.ts">
+<q><p>Write <code>hiddenInputs(source)</code> that returns the 1-based line numbers of lines that call <code>Date.now()</code>, <code>new Date()</code> with no arguments, or <code>Math.random()</code>. The program should print <code>[ 2, 4 ]</code>.</p></q>
+<starter>
+const source = `const cutoff = new Date(clock.now().getTime() - 30 * 60_000);
+const id = "ord-" + Math.random().toString(36).slice(2);
+const placed = new Date("2026-09-24T09:00:00Z");
+const age = Date.now() - placed.getTime();`;
+
+// write hiddenInputs and print hiddenInputs(source)
+</starter>
+<solution>
+const source = `const cutoff = new Date(clock.now().getTime() - 30 * 60_000);
+const id = "ord-" + Math.random().toString(36).slice(2);
+const placed = new Date("2026-09-24T09:00:00Z");
+const age = Date.now() - placed.getTime();`;
+
+function hiddenInputs(code: string): number[] {
+  const pattern = /\bDate\.now\(|\bnew Date\(\s*\)|\bMath\.random\(/;
+  const lines: number[] = [];
+  code.split("\n").forEach((text, index) => {
+    if (pattern.test(text)) lines.push(index + 1);
+  });
+  return lines;
+}
+
+console.log(hiddenInputs(source));
+</solution>
+<expected>
+[ 2, 4 ]
+</expected>
+<explain><p>Line 1 builds a date from a clock port and line 3 from a fixed string, so both are deterministic. Lines 2 and 4 read hidden inputs, which make a use case impossible to test with exact expectations.</p></explain>
+</question>
+
+<question id="ac-code-respond" type="code" file="respond.ts">
+<q><p>Write the HTTP adapter's <code>respond(result)</code>: a failure becomes <code>{ status, body: { error: code } }</code> using the <code>STATUS</code> table, a success becomes status 200 with the total formatted by <code>formatNaira</code>. The program should print <code>200 {"id":"ord-1","total":"₦16,500.00"}</code>, <code>409 {"error":"out_of_stock"}</code> and <code>402 {"error":"payment_declined"}</code>.</p></q>
+<starter>
+type Failure = { code: "out_of_stock" } | { code: "order_not_found" } | { code: "payment_declined" };
+type Result = { ok: true; value: { id: string; totalKobo: number } } | { ok: false; error: Failure };
+
+const STATUS: Record<Failure["code"], number> = { out_of_stock: 409, order_not_found: 404, payment_declined: 402 };
+
+function formatNaira(kobo: number): string {
+  const naira = Math.floor(kobo / 100).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `₦${naira}.${String(kobo % 100).padStart(2, "0")}`;
+}
+
+// write respond(result) and print status and JSON body for each result below
+const results: Result[] = [
+  { ok: true, value: { id: "ord-1", totalKobo: 1_650_000 } },
+  { ok: false, error: { code: "out_of_stock" } },
+  { ok: false, error: { code: "payment_declined" } },
+];
+</starter>
+<solution>
+type Failure = { code: "out_of_stock" } | { code: "order_not_found" } | { code: "payment_declined" };
+type Result = { ok: true; value: { id: string; totalKobo: number } } | { ok: false; error: Failure };
+
+const STATUS: Record<Failure["code"], number> = { out_of_stock: 409, order_not_found: 404, payment_declined: 402 };
+
+function formatNaira(kobo: number): string {
+  const naira = Math.floor(kobo / 100).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `₦${naira}.${String(kobo % 100).padStart(2, "0")}`;
+}
+
+function respond(result: Result): { status: number; body: unknown } {
+  if (!result.ok) return { status: STATUS[result.error.code], body: { error: result.error.code } };
+  return { status: 200, body: { id: result.value.id, total: formatNaira(result.value.totalKobo) } };
+}
+
+const results: Result[] = [
+  { ok: true, value: { id: "ord-1", totalKobo: 1_650_000 } },
+  { ok: false, error: { code: "out_of_stock" } },
+  { ok: false, error: { code: "payment_declined" } },
+];
+for (const result of results) {
+  const response = respond(result);
+  console.log(response.status, JSON.stringify(response.body));
+}
+</solution>
+<expected>
+200 {"id":"ord-1","total":"₦16,500.00"}
+409 {"error":"out_of_stock"}
+402 {"error":"payment_declined"}
+</expected>
+<explain><p>Status codes and currency formatting are HTTP and presentation details, so they live in the adapter. The use case only reports what happened; another adapter can phrase the same failures differently.</p></explain>
+</question>
+
+<question id="ac-code-contract" type="code" file="contract.ts">
+<q><p>Two stock adapters implement the same port. Write <code>stockContract(name, make)</code>, which checks that a <code>reserve</code> that cannot be fully met changes <strong>no</strong> stock, and prints <code>"&lt;name&gt;: ok"</code> or <code>"&lt;name&gt;: FAIL"</code>. Run it on both. The program should print <code>all-or-nothing: ok</code> and <code>line-by-line: FAIL</code>.</p></q>
+<starter>
+interface Stock {
+  reserve(items: { sku: string; qty: number }[]): boolean;
+  left(sku: string): number;
+}
+
+function allOrNothing(initial: Record<string, number>): Stock {
+  const stock = { ...initial };
+  return {
+    reserve(items) {
+      if (items.some((i) => (stock[i.sku] ?? 0) < i.qty)) return false;
+      for (const i of items) stock[i.sku]! -= i.qty;
+      return true;
+    },
+    left: (sku) => stock[sku] ?? 0,
+  };
+}
+
+function lineByLine(initial: Record<string, number>): Stock {
+  const stock = { ...initial };
+  return {
+    reserve(items) {
+      for (const i of items) {
+        if ((stock[i.sku] ?? 0) < i.qty) return false;
+        stock[i.sku]! -= i.qty;
+      }
+      return true;
+    },
+    left: (sku) => stock[sku] ?? 0,
+  };
+}
+
+// write stockContract and run it on both adapters
+</starter>
+<solution>
+interface Stock {
+  reserve(items: { sku: string; qty: number }[]): boolean;
+  left(sku: string): number;
+}
+
+function allOrNothing(initial: Record<string, number>): Stock {
+  const stock = { ...initial };
+  return {
+    reserve(items) {
+      if (items.some((i) => (stock[i.sku] ?? 0) < i.qty)) return false;
+      for (const i of items) stock[i.sku]! -= i.qty;
+      return true;
+    },
+    left: (sku) => stock[sku] ?? 0,
+  };
+}
+
+function lineByLine(initial: Record<string, number>): Stock {
+  const stock = { ...initial };
+  return {
+    reserve(items) {
+      for (const i of items) {
+        if ((stock[i.sku] ?? 0) < i.qty) return false;
+        stock[i.sku]! -= i.qty;
+      }
+      return true;
+    },
+    left: (sku) => stock[sku] ?? 0,
+  };
+}
+
+function stockContract(name: string, make: (initial: Record<string, number>) => Stock): void {
+  const stock = make({ "RICE-50KG": 5, "OIL-5L": 1 });
+  const reserved = stock.reserve([{ sku: "RICE-50KG", qty: 2 }, { sku: "OIL-5L", qty: 3 }]);
+  const untouched = !reserved && stock.left("RICE-50KG") === 5 && stock.left("OIL-5L") === 1;
+  console.log(`${name}: ${untouched ? "ok" : "FAIL"}`);
+}
+
+stockContract("all-or-nothing", allOrNothing);
+stockContract("line-by-line", lineByLine);
+</solution>
+<expected>
+all-or-nothing: ok
+line-by-line: FAIL
+</expected>
+<explain><p>The line-by-line adapter took 2 bags of rice before discovering the oil was short, and never gave them back. Both adapters satisfy the TypeScript interface; only a behaviour test run against every implementation catches the broken promise.</p></explain>
+</question>

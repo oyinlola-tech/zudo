@@ -1,0 +1,1045 @@
+<question id="dia-root-def" type="choice">
+<q>What is the <strong>composition root</strong> of an application?</q>
+<option>The base class every service extends</option>
+<option correct>The one place, near the entry point, where the concrete objects are created and connected</option>
+<option>The top-level folder of the project</option>
+<option>The first module the runtime starts</option>
+<explain><p>The composition root is where all "which class, which lifetime, which settings" decisions are made, once, at startup. Everything else receives its dependencies instead of creating them.</p></explain>
+</question>
+
+<question id="dia-two-stores" type="choice">
+<q>In a generated Task API, <code>app.ts</code> resolves <code>TaskStore</code> from the container for the modules, while <code>createDependencies</code> builds <code>new TaskService(new TaskStore(), clock)</code> for the routes. What is the result?</q>
+<option>A compile error, because <code>TaskStore</code> is created twice</option>
+<option>A <code>DuplicateRegistrationError</code> at startup</option>
+<option correct>Two separate stores: tasks created over HTTP are invisible to the modules</option>
+<option>Nothing unusual: the container notices and shares the store</option>
+<explain><p>Both lines are valid TypeScript and the container never sees the <code>new TaskStore()</code>. Two places decided how a store is made, so there are two stores. One composition root prevents exactly this.</p></explain>
+</question>
+
+<question id="dia-generated-split" type="choice">
+<q>In a freshly generated ZudoJS project, which statement is true?</q>
+<option><code>src/container.ts</code> creates the <code>@zudojs/container</code> container and registers the example resource in it</option>
+<option correct><code>src/app.ts</code> creates an empty <code>@zudojs/container</code> container for the runtime, while <code>src/container.ts</code> wires the example resource by hand with <code>new</code></option>
+<option>There is no dependency injection at all in a generated project</option>
+<option>The runtime creates the container itself and registers every service it finds</option>
+<explain><p>The names mislead: the file called <code>container.ts</code> holds a hand-written composition root (<code>createDependencies</code>), and the real container is created in <code>app.ts</code> and handed to <code>createRuntime</code>, empty.</p></explain>
+</question>
+
+<question id="dia-which-mechanism" type="choice">
+<q>You add a <code>PaymentGateway</code> that is shared by an invoice service and a refund service, must be closed at shutdown, and must be replaced with a fake in tests. Where should it be built?</q>
+<option>Inside each service's constructor, with <code>new</code></option>
+<option>In <code>createDependencies</code>, once per route file</option>
+<option correct>In the container, as a singleton, registered in <code>registerServices</code></option>
+<option>In a module's <code>onInitialize</code> hook</option>
+<explain><p>Shared, lifetime-managed, disposable and replaceable in tests: those are exactly the reasons to use the container. <code>replace</code> in tests and <code>dispose</code> at shutdown both come for free.</p></explain>
+</question>
+
+<question id="dia-data-objects" type="choice">
+<q>Should a newly created <code>Task</code> object (id, title, createdAt) be registered in the container?</q>
+<option>Yes, as a transient, so each resolve gives a new task</option>
+<option>Yes, as a scoped registration, one per request</option>
+<option correct>No: data objects are created by your code at run time; the container builds the app's machinery</option>
+<option>Only when the task is saved to the database</option>
+<explain><p>A container wires services, repositories, clocks and pools: the long-lived parts. Data flowing through the app is created by those services while they run.</p></explain>
+</question>
+
+<question id="dia-modules-owner" type="choice">
+<q>Why does the Task API create <code>StoreModule</code> and <code>TasksModule</code> with <code>new</code> in <code>app.ts</code> instead of registering them in the container?</q>
+<option>Modules cannot receive constructor parameters</option>
+<option correct>The runtime owns the modules' lifecycle (start, stop, destroy); the container only has to supply the store they receive</option>
+<option>The container cannot hold classes that extend <code>BaseModule</code></option>
+<option>Registered modules would be started twice</option>
+<explain><p>Who owns an object's lifecycle should create it. The runtime starts and stops modules; the container creates and disposes services. The modules still get the store through constructor injection, from the one container.</p></explain>
+</question>
+
+<question id="dia-constructor-why" type="choice">
+<q>Which is <strong>not</strong> an advantage of constructor injection?</q>
+<option>The constructor lists every dependency, so readers and tests see them</option>
+<option>The object is complete as soon as <code>new</code> returns</option>
+<option>With <code>readonly</code>, dependencies cannot be swapped behind the object's back</option>
+<option correct>It lets a class fetch any service it needs later, without listing it</option>
+<explain><p>Fetching services later without listing them is the service locator pattern, which constructor injection exists to avoid.</p></explain>
+</question>
+
+<question id="dia-property-injection" type="output">
+<q>What does this print?</q>
+<code file="property.ts">
+interface Clock {
+  now(): Date;
+}
+
+class ReportService {
+  clock?: Clock;
+  today(): string {
+    return this.clock!.now().toISOString().slice(0, 10);
+  }
+}
+
+const reports = new ReportService();
+try {
+  console.log(reports.today());
+} catch (error) {
+  console.log((error as Error).name);
+}
+reports.clock = { now: () => new Date("2026-09-24T09:00:00Z") };
+console.log(reports.today());
+</code>
+<option correct>TypeError
+2026-09-24</option>
+<option>2026-09-24
+2026-09-24</option>
+<option>undefined
+2026-09-24</option>
+<option>A compile error: clock may be undefined</option>
+<explain><p>Property injection creates a half-built object. The <code>!</code> silenced TypeScript, so the first call fails at run time with a <code>TypeError</code>. Only after someone assigns the clock does the object work.</p></explain>
+</question>
+
+<question id="dia-factory-checked" type="choice">
+<q>Why does this lesson register classes with <code>registerFactory(TaskService, (store, clock) =&gt; new TaskService(store, clock), [TaskStore, CLOCK])</code> instead of <code>registerClass(TaskService, TaskService, { inject: [TaskStore, CLOCK] })</code>?</q>
+<option>Factories are faster to resolve</option>
+<option><code>registerClass</code> cannot create singletons</option>
+<option correct>The factory's parameters are typed from the <code>inject</code> list, so a wrong order is a compile error; the class <code>inject</code> list is not checked</option>
+<option>Factories are disposed automatically and classes are not</option>
+<explain><p><code>registerClass</code> types the class as a constructor taking <code>any[]</code>, so a swapped <code>inject</code> list compiles and fails at run time. The arrow function costs one line and lets the compiler check the wiring.</p></explain>
+</question>
+
+<question id="dia-factory-registration-use" type="choice">
+<q>The Task API should print e-mails in development and send them over SMTP in production. Where does the <code>if</code> that chooses belong?</q>
+<option>In <code>TaskNotifier.taskDone</code></option>
+<option>In every class that sends e-mail</option>
+<option correct>In one factory registration for <code>MAILER</code> that reads the mail settings</option>
+<option>In a middleware that checks <code>NODE_ENV</code> on every request</option>
+<explain><p>Choosing an implementation is a composition decision. A factory registration makes it once; <code>TaskNotifier</code> just asks for "a mailer".</p></explain>
+</question>
+
+<question id="dia-inject-fn-when" type="choice">
+<q>A <code>TaskImporter</code> must create a new <code>ImportReport</code> for every file it imports. What should it receive?</q>
+<option>One <code>ImportReport</code> in its constructor</option>
+<option>The container, so it can resolve <code>ImportReport</code> each time</option>
+<option correct>A typed factory function <code>(source: string) =&gt; ImportReport</code></option>
+<option>Nothing; it should call <code>new ImportReport(source, new SystemClock())</code></option>
+<explain><p>A single injected report would be shared by every import, the container would make it a service locator, and <code>new</code> inside the service hard-wires the clock. A factory function is narrow, typed and easy to fake.</p></explain>
+</question>
+
+<question id="dia-inject-fn-output" type="output">
+<q>What does this print?</q>
+<code file="factory-fn.ts">
+import { createContainer, createToken } from "@zudojs/container";
+
+class Receipt {
+  constructor(readonly orderId: string) {}
+}
+type ReceiptFactory = (orderId: string) => Receipt;
+const RECEIPTS = createToken<ReceiptFactory>("ReceiptFactory");
+
+class Checkout {
+  constructor(private readonly newReceipt: ReceiptFactory) {}
+  pay(orderId: string): Receipt {
+    return this.newReceipt(orderId);
+  }
+}
+
+const container = createContainer();
+container.registerFactory(RECEIPTS, () => (orderId: string) => new Receipt(orderId));
+container.registerFactory(Checkout, (newReceipt) => new Checkout(newReceipt), [RECEIPTS]);
+
+const checkout = container.resolve(Checkout);
+const a = checkout.pay("ord-1");
+const b = checkout.pay("ord-2");
+console.log(a.orderId, b.orderId, a === b);
+</code>
+<option correct>ord-1 ord-2 false</option>
+<option>ord-1 ord-1 true</option>
+<option>ord-2 ord-2 true</option>
+<option>ord-1 ord-2 true</option>
+<explain><p>The container resolved the factory function once, but every call of that function builds a new <code>Receipt</code>, with the id given at run time.</p></explain>
+</question>
+
+<question id="dia-locator-def" type="choice">
+<q>Which class is a <strong>service locator</strong>?</q>
+<option><code>class A { constructor(private readonly mailer: Mailer) {} }</code></option>
+<option correct><code>class A { constructor(private readonly container: Container) {} send() { this.container.resolve(MAILER).send(…); } }</code></option>
+<option><code>class A { constructor(private readonly newMail: () =&gt; Mail) {} }</code></option>
+<option><code>container.registerFactory(A, (mailer) =&gt; new A(mailer), [MAILER])</code></option>
+<explain><p>A class that receives the container and pulls dependencies out of it hides what it needs. Its constructor says "I need everything".</p></explain>
+</question>
+
+<question id="dia-locator-late" type="output">
+<q>What does this print?</q>
+<code file="locator.ts">
+import { createContainer, createToken } from "@zudojs/container";
+import type { Container } from "@zudojs/container";
+
+interface Mailer {
+  send(text: string): void;
+}
+const MAILER = createToken<Mailer>("Mailer");
+
+class Reminder {
+  constructor(private readonly container: Container) {}
+  run(): void {
+    this.container.resolve(MAILER).send("2 tasks due");
+  }
+}
+
+const container = createContainer();
+container.registerFactory(Reminder, () => new Reminder(container));
+
+const reminder = container.resolve(Reminder);
+console.log("started");
+try {
+  reminder.run();
+} catch (error) {
+  console.log((error as Error).name);
+}
+</code>
+<option correct>started
+RegistrationNotFoundError</option>
+<option>RegistrationNotFoundError</option>
+<option>DependencyResolutionError</option>
+<option>started
+2 tasks due</option>
+<explain><p>The container only knew that <code>Reminder</code> needs nothing, so resolving it worked and the app "started". The missing mailer surfaced only when <code>run</code> executed: the late failure a locator causes.</p></explain>
+</question>
+
+<question id="dia-injected-early" type="output">
+<q>What does this print?</q>
+<code file="injected.ts">
+import { createContainer, createToken } from "@zudojs/container";
+
+interface Mailer {
+  send(text: string): void;
+}
+const MAILER = createToken<Mailer>("Mailer");
+
+class Reminder {
+  constructor(private readonly mailer: Mailer) {}
+  run(): void {
+    this.mailer.send("2 tasks due");
+  }
+}
+
+const container = createContainer();
+container.registerFactory(Reminder, (mailer) => new Reminder(mailer), [MAILER]);
+
+try {
+  container.resolve(Reminder);
+  console.log("started");
+} catch (error) {
+  console.log((error as Error).name);
+}
+</code>
+<option correct>DependencyResolutionError</option>
+<option>started</option>
+<option>started
+DependencyResolutionError</option>
+<option>RegistrationNotFoundError
+started</option>
+<explain><p>The <code>inject</code> list tells the container that <code>Reminder</code> needs <code>MAILER</code>, so resolving <code>Reminder</code> fails at once, wrapped as a <code>DependencyResolutionError</code> naming the missing token. A startup check turns that into a failed deploy.</p></explain>
+</question>
+
+<question id="dia-hidden-replace" type="output">
+<q>What does this print?</q>
+<code file="hidden.ts">
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+
+const RATE = createToken<number>("VatRate");
+class Listed {
+  constructor(readonly rate: number) {}
+}
+class Hidden {
+  constructor(readonly rate: number) {}
+}
+
+const container = createContainer();
+container.registerValue(RATE, 0.075);
+container.registerFactory(Listed, (rate) => new Listed(rate), [RATE], { scope: ContainerScope.SINGLETON });
+container.registerFactory(Hidden, () => new Hidden(container.resolve(RATE)), [], { scope: ContainerScope.SINGLETON });
+
+container.resolve(Listed);
+container.resolve(Hidden);
+container.replace(RATE, { useValue: 0.1 });
+console.log(container.resolve(Listed).rate, container.resolve(Hidden).rate);
+</code>
+<option correct>0.1 0.075</option>
+<option>0.1 0.1</option>
+<option>0.075 0.075</option>
+<option>0.075 0.1</option>
+<explain><p><code>replace</code> rebuilds the singletons that <em>listed</em> the replaced token. <code>Hidden</code> resolved the rate inside its factory body, so the container never learned about that dependency and kept the old instance.</p></explain>
+</question>
+
+<question id="dia-who-resolves" type="choice">
+<q>In the Task API, which code may call <code>container.resolve</code>?</q>
+<option>Any service that needs a collaborator it did not declare</option>
+<option>Repositories, because they talk to the database</option>
+<option correct>The composition root (<code>app.ts</code>, <code>createDependencies</code>), per-request edge code that uses a scope, and tests</option>
+<option>Only the runtime</option>
+<explain><p>Resolving at the edges keeps every dependency visible to the container. Services, repositories and controllers receive what they need through constructors.</p></explain>
+</question>
+
+<question id="dia-captive-hidden" type="choice">
+<q>Why can a service locator break the container's captive-dependency check?</q>
+<option>Because locators always create transient instances</option>
+<option correct>The check only sees dependencies listed in <code>inject</code>; a singleton that resolves a scoped value in its body is never inspected</option>
+<option>Because <code>resolve</code> ignores lifetimes</option>
+<option>It cannot; the check inspects every call to <code>resolve</code></option>
+<explain><p>A singleton that <em>lists</em> a scoped token gets a <code>CaptiveDependencyError</code>. The same singleton pulling the value from a scope inside its factory keeps one request's data forever, and nothing complains.</p></explain>
+</question>
+
+<question id="dia-test-reuse" type="choice">
+<q>Why should tests call the same <code>registerServices</code> function as the app, then replace a few tokens, instead of registering their own objects from scratch?</q>
+<option>It makes the tests run faster</option>
+<option correct>A wiring mistake in the production registrations then fails the tests too</option>
+<option><code>replace</code> only works on registrations made by <code>registerServices</code></option>
+<option>Tests are not allowed to call <code>register</code></option>
+<explain><p>A test that builds its own wiring tests a second composition root. Reusing the real one means the tests check the wiring the app actually runs, and only the outside world is faked.</p></explain>
+</question>
+
+<question id="dia-replace-typed" type="choice">
+<q><code>CLOCK</code> is <code>createToken&lt;Clock&gt;("Clock")</code> and <code>Clock</code> has <code>now(): Date</code>. What happens with <code>container.replace(CLOCK, { useValue: { today: () =&gt; "2026-09-24" } })</code>?</q>
+<option>It compiles, and fails when something calls <code>now()</code></option>
+<option correct>It does not compile: the value must match the token's type</option>
+<option>It throws <code>DuplicateRegistrationError</code></option>
+<option>It adds a second clock next to the first</option>
+<explain><p><code>replace</code> is typed from the token, exactly like <code>registerValue</code>. A fake with the wrong shape is a compile error, so fakes stay honest.</p></explain>
+</question>
+
+<question id="dia-stale-ref" type="output">
+<q>What does this print?</q>
+<code file="stale.ts">
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+
+const RATE = createToken<number>("VatRate");
+class PriceService {
+  constructor(readonly rate: number) {}
+  gross(kobo: number): number {
+    return Math.round(kobo * (1 + this.rate));
+  }
+}
+
+const container = createContainer();
+container.registerValue(RATE, 0.075);
+container.registerFactory(PriceService, (rate) => new PriceService(rate), [RATE], { scope: ContainerScope.SINGLETON });
+
+const early = container.resolve(PriceService);
+container.replace(RATE, { useValue: 0 });
+const late = container.resolve(PriceService);
+console.log(early.gross(100000), late.gross(100000));
+</code>
+<option correct>107500 100000</option>
+<option>100000 100000</option>
+<option>107500 107500</option>
+<option>100000 107500</option>
+<explain><p><code>replace</code> rebuilt the singleton for everyone who resolves <em>afterwards</em>. The reference taken before still points at the old instance with the 7.5% rate. In tests, replace first, then resolve.</p></explain>
+</question>
+
+<question id="dia-snapshot-content" type="choice">
+<q>What does <code>container.snapshot()</code> save?</q>
+<option>Every instance the container has built, so <code>restoreSnapshot</code> brings back their state</option>
+<option correct>The registrations only; after <code>restoreSnapshot</code>, singletons are rebuilt from them</option>
+<option>The registrations and the scoped instances of every live scope</option>
+<option>A JSON copy of the container that can be written to disk</option>
+<explain><p>A snapshot holds registrations, not instances. Restoring evicts and disposes the cached singletons, so a store that was filled during the test comes back empty.</p></explain>
+</question>
+
+<question id="dia-snapshot-output" type="output">
+<q>What does this print?</q>
+<code file="snapshot.ts">
+import { ContainerScope, createContainer } from "@zudojs/container";
+
+class Cart {
+  readonly items: string[] = [];
+}
+
+const container = createContainer();
+container.registerClass(Cart, Cart, { scope: ContainerScope.SINGLETON });
+const saved = container.snapshot();
+
+container.resolve(Cart).items.push("Rice 5kg");
+console.log(container.resolve(Cart).items.length);
+container.restoreSnapshot(saved);
+console.log(container.resolve(Cart).items.length);
+</code>
+<option correct>1
+0</option>
+<option>1
+1</option>
+<option>0
+0</option>
+<option>1
+An error: the snapshot was taken before Cart was built</option>
+<explain><p>The snapshot kept the registration, not the cart. <code>restoreSnapshot</code> evicted the cached singleton, so the next resolve built a new, empty cart.</p></explain>
+</question>
+
+<question id="dia-parallel" type="choice">
+<q>Two test files share one container and use <code>replace</code> plus <code>restoreSnapshot</code>. The test runner runs files in parallel. What is the risk?</q>
+<option>None: snapshots are per file</option>
+<option correct>One test's replacement can be seen by another test that runs at the same time</option>
+<option><code>restoreSnapshot</code> throws when two tests call it</option>
+<option>The container becomes frozen</option>
+<explain><p>A shared container is shared state. Keep a shared container inside one file, or build a fresh container per test, which is the simplest isolation.</p></explain>
+</question>
+
+<question id="dia-lazy" type="choice">
+<q>Why does the lesson add a <code>verifyContainer</code> step at startup?</q>
+<option>To make the first request faster</option>
+<option correct>The container builds objects lazily, so a broken registration nobody resolves at startup would fail on the first request that needs it</option>
+<option>Because the runtime refuses to start an unverified container</option>
+<option>To freeze the registrations</option>
+<explain><p>Resolving every registration once, scoped ones inside a throwaway scope, moves wiring errors from "first unlucky request" to "the deploy does not start".</p></explain>
+</question>
+
+<question id="dia-freeze-output" type="output">
+<q>What does this print?</q>
+<code file="freeze.ts">
+import { createContainer, createToken } from "@zudojs/container";
+
+const RATE = createToken<number>("VatRate");
+const container = createContainer({ name: "shop", freezeRegistrations: true });
+container.registerValue(RATE, 0.075);
+
+try {
+  container.replace(RATE, { useValue: 0 });
+  console.log("replaced before start");
+} catch (error) {
+  console.log((error as Error).message);
+}
+console.log(container.resolve(RATE));
+try {
+  container.replace(RATE, { useValue: 0 });
+  console.log("replaced after start");
+} catch (error) {
+  console.log((error as Error).message);
+}
+</code>
+<option correct>replaced before start
+0
+Registrations for container "shop" are frozen.</option>
+<option>Registrations for container "shop" are frozen.
+0.075
+Registrations for container "shop" are frozen.</option>
+<option>replaced before start
+0
+replaced after start</option>
+<option>replaced before start
+0.075
+Registrations for container "shop" are frozen.</option>
+<explain><p>With <code>freezeRegistrations: true</code> the set is frozen when the container starts, and the first <code>resolve</code> starts it. Before that, registering and replacing still work, which is when the composition root does its job.</p></explain>
+</question>
+
+<question id="dia-autoregister" type="output">
+<q>What does this print?</q>
+<code file="autoregister.ts">
+import { createContainer } from "@zudojs/container";
+
+class ForgottenService {}
+
+const relaxed = createContainer();
+const strict = createContainer({ resolution: { autoRegisterClasses: false } });
+
+console.log(relaxed.resolve(ForgottenService) instanceof ForgottenService);
+try {
+  strict.resolve(ForgottenService);
+  console.log("strict: built");
+} catch (error) {
+  console.log("strict:", (error as Error).name);
+}
+</code>
+<option correct>true
+strict: RegistrationNotFoundError</option>
+<option>true
+strict: built</option>
+<option>false
+strict: RegistrationNotFoundError</option>
+<option>RegistrationNotFoundError
+strict: RegistrationNotFoundError</option>
+<explain><p>By default an unregistered class with a no-argument constructor is built on demand. With <code>autoRegisterClasses: false</code> it is refused, so a forgotten registration cannot hide in production.</p></explain>
+</question>
+
+<question id="dia-freeze-tests" type="code" file="freeze.ts">
+<q><p>Write <code>createShopContainer(production)</code>: it creates a container, frozen only when <code>production</code> is <code>true</code>, and calls <code>registerShop</code>. The test container must accept a replaced VAT rate; the production one must refuse it once started.</p></q>
+<starter>
+import { createContainer, createToken } from "@zudojs/container";
+import type { Container } from "@zudojs/container";
+
+const VAT_RATE = createToken<number>("VatRate");
+function registerShop(container: Container): void {
+  container.registerValue(VAT_RATE, 0.075);
+}
+
+function createShopContainer(production: boolean): Container {
+  const container = createContainer();
+  registerShop(container);
+  return container;
+}
+
+for (const production of [false, true]) {
+  const container = createShopContainer(production);
+  container.resolve(VAT_RATE);
+  console.log(production ? "production" : "test", "not checked yet");
+}
+</starter>
+<solution>
+import { createContainer, createToken } from "@zudojs/container";
+import type { Container } from "@zudojs/container";
+
+const VAT_RATE = createToken<number>("VatRate");
+function registerShop(container: Container): void {
+  container.registerValue(VAT_RATE, 0.075);
+}
+
+function createShopContainer(production: boolean): Container {
+  const container = createContainer({ freezeRegistrations: production });
+  registerShop(container);
+  return container;
+}
+
+for (const production of [false, true]) {
+  const container = createShopContainer(production);
+  container.resolve(VAT_RATE);
+  try {
+    container.replace(VAT_RATE, { useValue: 0 });
+    console.log(production ? "production" : "test", "replaced:", container.resolve(VAT_RATE));
+  } catch {
+    console.log(production ? "production" : "test", "refused");
+  }
+}
+</solution>
+<expected>test replaced: 0
+production refused</expected>
+<explain><p>Both containers get the same registrations; only the caller decides whether the wiring is frozen. The first <code>resolve</code> starts the container, which freezes the production one.</p></explain>
+</question>
+
+<question id="dia-async" type="output">
+<q>A database pool needs <code>await connect()</code>. What does this print?</q>
+<code file="async.ts">
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+
+interface Pool {
+  readonly url: string;
+}
+const POOL = createToken<Pool>("Pool");
+async function connect(url: string): Promise<Pool> {
+  return { url };
+}
+
+const container = createContainer();
+container.registerFactory(POOL, () => connect("postgres://localhost/shop") as unknown as Pool, [], {
+  scope: ContainerScope.SINGLETON,
+});
+try {
+  console.log(container.resolve(POOL).url);
+} catch (error) {
+  console.log((error as Error).name);
+}
+
+const fixed = createContainer();
+fixed.registerValue(POOL, await connect("postgres://localhost/shop"));
+console.log(fixed.resolve(POOL).url);
+</code>
+<option correct>AsyncProviderError
+postgres://localhost/shop</option>
+<option>undefined
+postgres://localhost/shop</option>
+<option>postgres://localhost/shop
+postgres://localhost/shop</option>
+<option>[object Promise]
+postgres://localhost/shop</option>
+<explain><p>The container is synchronous, so a singleton factory that returns a promise is refused with <code>AsyncProviderError</code> instead of caching the promise. Await the resource in the composition root, then register the finished object with <code>registerValue</code>.</p></explain>
+</question>
+
+<question id="dia-value-dispose" type="output">
+<q>What does this print?</q>
+<code file="dispose.ts">
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+
+class Resource {
+  constructor(readonly name: string) {}
+  dispose(): void {
+    console.log(`closed ${this.name}`);
+  }
+}
+const POOL = createToken<Resource>("Pool");
+
+const container = createContainer();
+container.registerValue(POOL, new Resource("pool"));
+container.registerFactory(Resource, () => new Resource("cache"), [], { scope: ContainerScope.SINGLETON });
+container.resolve(POOL);
+container.resolve(Resource);
+await container.dispose();
+console.log("done");
+</code>
+<option correct>closed cache
+done</option>
+<option>closed cache
+closed pool
+done</option>
+<option>closed pool
+closed cache
+done</option>
+<option>done</option>
+<explain><p>The container disposes the singletons it <em>created</em>. It did not create the value given to <code>registerValue</code>, so it does not own it: whoever opened the pool must close it.</p></explain>
+</question>
+
+<question id="dia-request-scope" type="choice">
+<q>In an HTTP app, where should a per-request container scope be created and disposed?</q>
+<option>In every service method that needs a scoped dependency</option>
+<option>Once at startup, shared by all requests</option>
+<option correct>In a middleware at the edge: create it before <code>next()</code>, dispose it in <code>finally</code></option>
+<option>In the repository, when it opens a transaction</option>
+<explain><p>The request is the natural scope, and the middleware sees its start and end. <code>finally</code> makes sure the scope is disposed even when the route throws.</p></explain>
+</question>
+
+<question id="dia-scope-output" type="output">
+<q>What does this print?</q>
+<code file="scopes.ts">
+import { ContainerScope, createContainer } from "@zudojs/container";
+
+let created = 0;
+class AuditLog {
+  readonly id = ++created;
+  dispose(): void {
+    console.log(`flush log ${this.id}`);
+  }
+}
+
+const container = createContainer();
+container.registerClass(AuditLog, AuditLog, { scope: ContainerScope.SCOPED });
+
+for (const request of ["req-1", "req-2"]) {
+  const scope = container.createScope({ name: request });
+  const a = scope.resolve(AuditLog);
+  const b = scope.resolve(AuditLog);
+  console.log(request, a.id, a === b);
+  await scope.dispose();
+}
+</code>
+<option correct>req-1 1 true
+flush log 1
+req-2 2 true
+flush log 2</option>
+<option>req-1 1 false
+flush log 1
+req-2 2 false
+flush log 2</option>
+<option>req-1 1 true
+req-2 1 true
+flush log 1</option>
+<option>req-1 1 true
+req-2 2 true
+flush log 1
+flush log 2</option>
+<explain><p>A scoped registration gives one instance per scope: both resolves in a request share it. Disposing the scope at the end of each request disposes that request's log, before the next request starts.</p></explain>
+</question>
+
+<question id="dia-verify-scoped" type="output">
+<q><code>verifyContainer</code> resolves scoped registrations through a throwaway scope. What does this print, and why is that needed?</q>
+<code file="scoped-root.ts">
+import { ContainerScope, createContainer } from "@zudojs/container";
+
+class RequestInfo {}
+
+const container = createContainer();
+container.registerClass(RequestInfo, RequestInfo, { scope: ContainerScope.SCOPED });
+
+try {
+  container.resolve(RequestInfo);
+  console.log("root: ok");
+} catch (error) {
+  console.log("root:", (error as Error).name);
+}
+const scope = container.createScope({ name: "startup-check" });
+console.log("scope:", scope.resolve(RequestInfo) instanceof RequestInfo);
+await scope.dispose();
+</code>
+<option correct>root: ScopedResolutionError
+scope: true</option>
+<option>root: ok
+scope: true</option>
+<option>root: ScopedResolutionError
+scope: false</option>
+<option>root: RegistrationNotFoundError
+scope: true</option>
+<explain><p>A scoped registration cannot be resolved at the root: that would be a false alarm in a startup check. Inside a scope it resolves normally, so request-only registrations are checked too.</p></explain>
+</question>
+
+<question id="dia-seven-params" type="choice">
+<q>A service's constructor has grown to seven parameters. What is the best response?</q>
+<option>Replace them with one <code>container</code> parameter</option>
+<option>Use property injection for the less important ones</option>
+<option correct>Treat it as a sign the class does several jobs, and split it</option>
+<option>Pack them into an <code>any</code> options object</option>
+<explain><p>Constructor injection makes the number of dependencies visible, which is its point. A long list is design feedback; hiding it behind a locator or an options bag only hides the problem.</p></explain>
+</question>
+
+<question id="dia-code-inject" type="code" file="notifier.ts">
+<q><p>Rewrite <code>OrderNotifier</code> so it receives its <code>Mailer</code> through its constructor instead of pulling it from the container, and register it with a <strong>factory</strong> whose <code>inject</code> list is <code>[MAILER]</code>. The program must print the e-mail line.</p></q>
+<starter>
+import { createContainer, createToken } from "@zudojs/container";
+import type { Container } from "@zudojs/container";
+
+interface Mailer {
+  send(to: string, text: string): void;
+}
+const MAILER = createToken<Mailer>("Mailer");
+
+class OrderNotifier {
+  constructor(private readonly container: Container) {}
+  shipped(orderId: string): void {
+    this.container.resolve(MAILER).send("ada@example.com", `Order ${orderId} has shipped`);
+  }
+}
+
+const container = createContainer();
+container.registerValue(MAILER, { send: (to, text) => console.log(`to ${to}: ${text}`) });
+// register OrderNotifier here, then resolve it and call shipped("ord-7")
+console.log("not wired yet");
+</starter>
+<solution>
+import { createContainer, createToken } from "@zudojs/container";
+
+interface Mailer {
+  send(to: string, text: string): void;
+}
+const MAILER = createToken<Mailer>("Mailer");
+
+class OrderNotifier {
+  constructor(private readonly mailer: Mailer) {}
+  shipped(orderId: string): void {
+    this.mailer.send("ada@example.com", `Order ${orderId} has shipped`);
+  }
+}
+
+const container = createContainer();
+container.registerValue(MAILER, { send: (to, text) => console.log(`to ${to}: ${text}`) });
+container.registerFactory(OrderNotifier, (mailer) => new OrderNotifier(mailer), [MAILER]);
+container.resolve(OrderNotifier).shipped("ord-7");
+</solution>
+<expected>to ada@example.com: Order ord-7 has shipped</expected>
+<explain><p>The constructor now states the one thing the class needs, and the factory's <code>mailer</code> parameter is typed from <code>[MAILER]</code>. A missing mailer now fails when <code>OrderNotifier</code> is resolved, not when an order ships.</p></explain>
+</question>
+
+<question id="dia-code-choose" type="code" file="choose.ts">
+<q><p>Register <code>MAILER</code> with a factory that reads the <code>TRANSPORT</code> token: <code>"console"</code> gives a <code>ConsoleMailer</code>, <code>"sms"</code> gives an <code>SmsMailer</code>. Then the loop must print one line per transport.</p></q>
+<starter>
+import { createContainer, createToken } from "@zudojs/container";
+
+interface Mailer {
+  send(text: string): string;
+}
+class ConsoleMailer implements Mailer {
+  send(text: string): string {
+    return `console: ${text}`;
+  }
+}
+class SmsMailer implements Mailer {
+  send(text: string): string {
+    return `sms: ${text}`;
+  }
+}
+
+const TRANSPORT = createToken<"console" | "sms">("Transport");
+const MAILER = createToken<Mailer>("Mailer");
+
+for (const transport of ["console", "sms"] as const) {
+  const container = createContainer();
+  container.registerValue(TRANSPORT, transport);
+  // register MAILER here
+  console.log(container.has(MAILER));
+}
+</starter>
+<solution>
+import { createContainer, createToken } from "@zudojs/container";
+
+interface Mailer {
+  send(text: string): string;
+}
+class ConsoleMailer implements Mailer {
+  send(text: string): string {
+    return `console: ${text}`;
+  }
+}
+class SmsMailer implements Mailer {
+  send(text: string): string {
+    return `sms: ${text}`;
+  }
+}
+
+const TRANSPORT = createToken<"console" | "sms">("Transport");
+const MAILER = createToken<Mailer>("Mailer");
+
+for (const transport of ["console", "sms"] as const) {
+  const container = createContainer();
+  container.registerValue(TRANSPORT, transport);
+  container.registerFactory(MAILER, (kind) => (kind === "sms" ? new SmsMailer() : new ConsoleMailer()), [TRANSPORT]);
+  console.log(container.resolve(MAILER).send("Order ord-7 has shipped"));
+}
+</solution>
+<expected>console: Order ord-7 has shipped
+sms: Order ord-7 has shipped</expected>
+<explain><p>The choice lives in one factory registration at the composition root. Code that sends messages never checks the transport.</p></explain>
+</question>
+
+<question id="dia-code-factory-fn" type="code" file="receipts.ts">
+<q><p><code>Checkout</code> must create a new <code>Receipt</code> for every payment. Register a <code>RECEIPT_FACTORY</code> token whose value is a function <code>(orderId) =&gt; Receipt</code> that gives each receipt the injected <code>CLOCK</code>, and register <code>Checkout</code> with it. Print both receipts.</p></q>
+<starter>
+import { createContainer, createToken } from "@zudojs/container";
+
+interface Clock {
+  now(): Date;
+}
+const CLOCK = createToken<Clock>("Clock");
+
+class Receipt {
+  constructor(readonly orderId: string, private readonly clock: Clock) {}
+  toString(): string {
+    return `${this.orderId} paid on ${this.clock.now().toISOString().slice(0, 10)}`;
+  }
+}
+type ReceiptFactory = (orderId: string) => Receipt;
+const RECEIPT_FACTORY = createToken<ReceiptFactory>("ReceiptFactory");
+
+class Checkout {
+  constructor(private readonly newReceipt: ReceiptFactory) {}
+  pay(orderId: string): string {
+    return String(this.newReceipt(orderId));
+  }
+}
+
+const container = createContainer();
+container.registerValue(CLOCK, { now: () => new Date("2026-09-24T09:00:00Z") });
+// register RECEIPT_FACTORY and Checkout here
+console.log("todo");
+</starter>
+<solution>
+import { createContainer, createToken } from "@zudojs/container";
+
+interface Clock {
+  now(): Date;
+}
+const CLOCK = createToken<Clock>("Clock");
+
+class Receipt {
+  constructor(readonly orderId: string, private readonly clock: Clock) {}
+  toString(): string {
+    return `${this.orderId} paid on ${this.clock.now().toISOString().slice(0, 10)}`;
+  }
+}
+type ReceiptFactory = (orderId: string) => Receipt;
+const RECEIPT_FACTORY = createToken<ReceiptFactory>("ReceiptFactory");
+
+class Checkout {
+  constructor(private readonly newReceipt: ReceiptFactory) {}
+  pay(orderId: string): string {
+    return String(this.newReceipt(orderId));
+  }
+}
+
+const container = createContainer();
+container.registerValue(CLOCK, { now: () => new Date("2026-09-24T09:00:00Z") });
+container.registerFactory(RECEIPT_FACTORY, (clock) => (orderId: string) => new Receipt(orderId, clock), [CLOCK]);
+container.registerFactory(Checkout, (newReceipt) => new Checkout(newReceipt), [RECEIPT_FACTORY]);
+
+const checkout = container.resolve(Checkout);
+console.log(checkout.pay("ord-1"));
+console.log(checkout.pay("ord-2"));
+</solution>
+<expected>ord-1 paid on 2026-09-24
+ord-2 paid on 2026-09-24</expected>
+<explain><p>The factory registration receives the clock once and returns a function that closes over it. <code>Checkout</code> can only make receipts; it never sees the container.</p></explain>
+</question>
+
+<question id="dia-code-test-container" type="code" file="test-container.ts">
+<q><p>Write <code>testContainer(rate)</code>: it must call the production <code>registerShop</code>, then replace <code>VAT_RATE</code> with <code>rate</code>. Two containers with different rates must not affect each other.</p></q>
+<starter>
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+
+const VAT_RATE = createToken<number>("VatRate");
+class PriceService {
+  constructor(private readonly rate: number) {}
+  gross(kobo: number): number {
+    return Math.round(kobo * (1 + this.rate));
+  }
+}
+
+function registerShop(container: ReturnType<typeof createContainer>): void {
+  container.registerValue(VAT_RATE, 0.075);
+  container.registerFactory(PriceService, (rate) => new PriceService(rate), [VAT_RATE], { scope: ContainerScope.SINGLETON });
+}
+
+function testContainer(rate: number) {
+  const container = createContainer();
+  // your code here
+  return container;
+}
+
+console.log(testContainer(0).has(PriceService));
+</starter>
+<solution>
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+
+const VAT_RATE = createToken<number>("VatRate");
+class PriceService {
+  constructor(private readonly rate: number) {}
+  gross(kobo: number): number {
+    return Math.round(kobo * (1 + this.rate));
+  }
+}
+
+function registerShop(container: ReturnType<typeof createContainer>): void {
+  container.registerValue(VAT_RATE, 0.075);
+  container.registerFactory(PriceService, (rate) => new PriceService(rate), [VAT_RATE], { scope: ContainerScope.SINGLETON });
+}
+
+function testContainer(rate: number) {
+  const container = createContainer();
+  registerShop(container);
+  container.replace(VAT_RATE, { useValue: rate });
+  return container;
+}
+
+const exempt = testContainer(0);
+const standard = testContainer(0.075);
+console.log(exempt.resolve(PriceService).gross(200000), standard.resolve(PriceService).gross(200000));
+</solution>
+<expected>200000 215000</expected>
+<explain><p>Each test gets its own container built by the real <code>registerShop</code>, with only the rate replaced. Nothing is shared, so the order of tests does not matter.</p></explain>
+</question>
+
+<question id="dia-code-verify" type="code" file="verify.ts">
+<q><p>Write <code>verify(container)</code>: resolve every registration from <code>container.getRegistrations()</code> once and return the list of <code>describeToken(token)</code> names that fail. The broken container below must report <code>["Invoices"]</code>.</p></q>
+<starter>
+import { createContainer, createToken, describeToken } from "@zudojs/container";
+import type { Container } from "@zudojs/container";
+
+interface Payments {
+  charge(kobo: number): void;
+}
+const PAYMENTS = createToken<Payments>("Payments");
+class Invoices {
+  constructor(readonly payments: Payments) {}
+}
+class Clock {
+  now(): Date {
+    return new Date();
+  }
+}
+
+function verify(container: Container): string[] {
+  // your code here
+  return [];
+}
+
+const container = createContainer();
+container.registerClass(Clock, Clock);
+container.registerFactory(Invoices, (payments) => new Invoices(payments), [PAYMENTS]);
+console.log(verify(container).length);
+</starter>
+<solution>
+import { createContainer, createToken, describeToken } from "@zudojs/container";
+import type { Container } from "@zudojs/container";
+
+interface Payments {
+  charge(kobo: number): void;
+}
+const PAYMENTS = createToken<Payments>("Payments");
+class Invoices {
+  constructor(readonly payments: Payments) {}
+}
+class Clock {
+  now(): Date {
+    return new Date();
+  }
+}
+
+function verify(container: Container): string[] {
+  const failing: string[] = [];
+  for (const registration of container.getRegistrations()) {
+    try {
+      container.resolve(registration.token);
+    } catch {
+      failing.push(describeToken(registration.token));
+    }
+  }
+  return failing;
+}
+
+const container = createContainer();
+container.registerClass(Clock, Clock);
+container.registerFactory(Invoices, (payments) => new Invoices(payments), [PAYMENTS]);
+console.log(verify(container));
+</solution>
+<expected>[ 'Invoices' ]</expected>
+<explain><p>Resolving every registration once at startup finds the missing <code>Payments</code> before any request needs invoices. <code>describeToken</code> turns a class or a <code>createToken</code> token into a readable name.</p></explain>
+</question>
+
+<question id="dia-code-scope" type="code" file="scope.ts">
+<q><p>Complete <code>handle(requestId)</code>: create a scope named after the request, resolve <code>RequestLog</code> twice from it, add one entry through each, and dispose the scope at the end even if something throws. Each request must print its own two entries when its log is disposed.</p></q>
+<starter>
+import { ContainerScope, createContainer } from "@zudojs/container";
+
+class RequestLog {
+  readonly entries: string[] = [];
+  dispose(): void {
+    console.log(this.entries.join(" | "));
+  }
+}
+
+const container = createContainer();
+container.registerClass(RequestLog, RequestLog, { scope: ContainerScope.SCOPED });
+
+async function handle(requestId: string): Promise<void> {
+  // your code here
+  console.log(`handled ${requestId}`);
+}
+
+await handle("req-1");
+</starter>
+<solution>
+import { ContainerScope, createContainer } from "@zudojs/container";
+
+class RequestLog {
+  readonly entries: string[] = [];
+  dispose(): void {
+    console.log(this.entries.join(" | "));
+  }
+}
+
+const container = createContainer();
+container.registerClass(RequestLog, RequestLog, { scope: ContainerScope.SCOPED });
+
+async function handle(requestId: string): Promise<void> {
+  const scope = container.createScope({ name: requestId });
+  try {
+    scope.resolve(RequestLog).entries.push(`${requestId} start`);
+    scope.resolve(RequestLog).entries.push(`${requestId} end`);
+  } finally {
+    await scope.dispose();
+  }
+}
+
+await handle("req-1");
+await handle("req-2");
+</solution>
+<expected>req-1 start | req-1 end
+req-2 start | req-2 end</expected>
+<explain><p>Within one scope both resolves return the same log, so both entries land together. Disposing in <code>finally</code> flushes each request's log exactly once, and a new scope starts empty.</p></explain>
+</question>
+
+<question id="dia-edge-resolve" type="choice">
+<q>A route handler calls <code>scopeOf(ctx.request).resolve(TaskCommands)</code>, where a middleware put a per-request scope on the request. Is that a service locator?</q>
+<option>Yes, every <code>resolve</code> outside <code>app.ts</code> is a locator</option>
+<option correct>No, it is the one resolve per request at the edge; <code>TaskCommands</code> and everything below it still receive their dependencies through constructors</option>
+<option>Yes, because routes must never touch the container</option>
+<option>No, because scoped resolves are not checked by the container</option>
+<explain><p>The route is edge code, the per-request part of the composition root. The problem with a locator is a <em>service</em> hiding its dependencies; here the dependency graph below the route is still declared in <code>inject</code> lists.</p></explain>
+</question>
+
+<question id="dia-where-verify" type="choice">
+<q>In the Task API, why is <code>verifyContainer</code> called in <code>server.ts</code> and not inside <code>createApp</code>?</q>
+<option>Because <code>createApp</code> has no access to the container</option>
+<option correct><code>verifyContainer</code> is async and <code>createApp</code> is synchronous; <code>server.ts</code> can use top-level <code>await</code> before the runtime starts</option>
+<option>Because verification must run after <code>server.start()</code></option>
+<option>Because the runtime would verify the container a second time</option>
+<explain><p>It disposes its throwaway scope with <code>await</code>, so it runs where awaiting is possible: right after <code>createApp</code>, before <code>runtime.start()</code> and long before the port opens.</p></explain>
+</question>

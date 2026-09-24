@@ -1,0 +1,758 @@
+---
+title: Indexes and query plans
+description: Read PostgreSQL query plans, see how a B-tree finds rows, and add composite, partial, expression and covering indexes that make a 100,000-order shop fast again.
+minutes: 55
+youNeed: Modelling data for a shop, and Joins, grouping and transactions
+youBuild: A measured set of indexes for the shop's busiest queries, a slow-query report from pg_stat_statements, and a test that fails when an index goes missing
+keywords: postgresql index, b-tree, explain analyze, query plan, seq scan, index scan, bitmap scan, index only scan, composite index, partial index, expression index, covering index include, selectivity, pg_stat_statements, slow queries, write amplification
+objectives: Read an EXPLAIN plan from the inside out and name what each node does | Explain how a B-tree index finds rows and why column order matters in a composite index | Choose between single-column, composite, partial, expression and covering indexes for a query | Measure what an index costs on every write, and find unused indexes | Find the slowest queries with pg_stat_statements and lock the fix in with a plan test
+---
+<section>
+<h2 id="problem">The page that got slower every week</h2>
+<p>Amaka's shop from <a href="/learn/db-modeling">the modelling lesson</a> has grown: 10,000 customers and 100,000 orders. Customers complain that "My orders" takes seconds to open, and it gets worse every week. Nothing in the code changed. The data did.</p>
+<p>This lesson uses a generated copy of the shop with realistic sizes. Every example imports this module. It builds the data with <code>generate_series</code> and also exports a <code>plan</code> helper that prints the query plan:</p>
+<file name="bigshop.js" project="idx">
+import { PGlite } from "@electric-sql/pglite";
+
+export async function openBigShop(options = {}) {
+  const db = new PGlite(options);
+  await db.exec(`
+    set timezone = 'UTC';
+    create table customers (
+      id integer generated always as identity primary key,
+      email text not null,
+      city text not null
+    );
+    insert into customers (email, city)
+    select 'customer' || n || '@example.com',
+           (array['Lagos', 'Abuja', 'Kano', 'Ibadan', 'Enugu'])[1 + n % 5]
+    from generate_series(1, 10000) as n;
+
+    create table orders (
+      id integer generated always as identity primary key,
+      customer_id integer not null,
+      status text not null,
+      total_kobo integer not null,
+      placed_at timestamptz not null
+    );
+    -- 100,000 orders: 90% paid, 9% pending, 1% cancelled, one per minute from 1 January
+    insert into orders (customer_id, status, total_kobo, placed_at)
+    select 1 + (n * 7919) % 10000,
+           case when n % 100 = 0 then 'cancelled' when n % 10 = 0 then 'pending' else 'paid' end,
+           100000 + (n * 37) % 5000000,
+           timestamptz '2026-01-01 00:00:00+00' + n * interval '1 minute'
+    from generate_series(1, 100000) as n;
+
+    create table order_lines (
+      order_id integer not null,
+      product_id integer not null,
+      quantity integer not null
+    );
+    insert into order_lines select n, 1 + n % 500, 1 + n % 3 from generate_series(1, 100000) as n;
+    insert into order_lines select n, 1 + (n * 13) % 500, 1 from generate_series(1, 100000, 2) as n;
+
+    -- foreign keys added after the bulk load: one check for all rows instead of one per row
+    alter table orders add foreign key (customer_id) references customers (id);
+    alter table order_lines add foreign key (order_id) references orders (id);
+    -- sample every row, so the statistics (and the plans below) are the same on every run
+    set default_statistics_target = 500;
+    analyze;
+  `);
+  return db;
+}
+
+/* Runs the query and prints its real plan, without timings, which change on every run. */
+export async function plan(db, sql, params = []) {
+  const { rows } = await db.query(
+    `explain (analyze, costs off, timing off, summary off, buffers off) ${sql}`,
+    params,
+  );
+  console.log(rows.map((r) => r["QUERY PLAN"]).join("\n"));
+}
+</file>
+<p>Three details: the foreign keys are added <em>after</em> loading, which is how bulk imports are done (one check for all rows instead of one per row); <code>analyze</code> collects statistics about the data, which the planner needs; and <code>default_statistics_target = 500</code> makes <code>analyze</code> read every row of these tables instead of its usual random sample of 30,000 rows, so the plans you see are the same on every run. More on statistics below. Each example takes a few seconds to build this data.</p>
+<p>Here is the "My orders" query, the five latest orders of customer 42, with its plan:</p>
+<example file="slow.js" project="idx" browser="no">
+import { openBigShop, plan } from "./bigshop.js";
+
+const db = await openBigShop();
+await plan(db, "select id, total_kobo, placed_at from orders where customer_id = 42 order by placed_at desc limit 5");
+await db.close();
+</example>
+<output>
+Limit (actual rows=5.00 loops=1)
+  ->  Sort (actual rows=5.00 loops=1)
+        Sort Key: placed_at DESC
+        Sort Method: quicksort  Memory: 17kB
+        ->  Seq Scan on orders (actual rows=10.00 loops=1)
+              Filter: (customer_id = 42)
+              Rows Removed by Filter: 99990
+</output>
+<p>You met <code>explain analyze</code> in <a href="/learn/sql-advanced#performance">Joins, grouping and transactions</a>. This lesson turns off timings so the output is the same on every run; on your own server, leave them on. Read the plan from the most indented line outwards, because data flows from the inside to the outside:</p>
+<ol>
+<li><strong>Seq Scan on orders</strong>: read all 100,000 rows. 10 matched <code>customer_id = 42</code>; <code>Rows Removed by Filter: 99990</code> is the wasted work.</li>
+<li><strong>Sort</strong>: sort those 10 rows by <code>placed_at</code>, newest first.</li>
+<li><strong>Limit</strong>: keep the first 5.</li>
+</ol>
+<p>The work grows with the size of the table, not with the size of the answer. That is why the page slows down every week while the customer's own order count barely changes. The fix is an <strong>index</strong>, and choosing the right one is what this lesson is about.</p>
+</section>
+
+<section>
+<h2 id="btree">How a B-tree index finds a row</h2>
+<p>PostgreSQL stores a table as a <strong>heap</strong>: 8 KB <strong>pages</strong> of rows in no particular order. Each row has a physical address, its <strong>tuple id</strong> (page number and slot). An index is a separate structure that maps values to tuple ids.</p>
+<p>The default index type is the <strong>B-tree</strong> (balanced tree). Its <strong>leaf pages</strong> hold every indexed value in sorted order, each with the tuple id of its row, and each leaf links to the next one. Above them sit <strong>internal pages</strong> that say which child page holds which range of values, up to a single <strong>root page</strong>:</p>
+<figure class="lx-diagram">
+<pre>
+                       root page
+               [ ..., 3334, ..., 6667, ... ]
+              /              |               \
+   leaf: 1 1 1 ... 42 42 ...  leaf: ...        leaf: ... 9999 10000
+         │         │  │
+         ▼         ▼  ▼                       (leaves are linked left to right,
+   heap pages: rows of the orders table        so a range is read by walking
+   (in insert order, not sorted)               along them)
+</pre>
+<figcaption>A two-level B-tree: finding customer 42 reads the root, one leaf, then only the heap pages that hold customer 42's rows.</figcaption>
+</figure>
+<p>A lookup starts at the root and follows one child per level, so it reads as many pages as the tree has levels, and the number of levels grows with the logarithm of the row count: <a href="/learn/dsa-searching">binary search</a>, but with hundreds of keys per page instead of two. The <code>pageinspect</code> extension lets you look inside a real one:</p>
+<example file="btree.js" project="idx" browser="no">
+import { pageinspect } from "@electric-sql/pglite/contrib/pageinspect";
+import { openBigShop } from "./bigshop.js";
+
+const db = await openBigShop({ extensions: { pageinspect } });
+await db.exec(`
+  create extension pageinspect;
+  create index orders_customer_idx on orders (customer_id);
+`);
+
+const meta = await db.query("select level from bt_metap('orders_customer_idx')");
+console.log("levels above the leaves:", meta.rows[0].level);
+
+const sizes = await db.query(`
+  select pg_relation_size('orders') / 8192 as table_pages,
+         pg_relation_size('orders_customer_idx') / 8192 as index_pages`);
+console.log(sizes.rows[0]);
+await db.close();
+</example>
+<output>
+levels above the leaves: 1
+{ table_pages: 736, index_pages: 117 }
+</output>
+<p>One level above the leaves: the root. So finding customer 42 among 100,000 orders reads two index pages, then the heap pages that hold that customer's rows. The whole index is small next to the table, because each entry holds only one integer and a tuple id. A table a thousand times bigger would need only one or two more levels.</p>
+<p>Because the leaves are sorted and linked, a B-tree answers more than equality. It serves <code>=</code>, <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code>, <code>between</code>, <code>in (…)</code>, <code>is null</code>, prefix searches such as <code>like 'abc%'</code> (with the right collation or operator class), and <code>order by</code> on the indexed columns, read forwards or backwards. It does not help <code>like '%abc'</code> or conditions on a function of the column, as you will see.</p>
+</section>
+
+<section>
+<h2 id="plan-nodes">Reading plans: the nodes you will meet</h2>
+<p>The <strong>planner</strong> considers many ways to run a query, estimates the cost of each from table <strong>statistics</strong> (row counts, common values, value spread, collected by <code>analyze</code>), and picks the cheapest. The plan it prints is a tree of <strong>nodes</strong>:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Node</th><th>What it does</th><th>Good when</th></tr></thead>
+<tbody>
+<tr><td>Seq Scan</td><td>Reads every page of the table</td><td>The query needs a large share of the rows, or the table is tiny</td></tr>
+<tr><td>Index Scan</td><td>Walks the index, fetching each row from the heap in index order</td><td>Few rows, or the index order saves a sort</td></tr>
+<tr><td>Bitmap Index Scan + Bitmap Heap Scan</td><td>Collects matching tuple ids from the index first, then reads their heap pages in page order</td><td>A moderate number of rows spread over many pages</td></tr>
+<tr><td>Index Only Scan</td><td>Answers from the index alone, without visiting the heap</td><td>All needed columns are in the index</td></tr>
+<tr><td>Sort, Limit, Aggregate, HashAggregate</td><td>Sort rows; stop after N; compute <code>count</code>, <code>sum</code> and friends</td><td>—</td></tr>
+<tr><td>Nested Loop, Hash Join, Merge Join</td><td>Three ways to join: look up per outer row; build a hash table of one side; walk two sorted inputs together</td><td>Nested loop with an index for few outer rows; hash join for large unsorted inputs</td></tr>
+</tbody>
+</table></div>
+<p>With <code>analyze</code>, each node also shows <code>actual rows</code> (rows it produced) and <code>loops</code> (how many times it ran). Without <code>analyze</code>, <code>explain</code> only shows the planner's <em>estimates</em>. When estimated and actual rows differ by a factor of ten or more, the statistics are stale or misleading, and the plan is probably wrong: run <code>analyze</code> on the table first.</p>
+<warn title="explain analyze really runs the query">Without <code>analyze</code>, <code>explain</code> only plans. With it, the statement is executed, and that includes <code>insert</code>, <code>update</code> and <code>delete</code>. Wrap it in a transaction and roll back when you look at a write.</warn>
+<example file="explain-writes.js" project="idx" browser="no">
+import { openBigShop } from "./bigshop.js";
+
+const db = await openBigShop();
+const count = async () => (await db.query("select count(*)::int as n from orders where status = 'cancelled'")).rows[0].n;
+
+console.log("cancelled orders:", await count());
+await db.exec("explain analyze update orders set status = 'paid' where status = 'cancelled'");
+console.log("after explain analyze:", await count());
+
+await db.exec("update orders set status = 'cancelled' where id % 100 = 0");
+await db.exec("begin");
+await db.exec("explain analyze update orders set status = 'paid' where status = 'cancelled'");
+await db.exec("rollback");
+console.log("after explain analyze inside begin/rollback:", await count());
+await db.close();
+</example>
+<output>
+cancelled orders: 1000
+after explain analyze: 0
+after explain analyze inside begin/rollback: 1000
+</output>
+<reason title="Before you add an index">
+<p>An index is a trade: faster reads for some queries, slower writes for all of them, and more disk. Before creating one, answer these about the slow query:</p>
+<ul>
+<li>How many rows does the query <em>return</em>, and how many does it <em>read</em> today?</li>
+<li>Which columns appear in <code>where</code>, in <code>join … on</code> and in <code>order by</code>? Which are compared with <code>=</code> and which with a range (<code>&lt;</code>, <code>between</code>)?</li>
+<li>How <strong>selective</strong> is each condition: what fraction of the table matches?</li>
+<li>Is a column wrapped in a function or cast (<code>lower(email)</code>, <code>placed_at::date</code>)?</li>
+<li>How often is the table written? Is it an append-heavy log or a rarely-changed catalogue?</li>
+<li>Does an existing index almost fit, so it could be replaced instead of adding another?</li>
+</ul>
+<answer>
+<p>For "My orders": it returns 5 rows and reads 100,000, so an index can win by four orders of magnitude. It filters with <code>customer_id =</code> (equality, very selective: 10 of 100,000) and sorts by <code>placed_at desc</code>. No function wraps the columns. Orders are written often, but far less often than they are read, so one well-chosen index is clearly worth it, and it should serve both the filter and the sort: <code>(customer_id, placed_at desc)</code>. The next sections show why each of those answers matters.</p>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="composite">Single-column and composite indexes</h2>
+<p>Start with the obvious index on <code>customer_id</code>, then try a <strong>composite</strong> (multi-column) index that matches both the filter and the sort order:</p>
+<example file="composite.js" project="idx" browser="no">
+import { openBigShop, plan } from "./bigshop.js";
+
+const db = await openBigShop();
+const myOrders = "select id, total_kobo, placed_at from orders where customer_id = 42 order by placed_at desc limit 5";
+
+await db.exec("create index orders_customer_idx on orders (customer_id)");
+console.log("--- index on (customer_id)");
+await plan(db, myOrders);
+
+await db.exec("create index orders_customer_placed_idx on orders (customer_id, placed_at desc)");
+console.log("--- index on (customer_id, placed_at desc)");
+await plan(db, myOrders);
+await db.close();
+</example>
+<output>
+--- index on (customer_id)
+Limit (actual rows=5.00 loops=1)
+  ->  Sort (actual rows=5.00 loops=1)
+        Sort Key: placed_at DESC
+        Sort Method: quicksort  Memory: 17kB
+        ->  Bitmap Heap Scan on orders (actual rows=10.00 loops=1)
+              Recheck Cond: (customer_id = 42)
+              Heap Blocks: exact=10
+              ->  Bitmap Index Scan on orders_customer_idx (actual rows=10.00 loops=1)
+                    Index Cond: (customer_id = 42)
+                    Index Searches: 1
+--- index on (customer_id, placed_at desc)
+Limit (actual rows=5.00 loops=1)
+  ->  Index Scan using orders_customer_placed_idx on orders (actual rows=5.00 loops=1)
+        Index Cond: (customer_id = 42)
+        Index Searches: 1
+</output>
+<p>With the single-column index, PostgreSQL found the 10 rows through the index, but still had to sort them. With the composite index there is no Sort node at all: inside the entries for customer 42, the index is already ordered by <code>placed_at</code> descending, so an Index Scan returns rows in the right order and the Limit stops it after 5. For a customer with 5,000 orders, that difference is reading 5 rows instead of 5,000.</p>
+<p>The first index is now redundant: any query that can use <code>(customer_id)</code> can use <code>(customer_id, placed_at desc)</code> too. Drop redundant indexes; each one costs on every write.</p>
+<h3>Column order: equality first, then range or sort</h3>
+<p>A composite index is sorted by its first column, then by the second <em>within</em> equal first values, like a phone book sorted by surname, then first name. So it is fast for conditions on a <strong>leftmost prefix</strong> of its columns, and a range or sort column should come after the equality columns:</p>
+<example file="column-order.js" project="idx" browser="no">
+import { openBigShop, plan } from "./bigshop.js";
+
+const db = await openBigShop();
+await db.exec("create index orders_customer_placed_idx on orders (customer_id, placed_at)");
+
+console.log("--- customer_id only (leftmost prefix)");
+await plan(db, "select count(*) from orders where customer_id = 42");
+console.log("--- customer_id and a date range");
+await plan(db, "select count(*) from orders where customer_id = 42 and placed_at >= '2026-02-01'");
+console.log("--- the date range only");
+await plan(db, "select count(*) from orders where placed_at >= '2026-02-01' and placed_at < '2026-02-02'");
+await db.close();
+</example>
+<output>
+--- customer_id only (leftmost prefix)
+Aggregate (actual rows=1.00 loops=1)
+  ->  Bitmap Heap Scan on orders (actual rows=10.00 loops=1)
+        Recheck Cond: (customer_id = 42)
+        Heap Blocks: exact=10
+        ->  Bitmap Index Scan on orders_customer_placed_idx (actual rows=10.00 loops=1)
+              Index Cond: (customer_id = 42)
+              Index Searches: 1
+--- customer_id and a date range
+Aggregate (actual rows=1.00 loops=1)
+  ->  Bitmap Heap Scan on orders (actual rows=6.00 loops=1)
+        Recheck Cond: ((customer_id = 42) AND (placed_at >= '2026-02-01 00:00:00+00'::timestamp with time zone))
+        Heap Blocks: exact=6
+        ->  Bitmap Index Scan on orders_customer_placed_idx (actual rows=6.00 loops=1)
+              Index Cond: ((customer_id = 42) AND (placed_at >= '2026-02-01 00:00:00+00'::timestamp with time zone))
+              Index Searches: 1
+--- the date range only
+Aggregate (actual rows=1.00 loops=1)
+  ->  Seq Scan on orders (actual rows=1440.00 loops=1)
+        Filter: ((placed_at >= '2026-02-01 00:00:00+00'::timestamp with time zone) AND (placed_at < '2026-02-02 00:00:00+00'::timestamp with time zone))
+        Rows Removed by Filter: 98560
+</output>
+<p>The first two queries use the index. The third cannot: orders from 1 February are scattered through the whole index, a few inside every customer's section, so the planner reads the table instead. For the date range alone you need an index that <em>starts</em> with <code>placed_at</code>.</p>
+<note>PostgreSQL 18 added <strong>skip scan</strong>: when the leading column has only a few distinct values, a B-tree can be searched once per value, and the plan shows <code>Index Searches: N</code>. An index on <code>(status, placed_at)</code> can then serve a <code>placed_at</code> range with three searches, one per status. With 10,000 distinct customers, skipping is too expensive, which is what you saw above. Don't design around skip scan; treat it as a bonus.</note>
+</section>
+
+<section>
+<h2 id="selectivity">Selectivity: when the planner ignores your index</h2>
+<p>An index on <code>status</code> sounds useful for "show all paid orders". Look at what the planner does with it:</p>
+<example file="selectivity.js" project="idx" browser="no">
+import { openBigShop, plan } from "./bigshop.js";
+
+const db = await openBigShop();
+await db.exec("create index orders_status_idx on orders (status)");
+
+const stats = await db.query(`
+  select unnest(most_common_vals::text::text[]) as value,
+         round(unnest(most_common_freqs) * 100)::int as percent
+  from pg_stats where tablename = 'orders' and attname = 'status'
+  order by percent desc`);
+console.log(stats.rows);
+
+console.log("--- status = 'paid'");
+await plan(db, "select id from orders where status = 'paid'");
+console.log("--- status = 'cancelled'");
+await plan(db, "select id from orders where status = 'cancelled'");
+await db.close();
+</example>
+<output>
+[
+  { value: 'paid', percent: 90 },
+  { value: 'pending', percent: 9 },
+  { value: 'cancelled', percent: 1 }
+]
+--- status = 'paid'
+Seq Scan on orders (actual rows=90000.00 loops=1)
+  Filter: (status = 'paid'::text)
+  Rows Removed by Filter: 10000
+--- status = 'cancelled'
+Bitmap Heap Scan on orders (actual rows=1000.00 loops=1)
+  Recheck Cond: (status = 'cancelled'::text)
+  Heap Blocks: exact=736
+  ->  Bitmap Index Scan on orders_status_idx (actual rows=1000.00 loops=1)
+        Index Cond: (status = 'cancelled'::text)
+        Index Searches: 1
+</output>
+<p><code>pg_stats</code> shows what <code>analyze</code> learned: 90% of orders are paid. Fetching 90% of the rows through an index would mean jumping between index and heap for almost every row, which is slower than reading the table straight through, so the planner ignores the index for <code>'paid'</code>. For <code>'cancelled'</code>, 1% of the rows, it uses the index. The same index, two different plans: the choice depends on the value, and on up-to-date statistics.</p>
+<p>Look closer at the second plan: <code>Heap Blocks: exact=736</code> is every page of the table. Cancelled orders are every hundredth order, so each page holds one or two of them, and 1% of the rows still live on 100% of the pages. The index saved checking 99,000 rows, but not reading 736 pages. How rows are spread over pages matters as much as how many match: the statistics call it <strong>correlation</strong>. A day's orders, which were inserted together and sit on neighbouring pages, benefit far more from an index than rows scattered through the table.</p>
+<p>The <strong>selectivity</strong> of a condition is the fraction of rows it keeps. Indexes help selective conditions. A column with a few values that are evenly spread, such as a boolean, is rarely worth indexing alone; the rare values are, and the next section shows a cheaper way to index just those.</p>
+</section>
+
+<section>
+<h2 id="partial-expression">Partial and expression indexes</h2>
+<h3>Partial indexes: index only the rows you ask about</h3>
+<p>The warehouse screen lists <em>pending</em> orders, oldest first. Pending orders are 9% of the table. A <strong>partial index</strong> has a <code>where</code> clause and only contains the rows that match it:</p>
+<example file="partial.js" project="idx" browser="no">
+import { openBigShop, plan } from "./bigshop.js";
+
+const db = await openBigShop();
+await db.exec(`
+  create index orders_placed_idx on orders (placed_at);
+  create index orders_pending_placed_idx on orders (placed_at) where status = 'pending';
+`);
+
+await plan(db, "select id, placed_at from orders where status = 'pending' order by placed_at limit 3");
+
+const { rows } = await db.query(`
+  select indexrelname as index, pg_relation_size(indexrelid) / 8192 as pages
+  from pg_stat_user_indexes where indexrelname like 'orders_%placed_idx' order by 1`);
+console.log(rows);
+await db.close();
+</example>
+<output>
+Limit (actual rows=3.00 loops=1)
+  ->  Index Scan using orders_pending_placed_idx on orders (actual rows=3.00 loops=1)
+        Index Searches: 1
+[
+  { index: 'orders_pending_placed_idx', pages: 27 },
+  { index: 'orders_placed_idx', pages: 276 }
+]
+</output>
+<p>The planner used the partial index, because the query's <code>where status = 'pending'</code> matches the index's condition. The index is a tenth of the size of a full one, so it is cheaper to keep in memory, and writes to paid orders never touch it. A query must include the index's condition (or one that implies it) for the planner to use a partial index.</p>
+<p>Partial indexes can also be <code>unique</code>, which expresses rules a plain unique constraint cannot. "A customer has at most one open cart", while keeping any number of old, checked-out carts:</p>
+<example file="partial-unique.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table carts (
+    id integer generated always as identity primary key,
+    customer_id integer not null,
+    status text not null check (status in ('open', 'checked_out'))
+  );
+  create unique index carts_one_open_per_customer on carts (customer_id) where status = 'open';
+`);
+
+const attempts = [[7, "checked_out"], [7, "checked_out"], [7, "open"], [7, "open"], [8, "open"]];
+for (const [customer, status] of attempts) {
+  try {
+    await db.query("insert into carts (customer_id, status) values ($1, $2)", [customer, status]);
+    console.log(`customer ${customer}: ${status} cart saved`);
+  } catch (error) {
+    console.log(`customer ${customer}: ${status} cart refused (${error.code})`);
+  }
+}
+await db.close();
+</example>
+<output>
+customer 7: checked_out cart saved
+customer 7: checked_out cart saved
+customer 7: open cart saved
+customer 7: open cart refused (23505)
+customer 8: open cart saved
+</output>
+<p>The same pattern handles soft deletes: <code>create unique index … on products (sku) where deleted_at is null</code> keeps SKUs unique among live products, while deleted ones may repeat.</p>
+<h3>Expression indexes, and keeping queries "sargable"</h3>
+<p>An index on a column only helps conditions on the bare column. Wrap the column in a function or a cast, and the index no longer matches:</p>
+<example file="expression.js" project="idx" browser="no">
+import { openBigShop, plan } from "./bigshop.js";
+
+const db = await openBigShop();
+await db.exec(`
+  create index customers_email_lower_idx on customers (lower(email));
+  create index orders_placed_idx on orders (placed_at);
+`);
+
+console.log("--- lower(email) = …");
+await plan(db, "select id from customers where lower(email) = 'customer42@example.com'");
+console.log("--- email = … (the index is on lower(email), not email)");
+await plan(db, "select id from customers where email = 'customer42@example.com'");
+console.log("--- placed_at::date = … (a cast on the column)");
+await plan(db, "select count(*) from orders where placed_at::date = '2026-02-01'");
+console.log("--- the same day as a range on the bare column");
+await plan(db, "select count(*) from orders where placed_at >= '2026-02-01' and placed_at < '2026-02-02'");
+await db.close();
+</example>
+<output>
+--- lower(email) = …
+Bitmap Heap Scan on customers (actual rows=1.00 loops=1)
+  Recheck Cond: (lower(email) = 'customer42@example.com'::text)
+  Heap Blocks: exact=1
+  ->  Bitmap Index Scan on customers_email_lower_idx (actual rows=1.00 loops=1)
+        Index Cond: (lower(email) = 'customer42@example.com'::text)
+        Index Searches: 1
+--- email = … (the index is on lower(email), not email)
+Seq Scan on customers (actual rows=1.00 loops=1)
+  Filter: (email = 'customer42@example.com'::text)
+  Rows Removed by Filter: 9999
+--- placed_at::date = … (a cast on the column)
+Aggregate (actual rows=1.00 loops=1)
+  ->  Seq Scan on orders (actual rows=1440.00 loops=1)
+        Filter: ((placed_at)::date = '2026-02-01'::date)
+        Rows Removed by Filter: 98560
+--- the same day as a range on the bare column
+Aggregate (actual rows=1.00 loops=1)
+  ->  Index Only Scan using orders_placed_idx on orders (actual rows=1440.00 loops=1)
+        Index Cond: ((placed_at >= '2026-02-01 00:00:00+00'::timestamp with time zone) AND (placed_at < '2026-02-02 00:00:00+00'::timestamp with time zone))
+        Heap Fetches: 1440
+        Index Searches: 1
+</output>
+<p>An <strong>expression index</strong> stores the result of an expression, here <code>lower(email)</code>, and serves queries that use exactly that expression. The shop's case-insensitive unique email index from the modelling lesson is one. But a query on plain <code>email</code> cannot use it.</p>
+<p>The date example is the more common trap. <code>placed_at::date = '2026-02-01'</code> must compute the cast for every row before comparing, so the index on <code>placed_at</code> is useless. Rewriting it as a half-open range, <code>&gt;= '2026-02-01' and &lt; '2026-02-02'</code>, compares the bare column and uses the index. A condition that can use an index this way is called <strong>sargable</strong> (from "search argument able"). Rules of thumb: keep the column bare on one side (<code>total_kobo &gt; 4000000</code>, not <code>total_kobo / 100 &gt; 40000</code>), compare with the column's own type, and prefer ranges to casts.</p>
+</section>
+
+<section>
+<h2 id="index-only">Covering indexes and index-only scans</h2>
+<p>Even with a good index, every matching row costs a trip to the heap to read the columns the query needs. If the index itself holds all those columns, PostgreSQL can answer from the index alone: an <strong>index-only scan</strong>. <code>include (…)</code> adds columns to the leaf entries without making them part of the sort key, which gives you a <strong>covering index</strong>.</p>
+<p>There is one condition. An index does not know whether the row it points to is visible to your transaction (a row may have been deleted or updated by a transaction that has not committed, as <a href="/learn/db-transactions">the next lesson</a> explains). PostgreSQL keeps a <strong>visibility map</strong> of heap pages whose rows are all visible to everyone; for those pages it can skip the heap. <code>vacuum</code> updates that map, and <strong>autovacuum</strong> runs it in the background on a real server:</p>
+<example file="index-only.js" project="idx" browser="no">
+import { openBigShop, plan } from "./bigshop.js";
+
+const db = await openBigShop();
+await db.exec("create index orders_customer_total_idx on orders (customer_id) include (total_kobo)");
+const spend = "select customer_id, sum(total_kobo) from orders where customer_id between 1 and 50 group by customer_id";
+
+console.log("--- before vacuum");
+await plan(db, spend);
+await db.exec("vacuum orders");
+console.log("--- after vacuum");
+await plan(db, spend);
+await db.close();
+</example>
+<output>
+--- before vacuum
+HashAggregate (actual rows=50.00 loops=1)
+  Group Key: customer_id
+  Batches: 1  Memory Usage: 45kB
+  ->  Bitmap Heap Scan on orders (actual rows=500.00 loops=1)
+        Recheck Cond: ((customer_id >= 1) AND (customer_id <= 50))
+        Heap Blocks: exact=500
+        ->  Bitmap Index Scan on orders_customer_total_idx (actual rows=500.00 loops=1)
+              Index Cond: ((customer_id >= 1) AND (customer_id <= 50))
+              Index Searches: 1
+--- after vacuum
+GroupAggregate (actual rows=50.00 loops=1)
+  Group Key: customer_id
+  ->  Index Only Scan using orders_customer_total_idx on orders (actual rows=500.00 loops=1)
+        Index Cond: ((customer_id >= 1) AND (customer_id <= 50))
+        Heap Fetches: 0
+        Index Searches: 1
+</output>
+<p>Before <code>vacuum</code>, the visibility map was empty, an index-only scan would have had to check the heap for every row anyway, and the planner chose a bitmap scan. After <code>vacuum</code>, it switched to an Index Only Scan with <code>Heap Fetches: 0</code>: the 500 rows were answered from the index alone. On a busy table, the number of heap fetches tells you how well vacuum is keeping up.</p>
+<tip>Covering indexes are a finishing touch for a few very hot queries. Adding every selected column to <code>include</code> makes the index nearly as big as the table, and every update of those columns updates the index too.</tip>
+</section>
+
+<section>
+<h2 id="joins">Indexes for joins and foreign keys</h2>
+<p>PostgreSQL indexes primary keys and unique columns, but not the <em>referencing</em> side of a foreign key. <code>order_lines.order_id</code> has no index yet, so fetching the lines of a customer's orders reads all 150,000 lines:</p>
+<example file="join.js" project="idx" browser="no">
+import { openBigShop, plan } from "./bigshop.js";
+
+const db = await openBigShop();
+await db.exec("create index orders_customer_placed_idx on orders (customer_id, placed_at desc)");
+const lines = `
+  select o.id, l.product_id, l.quantity
+  from orders o join order_lines l on l.order_id = o.id
+  where o.customer_id = 42`;
+
+console.log("--- no index on order_lines.order_id");
+await plan(db, lines);
+await db.exec("create index order_lines_order_idx on order_lines (order_id)");
+console.log("--- with it");
+await plan(db, lines);
+await db.close();
+</example>
+<output>
+--- no index on order_lines.order_id
+Hash Join (actual rows=20.00 loops=1)
+  Hash Cond: (l.order_id = o.id)
+  ->  Seq Scan on order_lines l (actual rows=150000.00 loops=1)
+  ->  Hash (actual rows=10.00 loops=1)
+        Buckets: 1024  Batches: 1  Memory Usage: 5kB
+        ->  Bitmap Heap Scan on orders o (actual rows=10.00 loops=1)
+              Recheck Cond: (customer_id = 42)
+              Heap Blocks: exact=10
+              ->  Bitmap Index Scan on orders_customer_placed_idx (actual rows=10.00 loops=1)
+                    Index Cond: (customer_id = 42)
+                    Index Searches: 1
+--- with it
+Nested Loop (actual rows=20.00 loops=1)
+  ->  Bitmap Heap Scan on orders o (actual rows=10.00 loops=1)
+        Recheck Cond: (customer_id = 42)
+        Heap Blocks: exact=10
+        ->  Bitmap Index Scan on orders_customer_placed_idx (actual rows=10.00 loops=1)
+              Index Cond: (customer_id = 42)
+              Index Searches: 1
+  ->  Index Scan using order_lines_order_idx on order_lines l (actual rows=2.00 loops=10)
+        Index Cond: (order_id = o.id)
+        Index Searches: 10
+</output>
+<p>Without the index, the only way to find the lines was a Hash Join: build a hash table of the customer's 10 orders, then stream all 150,000 lines past it. With the index, the planner picks a <strong>Nested Loop</strong>: for each of the 10 orders (<code>loops=10</code>), look up its lines in the index. The same missing index slows down deleting an order, because PostgreSQL must check that no line still references it. Index every foreign key column you join on or delete through; it is the most commonly missing index in real schemas.</p>
+</section>
+
+<section>
+<h2 id="write-cost">What indexes cost on every write</h2>
+<p>Every index is another structure to update on each <code>insert</code>, on each <code>delete</code>, and on each <code>update</code> of an indexed column. PostgreSQL also writes every change to its <strong>write-ahead log</strong> (WAL) before changing the data files, for crash safety and replication, so the extra index work shows up there too. Insert the same 20,000 orders into a table without secondary indexes and one with four:</p>
+<example file="write-cost.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+const columns = "(id integer generated always as identity primary key, customer_id integer, status text, total_kobo integer, placed_at timestamptz)";
+await db.exec(`
+  create table orders_lean ${columns};
+  create table orders_indexed ${columns};
+  create index on orders_indexed (customer_id);
+  create index on orders_indexed (status);
+  create index on orders_indexed (total_kobo);
+  create index on orders_indexed (placed_at);
+`);
+
+for (const table of ["orders_lean", "orders_indexed"]) {
+  const { rows } = await db.query(`
+    explain (analyze, wal, costs off, timing off, summary off, buffers off)
+    insert into ${table} (customer_id, status, total_kobo, placed_at)
+    select n % 1000, 'paid', n * 37 % 100000, timestamptz '2026-01-01 00:00:00+00' + n * interval '1 minute'
+    from generate_series(1, 20000) as n`);
+  const wal = rows.map((r) => r["QUERY PLAN"]).find((line) => line.includes("WAL:"));
+  console.log(table.padEnd(15), wal.trim());
+}
+
+const sizes = await db.query(`
+  select pg_relation_size('orders_indexed') / 1024 as table_kb, pg_indexes_size('orders_indexed') / 1024 as indexes_kb`);
+console.log(sizes.rows[0]);
+await db.close();
+</example>
+<output>
+orders_lean     WAL: records=40662 bytes=3121273
+orders_indexed  WAL: records=121293 bytes=8644893 buffers full=550
+{ table_kb: 1184, indexes_kb: 1832 }
+</output>
+<p>Same rows, about three times the log records and bytes, and indexes that together are larger than the table. The time grows in the same proportion; run the insert with <code>\timing</code> in psql to see it on your machine. Updates add a subtler cost: PostgreSQL can often update a row in place on its page (a <strong>HOT</strong>, heap-only tuple, update) without touching any index, but only if no indexed column changed. Indexing a column that changes on every request, such as <code>last_seen_at</code>, takes that shortcut away.</p>
+<h3>Finding indexes nobody uses</h3>
+<p>PostgreSQL counts how often each index is used in <code>pg_stat_user_indexes</code>. After a representative period of traffic, an index with <code>idx_scan = 0</code> is costing writes and disk for nothing:</p>
+<example file="unused.js" project="idx" browser="no">
+import { openBigShop } from "./bigshop.js";
+
+const db = await openBigShop();
+await db.exec(`
+  create index orders_customer_placed_idx on orders (customer_id, placed_at desc);
+  create index orders_customer_idx on orders (customer_id);
+  create index orders_total_idx on orders (total_kobo);
+`);
+
+for (let customer = 1; customer <= 20; customer++) {
+  await db.query("select id from orders where customer_id = $1 order by placed_at desc limit 5", [customer]);
+}
+
+await db.query("select pg_stat_force_next_flush()");
+const { rows } = await db.query(`
+  select indexrelname as index, idx_scan as scans
+  from pg_stat_user_indexes where relname = 'orders' order by indexrelname`);
+console.log(rows);
+await db.close();
+</example>
+<output>
+[
+  { index: 'orders_customer_idx', scans: 0 },
+  { index: 'orders_customer_placed_idx', scans: 20 },
+  { index: 'orders_pkey', scans: 0 },
+  { index: 'orders_total_idx', scans: 0 }
+]
+</output>
+<p>Twenty "My orders" requests all used the composite index. The single-column index is redundant with it, and nothing filters by total. Both are candidates to drop. <code>orders_pkey</code> also shows 0, but it is the primary key: it enforces uniqueness and serves lookups by id, which this workload simply did not make. (<code>pg_stat_force_next_flush()</code> makes the statistics appear immediately; a real server updates them every second or so.) Before dropping an index, check every server that runs queries, including read replicas, whose counters are separate, and remember that unique indexes enforce rules even when no query reads them.</p>
+</section>
+
+<section>
+<h2 id="slow-queries">Finding the slow queries</h2>
+<p>So far you knew which query was slow. In production you have hundreds of distinct queries, and the one users complain about is not always the one that costs the most. The <code>pg_stat_statements</code> extension records every statement, normalised (literal values replaced by <code>$1</code>, <code>$2</code>), with how often it ran, how many rows it returned, how long it took in total, and how many pages it touched:</p>
+<example file="slow-queries.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+import { pg_stat_statements } from "@electric-sql/pglite/contrib/pg_stat_statements";
+
+const db = new PGlite({ extensions: { pg_stat_statements } });
+await db.exec(`
+  create extension pg_stat_statements;
+  create table orders (id integer primary key, customer_id integer not null, status text not null, total_kobo integer not null);
+  insert into orders select n, 1 + n % 5000, case when n % 10 = 0 then 'pending' else 'paid' end, n % 900000
+  from generate_series(1, 100000) as n;
+  create index on orders (customer_id);
+  analyze orders;
+  select pg_stat_statements_reset();
+`);
+
+for (let i = 1; i <= 30; i++) {
+  await db.query("select id, total_kobo from orders where customer_id = $1", [i]);
+  await db.query("select id from orders where id = $1", [i]);
+}
+for (let i = 1; i <= 10; i++) {
+  await db.query("select count(*) from orders where status = 'pending' and total_kobo > $1", [i * 1000]);
+}
+
+const { rows } = await db.query(`
+  select query, calls, rows, shared_blks_hit + shared_blks_read as pages
+  from pg_stat_statements
+  where query like 'select%from orders%'
+  order by pages desc`);
+console.log(rows);
+await db.close();
+</example>
+<output>
+[
+  {
+    query: 'select count(*) from orders where status = $2 and total_kobo > $1',
+    calls: 10,
+    rows: 10,
+    pages: 6370
+  },
+  {
+    query: 'select id, total_kobo from orders where customer_id = $1',
+    calls: 30,
+    rows: 600,
+    pages: 660
+  },
+  {
+    query: 'select id from orders where id = $1',
+    calls: 30,
+    rows: 30,
+    pages: 90
+  }
+]
+</output>
+<p>The pending-orders count is on top although it ran only 10 times, a third as often as the others: each of its calls read the whole table (637 pages), while the indexed lookups read a handful of pages each. This example sorts by <code>pages</code> (shared buffer pages touched) because timings change on every run. On your server, sort by <code>total_exec_time</code>, the total time spent in a statement across all its calls, and look at <code>mean_exec_time</code> too; here they put the same statement on top.</p>
+<p>The workflow for a slow database is always the same:</p>
+<ol>
+<li><strong>Find</strong>: the top of <code>pg_stat_statements</code> by total time (what costs the most overall) and by mean time (what makes single requests slow). Setting <code>log_min_duration_statement = '500ms'</code> in the server's configuration also logs every statement slower than that; the <code>auto_explain</code> extension logs their plans.</li>
+<li><strong>Explain</strong>: run the query with <code>explain (analyze, buffers)</code>, with realistic parameter values, against production-sized data.</li>
+<li><strong>Fix</strong>: add or change an index, make the condition sargable, rewrite the query, or fetch less.</li>
+<li><strong>Verify</strong>: explain again, and watch the statement's numbers after deploying.</li>
+</ol>
+<p>Many slow pages are not one slow query but many fast ones: a list page that runs one query per row to fetch each order's lines, the <strong>N+1 query</strong> problem. <code>pg_stat_statements</code> shows it as a cheap statement with an enormous <code>calls</code> count. The fix is one query with a join or <code>where order_id = any($1)</code>, not an index.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing that the index is used</h2>
+<p>An index fix is fragile: a later migration drops or renames the index, or a query is "cleaned up" into a non-sargable form, and nothing fails until production slows down. A <strong>plan test</strong> asserts the shape of the plan. <code>explain (format json)</code> returns the plan as a tree that code can walk:</p>
+<example file="plan-test.js" project="idx" browser="no">
+import { openBigShop } from "./bigshop.js";
+
+function nodes(plan) {
+  return [plan, ...(plan.Plans ?? []).flatMap(nodes)];
+}
+
+async function assertNoSeqScan(db, label, sql, params = []) {
+  const { rows } = await db.query(`explain (format json) ${sql}`, params);
+  const all = nodes(rows[0]["QUERY PLAN"][0].Plan);
+  const seq = all.filter((n) => n["Node Type"] === "Seq Scan").map((n) => n["Relation Name"]);
+  console.log(`${seq.length === 0 ? "PASS" : "FAIL"} ${label}: ${all.map((n) => n["Node Type"]).join(" > ")}`);
+}
+
+const db = await openBigShop();
+await db.exec("create index orders_customer_placed_idx on orders (customer_id, placed_at desc)");
+const myOrders = "select id from orders where customer_id = $1 order by placed_at desc limit 5";
+
+await assertNoSeqScan(db, "my orders", myOrders, [42]);
+await db.exec("drop index orders_customer_placed_idx");
+await assertNoSeqScan(db, "my orders after a migration dropped the index", myOrders, [42]);
+await db.close();
+</example>
+<output>
+PASS my orders: Limit > Index Scan
+FAIL my orders after a migration dropped the index: Limit > Sort > Seq Scan
+</output>
+<p>Run plan tests against data of realistic size and shape; on a table of ten rows every plan is a Seq Scan, because that <em>is</em> the fastest way to read ten rows. Check structure ("no Seq Scan on orders", "uses this index"), never costs or timings, which change with every version and machine.</p>
+</section>
+
+<section>
+<h2 id="production">In production</h2>
+<ul>
+<li><strong>Create indexes without blocking writes.</strong> A plain <code>create index</code> blocks inserts, updates and deletes on the table until it finishes, which can be minutes on a large table. <code>create index concurrently</code> builds it without that lock, more slowly. It cannot run inside a transaction block, so migration tools need a flag to run it on its own; if it fails halfway it leaves an <code>INVALID</code> index you must drop and retry. <a href="/learn/db-operations">Operating databases</a> covers this in migrations.</li>
+<li><strong>Keep statistics fresh.</strong> Autovacuum also runs <code>analyze</code>, but after a bulk load or a large delete, run <code>analyze</code> yourself so the planner does not plan for yesterday's table.</li>
+<li><strong>Test with production-sized data.</strong> Plans depend on table sizes and value distributions. A query that is fine on a 1,000-row staging table can be a disaster on 50 million rows.</li>
+<li><strong>Other index types exist</strong> for other questions: GIN for <code>jsonb</code>, arrays and full-text search, GiST for ranges and geometry, BRIN for huge append-only tables ordered by time, and <code>pg_trgm</code> for <code>like '%abc%'</code>. B-tree is the right answer for almost everything else.</li>
+<li><strong>Budget your indexes.</strong> Five to ten indexes on a busy table is normal; thirty means nobody is removing the unused ones.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="The warehouse queue for one customer">
+<p>Support opens a customer's <em>pending</em> orders, oldest first: <code>select id, placed_at from orders where customer_id = $1 and status = 'pending' order by placed_at</code>. Design one index for it, create it, and show that the plan has no Sort and no Seq Scan.</p>
+<solution>
+<example file="exercise-pending.js" project="idx" browser="no">
+import { openBigShop, plan } from "./bigshop.js";
+
+const db = await openBigShop();
+await db.exec("create index orders_customer_pending_idx on orders (customer_id, placed_at) where status = 'pending'");
+await plan(db, "select id, placed_at from orders where customer_id = 11 and status = 'pending' order by placed_at");
+await db.close();
+</example>
+<output>
+Index Scan using orders_customer_pending_idx on orders (actual rows=10.00 loops=1)
+  Index Cond: (customer_id = 11)
+  Index Searches: 1
+</output>
+<p>Equality on <code>customer_id</code> first, then the sort column <code>placed_at</code>, and the rare status as a partial-index condition, so the index holds only the 9% of orders that are pending. <code>(customer_id, status, placed_at)</code> would also work, but it indexes all 100,000 orders to serve a query about 9,000 of them.</p>
+</solution>
+</exercise>
+
+<exercise title="Make it sargable">
+<p>These conditions cannot use a B-tree index on the column. Rewrite each so it can: (a) <code>where total_kobo / 100 &gt; 40000</code>; (b) <code>where extract(year from placed_at) = 2026</code>; (c) <code>where coalesce(status, 'pending') = 'pending'</code> on a nullable <code>status</code>; (d) <code>where customer_id::text = $1</code>.</p>
+<solution>
+<p>(a) <code>where total_kobo &gt; 4000000</code>: move the arithmetic to the constant side. (b) <code>where placed_at &gt;= '2026-01-01' and placed_at &lt; '2027-01-01'</code>: a half-open range on the bare column. (c) <code>where status = 'pending' or status is null</code>: both parts can use an index (a B-tree indexes nulls too), and PostgreSQL can combine them with a BitmapOr. (d) <code>where customer_id = $1::integer</code>, or better, send a number from the application: cast the parameter, never the column. When a rewrite is impossible, an expression index on exactly the expression used is the fallback.</p>
+</solution>
+</exercise>
+
+<exercise title="Which index would you drop?">
+<p>A table has these indexes and a week of counters: <code>orders_pkey</code> (idx_scan 9,120,044), <code>orders_customer_idx (customer_id)</code> (0), <code>orders_customer_placed_idx (customer_id, placed_at desc)</code> (2,300,511), <code>orders_ref_key unique (provider_ref)</code> (0), <code>orders_status_idx (status)</code> (12). Which would you drop, and what would you check first?</p>
+<solution>
+<p>Drop <code>orders_customer_idx</code>: it is unused and fully covered by the composite index, which starts with the same column. <code>orders_status_idx</code> is a candidate too: 12 scans a week do not pay for maintaining an index on every order write, but first find those 12 queries in <code>pg_stat_statements</code>, because they may be an important monthly report that a partial index would serve better. Keep <code>orders_ref_key</code> although no query reads it: it enforces uniqueness on every insert. Before dropping anything, check the counters on every replica, and drop with <code>drop index concurrently</code> so writers are not blocked.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="summary">Summary</h2>
+<ul>
+<li>Read plans from the inside out. A Seq Scan with a huge <code>Rows Removed by Filter</code> on a big table is the classic missing index; a Sort under a Limit asks for an index in sort order.</li>
+<li>A B-tree keeps values sorted in linked leaf pages under a shallow tree, so lookups, ranges and ordered reads cost a few pages. Composite indexes serve leftmost prefixes: put equality columns first, then the range or sort column.</li>
+<li>The planner uses statistics to estimate selectivity. It ignores an index when a condition matches a large share of rows, and that is usually right.</li>
+<li>Partial indexes cover only the rows you ask about (and can enforce "unique among some rows"). Expression indexes serve exact expressions. Keep conditions sargable: bare column, same type, ranges instead of casts.</li>
+<li>Covering indexes with <code>include</code> allow index-only scans, which depend on vacuum keeping the visibility map current. Index foreign key columns you join or delete through.</li>
+<li>Every index costs on every write. Measure, find unused ones in <code>pg_stat_user_indexes</code>, find expensive queries in <code>pg_stat_statements</code>, and lock fixes in with plan tests.</li>
+</ul>
+<p>Next: <a href="/learn/db-transactions">Transactions, isolation and locks</a>, where two customers try to buy the last bag of rice at the same moment, and a ₦50,000 transfer must never be counted twice.</p>
+</section>

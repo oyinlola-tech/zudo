@@ -1,0 +1,837 @@
+---
+title: Branded types
+description: Stop swapped ids and naira-for-kobo bugs at compile time with branded types, validating smart constructors, money units and the ids in @zudojs/constants.
+minutes: 50
+youNeed: The type system in depth, Narrowing and Functional TypeScript
+youBuild: An identifiers and money module for a refunds service, where every id and amount is validated once at the boundary and cannot be mixed up afterwards
+keywords: typescript branded types, nominal types, opaque types, phantom types, unique symbol, smart constructor, parse don't validate, UserId OrderId PaymentId, money kobo naira, units of measure, zod brand, @zudojs/constants Brand, createUserId, createTenantId
+objectives: Explain why a type alias cannot tell two ids apart, and how a brand can | Write a Brand helper with a unique symbol and choose it over a string key knowingly | Write smart constructors that validate and normalise, returning a Result or throwing | Model money units (kobo and naira) so mixing them or losing the unit is a compile error | Use the branded ids and validating factories of @zudojs/constants, knowing which ones validate | Recognise where brands disappear: arithmetic, string methods, JSON and casts
+---
+<section>
+<h2 id="problem">A refund with every argument in the wrong place</h2>
+<p>A support agent refunds ₦5,000 on a returned order. The refund function takes a payment id, an order id and an amount in kobo, all as plain strings and numbers. The call below compiles:</p>
+<example file="problem.ts">
+function refund(paymentId: string, orderId: string, amountKobo: number): string {
+  return `refund ${amountKobo} kobo (₦${(amountKobo / 100).toFixed(2)}) on payment ${paymentId} for order ${orderId}`;
+}
+
+const order = { id: "ORD-1042", totalKobo: 2138750 };
+const payment = { id: "PAY-88", orderId: "ORD-1042", amountKobo: 1638750 };
+const amountNaira = 5000;
+
+console.log(refund(order.id, payment.id, amountNaira));
+</example>
+<output>
+refund 5000 kobo (₦50.00) on payment ORD-1042 for order PAY-88
+</output>
+<p>Three mistakes in one call. The order id went where the payment id belongs and the payment id where the order id belongs, so the refund service will look up a payment called <code>ORD-1042</code>. And the amount was in naira where kobo was expected, so the customer gets ₦50 instead of ₦5,000. (Had the mistake gone the other way, kobo passed as naira, the shop would have refunded a hundred times too much.)</p>
+<p>Each value had the right <em>type</em> (a string is a string) and the wrong <em>meaning</em>. The <a href="/learn/ts-type-system#structural">previous lesson</a> explained why TypeScript cannot see the difference: it compares shapes, and every id is the same shape. This lesson gives each kind of id and each unit of money its own type, so that the call above has three compile errors, at zero runtime cost.</p>
+</section>
+
+<section>
+<h2 id="aliases">An alias is only a name</h2>
+<p>The first idea everyone tries is a type alias. It makes signatures easier to read, and it changes nothing else, because an alias is a new <em>name</em> for the same type, not a new type (<a href="/learn/ts-aliases-interfaces#aliases">Type aliases and interfaces</a>):</p>
+<example file="aliases.ts">
+type PaymentId = string;
+type OrderId = string;
+type Kobo = number;
+
+function refund(paymentId: PaymentId, orderId: OrderId, amount: Kobo): string {
+  return `refund ${amount} kobo on ${paymentId} for ${orderId}`;
+}
+
+const orderId: OrderId = "ORD-1042";
+const paymentId: PaymentId = "PAY-88";
+console.log(refund(orderId, paymentId, 5000));
+</example>
+<output>
+refund 5000 kobo on ORD-1042 for PAY-88
+</output>
+<p>Still no error. To the compiler, <code>PaymentId</code>, <code>OrderId</code> and <code>string</code> are one and the same. What is needed is a type that behaves like a string at runtime but that a plain string, or a different kind of id, cannot pass for.</p>
+</section>
+
+<section>
+<h2 id="brands">Brands: a tag that exists only in types</h2>
+<p>The trick is to add a property that no ordinary string has. An intersection (<a href="/learn/ts-unions#intersections">Union types in depth</a>) does it:</p>
+<example file="brand-idea.ts" project="idea" check="tsc-error">
+type PaymentId = string & { readonly __brand: "PaymentId" };
+type OrderId = string & { readonly __brand: "OrderId" };
+
+function refund(paymentId: PaymentId, orderId: OrderId): string {
+  return `refund on ${paymentId} for ${orderId}`;
+}
+
+const paymentId = "PAY-88" as PaymentId;
+const orderId = "ORD-1042" as OrderId;
+
+refund(paymentId, orderId);
+refund(orderId, paymentId);
+refund("PAY-88", "ORD-1042");
+
+const printable: string = paymentId;
+console.log(printable.length);
+</example>
+<output kind="tsc">
+brand-idea.ts:12:8 - error TS2345: Argument of type 'OrderId' is not assignable to parameter of type 'PaymentId'.
+  Type 'OrderId' is not assignable to type '{ readonly __brand: "PaymentId"; }'.
+    Types of property '__brand' are incompatible.
+      Type '"OrderId"' is not assignable to type '"PaymentId"'.
+
+12 refund(orderId, paymentId);
+          ~~~~~~~
+
+brand-idea.ts:13:8 - error TS2345: Argument of type 'string' is not assignable to parameter of type 'PaymentId'.
+  Type 'string' is not assignable to type '{ readonly __brand: "PaymentId"; }'.
+
+13 refund("PAY-88", "ORD-1042");
+          ~~~~~~~~
+
+
+Found 2 errors in the same file, starting at: brand-idea.ts:12
+</output>
+<p>This is a <strong>branded type</strong> (also called an opaque or nominal type): a base type, here <code>string</code>, intersected with a <strong>brand</strong>, a property whose literal type names the kind of value. The brand is a <strong>phantom</strong>: it exists only in the type. At runtime a <code>PaymentId</code> is the plain string <code>"PAY-88"</code> with no extra property, no wrapper object, no cost. The results:</p>
+<ul>
+<li>The correct call compiles.</li>
+<li>Swapped ids fail: an <code>OrderId</code>'s brand is <code>"OrderId"</code>, not <code>"PaymentId"</code>.</li>
+<li>Plain strings fail: a string has no <code>__brand</code> at all.</li>
+<li>A branded id is still a string wherever a string is expected, so logging, templates, <code>Map</code> keys and database drivers keep working. The last two lines compile.</li>
+</ul>
+<p>The <code>as PaymentId</code> is the only way to <em>create</em> a branded value, and it checks nothing. That is fine as long as there is exactly one place that does it, the place that also checks the value. That place is called a smart constructor, and it comes after one improvement to the brand itself.</p>
+<h3>A brand nobody can read or forge</h3>
+<p>A brand written as a string key, <code>__brand</code>, has two weaknesses. The property shows up in editor autocomplete and type-checks when read, although it does not exist at runtime. And any code in the program can write the same brand by hand. A <code>unique symbol</code> fixes both:</p>
+<example file="brand.ts" project="symbol">
+declare const brand: unique symbol;
+
+export type Brand<T, Name extends string> = T & { readonly [brand]: Name };
+</example>
+<p><code>declare const brand: unique symbol</code> announces a symbol that exists only for the type checker: no symbol is ever created at runtime (<code>declare</code> emits nothing), and a <code>unique symbol</code> type is different from every other symbol. Because it is not exported, no other module can name the key, so no other module can read or spell out the brand. Compare the two styles:</p>
+<example file="compare.ts" project="symbol" check="tsc-error">
+import type { Brand } from "./brand.js";
+
+type LooseOrderId = string & { readonly __brand: "OrderId" };
+type OrderId = Brand<string, "OrderId">;
+
+const loose = "ORD-1042" as LooseOrderId;
+const strict = "ORD-1042" as OrderId;
+
+const looseLabel: string = loose.__brand;
+const looseForged: LooseOrderId = "ORD-9" as string & { readonly __brand: "OrderId" };
+
+const strictLabel = strict.__brand;
+const strictForged: OrderId = "ORD-9" as string & { readonly [brand]: "OrderId" };
+</example>
+<output kind="tsc">
+compare.ts:12:28 - error TS2339: Property '__brand' does not exist on type 'OrderId'.
+
+12 const strictLabel = strict.__brand;
+                              ~~~~~~~
+
+compare.ts:13:7 - error TS2322: Type 'string & { readonly [x: number]: "OrderId"; }' is not assignable to type 'OrderId'.
+  Type 'string & { readonly [x: number]: "OrderId"; }' is not assignable to type '{ readonly [brand]: "OrderId"; }'.
+    Property '[brand]' is missing in type 'String & { readonly [x: number]: "OrderId"; }' but required in type '{ readonly [brand]: "OrderId"; }'.
+
+13 const strictForged: OrderId = "ORD-9" as string & { readonly [brand]: "OrderId" };
+         ~~~~~~~~~~~~
+
+  brand.ts:3:60 - '[brand]' is declared here.
+    3 export type Brand<T, Name extends string> = T & { readonly [brand]: Name };
+                                                                 ~~~~~~~
+
+compare.ts:13:63 - error TS2304: Cannot find name 'brand'.
+
+13 const strictForged: OrderId = "ORD-9" as string & { readonly [brand]: "OrderId" };
+                                                                 ~~~~~
+
+
+Found 3 errors in the same file, starting at: compare.ts:12
+</output>
+<p>The loose brand can be read (it type-checks, and would be <code>undefined</code> at runtime) and forged from any file by writing its shape. The symbol brand can do neither; the only ways in are a cast in the module that owns the type, or a cast spelling out <code>Brand&lt;string, "OrderId"&gt;</code>, which is easy to find in code review.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th></th><th>String key <code>__brand</code></th><th><code>unique symbol</code> key</th></tr></thead>
+<tbody>
+<tr><td>Readable by mistake</td><td>Yes: <code>id.__brand</code> compiles, is <code>undefined</code></td><td>No</td></tr>
+<tr><td>Forgeable by writing the shape</td><td>Yes, from any file</td><td>Only by importing <code>Brand</code> and casting</td></tr>
+<tr><td>Two copies of a library in one app</td><td>Compatible: same key, same type</td><td>Incompatible: each copy has its own symbol</td></tr>
+<tr><td>Readable error messages</td><td>Mentions <code>__brand</code></td><td>Mentions <code>[brand]</code></td></tr>
+</tbody>
+</table></div>
+<p>The third row is why shared libraries sometimes choose the string key: when an app ends up with two installed versions of a package (the dual package hazard from <a href="/learn/js-module-systems">Module systems in depth</a>), symbol-branded ids from one copy do not fit the other copy's types. <code>@zudojs/constants</code>, which the whole framework shares, uses <code>__brand</code>, as you will see below. In your own application code, the symbol is the better default.</p>
+</section>
+
+<section>
+<h2 id="smart-constructors">Smart constructors: validate once, trust afterwards</h2>
+<p>A <strong>smart constructor</strong> is the one function allowed to create a branded value. It takes the raw input, checks it, and only then applies the brand. Every other part of the program receives branded values and never checks them again: an <code>OrderId</code> in a function signature now <em>means</em> "a string that passed the order id check". This is the "parse, don't validate" idea from <a href="/learn/ts-functional#reason">Functional TypeScript</a>, applied to single values.</p>
+<reason title="What should an order id constructor accept?">
+<p>Order ids look like <code>ORD-1042</code>. They come from URLs, forms, CSV imports and support agents typing them in. Before writing <code>parseOrderId</code>, decide:</p>
+<ul>
+<li>Should <code>" ord-1042 "</code> be accepted? As what?</li>
+<li>What about <code>"ORD-"</code>, <code>"ORD-01042"</code>, <code>"ORD-1042; DROP TABLE orders"</code>, or a 5,000-character string?</li>
+<li>Should a bad id throw, or come back as a value?</li>
+<li>Does passing the check mean the order exists?</li>
+</ul>
+<answer>
+<ul>
+<li>Normalise first, then check: trim and upper-case, so <code>" ord-1042 "</code> becomes <code>"ORD-1042"</code>. Two spellings must not become two different ids, or a lookup by one spelling misses the record stored under the other. <code>createTenantId</code> in <code>@zudojs/constants</code> does exactly this.</li>
+<li>Reject everything that does not match the exact format: <code>ORD-</code>, then 1 to 12 digits, anchored at both ends (<code>^…$</code>) so nothing can be appended. The length limit also protects every place the id is later used: logs, cache keys, SQL parameters. Leading zeros are a policy choice; here they are allowed, because the database stores the id as text.</li>
+<li>At a boundary where bad input is expected (a request, a form), return a <code>Result</code> so the caller can report it. Inside the program, where a bad id means a bug, throwing is fine. You can offer both.</li>
+<li>No. The brand says the <em>format</em> is right. Whether order ORD-1042 exists, and whether this user may see it, is a question for the database and for authorisation. A brand can only record facts that were checked when it was created, and existence can change afterwards.</li>
+</ul>
+</answer>
+</reason>
+<p>A <code>Result</code> type as in <a href="/learn/ts-generic-design#result">Designing generic APIs</a>, and a small factory that makes one parser per kind of id:</p>
+<example file="result.ts" project="ids">
+export type Result<T, E> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
+export const ok = <T>(value: T): Result<T, never> => ({ ok: true, value });
+export const err = <E>(error: E): Result<never, E> => ({ ok: false, error });
+</example>
+<example file="brand.ts" project="ids">
+declare const brand: unique symbol;
+export type Brand<T, Name extends string> = T & { readonly [brand]: Name };
+</example>
+<example file="ids.ts" project="ids">
+import type { Brand } from "./brand.js";
+import { err, ok } from "./result.js";
+import type { Result } from "./result.js";
+
+export type UserId = Brand<string, "UserId">;
+export type OrderId = Brand<string, "OrderId">;
+export type PaymentId = Brand<string, "PaymentId">;
+
+function idParser<Id extends Brand<string, string>>(prefix: string, label: string) {
+  const pattern = new RegExp(`^${prefix}-\\d{1,12}$`);
+  return (raw: string): Result<Id, string> => {
+    const value = raw.trim().toUpperCase();
+    return pattern.test(value) ? ok(value as Id) : err(`not a valid ${label}: ${JSON.stringify(raw.slice(0, 40))}`);
+  };
+}
+
+export const parseUserId = idParser<UserId>("USR", "user id");
+export const parseOrderId = idParser<OrderId>("ORD", "order id");
+export const parsePaymentId = idParser<PaymentId>("PAY", "payment id");
+
+export function orderId(raw: string): OrderId {
+  const result = parseOrderId(raw);
+  if (!result.ok) throw new TypeError(result.error);
+  return result.value;
+}
+</example>
+<p>The only <code>as</code> in the project is inside <code>idParser</code>, on the line that has just tested the value. <code>orderId</code> is the throwing variant for code that holds trusted input, such as test fixtures and ids read back from your own database. The error message quotes at most 40 characters of the input, so a 5,000-character attack string does not flood the logs.</p>
+<example file="ids-demo.ts" project="ids">
+import { orderId, parseOrderId, parsePaymentId } from "./ids.js";
+
+for (const raw of [" ord-1042 ", "ORD-", "ORD-1042; DROP TABLE orders", "PAY-88", "ORD-" + "9".repeat(5000)]) {
+  const result = parseOrderId(raw);
+  console.log(result.ok ? `ok ${result.value}` : result.error);
+}
+
+const payment = parsePaymentId("pay-88");
+console.log(payment.ok && payment.value);
+
+try {
+  orderId("1042");
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+ok ORD-1042
+not a valid order id: "ORD-"
+not a valid order id: "ORD-1042; DROP TABLE orders"
+not a valid order id: "PAY-88"
+not a valid order id: "ORD-999999999999999999999999999999999999"
+PAY-88
+TypeError: not a valid order id: "1042"
+</output>
+<h3>Guards and assertions</h3>
+<p>Two more shapes of smart constructor are useful when the raw value is already in a variable: a type guard that narrows it in place, and an assertion function (<a href="/learn/ts-narrowing#assertion-functions">Narrowing</a>) that throws otherwise. Neither normalises; they only check. Use them for values that are already in canonical form, such as ids read back from your own database:</p>
+<example file="guards.ts" project="ids">
+import type { PaymentId } from "./ids.js";
+
+const PAYMENT_ID = /^PAY-\d{1,12}$/;
+
+export function isPaymentId(value: string): value is PaymentId {
+  return PAYMENT_ID.test(value);
+}
+
+export function assertPaymentId(value: string): asserts value is PaymentId {
+  if (!isPaymentId(value)) throw new TypeError(`not a payment id: ${JSON.stringify(value)}`);
+}
+
+function lookup(id: PaymentId): string {
+  return `looking up ${id}`;
+}
+
+const fromRow: string = "PAY-88";
+if (isPaymentId(fromRow)) console.log(lookup(fromRow));
+
+const fromCache: string = "PAY-90";
+assertPaymentId(fromCache);
+console.log(lookup(fromCache));
+</example>
+<output>
+looking up PAY-88
+looking up PAY-90
+</output>
+</section>
+
+<section>
+<h2 id="units">Units: kobo and naira</h2>
+<p>Money is the most valuable place for brands. <a href="/learn/logic-math">Mathematical reasoning</a> and <a href="/learn/js-numbers">Numbers in depth</a> settled on storing amounts as whole kobo, because floating-point naira drift (<code>0.1 + 0.2</code>). But a <code>number</code> does not say which unit it holds, and the opening bug passed naira where kobo was expected. Two brands, two constructors, and conversions that are the only way from one unit to the other:</p>
+<example file="brand.ts" project="money">
+declare const brand: unique symbol;
+export type Brand<T, Name extends string> = T & { readonly [brand]: Name };
+</example>
+<example file="money.ts" project="money">
+import type { Brand } from "./brand.js";
+
+export type Kobo = Brand<number, "Kobo">;
+export type Naira = Brand<number, "Naira">;
+
+export function kobo(amount: number): Kobo {
+  if (!Number.isSafeInteger(amount)) throw new RangeError(`kobo must be a whole number, got ${amount}`);
+  return amount as Kobo;
+}
+
+export function naira(amount: number): Naira {
+  if (!Number.isFinite(amount) || Math.abs(amount * 100 - Math.round(amount * 100)) > 1e-6) {
+    throw new RangeError(`naira must have at most 2 decimal places, got ${amount}`);
+  }
+  return amount as Naira;
+}
+
+export const toKobo = (amount: Naira): Kobo => kobo(Math.round(amount * 100));
+export const toNaira = (amount: Kobo): Naira => naira(amount / 100);
+
+export const addKobo = (...amounts: readonly Kobo[]): Kobo => kobo(amounts.reduce((sum, amount) => sum + amount, 0));
+export const subtractKobo = (from: Kobo, amount: Kobo): Kobo => kobo(from - amount);
+export const percentOf = (amount: Kobo, percent: number): Kobo => kobo(Math.round((amount * percent) / 100));
+
+export function formatKobo(amount: Kobo): string {
+  const sign = amount < 0 ? "-" : "";
+  const [whole = "0", fraction = "00"] = (Math.abs(amount) / 100).toFixed(2).split(".");
+  return `${sign}₦${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${fraction}`;
+}
+</example>
+<ul>
+<li><code>kobo</code> accepts only safe integers: no fractions of a kobo, no <code>NaN</code>, no <code>Infinity</code>, nothing beyond 2<sup>53</sup> where integers stop being exact.</li>
+<li><code>naira</code> accepts at most two decimal places, with a tolerance. The obvious test, <code>Math.round(amount * 100) === amount * 100</code>, rejects an everyday price: <code>19.99 * 100</code> is <code>1998.9999999999998</code> in floating point (<a href="/learn/js-numbers">Numbers in depth</a>). So the check allows a difference of a millionth of a kobo, which absorbs floating-point noise but not a real third decimal: ₦50.555 is 0.5 kobo away from a whole number.</li>
+<li>Arithmetic has helpers. The <code>+</code> operator on two <code>Kobo</code> values returns a plain <code>number</code>: the compiler does not know that the sum of two kobo amounts is still kobo. The helpers put the brand back, through the constructor, so every result is checked again.</li>
+</ul>
+<p>Now the compiler knows about units:</p>
+<example file="unit-errors.ts" project="money" check="tsc-error">
+import { addKobo, kobo, naira, toKobo } from "./money.js";
+import type { Kobo } from "./money.js";
+
+function refundToCard(amount: Kobo): string {
+  return `refunding ${amount} kobo`;
+}
+
+const fiveThousandNaira = naira(5000);
+const deliveryFee = kobo(150000);
+
+refundToCard(toKobo(fiveThousandNaira));
+refundToCard(fiveThousandNaira);
+refundToCard(5000);
+
+const total: Kobo = deliveryFee + deliveryFee;
+const sameTotal: Kobo = addKobo(deliveryFee, deliveryFee);
+console.log(fiveThousandNaira === deliveryFee);
+</example>
+<output kind="tsc">
+unit-errors.ts:12:14 - error TS2345: Argument of type 'Naira' is not assignable to parameter of type 'Kobo'.
+  Type 'Naira' is not assignable to type '{ readonly [brand]: "Kobo"; }'.
+    Types of property '[brand]' are incompatible.
+      Type '"Naira"' is not assignable to type '"Kobo"'.
+
+12 refundToCard(fiveThousandNaira);
+                ~~~~~~~~~~~~~~~~~
+
+unit-errors.ts:13:14 - error TS2345: Argument of type 'number' is not assignable to parameter of type 'Kobo'.
+  Type 'number' is not assignable to type '{ readonly [brand]: "Kobo"; }'.
+
+13 refundToCard(5000);
+                ~~~~
+
+unit-errors.ts:15:7 - error TS2322: Type 'number' is not assignable to type 'Kobo'.
+  Type 'number' is not assignable to type '{ readonly [brand]: "Kobo"; }'.
+
+15 const total: Kobo = deliveryFee + deliveryFee;
+         ~~~~~
+
+unit-errors.ts:17:13 - error TS2367: This comparison appears to be unintentional because the types 'Naira' and 'Kobo' have no overlap.
+
+17 console.log(fiveThousandNaira === deliveryFee);
+               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 4 errors in the same file, starting at: unit-errors.ts:12
+</output>
+<p>Naira where kobo is expected: refused. A bare number: refused. <code>deliveryFee + deliveryFee</code> assigned to <code>Kobo</code>: refused, with the fix one line below. And comparing a naira amount to a kobo amount is flagged as a comparison that can never be true, because <code>Kobo</code> and <code>Naira</code> have no values in common. That last error catches a subtle bug: <code>if (paid === expected)</code> with the two sides in different units would be silently false forever.</p>
+<example file="money-demo.ts" project="money">
+import { addKobo, formatKobo, kobo, naira, percentOf, subtractKobo, toKobo, toNaira } from "./money.js";
+
+const subtotal = toKobo(naira(20200));
+const discount = percentOf(kobo(1700000), 10);
+const vat = percentOf(subtractKobo(subtotal, discount), 7.5);
+const total = addKobo(subtotal, vat, kobo(150000));
+
+console.log(formatKobo(subtotal), formatKobo(discount), formatKobo(vat), formatKobo(total));
+console.log(toNaira(total), toKobo(naira(19.99)), formatKobo(kobo(-2500)), formatKobo(kobo(123456789)));
+
+for (const bad of [() => naira(50.555), () => kobo(0.5), () => kobo(Number.NaN)]) {
+  try {
+    bad();
+  } catch (error) {
+    console.log(String(error));
+  }
+}
+</example>
+<output>
+₦20,200.00 ₦1,700.00 ₦1,387.50 ₦23,087.50
+23087.5 1999 -₦25.00 ₦1,234,567.89
+RangeError: naira must have at most 2 decimal places, got 50.555
+RangeError: kobo must be a whole number, got 0.5
+RangeError: kobo must be a whole number, got NaN
+</output>
+<tip>The same pattern works for every unit that is stored as a plain number: grams and kilograms for delivery weight, minutes and milliseconds for timeouts, basis points and percent for interest rates. If mixing two units up has ever caused a bug, give each one a brand.</tip>
+</section>
+
+<section>
+<h2 id="zudo">Branded ids in @zudojs/constants</h2>
+<p>ZudoJS defines its shared identifiers once, in <code>@zudojs/constants</code>, and every other package imports them from there (<a href="/learn/zudo-types-constants">Types and constants</a>). The published package exports a <code>Brand&lt;T, B&gt;</code> helper with a string key, <code>T &amp; { readonly __brand: B }</code>, and a set of branded types built with it: <code>UserId</code>, <code>EventId</code>, <code>RequestId</code>, <code>CorrelationId</code>, <code>SessionId</code>, <code>TenantId</code>, <code>MessageId</code>, <code>TokenId</code>, <code>Timestamp</code>, <code>Url</code>, <code>EmailAddress</code> and a few encodings. <code>@zudojs/auth</code> re-exports the same <code>UserId</code>, so an id made by one package fits the other.</p>
+<p>The package also exports a constructor for each, and here the details matter: <strong>some constructors validate, and some only apply the brand</strong>.</p>
+<example file="zudo-ids.ts" project="zudo">
+import { createEmailAddress, createTenantId, createTimestamp, createUserId, InvalidConstantError } from "@zudojs/constants";
+import type { TenantId, UserId } from "@zudojs/constants";
+
+const unchecked: UserId = createUserId("");
+console.log(JSON.stringify(unchecked), typeof unchecked);
+
+const tenant: TenantId = createTenantId("  Mama-Put-Kitchen ");
+console.log(tenant);
+
+const attempts = [
+  () => createTenantId("acme/../billing"),
+  () => createEmailAddress("ada@"),
+  () => createTimestamp("2026-02-30T10:00:00Z"),
+];
+for (const attempt of attempts) {
+  try {
+    attempt();
+  } catch (error) {
+    if (error instanceof InvalidConstantError) console.log(`${error.name}: ${error.message}`);
+  }
+}
+console.log(createTimestamp("2026-09-24T19:05:00Z"), createEmailAddress("ada@example.com"));
+</example>
+<output>
+"" string
+mama-put-kitchen
+InvalidConstantError: Invalid tenant id: "acme/../billing"
+InvalidConstantError: Invalid email address: "ada@"
+InvalidConstantError: Invalid ISO 8601 timestamp: "2026-02-30T10:00:00Z"
+2026-09-24T19:05:00Z ada@example.com
+</output>
+<ul>
+<li><code>createUserId</code> (and <code>createEventId</code>, <code>createRequestId</code>, <code>createSessionId</code> and the other id constructors) accept any string, even an empty one. They are a labelled cast: use them where the id was already checked, for example after <code>@zudojs/auth</code> verified a token, or wrap them in your own smart constructor that validates your id format first.</li>
+<li><code>createTenantId</code> is a real smart constructor. It normalises (Unicode NFKC, trim, lower case) so two spellings of one tenant cannot become two tenants, and rejects anything that could act as a path segment or separator, because tenant ids end up in cache keys, schema names and file paths.</li>
+<li><code>createEmailAddress</code>, <code>createTimestamp</code> and <code>createUrl</code> validate too, and throw <code>InvalidConstantError</code> (owned by <code>@zudojs/errors</code>). <code>createTimestamp</code> even rejects 30 February, which <code>Date.parse</code> would quietly roll over into March.</li>
+<li>Because the brand is a string key, <code>unchecked.__brand</code> type-checks (as <code>"UserId"</code>) and is <code>undefined</code> at runtime. Do not read it.</li>
+</ul>
+<p>In a ZudoJS project, import these types instead of defining your own <code>UserId</code>: a second, incompatible <code>UserId</code> would reject ids coming from the framework. Define your own brands for your own domain (<code>OrderId</code>, <code>PaymentId</code>, <code>Kobo</code>), which the framework does not know about.</p>
+</section>
+
+<section>
+<h2 id="leaks">Where brands disappear</h2>
+<p>A brand is a promise the compiler tracks. It is lost, or can be faked, in a few predictable places. Knowing them is most of the skill.</p>
+<example file="leaks.ts" project="ids">
+import { orderId } from "./ids.js";
+import type { OrderId } from "./ids.js";
+
+const id: OrderId = orderId("ORD-1042");
+
+const trimmed = id.trim();
+const lower = id.toLowerCase();
+const viaJson = JSON.parse(JSON.stringify({ id })) as { id: string };
+const keys = Object.keys({ [id]: true });
+
+const index = new Map<OrderId, string>([[id, "Ada"]]);
+console.log(index.get(orderId(" ord-1042")), typeof trimmed, lower, viaJson.id === id, keys);
+</example>
+<output>
+Ada string ord-1042 true [ 'ORD-1042' ]
+</output>
+<ul>
+<li><strong>Methods and operators return the base type.</strong> <code>trim()</code> returns <code>string</code>, <code>+</code> returns <code>number</code>. That is correct: <code>id.toLowerCase()</code> is <em>not</em> a valid order id. Re-brand only through the constructor.</li>
+<li><strong>JSON, databases, <code>Object.keys</code> and URLs return plain strings.</strong> Brands are erased at runtime, so anything that comes back from outside must be parsed again. The usual place is the repository or the request handler, the same boundary where other validation happens.</li>
+<li><strong>Branded values work as <code>Map</code> keys</strong>, and a normalising constructor makes lookups reliable: <code>" ord-1042"</code> found the entry stored under <code>ORD-1042</code>.</li>
+<li><strong>A cast can forge any brand.</strong> <code>"anything" as OrderId</code> compiles. Keep the casts in the constructors, and treat any other <code>as SomethingId</code> in a code review as a bug until proven otherwise. A lint rule that bans <code>as</code> outside certain files enforces it.</li>
+</ul>
+<h3>Validation libraries brand too</h3>
+<p>Schema libraries produce branded types from their parsers, so the schema is the smart constructor. With Zod, <code>.brand&lt;"OrderId"&gt;()</code> after the checks:</p>
+<example file="zod-brand.ts" project="zod" browser="no">
+import { z } from "zod";
+
+const OrderIdSchema = z.string().trim().toUpperCase().regex(/^ORD-\d{1,12}$/).brand<"OrderId">();
+type OrderId = z.infer<typeof OrderIdSchema>;
+
+function cancel(id: OrderId): string {
+  return `cancelling ${id}`;
+}
+
+console.log(cancel(OrderIdSchema.parse(" ord-1042 ")));
+const bad = OrderIdSchema.safeParse("ORD-");
+console.log(bad.success, bad.success ? "" : bad.error.issues[0]?.code);
+</example>
+<output>
+cancelling ORD-1042
+false invalid_format
+</output>
+<p>Zod's brand is its own type (<code>string &amp; z.$brand&lt;"OrderId"&gt;</code>), so a Zod <code>OrderId</code> and the <code>OrderId</code> from <code>ids.ts</code> are different types. Pick one source of branded types per project. <a href="/learn/ts-validation">Runtime validation</a> compares the libraries.</p>
+</section>
+
+<section>
+<h2 id="build">Build: identifiers and money for a refunds service</h2>
+<p>The refund from the opening, done properly. The request arrives as untrusted JSON; the handler parses every id and amount into branded values; the refund logic only accepts branded values and checks the business rules. The project reuses <code>result.ts</code>, <code>brand.ts</code> and <code>ids.ts</code> from above and adds the money helpers:</p>
+<example file="money.ts" project="ids">
+import type { Brand } from "./brand.js";
+
+export type Kobo = Brand<number, "Kobo">;
+export type Naira = Brand<number, "Naira">;
+
+export function kobo(amount: number): Kobo {
+  if (!Number.isSafeInteger(amount)) throw new RangeError(`kobo must be a whole number, got ${amount}`);
+  return amount as Kobo;
+}
+
+export function parseNaira(raw: unknown): Naira | undefined {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return undefined;
+  return Math.abs(raw * 100 - Math.round(raw * 100)) > 1e-6 ? undefined : (raw as Naira);
+}
+
+export const toKobo = (amount: Naira): Kobo => kobo(Math.round(amount * 100));
+export const addKobo = (a: Kobo, b: Kobo): Kobo => kobo(a + b);
+export const subtractKobo = (from: Kobo, amount: Kobo): Kobo => kobo(from - amount);
+export const formatKobo = (amount: Kobo): string => `₦${(amount / 100).toFixed(2)}`;
+</example>
+<p>The refund rules take only branded values. A payment belongs to one order and has a captured amount and an already-refunded amount:</p>
+<example file="refunds.ts" project="ids">
+import type { OrderId, PaymentId, UserId } from "./ids.js";
+import { addKobo, kobo, subtractKobo } from "./money.js";
+import type { Kobo } from "./money.js";
+import { err, ok } from "./result.js";
+import type { Result } from "./result.js";
+
+export interface CapturedPayment {
+  readonly id: PaymentId;
+  readonly orderId: OrderId;
+  readonly customer: UserId;
+  readonly captured: Kobo;
+  readonly refunded: Kobo;
+}
+
+export type RefundError =
+  | { readonly code: "wrong-order"; readonly paymentOrder: OrderId }
+  | { readonly code: "too-much"; readonly remaining: Kobo };
+
+export function refund(payment: CapturedPayment, order: OrderId, amount: Kobo): Result<CapturedPayment, RefundError> {
+  if (payment.orderId !== order) return err({ code: "wrong-order", paymentOrder: payment.orderId });
+  const remaining = subtractKobo(payment.captured, payment.refunded);
+  if (amount > remaining) return err({ code: "too-much", remaining });
+  return ok({ ...payment, refunded: addKobo(payment.refunded, amount) });
+}
+
+export const remainingOf = (payment: CapturedPayment): Kobo => kobo(payment.captured - payment.refunded);
+</example>
+<p>The handler is the boundary. It receives <code>unknown</code>, parses each field with its smart constructor, collects every problem, and only then calls <code>refund</code>:</p>
+<example file="handler.ts" project="ids">
+import { parseOrderId, parsePaymentId } from "./ids.js";
+import type { PaymentId } from "./ids.js";
+import { formatKobo, parseNaira, toKobo } from "./money.js";
+import { refund } from "./refunds.js";
+import type { CapturedPayment } from "./refunds.js";
+
+const field = (body: unknown, key: string): unknown =>
+  typeof body === "object" && body !== null && Object.hasOwn(body, key) ? (body as Record<string, unknown>)[key] : undefined;
+
+const text = (value: unknown): string => (typeof value === "string" ? value : "");
+
+export function handleRefund(body: unknown, payments: Map<PaymentId, CapturedPayment>): string {
+  const paymentId = parsePaymentId(text(field(body, "paymentId")));
+  const orderId = parseOrderId(text(field(body, "orderId")));
+  const amount = parseNaira(field(body, "amountNaira"));
+
+  const problems = [
+    ...(paymentId.ok ? [] : [paymentId.error]),
+    ...(orderId.ok ? [] : [orderId.error]),
+    ...(amount === undefined ? ["amountNaira must be a positive naira amount with at most 2 decimals"] : []),
+  ];
+  if (!paymentId.ok || !orderId.ok || amount === undefined) return `400 ${problems.join("; ")}`;
+
+  const payment = payments.get(paymentId.value);
+  if (payment === undefined) return `404 no payment ${paymentId.value}`;
+
+  const result = refund(payment, orderId.value, toKobo(amount));
+  if (!result.ok) {
+    return result.error.code === "wrong-order"
+      ? `409 payment ${payment.id} belongs to ${result.error.paymentOrder}`
+      : `409 only ${formatKobo(result.error.remaining)} left to refund`;
+  }
+  payments.set(payment.id, result.value);
+  return `200 refunded ${formatKobo(toKobo(amount))} on ${payment.id}`;
+}
+</example>
+<example file="main.ts" project="ids">
+import { orderId, parsePaymentId, parseUserId } from "./ids.js";
+import type { PaymentId } from "./ids.js";
+import { kobo } from "./money.js";
+import { handleRefund } from "./handler.js";
+import type { CapturedPayment } from "./refunds.js";
+
+const payId = parsePaymentId("PAY-88");
+const customer = parseUserId("USR-7");
+if (!payId.ok || !customer.ok) throw new Error("bad fixture");
+
+const payments = new Map<PaymentId, CapturedPayment>([
+  [payId.value, { id: payId.value, orderId: orderId("ORD-1042"), customer: customer.value, captured: kobo(1638750), refunded: kobo(0) }],
+]);
+
+const requests: unknown[] = [
+  { paymentId: "ORD-1042", orderId: "PAY-88", amountNaira: 5000 },
+  { paymentId: "pay-88", orderId: "ORD-1043", amountNaira: 5000 },
+  { paymentId: "PAY-88", orderId: "ORD-1042", amountNaira: 50.555 },
+  { paymentId: "PAY-88", orderId: "ord-1042", amountNaira: 5000 },
+  { paymentId: "PAY-88", orderId: "ORD-1042", amountNaira: 12000 },
+  { paymentId: "PAY-90", orderId: "ORD-1042", amountNaira: 1 },
+  "refund please",
+];
+
+for (const body of requests) console.log(handleRefund(body, payments));
+</example>
+<output>
+400 not a valid payment id: "ORD-1042"; not a valid order id: "PAY-88"
+409 payment PAY-88 belongs to ORD-1042
+400 amountNaira must be a positive naira amount with at most 2 decimals
+200 refunded ₦5000.00 on PAY-88
+409 only ₦11387.50 left to refund
+404 no payment PAY-90
+400 not a valid payment id: ""; not a valid order id: ""; amountNaira must be a positive naira amount with at most 2 decimals
+</output>
+<p>The swapped ids from the opening are now a 400 with both problems named, instead of a refund against the wrong record. The lower-case ids were normalised and accepted. The second refund was limited to what was left on the payment, and the amount that could not be represented in kobo was refused before any arithmetic.</p>
+<p>Inside <code>refunds.ts</code>, nothing checks formats or units any more: the signature <code>refund(payment, order: OrderId, amount: Kobo)</code> already guarantees them. The compiler also guarantees the argument order:</p>
+<example file="misuse.ts" project="ids" check="tsc-error">
+import { orderId } from "./ids.js";
+import { kobo } from "./money.js";
+import { refund } from "./refunds.js";
+import type { CapturedPayment } from "./refunds.js";
+
+declare const payment: CapturedPayment;
+
+refund(payment, payment.id, kobo(500000));
+refund(payment, orderId("ORD-1042"), 500000);
+refund(payment, "ORD-1042", kobo(500000));
+</example>
+<output kind="tsc">
+misuse.ts:8:17 - error TS2345: Argument of type 'PaymentId' is not assignable to parameter of type 'OrderId'.
+  Type 'PaymentId' is not assignable to type '{ readonly [brand]: "OrderId"; }'.
+    Types of property '[brand]' are incompatible.
+      Type '"PaymentId"' is not assignable to type '"OrderId"'.
+
+8 refund(payment, payment.id, kobo(500000));
+                  ~~~~~~~~~~
+
+misuse.ts:9:38 - error TS2345: Argument of type 'number' is not assignable to parameter of type 'Kobo'.
+  Type 'number' is not assignable to type '{ readonly [brand]: "Kobo"; }'.
+
+9 refund(payment, orderId("ORD-1042"), 500000);
+                                       ~~~~~~
+
+misuse.ts:10:17 - error TS2345: Argument of type 'string' is not assignable to parameter of type 'OrderId'.
+  Type 'string' is not assignable to type '{ readonly [brand]: "OrderId"; }'.
+
+10 refund(payment, "ORD-1042", kobo(500000));
+                   ~~~~~~~~~~
+
+
+Found 3 errors in the same file, starting at: misuse.ts:8
+</output>
+<h3>Testing branded code</h3>
+<p>Test the constructors hardest: they are the only gate. Then pin the type-level promises with <code>@ts-expect-error</code>, inside a function that never runs:</p>
+<example file="ids.test.ts" project="ids">
+import { orderId, parseOrderId, parsePaymentId } from "./ids.js";
+import type { OrderId, PaymentId } from "./ids.js";
+import { kobo, parseNaira, toKobo } from "./money.js";
+import type { Kobo, Naira } from "./money.js";
+
+function check(label: string, actual: unknown, expected: unknown): void {
+  const same = JSON.stringify(actual) === JSON.stringify(expected);
+  console.log(`${same ? "PASS" : "FAIL"} ${label} -> ${JSON.stringify(actual)}`);
+}
+
+check("normalises case and spaces", parseOrderId("  ord-7 "), { ok: true, value: "ORD-7" });
+check("rejects the bare prefix", parseOrderId("ORD-").ok, false);
+check("rejects suffixes", parseOrderId("ORD-7x").ok, false);
+check("rejects 13 digits", parseOrderId("ORD-1234567890123").ok, false);
+check("rejects the other kind", parsePaymentId("ORD-7").ok, false);
+check("kobo rejects fractions", (() => { try { return kobo(0.5); } catch { return "threw"; } })(), "threw");
+check("naira to kobo", toKobo(parseNaira(19.99) as Naira), 1999);
+check("naira rejects 3 decimals", parseNaira(0.125), undefined);
+check("naira rejects zero", parseNaira(0), undefined);
+
+function typeTests(order: OrderId, payment: PaymentId, amount: Kobo, inNaira: Naira): void {
+  // @ts-expect-error: an order id is not a payment id
+  const p: PaymentId = order;
+  // @ts-expect-error: a plain string is not an order id
+  const o: OrderId = "ORD-7";
+  // @ts-expect-error: naira is not kobo
+  const k: Kobo = inNaira;
+  const s: string = payment;
+  const n: number = amount;
+  console.log(p, o, k, s, n, orderId);
+}
+console.log("type tests compiled:", typeTests.length === 4);
+</example>
+<output>
+PASS normalises case and spaces -> {"ok":true,"value":"ORD-7"}
+PASS rejects the bare prefix -> false
+PASS rejects suffixes -> false
+PASS rejects 13 digits -> false
+PASS rejects the other kind -> false
+PASS kobo rejects fractions -> "threw"
+PASS naira to kobo -> 1999
+PASS naira rejects 3 decimals -> undefined
+PASS naira rejects zero -> undefined
+type tests compiled: true
+</output>
+<p>The last two lines inside <code>typeTests</code> are positive tests: a brand must still fit its base type, or logging and database code would break.</p>
+</section>
+
+<section>
+<h2 id="production">Branded types in production</h2>
+<ul>
+<li><strong>Brand at the boundaries, trust inside.</strong> Request handlers, message consumers, repositories and CSV importers parse raw values into branded ones. Domain code only accepts branded types. This keeps every check in one place per kind of value.</li>
+<li><strong>Brand what gets mixed up.</strong> Ids that travel together through the same functions (user, order, payment), money in different units, validated strings (emails, tenant ids, sanitised HTML). A local loop counter does not need a brand.</li>
+<li><strong>Keep casts out of application code.</strong> The only <code>as SomeId</code> belongs in the constructor. Search the codebase for others now and then; each one is a hole.</li>
+<li><strong>They cost nothing at runtime.</strong> The value is the same string or number, so there is no memory, speed or serialisation cost. The cost is in writing constructors and helpers such as <code>addKobo</code>, which is also where the checks live.</li>
+<li><strong>Share brands through one package.</strong> In ZudoJS projects, <code>UserId</code>, <code>TenantId</code> and the other framework ids come from <code>@zudojs/constants</code>; check whether the constructor you call validates. Keep your own domain brands in one module of your own.</li>
+<li><strong>Existence and permission are not brands.</strong> A valid <code>OrderId</code> can still point to a deleted order or one the user may not see. Those checks happen at use time, against the database and the permission system.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A normalising email constructor">
+<p>Write <code>parseEmail(raw: string): Result&lt;Email, string&gt;</code> for a brand <code>Email</code>. It trims and lower-cases the input, rejects anything over 254 characters, and accepts only a simple <code>local@domain.tld</code> shape. Two spellings of the same address must produce the same <code>Email</code>.</p>
+<solution>
+<example file="email.ts">
+declare const brand: unique symbol;
+type Brand<T, Name extends string> = T & { readonly [brand]: Name };
+type Email = Brand<string, "Email">;
+type Result<T, E> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function parseEmail(raw: string): Result<Email, string> {
+  const value = raw.trim().toLowerCase();
+  if (value.length > 254) return { ok: false, error: "email is too long" };
+  if (!EMAIL.test(value)) return { ok: false, error: `not an email: ${JSON.stringify(raw.slice(0, 40))}` };
+  return { ok: true, value: value as Email };
+}
+
+const a = parseEmail("  Ada@Example.com ");
+const b = parseEmail("ada@example.com");
+console.log(a.ok && b.ok && a.value === b.value, a.ok && a.value);
+console.log(parseEmail("ada@example").ok, parseEmail(`${"a".repeat(250)}@x.ng`).ok);
+</example>
+<output>
+true ada@example.com
+false false
+</output>
+<p>Normalising before the check is what makes the brand useful for lookups and uniqueness: a sign-up with <code>Ada@Example.com</code> and a login with <code>ada@example.com</code> now meet the same account. The pattern is deliberately loose; the only real proof that an address works is a confirmation email, which is a fact worth another brand, <code>VerifiedEmail</code>, created only by the code that handles the confirmation link.</p>
+</solution>
+</exercise>
+<exercise title="Split a bill without losing a kobo">
+<p>Three friends split a ₦10,000 bill. <code>10000 / 3</code> is not a whole number of kobo. Write <code>splitKobo(total: Kobo, parts: number): readonly Kobo[]</code> that returns amounts that differ by at most one kobo and always add up to exactly <code>total</code>.</p>
+<solution>
+<example file="split.ts">
+declare const brand: unique symbol;
+type Kobo = number & { readonly [brand]: "Kobo" };
+
+function kobo(amount: number): Kobo {
+  if (!Number.isSafeInteger(amount)) throw new RangeError(`kobo must be a whole number, got ${amount}`);
+  return amount as Kobo;
+}
+
+function splitKobo(total: Kobo, parts: number): readonly Kobo[] {
+  if (!Number.isInteger(parts) || parts < 1) throw new RangeError(`cannot split into ${parts} parts`);
+  const base = Math.floor(total / parts);
+  const extra = total - base * parts;
+  return Array.from({ length: parts }, (_, i) => kobo(base + (i < extra ? 1 : 0)));
+}
+
+const shares = splitKobo(kobo(1000000), 3);
+console.log(shares, shares.reduce((sum, share) => sum + share, 0));
+console.log(splitKobo(kobo(100), 7));
+</example>
+<output>
+[ 333334, 333333, 333333 ] 1000000
+[
+  15, 15, 14, 14,
+  14, 14, 14
+]
+</output>
+<p>Integer division gives each person the base share, and the leftover kobo (at most <code>parts - 1</code> of them) go one each to the first people. Rounding each share separately (<code>Math.round(total / parts)</code>) would give 333,333 × 3 = 999,999: a kobo lost. Allocation that preserves the total is a standard rule in payment systems.</p>
+</solution>
+</exercise>
+<exercise title="Basis points for rates">
+<p>Interest and VAT rates cause unit bugs too: is <code>7.5</code> a percent or a fraction? Add a brand <code>BasisPoints</code> (1 basis point = 0.01%, so 7.5% is 750 bp), a constructor that accepts whole numbers from 0 to 10,000, and <code>applyRate(amount: Kobo, rate: BasisPoints): Kobo</code>. Show that passing a plain <code>7.5</code> is a compile error.</p>
+<solution>
+<example file="rates.ts" check="tsc-error">
+declare const brand: unique symbol;
+type Brand<T, Name extends string> = T & { readonly [brand]: Name };
+type Kobo = Brand<number, "Kobo">;
+type BasisPoints = Brand<number, "BasisPoints">;
+
+const kobo = (amount: number): Kobo => {
+  if (!Number.isSafeInteger(amount)) throw new RangeError(`kobo must be a whole number, got ${amount}`);
+  return amount as Kobo;
+};
+
+const basisPoints = (value: number): BasisPoints => {
+  if (!Number.isInteger(value) || value < 0 || value > 10000) throw new RangeError(`basis points must be 0 to 10000, got ${value}`);
+  return value as BasisPoints;
+};
+
+const applyRate = (amount: Kobo, rate: BasisPoints): Kobo => kobo(Math.round((amount * rate) / 10000));
+
+const VAT = basisPoints(750);
+console.log(applyRate(kobo(1000000), VAT));
+console.log(applyRate(kobo(1000000), 7.5));
+</example>
+<output kind="tsc">
+rates.ts:20:38 - error TS2345: Argument of type 'number' is not assignable to parameter of type 'BasisPoints'.
+  Type 'number' is not assignable to type '{ readonly [brand]: "BasisPoints"; }'.
+
+20 console.log(applyRate(kobo(1000000), 7.5));
+                                        ~~~
+
+
+Found 1 error in rates.ts:20
+</output>
+<p>With the brand, the only way to get a rate is <code>basisPoints(750)</code>, which also rejects <code>7.5</code> at runtime because it is not a whole number of basis points. Remove the last line and the program prints <code>75000</code>. Banks use basis points for exactly this reason: an integer rate has no "percent or fraction?" ambiguity.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A type alias is only a name: <code>type OrderId = string</code> accepts every string. A brand, <code>string &amp; { readonly [brand]: "OrderId" }</code>, adds a phantom property that plain strings and other ids lack, at zero runtime cost.</li>
+<li>Use a non-exported <code>unique symbol</code> as the key, so the brand cannot be read or forged by writing its shape. String-key brands (as in <code>@zudojs/constants</code>) stay compatible across duplicate package copies, at the cost of being readable and forgeable.</li>
+<li>A smart constructor is the only place that casts. It normalises, validates, and brands; it returns a <code>Result</code> at boundaries and may throw inside. Guards and assertion functions brand values that are already canonical.</li>
+<li>Brand units: <code>Kobo</code> and <code>Naira</code> cannot be mixed or compared, operators return plain numbers, and helpers like <code>addKobo</code> re-check and re-brand.</li>
+<li><code>@zudojs/constants</code> exports <code>Brand</code> and the framework ids. <code>createTenantId</code>, <code>createEmailAddress</code>, <code>createTimestamp</code> and <code>createUrl</code> validate; <code>createUserId</code> and the other id constructors only brand.</li>
+<li>Brands disappear through methods, operators, JSON, databases and <code>Object.keys</code>, and can be forged by any cast: parse again at every boundary and keep casts in constructors.</li>
+</ul>
+<p>Next: <a href="/learn/ts-domain-modeling">Type-safe domain modelling</a>, where brands, unions and readonly data combine into a commerce domain in which illegal states cannot be written.</p>
+</section>

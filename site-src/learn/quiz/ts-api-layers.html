@@ -1,0 +1,884 @@
+<question id="tal-mass-assignment" type="choice">
+<q>A route does <code>const updated = { ...user, ...body }</code> with the client's JSON body. What is this bug called, and what can an attacker do with it?</q>
+<option>SQL injection: they can run their own SQL</option>
+<option correct>Mass assignment: they can set fields they should never control, such as <code>role</code></option>
+<option>Cross-site scripting: they can run scripts in other users' browsers</option>
+<option>A race condition: two updates can overwrite each other</option>
+<explain><p>Spreading an untrusted body copies <em>every</em> field it contains. Adding <code>"role":"admin"</code> to a profile edit turns a customer into an admin. Parse the body into a DTO with an allow-list of fields instead.</p></explain>
+</question>
+
+<question id="tal-omit-deny" type="choice">
+<q>Why is <code>type UserResponse = Omit&lt;User, "passwordHash"&gt;</code> risky for a response type?</q>
+<option><code>Omit</code> does not work on interfaces</option>
+<option>It makes every field optional</option>
+<option correct>It is a deny-list: any field added to <code>User</code> later is published automatically</option>
+<option>It removes <code>passwordHash</code> at compile time but not from the type</option>
+<explain><p><code>Omit</code> means "everything except". When someone adds <code>resetTokenHash</code> to the entity next month, it is in the response without anyone deciding so. A response type that names its fields is an allow-list.</p></explain>
+</question>
+
+<question id="tal-register-role" type="choice">
+<q>In the lesson's BookStore, where does a new user's <code>role</code> come from at registration?</q>
+<option>From the <code>role</code> field of the request body, if present</option>
+<option>From the database's default value only</option>
+<option correct>From the service, which always sets <code>"customer"</code>; a body with <code>role</code> is refused</option>
+<option>From the token the client sends</option>
+<explain><p><code>CreateUserDTO</code> has no role, the parser refuses the key, and <code>UserService.register</code> writes <code>role: "customer"</code> itself. Admins are created by operators, never through the public API.</p></explain>
+</question>
+
+<question id="tal-absent-null" type="choice">
+<q>An update DTO has <code>displayName?: string | null</code>. What do "the key is absent" and "the key is <code>null</code>" mean?</q>
+<option>Both mean "clear the name"</option>
+<option>Both mean "leave the name alone"</option>
+<option correct>Absent means "leave it alone"; <code>null</code> means "clear it"</option>
+<option>Absent is an error; <code>null</code> means "leave it alone"</option>
+<explain><p>A partial update must tell "not mentioned" from "set to nothing". The parser only sets the property when the key is in the body, and the SQL uses a flag so that <code>NULL</code> is written only when it was asked for.</p></explain>
+</question>
+
+<question id="tal-refuse-unknown" type="choice">
+<q>A client sends <code>{"title":"Kindred","id":7}</code> to update a book. Why does the lesson answer 400 instead of silently ignoring <code>id</code>?</q>
+<option>Because ignoring fields is impossible in TypeScript</option>
+<option correct>A confused client learns about its mistake, and an attack attempt is visible instead of quietly half-working</option>
+<option>Because PostgreSQL would reject the id anyway</option>
+<option>Because a 400 is faster to send than a 200</option>
+<explain><p>Silently dropping fields hides bugs in clients ("why does my id change never stick?") and hides probing. Refusing unknown keys, with a clear issue, is safer and easier to debug.</p></explain>
+</question>
+
+<question id="tal-layer-permission" type="choice">
+<q>Which layer should enforce "only admins may change a book's price"?</q>
+<option>The DTO parser</option>
+<option>The response mapper</option>
+<option correct>The service</option>
+<option>The repository</option>
+<explain><p>The rule depends on <em>who</em> is asking, which the parser does not know, and it is a business rule, which the repository should not know. The service sees the principal and the request, and every caller (HTTP, scripts, jobs) goes through it.</p></explain>
+</question>
+
+<question id="tal-layer-row" type="choice">
+<q>Which layer turns the column <code>price_cents</code> into the property <code>priceCents</code>?</q>
+<option>The controller</option>
+<option>The DTO parser</option>
+<option correct>The repository's row mapper</option>
+<option>The service</option>
+<explain><p>Only the repository knows column names. Its private row type and <code>toBook</code> mapper keep <code>snake_case</code> inside the database layer, so no other code changes when a column is renamed.</p></explain>
+</question>
+
+<question id="tal-401-403" type="choice">
+<q>A request to create a book arrives with a valid token for a customer. Which status is right?</q>
+<option>401 Unauthorized, because the customer is not allowed</option>
+<option correct>403 Forbidden: we know who they are, and they may not do this</option>
+<option>404 Not Found, because books are not theirs</option>
+<option>400 Bad Request, because the body is wrong for a customer</option>
+<explain><p>401 means "we don't know who you are" (authentication failed). 403 means "we know who you are, and the answer is no" (authorization failed). The customer is authenticated, so it is 403.</p></explain>
+</question>
+
+<question id="tal-authz-service" type="choice">
+<q>Why does the lesson put permission checks in the services instead of only in the controllers?</q>
+<option>Controllers cannot throw errors</option>
+<option correct>Services are also called from admin scripts, queue jobs and tests; a check in the controller protects only the HTTP door</option>
+<option>Services run faster than controllers</option>
+<option>TypeScript does not allow imports of the policy in controllers</option>
+<explain><p>Put a rule where every path passes. A background job that calls <code>BookService.update</code> directly must be checked just like an HTTP request.</p></explain>
+</question>
+
+<question id="tal-current-role" type="choice">
+<q>The <code>Authenticator</code> reads only the user id from the token and loads the user to get the role. What does that buy you?</q>
+<option>Tokens become shorter, which is the main goal</option>
+<option>Nothing: putting the role in the token would be the same</option>
+<option correct>Role changes take effect on the next request; a demoted admin does not keep admin rights until the token expires</option>
+<option>It makes the token impossible to forge</option>
+<explain><p>A role copied into a token is a snapshot. Loading the user each time costs one query but always uses the current role. (Signing, not loading, is what makes a token unforgeable.)</p></explain>
+</question>
+
+<question id="tal-clock" type="choice">
+<q>Why do the services receive a <code>Clock</code> instead of calling <code>new Date()</code>?</q>
+<option>Because <code>new Date()</code> is not allowed in services</option>
+<option correct>So tests and demos can fix the time, and outputs such as <code>createdAt</code> are the same on every run</option>
+<option>Because <code>Clock</code> is faster than <code>Date</code></option>
+<option>So the database can set the time instead</option>
+<explain><p>The current time is an input from outside, like a database. Injecting it lets a test say "it is 10:00" and check the result exactly.</p></explain>
+</question>
+
+<question id="tal-inversion" type="choice">
+<q>Which sentence describes dependency inversion in the lesson's code?</q>
+<option>The repository imports the service and calls it</option>
+<option correct>The service depends on a <code>BookRepository</code> interface, and the PGlite repository implements it; neither imports the other</option>
+<option>The service creates its own <code>PgBookRepository</code> in its constructor</option>
+<option>Every class depends on <code>app.ts</code></option>
+<explain><p>The high-level code states what it needs as an interface (a port). The low-level code fits that interface. The composition root connects them, which is why a test can pass a fake.</p></explain>
+</question>
+
+<question id="tal-limit-plus-one" type="choice">
+<q>Why does <code>BookService.list</code> ask the repository for <code>limit + 1</code> rows?</q>
+<option>To make up for an off-by-one error in SQL <code>LIMIT</code></option>
+<option correct>If the extra row exists, there is a next page, so it knows whether to return a cursor without a <code>COUNT(*)</code> query</option>
+<option>To return one bonus item to the client</option>
+<option>Because PostgreSQL skips the first row of every page</option>
+<explain><p>The extra row is only a probe. The page shows <code>limit</code> items; <code>nextCursor</code> is set only when the probe row came back. Counting a large table for every page would be much slower.</p></explain>
+</question>
+
+<question id="tal-cursor-untrusted" type="choice">
+<q>The cursor is a base64url string the server created itself. Why does <code>parsePageQuery</code> still validate it?</q>
+<option>Because base64url decoding is slow</option>
+<option>It doesn't need to; the server wrote it</option>
+<option correct>It comes back from the client, who can send any string, so it is untrusted input like every other query parameter</option>
+<option>Because cursors expire after one hour</option>
+<explain><p>Anything that arrives in a request is client input, even if you generated it earlier. An unchecked cursor could become a SQL error, a crash or a way to read unexpected rows.</p></explain>
+</question>
+
+<question id="tal-satisfies-status" type="choice">
+<q>What does <code>as const satisfies Record&lt;Failure["kind"], number&gt;</code> on the <code>STATUS</code> table guarantee?</q>
+<option>That every status is between 400 and 599</option>
+<option correct>That every failure kind has a status, while TypeScript keeps the exact literal numbers</option>
+<option>That the table can be changed at runtime</option>
+<option>That no two kinds share a status</option>
+<explain><p><code>satisfies</code> checks the object against the type without widening it. Adding a new kind to <code>Failure</code> without a status becomes a compile error pointing at this table.</p></explain>
+</question>
+
+<question id="tal-structural" type="choice">
+<q>A controller promises <code>ApiResponse&lt;UserResponse&gt;</code> and returns <code>{ status: 200, body: user }</code>, where <code>user</code> is the entity with a <code>passwordHash</code>. When does this compile?</q>
+<option>Never: TypeScript forbids extra fields on assignment</option>
+<option correct>Whenever every field of <code>UserResponse</code> has a matching type on <code>User</code>, because extra fields are allowed on a variable</option>
+<option>Only with <code>strict</code> turned off</option>
+<option>Only if <code>passwordHash</code> is optional</option>
+<explain><p>TypeScript is structural: an object with more properties fits a type with fewer. Excess-property errors only apply to fresh object literals. In the lesson, only the <code>Date</code> vs <code>string</code> mismatch stopped it; an explicit mapper is the real protection.</p></explain>
+</question>
+
+<question id="tal-404-private" type="choice">
+<q>Ada asks for <code>GET /users/3</code>, another customer's private profile. Why might you answer 404 instead of 403?</q>
+<option>Because 404 responses are cached</option>
+<option correct>A 403 confirms that user 3 exists; answering 404 for "exists but hidden" and "does not exist" stops id probing</option>
+<option>Because 403 is only for administrators</option>
+<option>Because the service cannot throw a forbidden error there</option>
+<explain><p>The difference between 403 and 404 leaks information. For private resources, "you may not see it" and "it does not exist" should look the same to the caller.</p></explain>
+</question>
+
+<question id="tal-unknown-500" type="choice">
+<q><code>toErrorResponse</code> receives an error that is not an <code>AppError</code>. What does it do, and why?</q>
+<option>Returns the error's message and stack with status 400, to help the client</option>
+<option correct>Logs it on the server and returns a bare 500, because it is a bug and its details must not reach the client</option>
+<option>Retries the request</option>
+<option>Converts it to a validation failure</option>
+<explain><p>An unexpected error is your bug, not the client's mistake. Its message can reveal SQL, paths or internals. Log it for yourself; tell the client only that something went wrong.</p></explain>
+</question>
+
+<question id="tal-composition-root" type="choice">
+<q>What is special about <code>createApp</code> in <code>src/app.ts</code>?</q>
+<option>It contains all the business rules</option>
+<option>It is the only file that may import types</option>
+<option correct>It is the one place that knows every concrete class, creates them and connects them</option>
+<option>It is loaded again for every request</option>
+<explain><p>This is the composition root. Services and controllers only know interfaces and each other's types; swapping PGlite for a PostgreSQL server, or scrypt for another hasher, changes this file only.</p></explain>
+</question>
+
+<question id="tal-fake-limits" type="choice">
+<q>The unit test gives <code>BookService</code> an in-memory fake repository. Which mistake can that test <strong>not</strong> catch?</q>
+<option>A customer being allowed to create books</option>
+<option>A page that skips an item</option>
+<option correct>A typo in the SQL of <code>PgBookRepository</code></option>
+<option>A missing <code>nextCursor</code> on the last page</option>
+<explain><p>The fake replaces the SQL, so the SQL is not exercised. Rules and paging logic are tested fast with the fake; the repository needs its own integration test against a real database.</p></explain>
+</question>
+
+<question id="tal-row-role" type="choice">
+<q>Why does the user repository check the row's <code>role</code> with <code>isRole</code> before building the entity?</q>
+<option>Because PostgreSQL returns roles in upper case</option>
+<option correct>The column arrives as a plain <code>string</code>; the entity claims <code>Role</code>, and the database is outside data too</option>
+<option>Because the <code>CHECK</code> constraint does not work in PGlite</option>
+<option>To make the query faster</option>
+<explain><p>The row type can only honestly say <code>string</code>. The guard turns it into <code>"customer" | "admin"</code> with proof, so a bad row fails loudly at the edge instead of confusing permission checks later.</p></explain>
+</question>
+
+<question id="tal-generic-response" type="choice">
+<q>Why is <code>ApiResponse</code> generic (<code>ApiResponse&lt;T&gt;</code>) instead of having <code>body: unknown</code>?</q>
+<option>Generic types are required for JSON</option>
+<option correct>Each controller method states what it sends, so returning the wrong shape is a compile error and readers see the contract in the signature</option>
+<option>So the response can hold several bodies</option>
+<option>Because <code>unknown</code> cannot be serialized</option>
+<explain><p><code>Promise&lt;ApiResponse&lt;Page&lt;BookResponse&gt;&gt;&gt;</code> documents and checks the endpoint's contract. With <code>body: unknown</code>, anything would compile.</p></explain>
+</question>
+
+<question id="tal-out-spread" type="output">
+<q>What does this print?</q>
+<code file="spread.ts">
+interface Account {
+  id: number;
+  owner: string;
+  role: "customer" | "admin";
+}
+
+const stored: Account = { id: 7, owner: "Ada", role: "customer" };
+const body: unknown = JSON.parse('{"owner":"Ada Obi","role":"admin"}');
+const updated = { ...stored, ...(body as Partial<Account>) };
+console.log(updated.role, updated.owner);
+</code>
+<option>customer Ada Obi</option>
+<option correct>admin Ada Obi</option>
+<option>customer Ada</option>
+<option>It does not compile</option>
+<explain><p>The cast silences the compiler, and the spread copies every field of the body, including <code>role</code>. That is mass assignment.</p></explain>
+</question>
+
+<question id="tal-out-omit-leak" type="output">
+<q>A new field was added to the entity. What does this mapper publish?</q>
+<code file="omit.ts">
+interface User {
+  readonly id: number;
+  readonly email: string;
+  readonly passwordHash: string;
+  readonly twoFactorSecret: string;
+}
+
+function toResponse(user: User): Omit<User, "passwordHash"> {
+  const { passwordHash: _hidden, ...rest } = user;
+  return rest;
+}
+
+const user: User = { id: 1, email: "ada@example.com", passwordHash: "scrypt$x$y", twoFactorSecret: "JBSWY3DP" };
+console.log(Object.keys(toResponse(user)));
+</code>
+<option>[ 'id', 'email' ]</option>
+<option correct>[ 'id', 'email', 'twoFactorSecret' ]</option>
+<option>[ 'id', 'email', 'passwordHash', 'twoFactorSecret' ]</option>
+<option>[]</option>
+<explain><p>The rest spread keeps everything it was not told to remove. The two-factor secret leaks without any change to the mapper: the danger of a deny-list.</p></explain>
+</question>
+
+<question id="tal-out-types-runtime" type="output">
+<q>The function's parameter type has only two fields. What does it print?</q>
+<code file="erased.ts">
+interface UserResponse {
+  readonly id: number;
+  readonly email: string;
+}
+
+function send(body: UserResponse): string {
+  return JSON.stringify(body);
+}
+
+const user = { id: 2, email: "ada@example.com", passwordHash: "scrypt$x$y" };
+console.log(send(user));
+</code>
+<option>{"id":2,"email":"ada@example.com"}</option>
+<option correct>{"id":2,"email":"ada@example.com","passwordHash":"scrypt$x$y"}</option>
+<option>It does not compile: passwordHash is not in UserResponse</option>
+<option>{}</option>
+<explain><p>Types are erased at runtime; they never remove properties. And <code>user</code> is a variable, not a fresh literal, so the extra field compiles. Only a mapper that builds a new object stops the leak.</p></explain>
+</question>
+
+<question id="tal-out-undefined-overrides" type="output">
+<q>A partial update is applied with a spread. What does it print?</q>
+<code file="undefined-spread.ts">
+interface Book {
+  title: string;
+  stock: number;
+}
+
+const book: Book = { title: "Kindred", stock: 4 };
+const changes: Partial<Book> = { title: "Kindred (2nd ed.)", stock: undefined };
+console.log({ ...book, ...changes });
+</code>
+<option>{ title: 'Kindred (2nd ed.)', stock: 4 }</option>
+<option correct>{ title: 'Kindred (2nd ed.)', stock: undefined }</option>
+<option>{ title: 'Kindred', stock: 4 }</option>
+<option>It does not compile</option>
+<explain><p>A property that is present with the value <code>undefined</code> still overwrites. <code>Partial</code> allows that unless <code>exactOptionalPropertyTypes</code> is on. This is why parsers should only set keys that were really sent.</p></explain>
+</question>
+
+<question id="tal-out-in-parser" type="output">
+<q>What does this print?</q>
+<code file="in-parser.ts">
+function parseUpdate(body: Record<string, unknown>): { displayName?: string | null } {
+  const dto: { displayName?: string | null } = {};
+  if ("displayName" in body) {
+    const value = body["displayName"];
+    dto.displayName = typeof value === "string" ? value.trim() : null;
+  }
+  return dto;
+}
+
+console.log(JSON.stringify(parseUpdate({})));
+console.log(JSON.stringify(parseUpdate({ displayName: null })));
+console.log(JSON.stringify(parseUpdate({ displayName: " Ada " })));
+</code>
+<option>{"displayName":null}
+{"displayName":null}
+{"displayName":"Ada"}</option>
+<option correct>{}
+{"displayName":null}
+{"displayName":"Ada"}</option>
+<option>{}
+{}
+{"displayName":" Ada "}</option>
+<option>{"displayName":undefined}
+{"displayName":null}
+{"displayName":"Ada"}</option>
+<explain><p>With <code>in</code>, the property is only set when the key was sent. "Not sent" stays absent, <code>null</code> stays <code>null</code>, and a string is trimmed.</p></explain>
+</question>
+
+<question id="tal-out-page" type="output">
+<q>This is the service's paging logic with 5 stored ids. What does it print?</q>
+<code file="page.ts">
+function page(ids: number[], afterId: number, limit: number) {
+  const rows = ids.filter((id) => id > afterId).slice(0, limit + 1);
+  const items = rows.slice(0, limit);
+  const next = rows.length > limit ? items.at(-1) : null;
+  return { items, next };
+}
+
+const ids = [1, 2, 3, 4, 5];
+console.log(page(ids, 0, 2));
+console.log(page(ids, 4, 2));
+</code>
+<option>{ items: [ 1, 2 ], next: 3 }
+{ items: [ 5 ], next: 5 }</option>
+<option correct>{ items: [ 1, 2 ], next: 2 }
+{ items: [ 5 ], next: null }</option>
+<option>{ items: [ 1, 2, 3 ], next: 3 }
+{ items: [ 5 ], next: null }</option>
+<option>{ items: [ 1, 2 ], next: 2 }
+{ items: [ 5 ], next: 5 }</option>
+<explain><p>The repository returns up to <code>limit + 1</code> rows. The page shows <code>limit</code> of them, and the next cursor points after the last one <em>shown</em>, id 2. After id 4 only one row exists, so there is no next page.</p></explain>
+</question>
+
+<question id="tal-out-cursor" type="output">
+<q>What does this print?</q>
+<code file="cursor.ts" browser="no">
+const encode = (lastId: number) => Buffer.from(`after:${lastId}`).toString("base64url");
+
+function decode(cursor: string): number | "invalid" {
+  const match = /^after:(\d{1,10})$/.exec(Buffer.from(cursor, "base64url").toString("utf8"));
+  return match === null ? "invalid" : Number(match[1]);
+}
+
+const cursor = encode(2);
+console.log(cursor, decode(cursor));
+console.log(decode("nope"), decode(encode(-1)));
+</code>
+<option>YWZ0ZXI6Mg 2
+invalid -1</option>
+<option correct>YWZ0ZXI6Mg 2
+invalid invalid</option>
+<option>after:2 2
+invalid invalid</option>
+<option>YWZ0ZXI6Mg== 2
+invalid invalid</option>
+<explain><p>base64url has no <code>=</code> padding. Decoding checks the exact format: random text fails, and so does a negative id, because the pattern only accepts digits.</p></explain>
+</question>
+
+<question id="tal-out-status-table" type="output">
+<q>What does this print?</q>
+<code file="status.ts">
+type Failure =
+  | { readonly kind: "validation"; readonly issues: readonly string[] }
+  | { readonly kind: "unauthenticated" }
+  | { readonly kind: "forbidden"; readonly action: string }
+  | { readonly kind: "not_found"; readonly resource: string };
+
+const STATUS = { validation: 400, unauthenticated: 401, forbidden: 403, not_found: 404 } as const satisfies Record<Failure["kind"], number>;
+
+const failures: Failure[] = [
+  { kind: "forbidden", action: "book:create" },
+  { kind: "unauthenticated" },
+  { kind: "validation", issues: ["limit must be 1 to 50"] },
+];
+console.log(failures.map((failure) => STATUS[failure.kind]));
+</code>
+<option>[ 401, 401, 400 ]</option>
+<option correct>[ 403, 401, 400 ]</option>
+<option>[ 403, 403, 400 ]</option>
+<option>[ 'forbidden', 'unauthenticated', 'validation' ]</option>
+<explain><p>Each kind looks up its own status. Forbidden (known user, not allowed) is 403; unauthenticated (unknown user) is 401.</p></explain>
+</question>
+
+<question id="tal-out-grants" type="output">
+<q>What does this print?</q>
+<code file="grants.ts">
+type Role = "customer" | "admin";
+type Action = "book:create" | "book:update" | "order:read-own";
+
+const GRANTS: Readonly<Record<Role, readonly Action[]>> = {
+  customer: ["order:read-own"],
+  admin: ["book:create", "book:update", "order:read-own"],
+};
+
+const can = (role: Role, action: Action) => GRANTS[role].includes(action);
+
+console.log(can("customer", "book:create"), can("customer", "order:read-own"), can("admin", "book:update"));
+</code>
+<option>true true true</option>
+<option correct>false true true</option>
+<option>false false true</option>
+<option>false true false</option>
+<explain><p>Each role has an explicit list of actions. Anything not granted is refused: a customer may read their own orders but not create books.</p></explain>
+</question>
+
+<question id="tal-out-date-json" type="output">
+<q>What does this print?</q>
+<code file="date-json.ts">
+const entity = { id: 1, createdAt: new Date(Date.UTC(2026, 8, 24, 10, 0, 0)) };
+const json = JSON.stringify(entity);
+console.log(json);
+console.log(typeof JSON.parse(json).createdAt);
+</code>
+<option>{"id":1,"createdAt":{}}
+object</option>
+<option correct>{"id":1,"createdAt":"2026-09-24T10:00:00.000Z"}
+string</option>
+<option>{"id":1,"createdAt":"2026-08-24T10:00:00.000Z"}
+string</option>
+<option>{"id":1,"createdAt":1790244000000}
+number</option>
+<explain><p><code>JSON.stringify</code> calls <code>Date.prototype.toJSON</code>, which gives an ISO string (months count from 0, so 8 is September). After parsing, it is only a string. That is why the response DTO types <code>createdAt</code> as <code>string</code>, not <code>Date</code>.</p></explain>
+</question>
+
+<question id="tal-out-allowlist" type="output">
+<q>What does this print?</q>
+<code file="allowlist.ts">
+function unknownKeys(body: Record<string, unknown>, allowed: readonly string[]): string[] {
+  return Object.keys(body).filter((key) => !allowed.includes(key)).map((key) => `${key} cannot be set`);
+}
+
+console.log(unknownKeys({ title: "Kindred", priceCents: 999 }, ["title", "priceCents", "stock"]));
+console.log(unknownKeys({ title: "Kindred", id: 7, authorId: 2 }, ["title", "priceCents", "stock"]));
+</code>
+<option>[ 'title cannot be set' ]
+[ 'id cannot be set' ]</option>
+<option correct>[]
+[ 'id cannot be set', 'authorId cannot be set' ]</option>
+<option>[]
+[ 'id cannot be set' ]</option>
+<option>[ 'stock cannot be set' ]
+[ 'id cannot be set', 'authorId cannot be set' ]</option>
+<explain><p>Missing allowed keys are fine (an update may send only some). Every key outside the allow-list is reported, so both <code>id</code> and <code>authorId</code> are refused.</p></explain>
+</question>
+
+<question id="tal-out-narrow-failure" type="output">
+<q>What does this print?</q>
+<code file="narrow.ts">
+type Failure =
+  | { readonly kind: "not_found"; readonly resource: string; readonly id: number }
+  | { readonly kind: "conflict"; readonly message: string };
+
+function messageFor(failure: Failure): string {
+  switch (failure.kind) {
+    case "not_found": return `No ${failure.resource} with id ${failure.id}`;
+    case "conflict": return failure.message;
+  }
+}
+
+console.log(messageFor({ kind: "not_found", resource: "book", id: 99 }));
+console.log(messageFor({ kind: "conflict", message: "That e-mail is already registered" }));
+</code>
+<option>not_found
+conflict</option>
+<option correct>No book with id 99
+That e-mail is already registered</option>
+<option>No book with id undefined
+That e-mail is already registered</option>
+<option>It does not compile: failure.id may not exist</option>
+<explain><p>Inside each <code>case</code>, TypeScript narrows <code>failure</code> to that member of the union, so <code>failure.id</code> and <code>failure.message</code> are known to exist.</p></explain>
+</question>
+
+<question id="tal-code-mapper" type="code" file="mapper.ts">
+<q><p>Write <code>toUserResponse(user)</code>. It must name every field it publishes (no spreads), leave out <code>passwordHash</code>, and turn <code>createdAt</code> into an ISO string.</p></q>
+<starter>
+interface User {
+  readonly id: number;
+  readonly email: string;
+  readonly passwordHash: string;
+  readonly createdAt: Date;
+}
+
+interface UserResponse {
+  readonly id: number;
+  readonly email: string;
+  readonly createdAt: string;
+}
+
+function toUserResponse(user: User): UserResponse {
+  // your code here
+}
+
+const user: User = { id: 2, email: "ada@example.com", passwordHash: "scrypt$x$y", createdAt: new Date(Date.UTC(2026, 8, 24, 10)) };
+console.log(JSON.stringify(toUserResponse(user)));
+</starter>
+<solution>
+interface User {
+  readonly id: number;
+  readonly email: string;
+  readonly passwordHash: string;
+  readonly createdAt: Date;
+}
+
+interface UserResponse {
+  readonly id: number;
+  readonly email: string;
+  readonly createdAt: string;
+}
+
+function toUserResponse(user: User): UserResponse {
+  return { id: user.id, email: user.email, createdAt: user.createdAt.toISOString() };
+}
+
+const user: User = { id: 2, email: "ada@example.com", passwordHash: "scrypt$x$y", createdAt: new Date(Date.UTC(2026, 8, 24, 10)) };
+console.log(JSON.stringify(toUserResponse(user)));
+</solution>
+<expected>{"id":2,"email":"ada@example.com","createdAt":"2026-09-24T10:00:00.000Z"}</expected>
+<explain><p>A new object built field by field is an allow-list: fields added to <code>User</code> later stay private until someone adds them here on purpose.</p></explain>
+</question>
+
+<question id="tal-code-update-parser" type="code" file="update-book.ts">
+<q><p>Finish <code>parseUpdateBook</code>: allowed keys are <code>title</code> and <code>stock</code>. Every other key is an issue (<code>KEY cannot be set</code>), <code>stock</code> must be a whole number from 0 to 10000 (<code>stock must be 0 to 10000</code>), and only keys that were sent end up in the DTO. Throw an <code>Error</code> with the issues joined by <code>"; "</code>.</p></q>
+<starter>
+interface UpdateBookDTO {
+  readonly title?: string;
+  readonly stock?: number;
+}
+
+function parseUpdateBook(body: Record<string, unknown>): UpdateBookDTO {
+  return { title: String(body["title"]), stock: Number(body["stock"]) };
+}
+
+for (const body of [{ stock: 4 }, { id: 7, stock: -1 }]) {
+  try {
+    console.log(JSON.stringify(parseUpdateBook(body)));
+  } catch (error) {
+    console.log(error instanceof Error ? error.message : error);
+  }
+}
+</starter>
+<solution>
+interface UpdateBookDTO {
+  readonly title?: string;
+  readonly stock?: number;
+}
+
+function parseUpdateBook(body: Record<string, unknown>): UpdateBookDTO {
+  const issues: string[] = [];
+  for (const key of Object.keys(body)) {
+    if (key !== "title" && key !== "stock") issues.push(`${key} cannot be set`);
+  }
+  const dto: { title?: string; stock?: number } = {};
+  if ("title" in body) {
+    const title = body["title"];
+    if (typeof title === "string" && title.trim() !== "") dto.title = title.trim();
+    else issues.push("title must be text");
+  }
+  if ("stock" in body) {
+    const stock = body["stock"];
+    if (typeof stock === "number" && Number.isSafeInteger(stock) && stock >= 0 && stock <= 10000) dto.stock = stock;
+    else issues.push("stock must be 0 to 10000");
+  }
+  if (issues.length > 0) throw new Error(issues.join("; "));
+  return dto;
+}
+
+for (const body of [{ stock: 4 }, { id: 7, stock: -1 }]) {
+  try {
+    console.log(JSON.stringify(parseUpdateBook(body)));
+  } catch (error) {
+    console.log(error instanceof Error ? error.message : error);
+  }
+}
+</solution>
+<expected>
+{"stock":4}
+id cannot be set; stock must be 0 to 10000
+</expected>
+<explain><p>The allow-list refuses <code>id</code>, the range check refuses <code>-1</code>, and both are reported together. The first body only mentions <code>stock</code>, so the DTO has no <code>title</code> key at all.</p></explain>
+</question>
+
+<question id="tal-code-authorize" type="code" file="authorize.ts">
+<q><p>Write <code>authorize(principal, action)</code>: throw <code>Error("unauthenticated")</code> when there is no principal, <code>Error("forbidden: ACTION")</code> when the role lacks the action, and return the principal otherwise.</p></q>
+<starter>
+type Role = "customer" | "admin";
+type Action = "book:create" | "order:read-own";
+interface Principal { readonly userId: number; readonly role: Role }
+
+const GRANTS: Readonly<Record<Role, readonly Action[]>> = {
+  customer: ["order:read-own"],
+  admin: ["book:create", "order:read-own"],
+};
+
+function authorize(principal: Principal | undefined, action: Action): Principal {
+  return principal!;
+}
+
+const attempts: [Principal | undefined, Action][] = [
+  [{ userId: 1, role: "admin" }, "book:create"],
+  [{ userId: 2, role: "customer" }, "book:create"],
+  [undefined, "order:read-own"],
+];
+for (const [principal, action] of attempts) {
+  try {
+    console.log("allowed for user", authorize(principal, action).userId);
+  } catch (error) {
+    console.log(error instanceof Error ? error.message : error);
+  }
+}
+</starter>
+<solution>
+type Role = "customer" | "admin";
+type Action = "book:create" | "order:read-own";
+interface Principal { readonly userId: number; readonly role: Role }
+
+const GRANTS: Readonly<Record<Role, readonly Action[]>> = {
+  customer: ["order:read-own"],
+  admin: ["book:create", "order:read-own"],
+};
+
+function authorize(principal: Principal | undefined, action: Action): Principal {
+  if (principal === undefined) throw new Error("unauthenticated");
+  if (!GRANTS[principal.role].includes(action)) throw new Error(`forbidden: ${action}`);
+  return principal;
+}
+
+const attempts: [Principal | undefined, Action][] = [
+  [{ userId: 1, role: "admin" }, "book:create"],
+  [{ userId: 2, role: "customer" }, "book:create"],
+  [undefined, "order:read-own"],
+];
+for (const [principal, action] of attempts) {
+  try {
+    console.log("allowed for user", authorize(principal, action).userId);
+  } catch (error) {
+    console.log(error instanceof Error ? error.message : error);
+  }
+}
+</solution>
+<expected>
+allowed for user 1
+forbidden: book:create
+unauthenticated
+</expected>
+<explain><p>Check authentication first (no principal: 401), then authorization (principal without the grant: 403). Returning the principal lets the caller continue with a value that is known to be allowed.</p></explain>
+</question>
+
+<question id="tal-code-page" type="code" file="page.ts">
+<q><p>Write the generic <code>toPage(rows, limit, idOf)</code>: <code>rows</code> holds up to <code>limit + 1</code> items. Return <code>{ items, nextCursor }</code> where <code>items</code> has at most <code>limit</code> items and <code>nextCursor</code> is <code>"after:ID"</code> of the last shown item when an extra row exists, otherwise <code>null</code>.</p></q>
+<starter>
+interface Page<T> {
+  readonly items: readonly T[];
+  readonly nextCursor: string | null;
+}
+
+function toPage<T>(rows: readonly T[], limit: number, idOf: (item: T) => number): Page<T> {
+  return { items: rows, nextCursor: null };
+}
+
+const books = [{ id: 4, title: "Kindred" }, { id: 7, title: "Arrow of God" }, { id: 9, title: "Half of a Yellow Sun" }];
+console.log(JSON.stringify(toPage(books, 2, (book) => book.id)));
+console.log(JSON.stringify(toPage(books.slice(2), 2, (book) => book.id)));
+</starter>
+<solution>
+interface Page<T> {
+  readonly items: readonly T[];
+  readonly nextCursor: string | null;
+}
+
+function toPage<T>(rows: readonly T[], limit: number, idOf: (item: T) => number): Page<T> {
+  const items = rows.slice(0, limit);
+  const last = items.at(-1);
+  const nextCursor = rows.length > limit && last !== undefined ? `after:${idOf(last)}` : null;
+  return { items, nextCursor };
+}
+
+const books = [{ id: 4, title: "Kindred" }, { id: 7, title: "Arrow of God" }, { id: 9, title: "Half of a Yellow Sun" }];
+console.log(JSON.stringify(toPage(books, 2, (book) => book.id)));
+console.log(JSON.stringify(toPage(books.slice(2), 2, (book) => book.id)));
+</solution>
+<expected>
+{"items":[{"id":4,"title":"Kindred"},{"id":7,"title":"Arrow of God"}],"nextCursor":"after:7"}
+{"items":[{"id":9,"title":"Half of a Yellow Sun"}],"nextCursor":null}
+</expected>
+<explain><p>The cursor points after the last item <em>shown</em> (id 7), not after the probe row (id 9); otherwise the next page would skip a book. <code>idOf</code> keeps the function generic over any item type.</p></explain>
+</question>
+
+<question id="tal-code-status" type="code" file="status.ts">
+<q><p>Write the <code>STATUS</code> table so that every failure kind maps to its HTTP status, checked with <code>satisfies Record&lt;Failure["kind"], number&gt;</code>: validation 400, unauthenticated 401, forbidden 403, not_found 404, conflict 409.</p></q>
+<starter>
+type Failure =
+  | { readonly kind: "validation" }
+  | { readonly kind: "unauthenticated" }
+  | { readonly kind: "forbidden" }
+  | { readonly kind: "not_found" }
+  | { readonly kind: "conflict" };
+
+const STATUS: Record<string, number> = {};
+
+const kinds: Failure["kind"][] = ["conflict", "forbidden", "not_found", "unauthenticated", "validation"];
+console.log(kinds.map((kind) => `${kind}=${STATUS[kind]}`).join(" "));
+</starter>
+<solution>
+type Failure =
+  | { readonly kind: "validation" }
+  | { readonly kind: "unauthenticated" }
+  | { readonly kind: "forbidden" }
+  | { readonly kind: "not_found" }
+  | { readonly kind: "conflict" };
+
+const STATUS = {
+  validation: 400,
+  unauthenticated: 401,
+  forbidden: 403,
+  not_found: 404,
+  conflict: 409,
+} as const satisfies Record<Failure["kind"], number>;
+
+const kinds: Failure["kind"][] = ["conflict", "forbidden", "not_found", "unauthenticated", "validation"];
+console.log(kinds.map((kind) => `${kind}=${STATUS[kind]}`).join(" "));
+</solution>
+<expected>conflict=409 forbidden=403 not_found=404 unauthenticated=401 validation=400</expected>
+<explain><p>Typed as <code>Record&lt;string, number&gt;</code>, the table accepts any key and misses none. With <code>satisfies Record&lt;Failure["kind"], number&gt;</code>, a new failure kind without a status is a compile error.</p></explain>
+</question>
+
+<question id="tal-code-row-mapper" type="code" file="row.ts">
+<q><p>Write <code>toBook(row)</code> that maps a database row with <code>snake_case</code> columns to the <code>Book</code> entity.</p></q>
+<starter>
+interface BookRow {
+  readonly id: number;
+  readonly title: string;
+  readonly author_id: number;
+  readonly price_cents: number;
+}
+
+interface Book {
+  readonly id: number;
+  readonly title: string;
+  readonly authorId: number;
+  readonly priceCents: number;
+}
+
+function toBook(row: BookRow): Book {
+  // your code here
+}
+
+const row: BookRow = { id: 1, title: "Things Fall Apart", author_id: 1, price_cents: 1299 };
+console.log(toBook(row));
+</starter>
+<solution>
+interface BookRow {
+  readonly id: number;
+  readonly title: string;
+  readonly author_id: number;
+  readonly price_cents: number;
+}
+
+interface Book {
+  readonly id: number;
+  readonly title: string;
+  readonly authorId: number;
+  readonly priceCents: number;
+}
+
+function toBook(row: BookRow): Book {
+  return { id: row.id, title: row.title, authorId: row.author_id, priceCents: row.price_cents };
+}
+
+const row: BookRow = { id: 1, title: "Things Fall Apart", author_id: 1, price_cents: 1299 };
+console.log(toBook(row));
+</solution>
+<expected>{ id: 1, title: 'Things Fall Apart', authorId: 1, priceCents: 1299 }</expected>
+<explain><p>The row type describes the database, the entity describes your code, and this mapper is the only place that knows both. Renaming a column later means changing the row type and this one function.</p></explain>
+</question>
+
+<question id="tal-code-merge" type="code" file="merge.ts">
+<q><p>Write <code>applyChanges(book, changes)</code> that copies only the change keys whose value is not <code>undefined</code>, so <code>{ stock: undefined }</code> leaves the stock alone.</p></q>
+<starter>
+interface Book {
+  readonly title: string;
+  readonly stock: number;
+}
+
+function applyChanges(book: Book, changes: Partial<Book>): Book {
+  return { ...book, ...changes } as Book;
+}
+
+console.log(applyChanges({ title: "Kindred", stock: 4 }, { title: "Kindred (2nd ed.)", stock: undefined }));
+</starter>
+<solution>
+interface Book {
+  readonly title: string;
+  readonly stock: number;
+}
+
+function applyChanges(book: Book, changes: Partial<Book>): Book {
+  return {
+    title: changes.title ?? book.title,
+    stock: changes.stock ?? book.stock,
+  };
+}
+
+console.log(applyChanges({ title: "Kindred", stock: 4 }, { title: "Kindred (2nd ed.)", stock: undefined }));
+</solution>
+<expected>{ title: 'Kindred (2nd ed.)', stock: 4 }</expected>
+<explain><p>A spread copies a key even when its value is <code>undefined</code>. Taking each field with <code>??</code> is the JavaScript version of SQL's <code>COALESCE(new, old)</code>. It only works because neither field may be <code>null</code>; a nullable field needs the "was it sent?" flag from the lesson.</p></explain>
+</question>
+
+<question id="tal-code-fake" type="code" file="fake.ts">
+<q><p>Write <code>MemoryBookRepository</code>, a fake that implements <code>BookRepository</code> with an array, so the service below can run without a database.</p></q>
+<starter>
+interface Book { readonly id: number; readonly title: string; readonly stock: number }
+
+interface BookRepository {
+  create(book: Omit<Book, "id">): Promise<Book>;
+  findById(id: number): Promise<Book | undefined>;
+}
+
+class MemoryBookRepository implements BookRepository {
+  async create(book: Omit<Book, "id">): Promise<Book> {
+    return { ...book, id: 0 };
+  }
+
+  async findById(id: number): Promise<Book | undefined> {
+    return undefined;
+  }
+}
+
+async function restock(books: BookRepository, id: number): Promise<string> {
+  const book = await books.findById(id);
+  return book === undefined ? `book ${id} not found` : `${book.title}: ${book.stock} in stock`;
+}
+
+const repository = new MemoryBookRepository();
+await repository.create({ title: "Kindred", stock: 4 });
+console.log(await restock(repository, 1));
+console.log(await restock(repository, 2));
+</starter>
+<solution>
+interface Book { readonly id: number; readonly title: string; readonly stock: number }
+
+interface BookRepository {
+  create(book: Omit<Book, "id">): Promise<Book>;
+  findById(id: number): Promise<Book | undefined>;
+}
+
+class MemoryBookRepository implements BookRepository {
+  private readonly books: Book[] = [];
+
+  async create(book: Omit<Book, "id">): Promise<Book> {
+    const saved = { ...book, id: this.books.length + 1 };
+    this.books.push(saved);
+    return saved;
+  }
+
+  async findById(id: number): Promise<Book | undefined> {
+    return this.books.find((book) => book.id === id);
+  }
+}
+
+async function restock(books: BookRepository, id: number): Promise<string> {
+  const book = await books.findById(id);
+  return book === undefined ? `book ${id} not found` : `${book.title}: ${book.stock} in stock`;
+}
+
+const repository = new MemoryBookRepository();
+await repository.create({ title: "Kindred", stock: 4 });
+console.log(await restock(repository, 1));
+console.log(await restock(repository, 2));
+</solution>
+<expected>
+Kindred: 4 in stock
+book 2 not found
+</expected>
+<explain><p><code>restock</code> only knows the interface, so a small real implementation in memory is enough to test it. <code>implements BookRepository</code> makes the compiler check that the fake keeps the port's contract.</p></explain>
+</question>

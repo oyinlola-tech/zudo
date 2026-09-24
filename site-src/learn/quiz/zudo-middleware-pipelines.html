@@ -1,0 +1,751 @@
+<question id="mp-why" type="choice">
+<q>Three entry points (an HTTP route, a CLI tool, a batch job) each run their own copy of the authentication, authorization and validation checks. What is the main risk?</q>
+<option>The code runs slower</option>
+<option correct>One copy silently misses a check, and nothing fails until someone abuses that entry point</option>
+<option>TypeScript cannot type-check duplicated code</option>
+<option>The checks run in parallel and race each other</option>
+<explain><p>Every copy compiles and passes its own tests. The bug is the line nobody wrote a second time. One pipeline shared by every entry point removes the copies.</p></explain>
+</question>
+
+<question id="mp-compose-order" type="output">
+<q>What does this print?</q>
+<code file="compose.ts" browser="no">
+import { compose } from "@zudojs/middleware";
+import type { Middleware } from "@zudojs/middleware";
+
+type Context = { log: string[] };
+const a: Middleware<Context, string> = async (context, next) => {
+  context.log.push("a in");
+  const result = await next();
+  context.log.push("a out");
+  return result.toUpperCase();
+};
+const b: Middleware<Context, string> = async (context, next) => {
+  context.log.push("b in");
+  return next();
+};
+
+const run = compose([a, b], async (context) => {
+  context.log.push("handler");
+  return "paid";
+});
+const context: Context = { log: [] };
+console.log(await run(context), context.log.join(", "));
+</code>
+<option correct>PAID a in, b in, handler, a out</option>
+<option>paid a in, b in, handler, a out</option>
+<option>PAID b in, a in, handler, a out</option>
+<option>PAID a in, a out, b in, handler</option>
+<explain><p>The first middleware starts first and finishes last, and it can change the result on the way out: <code>a</code> upper-cased what the handler returned.</p></explain>
+</question>
+
+<question id="mp-result-union" type="choice">
+<q>What does <code>createPipeline</code>'s function return when a middleware throws, with the default options?</q>
+<option>It rethrows the error</option>
+<option correct>An outcome with <code>success: false</code>, the <code>error</code>, and the names of the middleware that started</option>
+<option><code>undefined</code></option>
+<option>An outcome with <code>success: true</code> and <code>result: undefined</code></option>
+<explain><p>The default error mode is <code>"capture"</code>: the chain stops and the failure is reported in the outcome, including <code>executedMiddleware</code> and <code>errors</code>.</p></explain>
+</question>
+
+<question id="mp-executed" type="output">
+<q>What does this print?</q>
+<code file="executed.ts" browser="no">
+import { createPipeline } from "@zudojs/middleware";
+import type { NamedMiddleware } from "@zudojs/middleware";
+
+type Context = { token?: string };
+const step = (name: string, fail = false): NamedMiddleware<Context, string> => ({
+  name,
+  handler: async (_context, next) => {
+    if (fail) throw new Error(`${name} refused`);
+    return next();
+  },
+});
+
+const run = createPipeline([step("log"), step("authenticate", true), step("validate")], async () => "done");
+const outcome = await run({});
+console.log(outcome.success, outcome.executedMiddleware, outcome.errors.length);
+</code>
+<option correct>false [ 'log', 'authenticate' ] 1</option>
+<option>false [ 'log' ] 1</option>
+<option>false [ 'log', 'authenticate', 'validate' ] 1</option>
+<option>true [ 'log', 'authenticate', 'validate' ] 0</option>
+<explain><p><code>executedMiddleware</code> lists the middleware that <em>started</em>, so the failing <code>authenticate</code> is included and <code>validate</code> never ran. The failure is recorded once in <code>errors</code>.</p></explain>
+</question>
+
+<question id="mp-narrow" type="choice">
+<q>Why can you write <code>if (outcome.success) use(outcome.result)</code> without TypeScript complaining that <code>result</code> may be <code>undefined</code>?</q>
+<option>Because <code>result</code> is typed <code>any</code></option>
+<option correct>The outcome is a discriminated union on <code>success</code>, so checking it narrows to the success type with a non-optional <code>result</code></option>
+<option>Because the pipeline never fails</option>
+<option>Because <code>result</code> has a default value</option>
+<explain><p><code>PipelineResult</code> is <code>PipelineSuccess | PipelineFailure</code>, told apart by <code>success: true</code> or <code>false</code>. Narrowing on it is the TypeScript pattern from the unions lesson.</p></explain>
+</question>
+
+<question id="mp-priority" type="output">
+<q>What does this print?</q>
+<code file="priority.ts" browser="no">
+import { resolveNamedMiddleware } from "@zudojs/middleware";
+import type { NamedMiddleware } from "@zudojs/middleware";
+
+const m = (name: string, priority?: number, enabled?: boolean): NamedMiddleware<object, void> => ({
+  name,
+  priority,
+  enabled,
+  handler: async (_c, next) => next(),
+});
+
+const order = resolveNamedMiddleware([m("validate"), m("authorize", 10), m("metrics", 0, false), m("authenticate", 10), m("log", 0)]);
+console.log(order.map((x) => x.name).join(" > "));
+</code>
+<option correct>log > authorize > authenticate > validate</option>
+<option>log > authenticate > authorize > validate</option>
+<option>metrics > log > authorize > authenticate > validate</option>
+<option>validate > authorize > authenticate > log</option>
+<explain><p>Lower priority runs first, the default is 100, disabled middleware is dropped, and equal priorities keep their list order. That last rule put <code>authorize</code> before <code>authenticate</code>: a real bug in a security chain.</p></explain>
+</question>
+
+<question id="mp-default-priority" type="choice">
+<q>What priority does a named middleware get when you give none?</q>
+<option>0</option>
+<option>1</option>
+<option correct>100</option>
+<option>Its position in the list</option>
+<explain><p>The default is 100 and lower numbers run earlier. <code>errorMiddleware</code> uses 0, so it runs before everything with the default.</p></explain>
+</question>
+
+<question id="mp-plain-list" type="choice">
+<q>When one file builds the whole pipeline, why does this lesson prefer a plain list in the right order over priorities?</q>
+<option>Priorities are ignored by <code>createPipeline</code></option>
+<option correct>The order can be read directly from the list, and ties between equal priorities cannot silently reorder security checks</option>
+<option>Plain lists run faster</option>
+<option>Priorities only work with <code>compose</code></option>
+<explain><p>Priorities help when middleware comes from several places. Within one file, the list itself is the clearest statement of order.</p></explain>
+</question>
+
+<question id="mp-context-readonly" type="choice">
+<q>In the transfer context, <code>token</code> and <code>body</code> are <code>readonly</code> while <code>user</code> and <code>transfer</code> are optional and writable. Why?</q>
+<option>Readonly fields are faster to read</option>
+<option correct>The transport fields are what the caller sent and must not be rewritten; the trusted fields are filled in by the middleware that checked them</option>
+<option>Optional fields are not sent over HTTP</option>
+<option>TypeScript requires context objects to have optional fields</option>
+<explain><p>Only <code>authenticate</code> sets <code>user</code> and only <code>validate</code> sets <code>transfer</code>. A handler that reads them knows they were checked; a handler reading <code>body</code> would skip validation.</p></explain>
+</question>
+
+<question id="mp-handler-reads" type="choice">
+<q>Which value should the transfer handler use for the amount?</q>
+<option><code>context.body.amountKobo</code>, because it is the original</option>
+<option correct><code>context.transfer.amountKobo</code>, set by the validation middleware</option>
+<option>Either; they are always equal</option>
+<option><code>Number(context.body.amountKobo)</code></option>
+<explain><p>The raw body is untrusted: it may be missing, a string or negative. The parsed <code>transfer</code> exists only if validation passed, which is the whole point of putting validation before the handler.</p></explain>
+</question>
+
+<question id="mp-error-modes" type="output">
+<q>What does this print?</q>
+<code file="modes.ts" browser="no">
+import { createPipeline } from "@zudojs/middleware";
+import type { NamedMiddleware } from "@zudojs/middleware";
+
+const audit: NamedMiddleware<object, string> = {
+  name: "audit",
+  handler: async () => {
+    throw new Error("audit store down");
+  },
+};
+
+for (const errorMode of ["capture", "continue"] as const) {
+  const outcome = await createPipeline([audit], async () => "transfer done", { errorMode })({});
+  console.log(errorMode, outcome.success, outcome.success ? outcome.result : "-", outcome.errors.length);
+}
+</code>
+<option correct>capture false - 1
+continue true transfer done 1</option>
+<option>capture false - 1
+continue false - 1</option>
+<option>capture true transfer done 1
+continue true transfer done 0</option>
+<option>capture false - 0
+continue true transfer done 0</option>
+<explain><p><code>capture</code> stops and reports. <code>continue</code> records the failure, skips the rest of that middleware and still runs the handler, so the outcome succeeds with one recorded error.</p></explain>
+</question>
+
+<question id="mp-continue-danger" type="choice">
+<q>Why must a pipeline that contains <code>authenticate</code> never use <code>errorMode: "continue"</code>?</q>
+<option>Because <code>continue</code> is slower</option>
+<option correct>A thrown authentication failure would be recorded and skipped, and the request would still reach the handler</option>
+<option>Because <code>continue</code> rethrows every error</option>
+<option>Because authentication errors cannot be recorded</option>
+<explain><p><code>continue</code> is for truly optional steps such as an audit log. For a security check, "skip the failing middleware and carry on" means "let the attacker in".</p></explain>
+</question>
+
+<question id="mp-throw-mode" type="choice">
+<q>When is <code>errorMode: "throw"</code> the right choice?</q>
+<option>For HTTP routes, so errors become 500</option>
+<option correct>When the caller already has its own <code>try</code>/<code>catch</code> that decides what to do, such as a job runner deciding whether to retry</option>
+<option>When you want the pipeline to continue after an error</option>
+<option>Never; it is deprecated</option>
+<explain><p><code>"throw"</code> stops the chain and lets the error propagate. The deprecated option is <code>stopOnError</code>, not <code>errorMode</code>.</p></explain>
+</question>
+
+<question id="mp-next-twice" type="output">
+<q>What does this print?</q>
+<code file="twice.ts" browser="no">
+import { createPipeline } from "@zudojs/middleware";
+import type { NamedMiddleware } from "@zudojs/middleware";
+
+let payments = 0;
+const again: NamedMiddleware<object, string> = {
+  name: "again",
+  handler: async (_context, next) => {
+    await next();
+    return next();
+  },
+};
+const outcome = await createPipeline([again], async () => {
+  payments += 1;
+  return "paid";
+})({});
+console.log(outcome.success, payments, !outcome.success && (outcome.error as Error).name);
+</code>
+<option correct>false 1 MiddlewareNextCalledMultipleTimesError</option>
+<option>true 2 false</option>
+<option>true 1 false</option>
+<option>false 2 MiddlewareNextCalledMultipleTimesError</option>
+<explain><p>A second <code>next()</code> would run the handler, and the payment, twice. The pipeline refuses it before the handler runs again. A retry belongs inside the handler, around the operation you know is safe to repeat.</p></explain>
+</question>
+
+<question id="mp-error-mw" type="choice">
+<q>What does <code>errorMiddleware(onError)</code> do with an error thrown further down the pipeline?</q>
+<option>Swallows it and returns <code>undefined</code></option>
+<option>Converts it into a 500 response</option>
+<option correct>Calls <code>onError</code> with it and rethrows it, so the pipeline's error mode still decides the outcome</option>
+<option>Retries the rest of the pipeline once</option>
+<explain><p>It is a reporter, not a handler. With priority 0 it runs first, so it sees every error of the middleware after it.</p></explain>
+</question>
+
+<question id="mp-timeout" type="output">
+<q>What does this print?</q>
+<code file="timeout.ts" browser="no">
+import { createPipeline, timeoutMiddleware } from "@zudojs/middleware";
+
+let bankDone = false;
+const run = createPipeline([timeoutMiddleware<object, string>(20)], async () => {
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  bankDone = true;
+  return "sent";
+});
+
+const outcome = await run({});
+console.log(outcome.success, bankDone);
+await new Promise((resolve) => setTimeout(resolve, 80));
+console.log(bankDone);
+</code>
+<option correct>false false
+true</option>
+<option>false false
+false</option>
+<option>true true
+true</option>
+<option>false true
+true</option>
+<explain><p>The timeout made the pipeline stop waiting, but the work it was waiting for kept running and finished later. A timeout means "I don't know", never "it did not happen".</p></explain>
+</question>
+
+<question id="mp-timeout-cancel" type="choice">
+<q>A payment call must really stop when the timeout fires. What do you need?</q>
+<option>A shorter <code>timeoutMiddleware</code></option>
+<option>Two timeout middleware in a row</option>
+<option correct>An <code>AbortSignal</code> that the payment call itself checks, passed through the context</option>
+<option><code>errorMode: "throw"</code></option>
+<option>Nothing: <code>timeoutMiddleware</code> cancels the handler</option>
+<explain><p>Nothing in the middleware contract can stop a promise that is already running. Only code that checks a signal can stop, which is why <code>fetch</code> and many clients accept one.</p></explain>
+</question>
+
+<question id="mp-signal" type="output">
+<q>What does this print?</q>
+<code file="signal.ts" browser="no">
+import { createPipeline } from "@zudojs/middleware";
+
+const controller = new AbortController();
+controller.abort();
+const outcome = await createPipeline([], async () => "sent", { signal: controller.signal })({});
+console.log(outcome.success, !outcome.success && (outcome.error as Error).name);
+</code>
+<option correct>false MiddlewareAbortedError</option>
+<option>true false</option>
+<option>false AbortError</option>
+<option>false MiddlewareTimeoutError</option>
+<explain><p>The pipeline checks its <code>signal</code> before each middleware and before the handler. An aborted signal fails the run with <code>MiddlewareAbortedError</code> without calling the handler.</p></explain>
+</question>
+
+<question id="mp-log-injection" type="choice">
+<q>A request path is <code>/transfers\n[INFO] admin logged in</code>. Why does <code>loggingMiddleware</code> write the newline as the two characters <code>\n</code>?</q>
+<option>To make the log shorter</option>
+<option correct>So the caller cannot forge a second, real-looking log line (log injection)</option>
+<option>Because log files cannot contain newlines</option>
+<option>To hide the path from the log</option>
+<explain><p>Escaping control characters keeps every caller-supplied value inside its own line, while the original stays readable. <code>sanitizeLogValue</code> does the same for your own lines.</p></explain>
+</question>
+
+<question id="mp-log-secret" type="choice">
+<q>Why does <code>loggingMiddleware</code> leave the error message out of its completion line by default?</q>
+<option>Error messages are too long</option>
+<option correct>Error messages often contain connection strings, tokens or user data; the error object still reaches the caller</option>
+<option>Because errors are logged by the runtime instead</option>
+<option>It cannot read the error</option>
+<explain><p>A message like <code>connection to postgres://bank:s3cret@db failed</code> would put a password in the logs. Opt in with <code>includeErrorMessage: true</code> only when your messages are safe.</p></explain>
+</question>
+
+<question id="mp-sanitize" type="output">
+<q>What does this print?</q>
+<code file="sanitize.ts" browser="no">
+import { sanitizeLogValue } from "@zudojs/middleware";
+
+console.log(sanitizeLogValue("Chiamaka\r\nERROR fake"));
+console.log(sanitizeLogValue("x".repeat(12), 5));
+</code>
+<option correct>Chiamaka\r\nERROR fake
+xxxxx…</option>
+<option>Chiamaka ERROR fake
+xxxxx</option>
+<option>ChiamakaERROR fake
+xxxxxxxxxxxx</option>
+<option>Chiamaka
+ERROR fake
+xxxxx…</option>
+<explain><p>Control characters are escaped, not dropped, so the value stays visible without breaking out of its line. The second argument truncates long values and marks the cut with an ellipsis.</p></explain>
+</question>
+
+<question id="mp-rate-key" type="choice">
+<q>Where does <code>rateLimitMiddleware</code> find the key it counts by?</q>
+<option>In the request's IP address</option>
+<option correct>In <code>context.key</code></option>
+<option>In the middleware's <code>name</code></option>
+<option>It counts all requests together, always</option>
+<explain><p>It reads <code>context.key</code>. In the transfer pipeline, <code>authenticate</code> sets it to the user id, so each user has their own allowance.</p></explain>
+</question>
+
+<question id="mp-unkeyed" type="output">
+<q>What does this print?</q>
+<code file="unkeyed.ts" browser="no">
+import { createPipeline, rateLimitMiddleware } from "@zudojs/middleware";
+
+type Context = { key?: string };
+const run = createPipeline([rateLimitMiddleware<Context, string>(2, 60_000)], async () => "ok");
+
+const results: string[] = [];
+for (const key of [undefined, undefined, "ada", undefined]) {
+  results.push((await run({ key })).success ? "ok" : "refused");
+}
+console.log(results.join(" "));
+</code>
+<option correct>ok ok ok refused</option>
+<option>ok ok ok ok</option>
+<option>refused refused ok refused</option>
+<option>ok ok refused refused</option>
+<explain><p>Every request without a key lands in one shared bucket with an allowance of two, so the third unkeyed request is refused, while <code>ada</code> has her own bucket. <code>rejectUnkeyed: true</code> refuses unkeyed requests instead of pooling them.</p></explain>
+</question>
+
+<question id="mp-limit-after-auth" type="choice">
+<q>What goes wrong if the per-user rate limiter runs <em>before</em> <code>authenticate</code>?</q>
+<option>Nothing; order does not matter for rate limits</option>
+<option correct><code>context.key</code> is not set yet, so every request shares one bucket and one noisy client can lock everybody out</option>
+<option>The limiter counts each request twice</option>
+<option>Authentication errors are no longer reported</option>
+<explain><p>The limiter can only count per user once the user is known. With <code>rejectUnkeyed: true</code> the wrong order fails loudly instead of quietly pooling everyone.</p></explain>
+</question>
+
+<question id="mp-rate-500" type="choice">
+<q>A <code>MiddlewareRateLimitError</code> is thrown out of a route in <code>@zudojs/http</code>. What does the client get in the published packages?</q>
+<option>429 with <code>Retry-After</code>, automatically</option>
+<option correct>A generic 500, because the error has status 500 and is not exposed; you must map it to 429 yourself</option>
+<option>503 Service Unavailable</option>
+<option>400 Bad Request</option>
+<explain><p>The error carries <code>retryAfterMs</code>, but not an HTTP status the server honours. The adapter in this lesson checks <code>instanceof MiddlewareRateLimitError</code> and answers 429 with <code>Retry-After</code>.</p></explain>
+</question>
+
+<question id="mp-order-validate-limit" type="choice">
+<q>The lesson puts validation <em>before</em> the rate limit. What is the benefit, and what is the cost?</q>
+<option>Benefit: faster validation. Cost: none</option>
+<option correct>Benefit: malformed requests do not use up the caller's allowance. Cost: malformed requests are not limited by this step, so a per-IP limit in front is still needed</option>
+<option>Benefit: the limiter can read the parsed body. Cost: validation runs twice</option>
+<option>Benefit: none; it is only a convention</option>
+<explain><p>A client with a bug gets a clear 400 instead of a 429. The expensive handler is still protected, and the HTTP pipeline's per-IP limiter stops floods of junk.</p></explain>
+</question>
+
+<question id="mp-order-authz-validate" type="choice">
+<q>Why does authorization run before validation in the transfer pipeline?</q>
+<option>Validation needs to know the user's role</option>
+<option correct>A caller who is not allowed to transfer learns nothing about what a valid transfer looks like, and no work is spent validating a request that will be refused</option>
+<option>Authorization is faster than validation</option>
+<option>Because <code>authorize</code> sets <code>context.transfer</code></option>
+<explain><p>Refusing early leaks less and costs less. Validation error messages describe your input format, which an unauthorised caller does not need to see.</p></explain>
+</question>
+
+<question id="mp-guard" type="output">
+<q>What does this print?</q>
+<code file="guard.ts" browser="no">
+import { createRequestContext, createResponseContext, HttpMiddlewarePipeline } from "@zudojs/http";
+import { createGuardResponse } from "@zudojs/middleware";
+
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(async (context, next) =>
+  context.request.getHeader("x-role") === "teller"
+    ? next()
+    : createGuardResponse({ status: 403, body: { error: "Tellers only" } }),
+);
+pipeline.use(async (context) => context.response.setStatus(201).json({ ok: true }));
+
+for (const role of ["teller", "viewer"]) {
+  const request = createRequestContext({ method: "POST", url: "/transfers", headers: { "x-role": role } });
+  const response = await pipeline.execute(request, createResponseContext());
+  console.log(role, response.status, response.body);
+}
+</code>
+<option correct>teller 201 {"ok":true}
+viewer 403 {"error":"Tellers only"}</option>
+<option>teller 201 {"ok":true}
+viewer 200 {"status":403,"body":{"error":"Tellers only"}}</option>
+<option>teller 201 {"ok":true}
+viewer 500 {"error":"Internal Server Error"}</option>
+<option>teller 403 {"error":"Tellers only"}
+viewer 403 {"error":"Tellers only"}</option>
+<explain><p><code>@zudojs/http</code> recognises a guard response by its brand and sends it with its own status and body. This lets a guard written without importing <code>@zudojs/http</code> refuse requests.</p></explain>
+</question>
+
+<question id="mp-guard-brand" type="choice">
+<q>Why is a guard response branded with a symbol instead of being any object with a <code>status</code> field?</q>
+<option>Symbols are faster to compare</option>
+<option correct>JSON cannot carry a symbol, so data from a request can never be mistaken for a response</option>
+<option>Because <code>status</code> is a reserved word</option>
+<option>So it can be serialised to JSON</option>
+<explain><p>A middleware may legitimately return data that happens to have a <code>status</code> key. Only the brand, which request data cannot forge, turns an object into a response.</p></explain>
+</question>
+
+<question id="mp-adapter" type="choice">
+<q>In the transfer example, which part knows about HTTP status codes?</q>
+<option>The <code>authenticate</code> middleware</option>
+<option>The handler <code>moveMoney</code></option>
+<option correct>Only the route adapter that turns the pipeline outcome into a response</option>
+<option>Every middleware, through <code>context.status</code></option>
+<explain><p>Keeping the pipeline transport-independent is what lets a CLI tool or a queue job run it too. The errors carry meaning (401, 403, 400); only the adapter decides how to present them.</p></explain>
+</question>
+
+<question id="mp-singleton" type="choice">
+<q>The Task API registers the import pipeline in the container as a <strong>singleton</strong>. What would go wrong if it created a new pipeline for every request?</q>
+<option>The pipeline would be garbage collected too early</option>
+<option correct>Each request would get a fresh rate limiter, so the limit would never be reached</option>
+<option>Logging would stop working</option>
+<option>The container would throw a <code>CaptiveDependencyError</code></option>
+<explain><p>The limiter's counts live inside the middleware instance. One shared pipeline means one shared set of counts for all requests in the process.</p></explain>
+</question>
+
+<question id="mp-token-digest" type="choice">
+<q>Why does the import pipeline compare SHA-256 digests with <code>timingSafeEqual</code> instead of <code>token === expected</code>?</q>
+<option>Digests are shorter to type</option>
+<option correct>The comparison takes the same time however many characters match, and the server never stores the raw token</option>
+<option>Because <code>===</code> does not work on strings from headers</option>
+<option>To make tokens case-insensitive</option>
+<explain><p><code>===</code> can stop at the first different character, which leaks timing. Equal-length digests compared in constant time avoid that, and storing only digests means a leaked configuration does not reveal tokens.</p></explain>
+</question>
+
+<question id="mp-code-compose" type="code" file="compose.ts">
+<q><p>Write your own <code>compose(middleware, handler)</code>: it returns a function of a context that runs the middleware in order around the handler, and throws <code>Error("next() called twice")</code> if a middleware calls <code>next</code> more than once.</p></q>
+<starter>
+type Middleware<C, R> = (context: C, next: () => Promise<R>) => Promise<R>;
+
+function compose<C, R>(middleware: Middleware<C, R>[], handler: (context: C) => Promise<R>): (context: C) => Promise<R> {
+  // your code here
+  return handler;
+}
+
+const run = compose<{ log: string[] }, string>([], async () => "paid");
+console.log(await run({ log: [] }));
+</starter>
+<solution>
+type Middleware<C, R> = (context: C, next: () => Promise<R>) => Promise<R>;
+
+function compose<C, R>(middleware: Middleware<C, R>[], handler: (context: C) => Promise<R>): (context: C) => Promise<R> {
+  return (context) => {
+    const dispatch = (index: number): Promise<R> => {
+      const current = middleware[index];
+      if (!current) return handler(context);
+      let called = false;
+      return current(context, () => {
+        if (called) return Promise.reject(new Error("next() called twice"));
+        called = true;
+        return dispatch(index + 1);
+      });
+    };
+    return dispatch(0);
+  };
+}
+
+const trace = (name: string): Middleware<{ log: string[] }, string> => async (context, next) => {
+  context.log.push(`${name} in`);
+  const result = await next();
+  context.log.push(`${name} out`);
+  return result;
+};
+const context = { log: [] as string[] };
+const run = compose([trace("auth"), trace("validate")], async (c) => {
+  c.log.push("handler");
+  return "paid";
+});
+console.log(await run(context), context.log.join(" > "));
+
+const twice = compose<{ log: string[] }, string>([async (_c, next) => { await next(); return next(); }], async () => "paid");
+console.log(await twice({ log: [] }).catch((error: Error) => error.message));
+</solution>
+<expected>paid auth in > validate in > handler > validate out > auth out
+next() called twice</expected>
+<explain><p>Each middleware gets a <code>next</code> that dispatches the one after it; the last <code>next</code> calls the handler. A flag per middleware refuses a second call, which is exactly what <code>@zudojs/middleware</code> does with <code>MiddlewareNextCalledMultipleTimesError</code>.</p></explain>
+</question>
+
+<question id="mp-code-sliding" type="code" file="sliding.ts">
+<q><p>Write <code>createLimiter(max, windowMs)</code> with a method <code>allow(key, now)</code> that implements a sliding window: keep each key's timestamps, forget those older than <code>windowMs</code>, allow when fewer than <code>max</code> remain. Time is passed in, so the test is deterministic.</p></q>
+<starter>
+function createLimiter(max: number, windowMs: number) {
+  return {
+    allow(key: string, now: number): boolean {
+      // your code here
+      return true;
+    },
+  };
+}
+
+const limiter = createLimiter(2, 60_000);
+console.log(limiter.allow("ada", 0));
+</starter>
+<solution>
+function createLimiter(max: number, windowMs: number) {
+  const seen = new Map<string, number[]>();
+  return {
+    allow(key: string, now: number): boolean {
+      const recent = (seen.get(key) ?? []).filter((time) => now - time < windowMs);
+      if (recent.length >= max) {
+        seen.set(key, recent);
+        return false;
+      }
+      recent.push(now);
+      seen.set(key, recent);
+      return true;
+    },
+  };
+}
+
+const limiter = createLimiter(2, 60_000);
+const at = (seconds: number) => seconds * 1000;
+console.log(
+  [limiter.allow("ada", at(0)), limiter.allow("ada", at(30)), limiter.allow("ada", at(59)), limiter.allow("bayo", at(59)), limiter.allow("ada", at(61))].join(" "),
+);
+</solution>
+<expected>true true false true true</expected>
+<explain><p>At 59 seconds Ada still has two requests in the last minute, so she is refused; at 61 seconds the one from second 0 has left the window. A fixed window reset at 60 seconds would have let her send four requests in two seconds around the boundary.</p></explain>
+</question>
+
+<question id="mp-code-order" type="code" file="order.ts">
+<q><p>The pipeline below is in the wrong order: the limiter runs before authentication, so every request shares one bucket. Reorder the list so the output shows Ada refused on her third request while Bayo is still allowed.</p></q>
+<starter>
+type Context = { token: string; key?: string };
+type Step = (context: Context) => string | undefined;
+
+const counts = new Map<string, number>();
+const limit: Step = (context) => {
+  const key = context.key ?? "(shared)";
+  const count = (counts.get(key) ?? 0) + 1;
+  counts.set(key, count);
+  return count > 2 ? "429" : undefined;
+};
+const authenticate: Step = (context) => {
+  if (!["tok-ada", "tok-bayo"].includes(context.token)) return "401";
+  context.key = context.token;
+  return undefined;
+};
+
+const steps: Step[] = [limit, authenticate];
+function run(context: Context): string {
+  for (const step of steps) {
+    const refused = step(context);
+    if (refused) return refused;
+  }
+  return "200";
+}
+
+console.log(["tok-ada", "tok-ada", "tok-ada", "tok-bayo"].map((token) => run({ token })).join(" "));
+</starter>
+<solution>
+type Context = { token: string; key?: string };
+type Step = (context: Context) => string | undefined;
+
+const counts = new Map<string, number>();
+const limit: Step = (context) => {
+  const key = context.key ?? "(shared)";
+  const count = (counts.get(key) ?? 0) + 1;
+  counts.set(key, count);
+  return count > 2 ? "429" : undefined;
+};
+const authenticate: Step = (context) => {
+  if (!["tok-ada", "tok-bayo"].includes(context.token)) return "401";
+  context.key = context.token;
+  return undefined;
+};
+
+const steps: Step[] = [authenticate, limit];
+function run(context: Context): string {
+  for (const step of steps) {
+    const refused = step(context);
+    if (refused) return refused;
+  }
+  return "200";
+}
+
+console.log(["tok-ada", "tok-ada", "tok-ada", "tok-bayo"].map((token) => run({ token })).join(" "));
+</solution>
+<expected>200 200 429 200</expected>
+<explain><p>In the starter order, all four requests share the <code>(shared)</code> bucket, so Bayo is refused because of Ada. After authentication has set the key, each user has an own allowance.</p></explain>
+</question>
+
+<question id="mp-code-map" type="code" file="to-status.ts">
+<q><p>Write <code>toStatus(error)</code> for a pipeline adapter: an object with <code>retryAfterMs</code> gives <code>"429 retry-after=N"</code> (seconds, rounded up); an object with <code>expose: true</code> and a numeric <code>statusCode</code> below 500 gives that status; anything else gives <code>"500"</code>.</p></q>
+<starter>
+function toStatus(error: unknown): string {
+  // your code here
+  return "500";
+}
+
+console.log(toStatus(new Error("boom")));
+</starter>
+<solution>
+function toStatus(error: unknown): string {
+  if (typeof error !== "object" || error === null) return "500";
+  const candidate = error as { retryAfterMs?: unknown; expose?: unknown; statusCode?: unknown };
+  if (typeof candidate.retryAfterMs === "number") {
+    return `429 retry-after=${Math.ceil(candidate.retryAfterMs / 1000)}`;
+  }
+  if (candidate.expose === true && typeof candidate.statusCode === "number" && candidate.statusCode < 500) {
+    return String(candidate.statusCode);
+  }
+  return "500";
+}
+
+console.log(toStatus({ retryAfterMs: 59_001 }));
+console.log(toStatus({ expose: true, statusCode: 403 }));
+console.log(toStatus({ expose: false, statusCode: 401 }));
+console.log(toStatus(new Error("connection refused")));
+console.log(toStatus("not an error"));
+</solution>
+<expected>429 retry-after=60
+403
+500
+500
+500</expected>
+<explain><p>Only errors that are explicitly marked safe to show become client errors. Everything else is a 500 with no details, and the rate-limit error is mapped deliberately because it does not carry a 429 of its own.</p></explain>
+</question>
+
+<question id="mp-code-daily" type="code" file="daily.ts">
+<q><p>Write a middleware-like function <code>dailyCap(capKobo)</code> that returns <code>(userId, amountKobo, next)</code>. It refuses (returns <code>"refused"</code>) when the user's total plus this amount would exceed the cap, otherwise calls <code>next()</code> and adds the amount only if <code>next()</code> returned <code>"ok"</code>.</p></q>
+<starter>
+function dailyCap(capKobo: number) {
+  return (userId: string, amountKobo: number, next: () => string): string => {
+    // your code here
+    return next();
+  };
+}
+
+const cap = dailyCap(10_000_000);
+console.log(cap("ada", 4_500_000, () => "ok"));
+</starter>
+<solution>
+function dailyCap(capKobo: number) {
+  const totals = new Map<string, number>();
+  return (userId: string, amountKobo: number, next: () => string): string => {
+    const already = totals.get(userId) ?? 0;
+    if (already + amountKobo > capKobo) return "refused";
+    const result = next();
+    if (result === "ok") totals.set(userId, already + amountKobo);
+    return result;
+  };
+}
+
+const cap = dailyCap(10_000_000);
+console.log(
+  [
+    cap("ada", 4_500_000, () => "ok"),
+    cap("ada", 4_500_000, () => "insufficient funds"),
+    cap("ada", 4_500_000, () => "ok"),
+    cap("ada", 4_500_000, () => "ok"),
+    cap("bayo", 4_500_000, () => "ok"),
+  ].join(", "),
+);
+</solution>
+<expected>ok, insufficient funds, ok, refused, ok</expected>
+<explain><p>Counting only after the rest of the pipeline succeeded means a failed transfer does not eat into the cap: Ada's second attempt failed, so her third went through and only the fourth hit the ₦100,000 limit.</p></explain>
+</question>
+
+<question id="mp-rate-per-user" type="output">
+<q>What does this print?</q>
+<code file="per-user.ts" browser="no">
+import { createPipeline, rateLimitMiddleware } from "@zudojs/middleware";
+import type { NamedMiddleware } from "@zudojs/middleware";
+
+type Context = { token: string; key?: string };
+const authenticate: NamedMiddleware<Context, string> = {
+  name: "authenticate",
+  handler: async (context, next) => {
+    context.key = context.token.replace("tok-", "user-");
+    return next();
+  },
+};
+const run = createPipeline([authenticate, rateLimitMiddleware<Context, string>(1, 60_000)], async (context) => context.key ?? "");
+
+const results: string[] = [];
+for (const token of ["tok-ada", "tok-bayo", "tok-ada"]) {
+  const outcome = await run({ token });
+  results.push(outcome.success ? outcome.result : "limited");
+}
+console.log(results.join(" "));
+</code>
+<option correct>user-ada user-bayo limited</option>
+<option>user-ada limited limited</option>
+<option>user-ada user-bayo user-ada</option>
+<option>limited limited limited</option>
+<explain><p>Each user id is its own key with an allowance of one per minute. Bayo is unaffected by Ada; Ada's second request is limited.</p></explain>
+</question>
+
+<question id="mp-no-logger" type="output">
+<q>What does this print?</q>
+<code file="no-logger.ts" browser="no">
+import { createPipeline, loggingMiddleware } from "@zudojs/middleware";
+
+const run = createPipeline([loggingMiddleware<string>()], async () => "done");
+const outcome = await run({ method: "POST", path: "/transfers" });
+console.log(outcome.success && outcome.result, outcome.executedMiddleware);
+</code>
+<option correct>done [ 'logging' ]</option>
+<option>[middleware] → POST /transfers
+done [ 'logging' ]</option>
+<option>done []</option>
+<option>An error: a logger is required</option>
+<explain><p>Without a write function, <code>loggingMiddleware</code> writes nothing; it never falls back to the console. It still runs, so it appears in <code>executedMiddleware</code>.</p></explain>
+</question>
+
+<question id="mp-error-first" type="output">
+<q>What does this print?</q>
+<code file="error-first.ts" browser="no">
+import { errorMiddleware, resolveNamedMiddleware } from "@zudojs/middleware";
+import type { NamedMiddleware } from "@zudojs/middleware";
+
+const validate: NamedMiddleware<unknown, void> = { name: "validate", handler: async (_c, next) => next() };
+const authenticate: NamedMiddleware<unknown, void> = { name: "authenticate", priority: 10, handler: async (_c, next) => next() };
+
+console.log(resolveNamedMiddleware([validate, authenticate, errorMiddleware<void>()]).map((m) => m.name));
+</code>
+<option correct>[ 'error-handler', 'authenticate', 'validate' ]</option>
+<option>[ 'authenticate', 'validate', 'error-handler' ]</option>
+<option>[ 'validate', 'authenticate', 'error-handler' ]</option>
+<option>[ 'authenticate', 'error-handler', 'validate' ]</option>
+<explain><p><code>errorMiddleware</code> has priority 0, lower than any other here, so it is placed first and wraps everything after it. <code>authenticate</code> (10) comes before <code>validate</code> (default 100).</p></explain>
+</question>

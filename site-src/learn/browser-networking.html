@@ -1,0 +1,1015 @@
+---
+title: Networking from JavaScript
+description: Connect a browser page to your Node.js Task API: the request lifecycle, headers and JSON, HttpOnly session cookies, the same-origin policy, CORS and preflight, and cancelling stale requests.
+minutes: 60
+youNeed: Build a plain Node.js Task API, Browser APIs and Events
+youBuild: A Task API with CORS and HttpOnly cookie sessions, a typed-error API client, and a browser front end that logs in, lists and creates tasks, verified against real server responses
+keywords: fetch api, http request lifecycle, request headers, forbidden headers, json api client, cookies, httponly cookie, samesite, credentials include, same-origin policy, cors, preflight request, access-control-allow-origin, abortcontroller fetch, race condition search
+objectives: Follow a request from fetch() to the parsed body, and say which headers the browser controls | Send and receive JSON with the right headers, and turn HTTP errors into clear application errors | Explain the same-origin policy: what it blocks and what it does not | Configure CORS on a Node.js server, including preflight and credentials, and read a CORS error | Log in with an HttpOnly session cookie and explain why page JavaScript cannot read it | Cancel stale requests with AbortController and time out slow ones
+---
+<section>
+<h2 id="problem">The front end that could not see its API</h2>
+<p>In <a href="/learn/node-task-api">Build a plain Node.js Task API</a> you built a Task API and called it with <code>curl</code> and from Node.js. Now Ada wants a real front end: a web page, served from <code>http://localhost:5173</code> by a development server, that talks to the API on <code>http://localhost:3000</code>. Her first attempt copies the Node.js code into the page:</p>
+<pre class="lx-json">const response = await fetch("http://localhost:3000/tasks", {
+  headers: { Authorization: "Bearer 3f9c…the API key…" },
+});
+console.log(await response.json());</pre>
+<p>Two things go wrong. First, the browser's console shows a red error and the code never gets the tasks:</p>
+<blockquote>Access to fetch at 'http://localhost:3000/tasks' from origin 'http://localhost:5173' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.</blockquote>
+<p>Second, and worse, the API key is now in a JavaScript file that every visitor downloads. Anyone can open the developer tools, copy it, and do anything the key allows. A key that sits in the browser is not a secret.</p>
+<p>Neither problem exists in Node.js, because the rules behind them are enforced by the <strong>browser</strong>, to protect its user. This lesson explains those rules: what a request from a page contains and who controls each part, why a page may not read another site's responses unless that site agrees (the <strong>same-origin policy</strong> and <strong>CORS</strong>), and how a browser app proves who the user is without holding a secret in JavaScript (an <strong>HttpOnly session cookie</strong>). At the end, the Task API gets a proper browser front end.</p>
+<p>The server side is Node.js, so those examples run on your computer (Node.js only). The browser side runs here in the preview.</p>
+</section>
+
+<section>
+<h2 id="lifecycle">What happens during fetch()</h2>
+<p>A single <code>await fetch(url)</code> hides a lot of work. In order:</p>
+<figure class="lx-diagram">
+<pre>page code            browser                                server
+─────────            ───────                                ──────
+fetch(url, opts) ──▶ parse and resolve the URL
+                     check the rules (same-origin? CORS?)
+                     look up the host name (DNS)
+                     open or reuse a connection (TCP, TLS)
+                     add its own headers (Origin, Cookie,
+                     User-Agent, Accept-Language, …)
+                     send method + path + headers + body ──▶ read the request
+                                                            run the handler
+                     receive status + headers  ◀──────────── send status + headers
+promise fulfils ◀─── check CORS on the response
+(response.status,
+ response.headers)
+response.json() ───▶ keep reading the body stream  ◀─────── send the body
+promise fulfils ◀─── parse it as JSON</pre>
+<figcaption>The request lifecycle as seen from a page. The first promise fulfils when the headers arrive, the second when the body has been read and parsed.</figcaption>
+</figure>
+<p>Two things in that picture matter every day. The browser adds headers itself, and some headers only the browser may set. And the browser checks the rules <em>before</em> it hands the response to your code.</p>
+<h3>Headers: yours and the browser's</h3>
+<p><strong>Headers</strong> are the named values that travel with a request or response (you met them in <a href="/learn/node-http#request">An HTTP server with no framework</a>). A page sets its own with the <code>headers</code> option. But some header names are <strong>forbidden</strong> for page JavaScript: the browser sets them, and silently drops them if your code tries. <code>Cookie</code>, <code>Origin</code> and <code>Host</code> are among them, because a page that could forge them could pretend to be another site or steal another user's session. Likewise, a page can never read a response's <code>Set-Cookie</code> header. Watch the browser strip them:</p>
+<file name="index.html" project="net">
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Tasks</title></head>
+<body>
+  <label>Search products <input type="search" id="search"></label>
+  <ul id="results"></ul>
+</body>
+</html>
+</file>
+<example file="forbidden.js" project="net" runtime="dom">
+const request = new Request("https://api.tasks.example/tasks", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "X-Request-Id": "req-81",
+    Cookie: "session=stolen-from-someone",
+    Origin: "https://bank.example",
+    Host: "bank.example",
+  },
+  body: JSON.stringify({ title: "Buy detergent" }),
+});
+console.log("headers the page may send:", [...request.headers.keys()]);
+console.log("mode:", request.mode, "credentials:", request.credentials);
+
+const response = new Response("{}", {
+  headers: { "Content-Type": "application/json", "Set-Cookie": "session=abc; HttpOnly", "X-Total-Count": "3" },
+});
+console.log("headers the page may read:", [...response.headers.keys()]);
+console.log("Set-Cookie:", response.headers.get("set-cookie"));
+</example>
+<output>
+headers the page may send: [ 'content-type', 'x-request-id' ]
+mode: cors credentials: same-origin
+headers the page may read: [ 'content-type', 'x-total-count' ]
+Set-Cookie: null
+</output>
+<p>Run the same lines in Node.js and all five request headers survive, and <code>Set-Cookie</code> is readable: a server-side program speaks only for itself, so there is nobody to protect. In the browser, the page is running code from one site inside a user's browser that is logged in to many sites, and these restrictions keep them apart. Note also the two defaults: <code>mode: "cors"</code> (cross-origin requests follow the CORS rules below) and <code>credentials: "same-origin"</code> (cookies are sent only to the page's own origin).</p>
+</section>
+
+<section>
+<h2 id="server-code">The API for this lesson</h2>
+<p>The server in this lesson is the Task API from the Node.js module, trimmed to the routes a front end needs, plus the two things this lesson adds: sessions and CORS. Skim it now; each part is explained in the sections that follow. First the CORS module, explained in <a href="#cors">CORS</a>. It returns <code>true</code> when it has answered the request completely (a preflight), and otherwise only adds headers:</p>
+<example file="src/cors.js" project="web-api" browser="no">
+export function cors({ allowedOrigins, methods = ["GET", "POST", "PATCH"], headers = ["Content-Type"] }) {
+  return (req, res) => {
+    const origin = req.headers.origin;
+    res.setHeader("Vary", "Origin");
+    const allowed = origin !== undefined && allowedOrigins.includes(origin);
+    if (allowed) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+    }
+    if (req.method !== "OPTIONS") return false;
+    if (allowed) {
+      res.setHeader("Access-Control-Allow-Methods", methods.join(", "));
+      res.setHeader("Access-Control-Allow-Headers", headers.join(", "));
+      res.setHeader("Access-Control-Max-Age", "600");
+    }
+    res.writeHead(204).end();
+    return true;
+  };
+}
+</example>
+<p>Then the API. It keeps users, sessions and tasks in memory, and has four routes: <code>POST /login</code>, <code>GET /tasks</code>, <code>POST /tasks</code> and <code>PATCH /tasks/:id</code>. Passwords are checked with <code>scrypt</code> and <code>timingSafeEqual</code>, as <a href="/learn/node-crypto">node:crypto</a> explains. A successful login creates a random session id, remembers which user it belongs to, and sends it to the browser in a cookie:</p>
+<example file="src/api.js" project="web-api" browser="no">
+import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { cors } from "./cors.js";
+
+function send(res, status, body, headers = {}) {
+  const type = body === undefined ? {} : { "Content-Type": "application/json" };
+  res.writeHead(status, { "Cache-Control": "no-store", ...type, ...headers });
+  res.end(body === undefined ? undefined : JSON.stringify(body));
+}
+
+class BadRequest extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function readJson(req) {
+  if (!req.headers["content-type"]?.startsWith("application/json")) {
+    throw new BadRequest(415, "Send JSON with Content-Type: application/json");
+  }
+  let text = "";
+  for await (const chunk of req) {
+    text += chunk;
+    if (text.length > 10_000) throw new BadRequest(413, "Body too large");
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new BadRequest(400, "Body is not valid JSON");
+  }
+}
+
+function sessionIdOf(req) {
+  for (const part of (req.headers.cookie ?? "").split(";")) {
+    const [name, value] = part.trim().split("=");
+    if (name === "session") return value;
+  }
+  return undefined;
+}
+
+export function createApi({ allowedOrigins, users }) {
+  const accounts = new Map();
+  for (const [email, password] of Object.entries(users)) {
+    const salt = randomBytes(16);
+    accounts.set(email, { salt, hash: scryptSync(password, salt, 32) });
+  }
+  const sessions = new Map();
+  const tasks = [];
+  const handleCors = cors({ allowedOrigins });
+  const sessionCookie = (id) => `session=${id}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600`;
+
+  async function route(req, res, url) {
+    if (req.method === "POST" && url.pathname === "/login") {
+      const body = await readJson(req);
+      const account = accounts.get(body?.email);
+      const given = scryptSync(String(body?.password ?? ""), account?.salt ?? randomBytes(16), 32);
+      if (!account || !timingSafeEqual(given, account.hash)) return send(res, 401, { error: "Wrong email or password" });
+      const id = randomBytes(32).toString("hex");
+      sessions.set(id, body.email);
+      return send(res, 204, undefined, { "Set-Cookie": sessionCookie(id) });
+    }
+
+    const user = sessions.get(sessionIdOf(req));
+    if (!user) return send(res, 401, { error: "Log in first" });
+    const mine = tasks.filter((t) => t.owner === user);
+
+    if (req.method === "GET" && url.pathname === "/tasks") {
+      return send(res, 200, mine.map(({ owner, ...task }) => task));
+    }
+    if (req.method === "POST" && url.pathname === "/tasks") {
+      const body = await readJson(req);
+      const title = typeof body?.title === "string" ? body.title.trim() : "";
+      if (title === "" || title.length > 200) return send(res, 400, { error: "title must be 1 to 200 characters" });
+      const task = { id: tasks.length + 1, title, done: false, owner: user };
+      tasks.push(task);
+      return send(res, 201, { id: task.id, title: task.title, done: task.done });
+    }
+    const match = url.pathname.match(/^\/tasks\/([0-9]+)$/);
+    if (req.method === "PATCH" && match) {
+      const task = mine.find((t) => t.id === Number(match[1]));
+      if (!task) return send(res, 404, { error: `Task ${match[1]} not found` });
+      const body = await readJson(req);
+      if (typeof body?.done !== "boolean") return send(res, 400, { error: "done must be true or false" });
+      task.done = body.done;
+      return send(res, 200, { id: task.id, title: task.title, done: task.done });
+    }
+    return send(res, 404, { error: "Not Found" });
+  }
+
+  return async (req, res) => {
+    if (handleCors(req, res)) return;
+    try {
+      await route(req, res, new URL(req.url, "http://localhost"));
+    } catch (error) {
+      if (error instanceof BadRequest) return send(res, error.status, { error: error.message });
+      console.error(error);
+      send(res, 500, { error: "Internal Server Error" });
+    }
+  };
+}
+</example>
+<p>A few details to notice now, and understand fully by the end of the lesson:</p>
+<ul>
+<li>A user only ever sees their own tasks: every task route filters by the session's user, and <code>PATCH</code> looks the task up in <code>mine</code>. A task id belonging to someone else is simply "not found".</li>
+<li>The password check runs <code>scrypt</code> even for an unknown email (against a random salt), so a wrong email takes as long as a wrong password and the timing does not reveal which emails have accounts.</li>
+<li>CORS runs first, before the session check. The reason is in <a href="#failures">When networking fails</a>.</li>
+</ul>
+<h3>JSON in both directions</h3>
+<p>To send JSON, set the body to a string and say what it is with <code>Content-Type: application/json</code>; say what you want back with <code>Accept: application/json</code>. Here is the API receiving JSON with and without that header, sent the way the browser will send it. <code>start</code> runs the API on a free port for the example; a request is a <code>fetch</code> with an <code>Origin</code> header, which a browser adds automatically:</p>
+<example file="json.js" project="web-api" browser="no">
+import { once } from "node:events";
+import { createServer } from "node:http";
+import { createApi } from "./src/api.js";
+
+const server = createServer(createApi({ allowedOrigins: ["http://localhost:5173"], users: { "ada@tasks.example": "correct horse battery staple" } }));
+server.listen(0);
+await once(server, "listening");
+const api = `http://localhost:${server.address().port}`;
+
+const login = await fetch(`${api}/login`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ email: "ada@tasks.example", password: "correct horse battery staple" }),
+});
+const cookie = login.headers.get("set-cookie").split(";")[0];
+console.log("login:", login.status);
+
+const withoutType = await fetch(`${api}/tasks`, { method: "POST", headers: { Cookie: cookie }, body: '{"title":"Buy detergent"}' });
+console.log("no Content-Type:", withoutType.status, await withoutType.json());
+
+const created = await fetch(`${api}/tasks`, {
+  method: "POST",
+  headers: { Cookie: cookie, "Content-Type": "application/json", Accept: "application/json" },
+  body: JSON.stringify({ title: "Buy detergent" }),
+});
+console.log("with JSON:", created.status, created.headers.get("content-type"), await created.json());
+
+server.close();
+</example>
+<output>
+login: 204
+no Content-Type: 415 { error: 'Send JSON with Content-Type: application/json' }
+with JSON: 201 application/json { id: 1, title: 'Buy detergent', done: false }
+</output>
+<p>Without <code>Content-Type</code>, a string body is labelled <code>text/plain</code>, and the API answers 415 Unsupported Media Type. With it, 201 Created, and a JSON body back. Node.js's <code>fetch</code> let the example set <code>Cookie</code> by hand; in a browser, only the browser does that.</p>
+</section>
+
+<section>
+<h2 id="same-origin">The same-origin policy</h2>
+<p>An <strong>origin</strong> is the scheme, host and port of a URL together. Two URLs have the <strong>same origin</strong> only if all three match:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Page</th><th>Request to</th><th>Same origin?</th></tr></thead>
+<tbody>
+<tr><td><code>https://tasks.example/app</code></td><td><code>https://tasks.example/api/tasks</code></td><td>yes: only the path differs</td></tr>
+<tr><td><code>https://tasks.example</code></td><td><code>http://tasks.example</code></td><td>no: scheme differs</td></tr>
+<tr><td><code>https://tasks.example</code></td><td><code>https://api.tasks.example</code></td><td>no: host differs</td></tr>
+<tr><td><code>http://localhost:5173</code></td><td><code>http://localhost:3000</code></td><td>no: port differs</td></tr>
+</tbody>
+</table></div>
+<p>The browser runs pages from many sites at once, for a user who is logged in to their bank, their email and their shop. The <strong>same-origin policy</strong> stops one site's page from reading another origin's data with the user's identity. Without it, any page you visit could <code>fetch("https://mail.example/inbox")</code>, the browser would attach your mail cookies, and the page would read your email.</p>
+<p>It is important to know what the policy blocks and what it does not:</p>
+<ul>
+<li><strong>Blocked by default</strong>: <em>reading</em> a cross-origin response in JavaScript (<code>fetch</code>), reading the DOM of a cross-origin frame, reading another origin's storage and cookies.</li>
+<li><strong>Allowed</strong>: <em>sending</em> many kinds of cross-origin requests. A page may embed another origin's images, scripts and styles, submit a form to it, and even send a "simple" <code>fetch</code> to it. The request arrives; only the page's ability to <em>read</em> the answer is blocked.</li>
+</ul>
+<p>That second point has a consequence: a malicious page can make the user's browser send a request, with the user's cookies, to your API. It cannot see the response, but the request itself may do damage ("transfer ₦50,000", "delete my tasks"). That attack is <strong>cross-site request forgery</strong> (<strong>CSRF</strong>), and it is why the session cookie below uses <code>SameSite</code>, and why state-changing routes must never be <code>GET</code>. <a href="/learn/sec-web">Web security</a> covers CSRF defences in full.</p>
+</section>
+
+<section>
+<h2 id="cors">CORS: the server's permission</h2>
+<p><strong>Cross-Origin Resource Sharing</strong> (<strong>CORS</strong>) is how a server tells browsers "pages from these origins may read my responses". The browser sends an <code>Origin</code> header with every cross-origin request, and looks for <code>Access-Control-Allow-*</code> headers in the response. The check is done by the browser, for the user; the server only states its policy. This is why <code>curl</code> and Node.js never see CORS errors: they are not browsers, and they have no user to protect.</p>
+<h3>Simple requests and preflight</h3>
+<p>For some requests, the browser first asks permission with a separate <strong>preflight</strong> request: an <code>OPTIONS</code> request that describes the real one. Only if the server's answer allows it does the browser send the real request. A request skips the preflight only if it could have been sent by an old-fashioned HTML form anyway (a <strong>simple request</strong>): method <code>GET</code>, <code>HEAD</code> or <code>POST</code>, only a few safe headers, and a <code>Content-Type</code> that forms can send. Anything a form could not send, like <code>PATCH</code>, <code>DELETE</code>, JSON bodies or an <code>Authorization</code> header, is preflighted, because servers written before CORS never expected to receive such requests from another site:</p>
+<example file="preflight-rules.js">
+const SIMPLE_METHODS = ["GET", "HEAD", "POST"];
+const FORM_TYPES = ["application/x-www-form-urlencoded", "multipart/form-data", "text/plain"];
+const SAFE_HEADERS = ["accept", "accept-language", "content-language", "content-type"];
+
+function needsPreflight(method, headers = {}) {
+  if (!SIMPLE_METHODS.includes(method.toUpperCase())) return true;
+  for (const [name, value] of Object.entries(headers)) {
+    const key = name.toLowerCase();
+    if (!SAFE_HEADERS.includes(key)) return true;
+    if (key === "content-type" && !FORM_TYPES.includes(value.split(";")[0].trim().toLowerCase())) return true;
+  }
+  return false;
+}
+
+const requests = [
+  ["GET /tasks", "GET", {}],
+  ["GET /tasks with Accept", "GET", { Accept: "application/json" }],
+  ["POST a form", "POST", { "Content-Type": "application/x-www-form-urlencoded" }],
+  ["POST JSON", "POST", { "Content-Type": "application/json" }],
+  ["GET with a Bearer token", "GET", { Authorization: "Bearer abc" }],
+  ["PATCH /tasks/1", "PATCH", { "Content-Type": "application/json" }],
+];
+for (const [label, method, headers] of requests) {
+  console.log(`${needsPreflight(method, headers) ? "preflight" : "simple   "}  ${label}`);
+}
+</example>
+<output>
+simple     GET /tasks
+simple     GET /tasks with Accept
+simple     POST a form
+preflight  POST JSON
+preflight  GET with a Bearer token
+preflight  PATCH /tasks/1
+</output>
+<p>These are the rules browsers follow (simplified: header values have a few more limits). Now watch the real Task API answer preflights. The first comes from the front end's origin, which is on the allow-list; the second from a page on another site:</p>
+<example file="preflight.js" project="web-api" browser="no">
+import { once } from "node:events";
+import { createServer } from "node:http";
+import { createApi } from "./src/api.js";
+
+const server = createServer(createApi({ allowedOrigins: ["http://localhost:5173"], users: {} }));
+server.listen(0);
+await once(server, "listening");
+const api = `http://localhost:${server.address().port}`;
+
+for (const origin of ["http://localhost:5173", "https://evil.example"]) {
+  const response = await fetch(`${api}/tasks/1`, {
+    method: "OPTIONS",
+    headers: { Origin: origin, "Access-Control-Request-Method": "PATCH", "Access-Control-Request-Headers": "content-type" },
+  });
+  console.log(`preflight from ${origin}: ${response.status}`);
+  for (const [name, value] of response.headers) {
+    if (name.startsWith("access-control-") || name === "vary") console.log(`  ${name}: ${value}`);
+  }
+}
+server.close();
+</example>
+<output>
+preflight from http://localhost:5173: 204
+  access-control-allow-credentials: true
+  access-control-allow-headers: Content-Type
+  access-control-allow-methods: GET, POST, PATCH
+  access-control-allow-origin: http://localhost:5173
+  access-control-max-age: 600
+  vary: Origin
+preflight from https://evil.example: 204
+  vary: Origin
+</output>
+<p>The allowed origin gets its own origin echoed back, the allowed methods and headers, and <code>Max-Age: 600</code>, which lets the browser remember the answer for ten minutes instead of preflighting every request. The other site gets a 204 with no permissions at all, so its browser will refuse to send the <code>PATCH</code>. <code>Vary: Origin</code> tells caches that the answer depends on the <code>Origin</code> header, so a cache never hands one origin's permission to another.</p>
+<h3>What the browser checks</h3>
+<p>After the real request, the browser checks the response before your code sees it. The whole check fits in a few lines:</p>
+<example file="cors-check.js">
+function corsAllows(headers, origin, withCredentials) {
+  const allowOrigin = headers.get("access-control-allow-origin");
+  if (allowOrigin === "*" && !withCredentials) return true;
+  if (allowOrigin !== origin) return false;
+  return !withCredentials || headers.get("access-control-allow-credentials") === "true";
+}
+
+const page = "http://localhost:5173";
+const cases = [
+  ["no CORS headers", {}, false],
+  ["* for a public API", { "access-control-allow-origin": "*" }, false],
+  ["* with cookies", { "access-control-allow-origin": "*" }, true],
+  ["another origin", { "access-control-allow-origin": "https://tasks.example" }, true],
+  ["exact origin, no credentials flag", { "access-control-allow-origin": page }, true],
+  ["exact origin + credentials", { "access-control-allow-origin": page, "access-control-allow-credentials": "true" }, true],
+];
+for (const [label, headers, withCredentials] of cases) {
+  console.log(`${corsAllows(new Headers(headers), page, withCredentials) ? "readable" : "BLOCKED "}  ${label}`);
+}
+</example>
+<output>
+BLOCKED   no CORS headers
+readable  * for a public API
+BLOCKED   * with cookies
+BLOCKED   another origin
+BLOCKED   exact origin, no credentials flag
+readable  exact origin + credentials
+</output>
+<p>The wildcard <code>*</code> is allowed only for requests without credentials: a truly public API, like a list of exchange rates, can say "anyone may read this". A response to a request that carried cookies must name the exact origin and add <code>Access-Control-Allow-Credentials: true</code>. That is why the API's CORS module echoes the origin after checking it against an allow-list. Never echo back <em>any</em> origin: that is the same as allowing every site on the internet to read your users' data.</p>
+<note>A blocked response is not a network failure: the request usually reached the server, which may have acted on it, and the response came back. The browser simply refuses to show it to your code. Your code sees a <code>TypeError</code> ("Failed to fetch" in Chromium), and the real reason appears only in the developer console. Check the console and the Network tab, never guess.</note>
+</section>
+
+<section>
+<h2 id="cookies">Sessions with HttpOnly cookies</h2>
+<p>Back to the second problem: the API key in the page. A browser app should not hold a long-lived secret at all. Instead, the user logs in, and the server gives the browser a <strong>session cookie</strong>: a random id that stands for "this user, logged in". The browser stores it and sends it back with every request to the API, and the server looks the id up. <a href="/learn/http-deep#cookies">HTTP in depth</a> lists the cookie attributes; the API's cookie uses five of them:</p>
+<pre class="lx-json">Set-Cookie: session=4f1c…(64 hex characters)…; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600</pre>
+<ul>
+<li><strong><code>HttpOnly</code></strong>: page JavaScript cannot read or write this cookie. It is sent with requests, but <code>document.cookie</code> does not show it. An XSS attacker who runs code in the page cannot steal the session id.</li>
+<li><strong><code>Secure</code></strong>: sent only over HTTPS (browsers make an exception for <code>http://localhost</code>, so development still works).</li>
+<li><strong><code>SameSite=Lax</code></strong>: not sent with requests started by pages from <em>other sites</em>, apart from top-level link navigation. That blocks most CSRF.</li>
+<li><strong><code>Path=/</code></strong> and <strong><code>Max-Age=3600</code></strong>: send it for every path, and forget it after an hour.</li>
+</ul>
+<p>Here is what page JavaScript can and cannot do with cookies. A page may set ordinary cookies through <code>document.cookie</code>, but a cookie marked <code>HttpOnly</code> can only come from a server:</p>
+<example file="document-cookie.js" project="net" runtime="dom">
+document.cookie = "academy-demo-theme=dark; Path=/; SameSite=Lax; Max-Age=60";
+document.cookie = "academy-demo-session=forged; HttpOnly; Path=/; Max-Age=60";
+
+const visible = document.cookie.split("; ").filter((c) => c.startsWith("academy-demo-"));
+console.log("cookies this page can see:", visible);
+
+document.cookie = "academy-demo-theme=; Path=/; Max-Age=0";
+console.log("after deleting:", document.cookie.split("; ").filter((c) => c.startsWith("academy-demo-")));
+</example>
+<output>
+cookies this page can see: [ 'academy-demo-theme=dark' ]
+after deleting: []
+</output>
+<p>The browser ignored the attempt to create an <code>HttpOnly</code> cookie from script. Deleting a cookie means setting it again with <code>Max-Age=0</code>. (This preview shares this website's cookies, so the example uses <code>academy-demo-</code> names, a one-minute lifetime, and cleans up.)</p>
+<h3>Cookies and fetch: credentials</h3>
+<p>Whether <code>fetch</code> sends and stores cookies is decided by its <code>credentials</code> option:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th><code>credentials</code></th><th>Cookies sent and stored for…</th></tr></thead>
+<tbody>
+<tr><td><code>"same-origin"</code> (default)</td><td>requests to the page's own origin only</td></tr>
+<tr><td><code>"include"</code></td><td>cross-origin requests too, if the server's CORS answer allows credentials</td></tr>
+<tr><td><code>"omit"</code></td><td>never</td></tr>
+</tbody>
+</table></div>
+<p>The front end on <code>localhost:5173</code> calls the API on <code>localhost:3000</code>, a different origin, so it must use <code>credentials: "include"</code>, and the API must answer with its exact origin and <code>Access-Control-Allow-Credentials: true</code>. Cookies have one more filter: <code>SameSite</code> is about <strong>sites</strong>, not origins. A site is roughly the registrable domain (<code>tasks.example</code>), ignoring subdomains and ports. <code>localhost:5173</code> and <code>localhost:3000</code> are the same site, and so are <code>app.tasks.example</code> and <code>api.tasks.example</code>, so a <code>SameSite=Lax</code> cookie works between them. An API on a completely different domain would need <code>SameSite=None; Secure</code>, and many browsers now block such third-party cookies anyway. Keep the front end and the API on the same site.</p>
+</section>
+
+<section>
+<h2 id="plan">Before you build: connecting the front end</h2>
+<reason title="Who is protected from whom?">
+<p>Before writing the client and the CORS configuration, answer these:</p>
+<ul>
+<li>Which origins should the API allow, and what would <code>Access-Control-Allow-Origin: *</code> or "echo any origin" mean for your users?</li>
+<li>Where does the proof of identity live, and what can an XSS bug on the front end steal in each design (API key in JS, token in <code>localStorage</code>, HttpOnly cookie)?</li>
+<li>CORS stops other sites from <em>reading</em> responses. What stops another site from <em>sending</em> <code>POST /tasks</code> with the user's cookie?</li>
+<li>The front end shows an error. How does the code tell "wrong password", "session expired", "the server is down" and "the request took too long" apart, and what should the user see for each?</li>
+<li>A <code>POST /tasks</code> times out. Did the task get created? Is it safe to send it again automatically?</li>
+</ul>
+<answer>
+<ul>
+<li>Allow exactly the front end's origins (development and production), from configuration. <code>*</code> cannot be used with cookies at all; echoing any origin would let every website read every logged-in user's tasks.</li>
+<li>An API key in JavaScript is readable by everyone, XSS or not. A token in <code>localStorage</code> can be read and sent away by any XSS payload. An HttpOnly cookie cannot be read by script; XSS can still <em>use</em> it while the user has the page open, but cannot take it away. HttpOnly cookies are the safest of the three, and XSS must still be prevented.</li>
+<li><code>SameSite=Lax</code> stops the browser from attaching the cookie to requests started by other sites. The JSON <code>Content-Type</code> helps too: a cross-site JSON <code>POST</code> needs a preflight, which the API refuses for unknown origins. <a href="/learn/sec-web">Web security</a> adds CSRF tokens for extra safety.</li>
+<li>By status: 401 from <code>/login</code> is a wrong password; 401 elsewhere means "log in again"; 400 carries the server's message; 5xx means "try again later"; a <code>TypeError</code> from <code>fetch</code> means the server could not be reached (or CORS blocked it); a <code>TimeoutError</code> means it was too slow. The client turns each into one error type with a clear message.</li>
+<li>Unknown: the server may have created it and the answer got lost. Retrying a <code>GET</code> is safe; retrying a <code>POST</code> can create a duplicate. Only retry non-idempotent requests with an idempotency key, which <a href="/learn/api-idempotency">a later lesson</a> builds.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="build">Build: Browser → API → Server</h2>
+<p>The front end talks to the API through one small module, the <strong>API client</strong>. Every request goes through one function, which adds the headers, sends cookies, sets a time limit, and turns every kind of failure into an <code>ApiError</code> with a status and a message the page can show. It takes <code>fetch</code> as a parameter, so it runs unchanged in the browser, in Node.js, and in tests:</p>
+<example file="src/client.js" project="web-api" browser="no">
+export class ApiError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+export function createTaskClient(baseUrl, { fetch: fetchFn = fetch, timeoutMs = 5000 } = {}) {
+  async function request(method, path, body) {
+    const headers = { Accept: "application/json" };
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    let response;
+    try {
+      response = await fetchFn(new URL(path, baseUrl).href, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        credentials: "include",
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (error) {
+      if (error.name === "TimeoutError") throw new ApiError(0, "The server took too long to answer. Try again.");
+      throw new ApiError(0, "Could not reach the server. Check your connection.");
+    }
+    const data = response.status === 204 ? undefined : await response.json().catch(() => undefined);
+    if (response.ok) return data;
+    if (response.status === 401 && path !== "/login") throw new ApiError(401, "Your session has ended. Please log in again.");
+    if (response.status >= 500) throw new ApiError(response.status, "Something went wrong on our side. Try again later.");
+    throw new ApiError(response.status, data?.error ?? `Request failed (${response.status})`);
+  }
+
+  return {
+    login: (email, password) => request("POST", "/login", { email, password }),
+    listTasks: () => request("GET", "/tasks"),
+    createTask: (title) => request("POST", "/tasks", { title }),
+    setDone: (id, done) => request("PATCH", `/tasks/${encodeURIComponent(id)}`, { done }),
+  };
+}
+</example>
+<p>Node.js's <code>fetch</code> is not a browser: it keeps no cookies and checks no CORS rules. To run the whole flow here, <code>browser.js</code> stands in for the browser's network layer, with the two behaviours this lesson is about: a cookie jar, and the CORS checks from above (preflight and response), including the console message a browser would print. It is a teaching model, not a browser; the real browser's output follows after it:</p>
+<example file="browser.js" project="web-api" browser="no">
+const SIMPLE_METHODS = ["GET", "HEAD", "POST"];
+const FORM_TYPES = ["application/x-www-form-urlencoded", "multipart/form-data", "text/plain"];
+
+function needsPreflight(method, headers) {
+  if (!SIMPLE_METHODS.includes(method)) return true;
+  return Object.entries(headers).some(([name, value]) => {
+    const key = name.toLowerCase();
+    if (key === "content-type") return !FORM_TYPES.includes(value.split(";")[0].trim());
+    return key !== "accept" && key !== "accept-language" && key !== "content-language";
+  });
+}
+
+function corsAllows(headers, origin, withCredentials) {
+  const allowOrigin = headers.get("access-control-allow-origin");
+  if (allowOrigin === "*" && !withCredentials) return true;
+  if (allowOrigin !== origin) return false;
+  return !withCredentials || headers.get("access-control-allow-credentials") === "true";
+}
+
+export function createBrowser(pageOrigin) {
+  const jar = new Map();
+  const blocked = (message) => {
+    console.log(`  [console] blocked by CORS policy: ${message}`);
+    return new TypeError("Failed to fetch");
+  };
+
+  async function browserFetch(href, { method = "GET", headers = {}, body, credentials = "same-origin" } = {}) {
+    const url = new URL(href);
+    const crossOrigin = url.origin !== pageOrigin;
+    const withCredentials = credentials === "include" || (credentials === "same-origin" && !crossOrigin);
+    const sent = { ...headers };
+    if (crossOrigin) {
+      sent.Origin = pageOrigin;
+      if (needsPreflight(method, headers)) {
+        const preflight = await fetch(url, {
+          method: "OPTIONS",
+          headers: { Origin: pageOrigin, "Access-Control-Request-Method": method, "Access-Control-Request-Headers": Object.keys(headers).join(",").toLowerCase() },
+        });
+        const methods = preflight.headers.get("access-control-allow-methods") ?? "";
+        if (!corsAllows(preflight.headers, pageOrigin, withCredentials) || !methods.includes(method)) {
+          throw blocked(`preflight for ${method} ${url.pathname} was not allowed`);
+        }
+      }
+    }
+    const cookies = jar.get(url.origin);
+    if (withCredentials && cookies) sent.Cookie = cookies;
+    const response = await fetch(url, { method, headers: sent, body });
+    if (crossOrigin && !corsAllows(response.headers, pageOrigin, withCredentials)) {
+      throw blocked(`no permission for ${pageOrigin} to read ${method} ${url.pathname}`);
+    }
+    const setCookie = response.headers.get("set-cookie");
+    if (withCredentials && setCookie) jar.set(url.origin, setCookie.split(";")[0]);
+    return response;
+  }
+
+  return { fetch: browserFetch, hasCookieFor: (origin) => jar.has(origin) };
+}
+</example>
+<p>And the whole flow: start the API, open "the page" on the allowed origin, log in, create and list tasks, then try the same things with a wrong password, from a page on a site the API does not allow, without a session, and against a server that is not running:</p>
+<example file="flow.js" project="web-api" browser="no">
+import { once } from "node:events";
+import { createServer } from "node:http";
+import { createApi } from "./src/api.js";
+import { createTaskClient } from "./src/client.js";
+import { createBrowser } from "./browser.js";
+
+const users = { "ada@tasks.example": "correct horse battery staple" };
+const server = createServer(createApi({ allowedOrigins: ["http://localhost:5173"], users }));
+server.listen(0);
+await once(server, "listening");
+const apiUrl = `http://localhost:${server.address().port}`;
+
+async function show(label, action) {
+  try {
+    const result = await action();
+    console.log(`${label}: ${result === undefined ? "ok" : JSON.stringify(result)}`);
+  } catch (error) {
+    console.log(`${label}: ${error.name} ${error.status} - ${error.message}`);
+  }
+}
+
+console.log("--- page on http://localhost:5173");
+const browser = createBrowser("http://localhost:5173");
+const client = createTaskClient(apiUrl, { fetch: browser.fetch });
+await show("login, wrong password", () => client.login("ada@tasks.example", "password123"));
+await show("list before login", () => client.listTasks());
+await show("login", () => client.login("ada@tasks.example", "correct horse battery staple"));
+console.log("the browser holds a session cookie:", browser.hasCookieFor(apiUrl));
+await show("create", () => client.createTask("Buy detergent"));
+await show("create empty", () => client.createTask("   "));
+await show("mark done", () => client.setDone(1, true));
+await show("list", () => client.listTasks());
+
+console.log("--- page on https://evil.example, same browser, same cookie jar");
+const evil = createTaskClient(apiUrl, { fetch: createBrowser("https://evil.example").fetch });
+await show("list", () => evil.listTasks());
+await show("mark not done", () => evil.setDone(1, false));
+
+server.close();
+console.log("--- server stopped");
+await show("list", () => client.listTasks());
+</example>
+<output>
+--- page on http://localhost:5173
+login, wrong password: ApiError 401 - Wrong email or password
+list before login: ApiError 401 - Your session has ended. Please log in again.
+login: ok
+the browser holds a session cookie: true
+create: {"id":1,"title":"Buy detergent","done":false}
+create empty: ApiError 400 - title must be 1 to 200 characters
+mark done: {"id":1,"title":"Buy detergent","done":true}
+list: [{"id":1,"title":"Buy detergent","done":true}]
+--- page on https://evil.example, same browser, same cookie jar
+  [console] blocked by CORS policy: no permission for https://evil.example to read GET /tasks
+list: ApiError 0 - Could not reach the server. Check your connection.
+  [console] blocked by CORS policy: preflight for PATCH /tasks/1 was not allowed
+mark not done: ApiError 0 - Could not reach the server. Check your connection.
+--- server stopped
+list: ApiError 0 - Could not reach the server. Check your connection.
+</output>
+<p>Read the results against the rules:</p>
+<ul>
+<li>The wrong password shows the server's message; listing before login shows the friendlier "session has ended" message the client chose for 401s.</li>
+<li>After login, the cookie jar holds the session, and every later request carried it: <code>credentials: "include"</code> plus the API's CORS answer.</li>
+<li>The page on <code>evil.example</code> got nowhere. Its <code>GET</code> reached the server, but the response was hidden from it. Its <code>PATCH</code> needed a preflight, which the API refused, so the real request was never sent. (In a real browser, <code>SameSite=Lax</code> would also have kept the cookie off both requests; this stand-in does not model it.)</li>
+<li>With the server gone, <code>fetch</code> itself rejected, and the client turned it into a message a user can act on.</li>
+</ul>
+<h3>The real front end</h3>
+<p>In the browser, the page loads the same <code>client.js</code> as a module and passes the browser's own <code>fetch</code>. The rendering follows <a href="/learn/browser-dom#build">The DOM</a>: build rows from data with <code>textContent</code>.</p>
+<file name="public/index.html" project="web-api">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Ada's tasks</title>
+  <link rel="icon" href="data:,">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <form id="login">
+    <label>Email <input name="email" type="email" autocomplete="username" required></label>
+    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+    <button>Log in</button>
+  </form>
+  <form id="new-task" hidden>
+    <label>New task <input name="title" required maxlength="200"></label>
+    <button>Add</button>
+  </form>
+  <p id="message" role="status"></p>
+  <ul id="tasks"></ul>
+</body>
+</html>
+</file>
+<file name="public/app.js" project="web-api">
+import { ApiError, createTaskClient } from "./client.js";
+
+const api = createTaskClient("http://localhost:3000", { fetch: (...args) => fetch(...args) });
+const $ = (selector) => document.querySelector(selector);
+const say = (text) => ($("#message").textContent = text);
+
+async function refresh() {
+  const tasks = await api.listTasks();
+  $("#tasks").replaceChildren(...tasks.map((task) => {
+    const li = document.createElement("li");
+    li.textContent = `${task.done ? "[x]" : "[ ]"} ${task.title}`;
+    return li;
+  }));
+}
+
+async function run(action) {
+  try {
+    await action();
+    say("");
+  } catch (error) {
+    say(error instanceof ApiError ? error.message : "Unexpected error");
+    if (!(error instanceof ApiError)) console.error(error);
+  }
+}
+
+$("#login").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const { email, password } = Object.fromEntries(new FormData(event.target));
+  run(async () => {
+    await api.login(email, password);
+    $("#login").hidden = true;
+    $("#new-task").hidden = false;
+    await refresh();
+  });
+});
+
+$("#new-task").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const form = event.target;
+  run(async () => {
+    await api.createTask(form.elements.title.value);
+    form.reset();
+    await refresh();
+  });
+});
+</file>
+<p>Run the API on port 3000 with <code>allowedOrigins: ["http://localhost:5173"]</code>, copy <code>src/client.js</code> into <code>public/</code>, and serve <code>public/</code> on port 5173 with any static server, for example <code>npx serve public -l 5173</code>. Log in as Ada and add a task. Then serve the same folder on port 5174, which is not on the allow-list, and try again. This is what Chromium printed in its console when the lesson was tested that way:</p>
+<pre class="lx-json" id="real-browser-output">Page on http://localhost:5173: log in as Ada, add "Buy detergent"
+  list on the page:     [ ] Buy detergent
+  console:              (no messages)
+  document.cookie:      ""
+
+Page on http://localhost:5174: log in as Ada
+  console:              Access to fetch at 'http://localhost:3000/login' from origin 'http://localhost:5174' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+  console:              Failed to load resource: net::ERR_FAILED
+  message on the page:  Could not reach the server. Check your connection.</pre>
+<p>On the allowed origin everything worked, and <code>document.cookie</code> is empty although the browser holds a session: the cookie is <code>HttpOnly</code>. On port 5174, the login request (JSON, so preflighted) never got past the preflight. Same code, same server, one different port number: the browser refused, and the page's <code>ApiError</code> said "Could not reach the server", because a CORS block and a network failure look identical to JavaScript. The console, which only a developer sees, gives the real reason.</p>
+</section>
+
+<section>
+<h2 id="abort">Cancelling stale requests</h2>
+<p>The debounced search box from <a href="/learn/browser-events#debounce">Events</a> still has one bug. The user types "ric", pauses, and a search starts. They type "e", and a second search starts. If the server answers "rice" quickly and "ric" slowly (a bigger result, a busier server), the old answer arrives last and overwrites the new one: the box says "rice" and the list shows results for "ric". Responses do not arrive in the order requests were sent. Here is the race against a real server whose answer for "ric" is slow:</p>
+<example file="race.js" project="web-api" browser="no">
+import { once } from "node:events";
+import { createServer } from "node:http";
+
+const products = ["Rice 5kg", "Rice 10kg", "Rice bran oil", "Palm oil 1L"];
+const server = createServer(async (req, res) => {
+  const q = new URL(req.url, "http://x").searchParams.get("q") ?? "";
+  await new Promise((resolve) => setTimeout(resolve, q === "ric" ? 150 : 20));
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify(products.filter((p) => p.toLowerCase().includes(q))));
+});
+server.listen(0);
+await once(server, "listening");
+const base = `http://localhost:${server.address().port}/search?q=`;
+
+async function searchWithoutCancel(terms) {
+  let shown;
+  await Promise.all(terms.map(async (term, i) => {
+    await new Promise((resolve) => setTimeout(resolve, i * 40));
+    const results = await (await fetch(base + encodeURIComponent(term))).json();
+    shown = { term, results };
+  }));
+  return shown;
+}
+
+async function searchWithCancel(terms) {
+  let shown;
+  let controller;
+  await Promise.all(terms.map(async (term, i) => {
+    await new Promise((resolve) => setTimeout(resolve, i * 40));
+    controller?.abort();
+    controller = new AbortController();
+    try {
+      const response = await fetch(base + encodeURIComponent(term), { signal: controller.signal });
+      shown = { term, results: await response.json() };
+    } catch (error) {
+      if (error.name !== "AbortError") throw error;
+      console.log(`  cancelled the search for "${term}"`);
+    }
+  }));
+  return shown;
+}
+
+console.log("without cancelling:", await searchWithoutCancel(["ric", "rice 1"]));
+console.log("with cancelling:", await searchWithCancel(["ric", "rice 1"]));
+server.close();
+</example>
+<output>
+without cancelling: { term: 'ric', results: [ 'Rice 5kg', 'Rice 10kg', 'Rice bran oil' ] }
+  cancelled the search for "ric"
+with cancelling: { term: 'rice 1', results: [ 'Rice 10kg' ] }
+</output>
+<p>Without cancelling, the page ends up showing the slow, stale answer for "ric" (all three rice products) although the user typed "rice 1". With an <code>AbortController</code> per search, starting a new search aborts the previous request: its <code>fetch</code> rejects with an <code>AbortError</code>, which is expected and ignored, and only the latest answer is shown. Aborting also frees the browser's connection and, if the server listens for it, lets the server stop working on an answer nobody wants.</p>
+<p>In the page, the same idea joins the debounce from Events. Here the "server" is a function with the same contract as <code>fetch</code> (it takes a <code>signal</code> and rejects with an <code>AbortError</code> when aborted), with simulated delays, because the preview has no search API to call:</p>
+<example file="search-box.js" project="net" runtime="dom">
+const products = ["Rice 5kg", "Rice 10kg", "Rice bran oil", "Palm oil 1L"];
+function searchApi(term, { signal }) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(products.filter((p) => p.toLowerCase().includes(term))), term === "ric" ? 300 : 50);
+    signal.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    }, { once: true });
+  });
+}
+
+const input = document.querySelector("#search");
+const list = document.querySelector("#results");
+let controller;
+let timer;
+
+input.addEventListener("input", () => {
+  clearTimeout(timer);
+  timer = setTimeout(async () => {
+    const term = input.value.trim().toLowerCase();
+    controller?.abort();
+    controller = new AbortController();
+    try {
+      const results = await searchApi(term, { signal: controller.signal });
+      list.replaceChildren(...results.map((name) => Object.assign(document.createElement("li"), { textContent: name })));
+      console.log(`showing ${results.length} of ${products.length} products for "${term}"`);
+    } catch (error) {
+      if (error.name === "AbortError") console.log(`cancelled "${term}"`);
+      else console.log("search failed:", error.message);
+    }
+  }, 100);
+});
+
+const type = (value) => {
+  input.value = value;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+};
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+type("ric");
+await sleep(150);
+type("rice 1");
+await sleep(400);
+console.log("list shows:", [...list.children].map((li) => li.textContent));
+</example>
+<output>
+cancelled "ric"
+showing 1 of 4 products for "rice 1"
+list shows: [ 'Rice 10kg' ]
+</output>
+<p>Two more tools from the same family. <code>AbortSignal.timeout(ms)</code> makes a signal that aborts by itself after <code>ms</code> milliseconds, with a <code>TimeoutError</code>; the API client uses it so that no request can hang forever. <code>AbortSignal.any([a, b])</code> combines signals, for a request that should stop on a timeout <em>or</em> when the user leaves the page. <a href="/learn/js-concurrency">Concurrency</a> covers cancellation in depth.</p>
+</section>
+
+<section>
+<h2 id="failures">When networking fails</h2>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Symptom</th><th>Usual cause</th></tr></thead>
+<tbody>
+<tr><td>"No 'Access-Control-Allow-Origin' header is present"</td><td>The server does not allow this origin, or an error happened before the CORS headers were added (a crash, a proxy's error page). Check the server's log too.</td></tr>
+<tr><td>"Response to preflight request doesn't pass access control check"</td><td>The <code>OPTIONS</code> request was rejected: often by an authentication check that runs before CORS and answers 401. Preflights never carry cookies, so CORS must answer them before any auth middleware.</td></tr>
+<tr><td>"The value of the 'Access-Control-Allow-Origin' header must not be the wildcard '*' when the request's credentials mode is 'include'"</td><td><code>*</code> with cookies. Echo the checked origin and add <code>Access-Control-Allow-Credentials: true</code>.</td></tr>
+<tr><td>401 on every request after a successful login</td><td>The cookie is not sent: <code>credentials: "include"</code> missing, a cross-site API with <code>SameSite=Lax</code>, or <code>Secure</code> cookies on plain HTTP outside localhost.</td></tr>
+<tr><td>Code reads a header the Network tab shows, but gets <code>null</code></td><td>Cross-origin responses expose only a few headers to JavaScript. The server must list others in <code>Access-Control-Expose-Headers</code>. <code>Set-Cookie</code> is never readable.</td></tr>
+<tr><td><code>response.json()</code> fails with a <code>SyntaxError</code></td><td>The body is an HTML error page (404, a proxy's 502). Check <code>response.ok</code> and the content type first.</td></tr>
+<tr><td>Old results replace new ones</td><td>A race between requests. Abort the previous one.</td></tr>
+</tbody>
+</table></div>
+<warn><code>fetch(url, { mode: "no-cors" })</code> does not switch CORS off. It sends the request and gives you an <strong>opaque</strong> response: status 0, no headers, an empty body. It exists for caching things like images, not for reading APIs. When a CORS error appears, fix the server's headers.</warn>
+</section>
+
+<section>
+<h2 id="testing">Testing networked code</h2>
+<ul>
+<li><strong>Unit tests with a fake fetch.</strong> <code>createTaskClient</code> accepts any <code>fetch</code>. A test passes a function that returns <code>new Response(…)</code> objects (or throws a <code>TypeError</code>, or waits past the timeout) and checks the <code>ApiError</code> that comes out.</li>
+<li><strong>Integration tests against the real server.</strong> Start the API on port 0, call it with real HTTP, and close it, as every Node.js example in this lesson did. Test the headers too: that an unknown origin gets no <code>Access-Control-Allow-Origin</code>, that the session cookie is <code>HttpOnly</code>, that a preflight is answered without a session.</li>
+<li><strong>End-to-end tests in a real browser.</strong> Only a real browser applies CORS, SameSite and cookie storage exactly. Tools such as Playwright drive Chromium, Firefox and WebKit through the front end and fail on console errors. A few such tests catch configuration mistakes that no unit test can.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="production">In production</h2>
+<ul>
+<li><strong>Avoid CORS when you can.</strong> Serve the front end and the API from one origin, with a reverse proxy sending <code>/api/*</code> to the Node.js server. Development servers such as Vite have a <code>proxy</code> setting that does the same on your machine. No cross-origin requests, no preflights, no CORS configuration to get wrong.</li>
+<li><strong>When you need CORS</strong>, read the allowed origins from configuration, compare exactly (never with <code>startsWith</code> or a loose regular expression: <code>https://tasks.example.evil.com</code> starts with <code>https://tasks.example</code>), send <code>Vary: Origin</code>, and set <code>Access-Control-Max-Age</code> to cut preflights.</li>
+<li><strong>HTTPS everywhere</strong>, with <code>Secure</code> cookies. Rotate the session id after login, expire sessions on the server, and delete them on logout.</li>
+<li><strong>CSRF</strong>: <code>SameSite</code> cookies, JSON-only APIs and a check of the <code>Origin</code> header on state-changing requests, plus CSRF tokens for forms. See <a href="/learn/sec-web">Web security</a>.</li>
+<li><strong>Timeouts and retries.</strong> Every request has a time limit. Retry only idempotent requests (<code>GET</code>, <code>PUT</code>, <code>DELETE</code>) automatically, with increasing delays; retry <code>POST</code> only with an idempotency key.</li>
+<li><strong>Rate limits</strong> on <code>/login</code> and every public route, and error messages that do not reveal whether an email has an account.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Decide the CORS headers">
+<p>Write <code>corsHeadersFor(request, allowedOrigins)</code>, a pure function that takes <code>{ method, origin, requestMethod }</code> and returns the headers the API should add. Unknown origins get only <code>Vary</code>. Preflights (<code>OPTIONS</code>) from allowed origins also get methods, headers and max-age.</p>
+<solution>
+<example file="cors-headers.js">
+function corsHeadersFor({ method, origin }, allowedOrigins) {
+  const headers = { Vary: "Origin" };
+  if (!origin || !allowedOrigins.includes(origin)) return headers;
+  headers["Access-Control-Allow-Origin"] = origin;
+  headers["Access-Control-Allow-Credentials"] = "true";
+  if (method === "OPTIONS") {
+    headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH";
+    headers["Access-Control-Allow-Headers"] = "Content-Type";
+    headers["Access-Control-Max-Age"] = "600";
+  }
+  return headers;
+}
+
+const allowed = ["https://tasks.example", "http://localhost:5173"];
+console.log(corsHeadersFor({ method: "GET", origin: "https://tasks.example" }, allowed));
+console.log(corsHeadersFor({ method: "OPTIONS", origin: "http://localhost:5173" }, allowed));
+console.log(corsHeadersFor({ method: "GET", origin: "https://tasks.example.evil.com" }, allowed));
+console.log(corsHeadersFor({ method: "GET" }, allowed));
+</example>
+<output>
+{
+  Vary: 'Origin',
+  'Access-Control-Allow-Origin': 'https://tasks.example',
+  'Access-Control-Allow-Credentials': 'true'
+}
+{
+  Vary: 'Origin',
+  'Access-Control-Allow-Origin': 'http://localhost:5173',
+  'Access-Control-Allow-Credentials': 'true',
+  'Access-Control-Allow-Methods': 'GET, POST, PATCH',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Max-Age': '600'
+}
+{ Vary: 'Origin' }
+{ Vary: 'Origin' }
+</output>
+<p>A pure function like this is trivial to test for every case, including the look-alike origin, and the middleware only copies its result onto the response.</p>
+</solution>
+</exercise>
+<exercise title="Retry safely">
+<p>Write <code>withRetry(send, { method, attempts, delayMs })</code>. It calls <code>send()</code>, and retries after a network error (a <code>TypeError</code>) or a 503, waiting <code>delayMs</code>, then twice as long each time, up to <code>attempts</code> tries in total. It never retries a <code>POST</code>. Test it with fake responses.</p>
+<solution>
+<example file="retry.js">
+const IDEMPOTENT = ["GET", "HEAD", "PUT", "DELETE"];
+
+async function withRetry(send, { method = "GET", attempts = 3, delayMs = 10 } = {}) {
+  const tries = IDEMPOTENT.includes(method) ? attempts : 1;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const response = await send();
+      if (response.status !== 503 || attempt === tries) return response;
+      console.log(`  attempt ${attempt}: 503, retrying`);
+    } catch (error) {
+      if (!(error instanceof TypeError) || attempt === tries) throw error;
+      console.log(`  attempt ${attempt}: ${error.message}, retrying`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, delayMs * 2 ** (attempt - 1)));
+  }
+}
+
+function flakyServer(script) {
+  let call = 0;
+  return async () => {
+    const next = script[Math.min(call++, script.length - 1)];
+    if (next === "down") throw new TypeError("Failed to fetch");
+    return new Response(null, { status: next });
+  };
+}
+
+console.log("GET:", (await withRetry(flakyServer(["down", 503, 200]))).status);
+console.log("POST:", (await withRetry(flakyServer([503, 200]), { method: "POST" })).status);
+try {
+  await withRetry(flakyServer(["down"]), { attempts: 2 });
+} catch (error) {
+  console.log("gave up:", error.message);
+}
+</example>
+<output>
+  attempt 1: Failed to fetch, retrying
+  attempt 2: 503, retrying
+GET: 200
+POST: 503
+  attempt 1: Failed to fetch, retrying
+gave up: Failed to fetch
+</output>
+<p>The <code>POST</code> got its 503 back after one attempt: the caller decides, and a real client would show "try again" rather than risk a duplicate order. Doubling the delay (<strong>exponential backoff</strong>) avoids hammering a server that is already struggling; production code also adds a little randomness so thousands of clients do not retry in step.</p>
+</solution>
+</exercise>
+<exercise title="Can JavaScript read this cookie?">
+<p>Write <code>describeCookie(setCookieLine)</code> that parses a <code>Set-Cookie</code> value and reports its name, whether page JavaScript can read it, whether it is limited to HTTPS, and its <code>SameSite</code> value (browsers treat a missing one as <code>Lax</code>).</p>
+<solution>
+<example file="describe-cookie.js">
+function describeCookie(line) {
+  const [pair, ...attributes] = line.split(";").map((part) => part.trim());
+  const name = pair.slice(0, pair.indexOf("="));
+  const flags = new Map(attributes.map((a) => {
+    const [key, value = ""] = a.split("=");
+    return [key.toLowerCase(), value];
+  }));
+  return {
+    name,
+    readableByJs: !flags.has("httponly"),
+    httpsOnly: flags.has("secure"),
+    sameSite: flags.get("samesite") || "Lax (default)",
+  };
+}
+
+console.log(describeCookie("session=4f1c9e; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600"));
+console.log(describeCookie("theme=dark; Path=/"));
+console.log(describeCookie("tracker=x1; SameSite=None; Secure"));
+</example>
+<output>
+{
+  name: 'session',
+  readableByJs: false,
+  httpsOnly: true,
+  sameSite: 'Lax'
+}
+{
+  name: 'theme',
+  readableByJs: true,
+  httpsOnly: false,
+  sameSite: 'Lax (default)'
+}
+{
+  name: 'tracker',
+  readableByJs: true,
+  httpsOnly: true,
+  sameSite: 'None'
+}
+</output>
+<p>The theme cookie is fine to leave readable: the page needs it and it is not secret. A session cookie must always be <code>HttpOnly</code> and <code>Secure</code>.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Summary</h2>
+<ul>
+<li>A <code>fetch</code> resolves when the headers arrive; the body is read separately. The browser adds headers itself, forbids pages from setting <code>Cookie</code>, <code>Origin</code> and <code>Host</code>, and never shows them <code>Set-Cookie</code>.</li>
+<li>Send JSON with <code>Content-Type: application/json</code>, ask for it with <code>Accept</code>, and turn every failure (network, timeout, 4xx, 5xx, bad JSON) into one clear error type in a single API client.</li>
+<li>The same-origin policy stops pages from <em>reading</em> other origins' responses; it does not stop them from <em>sending</em> requests, which is why CSRF defences exist.</li>
+<li>CORS is the server's permission, checked by the browser: an exact <code>Access-Control-Allow-Origin</code> (never <code>*</code> with cookies), <code>Allow-Credentials</code>, and preflight answers for non-simple requests, handled before authentication.</li>
+<li>Browser apps prove identity with an <code>HttpOnly; Secure; SameSite</code> session cookie, not a key in JavaScript. Cross-origin requests need <code>credentials: "include"</code>.</li>
+<li>Abort stale requests with <code>AbortController</code>, and give every request a time limit with <code>AbortSignal.timeout</code>.</li>
+</ul>
+<p>Next: <a href="/learn/browser-realtime">Real-time and background work</a>: the order-status page that updates itself, with WebSockets, Server-Sent Events and Web Workers.</p>
+</section>

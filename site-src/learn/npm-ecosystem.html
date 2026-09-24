@@ -1,0 +1,971 @@
+---
+title: The npm ecosystem in depth
+description: Go beyond npm install: exact semver rules, the dependency tree and lockfile, peer dependencies, lifecycle scripts, local packages, publishing and supply-chain defence.
+minutes: 50
+youNeed: npm and packages
+youBuild: A shop monorepo with a linked invoice-kit package, a reproducible install, and small tools that read a lockfile, compare versions and flag typosquats
+keywords: semantic versioning prerelease, semver caret 0.x, version ranges, package-lock.json lockfileVersion 3, npm ci omit dev, npm explain, npm dedupe, overrides, peerDependencies ERESOLVE, npm scripts pre post lifecycle, npm_package_version, npm pack tarball, file dependency, npm workspaces, npm publish access dist-tag, npm version prerelease, npm audit, provenance, typosquatting, dependency confusion
+objectives: Predict exactly which versions a range allows, including 0.x versions and prereleases | Read a lockfile and explain why a package is installed, duplicated or overridden | Diagnose and fix a peer dependency conflict without --force | Use lifecycle scripts, script arguments and npm environment variables | Test a package as a tarball, publish it with the right access and dist-tag, and version prereleases | Assess npm audit output honestly and defend against typosquatting and dependency confusion
+---
+<section>
+<h2 id="problem">"It worked yesterday"</h2>
+<p>Monday morning, the shop's automated build fails. Nobody changed any code since Friday. The error comes from deep inside a package nobody on the team has heard of. How can code that nobody touched break?</p>
+<p>Because your project is not only your code. You met npm in <a href="/learn/npm-packages">npm and packages</a>: install, ranges, the lockfile, scripts, workspaces and the basic safety habits. This lesson looks at what happens underneath, because that is where "it worked yesterday" problems come from. Start by installing one popular web framework into an empty project:</p>
+<shell>
+$ mkdir shop-api
+$ cd shop-api
+$ npm init -y
+Wrote to ~/shop-api/package.json:
+…
+$ npm install express
+
+added 68 packages, and audited 69 packages in 9s
+
+28 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+</shell>
+<p>One command, 68 packages. You chose one; its authors chose the rest, and their authors chose more. Each of those 68 has its own version range, maintainers, release schedule and security history. Every one can change your build.</p>
+<reason title="The build that broke overnight">
+<p>Before reading on, list every way the build could have changed between Friday and Monday without anyone editing code. Think about:</p>
+<ul>
+<li>What does the build machine run: <code>npm install</code> or <code>npm ci</code>? Is <code>package-lock.json</code> committed?</li>
+<li>What does a range like <code>^4.4.0</code> allow, and who decides when a new version inside it appears?</li>
+<li>What else comes from outside your repository: the Node.js version, the registry itself?</li>
+</ul>
+<answer>
+<ul>
+<li>If the lockfile is not committed, or the build runs <code>npm install</code>, every build resolves ranges again. Any of the 68 packages may have published a new version inside its range over the weekend. Semver says a minor or patch release should not break you, but it is a promise made by people, and people make mistakes. So the first fix is: commit the lockfile, build with <code>npm ci</code>.</li>
+<li>A new version may be <em>malicious</em>, not just buggy: a stolen maintainer account publishing a patch release is a real, repeated attack. The lockfile protects you from this too, until you update.</li>
+<li>The build machine's Node.js version may have changed (a floating "latest" image). The <code>engines</code> field and a pinned version in the build configuration prevent that.</li>
+<li>The registry may be down or slow, or a package may have been removed. Builds that cache dependencies survive that.</li>
+</ul>
+<p>Each point is a section of this lesson: versions, the lockfile, the tree, and the supply chain.</p>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="semver">Semantic versioning, precisely</h2>
+<p>You know the basics: <code>MAJOR.MINOR.PATCH</code>, <code>^</code> accepts new minor versions and <code>~</code> only new patches. The full rules have three more parts that matter in real projects.</p>
+<h3>Prerelease versions</h3>
+<p>A version can carry a <strong>prerelease</strong> label after a hyphen: <code>2.0.0-beta.3</code>, <code>1.4.0-rc.1</code>. It means "not final yet". The label is split at the dots, and the parts are compared one by one: numbers as numbers, text alphabetically, and a version <em>with</em> a label comes before the same version without one. The official <code>semver</code> command sorts versions when you give it no range:</p>
+<shell>
+$ npx semver 1.0.0 1.0.0-beta.10 1.0.0-beta.2 1.0.0-alpha 1.0.0-rc.1 0.9.9 1.0.0-alpha.1
+0.9.9
+1.0.0-alpha
+1.0.0-alpha.1
+1.0.0-beta.2
+1.0.0-beta.10
+1.0.0-rc.1
+1.0.0
+</shell>
+<p>Two details trip people up: <code>beta.2</code> comes before <code>beta.10</code> (numbers compare as numbers, not as text), and <code>alpha</code> comes before <code>alpha.1</code> (fewer parts comes first when all shared parts are equal). Here is the same comparison written out, so you can see every rule. A plus sign starts <strong>build metadata</strong> (<code>1.0.0+build.42</code>), which is ignored when comparing:</p>
+<example file="semver-compare.js">
+function parse(version) {
+  const [core, pre] = version.split("+")[0].split(/-(.*)/s);
+  const [major, minor, patch] = core.split(".").map(Number);
+  return { major, minor, patch, pre: pre ? pre.split(".") : [] };
+}
+
+function compareIdentifiers(a, b) {
+  const aNum = /^\d+$/.test(a);
+  const bNum = /^\d+$/.test(b);
+  if (aNum && bNum) return Number(a) - Number(b);
+  if (aNum) return -1;
+  if (bNum) return 1;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function compare(x, y) {
+  const a = parse(x);
+  const b = parse(y);
+  for (const part of ["major", "minor", "patch"]) {
+    if (a[part] !== b[part]) return a[part] - b[part];
+  }
+  if (a.pre.length === 0 || b.pre.length === 0) return b.pre.length - a.pre.length;
+  for (let i = 0; i < Math.min(a.pre.length, b.pre.length); i++) {
+    const order = compareIdentifiers(a.pre[i], b.pre[i]);
+    if (order !== 0) return order;
+  }
+  return a.pre.length - b.pre.length;
+}
+
+const published = ["1.0.0", "1.0.0-beta.10", "1.0.0-beta.2", "1.0.0-alpha", "1.0.0-rc.1", "0.9.9", "1.0.0-alpha.1"];
+console.log(published.toSorted(compare).join("  "));
+console.log(compare("1.0.0+build.42", "1.0.0"));
+</example>
+<output>
+0.9.9  1.0.0-alpha  1.0.0-alpha.1  1.0.0-beta.2  1.0.0-beta.10  1.0.0-rc.1  1.0.0
+0
+</output>
+<p>The order matches the <code>semver</code> command exactly. In <code>compare</code>, the line with <code>b.pre.length - a.pre.length</code> encodes "a release beats its prereleases": if only one version has a label, the one <em>without</em> it is greater.</p>
+
+<h3>Prereleases and ranges</h3>
+<p>You would not want <code>^1.2.0</code> to install someone's experimental <code>1.3.0-beta.1</code> on your production server. So ranges skip prereleases, unless the range itself mentions a prerelease of the <em>same</em> <code>MAJOR.MINOR.PATCH</code>:</p>
+<shell>
+$ npx semver --range "^1.2.0" 1.2.5 1.3.0-beta.1 2.0.0-rc.1 1.9.9
+1.2.5
+1.9.9
+$ npx semver --range "^1.3.0-beta.1" 1.3.0-beta.0 1.3.0-beta.2 1.3.0 1.4.0-beta.1
+1.3.0-beta.2
+1.3.0
+</shell>
+<p>Opting into <code>1.3.0-beta.1</code> lets you receive later betas of 1.3.0 and the final 1.3.0, but not betas of 1.4.0.</p>
+
+<h3>The 0.x rule</h3>
+<p>Before 1.0.0, a package promises nothing: any release may break. So <code>^</code> is stricter there. It allows changes only to the right of the first non-zero number:</p>
+<shell>
+$ npx semver --range "^0.2.3" 0.2.3 0.2.9 0.3.0 1.0.0
+0.2.3
+0.2.9
+$ npx semver --range "^0.0.3" 0.0.3 0.0.4
+0.0.3
+</shell>
+<p>Every <code>^</code> and <code>~</code> is shorthand for a pair of comparisons. Writing the translation yourself makes the rule concrete:</p>
+<example file="desugar.js">
+function desugar(range) {
+  const [major, minor, patch] = range.slice(1).split(".").map(Number);
+  const low = `>=${major}.${minor}.${patch}`;
+  if (range[0] === "~") return `${low} <${major}.${minor + 1}.0`;
+  if (major > 0) return `${low} <${major + 1}.0.0`;
+  if (minor > 0) return `${low} <0.${minor + 1}.0`;
+  return `${low} <0.0.${patch + 1}`;
+}
+
+for (const range of ["^1.2.3", "~1.2.3", "^0.2.3", "~0.2.3", "^0.0.3"]) {
+  console.log(range.padEnd(7), "means", desugar(range));
+}
+</example>
+<output>
+^1.2.3  means >=1.2.3 <2.0.0
+~1.2.3  means >=1.2.3 <1.3.0
+^0.2.3  means >=0.2.3 <0.3.0
+~0.2.3  means >=0.2.3 <0.3.0
+^0.0.3  means >=0.0.3 <0.0.4
+</output>
+
+<h3>More range forms</h3>
+<p>You will meet these in other people's <code>package.json</code> files:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Range</th><th>Means</th></tr></thead>
+<tbody>
+<tr><td><code>&gt;=1.2.0 &lt;1.5.0</code></td><td>Both conditions (space means AND)</td></tr>
+<tr><td><code>^1.2.0 || ^2.0.0</code></td><td>Either range (<code>||</code> means OR); common for peer dependencies that support two majors</td></tr>
+<tr><td><code>1.2.0 - 1.4.0</code></td><td>Hyphen range: <code>&gt;=1.2.0 &lt;=1.4.0</code></td></tr>
+<tr><td><code>1.x</code>, <code>1.*</code>, <code>1</code></td><td>Any 1.x.x version, the same as <code>^1.0.0</code></td></tr>
+<tr><td><code>*</code> or <code>""</code></td><td>Any version at all. Avoid</td></tr>
+<tr><td><code>latest</code>, <code>next</code></td><td>Not a range but a <strong>dist-tag</strong> (see <a href="#publishing">Publishing</a>)</td></tr>
+</tbody>
+</table></div>
+<shell>
+$ npx semver --range "&gt;=1.2.0 &lt;1.5.0 || &gt;=2.1.0" 1.1.9 1.4.9 1.5.0 2.0.0 2.1.3
+1.4.9
+2.1.3
+$ npx semver --range "1.x" 0.9.0 1.0.0 1.9.3 2.0.0
+1.0.0
+1.9.3
+</shell>
+<p>When npm installs a range, it picks the <strong>highest</strong> published version that satisfies it, with one exception: if the <code>latest</code> dist-tag satisfies the range, npm uses that, so a publisher can hold back a version that is technically higher.</p>
+
+<h3>Which range should you write?</h3>
+<ul>
+<li><strong>Applications</strong> (a server you deploy): keep npm's default <code>^</code>. The committed lockfile already pins exact versions; the range only matters when you deliberately update. Some teams set <code>save-exact=true</code> in <code>.npmrc</code> so every update is an explicit change in <code>package.json</code>; that works too.</li>
+<li><strong>Libraries</strong> (packages others install): use <code>^</code> ranges for dependencies. If your library pins <code>ms</code> exactly at <code>2.1.2</code> and another library pins <code>2.1.3</code>, users get two copies. Wide ranges let npm share one.</li>
+<li><strong>0.x dependencies</strong>: remember that <code>^0.4.0</code> already means "0.4.x only". Read the changelog on every update.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="tree">The dependency tree</h2>
+<p>npm installs a <strong>tree</strong>: your dependencies, their dependencies, and so on. Node.js finds an imported package by looking in the nearest <code>node_modules</code> folder, then in the parent folder's <code>node_modules</code>, all the way up. npm uses that rule to save space: it puts packages as high as possible (<strong>hoisting</strong>) so they can be shared, and nests a copy only when two packages need incompatible versions. <code>npm ls</code> shows the tree, <code>npm explain</code> shows why a package is there:</p>
+<shell>
+$ npm ls ms
+shop-api@1.0.0 ~/shop-api
+└─┬ express@5.2.1
+  ├─┬ debug@4.4.3
+  │ └── ms@2.1.3
+  └─┬ send@1.2.1
+    └── ms@2.1.3 deduped
+$ npm explain ms
+ms@2.1.3
+node_modules/ms
+  ms@"^2.1.3" from debug@4.4.3
+  node_modules/debug
+    debug@"^4.4.3" from body-parser@2.3.0
+    node_modules/body-parser
+      body-parser@"^2.2.1" from express@5.2.1
+      node_modules/express
+        express@"^5.2.1" from the root project
+…
+</shell>
+<p><code>deduped</code> means "this need is met by a copy installed higher up": one <code>ms</code> in <code>node_modules/ms</code> serves both. Now watch what happens when your project also needs an old major version of a package the tree already uses. Some older code in the shop imports <code>debug</code> version 2:</p>
+<shell>
+$ npm install debug@2
+
+added 6 packages, changed 1 package, and audited 75 packages in 2s
+…
+$ npm ls ms
+shop-api@1.0.0 ~/shop-api
+├─┬ debug@2.6.9
+│ └── ms@2.0.0
+└─┬ express@5.2.1
+  ├─┬ body-parser@2.3.0
+  │ └─┬ debug@4.4.3
+  │   └── ms@2.1.3 deduped
+  ├─┬ debug@4.4.3
+  │ └── ms@2.1.3
+…
+$ find node_modules -path "*/debug/package.json"
+node_modules/body-parser/node_modules/debug/package.json
+node_modules/debug/package.json
+node_modules/express/node_modules/debug/package.json
+node_modules/finalhandler/node_modules/debug/package.json
+node_modules/router/node_modules/debug/package.json
+node_modules/send/node_modules/debug/package.json
+</shell>
+<p>Your direct dependency takes the top-level slot, <code>node_modules/debug</code>, so version 2.6.9 lives there. Five packages need <code>debug</code> 4, which no longer fits at the top, so each gets its own nested copy: one package added to your <code>package.json</code>, six copies of <code>debug</code> on disk. And <code>debug@2</code> needs <code>ms@2.0.0</code>, which conflicts with the shared <code>ms@2.1.3</code>, so it is nested too. Duplicates like these cost disk space and download time, and they can cause real bugs: two copies of a library each have their own state, and an <code>instanceof</code> check against one copy's class fails for objects made by the other.</p>
+<p>The placement rule is simple enough to simulate. Each package is placed at the top level if that slot is free or already holds the same version; otherwise it is nested inside the package that needs it. Your direct dependencies are placed first:</p>
+<example file="hoist.js">
+const requests = [
+  { by: "(root)", name: "debug", version: "2.6.9" },
+  { by: "(root)", name: "express", version: "5.2.1" },
+  { by: "express@5.2.1", name: "debug", version: "4.4.3" },
+  { by: "express@5.2.1", name: "send", version: "1.2.1" },
+  { by: "send@1.2.1", name: "debug", version: "4.4.3" },
+  { by: "debug@4.4.3", name: "ms", version: "2.1.3" },
+  { by: "debug@2.6.9", name: "ms", version: "2.0.0" },
+];
+
+const top = new Map();
+const placedAt = new Map([["(root)", ""]]);
+
+for (const { by, name, version } of requests) {
+  const id = `${name}@${version}`;
+  let path;
+  if (!top.has(name) || top.get(name) === version) {
+    top.set(name, version);
+    path = `node_modules/${name}`;
+  } else {
+    path = `${placedAt.get(by)}/node_modules/${name}`;
+  }
+  if (!placedAt.has(id)) placedAt.set(id, path);
+  console.log(id.padEnd(14), "for", by.padEnd(14), "->", path);
+}
+</example>
+<output>
+debug@2.6.9    for (root)         -> node_modules/debug
+express@5.2.1  for (root)         -> node_modules/express
+debug@4.4.3    for express@5.2.1  -> node_modules/express/node_modules/debug
+send@1.2.1     for express@5.2.1  -> node_modules/send
+debug@4.4.3    for send@1.2.1     -> node_modules/send/node_modules/debug
+ms@2.1.3       for debug@4.4.3    -> node_modules/ms
+ms@2.0.0       for debug@2.6.9    -> node_modules/debug/node_modules/ms
+</output>
+<p>This matches the real install: <code>debug@2.6.9</code> and <code>ms@2.1.3</code> at the top, every other version nested under the package that asked for it. The order of the requests matters, though. Move the last line to the front and <code>ms@2.0.0</code> takes the top slot, so every <code>debug@4</code> would need its own nested <code>ms@2.1.3</code>. Real npm therefore does not place packages naively one by one: it builds the whole tree and prefers placements that need fewer copies. The core rule stays the same: one version per name per folder, and a conflict means a nested copy.</p>
+
+<p>Two tools manage the tree. <code>npm dedupe</code> looks for duplicates that one shared version could replace. <strong>overrides</strong> in <code>package.json</code> force a version anywhere in the tree, which you need when a deep dependency has a security fix that its parent has not adopted yet:</p>
+<shell>
+$ npm pkg set overrides.ms=2.1.3
+$ npm install
+
+removed 1 package, and audited 74 packages in 2s
+…
+$ npm ls ms
+shop-api@1.0.0 ~/shop-api
+├─┬ debug@2.6.9
+│ └── ms@2.1.3 overridden
+…
+</shell>
+<p><code>debug@2</code> asked for <code>ms@2.0.0</code> and got 2.1.3. That is a promise you now make on the package's behalf, so test it, and remove the override once the parent package updates. An override can also be scoped to one parent, such as <code>"overrides": { "debug": { "ms": "2.1.3" } }</code>.</p>
+</section>
+
+<section>
+<h2 id="lockfile">Reading the lockfile</h2>
+<p>The lockfile is the tree written down. Since npm 7 it uses <code>"lockfileVersion": 3</code>: a <code>packages</code> object whose keys are folder paths inside <code>node_modules</code>, and <code>""</code> for your own project. This is a real lockfile from a small project with one dependency (<code>lodash</code>) and one dev dependency (<code>minimatch</code>, which brings two more packages with it):</p>
+<file name="package-lock.json" project="lock">
+{
+  "name": "invoice-app",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "invoice-app",
+      "version": "1.0.0",
+      "license": "ISC",
+      "dependencies": {
+        "lodash": "^4.17.20"
+      },
+      "devDependencies": {
+        "minimatch": "^3.0.4"
+      }
+    },
+    "node_modules/balanced-match": {
+      "version": "1.0.2",
+      "resolved": "https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz",
+      "integrity": "sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==",
+      "dev": true,
+      "license": "MIT"
+    },
+    "node_modules/brace-expansion": {
+      "version": "1.1.21",
+      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-1.1.21.tgz",
+      "integrity": "sha512-9zeA+KLZNNzglF2TPKRQEDyx6Yby7daAkuy8MiPzpXPsYDWi/DRM8jmwUDxokQjYqBpv5DgPiwD4h4ZZSy1Ujw==",
+      "dev": true,
+      "license": "MIT",
+      "dependencies": {
+        "balanced-match": "^1.0.0",
+        "concat-map": "0.0.1"
+      }
+    },
+    "node_modules/concat-map": {
+      "version": "0.0.1",
+      "resolved": "https://registry.npmjs.org/concat-map/-/concat-map-0.0.1.tgz",
+      "integrity": "sha512-/Srv4dswyQNBfohGpz9o6Yb3Gz3SrUDqBH5rTuhGR7ahtlbYKnVxw2bCFMRljaA7EXHaXZ8wsHdodFvbkhKmqg==",
+      "dev": true,
+      "license": "MIT"
+    },
+    "node_modules/lodash": {
+      "version": "4.18.1",
+      "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.18.1.tgz",
+      "integrity": "sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==",
+      "license": "MIT"
+    },
+    "node_modules/minimatch": {
+      "version": "3.1.5",
+      "resolved": "https://registry.npmjs.org/minimatch/-/minimatch-3.1.5.tgz",
+      "integrity": "sha512-VgjWUsnnT6n+NUk6eZq77zeFdpW2LWDzP6zFGrCbHXiYNul5Dzqk2HHQ5uFH2DNW5Xbp8+jVzaeNt94ssEEl4w==",
+      "dev": true,
+      "license": "ISC",
+      "dependencies": {
+        "brace-expansion": "^1.1.7"
+      },
+      "engines": {
+        "node": "*"
+      }
+    }
+  }
+}
+</file>
+<p>A lockfile is data, so a program can answer questions about it. This one works out, for each package, whether it is direct or transitive, who needs it, and whether a production install would include it:</p>
+<example file="lock-report.js" project="lock" browser="no">
+import { readFile } from "node:fs/promises";
+
+const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
+const root = lock.packages[""];
+const direct = new Set([...Object.keys(root.dependencies ?? {}), ...Object.keys(root.devDependencies ?? {})]);
+
+const neededBy = new Map();
+for (const [path, info] of Object.entries(lock.packages)) {
+  const parent = path === "" ? "(your project)" : path.replace("node_modules/", "");
+  for (const name of Object.keys({ ...info.dependencies, ...info.devDependencies })) {
+    if (!neededBy.has(name)) neededBy.set(name, []);
+    neededBy.get(name).push(parent);
+  }
+}
+
+for (const [path, info] of Object.entries(lock.packages)) {
+  if (path === "") continue;
+  const name = path.replace("node_modules/", "");
+  const kind = direct.has(name) ? "direct" : "transitive";
+  console.log(`${name}@${info.version}`.padEnd(22), kind.padEnd(11), (info.dev ? "dev" : "prod").padEnd(5), "needed by", neededBy.get(name).join(", "));
+}
+
+const production = Object.entries(lock.packages).filter(([path, info]) => path !== "" && !info.dev);
+console.log("npm ci --omit=dev installs:", production.map(([path]) => path.replace("node_modules/", "")));
+</example>
+<output>
+balanced-match@1.0.2   transitive  dev   needed by brace-expansion
+brace-expansion@1.1.21 transitive  dev   needed by minimatch
+concat-map@0.0.1       transitive  dev   needed by brace-expansion
+lodash@4.18.1          direct      prod  needed by (your project)
+minimatch@3.1.5        direct      dev   needed by (your project)
+npm ci --omit=dev installs: [ 'lodash' ]
+</output>
+<p>The <code>dev</code> flag is set on every package that is only reachable through dev dependencies, including transitive ones such as <code>concat-map</code>. That is how npm knows what to skip. The real commands agree:</p>
+<shell>
+$ npm ci
+
+added 5 packages, and audited 6 packages in 2s
+
+found 0 vulnerabilities
+$ npm ci --omit=dev
+
+added 1 package, and audited 2 packages in 2s
+
+found 0 vulnerabilities
+$ ls node_modules
+lodash
+</shell>
+<p>The <code>integrity</code> field is a <strong>Subresource Integrity</strong> string: the hash algorithm, a dash, and the digest in base64. npm hashes every downloaded tarball and refuses it if the digest differs, using exactly the hashing you learned in <a href="/learn/node-crypto#hashes">Cryptography with node:crypto</a>:</p>
+<example file="integrity.js" project="lock" browser="no">
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+
+const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
+const recorded = lock.packages["node_modules/lodash"].integrity;
+const [algorithm, digest] = recorded.split(/-(.*)/s);
+console.log(algorithm, Buffer.from(digest, "base64").length, "bytes");
+
+function sri(bytes) {
+  return "sha512-" + createHash("sha512").update(bytes).digest("base64");
+}
+
+const tarball = Buffer.from("pretend these are the bytes of lodash-4.18.1.tgz");
+const expected = sri(tarball);
+const tampered = Buffer.concat([tarball, Buffer.from("\nsteal(process.env)")]);
+console.log("original accepted:", sri(tarball) === expected);
+console.log("tampered accepted:", sri(tampered) === expected);
+</example>
+<output>
+sha512 64 bytes
+original accepted: true
+tampered accepted: false
+</output>
+<p>So the lockfile protects you in two ways: the <code>version</code> fixes <em>which</em> release is installed, and the <code>integrity</code> fixes <em>which bytes</em>, even if someone manages to replace a file on a registry mirror.</p>
+<h3>npm install versus npm ci</h3>
+<div class="lx-table-wrap"><table>
+<thead><tr><th></th><th><code>npm install</code></th><th><code>npm ci</code></th></tr></thead>
+<tbody>
+<tr><td>Starts from</td><td>Your existing <code>node_modules</code></td><td>Deletes <code>node_modules</code> first</td></tr>
+<tr><td>Lockfile</td><td>Updates it when <code>package.json</code> changed</td><td>Never writes it; fails if it does not match <code>package.json</code></td></tr>
+<tr><td>Use it</td><td>On your computer, when you change dependencies</td><td>In CI, Docker builds and deployments</td></tr>
+</tbody>
+</table></div>
+<p>When two people change dependencies on different branches, <code>package-lock.json</code> gets a merge conflict. Do not edit it by hand: take either side, then run <code>npm install</code>, which rebuilds the lockfile from the merged <code>package.json</code>.</p>
+</section>
+
+<section>
+<h2 id="kinds">Kinds of dependencies</h2>
+<p>You know <code>dependencies</code> and <code>devDependencies</code>. Three more fields exist, and one of them causes most confusing install errors.</p>
+<h3>peerDependencies</h3>
+<p>Some packages are <strong>plugins</strong>: they do not work on their own, only together with a host package that the <em>project</em> installs. <code>react-dom</code> renders React components, so it needs React, but it must use the <em>same</em> React as the rest of the app. Two copies of React in one app break it. So <code>react-dom</code> declares React as a <strong>peer dependency</strong>: "I need this, but my user provides it, in a version I accept":</p>
+<shell>
+$ npm view react-dom@19.3.0 peerDependencies
+{ react: '^19.3.0' }
+$ npm install react@18
+…
+$ npm install react-dom@19
+npm error code ERESOLVE
+npm error ERESOLVE unable to resolve dependency tree
+npm error
+npm error While resolving: storefront@1.0.0
+npm error Found: react@18.3.1
+npm error node_modules/react
+npm error   react@"^18.3.1" from the root project
+npm error
+npm error Could not resolve dependency:
+npm error peer react@"^19.3.0" from react-dom@19.3.0
+npm error node_modules/react-dom
+npm error   react-dom@"19" from the root project
+npm error
+npm error Fix the upstream dependency conflict, or retry this command with --force or --legacy-peer-deps to accept an incorrect (and potentially broken) dependency resolution.
+…
+</shell>
+<p>Read it from the bottom up: <code>react-dom@19.3.0</code> needs a peer <code>react@^19.3.0</code>, but the project has <code>react@18.3.1</code>. npm refuses rather than install a combination that the authors say does not work. The fix is to make the versions agree, here by moving both to 19 in one command:</p>
+<shell>
+$ npm install react@19 react-dom@19
+
+added 2 packages, removed 2 packages, changed 1 package, and audited 4 packages in 2s
+
+found 0 vulnerabilities
+$ npm ls
+storefront@1.0.0 ~/storefront
+├── react-dom@19.3.0
+└── react@19.3.0
+</shell>
+<warn title="--force AND --legacy-peer-deps">The error suggests two flags. <code>--legacy-peer-deps</code> ignores peer dependencies entirely, as npm 6 did; <code>--force</code> installs the conflicting versions anyway. Both make the error disappear and leave you with a combination the authors say is broken, which fails later, at run time, in a harder way. Use them only as a temporary step when you know the peer range is simply out of date, and write down why.</warn>
+<p>Peer dependencies are common for plugins of all kinds: ESLint plugins peer-depend on ESLint, and TypeScript tooling on <code>typescript</code>. If you publish a plugin yourself, declare the host as a peer with a range as wide as you actually support (<code>"^8.0.0 || ^9.0.0"</code>), and also as a dev dependency so your own tests have it.</p>
+<h3>optionalDependencies and bundleDependencies</h3>
+<ul>
+<li><strong>optionalDependencies</strong> may fail to install without failing the whole install. Tools that ship a fast native program per operating system use them: on Linux, the Windows build simply is not installed.</li>
+<li><strong>bundleDependencies</strong> are packed inside your package's tarball instead of downloaded separately. Rare; used when a dependency must not be fetched from the registry.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="scripts">Scripts in depth</h2>
+<p>Scripts are more than named commands. npm runs <code>pre&lt;name&gt;</code> before and <code>post&lt;name&gt;</code> after a script automatically, passes extra arguments after <code>--</code> to the command, and gives every script a set of environment variables. Take a package with these scripts:</p>
+<file name="package.json" project="kit">
+{
+  "name": "@naija-shop/invoice-kit",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": "./index.js",
+  "scripts": {
+    "prebuild": "node scripts/clean.js",
+    "build": "node scripts/build.js",
+    "postbuild": "node scripts/report.js"
+  }
+}
+</file>
+<p>The build script prints what npm gave it: <code>npm_lifecycle_event</code> is the name of the script being run, and <code>npm_package_name</code> and <code>npm_package_version</code> come from <code>package.json</code>:</p>
+<file name="scripts/build.js" project="kit">
+const args = process.argv.slice(2);
+console.log(`[${process.env.npm_lifecycle_event}] building ${process.env.npm_package_name}@${process.env.npm_package_version}`);
+console.log(`[${process.env.npm_lifecycle_event}] extra arguments: ${JSON.stringify(args)}`);
+</file>
+<shell>
+$ npm run build -- --minify --target=node24
+
+&gt; @naija-shop/invoice-kit@1.0.0 prebuild
+&gt; node scripts/clean.js
+
+[prebuild] removing old dist/
+
+&gt; @naija-shop/invoice-kit@1.0.0 build
+&gt; node scripts/build.js --minify --target=node24
+
+[build] building @naija-shop/invoice-kit@1.0.0
+[build] extra arguments: ["--minify","--target=node24"]
+
+&gt; @naija-shop/invoice-kit@1.0.0 postbuild
+&gt; node scripts/report.js
+
+[postbuild] done
+$ npm run build --silent
+[prebuild] removing old dist/
+[build] building @naija-shop/invoice-kit@1.0.0
+[build] extra arguments: []
+[postbuild] done
+</shell>
+<ul>
+<li>Everything after <code>--</code> goes to the script's command, not to npm. Without the <code>--</code>, npm would treat <code>--minify</code> as its own option.</li>
+<li><code>--silent</code> (or <code>-s</code>) hides npm's <code>&gt;</code> header lines, which matters when a script's output is piped into another program.</li>
+<li>If any step fails, the chain stops, and <code>npm run</code> exits with the failing step's exit code:</li>
+</ul>
+<shell>
+$ npm run build
+
+&gt; @naija-shop/invoice-kit@1.0.0 prebuild
+&gt; node scripts/clean.js
+
+[prebuild] cannot remove dist/: permission denied
+$ echo $?
+1
+</shell>
+<p>Some script names are special <strong>lifecycle scripts</strong> that npm runs by itself: <code>prepare</code> runs after <code>npm install</code> in your own project and before packing, which is where libraries often build; <code>prepublishOnly</code> runs only before <code>npm publish</code>, a good place for "run the tests first". A dependency's <code>preinstall</code>, <code>install</code> and <code>postinstall</code> scripts are the <strong>install scripts</strong> that npm 11 asks you to approve, as you saw in <a href="/learn/npm-packages#security">npm and packages</a>.</p>
+<tip>Scripts run in a shell: <code>sh</code> on macOS and Linux, <code>cmd.exe</code> on Windows. A script like <code>rm -rf dist</code> fails on Windows. Write anything beyond a single command as a small Node.js file (<code>node scripts/clean.js</code>, which can call <code>fs.rm</code>), and it works everywhere.</tip>
+</section>
+
+<section>
+<h2 id="local">Local packages, scopes and registries</h2>
+<h3>Testing a package before you publish it</h3>
+<p>Workspaces (from <a href="/learn/npm-packages#workspaces">npm and packages</a>) link a folder, which is convenient but hides mistakes: a file you forgot in <code>files</code>, or a wrong <code>exports</code> path, still works through a link because the whole folder is there. The honest test installs the <strong>tarball</strong>, exactly what the registry would receive:</p>
+<shell>
+$ cd invoice-kit
+$ npm pack --silent
+naija-shop-invoice-kit-1.1.0.tgz
+$ cd ../checkout
+$ npm install ../invoice-kit/naija-shop-invoice-kit-1.1.0.tgz
+
+added 1 package, and audited 2 packages in 1s
+
+found 0 vulnerabilities
+$ node main.js
+₦52,500.00
+$ ls node_modules/@naija-shop/invoice-kit
+index.js
+package.json
+README.md
+</shell>
+<p>Only the three allowed files arrived: no tests, no <code>.env</code>. <code>package.json</code> now contains <code>"@naija-shop/invoice-kit": "file:../invoice-kit/naija-shop-invoice-kit-1.1.0.tgz"</code>. A <code>file:</code> dependency can also point at a folder (<code>npm install ../invoice-kit</code>), which npm installs as a link, like a workspace. <code>npm link</code> does the same across unrelated projects on your computer. Folder links are fine while developing; run the tarball test before every first release.</p>
+<h3>Scopes and registries</h3>
+<p>A <strong>scope</strong> (<code>@naija-shop/</code>) is a namespace owned by an npm user or organisation: nobody else can publish <code>@naija-shop/anything</code>. Scopes can also point to a different <strong>registry</strong>, for example your company's private one or GitHub Packages. That is configured in <code>.npmrc</code>, in the project or in your home folder:</p>
+<pre class="lx-json">@naija-shop:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${NPM_TOKEN}</pre>
+<p>The token is read from the <code>NPM_TOKEN</code> environment variable at install time, so the file can be committed without the secret. Never commit a <code>.npmrc</code> with a real token in it; that is one of the commonest ways npm tokens leak.</p>
+
+<h3>Workspaces at scale</h3>
+<p>A <strong>monorepo</strong> is one repository holding several packages and apps. npm can create workspace packages and target commands at them with <code>-w</code> (one workspace) or <code>--workspaces</code> (all of them):</p>
+<shell>
+$ npm init -y -w packages/invoice-kit --scope=@naija-shop
+Wrote to ~/shop-mono/packages/invoice-kit/package.json:
+…
+added 1 package in 690ms
+$ npm init -y -w apps/api
+…
+added 1 package in 621ms
+$ npm install @naija-shop/invoice-kit -w apps/api
+
+up to date, audited 5 packages in 516ms
+
+found 0 vulnerabilities
+$ npm install ms -w apps/api
+
+added 1 package, and audited 6 packages in 18s
+
+found 0 vulnerabilities
+$ npm ls
+shop-mono@ ~/shop-mono
+├── @naija-shop/invoice-kit@1.0.0 -&gt; ./packages/invoice-kit
+└─┬ api@1.0.0 -&gt; ./apps/api
+  ├── @naija-shop/invoice-kit@1.0.0 deduped -&gt; ./packages/invoice-kit
+  └── ms@2.1.3
+$ npm run test --workspaces --if-present
+
+&gt; @naija-shop/invoice-kit@1.0.0 test
+&gt; node --test
+
+✔ adds up invoice lines (1.3123ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 184.467108
+</shell>
+<ul>
+<li><code>npm init -w</code> created each folder with its own <code>package.json</code> and added it to the root's <code>workspaces</code> list.</li>
+<li>Installing <code>@naija-shop/invoice-kit</code> into <code>apps/api</code> downloaded nothing ("up to date"): npm saw a workspace with that name and a matching version and linked it.</li>
+<li><code>--if-present</code> skips workspaces without a <code>test</code> script instead of failing.</li>
+<li>There is one lockfile and one <code>node_modules</code> at the root, shared by all workspaces.</li>
+</ul>
+<p>Larger monorepos often use <strong>pnpm</strong> or Yarn instead of npm. pnpm stores each package version once on disk and links it into projects, and it only lets a package import what it declares, which catches missing dependencies that npm's hoisting hides. The ZudoJS repository itself is a pnpm workspace, where internal dependencies are written <code>"workspace:*"</code> so they always resolve to the local folder. The ideas are the same; the commands differ slightly.</p>
+</section>
+
+<section>
+<h2 id="publishing">Publishing and versioning</h2>
+<p>Before a first release, a library's <code>package.json</code> needs a few fields beyond name and version:</p>
+<file name="package.json" project="release">
+{
+  "name": "@naija-shop/invoice-kit",
+  "version": "1.1.0",
+  "description": "Invoice helpers for Nigerian shops",
+  "license": "MIT",
+  "type": "module",
+  "exports": "./index.js",
+  "files": ["index.js"],
+  "engines": { "node": ">=24" },
+  "repository": { "type": "git", "url": "git+https://github.com/naija-shop/invoice-kit.git" }
+}
+</file>
+<ul>
+<li><strong>exports</strong> is the package's public entry point. Anything not listed cannot be imported by users (<code>import "@naija-shop/invoice-kit/internal.js"</code> fails), so you can reorganise internals without breaking anyone. It can also map several entry points and give different files to <code>import</code> and <code>require</code>; <a href="/learn/js-module-systems">Module systems in depth</a> goes into that.</li>
+<li><strong>engines</strong> states which Node.js versions you support. npm warns on install when it does not match.</li>
+<li><strong>repository</strong> links the package to its source code; provenance (below) checks it.</li>
+</ul>
+<p>The <code>engines</code> field is only a warning at install time, so a server should also check at startup. <code>process.versions.node</code> holds the running version as text:</p>
+<example file="engines-check.js" browser="no">
+const required = ">=24";
+const minimum = Number(required.replace(">=", ""));
+const running = Number(process.versions.node.split(".")[0]);
+
+if (running < minimum) {
+  console.error(`This server needs Node.js ${required}, but this is ${process.version}.`);
+  process.exit(1);
+}
+console.log(`Node.js major version ${running >= minimum ? "is supported" : "is too old"} (needs ${required})`);
+</example>
+<output>
+Node.js major version is supported (needs >=24)
+</output>
+
+<h3>npm version and prereleases</h3>
+<p><code>npm version</code> bumps the version in <code>package.json</code> and the lockfile. Inside a Git repository it also commits and creates a tag such as <code>v1.1.0</code>, which you will use in <a href="/learn/git-collaboration">Professional Git</a>:</p>
+<shell>
+$ npm version minor
+v1.1.0
+$ npm version prerelease --preid beta
+v1.1.1-beta.0
+$ npm version prerelease
+v1.1.1-beta.1
+</shell>
+<p>Notice that <code>prerelease</code> from 1.1.0 made a beta of <strong>1.1.1</strong>. For a beta of the next minor or major, use <code>preminor</code> or <code>premajor</code> (<code>1.2.0-beta.0</code>, <code>2.0.0-beta.0</code>).</p>
+<h3>dist-tags and access</h3>
+<p>A <strong>dist-tag</strong> is a name pointing at one version. <code>npm install express</code> means "install the version tagged <code>latest</code>". Projects keep other tags for other audiences:</p>
+<shell>
+$ npm view express dist-tags
+{ latest: '5.2.1', 'latest-4': '4.22.3' }
+</shell>
+<p>Express 4 still gets fixes, published under <code>latest-4</code> so that they do not become the default install. When you publish, npm moves <code>latest</code> to your new version unless you pass <code>--tag</code>. A beta published as <code>latest</code> would be what every new user installs, so npm 11 refuses to publish a prerelease without an explicit tag. <code>npm publish --dry-run</code> shows what would happen, without uploading. First at version 1.1.0, then at 1.1.1-beta.1:</p>
+<shell>
+$ npm publish --dry-run
+npm notice
+npm notice 📦  @naija-shop/invoice-kit@1.1.0
+npm notice Tarball Contents
+npm notice 75B README.md
+npm notice 238B index.js
+npm notice 397B package.json
+…
+npm notice Publishing to https://registry.npmjs.org/ with tag latest and default access (dry-run)
++ @naija-shop/invoice-kit@1.1.0
+$ npm version 1.1.1-beta.1
+v1.1.1-beta.1
+$ npm publish --dry-run
+npm error You must specify a tag using --tag when publishing a prerelease version.
+…
+$ npm publish --dry-run --tag next --access public
+…
+npm notice Publishing to https://registry.npmjs.org/ with tag next and public access (dry-run)
++ @naija-shop/invoice-kit@1.1.1-beta.1
+</shell>
+<p>"Default access" for a scoped package means <strong>restricted</strong>: private, which needs a paid npm account. The first publish of a public scoped package needs <code>--access public</code> (or <code>"publishConfig": { "access": "public" }</code> in <code>package.json</code>).</p>
+<h3>After publishing</h3>
+<ul>
+<li>A published version can never be changed. To fix a bad release, publish a new patch.</li>
+<li><code>npm deprecate @naija-shop/invoice-kit@1.1.0 "Wrong VAT rate, use 1.1.1"</code> shows a warning to everyone who installs that version.</li>
+<li><code>npm unpublish</code> is heavily restricted: within 72 hours of publishing only if no other public package depends on the version, and after that only for packages nobody depends on that are barely downloaded. Deleting published code breaks everyone who uses it. In 2016, the removal of a tiny package called <code>left-pad</code> broke builds across the internet, and these rules came from that.</li>
+<li>Publish from CI rather than from a laptop, with <strong>provenance</strong>: <code>npm publish --provenance</code> from GitHub Actions (or npm's <strong>trusted publishing</strong>, which needs no long-lived token at all) attaches a signed statement of which repository and which workflow built the package. Users can check it with <code>npm audit signatures</code>.</li>
+<li>Tools such as Changesets automate the version bumps and changelogs for many packages at once; the ZudoJS packages are released that way.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="supply-chain">Supply-chain security</h2>
+<p>Every dependency is code from strangers that runs with your permissions. Attacks on that <strong>supply chain</strong> are not hypothetical. Each of these happened:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Attack</th><th>What happened</th><th>What defends you</th></tr></thead>
+<tbody>
+<tr><td>Typosquatting</td><td><code>crossenv</code> (2017) copied <code>cross-env</code> and stole environment variables</td><td>Copy names from official docs; check with <code>npm view</code></td></tr>
+<tr><td>Malicious maintainer</td><td><code>event-stream</code> (2018): a new maintainer added code targeting a Bitcoin wallet app</td><td>Lockfile; reviewing updates; fewer dependencies</td></tr>
+<tr><td>Account takeover</td><td><code>ua-parser-js</code> (2021): a stolen account published versions with a password stealer and crypto miner</td><td>Lockfile; <code>npm ci</code>; waiting a few days before adopting new releases</td></tr>
+<tr><td>Dependency confusion</td><td>2021: public packages named like companies' private ones were installed inside those companies</td><td>Scoped names you own; a scoped registry in <code>.npmrc</code></td></tr>
+<tr><td>Install-script worm</td><td>2025: a worm stole npm tokens through install scripts and published itself into more packages</td><td>npm 11 install-script approval; <code>--ignore-scripts</code> in CI</td></tr>
+</tbody>
+</table></div>
+<p>The registry cleans up after such incidents. The malicious <code>event-stream</code> version is gone, and the typosquat name now belongs to npm itself:</p>
+<shell>
+$ npm view event-stream@3.3.6
+npm error code E404
+npm error 404 No match found for version 3.3.6
+…
+$ npm view crossenv
+crossenv@0.0.2-security | Proprietary | deps: none | versions: 4
+security holding package
+https://github.com/npm/security-holder#readme
+…
+</shell>
+<h3>Catching typos before they install</h3>
+<p>Typosquats are one or two keystrokes away from a real name. The number of single-character edits (insert, delete, replace) that turn one word into another is the <strong>edit distance</strong>, and it makes a simple, useful check:</p>
+<example file="typosquat.js">
+function editDistance(a, b) {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let diagonal = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const above = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1));
+      diagonal = above;
+    }
+  }
+  return row[b.length];
+}
+
+const popular = ["express", "lodash", "cross-env", "react", "dotenv", "axios"];
+
+function check(name) {
+  if (popular.includes(name)) return `${name}: known package`;
+  const close = popular.filter((p) => editDistance(name, p) <= 2);
+  return close.length ? `${name}: suspicious, looks like ${close.join(", ")}` : `${name}: not similar to a popular package`;
+}
+
+for (const name of ["express", "expres", "crossenv", "lodahs", "dotenv", "invoice-kit"]) {
+  console.log(check(name));
+}
+</example>
+<output>
+express: known package
+expres: suspicious, looks like express
+crossenv: suspicious, looks like cross-env
+lodahs: suspicious, looks like lodash
+dotenv: known package
+invoice-kit: not similar to a popular package
+</output>
+<p>Real tools use the same idea with the thousands of most-downloaded names, and some registries block new names that are too close to popular ones.</p>
+
+<h3>npm audit, honestly</h3>
+<p><code>npm audit</code> compares your installed versions with the public advisory database. It is useful, and it is also noisy. Here a project has an old <code>lodash</code> as a dependency and an old <code>minimatch</code> as a dev dependency:</p>
+<shell>
+$ npm audit
+# npm audit report
+
+lodash  &lt;=4.17.23
+Severity: high
+Command Injection in lodash - https://github.com/advisories/GHSA-35jh-r3h4-6jhm
+Regular Expression Denial of Service (ReDoS) in lodash - https://github.com/advisories/GHSA-29mw-wpgm-hmr9
+lodash vulnerable to Code Injection via `_.template` imports key names - https://github.com/advisories/GHSA-r5fr-rjxr-66jc
+lodash vulnerable to Prototype Pollution via array path bypass in `_.unset` and `_.omit` - https://github.com/advisories/GHSA-f23m-r3pf-42rh
+Lodash has Prototype Pollution Vulnerability in `_.unset` and `_.omit` functions - https://github.com/advisories/GHSA-xxjr-mmjv-4gpg
+fix available via `npm audit fix`
+node_modules/lodash
+
+minimatch  &lt;=3.1.3
+Severity: high
+minimatch ReDoS vulnerability - https://github.com/advisories/GHSA-f8q6-p94x-37v3
+…
+fix available via `npm audit fix`
+node_modules/minimatch
+
+2 high severity vulnerabilities
+
+To address all issues, run:
+  npm audit fix
+$ npm audit --omit=dev
+…
+1 high severity vulnerability
+…
+$ npm audit fix
+
+changed 2 packages, and audited 6 packages in 2s
+
+found 0 vulnerabilities
+$ npm ls
+audit-demo@1.0.0 ~/audit-demo
+├── lodash@4.18.1
+└── minimatch@3.1.5
+</shell>
+<p>How to read a report like this:</p>
+<ul>
+<li><strong>Does the vulnerable code run in production?</strong> <code>--omit=dev</code> leaves out dev dependencies. A ReDoS in a build tool that only ever reads your own files is far less urgent than one in code that handles requests.</li>
+<li><strong>Do you use the affected feature?</strong> The lodash advisories concern specific functions such as <code>_.template</code> and <code>_.unset</code>. Read the advisory before deciding how urgent it is, but do not skip the update because of this: code changes, and someone may start using that function next month.</li>
+<li><strong>Is the fix inside your range?</strong> Here it was, so <code>npm audit fix</code> updated both packages within their <code>^</code> ranges. When it is not, npm suggests <code>npm audit fix --force</code>, which may jump a major version and break your code. Update deliberately instead, or use an override for a transitive dependency.</li>
+<li><strong>Exit code.</strong> <code>npm audit</code> exits with 1 when it finds anything, so it can fail a CI job. Many teams fail only on high severity in production dependencies: <code>npm audit --omit=dev --audit-level=high</code>.</li>
+</ul>
+<p>That CI rule is easy to state as code. Given the findings of an audit (the fields mirror what <code>npm audit --json</code> reports), decide whether the build should fail:</p>
+<example file="audit-gate.js">
+const levels = ["info", "low", "moderate", "high", "critical"];
+const findings = [
+  { name: "lodash", severity: "high", dev: false, fixAvailable: true },
+  { name: "minimatch", severity: "high", dev: true, fixAvailable: true },
+  { name: "tough-cookie", severity: "moderate", dev: false, fixAvailable: false },
+];
+
+function gate(findings, { omitDev, auditLevel }) {
+  const min = levels.indexOf(auditLevel);
+  const blocking = findings.filter((f) => !(omitDev && f.dev) && levels.indexOf(f.severity) >= min);
+  return { exitCode: blocking.length > 0 ? 1 : 0, blocking: blocking.map((f) => f.name) };
+}
+
+console.log("everything:          ", gate(findings, { omitDev: false, auditLevel: "low" }));
+console.log("prod, high and above:", gate(findings, { omitDev: true, auditLevel: "high" }));
+console.log("after fixing lodash: ", gate(findings.slice(1), { omitDev: true, auditLevel: "high" }));
+</example>
+<output>
+everything:           { exitCode: 1, blocking: [ 'lodash', 'minimatch', 'tough-cookie' ] }
+prod, high and above: { exitCode: 1, blocking: [ 'lodash' ] }
+after fixing lodash:  { exitCode: 0, blocking: [] }
+</output>
+<p>The moderate finding without a fix still deserves a look, in a regular review rather than a failed build: a CI gate that fails on things nobody can fix teaches the team to ignore it.</p>
+
+<h3>Habits that cover the rest</h3>
+<ul>
+<li>Commit the lockfile and install with <code>npm ci</code> everywhere except your own computer.</li>
+<li>Prefer fewer dependencies. Ten lines you write and test yourself have no maintainer who can be hacked.</li>
+<li>Before adding a package: <code>npm view</code> it, check how long it has existed, its weekly downloads, its repository, and whether it has an install script it does not obviously need.</li>
+<li>Give private packages a scope you own, so a public package cannot take their name.</li>
+<li>In CI, <code>npm ci --ignore-scripts</code> when your build does not need install scripts, and keep npm tokens out of jobs that do not publish.</li>
+<li>Turn on automated update pull requests (GitHub's Dependabot or Renovate). They update one package at a time, run your tests, and show the changelog, which makes updating a routine instead of a yearly emergency.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Pick the highest version a range allows">
+<p>Write <code>maxSatisfying(versions, range)</code> for caret ranges without prereleases, using the <code>desugar</code> idea: a version satisfies <code>^X.Y.Z</code> when it is at least <code>X.Y.Z</code> and below the upper bound. Try it on <code>^1.2.0</code>, <code>^0.2.0</code> and <code>^2.0.0</code>.</p>
+<solution>
+<example file="max-satisfying.js">
+const parse = (v) => v.split(".").map(Number);
+const lessThan = (a, b) => {
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] < b[i];
+  return false;
+};
+
+function upperBound([major, minor, patch]) {
+  if (major > 0) return [major + 1, 0, 0];
+  if (minor > 0) return [0, minor + 1, 0];
+  return [0, 0, patch + 1];
+}
+
+function maxSatisfying(versions, range) {
+  const low = parse(range.slice(1));
+  const high = upperBound(low);
+  const ok = versions.filter((v) => !lessThan(parse(v), low) && lessThan(parse(v), high));
+  return ok.sort((a, b) => (lessThan(parse(a), parse(b)) ? -1 : 1)).at(-1) ?? null;
+}
+
+const published = ["0.2.1", "0.2.7", "0.3.0", "1.2.0", "1.4.2", "1.10.0", "2.0.0"];
+for (const range of ["^1.2.0", "^0.2.0", "^2.0.0", "^3.0.0"]) {
+  console.log(range, "->", maxSatisfying(published, range));
+}
+</example>
+<output>
+^1.2.0 -> 1.10.0
+^0.2.0 -> 0.2.7
+^2.0.0 -> 2.0.0
+^3.0.0 -> null
+</output>
+<p><code>1.10.0</code> beats <code>1.4.2</code> because versions compare as numbers, part by part. Sorting them as strings would pick <code>1.4.2</code>, a classic bug. <code>^3.0.0</code> has no match, which is when npm reports <code>ETARGET</code>.</p>
+</solution>
+</exercise>
+<exercise title="Find duplicated packages in a lockfile">
+<p>Write a program that reads the <code>packages</code> of a lockfile and lists every package name installed in more than one version, with the paths. Test it on this excerpt of the <code>shop-api</code> lockfile after <code>npm install debug@2</code>.</p>
+<solution>
+<example file="duplicates.js">
+const packages = {
+  "": {},
+  "node_modules/debug": { version: "2.6.9" },
+  "node_modules/debug/node_modules/ms": { version: "2.0.0" },
+  "node_modules/express/node_modules/debug": { version: "4.4.3" },
+  "node_modules/send/node_modules/debug": { version: "4.4.3" },
+  "node_modules/ms": { version: "2.1.3" },
+  "node_modules/express": { version: "5.2.1" },
+};
+
+const byName = new Map();
+for (const [path, info] of Object.entries(packages)) {
+  if (path === "") continue;
+  const name = path.split("node_modules/").at(-1);
+  if (!byName.has(name)) byName.set(name, new Map());
+  const versions = byName.get(name);
+  if (!versions.has(info.version)) versions.set(info.version, []);
+  versions.get(info.version).push(path);
+}
+
+for (const [name, versions] of byName) {
+  if (versions.size < 2) continue;
+  console.log(name);
+  for (const [version, paths] of versions) console.log(`  ${version}: ${paths.join(", ")}`);
+}
+</example>
+<output>
+debug
+  2.6.9: node_modules/debug
+  4.4.3: node_modules/express/node_modules/debug, node_modules/send/node_modules/debug
+ms
+  2.0.0: node_modules/debug/node_modules/ms
+  2.1.3: node_modules/ms
+</output>
+<p>The package name is whatever follows the <em>last</em> <code>node_modules/</code> in the path, which handles nested copies (and scoped names like <code>@naija-shop/invoice-kit</code>). Two versions of <code>debug</code> are expected here, since the project asked for version 2; the check is useful to spot duplicates nobody asked for.</p>
+</solution>
+</exercise>
+<exercise title="Diagnose the peer conflict">
+<p>A teammate ran <code>npm install eslint-plugin-shop@3</code> and got <code>ERESOLVE</code> with <code>peer eslint@"^9.0.0" from eslint-plugin-shop@3.0.0</code> and <code>Found: eslint@8.57.0</code>. List the three possible fixes, and say which one you would choose and why.</p>
+<solution>
+<ol>
+<li><strong>Upgrade ESLint to 9</strong> so it satisfies the peer range. This is usually right, but ESLint 9 is a major version, so read its migration notes and run the linter on the whole project.</li>
+<li><strong>Use the previous major of the plugin</strong> (<code>eslint-plugin-shop@2</code>), if its peer range includes ESLint 8. This is the safe short-term choice when you cannot upgrade ESLint yet.</li>
+<li><strong><code>--legacy-peer-deps</code></strong>: installs the plugin against a version its authors say it does not support. Only acceptable if you have checked that the plugin really works with ESLint 8 and the range is merely conservative, and then only with a note explaining it.</li>
+</ol>
+<p>Check the options with <code>npm view eslint-plugin-shop@2 peerDependencies</code> before deciding. Choose 1 when you have time for the upgrade, 2 when you do not; avoid 3.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Prereleases sort before their release and are skipped by normal ranges. Below 1.0.0, <code>^</code> only allows changes to the right of the first non-zero number. npm installs the highest match, or <code>latest</code> if it matches.</li>
+<li>npm hoists packages to share them and nests copies when versions conflict. <code>npm ls</code>, <code>npm explain</code>, <code>npm dedupe</code> and <code>overrides</code> inspect and shape the tree.</li>
+<li>The lockfile pins versions and integrity hashes; <code>dev</code> flags drive <code>npm ci --omit=dev</code>. Build with <code>npm ci</code>; fix lockfile conflicts by re-running <code>npm install</code>.</li>
+<li>Peer dependencies say "my user provides this". Fix <code>ERESOLVE</code> by making versions agree, not with <code>--force</code>.</li>
+<li>Scripts get <code>pre</code>/<code>post</code> hooks, arguments after <code>--</code> and <code>npm_*</code> variables. Test packages as tarballs, publish scoped packages with <code>--access public</code>, betas with <code>--tag next</code>, from CI with provenance.</li>
+<li>Read <code>npm audit</code> with judgement: production or dev, affected feature, fix in range. Defend against typosquats, takeovers and dependency confusion with lockfiles, scopes, fewer dependencies and careful names.</li>
+</ul>
+<p>Next, <a href="/learn/node-http">An HTTP server with no framework</a> builds a server with no dependencies at all.</p>
+</section>

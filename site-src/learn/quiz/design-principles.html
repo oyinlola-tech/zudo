@@ -1,0 +1,762 @@
+<question id="dp-first-step" type="choice">
+<q>You must refactor a 300-line checkout function that runs in production and has no tests. What should you do <strong>before</strong> moving any code?</q>
+<option>Split it into classes so it is easier to test later</option>
+<option correct>Write characterization tests that record what it does today for a few real inputs</option>
+<option>Rewrite it from scratch in a new file and switch over</option>
+<option>Add interfaces for every dependency it uses</option>
+<explain><p>A characterization test pins current behaviour, right or wrong. Every refactoring step can then be checked against it. Without it, a changed total or a missing e-mail goes unnoticed until a customer reports it.</p></explain>
+</question>
+
+<question id="dp-char-fails" type="choice">
+<q>After extracting <code>priceOrder</code>, a characterization test fails: the old code returned <code>145125</code> kobo, the new function returns <code>145124</code>. What does this tell you?</q>
+<option>The old code was wrong and the test should be deleted</option>
+<option>Characterization tests are too strict for refactoring</option>
+<option correct>The refactoring changed behaviour (probably rounding). Find out why, then either restore the old result or change it deliberately in a separate, reviewed step</option>
+<option>Nothing, one kobo is within rounding error</option>
+<explain><p>A refactoring must not change behaviour. One kobo on every order is real money and a real difference between the receipt and the charge. If the new rounding is actually better, that is a behaviour change to agree on and ship on its own, not a side effect of moving code.</p></explain>
+</question>
+
+<question id="dp-extract-first" type="choice">
+<q>The tangled <code>placeOrder</code> validates, prices, charges, saves and e-mails. Which part is the safest and most useful to extract first?</q>
+<option>The payment call, because it is the riskiest</option>
+<option>The e-mail, because it is the shortest</option>
+<option correct>Validation and pricing, because they are pure calculations that need nothing from the outside world</option>
+<option>The database write, because it holds the most data</option>
+<explain><p>Pure code can be moved and tested without fakes, databases or networks. Once it is out, the remaining function is mostly side effects in a clear order, which is easier to handle next.</p></explain>
+</question>
+
+<question id="dp-concern-define" type="choice">
+<q>Which of these best describes a <strong>concern</strong> in "separation of concerns"?</q>
+<option>A single line of code</option>
+<option>Any function longer than 20 lines</option>
+<option correct>One area of knowledge the code needs, which one expert or team could own and would ask to change</option>
+<option>A bug that someone is worried about</option>
+<explain><p>Pricing, payment, storage and notification are concerns: each has its own experts and its own reasons to change. Separating them means a pricing change does not touch the payment code.</p></explain>
+</question>
+
+<question id="dp-cohesion-sentence" type="choice">
+<q>Which module description signals <strong>low cohesion</strong>?</q>
+<option>"Computes order prices from lines, coupons and VAT"</option>
+<option>"Stores orders in PostgreSQL"</option>
+<option correct>"Formats naira amounts and validates e-mails and retries failed calls"</option>
+<option>"Sends order notifications by e-mail"</option>
+<explain><p>If you need "and" to describe a module, its parts serve different purposes and change for different reasons. Such modules become merge-conflict magnets and hide duplicates.</p></explain>
+</question>
+
+<question id="dp-scattered-vat" type="choice">
+<q>VAT is computed in the checkout, the invoice and the receipt. The rate changes and only the receipt is updated, so receipts disagree with charges. What is the design problem?</q>
+<option>The VAT rate should be a <code>let</code> instead of a literal</option>
+<option correct>One idea ("how a total is computed") has no single home: low cohesion. All three should ask one pricing module</option>
+<option>The receipt should not show VAT at all</option>
+<option>The three files should be merged into one big file</option>
+<explain><p>High cohesion means one idea lives in one place. When the invoice and the receipt call <code>priceOrder</code>, they cannot disagree with the charge, whatever the rate becomes.</p></explain>
+</question>
+
+<question id="dp-global-coupling" type="choice">
+<q>Four modules import an exported array <code>outbox</code> and push to it or clear it. Which kind of coupling is this, and why does it hurt?</q>
+<option>Data coupling; it is the best kind</option>
+<option correct>Global (common) coupling: any module can change shared state, so a bug in one can break the others, and tests leak state into each other</option>
+<option>Stamp coupling: too much data is passed</option>
+<option>Control coupling: a flag chooses the code path</option>
+<explain><p>Shared mutable globals connect every user of them. Tests that run in the same process see each other's leftovers, and you cannot tell who emptied the array.</p></explain>
+</question>
+
+<question id="dp-control-coupling" type="choice">
+<q><code>notify(order, true)</code> sends an SMS; <code>notify(order, false)</code> sends an e-mail. What is the better design?</q>
+<option>Use a string <code>"sms"</code> instead of <code>true</code>; that removes the coupling</option>
+<option correct>Pass the notifier to use (an object with <code>send</code>), or have two clearly named functions, so the caller does not steer the callee's internal branches</option>
+<option>Keep it; boolean parameters are the simplest option</option>
+<option>Make <code>notify</code> read a global setting instead</option>
+<explain><p>A flag that picks the code path is control coupling: the caller must know how the callee is built inside. A string flag is the same coupling with a different type. Passing the behaviour itself (a notifier) lets new channels be added without editing <code>notify</code>.</p></explain>
+</question>
+
+<question id="dp-stamp-coupling" type="choice">
+<q>The e-mail function receives the whole order record, including the card number, although it only needs the address and the total. What is the risk?</q>
+<option>None, passing more data is always more flexible</option>
+<option>It makes the program slower</option>
+<option correct>Stamp coupling: the e-mail code now depends on the order's shape, and sensitive fields travel to code (and logs, and templates) that should never see them</option>
+<option>TypeScript will refuse it</option>
+<explain><p>Passing only what is needed (data coupling) keeps modules independent of each other's record shapes and limits where sensitive data can leak.</p></explain>
+</question>
+
+<question id="dp-creation-coupling" type="choice">
+<q>A function does <code>const client = new PaystackClient(KEY)</code> inside itself before charging. Which problem does this cause first?</q>
+<option>It is slower than a global client</option>
+<option correct>No test can run it without the real provider, and switching providers means editing the function</option>
+<option>TypeScript cannot type the client</option>
+<option>The key will be logged</option>
+<explain><p>A function that builds its own collaborators has decided for every caller, tests included. Receiving the gateway as a parameter (dependency injection) moves that decision to the composition root.</p></explain>
+</question>
+
+<question id="dp-setter-encapsulation" type="choice">
+<q>A developer makes <code>status</code> private and adds <code>setStatus(value)</code> that assigns any status. Is the order encapsulated now?</q>
+<option>Yes, the field is private</option>
+<option correct>No. Any code can still set any status in any order; the rules (only a paid order can be refunded) are still not enforced anywhere</option>
+<option>Yes, because setters are slower to call</option>
+<option>No, because private fields do not work with getters</option>
+<explain><p>Encapsulation is about protecting invariants. Methods such as <code>markPaid</code> and <code>markRefunded</code> check the current state; a general setter checks nothing.</p></explain>
+</question>
+
+<question id="dp-invariant" type="choice">
+<q>Which of these is an <strong>invariant</strong> of an order?</q>
+<option>The order was created on a weekday</option>
+<option correct>The total always equals the price of the order's lines after discount plus VAT</option>
+<option>The customer has placed an order before</option>
+<option>The e-mail was delivered</option>
+<explain><p>An invariant is a rule that must be true of the object at every moment. Freezing the lines and computing the price inside <code>Order.create</code> makes this one impossible to break.</p></explain>
+</question>
+
+<question id="dp-private-constructor" type="choice">
+<q>Why does the lesson's <code>Order</code> have a <code>private</code> constructor and a <code>static create</code> method?</q>
+<option>Because TypeScript classes cannot have public constructors with parameter properties</option>
+<option correct>So the only way to get an order is through <code>create</code>, which always computes the price from frozen lines; no caller can build an order with a mismatched total</option>
+<option>To make orders singletons</option>
+<option>To hide the class from other modules</option>
+<explain><p>Controlling creation is part of encapsulation: every order that exists went through the one door that establishes the invariants.</p></explain>
+</question>
+
+<question id="dp-leaky-interface" type="choice">
+<q>Which payment interface is a <strong>leaky abstraction</strong>?</q>
+<option><code>charge(card, amountKobo, reference): Promise&lt;{ ok: true; chargeId } | { ok: false; reason }&gt;</code></option>
+<option correct><code>charge(request): Promise&lt;{ status: boolean; data: { gateway_response: string } }&gt;</code>, returning the provider's raw answer</option>
+<option><code>refund(chargeId): Promise&lt;void&gt;</code></option>
+<option><code>charge(amountKobo): Promise&lt;string&gt;</code> that throws on decline</option>
+<explain><p>Returning the provider's own field names forces the caller to understand one provider's format. A second provider with different fields silently breaks the caller, as the Flutterwave example showed.</p></explain>
+</question>
+
+<question id="dp-abstraction-owner" type="choice">
+<q>Who should decide the shape of the <code>PaymentGateway</code> interface?</q>
+<option>The payment provider's SDK</option>
+<option correct>The code that uses it (the order service), in its own words; each provider then gets a translator to that shape</option>
+<option>The database layer</option>
+<option>Whoever writes the first implementation</option>
+<explain><p>The side that uses an abstraction knows what it needs: did it work, a reference for refunds, and whether a failure is retryable. Designing from the provider's side leaks the provider into the service.</p></explain>
+</question>
+
+<question id="dp-compensate" type="choice">
+<q>The card was charged, then saving the order fails because the database is down. What should the order service do?</q>
+<option>Return success; the payment went through</option>
+<option>Retry the charge</option>
+<option correct>Compensate: refund the charge, mark the order refunded, and report the failure</option>
+<option>Nothing; the database will come back</option>
+<explain><p>The charge cannot be rolled back like a database transaction, so an explicit undo step (a compensation) is needed. Otherwise the customer has paid for an order the shop does not know about.</p></explain>
+</question>
+
+<question id="dp-email-failure" type="choice">
+<q>The order is paid and saved, but the e-mail server is down. Where does the lesson put the decision "do not fail the order because of this"?</q>
+<option>In a <code>try/catch</code> inside every service that sends messages</option>
+<option correct>In a <code>bestEffort</code> wrapper around the notifier, chosen in the composition root</option>
+<option>In the e-mail server's configuration</option>
+<option>Nowhere; the order should fail</option>
+<explain><p>It is a policy <em>about</em> notifying, not about ordering. As a wrapper it can be applied to any notifier and changed without editing the service.</p></explain>
+</question>
+
+<question id="dp-overdone-abstraction" type="choice">
+<q>Which of these most likely does <strong>not</strong> need an interface and injection?</q>
+<option>The payment gateway</option>
+<option>The order store</option>
+<option>The clock used to decide if a booking is late</option>
+<option correct>A pure <code>priceOrder</code> function with one implementation</option>
+<explain><p>Inject what talks to the outside world or must be replaced in tests. A pure function is already easy to test and replace; an interface around it adds names and hides nothing.</p></explain>
+</question>
+
+<question id="dp-composition-root" type="choice">
+<q>What is the <strong>composition root</strong>?</q>
+<option>The base class every service inherits from</option>
+<option correct>The one place, usually the entry file, that creates the concrete parts and connects them</option>
+<option>The first function called in each request</option>
+<option>The folder that holds interfaces</option>
+<explain><p>Only the composition root knows every concrete choice: which gateway, which store, which notifiers. Tests have their own small composition roots that pick fakes.</p></explain>
+</question>
+
+<question id="dp-measure-coupling" type="choice">
+<q>Which is the most practical everyday measure of whether a design is loosely coupled?</q>
+<option>The number of classes in the project</option>
+<option>The number of interfaces</option>
+<option correct>How many files typical changes touch, for example "change the VAT rate" or "switch payment provider"</option>
+<option>The length of the longest function</option>
+<explain><p>Coupling is about change. If a VAT change touches one file and a provider switch adds one file and edits the composition root, the design is doing its job.</p></explain>
+</question>
+
+<question id="dp-confetti" type="choice">
+<q>A developer splits a clear 15-line function into seven files of two lines each. Which principle suffers?</q>
+<option>Encapsulation</option>
+<option correct>Cohesion: one idea is now scattered, and reading it means opening seven files</option>
+<option>Nothing; smaller files are always better</option>
+<option>Composition</option>
+<explain><p>Separate by reason to change, not by line count. Over-splitting scatters one concern the same way the VAT rule was scattered.</p></explain>
+</question>
+
+<question id="dp-dto" type="choice">
+<q>A <code>PlaceOrderDto</code> only carries values from an HTTP body into the service. Should it be a class with private fields and guarded methods?</q>
+<option>Yes, every type should be encapsulated</option>
+<option correct>No. It has no invariants of its own to protect; a readonly interface is enough. Encapsulation belongs where there are rules</option>
+<option>Yes, otherwise JSON.parse will fail</option>
+<option>No, because DTOs must be mutable</option>
+<explain><p>Data that only crosses a boundary is checked once (by validation) and then read. The <code>Order</code> has rules about its lifecycle, so it gets the private state and guarded methods.</p></explain>
+</question>
+
+<question id="dp-out-stale-total" type="output">
+<q>What does this print?</q>
+<code file="stale.ts">
+const order = { items: [{ sku: "RICE-5KG", qty: 1 }], totalKobo: 850000 };
+const addGift = (o: typeof order) => o.items.push({ sku: "SUGAR-1KG", qty: 1 });
+
+addGift(order);
+console.log(order.items.length, order.totalKobo);
+</code>
+<option>1 850000</option>
+<option correct>2 850000</option>
+<option>2 1000000</option>
+<option>2 undefined</option>
+<explain><p>The gift function changed the lines from outside, and nothing recomputed the total. The invariant "total matches lines" is broken because any code can mutate the record.</p></explain>
+</question>
+
+<question id="dp-out-frozen-lines" type="output">
+<q>What does this print?</q>
+<code file="frozen.ts">
+const lines = Object.freeze([Object.freeze({ sku: "OIL-1L", qty: 2 })]);
+
+try {
+  (lines as unknown as { sku: string; qty: number }[]).push({ sku: "RICE-5KG", qty: 1 });
+} catch (error) {
+  console.log(error instanceof TypeError);
+}
+try {
+  (lines[0] as { qty: number }).qty = 5;
+} catch (error) {
+  console.log(error instanceof TypeError);
+}
+console.log(lines.length, lines[0]?.qty);
+</code>
+<option>false false 2 5</option>
+<option correct>true
+true
+1 2</option>
+<option>true
+1 5</option>
+<option>1 2</option>
+<explain><p>Both the array and the line object are frozen. Pushing to a frozen array always throws a <code>TypeError</code>, and assigning to a property of a frozen object throws in strict mode code (modules and TypeScript output are strict). Nothing changed.</p></explain>
+</question>
+
+<question id="dp-out-state-machine" type="output">
+<q>What does this print?</q>
+<code file="state.ts">
+class Order {
+  #status: "pending" | "paid" | "refunded" = "pending";
+  get status() { return this.#status; }
+  markPaid() {
+    if (this.#status !== "pending") throw new Error(`cannot pay an order that is ${this.#status}`);
+    this.#status = "paid";
+  }
+  markRefunded() {
+    if (this.#status !== "paid") throw new Error(`cannot refund an order that is ${this.#status}`);
+    this.#status = "refunded";
+  }
+}
+
+const order = new Order();
+for (const step of ["markPaid", "markRefunded", "markPaid"] as const) {
+  try {
+    order[step]();
+    console.log(step, "->", order.status);
+  } catch (error) {
+    console.log((error as Error).message);
+  }
+}
+</code>
+<option>markPaid -> paid
+markRefunded -> refunded
+markPaid -> paid</option>
+<option correct>markPaid -> paid
+markRefunded -> refunded
+cannot pay an order that is refunded</option>
+<option>markPaid -> paid
+cannot refund an order that is paid
+cannot pay an order that is paid</option>
+<option>cannot pay an order that is pending
+markRefunded -> refunded
+markPaid -> paid</option>
+<explain><p>The methods form a one-way state machine: pending → paid → refunded. Paying a refunded order is refused because the status is no longer <code>pending</code>.</p></explain>
+</question>
+
+<question id="dp-out-pricing" type="output">
+<q>What does this print?</q>
+<code file="price.ts">
+function price(subtotalKobo: number, discountRate: number) {
+  const afterDiscount = Math.round(subtotalKobo * (1 - discountRate));
+  const vat = Math.round(afterDiscount * 0.075);
+  return afterDiscount + vat;
+}
+
+console.log(price(1000, 0.1), price(1000, 0));
+</code>
+<option>967 1075</option>
+<option correct>968 1075</option>
+<option>975 1075</option>
+<option>968.5 1075</option>
+<explain><p>With the coupon: 900 after discount, VAT is 67.5, which <code>Math.round</code> turns into 68, so 968. Without: 1000 + 75 = 1075. VAT is charged on the discounted amount.</p></explain>
+</question>
+
+<question id="dp-out-leaky" type="output">
+<q>The service was written against Paystack's response. What does this print for a Flutterwave answer?</q>
+<code file="leak.ts">
+type Raw = { status: boolean | string; data: Record<string, string> };
+
+const approved = (raw: Raw) => raw.status === true && raw.data["gateway_response"] === "Approved";
+
+const flutterwave: Raw = { status: "success", data: { processor_response: "Approved" } };
+console.log(approved(flutterwave), flutterwave.data["gateway_response"]);
+</code>
+<option>true Approved</option>
+<option>false Approved</option>
+<option correct>false undefined</option>
+<option>true undefined</option>
+<explain><p><code>"success" === true</code> is false, and Flutterwave has no <code>gateway_response</code> field. The provider's details leaked into the check, so an approved payment reads as a failure.</p></explain>
+</question>
+
+<question id="dp-out-validation-all" type="output">
+<q>What does this print?</q>
+<code file="validate.ts">
+function validate(input: { email: string; items: { sku: string; qty: number }[] }): string[] {
+  const problems: string[] = [];
+  if (!input.email.includes("@")) problems.push("email");
+  if (input.items.length === 0) problems.push("no items");
+  for (const item of input.items) if (item.qty < 1) problems.push(`qty ${item.sku}`);
+  return problems;
+}
+
+console.log(validate({ email: "ada", items: [{ sku: "RICE", qty: 0 }, { sku: "OIL", qty: 2 }] }));
+</code>
+<option>[ 'email' ]</option>
+<option correct>[ 'email', 'qty RICE' ]</option>
+<option>[ 'email', 'no items', 'qty RICE' ]</option>
+<option>[ 'email', 'qty RICE', 'qty OIL' ]</option>
+<explain><p>The function collects every problem instead of throwing at the first. The items list is not empty, and only RICE has a quantity below 1.</p></explain>
+</question>
+
+<question id="dp-out-wrapper-order" type="output">
+<q>Two wrappers around a failing notifier. What does this print?</q>
+<code file="wrappers.ts">
+type Notifier = { send(to: string): Promise<void> };
+const log: string[] = [];
+
+const failing: Notifier = { send: async () => { throw new Error("down"); } };
+const bestEffort = (n: Notifier): Notifier => ({
+  send: async (to) => { try { await n.send(to); } catch { log.push("swallowed"); } },
+});
+const logged = (n: Notifier): Notifier => ({
+  send: async (to) => { log.push(`try ${to}`); await n.send(to); log.push(`sent ${to}`); },
+});
+
+await logged(bestEffort(failing)).send("ada");
+console.log(log.join(", "));
+</code>
+<option>try ada, swallowed</option>
+<option correct>try ada, swallowed, sent ada</option>
+<option>swallowed, try ada, sent ada</option>
+<option>try ada</option>
+<explain><p><code>logged</code> is outside, so it logs first. <code>bestEffort</code> swallows the error, so from <code>logged</code>'s point of view the send succeeded and it logs "sent ada", which is misleading. Wrapper order matters.</p></explain>
+</question>
+
+<question id="dp-out-allof-fail" type="output">
+<q>What does this print?</q>
+<code file="allof.ts">
+type Notifier = { send(to: string): Promise<void> };
+const outbox: string[] = [];
+
+const sms: Notifier = { send: async () => { throw new Error("sms down"); } };
+const email: Notifier = { send: async (to) => void outbox.push(`email ${to}`) };
+const allOf = (...ns: Notifier[]): Notifier => ({
+  send: async (to) => { for (const n of ns) await n.send(to); },
+});
+
+try {
+  await allOf(sms, email).send("ada");
+} catch (error) {
+  console.log((error as Error).message);
+}
+console.log(outbox.length);
+</code>
+<option>sms down
+1</option>
+<option correct>sms down
+0</option>
+<option>0</option>
+<option>1</option>
+<explain><p><code>allOf</code> sends in order and stops at the first error, so the e-mail is never sent. That is why the lesson wraps each channel in <code>bestEffort</code> before combining them.</p></explain>
+</question>
+
+<question id="dp-out-compensate" type="output">
+<q>What does this print?</q>
+<code file="compensate.ts">
+const events: string[] = [];
+const gateway = {
+  charge: async () => { events.push("charge"); return "CH-1"; },
+  refund: async (id: string) => void events.push(`refund ${id}`),
+};
+const store = { save: async () => { throw new Error("db down"); } };
+
+async function place(): Promise<string> {
+  const chargeId = await gateway.charge();
+  try {
+    await store.save();
+  } catch {
+    await gateway.refund(chargeId);
+    return "not_saved";
+  }
+  events.push("email");
+  return "ok";
+}
+
+console.log(await place(), events);
+</code>
+<option>ok [ 'charge', 'email' ]</option>
+<option correct>not_saved [ 'charge', 'refund CH-1' ]</option>
+<option>not_saved [ 'charge', 'refund CH-1', 'email' ]</option>
+<option>not_saved [ 'charge' ]</option>
+<explain><p>The save fails after the charge, so the catch block refunds the charge and returns early. No e-mail is sent for an order that does not exist.</p></explain>
+</question>
+
+<question id="dp-out-global-ids" type="output">
+<q>Two modules share one global counter. What does this print?</q>
+<code file="ids.ts">
+const db = { nextId: 1 };
+
+function createOrderId() { return `ORD-${db.nextId++}`; }
+function importLegacyOrders(count: number) { db.nextId += count; }
+
+console.log(createOrderId());
+importLegacyOrders(100);
+console.log(createOrderId());
+</code>
+<option>ORD-1 ORD-2</option>
+<option>ORD-1
+ORD-2</option>
+<option correct>ORD-1
+ORD-102</option>
+<option>ORD-1
+ORD-101</option>
+<explain><p>After the first id, <code>nextId</code> is 2. The import adds 100, so the next id is <code>ORD-102</code>. Any module can change the shared counter, so the id sequence depends on code far away.</p></explain>
+</question>
+
+<question id="dp-out-fake-calls" type="output">
+<q>A test passes fakes that record calls. What does it print?</q>
+<code file="fakes.ts">
+const calls: string[] = [];
+const deps = {
+  charge: async (amount: number) => { calls.push(`charge ${amount}`); return amount > 0; },
+  save: async () => void calls.push("save"),
+};
+
+async function checkout(amount: number) {
+  if (amount <= 0) return "invalid";
+  if (!(await deps.charge(amount))) return "declined";
+  await deps.save();
+  return "ok";
+}
+
+console.log(await checkout(0), await checkout(500), calls);
+</code>
+<option>invalid ok [ 'charge 0', 'charge 500', 'save' ]</option>
+<option correct>invalid ok [ 'charge 500', 'save' ]</option>
+<option>declined ok [ 'charge 0', 'charge 500', 'save' ]</option>
+<option>invalid ok []</option>
+<explain><p>The invalid amount returns before the gateway is touched, which the recorded calls prove. That is exactly the kind of fact a fake makes easy to check.</p></explain>
+</question>
+
+<question id="dp-code-extract-pricing" type="code" file="extract.ts">
+<q><p>The function below mixes pricing with side effects. Extract a pure function <code>cartTotalKobo(lines, prices)</code> that returns the subtotal plus 7.5% VAT (rounded with <code>Math.round</code>), and make <code>checkout</code> use it. The program should print <code>483750</code> and then <code>charged 483750</code>.</p></q>
+<starter>
+const prices: Record<string, number> = { "SUGAR-1KG": 150000 };
+const log: string[] = [];
+
+function checkout(lines: { sku: string; qty: number }[]): void {
+  let subtotal = 0;
+  for (const line of lines) subtotal += (prices[line.sku] ?? 0) * line.qty;
+  const total = subtotal + Math.round(subtotal * 0.075);
+  log.push(`charged ${total}`);
+}
+
+// write cartTotalKobo, use it in checkout, then print it for 3 sugar
+// and print log[0] after checkout of the same cart
+</starter>
+<solution>
+const prices: Record<string, number> = { "SUGAR-1KG": 150000 };
+const log: string[] = [];
+
+function cartTotalKobo(lines: { sku: string; qty: number }[], table: Record<string, number>): number {
+  let subtotal = 0;
+  for (const line of lines) subtotal += (table[line.sku] ?? 0) * line.qty;
+  return subtotal + Math.round(subtotal * 0.075);
+}
+
+function checkout(lines: { sku: string; qty: number }[]): void {
+  log.push(`charged ${cartTotalKobo(lines, prices)}`);
+}
+
+const cart = [{ sku: "SUGAR-1KG", qty: 3 }];
+console.log(cartTotalKobo(cart, prices));
+checkout(cart);
+console.log(log[0]);
+</solution>
+<expected>
+483750
+charged 483750
+</expected>
+<explain><p>The calculation now has no side effects and takes its price table as a parameter, so it can be tested alone. <code>checkout</code> keeps only its side effect.</p></explain>
+</question>
+
+<question id="dp-code-validate-transfer" type="code" file="transfer.ts">
+<q><p>Write <code>validateTransfer(t)</code> that returns a list of <em>all</em> problems: <code>"amount must be positive whole kobo"</code> if <code>amountKobo</code> is not a positive integer, <code>"cannot transfer to the same account"</code> if <code>from === to</code>, and <code>"account number must be 10 digits"</code> for each of <code>from</code>/<code>to</code> that is not exactly ten digits. The program should print <code>[]</code> and then <code>3</code>.</p></q>
+<starter>
+type Transfer = { from: string; to: string; amountKobo: number };
+
+// write validateTransfer here
+
+console.log(validateTransfer({ from: "0123456789", to: "9876543210", amountKobo: 1000000 }));
+console.log(validateTransfer({ from: "12345", to: "12345", amountKobo: 10.5 }).length);
+</starter>
+<solution>
+type Transfer = { from: string; to: string; amountKobo: number };
+
+function validateTransfer(t: Transfer): string[] {
+  const problems: string[] = [];
+  if (!Number.isInteger(t.amountKobo) || t.amountKobo <= 0) problems.push("amount must be positive whole kobo");
+  if (t.from === t.to) problems.push("cannot transfer to the same account");
+  if (!/^\d{10}$/.test(t.from) || !/^\d{10}$/.test(t.to)) problems.push("account number must be 10 digits");
+  return problems;
+}
+
+console.log(validateTransfer({ from: "0123456789", to: "9876543210", amountKobo: 1000000 }));
+console.log(validateTransfer({ from: "12345", to: "12345", amountKobo: 10.5 }).length);
+</solution>
+<expected>
+[]
+3
+</expected>
+<explain><p>Collecting every problem gives the user all the feedback at once, and a pure function like this is tested without a bank. (Reporting the account-number rule once or once per field are both reasonable; this solution reports it once.)</p></explain>
+</question>
+
+<question id="dp-code-best-effort" type="code" file="best-effort.ts">
+<q><p>Write <code>bestEffort(notifier, log)</code>: it returns a notifier whose <code>send</code> calls the wrapped one and, if that throws, calls <code>log</code> with <code>"failed: " + error.message</code> instead of throwing. The program should print <code>failed: sms down</code> and then <code>done</code>.</p></q>
+<starter>
+type Notifier = { send(to: string, message: string): Promise<void> };
+
+const sms: Notifier = { send: async () => { throw new Error("sms down"); } };
+
+// write bestEffort here
+
+await bestEffort(sms, (line) => console.log(line)).send("ada", "order confirmed");
+console.log("done");
+</starter>
+<solution>
+type Notifier = { send(to: string, message: string): Promise<void> };
+
+const sms: Notifier = { send: async () => { throw new Error("sms down"); } };
+
+function bestEffort(notifier: Notifier, log: (line: string) => void): Notifier {
+  return {
+    async send(to, message) {
+      try {
+        await notifier.send(to, message);
+      } catch (error) {
+        log(`failed: ${(error as Error).message}`);
+      }
+    },
+  };
+}
+
+await bestEffort(sms, (line) => console.log(line)).send("ada", "order confirmed");
+console.log("done");
+</solution>
+<expected>
+failed: sms down
+done
+</expected>
+<explain><p>The wrapper has the same interface as what it wraps, so the service cannot tell the difference. The policy "never fail because of a notification" lives in one small function. Note the <code>await</code> inside <code>try</code>: without it, the rejection would escape the <code>catch</code>.</p></explain>
+</question>
+
+<question id="dp-code-account" type="code" file="account.ts">
+<q><p>Write a class <code>Account</code> with a private balance (starting at 0), a getter <code>balanceKobo</code>, and methods <code>deposit(kobo)</code> and <code>withdraw(kobo)</code>. <code>withdraw</code> must throw <code>new Error("insufficient funds")</code> if the amount is larger than the balance. The program should print <code>300000</code>, then <code>insufficient funds</code>, then <code>300000</code>.</p></q>
+<starter>
+// write Account here
+
+const account = new Account();
+account.deposit(500000);
+account.withdraw(200000);
+console.log(account.balanceKobo);
+try {
+  account.withdraw(900000);
+} catch (error) {
+  console.log((error as Error).message);
+}
+console.log(account.balanceKobo);
+</starter>
+<solution>
+class Account {
+  #balanceKobo = 0;
+
+  get balanceKobo(): number {
+    return this.#balanceKobo;
+  }
+
+  deposit(kobo: number): void {
+    this.#balanceKobo += kobo;
+  }
+
+  withdraw(kobo: number): void {
+    if (kobo > this.#balanceKobo) throw new Error("insufficient funds");
+    this.#balanceKobo -= kobo;
+  }
+}
+
+const account = new Account();
+account.deposit(500000);
+account.withdraw(200000);
+console.log(account.balanceKobo);
+try {
+  account.withdraw(900000);
+} catch (error) {
+  console.log((error as Error).message);
+}
+console.log(account.balanceKobo);
+</solution>
+<expected>
+300000
+insufficient funds
+300000
+</expected>
+<explain><p>The balance can only change through the two methods, and <code>withdraw</code> checks before it changes anything, so a refused withdrawal leaves the balance untouched. A real version would also reject non-positive or fractional amounts.</p></explain>
+</question>
+
+<question id="dp-code-translate" type="code" file="translate.ts">
+<q><p>Write <code>toChargeResult(raw)</code> that translates a provider answer into the shop's own shape: <code>{ ok: true, chargeId }</code> when <code>raw.status === "success"</code> and <code>raw.data.processor_response === "Approved"</code> (with <code>chargeId</code> taken from <code>raw.data.flw_ref</code>), otherwise <code>{ ok: false, reason: "declined" }</code>. The program should print <code>true FLW-12</code> then <code>false declined</code>.</p></q>
+<starter>
+type Raw = { status: string; data: Record<string, string> };
+type ChargeResult = { ok: true; chargeId: string } | { ok: false; reason: "declined" };
+
+// write toChargeResult here
+
+const a = toChargeResult({ status: "success", data: { processor_response: "Approved", flw_ref: "FLW-12" } });
+const b = toChargeResult({ status: "success", data: { processor_response: "Insufficient funds", flw_ref: "FLW-13" } });
+console.log(a.ok, a.ok ? a.chargeId : a.reason);
+console.log(b.ok, b.ok ? b.chargeId : b.reason);
+</starter>
+<solution>
+type Raw = { status: string; data: Record<string, string> };
+type ChargeResult = { ok: true; chargeId: string } | { ok: false; reason: "declined" };
+
+function toChargeResult(raw: Raw): ChargeResult {
+  if (raw.status === "success" && raw.data["processor_response"] === "Approved") {
+    return { ok: true, chargeId: raw.data["flw_ref"] ?? "" };
+  }
+  return { ok: false, reason: "declined" };
+}
+
+const a = toChargeResult({ status: "success", data: { processor_response: "Approved", flw_ref: "FLW-12" } });
+const b = toChargeResult({ status: "success", data: { processor_response: "Insufficient funds", flw_ref: "FLW-13" } });
+console.log(a.ok, a.ok ? a.chargeId : a.reason);
+console.log(b.ok, b.ok ? b.chargeId : b.reason);
+</solution>
+<expected>
+true FLW-12
+false declined
+</expected>
+<explain><p>The provider's field names stay inside this one function. The service only ever sees <code>ok</code>, <code>chargeId</code> and <code>reason</code>, so adding a provider never changes it.</p></explain>
+</question>
+
+<question id="dp-code-allof" type="code" file="allof-code.ts">
+<q><p>Write <code>allOf(...notifiers)</code> that returns one notifier whose <code>send</code> sends to every notifier in order. The program should print <code>email: hi</code> then <code>sms: hi</code>.</p></q>
+<starter>
+type Notifier = { send(message: string): Promise<void> };
+
+const email: Notifier = { send: async (m) => console.log(`email: ${m}`) };
+const sms: Notifier = { send: async (m) => console.log(`sms: ${m}`) };
+
+// write allOf here
+
+await allOf(email, sms).send("hi");
+</starter>
+<solution>
+type Notifier = { send(message: string): Promise<void> };
+
+const email: Notifier = { send: async (m) => console.log(`email: ${m}`) };
+const sms: Notifier = { send: async (m) => console.log(`sms: ${m}`) };
+
+function allOf(...notifiers: Notifier[]): Notifier {
+  return {
+    async send(message) {
+      for (const notifier of notifiers) await notifier.send(message);
+    },
+  };
+}
+
+await allOf(email, sms).send("hi");
+</solution>
+<expected>
+email: hi
+sms: hi
+</expected>
+<explain><p>The combined notifier has the same interface as each part, so code that expects one notifier accepts the combination. That is composition: new behaviour from existing parts, with no edits to the service.</p></explain>
+</question>
+
+<question id="dp-code-clock" type="code" file="clock.ts">
+<q><p><code>isOverdue</code> reads the real clock, so it cannot be tested reliably. Change it to take a <code>now</code> parameter (a <code>Date</code>) and call it with fixed dates. An invoice due <code>2026-03-01T00:00:00Z</code> should print <code>false</code> for now = <code>2026-02-28T12:00:00Z</code> and <code>true</code> for now = <code>2026-03-02T00:00:00Z</code>.</p></q>
+<starter>
+function isOverdue(invoice: { dueAt: Date }): boolean {
+  return Date.now() > invoice.dueAt.getTime();
+}
+
+const invoice = { dueAt: new Date("2026-03-01T00:00:00Z") };
+// change isOverdue, then print it for the two fixed dates
+</starter>
+<solution>
+function isOverdue(invoice: { dueAt: Date }, now: Date): boolean {
+  return now.getTime() > invoice.dueAt.getTime();
+}
+
+const invoice = { dueAt: new Date("2026-03-01T00:00:00Z") };
+console.log(isOverdue(invoice, new Date("2026-02-28T12:00:00Z")));
+console.log(isOverdue(invoice, new Date("2026-03-02T00:00:00Z")));
+</solution>
+<expected>
+false
+true
+</expected>
+<explain><p>The clock is part of the outside world, like a database. Passing the time in makes the function pure and its tests repeatable on any day. In a service, you would inject a clock object instead of a date per call.</p></explain>
+</question>
+
+<question id="dp-code-flag" type="code" file="flag.ts">
+<q><p><code>notify(order, true)</code> means SMS and <code>false</code> means e-mail. Remove the flag: make <code>notify(order, channel)</code> take a <code>channel</code> object with a <code>send(text)</code> method, and call it with the two channels given. The program should print <code>sms: ORD-1 paid</code> then <code>email: ORD-1 paid</code>.</p></q>
+<starter>
+type Channel = { send(text: string): void };
+const sms: Channel = { send: (text) => console.log(`sms: ${text}`) };
+const email: Channel = { send: (text) => console.log(`email: ${text}`) };
+
+function notify(order: { id: string }, useSms: boolean): void {
+  const text = `${order.id} paid`;
+  if (useSms) console.log(`sms: ${text}`);
+  else console.log(`email: ${text}`);
+}
+
+// rewrite notify to take a Channel, then call it with sms and with email
+</starter>
+<solution>
+type Channel = { send(text: string): void };
+const sms: Channel = { send: (text) => console.log(`sms: ${text}`) };
+const email: Channel = { send: (text) => console.log(`email: ${text}`) };
+
+function notify(order: { id: string }, channel: Channel): void {
+  channel.send(`${order.id} paid`);
+}
+
+notify({ id: "ORD-1" }, sms);
+notify({ id: "ORD-1" }, email);
+</solution>
+<expected>
+sms: ORD-1 paid
+email: ORD-1 paid
+</expected>
+<explain><p>The caller no longer steers <code>notify</code>'s internal branches with a boolean. A WhatsApp channel can be added without touching <code>notify</code> at all.</p></explain>
+</question>

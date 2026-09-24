@@ -1,0 +1,1056 @@
+---
+title: The type system in depth
+description: Learn when one type fits another: structural typing, excess property checks, variance with in and out, computed types, and when a clever type costs too much.
+minutes: 60
+youNeed: Union types in depth, Conditional types, Advanced functions and Functional TypeScript
+youBuild: A variance-safe notification module for a shop, with a type test suite that pins every compatibility rule it relies on
+keywords: typescript structural typing, type compatibility, assignability, excess property checks, freshness, weak types, variance, covariance, contravariance, invariance, method bivariance, strictFunctionTypes, in out variance annotations, recursive types, recursive conditional types, type-level programming, TS2589, TS2590, extendedDiagnostics
+objectives: Predict whether one type is assignable to another using the structural rules for objects, functions and unions | Explain when excess property checks run and when a typo slips through | Classify a generic type as covariant, contravariant, invariant or bivariant, and write callbacks so they are checked | Use in and out annotations and read the error when one contradicts the type | Write a recursive conditional type that computes a useful answer, and test it | Weigh a clever type's error messages, compile time, limits and edge cases against a simpler design
+---
+<section>
+<h2 id="problem">The refund that accepted an order</h2>
+<p>A customer paid for order ORD-1042 partly with ₦5,000 of store credit and the rest by card. The order is later returned, and a support tool calls the refund function. This file compiles with no errors under <code>strict</code>:</p>
+<example file="problem.ts">
+interface Payment {
+  id: string;
+  amountKobo: number;
+}
+
+interface Order {
+  id: string;
+  amountKobo: number;
+  customer: string;
+}
+
+function refundToCard(payment: Payment): string {
+  return `refund ${payment.amountKobo} kobo to the card used for ${payment.id}`;
+}
+
+const order: Order = { id: "ORD-1042", amountKobo: 2138750, customer: "Ada" };
+const cardPayment: Payment = { id: "PAY-88", amountKobo: 1638750 };
+
+console.log(refundToCard(cardPayment));
+console.log(refundToCard(order));
+</example>
+<output>
+refund 1638750 kobo to the card used for PAY-88
+refund 2138750 kobo to the card used for ORD-1042
+</output>
+<p>The second call refunds the whole order total to the card, ₦5,000 more than the card was charged, against an id that is not a payment. The compiler did not object, because it never asked "is this a <code>Payment</code>?". It asked "does this <em>look like</em> a <code>Payment</code>?", and an order has an <code>id</code> string and an <code>amountKobo</code> number, so it does.</p>
+<p>This lesson is about the rules behind that answer: when one type is <strong>assignable</strong> to another (can be used where the other is expected), why the rules are shaped the way they are, where they are deliberately loose, and how to write types that the rules check well. It ends with types that compute answers, and an honest look at when that is a bad idea. <a href="/learn/ts-branded-types">Branded types</a>, the next lesson, fixes this refund for good.</p>
+</section>
+
+<section>
+<h2 id="structural">Structural typing</h2>
+<p>Languages decide type compatibility in one of two ways:</p>
+<ul>
+<li><strong>Nominal typing</strong> (Java, C#, Swift, Rust): a value has the type it was <em>declared</em> with. A <code>Payment</code> is only a <code>Payment</code> if it was created as one, even if another class has identical fields.</li>
+<li><strong>Structural typing</strong> (TypeScript, Go interfaces, OCaml objects): a value has every type whose required members it has. Names do not matter; shapes do.</li>
+</ul>
+<p>TypeScript is structural because JavaScript is. Objects in JavaScript are usually created with literals, not with classes; libraries pass plain objects to each other; and code has always been written in "duck typing" style: if it has a <code>then</code> method, treat it like a promise. A nominal type system would reject most existing JavaScript. You met the idea in <a href="/learn/ts-objects#interface-vs-type">Interfaces, unions and literal types</a>; here is its full consequence:</p>
+<example file="shapes.ts">
+interface Payment {
+  readonly id: string;
+  readonly amountKobo: number;
+}
+
+interface Refund {
+  readonly id: string;
+  readonly amountKobo: number;
+}
+
+class CardCharge {
+  constructor(
+    readonly id: string,
+    readonly amountKobo: number,
+    readonly last4: string,
+  ) {}
+}
+
+const refund: Refund = { id: "RF-3", amountKobo: 50000 };
+const asPayment: Payment = refund;
+const charge: Payment = new CardCharge("CH-9", 120000, "4242");
+const fromLiteral: CardCharge = { id: "CH-10", amountKobo: 1000, last4: "0005" };
+
+console.log(asPayment.id, charge.id, fromLiteral instanceof CardCharge);
+</example>
+<output>
+RF-3 CH-9 false
+</output>
+<p>Every assignment compiles. A <code>Refund</code> is a <code>Payment</code>, because the two interfaces have the same members. A <code>CardCharge</code> instance is a <code>Payment</code>, because it has the members and more. Even a plain object literal counts as a <code>CardCharge</code>, although it was never constructed by the class, which is why <code>instanceof</code> prints <code>false</code>. Classes are shapes too.</p>
+<h3>Where TypeScript is nominal</h3>
+<p>There is one exception. A class with a <code>private</code>, <code>protected</code> or <code>#private</code> member is only compatible with instances of that same class (and its subclasses), because the compiler cannot see or compare the hidden member from outside:</p>
+<example file="nominal.ts" check="tsc-error">
+class PaymentId {
+  #value: string;
+  constructor(value: string) {
+    this.#value = value;
+  }
+  toString(): string {
+    return this.#value;
+  }
+}
+
+class OrderId {
+  #value: string;
+  constructor(value: string) {
+    this.#value = value;
+  }
+  toString(): string {
+    return this.#value;
+  }
+}
+
+function refundPayment(id: PaymentId): string {
+  return `refunding ${id}`;
+}
+
+refundPayment(new OrderId("ORD-1042"));
+refundPayment({ toString: () => "PAY-88" });
+</example>
+<output kind="tsc">
+nominal.ts:25:15 - error TS2345: Argument of type 'OrderId' is not assignable to parameter of type 'PaymentId'.
+  Property '#value' in type 'OrderId' refers to a different member that cannot be accessed from within type 'PaymentId'.
+
+25 refundPayment(new OrderId("ORD-1042"));
+                 ~~~~~~~~~~~~~~~~~~~~~~~
+
+nominal.ts:26:15 - error TS2741: Property '#value' is missing in type '{ toString: () => string; }' but required in type 'PaymentId'.
+
+26 refundPayment({ toString: () => "PAY-88" });
+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  nominal.ts:2:3 - '#value' is declared here.
+    2   #value: string;
+        ~~~~~~
+
+
+Found 2 errors in the same file, starting at: nominal.ts:25
+</output>
+<p>That is a real way to get nominal types, and it has a runtime cost: every id becomes an object. Next lesson's branded types get the same compile-time safety for plain strings and numbers, with no runtime cost at all.</p>
+<p>Within structural typing, the usual fix for the refund bug is to give each shape a member that the other cannot have. A literal <code>kind</code> field does it: <code>{ kind: "payment"; … }</code> and <code>{ kind: "order"; … }</code> are no longer compatible, because <code>"payment"</code> and <code>"order"</code> are different types. That is exactly the discriminant of a discriminated union, and it is the reason <a href="/learn/ts-unions">Union types in depth</a> could tell the members apart.</p>
+</section>
+
+<section>
+<h2 id="compatibility">The compatibility rules</h2>
+<p>Assignability is a relation between a <strong>source</strong> type (the value you have) and a <strong>target</strong> type (the place you put it). "<code>S</code> is assignable to <code>T</code>" is also read as "<code>S</code> is a <strong>subtype</strong> of <code>T</code>": an <code>S</code> can be used wherever a <code>T</code> is expected. The rules that matter every day:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Source → target</th><th>Assignable when…</th><th>Example</th></tr></thead>
+<tbody>
+<tr><td>Object → object</td><td>The source has every required member of the target, each with an assignable type. Extra members are fine.</td><td><code>PaidOrder</code> → <code>Order</code></td></tr>
+<tr><td>Optional member</td><td>The source may lack it; if present, its type must fit.</td><td><code>{}</code> → <code>{ note?: string }</code></td></tr>
+<tr><td>Function → function</td><td>The source takes no more required parameters than the target provides, each target parameter is assignable to the source's parameter, and the source's return type is assignable to the target's.</td><td><code>(o: Order) =&gt; void</code> → <code>(p: PaidOrder, i: number) =&gt; void</code></td></tr>
+<tr><td>Union → anything</td><td>Every member of the source union is assignable.</td><td><code>"paid" | "shipped"</code> → <code>string</code></td></tr>
+<tr><td>Anything → union</td><td>The source fits at least one member.</td><td><code>"paid"</code> → <code>"paid" | "shipped"</code></td></tr>
+<tr><td><code>never</code> → anything; anything → <code>unknown</code></td><td>Always</td><td>The bottom and top of the system (<a href="/learn/ts-special-types">Special types</a>)</td></tr>
+</tbody>
+</table></div>
+<p><a href="/learn/ts-advanced-functions#compatibility">Advanced functions</a> explained the function rows: callbacks may take fewer parameters, and a function returning a value fits a <code>void</code> function type. The object rule has a hole worth knowing:</p>
+<example file="rules.ts">
+interface Payment {
+  readonly id: string;
+  readonly amountKobo: number;
+}
+
+interface EditablePayment {
+  id: string;
+  amountKobo: number;
+}
+
+const captured: Payment = { id: "PAY-88", amountKobo: 1638750 };
+const editable: EditablePayment = captured;
+editable.amountKobo = 0;
+console.log("captured payment now says", captured.amountKobo);
+</example>
+<output>
+captured payment now says 0
+</output>
+<p><strong>A readonly property fits a mutable one.</strong> Unlike <code>readonly</code> arrays (which <a href="/learn/ts-functional#readonly">Functional TypeScript</a> showed cannot be assigned to mutable arrays), <code>readonly</code> on a property does not affect assignability. The "captured" payment was zeroed through the mutable alias. This is a known, deliberate hole: checking it would have broken too much existing code. Treat <code>readonly</code> properties as intent, and freeze data that must not change.</p>
+<h3>Weak types</h3>
+<p>A type whose properties are <em>all</em> optional, such as an options object, would accept almost anything under the object rule. So TypeScript adds a check: assigning to a <strong>weak type</strong> fails if the source shares no properties with it at all.</p>
+<example file="weak.ts" check="tsc-error">
+interface RefundOptions {
+  reason?: string;
+  notifyCustomer?: boolean;
+}
+
+function refund(paymentId: string, options: RefundOptions = {}): string {
+  return `${paymentId}: ${options.reason ?? "no reason"}`;
+}
+
+const settings = { notify: true, amountKobo: 500000 };
+refund("PAY-88", settings);
+</example>
+<output kind="tsc">
+weak.ts:11:18 - error TS2559: Type '{ notify: boolean; amountKobo: number; }' has no properties in common with type 'RefundOptions'.
+
+11 refund("PAY-88", settings);
+                    ~~~~~~~~
+
+
+Found 1 error in weak.ts:11
+</output>
+<p>Without this rule, <code>settings</code> (which uses the wrong property names) would be accepted in silence, since every property of <code>RefundOptions</code> is optional.</p>
+</section>
+
+<section>
+<h2 id="excess">Excess property checks</h2>
+<p>Extra properties are allowed by the object rule. That is what let the order pass as a payment. But one kind of extra property is almost always a mistake: one you typed yourself, in an object literal, right where the target type is known. So TypeScript runs an extra check on <strong>fresh</strong> object literals, which are literals written directly where a type is expected: in an annotated variable, an argument, a return statement or a <code>satisfies</code> expression.</p>
+<example file="excess.ts" check="tsc-error">
+interface RefundRequest {
+  paymentId: string;
+  amountKobo: number;
+  reason?: string;
+}
+
+function requestRefund(request: RefundRequest): string {
+  return `${request.paymentId}: ${request.amountKobo} (${request.reason ?? "no reason given"})`;
+}
+
+requestRefund({ paymentId: "PAY-88", amountKobo: 500000, reasn: "damaged on delivery" });
+
+function fromForm(): RefundRequest {
+  return { paymentId: "PAY-90", amountKobo: 250000, notes: "customer called" };
+}
+</example>
+<output kind="tsc">
+excess.ts:11:58 - error TS2561: Object literal may only specify known properties, but 'reasn' does not exist in type 'RefundRequest'. Did you mean to write 'reason'?
+
+11 requestRefund({ paymentId: "PAY-88", amountKobo: 500000, reasn: "damaged on delivery" });
+                                                            ~~~~~
+
+excess.ts:14:53 - error TS2353: Object literal may only specify known properties, and 'notes' does not exist in type 'RefundRequest'.
+
+14   return { paymentId: "PAY-90", amountKobo: 250000, notes: "customer called" };
+                                                       ~~~~~
+
+
+Found 2 errors in the same file, starting at: excess.ts:11
+</output>
+<p>Both typos are caught, and the first even gets a suggestion. Now the same mistake, one step removed:</p>
+<example file="not-fresh.ts">
+interface RefundRequest {
+  paymentId: string;
+  amountKobo: number;
+  reason?: string;
+}
+
+function requestRefund(request: RefundRequest): string {
+  return `${request.paymentId}: ${request.amountKobo} (${request.reason ?? "no reason given"})`;
+}
+
+const fromTheForm = { paymentId: "PAY-88", amountKobo: 500000, reasn: "damaged on delivery" };
+console.log(requestRefund(fromTheForm));
+
+const base = { paymentId: "PAY-91", amountKobo: 100000, reasn: "late" };
+console.log(requestRefund({ ...base }));
+</example>
+<output>
+PAY-88: 500000 (no reason given)
+PAY-91: 100000 (no reason given)
+</output>
+<p>No errors, and the reason is silently lost. <code>fromTheForm</code> is not fresh when it reaches the call: it is a variable, so it might be used elsewhere, where the extra property could be intended. Properties that arrive through a spread are not checked either; only the ones written out in the literal are. Excess property checks are a typo detector for literals, not a rule that objects have exactly the listed properties. TypeScript has no "exact object" types.</p>
+<h3>Unions weaken the check</h3>
+<p>For a union target, a property is only "excess" if <em>no</em> member of the union has it. Without a discriminant, a mixed-up object passes:</p>
+<example file="union-excess.ts" check="tsc-error">
+type PayoutMethod = { last4: string; expiry: string } | { bank: string; accountNumber: string };
+const mixed: PayoutMethod = { last4: "4242", expiry: "12/28", bank: "GTBank" };
+
+type TaggedPayout = { kind: "card"; last4: string; expiry: string } | { kind: "bank"; bank: string; accountNumber: string };
+const caught: TaggedPayout = { kind: "card", last4: "4242", expiry: "12/28", bank: "GTBank" };
+</example>
+<output kind="tsc">
+union-excess.ts:5:78 - error TS2353: Object literal may only specify known properties, and 'bank' does not exist in type '{ kind: "card"; last4: string; expiry: string; }'.
+
+5 const caught: TaggedPayout = { kind: "card", last4: "4242", expiry: "12/28", bank: "GTBank" };
+                                                                               ~~~~
+
+
+Found 1 error in union-excess.ts:5
+</output>
+<p>Only the second object is reported. <code>mixed</code> is a valid card payout with a stray <code>bank</code>, because <code>bank</code> exists on some member. With a <code>kind</code> discriminant, TypeScript picks the <code>card</code> member first and checks the literal against it alone. One more reason to discriminate your unions.</p>
+<warn title="EXCESS CHECKS ARE NOT SECURITY">A request body is never a fresh literal: it comes from <code>JSON.parse</code>. If an attacker adds <code>"role": "admin"</code> to a sign-up request, no compile-time check can see it. Strip or reject unknown keys at runtime, in the validator (<a href="/learn/ts-validation">Runtime validation</a>).</warn>
+</section>
+
+<section>
+<h2 id="variance">Variance</h2>
+<p>A <code>PaidOrder</code> (an order with a <code>paidAt</code>) is a subtype of <code>Order</code>. Is a list of paid orders a subtype of a list of orders? Is a function that handles orders a subtype of a function that handles paid orders? <strong>Variance</strong> is the name for how subtyping of a type argument carries over to the generic type built from it. For a generic type <code>F&lt;T&gt;</code>:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Variance</th><th>Meaning</th><th>Typical shape</th></tr></thead>
+<tbody>
+<tr><td><strong>Covariant</strong></td><td><code>F&lt;PaidOrder&gt;</code> fits <code>F&lt;Order&gt;</code>: same direction</td><td><code>T</code> only comes <em>out</em>: return types, readonly arrays, <code>Promise&lt;T&gt;</code></td></tr>
+<tr><td><strong>Contravariant</strong></td><td><code>F&lt;Order&gt;</code> fits <code>F&lt;PaidOrder&gt;</code>: opposite direction</td><td><code>T</code> only goes <em>in</em>: function parameters, handlers</td></tr>
+<tr><td><strong>Invariant</strong></td><td>Neither fits the other</td><td><code>T</code> goes in and out: a mutable box, a channel</td></tr>
+<tr><td><strong>Bivariant</strong></td><td>Both fit</td><td>Unsound; TypeScript uses it for method parameters</td></tr>
+</tbody>
+</table></div>
+<h3>Covariance: things you read from</h3>
+<p>If you only read orders out of a list, a list of paid orders is fine: every paid order is an order. <code>readonly PaidOrder[]</code> is assignable to <code>readonly Order[]</code>, a <code>() =&gt; PaidOrder</code> to a <code>() =&gt; Order</code>, a <code>Promise&lt;PaidOrder&gt;</code> to a <code>Promise&lt;Order&gt;</code>.</p>
+<p>TypeScript also treats <em>mutable</em> arrays as covariant, and that is unsound: a mutable array is read <em>and</em> written. Here is the bug it permits:</p>
+<example file="array-covariance.ts">
+interface Order {
+  readonly id: string;
+  readonly totalKobo: number;
+}
+interface PaidOrder extends Order {
+  readonly paidAt: string;
+}
+
+const paidOrders: PaidOrder[] = [{ id: "ORD-1", totalKobo: 500000, paidAt: "2026-09-24T10:00:00Z" }];
+const allOrders: Order[] = paidOrders;
+allOrders.push({ id: "ORD-2", totalKobo: 320000 });
+
+for (const order of paidOrders) {
+  try {
+    console.log(order.id, "paid on", order.paidAt.slice(0, 10));
+  } catch (error) {
+    console.log(order.id, String(error));
+  }
+}
+</example>
+<output>
+ORD-1 paid on 2026-09-24
+ORD-2 TypeError: Cannot read properties of undefined (reading 'slice')
+</output>
+<p><code>allOrders</code> and <code>paidOrders</code> are the same array. Pushing an unpaid order through the wider view put it into the "paid" list, and the code that trusted <code>PaidOrder</code> crashed. The TypeScript team chose this on purpose: treating <code>T[]</code> as invariant would reject a great deal of correct code, such as passing a <code>string[]</code> to a function that takes <code>(string | number)[]</code> and only reads it. The defence is the one from Functional TypeScript: <strong>type parameters that you only read as <code>readonly T[]</code></strong>. A readonly array has no <code>push</code>, so the covariance becomes sound.</p>
+<h3>Contravariance: things you write to</h3>
+<p>A handler is the opposite of a list (<a href="/learn/ts-advanced-functions#compatibility">Advanced functions</a> met this rule for callbacks). A function that can handle <em>any</em> order can certainly handle a paid one, so <code>(order: Order) =&gt; void</code> fits where <code>(order: PaidOrder) =&gt; void</code> is expected. The other direction is refused, because a handler that needs <code>paidAt</code> might be given an order without it:</p>
+<example file="contravariance.ts" check="tsc-error">
+interface Order {
+  readonly id: string;
+  readonly totalKobo: number;
+}
+interface PaidOrder extends Order {
+  readonly paidAt: string;
+}
+
+type OrderHandler = (order: Order) => void;
+type PaidOrderHandler = (order: PaidOrder) => void;
+
+const auditAnyOrder: OrderHandler = (order) => console.log("audit", order.id);
+const printPaidReceipt: PaidOrderHandler = (order) => console.log(order.id, order.paidAt);
+
+const onPaid: PaidOrderHandler = auditAnyOrder;
+const onAnyOrder: OrderHandler = printPaidReceipt;
+</example>
+<output kind="tsc">
+contravariance.ts:16:7 - error TS2322: Type 'PaidOrderHandler' is not assignable to type 'OrderHandler'.
+  Types of parameters 'order' and 'order' are incompatible.
+    Property 'paidAt' is missing in type 'Order' but required in type 'PaidOrder'.
+
+16 const onAnyOrder: OrderHandler = printPaidReceipt;
+         ~~~~~~~~~~
+
+  contravariance.ts:6:12 - 'paidAt' is declared here.
+    6   readonly paidAt: string;
+                 ~~~~~~
+
+
+Found 1 error in contravariance.ts:16
+</output>
+<p>This check is what the <code>strictFunctionTypes</code> flag (part of <code>strict</code>) turns on. Without it, function parameters are bivariant and the second assignment compiles.</p>
+<h3>Method bivariance spreads to whole types</h3>
+<p>Advanced functions showed the exception to that rule: <strong>method</strong> parameters (written <code>save(item: T): void</code>) are still checked bivariantly, while function-typed <strong>properties</strong> (<code>save: (item: T) =&gt; void</code>) get the strict check. For a single callback, that lets one wrong handler through. For a generic type, the damage is larger, because the compiler works out a generic type's variance from how its members use <code>T</code>, and a method parameter counts as "either direction". A repository written with methods is therefore measured as covariant, like a read-only list:</p>
+<example file="method-repository.ts">
+interface Order {
+  readonly id: string;
+  readonly totalKobo: number;
+}
+interface PaidOrder extends Order {
+  readonly paidAt: string;
+}
+
+interface Repository<T> {
+  save(item: T): void;
+  all(): readonly T[];
+}
+
+function memoryRepository<T>(): Repository<T> {
+  const items: T[] = [];
+  return { save: (item) => void items.push(item), all: () => items };
+}
+
+const paidOrders: Repository<PaidOrder> = memoryRepository();
+paidOrders.save({ id: "ORD-1", totalKobo: 500000, paidAt: "2026-09-24T10:00:00Z" });
+
+const allOrders: Repository<Order> = paidOrders;
+allOrders.save({ id: "ORD-2", totalKobo: 320000 });
+
+for (const order of paidOrders.all()) {
+  try {
+    console.log(order.id, "paid on", order.paidAt.slice(0, 10));
+  } catch (error) {
+    console.log(order.id, String(error));
+  }
+}
+</example>
+<output>
+ORD-1 paid on 2026-09-24
+ORD-2 TypeError: Cannot read properties of undefined (reading 'slice')
+</output>
+<p>It is the mutable-array bug again, through a type you wrote yourself. Write the members as properties, and the compiler measures <code>T</code> correctly: it goes into <code>save</code> and comes out of <code>all</code>, so the type is <strong>invariant</strong>, and neither direction is allowed:</p>
+<example file="property-repository.ts" check="tsc-error">
+interface Order {
+  readonly id: string;
+  readonly totalKobo: number;
+}
+interface PaidOrder extends Order {
+  readonly paidAt: string;
+}
+
+interface Repository<T> {
+  readonly save: (item: T) => void;
+  readonly all: () => readonly T[];
+}
+
+declare const paidOrders: Repository<PaidOrder>;
+declare const allOrders: Repository<Order>;
+
+const widened: Repository<Order> = paidOrders;
+const narrowed: Repository<PaidOrder> = allOrders;
+</example>
+<output kind="tsc">
+property-repository.ts:17:7 - error TS2322: Type 'Repository<PaidOrder>' is not assignable to type 'Repository<Order>'.
+  Types of property 'save' are incompatible.
+    Type '(item: PaidOrder) => void' is not assignable to type '(item: Order) => void'.
+      Types of parameters 'item' and 'item' are incompatible.
+        Property 'paidAt' is missing in type 'Order' but required in type 'PaidOrder'.
+
+17 const widened: Repository<Order> = paidOrders;
+         ~~~~~~~
+
+  property-repository.ts:6:12 - 'paidAt' is declared here.
+    6   readonly paidAt: string;
+                 ~~~~~~
+
+property-repository.ts:18:7 - error TS2322: Type 'Repository<Order>' is not assignable to type 'Repository<PaidOrder>'.
+  The types returned by 'all()' are incompatible between these types.
+    Type 'readonly Order[]' is not assignable to type 'readonly PaidOrder[]'.
+      Property 'paidAt' is missing in type 'Order' but required in type 'PaidOrder'.
+
+18 const narrowed: Repository<PaidOrder> = allOrders;
+         ~~~~~~~~
+
+  property-repository.ts:6:12 - 'paidAt' is declared here.
+    6   readonly paidAt: string;
+                 ~~~~~~
+
+
+Found 2 errors in the same file, starting at: property-repository.ts:17
+</output>
+<p><code>declare const</code> announces a value without creating it: enough for the checker, and a handy way to ask "would this assignment compile?". The first assignment fails on <code>save</code> (you could store an unpaid order), the second on <code>all</code> (you could read an order without <code>paidAt</code>).</p>
+<p>Why does TypeScript keep the hole? Because the standard library relies on it. <code>Array&lt;T&gt;</code> is written with methods such as <code>push(...items: T[])</code>; checked strictly, <code>Array&lt;T&gt;</code> would be invariant and <code>PaidOrder[]</code> could never be passed as <code>Order[]</code>, even to a function that only reads it. The rule for your own generic types: <strong>write members that take a <code>T</code> as function-typed properties</strong>, so the compiler measures the variance you actually have.</p>
+<h3>Variance annotations: in and out</h3>
+<p>Since TypeScript 4.7 you can write the variance of a type parameter yourself: <code>out T</code> for covariant, <code>in T</code> for contravariant, <code>in out T</code> for invariant. Think of it as "<code>T</code> comes out of this type" and "<code>T</code> goes into this type". The compiler then checks the annotation against the structure:</p>
+<example file="annotations.ts" check="tsc-error">
+interface Order {
+  readonly id: string;
+  readonly totalKobo: number;
+}
+
+interface OrderFeed<out T> {
+  readonly latest: () => T;
+}
+
+interface OrderSink<in T> {
+  readonly accept: (value: T) => void;
+}
+
+interface Mailbox<in out T> {
+  readonly take: () => T;
+  readonly put: (value: T) => void;
+}
+
+interface Mislabelled<out T> {
+  readonly accept: (value: T) => void;
+}
+
+const feed: OrderFeed<Order> = { latest: () => ({ id: "ORD-1", totalKobo: 5000 }) };
+console.log(feed.latest().id);
+</example>
+<output kind="tsc">
+annotations.ts:19:23 - error TS2636: Type 'Mislabelled<sub-T>' is not assignable to type 'Mislabelled<super-T>' as implied by variance annotation.
+  Types of property 'accept' are incompatible.
+    Type '(value: sub-T) => void' is not assignable to type '(value: super-T) => void'.
+      Types of parameters 'value' and 'value' are incompatible.
+        Type 'super-T' is not assignable to type 'sub-T'.
+
+19 interface Mislabelled<out T> {
+                         ~~~~~
+
+
+Found 1 error in annotations.ts:19
+</output>
+<p>The first three annotations match their structures and compile. <code>Mislabelled</code> claims <code>T</code> only comes out, but <code>T</code> goes in, and the error spells out the proof: the compiler tried a subtype (<code>sub-T</code>) against a supertype (<code>super-T</code>) and the parameter did not fit. Annotations are useful for three things:</p>
+<ul>
+<li><strong>Documentation that is checked.</strong> A reader of a library's <code>interface Store&lt;in out T&gt;</code> knows at a glance that stores of different types never mix.</li>
+<li><strong>Catching accidental changes.</strong> If someone adds a method that makes an <code>out</code> type parameter appear in an input position, the annotation fails immediately, instead of users' code failing later.</li>
+<li><strong>Speed in very large types.</strong> Without annotations the compiler <em>measures</em> variance by trying marker types, which can be slow or even inaccurate for deeply recursive generic types. An annotation lets it skip the measurement.</li>
+</ul>
+<p>Application code rarely needs them. Write them on the generic types that sit at the centre of a library, such as an event bus, a store or a repository.</p>
+</section>
+
+<section>
+<h2 id="computation">Types that compute</h2>
+<p>You have written recursive types (<a href="/learn/ts-aliases-interfaces#recursive">Type aliases and interfaces</a>) and recursive conditional types (<a href="/learn/ts-conditional-types#recursion">Conditional types</a>). Taken together, the type system is a small programming language that runs inside the compiler:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Programming idea</th><th>At the type level</th></tr></thead>
+<tbody>
+<tr><td>Values</td><td>Literal types, tuples, object types, unions (sets of values)</td></tr>
+<tr><td>Functions and parameters</td><td>Generic type aliases: <code>type Next&lt;S&gt; = …</code></td></tr>
+<tr><td><code>if</code> / <code>else</code></td><td>Conditional types: <code>S extends X ? A : B</code></td></tr>
+<tr><td>Loops</td><td>Recursion, and distribution over a union</td></tr>
+<tr><td>Local variables</td><td><code>infer</code></td></tr>
+<tr><td>Running the program</td><td>Any use of the type, in every file, on every keystroke in the editor</td></tr>
+</tbody>
+</table></div>
+<p>A recursive <em>object</em> type such as <code>interface Category { children: readonly Category[] }</code> costs almost nothing: it is a description, expanded lazily. A recursive <em>conditional</em> type is a computation, and it runs again for each new input. Here is a computation that answers a real question.</p>
+<h3>Which order statuses can never be reached?</h3>
+<p>The order workflow in <a href="/learn/ts-type-operators#build">Type operators</a> derived its types from a transition table, and noted that an unreachable status is a property of the whole graph, which no type checks. A type <em>can</em> check it, with a loop over the graph:</p>
+<example file="reachable.ts" project="compute">
+const ORDER_FLOW = {
+  pending: ["paid", "cancelled"],
+  paid: ["shipped", "refunded"],
+  shipped: ["delivered", "returned"],
+  returned: ["refunded"],
+  delivered: [],
+  cancelled: [],
+  refunded: [],
+  archived: [],
+} as const;
+
+type Status = keyof typeof ORDER_FLOW;
+type Next<S extends Status> = (typeof ORDER_FLOW)[S][number];
+
+type Reachable<S extends Status, Seen extends Status = never> = S extends Seen
+  ? never
+  : S | Reachable<Next<S>, Seen | S>;
+
+type Unreachable = Exclude<Status, Reachable<"pending">>;
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+type R1 = Expect<Equal<Reachable<"shipped">, "shipped" | "delivered" | "returned" | "refunded">>;
+type R2 = Expect<Equal<Unreachable, "archived">>;
+
+const orphan: Unreachable = "archived";
+console.log(`"${orphan}" can never be reached from "pending"`);
+</example>
+<output>
+"archived" can never be reached from "pending"
+</output>
+<p>Read <code>Reachable</code> as a recursive function with an accumulator:</p>
+<ul>
+<li><code>S</code> is the status (or union of statuses) to visit; <code>Seen</code> collects the ones already visited, so a cycle such as <code>paid → refunded → paid</code> would stop instead of looping forever.</li>
+<li><code>S extends Seen ? never : …</code> is distributive (<code>S</code> is a naked type parameter), so the check runs for each status separately: visited ones contribute nothing.</li>
+<li>For a new status, the result is the status itself plus everything reachable from its next statuses. <code>Next&lt;"delivered"&gt;</code> is <code>never</code>, and a conditional type over <code>never</code> produces <code>never</code>: that is the base case.</li>
+</ul>
+<p>It works, it is tested, and it found <code>"archived"</code>. Whether you <em>should</em> keep it is the subject of the next section.</p>
+<h3>Paths into a settings object</h3>
+<p>A more common computation turns a nested object into the union of its dotted paths, for a typed <code>get("delivery.zones.lagos")</code>:</p>
+<example file="paths.ts" project="compute">
+type Paths<T> = {
+  [K in keyof T & string]: T[K] extends object ? `${K}.${Paths<T[K]>}` : K;
+}[keyof T & string];
+
+const settings = {
+  currency: "NGN",
+  delivery: { freeAboveKobo: 5000000, zones: { lagos: 100000, abuja: 150000 } },
+  payments: { card: { enabled: true }, transfer: { enabled: true, bank: "GTBank" } },
+};
+
+type SettingPath = Paths<typeof settings>;
+
+function readSetting(path: SettingPath): unknown {
+  return path.split(".").reduce<unknown>((node, key) => (node as Record<string, unknown>)[key], settings);
+}
+
+console.log(readSetting("delivery.zones.lagos"), readSetting("payments.transfer.bank"));
+</example>
+<output>
+100000 GTBank
+</output>
+<p>The mapped type builds an object whose value for each key is either the key itself (a leaf) or the key, a dot and every path of the child object; indexing with <code>[keyof T &amp; string]</code> collects the values into one union. Seven paths come out, and a typo such as <code>"delivery.zone.lagos"</code> is a compile error. (The <code>as</code> inside <code>readSetting</code> is the usual price of walking an object by computed keys; <a href="/learn/ts-mapped-types">Mapped types</a> builds a fully typed <code>get</code>.)</p>
+</section>
+
+<section>
+<h2 id="clever">When a clever type is a bad type</h2>
+<p>Both computations above are correct for the inputs shown. Types like these are also a common source of pain in real codebases, for four reasons, each demonstrated below with real compiler output.</p>
+<h3>1. Edge cases give quietly wrong answers</h3>
+<p>Give <code>Paths</code> the kinds of data real settings contain, an array, a nullable object and a self-reference, and watch what it does:</p>
+<example file="paths-edges.ts" project="edges" check="tsc-error">
+type Paths<T> = {
+  [K in keyof T & string]: T[K] extends object ? `${K}.${Paths<T[K]>}` : K;
+}[keyof T & string];
+
+interface Shop {
+  zones: { name: string; feeKobo: number }[];
+  manager: { name: string } | null;
+}
+
+const first: Paths<Shop> = "zones.0.name";
+const manager: Paths<Shop> = "manager.name";
+const everyPath: Record<Paths<Shop>, true> = { "zones.length": true, manager: true };
+
+interface Category {
+  name: string;
+  parent: Category;
+}
+type CategoryPath = Paths<Category>;
+</example>
+<output kind="tsc">
+paths-edges.ts:10:7 - error TS2322: Type '"zones.0.name"' is not assignable to type 'Paths<Shop>'.
+
+10 const first: Paths<Shop> = "zones.0.name";
+         ~~~~~
+
+paths-edges.ts:11:7 - error TS2322: Type '"manager.name"' is not assignable to type 'Paths<Shop>'.
+
+11 const manager: Paths<Shop> = "manager.name";
+         ~~~~~~~
+
+paths-edges.ts:18:21 - error TS2615: Type of property 'parent' circularly references itself in mapped type '{ [K in "name" | "parent"]: Category[K] extends object ? `${K}.${Paths<Category[K]>}` : K; }'.
+
+18 type CategoryPath = Paths<Category>;
+                       ~~~~~~~~~~~~~~~
+
+
+Found 3 errors in the same file, starting at: paths-edges.ts:10
+</output>
+<p>The <code>everyPath</code> line compiles, and a <code>Record</code> literal must list every key and no others, so it proves what <code>Paths&lt;Shop&gt;</code> really is: just <code>"zones.length" | "manager"</code>. For the array, the only path is <code>"zones.length"</code>: array indexes are numbers, not strings, and every array method is a function, which "extends object" and then yields no paths. The nullable <code>manager</code> is a union with <code>null</code>, which does not extend <code>object</code>, so it is treated as a leaf. And a type that refers to itself makes the whole definition circular (TS2615), with an error that points into the helper rather than at your data. Each of these can be fixed with more branches, and each branch makes the type harder to read and slower to evaluate.</p>
+<h3>2. Limits you hit in production</h3>
+<p>The compiler refuses to recurse too deeply (TS2589, from <a href="/learn/ts-conditional-types#recursion">Conditional types</a>) and to build unions of more than 100,000 members (TS2590, from <a href="/learn/ts-template-literals#expressions">Template literal types</a>, where a five-digit PIN type broke). Both limits are reached by types that grow with the data: a <code>Paths</code> over a large settings object, a template literal type over every one-time code. When a type hits a limit, the answer is almost never a cleverer type. For one-time codes, for example, it is a plain <code>string</code>, a runtime check (<code>/^\d{6}$/</code>), and a branded type that records that the check passed: the next lesson.</p>
+<h3>3. Error messages nobody can read</h3>
+<p><a href="/learn/ts-functional#composition">Functional TypeScript</a> typed <code>pipe</code> with four overloads and noted that a single variadic version is possible. Here it is, next to the error it produces for the same mistake:</p>
+<example file="variadic-pipe.ts" project="edges" check="tsc-error">
+type Step = (input: any) => unknown;
+
+type Chain<Fns extends readonly Step[], Prev = never> = Fns extends readonly [infer First extends Step, ...infer Rest extends Step[]]
+  ? [[Prev] extends [never] ? First : (input: Prev) => ReturnType<First>, ...Chain<Rest, ReturnType<First>>]
+  : [];
+
+type LastResult<Fns extends readonly Step[]> = Fns extends readonly [...Step[], infer L extends Step] ? ReturnType<L> : never;
+
+function pipe<const Fns extends readonly Step[]>(...fns: Fns & Chain<Fns>): (input: Parameters<Fns[0]>[0]) => LastResult<Fns> {
+  return (input) => fns.reduce<unknown>((value, fn) => fn(value), input) as LastResult<Fns>;
+}
+
+const minusVoucher = (kobo: number): number => Math.max(kobo - 200000, 0);
+const addVat = (kobo: number): number => Math.round(kobo * 1.075);
+const toNaira = (kobo: number): string => `₦${(kobo / 100).toFixed(2)}`;
+
+const label = pipe(minusVoucher, toNaira, addVat);
+</example>
+<output kind="tsc">
+variadic-pipe.ts:17:20 - error TS2345: Argument of type '[(kobo: number) => number, (kobo: number) => string, (kobo: number) => number]' is not assignable to parameter of type '[(kobo: number) => number, (kobo: number) => string, (kobo: number) => number] & [(kobo: number) => number, (input: number) => string, (input: string) => number]'.
+  Type '[(kobo: number) => number, (kobo: number) => string, (kobo: number) => number]' is not assignable to type '[(kobo: number) => number, (input: number) => string, (input: string) => number]'.
+    Type at position 2 in source is not compatible with type at position 2 in target.
+      Type '(kobo: number) => number' is not assignable to type '(input: string) => number'.
+        Types of parameters 'kobo' and 'input' are incompatible.
+          Type 'string' is not assignable to type 'number'.
+
+17 const label = pipe(minusVoucher, toNaira, addVat);
+                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 1 error in variadic-pipe.ts:17
+</output>
+<p>It does work: any number of steps, fully checked. But compare the two errors. The overloaded <code>pipe</code> said, in two lines, that a function returning <code>string</code> was used where one returning <code>number</code> was needed. This one prints the whole argument tuple twice inside an intersection, counts positions from zero, and needs an <code>any</code> and a cast inside to work at all. Everyone who mistypes a pipeline pays for this, every time, and most of them did not write the type.</p>
+<h3>4. Compile time</h3>
+<p>Types run on every check and every keystroke. The cost of a computed type grows with what it produces. Here is <code>Paths</code> measured on a generated settings interface with six keys on each of five levels (7,776 settings), and with eight keys (32,768 settings), against the same file with <code>type SettingPath = string</code>. The flag <code>--extendedDiagnostics</code> makes <code>tsc</code> print its statistics; <a href="/learn/ts-performance">Compiler performance</a> explains them all.</p>
+<shell title="Example output (TypeScript 7, one laptop; your numbers will differ)">
+$ npx tsc --noEmit --extendedDiagnostics   # 7,776 settings, SettingPath = string
+Types:            1898
+Instantiations:      0
+Check time:     0.031s
+$ npx tsc --noEmit --extendedDiagnostics   # 7,776 settings, SettingPath = Paths&lt;Settings&gt;
+Types:           16354
+Instantiations:  82741
+Check time:     0.182s
+$ npx tsc --noEmit --extendedDiagnostics   # 32,768 settings, SettingPath = Paths&lt;Settings&gt;
+Types:           56984
+Instantiations: 301465
+Check time:     0.692s
+</shell>
+<p>One use of one type added about six times the check time, and it grows with the data. That is fine once. It is not fine when the type sits in a library used in hundreds of files, or when several such types feed each other.</p>
+<h3>Deciding</h3>
+<reason title="Is this type worth it?">
+<p>Before you write, or approve, a type that computes, answer these:</p>
+<ol>
+<li>Who will read its error messages, and will they understand them?</li>
+<li>Does the value come from outside (JSON, a form, a database)? Then a runtime check is needed anyway. What does the type add?</li>
+<li>Could a test check the same property? For <code>Reachable</code>: a unit test that walks the graph.</li>
+<li>How large can its inputs get, and how many files use it?</li>
+<li>What does it do with arrays, <code>null</code>, optional properties, unions, <code>any</code> and recursive types?</li>
+</ol>
+<answer>
+<ol>
+<li>Every user of the type reads its errors; only its author understands its internals. If the errors need the internals to make sense, the type fails its users. Named helper types and fewer layers make better messages.</li>
+<li>For outside values, the runtime check is the real safety. A type that computes over literal strings only protects the handful of values written in the code, like the PIN. Put the effort into the check, and let a simple type record its result.</li>
+<li>Often yes. A graph walk in a test is ten lines of JavaScript that anyone can debug with a breakpoint. <code>Reachable</code> earns its place only if the table changes often and you want the editor to flag a dead status the moment it appears. Both are reasonable; the test is the default.</li>
+<li>Settings objects grow, route tables grow, permission lists grow. Measure with <code>--extendedDiagnostics</code> on realistic sizes, not on the example that motivated the type.</li>
+<li>These are where computed types go quietly wrong, as <code>Paths</code> showed. If the type does not handle them, the type tests should document it.</li>
+</ol>
+</answer>
+</reason>
+<p>A clever type is a good type when it sits at a library boundary, turns a large class of mistakes into compile errors, has readable errors, handles the edge cases, has type tests, and stays cheap on real inputs. <code>Awaited</code>, <code>ReturnType</code> and a four-overload <code>pipe</code> pass that test. Most one-off type puzzles in application code do not.</p>
+</section>
+
+<section>
+<h2 id="build">Build: a variance-safe notification module</h2>
+<p>A shop sends notifications on events: an SMS when a payment is captured, an email when an order ships, and an audit log entry for everything. The notification module has three generic types, and each one has a variance you can now predict:</p>
+<ul>
+<li>A <strong>handler</strong> takes an event: <code>T</code> goes in, so it is contravariant. An audit handler for every <code>ShopEvent</code> may listen to the payments channel.</li>
+<li>An <strong>event log</strong> hands out past events: <code>T</code> comes out, so it is covariant. A log of payment events can be shown in a viewer for all events.</li>
+<li>A <strong>channel</strong> accepts events and passes them to handlers: <code>T</code> goes both ways, so it is invariant. A payments channel must never be treated as an all-events channel, or someone could publish a shipping event to the SMS handler.</li>
+</ul>
+<p>Handlers are function-typed properties (not methods), and every type parameter carries its annotation, so the compiler checks all of this:</p>
+<example file="events.ts" project="notify">
+export interface OrderPlaced {
+  readonly type: "order.placed";
+  readonly orderId: string;
+  readonly totalKobo: number;
+}
+export interface PaymentCaptured {
+  readonly type: "payment.captured";
+  readonly orderId: string;
+  readonly amountKobo: number;
+  readonly phone: string;
+}
+export interface OrderShipped {
+  readonly type: "order.shipped";
+  readonly orderId: string;
+  readonly email: string;
+}
+export type ShopEvent = OrderPlaced | PaymentCaptured | OrderShipped;
+
+export type Handler<in E> = (event: E) => void;
+
+export interface EventLog<out E> {
+  readonly entries: () => readonly E[];
+}
+
+export interface Channel<in out E> extends EventLog<E> {
+  readonly publish: (event: E) => void;
+  readonly subscribe: (handler: Handler<E>) => () => void;
+}
+
+export function createChannel<E>(): Channel<E> {
+  const handlers = new Set<Handler<E>>();
+  const log: E[] = [];
+  return {
+    publish: (event) => {
+      log.push(event);
+      for (const handler of handlers) handler(event);
+    },
+    subscribe: (handler) => {
+      handlers.add(handler);
+      return () => handlers.delete(handler);
+    },
+    entries: () => log.slice(),
+  };
+}
+</example>
+<p>Notice <code>Channel&lt;in out E&gt;</code>: <code>E</code> appears in <code>publish</code>'s parameter (in), and in <code>entries</code>' result (out). It also appears in <code>subscribe</code>'s parameter, inside a <code>Handler&lt;E&gt;</code>. A parameter of a parameter flips twice, so that use is <em>out</em>: the channel hands events <em>to</em> the handler. The compiler follows the same reasoning, which is why the annotations compile. Now the handlers and the wiring:</p>
+<example file="main.ts" project="notify">
+import { createChannel } from "./events.js";
+import type { EventLog, Handler, PaymentCaptured, ShopEvent } from "./events.js";
+
+const audit: Handler<ShopEvent> = (event) => console.log(`audit: ${event.type} ${event.orderId}`);
+const sms: Handler<PaymentCaptured> = (event) => console.log(`sms to ${event.phone}: we received ₦${(event.amountKobo / 100).toFixed(2)}`);
+
+const payments = createChannel<PaymentCaptured>();
+const everything = createChannel<ShopEvent>();
+
+payments.subscribe(sms);
+payments.subscribe(audit);
+everything.subscribe(audit);
+
+payments.publish({ type: "payment.captured", orderId: "ORD-1042", amountKobo: 1638750, phone: "+2348030000000" });
+everything.publish({ type: "order.shipped", orderId: "ORD-1042", email: "ada@example.com" });
+
+function showLog(log: EventLog<ShopEvent>): void {
+  console.log("log:", log.entries().map((event) => event.type).join(", "));
+}
+showLog(payments);
+showLog(everything);
+</example>
+<output>
+sms to +2348030000000: we received ₦16387.50
+audit: payment.captured ORD-1042
+audit: order.shipped ORD-1042
+log: payment.captured
+log: order.shipped
+</output>
+<p><code>payments.subscribe(audit)</code> is contravariance at work: a handler for any <code>ShopEvent</code> accepted where a <code>Handler&lt;PaymentCaptured&gt;</code> was expected. <code>showLog(payments)</code> is covariance: a <code>Channel&lt;PaymentCaptured&gt;</code> is used as an <code>EventLog&lt;ShopEvent&gt;</code>, which only reads. Now the mistakes the types are there to stop:</p>
+<example file="mistakes.ts" project="notify" check="tsc-error">
+import { createChannel } from "./events.js";
+import type { Channel, Handler, PaymentCaptured, ShopEvent } from "./events.js";
+
+const sms: Handler<PaymentCaptured> = (event) => console.log(`sms to ${event.phone}`);
+const everything = createChannel<ShopEvent>();
+const payments = createChannel<PaymentCaptured>();
+
+everything.subscribe(sms);
+
+const widened: Channel<ShopEvent> = payments;
+</example>
+<output kind="tsc">
+mistakes.ts:8:22 - error TS2345: Argument of type 'Handler<PaymentCaptured>' is not assignable to parameter of type 'Handler<ShopEvent>'.
+  Type 'ShopEvent' is not assignable to type 'PaymentCaptured'.
+    Type 'OrderPlaced' is missing the following properties from type 'PaymentCaptured': amountKobo, phone
+
+8 everything.subscribe(sms);
+                       ~~~
+
+mistakes.ts:10:7 - error TS2322: Type 'Channel<PaymentCaptured>' is not assignable to type 'Channel<ShopEvent>'.
+  Types of property 'publish' are incompatible.
+    Type '(event: PaymentCaptured) => void' is not assignable to type '(event: ShopEvent) => void'.
+      Types of parameters 'event' and 'event' are incompatible.
+        Type 'ShopEvent' is not assignable to type 'PaymentCaptured'.
+          Type 'OrderPlaced' is missing the following properties from type 'PaymentCaptured': amountKobo, phone
+
+10 const widened: Channel<ShopEvent> = payments;
+         ~~~~~~~
+
+
+Found 2 errors in the same file, starting at: mistakes.ts:8
+</output>
+<p>The SMS handler cannot listen to every event, because a shipping event has no phone number. And the payments channel cannot be treated as a channel for all events: through <code>widened</code>, anyone could <code>publish</code> an <code>order.shipped</code> event straight into the SMS handler. That second error is the mutable-array bug from the variance section, caught this time, because the channel's <code>publish</code> is a property and its type parameter is invariant.</p>
+<h3>Testing the compatibility rules</h3>
+<p>The whole design rests on assignability, so the tests should pin assignability. A small <code>Assignable&lt;From, To&gt;</code> helper wraps both types in a tuple (to stop the conditional type from distributing) and answers <code>true</code> or <code>false</code>:</p>
+<example file="events.test.ts" project="notify">
+import type { Channel, EventLog, Handler, OrderShipped, PaymentCaptured, ShopEvent } from "./events.js";
+
+type Assignable<From, To> = [From] extends [To] ? true : false;
+type Expect<T extends true> = T;
+type Not<T extends boolean> = T extends true ? false : true;
+
+type H1 = Expect<Assignable<Handler<ShopEvent>, Handler<PaymentCaptured>>>;
+type H2 = Expect<Not<Assignable<Handler<PaymentCaptured>, Handler<ShopEvent>>>>;
+type L1 = Expect<Assignable<EventLog<PaymentCaptured>, EventLog<ShopEvent>>>;
+type L2 = Expect<Not<Assignable<EventLog<ShopEvent>, EventLog<PaymentCaptured>>>>;
+type C1 = Expect<Not<Assignable<Channel<PaymentCaptured>, Channel<ShopEvent>>>>;
+type C2 = Expect<Not<Assignable<Channel<ShopEvent>, Channel<PaymentCaptured>>>>;
+type C3 = Expect<Assignable<Channel<OrderShipped>, EventLog<ShopEvent>>>;
+
+function neverCalled(shipped: OrderShipped): PaymentCaptured {
+  // @ts-expect-error: a shipping event is not a payment
+  return shipped;
+}
+
+console.log("compiled: 7 type tests and", neverCalled.length, "expected rejection");
+</example>
+<output>
+compiled: 7 type tests and 1 expected rejection
+</output>
+<p>Each <code>type</code> line is a test the compiler runs: if a refactor turns a <code>Handler</code> into a method, or drops <code>readonly</code> from <code>entries</code>, or makes the channel covariant, one of these lines stops compiling. The <code>@ts-expect-error</code> sits inside a function that is never called: a type test must compile, but has nothing to do at runtime. <a href="/learn/ts-testing">Testing TypeScript</a> shows the same checks with Vitest's <code>expectTypeOf</code>.</p>
+</section>
+
+<section>
+<h2 id="production">The type system in production</h2>
+<ul>
+<li><strong>Keep <code>strict</code> on.</strong> It includes <code>strictFunctionTypes</code>, without which every callback parameter is bivariant. <a href="/learn/ts-tsconfig">tsconfig in depth</a> lists the flags.</li>
+<li><strong>Callbacks as properties, data as readonly.</strong> Write <code>readonly onPaid: (event: PaymentCaptured) =&gt; void</code>, not <code>onPaid(event): void</code>, in your own interfaces, and take arrays you only read as <code>readonly T[]</code>. Those two habits close the two biggest holes in variance checking.</li>
+<li><strong>Distinguish shapes that must not mix.</strong> Two domain types with the same fields are interchangeable. Add a discriminant (<code>kind</code>) or a brand wherever a mix-up costs money, as in the refund at the start.</li>
+<li><strong>Do not rely on excess property checks.</strong> They catch typos in literals. Unknown keys in data from outside must be removed or rejected at runtime.</li>
+<li><strong>Budget your cleverness.</strong> Measure with <code>--extendedDiagnostics</code>, look at type errors from a user's point of view, and prefer a simple type plus a runtime check plus a test over a type that computes the answer. Library authors, whose types are used thousands of times, should add <code>in</code>/<code>out</code> annotations and type tests to their central generic types.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Predict the compiler">
+<p>For each assignment, decide whether it compiles, and why. Then check your answers by pasting the file into your editor.</p>
+<example file="predict.ts" check="skip">
+interface Product { readonly sku: string; readonly priceKobo: number }
+interface DiscountedProduct extends Product { readonly discountKobo: number }
+
+declare const products: DiscountedProduct[];
+declare const readonlyProducts: readonly DiscountedProduct[];
+
+const a: Product[] = products;
+const b: DiscountedProduct[] = readonlyProducts;
+const c: (p: Product) => string = (p: DiscountedProduct) => p.sku;
+const d: (p: DiscountedProduct) => string = (p: Product) => p.sku;
+const e: { sku: string } = { sku: "RICE-5", priceKobo: 850000 };
+const f: () => void = () => 42;
+</example>
+<solution>
+<example file="predict-answers.ts" check="tsc-error">
+interface Product { readonly sku: string; readonly priceKobo: number }
+interface DiscountedProduct extends Product { readonly discountKobo: number }
+
+declare const products: DiscountedProduct[];
+declare const readonlyProducts: readonly DiscountedProduct[];
+
+const a: Product[] = products;
+const b: DiscountedProduct[] = readonlyProducts;
+const c: (p: Product) => string = (p: DiscountedProduct) => p.sku;
+const d: (p: DiscountedProduct) => string = (p: Product) => p.sku;
+const e: { sku: string } = { sku: "RICE-5", priceKobo: 850000 };
+const f: () => void = () => 42;
+</example>
+<output kind="tsc">
+predict-answers.ts:8:7 - error TS4104: The type 'readonly DiscountedProduct[]' is 'readonly' and cannot be assigned to the mutable type 'DiscountedProduct[]'.
+
+8 const b: DiscountedProduct[] = readonlyProducts;
+        ~
+
+predict-answers.ts:9:7 - error TS2322: Type '(p: DiscountedProduct) => string' is not assignable to type '(p: Product) => string'.
+  Types of parameters 'p' and 'p' are incompatible.
+    Property 'discountKobo' is missing in type 'Product' but required in type 'DiscountedProduct'.
+
+9 const c: (p: Product) => string = (p: DiscountedProduct) => p.sku;
+        ~
+
+  predict-answers.ts:2:56 - 'discountKobo' is declared here.
+    2 interface DiscountedProduct extends Product { readonly discountKobo: number }
+                                                             ~~~~~~~~~~~~
+
+predict-answers.ts:11:45 - error TS2353: Object literal may only specify known properties, and 'priceKobo' does not exist in type '{ sku: string; }'.
+
+11 const e: { sku: string } = { sku: "RICE-5", priceKobo: 850000 };
+                                               ~~~~~~~~~
+
+
+Found 3 errors in the same file, starting at: predict-answers.ts:8
+</output>
+<ul>
+<li><code>a</code> compiles: mutable arrays are (unsoundly) covariant.</li>
+<li><code>b</code> fails: a readonly array cannot become a mutable one.</li>
+<li><code>c</code> fails: the function needs <code>discountKobo</code>, but the target type may call it with a plain product (contravariance, under <code>strictFunctionTypes</code>).</li>
+<li><code>d</code> compiles: a function that handles any product can handle a discounted one.</li>
+<li><code>e</code> fails: a fresh literal with an extra property. Assign the literal to a variable first and it would compile.</li>
+<li><code>f</code> compiles: a function returning a value fits a <code>void</code> function type.</li>
+</ul>
+</solution>
+</exercise>
+<exercise title="Annotate the variance">
+<p>Add <code>in</code>, <code>out</code> or <code>in out</code> to every type parameter below, so that each annotation compiles. Then predict which of the four assignments at the end compile.</p>
+<example file="annotate.ts" check="skip">
+interface Order { readonly id: string }
+interface PaidOrder extends Order { readonly paidAt: string }
+
+interface Report<T> { readonly rows: () => readonly T[] }
+interface Importer<T> { readonly accept: (row: T) => void }
+interface PriceCache<K, V> {
+  readonly get: (key: K) => V | undefined;
+  readonly set: (key: K, value: V) => void;
+}
+
+declare const paidReport: Report<PaidOrder>;
+declare const paidImporter: Importer<PaidOrder>;
+declare const orderImporter: Importer<Order>;
+declare const paidCache: PriceCache<string, PaidOrder>;
+
+const a: Report<Order> = paidReport;
+const b: Importer<Order> = paidImporter;
+const c: Importer<PaidOrder> = orderImporter;
+const d: PriceCache<string, Order> = paidCache;
+</example>
+<solution>
+<example file="annotate-answer.ts" check="tsc-error">
+interface Order { readonly id: string }
+interface PaidOrder extends Order { readonly paidAt: string }
+
+interface Report<out T> { readonly rows: () => readonly T[] }
+interface Importer<in T> { readonly accept: (row: T) => void }
+interface PriceCache<in K, in out V> {
+  readonly get: (key: K) => V | undefined;
+  readonly set: (key: K, value: V) => void;
+}
+
+declare const paidReport: Report<PaidOrder>;
+declare const paidImporter: Importer<PaidOrder>;
+declare const orderImporter: Importer<Order>;
+declare const paidCache: PriceCache<string, PaidOrder>;
+
+const a: Report<Order> = paidReport;
+const b: Importer<Order> = paidImporter;
+const c: Importer<PaidOrder> = orderImporter;
+const d: PriceCache<string, Order> = paidCache;
+</example>
+<output kind="tsc">
+annotate-answer.ts:17:7 - error TS2322: Type 'Importer<PaidOrder>' is not assignable to type 'Importer<Order>'.
+  Property 'paidAt' is missing in type 'Order' but required in type 'PaidOrder'.
+
+17 const b: Importer<Order> = paidImporter;
+         ~
+
+  annotate-answer.ts:2:46 - 'paidAt' is declared here.
+    2 interface PaidOrder extends Order { readonly paidAt: string }
+                                                   ~~~~~~
+
+annotate-answer.ts:19:7 - error TS2322: Type 'PriceCache<string, PaidOrder>' is not assignable to type 'PriceCache<string, Order>'.
+  Types of property 'set' are incompatible.
+    Type '(key: string, value: PaidOrder) => void' is not assignable to type '(key: string, value: Order) => void'.
+      Types of parameters 'value' and 'value' are incompatible.
+        Property 'paidAt' is missing in type 'Order' but required in type 'PaidOrder'.
+
+19 const d: PriceCache<string, Order> = paidCache;
+         ~
+
+  annotate-answer.ts:2:46 - 'paidAt' is declared here.
+    2 interface PaidOrder extends Order { readonly paidAt: string }
+                                                   ~~~~~~
+
+
+Found 2 errors in the same file, starting at: annotate-answer.ts:17
+</output>
+<ul>
+<li><code>Report</code> only hands rows out: <code>out T</code>, and <code>a</code> compiles (covariance).</li>
+<li><code>Importer</code> only takes rows in: <code>in T</code>. <code>b</code> fails, because an importer of paid orders cannot accept every order; <code>c</code> compiles (contravariance).</li>
+<li><code>PriceCache</code> only takes keys in (<code>in K</code>), but values go both in (<code>set</code>) and out (<code>get</code>): <code>in out V</code>, so <code>d</code> fails (invariance). Writing <code>out V</code> instead would itself be an error, TS2636.</li>
+</ul>
+</solution>
+</exercise>
+<exercise title="Replace a clever type with a test">
+<p>The <code>Reachable</code> type found the unreachable <code>"archived"</code> status. Write the same check as a plain runtime function, <code>unreachable(flow, start)</code>, that walks the table and returns the statuses never visited. Which version would you keep in a shop's codebase, and why?</p>
+<solution>
+<example file="unreachable.ts">
+const ORDER_FLOW = {
+  pending: ["paid", "cancelled"],
+  paid: ["shipped", "refunded"],
+  shipped: ["delivered", "returned"],
+  returned: ["refunded"],
+  delivered: [],
+  cancelled: [],
+  refunded: [],
+  archived: [],
+} as const satisfies Record<string, readonly string[]>;
+
+function unreachable(flow: Readonly<Record<string, readonly string[]>>, start: string): string[] {
+  const seen = new Set<string>();
+  const queue = [start];
+  while (queue.length > 0) {
+    const status = queue.shift();
+    if (status === undefined || seen.has(status)) continue;
+    seen.add(status);
+    queue.push(...(flow[status] ?? []));
+  }
+  return Object.keys(flow).filter((status) => !seen.has(status));
+}
+
+console.log(unreachable(ORDER_FLOW, "pending"));
+</example>
+<output>
+[ 'archived' ]
+</output>
+<p>This is a breadth-first search (<a href="/learn/dsa-graph-search">Graph search</a>) with a <code>Set</code> of visited statuses, the runtime twin of the <code>Seen</code> accumulator. For most teams the test is the better choice: anyone can read and debug it, it costs nothing at compile time, it works on tables loaded from a database, and a unit test asserting <code>[]</code> fails the build just as reliably. The type version earns its place only when instant editor feedback on a frequently edited table is worth its complexity.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>TypeScript is structural: a value fits every type whose required members it has. Classes with private or <code>#private</code> members are the nominal exception. Distinguish look-alike domain types with a discriminant or a brand.</li>
+<li>Assignability: extra members are fine; fewer function parameters are fine; returns are covariant; a readonly property fits a mutable one (a known hole); weak types need at least one shared property.</li>
+<li>Excess property checks catch unknown properties in fresh literals only. Variables, spreads and non-discriminated unions slip past, and data from outside is never checked.</li>
+<li>Variance: out-only types are covariant, in-only types contravariant, in-and-out types invariant. Mutable arrays are unsoundly covariant, and method parameters are bivariant. Use readonly arrays and function-typed properties. <code>in</code>/<code>out</code> annotations document and check variance.</li>
+<li>Recursive conditional types compute: they can find unreachable states or build dotted paths. Every use runs the computation.</li>
+<li>A clever type costs error clarity, compile time and hard limits, and often mishandles arrays, <code>null</code> and recursion. Prefer simple types, runtime checks and tests unless the type sits at a boundary and pays for itself.</li>
+</ul>
+<p>Next: <a href="/learn/ts-branded-types">Branded types</a>, where a <code>PaymentId</code> finally stops accepting an order's id.</p>
+</section>

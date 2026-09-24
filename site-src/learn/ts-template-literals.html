@@ -1,0 +1,780 @@
+---
+title: Template literal types
+description: Build and take apart string types with template literal types, Uppercase and infer, then type routes, permissions and a compile-time safe event name system.
+minutes: 50
+youNeed: Conditional types and Mapped types
+youBuild: A typed event bus for a shop where every event name, wildcard subscription and payload is checked at compile time, and names arriving from a queue are checked at runtime
+keywords: typescript template literal types, string literal union, Uppercase Lowercase Capitalize Uncapitalize, infer string pattern, route params type, typed event names, wildcard events, permission strings, key remapping, TS2590, string manipulation types
+objectives: Build string unions from other unions with template literal types, and predict their size | Use Uppercase, Lowercase, Capitalize and Uncapitalize, and write runtime helpers that match them | Take strings apart with infer: split names, extract route parameters, parse numbers | Type route paths, permission strings and generated keys | Build an event name system with typed wildcard subscriptions and a runtime check for outside names
+---
+<section>
+<h2 id="problem">The SMS that never went out</h2>
+<p>An online shop publishes events when things happen to an order, and other parts of the code subscribe to them: the SMS service tells the customer their parcel has shipped, the audit log records everything. Event names are plain strings. One subscription has a typo:</p>
+<example file="bus.ts" project="problem">
+type Handler = (payload: Record<string, unknown>) => void;
+const handlers = new Map<string, Handler[]>();
+
+function on(name: string, handler: Handler): void {
+  handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+}
+
+function emit(name: string, payload: Record<string, unknown>): number {
+  const list = handlers.get(name) ?? [];
+  for (const handler of list) handler(payload);
+  return list.length;
+}
+
+on("order.shiped", (payload) => console.log(`SMS to customer: ${payload.orderId} has shipped`));
+on("order.placed", (payload) => console.log(`audit: ${payload.orderId} placed`));
+
+console.log(emit("order.placed", { orderId: "ORD-1042" }), "handler(s) ran");
+console.log(emit("order.shipped", { orderId: "ORD-1042", courier: "GIG Logistics" }), "handler(s) ran");
+</example>
+<output>
+audit: ORD-1042 placed
+1 handler(s) ran
+0 handler(s) ran
+</output>
+<p>Nothing crashed. Nothing was logged as an error. The customer simply never got the SMS, and the only clue is a zero that nobody reads. Typed as <code>string</code>, <code>"order.shiped"</code> is as valid as any other name, so the compiler had nothing to object to.</p>
+<p>You could write every event name into a union by hand. But event names have structure: an entity, a dot, an action. Routes have structure (<code>/shops/:shopId/orders/:orderId</code>), permissions have structure (<code>orders:refund</code>), environment variables have structure (<code>PAYSTACK_SECRET_KEY</code>). <strong>Template literal types</strong> let the compiler build strings from parts and take them apart again. <a href="/learn/ts-advanced#template-literals">Advanced and utility types</a> showed the first step, combining two unions. This lesson covers the rest: placeholders, the string helpers, parsing with <code>infer</code>, the limits, and a complete event name system.</p>
+</section>
+
+<section>
+<h2 id="building">Building string types</h2>
+<p>A template literal type has the syntax of a JavaScript template string, but it lives in the type world and its holes take <em>types</em>. With literal types in the holes you get a literal type; with unions you get every combination:</p>
+<file name="type-tests.ts" project="build">
+export type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+export type Expect<T extends true> = T;
+</file>
+<example file="combine.ts" project="build">
+import type { Equal, Expect } from "./type-tests.js";
+
+type Entity = "order" | "payment" | "stock";
+type Action = "created" | "updated" | "deleted";
+
+type EventName = `${Entity}.${Action}`;
+type Versioned = `${EventName}.v${1 | 2}`;
+type Channel = `sms:${"+234" | "+233"}`;
+
+type B1 = Expect<Equal<`order.${"paid"}`, "order.paid">>;
+type B2 = Expect<Equal<Extract<EventName, `payment.${string}`>, "payment.created" | "payment.updated" | "payment.deleted">>;
+type B3 = Expect<Equal<Channel, "sms:+234" | "sms:+233">>;
+
+const names: EventName[] = ["order.created", "stock.deleted"];
+const versioned: Versioned = "payment.updated.v2";
+console.log(names.length, versioned);
+</example>
+<output>
+2 payment.updated.v2
+</output>
+<p><code>EventName</code> has 3 × 3 = 9 members and <code>Versioned</code> has 9 × 2 = 18: a template with several union holes produces the <strong>cross product</strong>, one member per combination. <code>B2</code> shows the other direction: a template with a <code>string</code> hole, <code>`payment.${string}`</code>, is not a list but a <strong>pattern</strong>, "any string that starts with <code>payment.</code>", and <code>Extract</code> uses it to filter a union.</p>
+
+<h3>Placeholder types</h3>
+<p>A hole may hold <code>string</code>, <code>number</code>, <code>bigint</code>, <code>boolean</code>, <code>null</code> or <code>undefined</code>. The last three expand to their literal spellings. <code>number</code> is the tricky one:</p>
+<example file="placeholders.ts" project="build">
+import type { Equal, Expect } from "./type-tests.js";
+
+type P1 = Expect<Equal<`${boolean}`, "true" | "false">>;
+type P2 = Expect<Equal<`${null}|${undefined}`, "null|undefined">>;
+
+type AmountText = `${number}`;
+const fromForm: AmountText[] = ["1500", "-0.5", "1e3", " 42", "0x1F"];
+
+type OrderRef = `ORD-${number}`;
+const ref: OrderRef = "ORD-1042";
+console.log(fromForm.map(Number), ref);
+</example>
+<output>
+[ 1500, -0.5, 1000, 42, 31 ] ORD-1042
+</output>
+<p><code>`${number}`</code> does not mean "digits". It means "a string that JavaScript's <code>Number()</code> can read as a number": exponents, hex, leading spaces and signs all pass. That makes it a fine type for documenting a format, and a poor validator. A customer's amount field still needs a runtime check such as <code>/^\d+(\.\d{1,2})?$/</code>. And it does reject some strings you might expect it to accept:</p>
+<example file="placeholder-errors.ts" project="build" check="tsc-error">
+type AmountText = `${number}`;
+
+const withSeparator: AmountText = "1_500";
+const withCurrency: AmountText = "₦1500";
+const ref: `ORD-${number}` = "ORD-";
+</example>
+<output kind="tsc">
+placeholder-errors.ts:3:7 - error TS2322: Type '"1_500"' is not assignable to type '`${number}`'.
+
+3 const withSeparator: AmountText = "1_500";
+        ~~~~~~~~~~~~~
+
+placeholder-errors.ts:4:7 - error TS2322: Type '"₦1500"' is not assignable to type '`${number}`'.
+
+4 const withCurrency: AmountText = "₦1500";
+        ~~~~~~~~~~~~
+
+placeholder-errors.ts:5:7 - error TS2322: Type '"ORD-"' is not assignable to type '`ORD-${number}`'.
+
+5 const ref: `ORD-${number}` = "ORD-";
+        ~~~
+
+
+Found 3 errors in the same file, starting at: placeholder-errors.ts:3
+</output>
+<p><code>1_500</code> is valid in source code but <code>Number("1_500")</code> is <code>NaN</code>, and <code>Number("")</code>, what is left of <code>"ORD-"</code>, does not count either.</p>
+</section>
+
+<section>
+<h2 id="intrinsics">Uppercase, Lowercase, Capitalize, Uncapitalize</h2>
+<p>Four built-in types change the case of string types: <code>Uppercase</code>, <code>Lowercase</code>, <code>Capitalize</code> (first character upper) and <code>Uncapitalize</code> (first character lower). They are called <strong>intrinsic</strong> types because the compiler implements them directly; you could not write them with other type features. They distribute over unions, and they have no runtime existence, so a function that changes case at runtime must promise the matching type itself:</p>
+<example file="case.ts" project="build">
+import type { Equal, Expect } from "./type-tests.js";
+
+type Currency = "ngn" | "usd";
+type I1 = Expect<Equal<Uppercase<Currency>, "NGN" | "USD">>;
+type I2 = Expect<Equal<Capitalize<"order" | "payment">, "Order" | "Payment">>;
+type I3 = Expect<Equal<Uncapitalize<"OrderPlaced">, "orderPlaced">>;
+type I4 = Expect<Equal<`on${Capitalize<"paid" | "shipped">}`, "onPaid" | "onShipped">>;
+
+function upper<S extends string>(text: S): Uppercase<S> {
+  return text.toUpperCase() as Uppercase<S>;
+}
+
+function capitalize<S extends string>(text: S): Capitalize<S> {
+  return (text.charAt(0).toUpperCase() + text.slice(1)) as Capitalize<S>;
+}
+
+const code = upper("ngn");
+const handlerName = `on${capitalize("shipped")}` as const;
+console.log(code, handlerName);
+</example>
+<output>
+NGN onShipped
+</output>
+<p><code>code</code> has the type <code>"NGN"</code>, not <code>string</code>, because <code>upper</code> says so; the <code>as</code> in its body is where you take responsibility for the runtime matching the type. Two cautions. The compiler's case mapping is the simple, locale-independent one, so it agrees with <code>toUpperCase()</code> but not with <code>toLocaleUpperCase("tr")</code>. And on a non-literal <code>string</code>, <code>Uppercase&lt;string&gt;</code> stays a pattern: "some string with no lowercase letters", which <code>"LAGOS"</code> fits and <code>"Lagos"</code> does not.</p>
+</section>
+
+<section>
+<h2 id="expressions">Template strings in code: when you get a literal type</h2>
+<p>A template string <em>expression</em> in your code does not automatically get a template literal type. The rules follow the widening rules from <a href="/learn/ts-inference#widening">Type inference</a>:</p>
+<example file="expressions.ts" project="build">
+import type { Equal, Expect } from "./type-tests.js";
+
+function statusOf(delivered: boolean): "paid" | "shipped" {
+  return delivered ? "shipped" : "paid";
+}
+const status = statusOf(true);
+
+const plain = `order.${status}`;
+const frozen = `order.${status}` as const;
+const expected: `order.${string}` = `order.${status}`;
+
+type X1 = Expect<Equal<typeof plain, string>>;
+type X2 = Expect<Equal<typeof frozen, "order.paid" | "order.shipped">>;
+type X3 = Expect<Equal<typeof expected, `order.${string}`>>;
+
+function eventFor<const S extends string>(state: S) {
+  return `order.${state}` as const;
+}
+type X4 = Expect<Equal<ReturnType<typeof eventFor<"refunded">>, "order.refunded">>;
+
+console.log("template expressions compiled");
+</example>
+<output>
+template expressions compiled
+</output>
+<ul>
+<li>On its own, a template expression is <code>string</code> (<code>X1</code>), even when every hole is a literal.</li>
+<li><code>as const</code> keeps the precise union (<code>X2</code>). So does an expected type written at the place of the expression (<code>X3</code>): the value is then checked against the pattern.</li>
+<li>Inside a generic function, <code>as const</code> produces a template literal type over the type parameter, so each call gets its own exact name (<code>X4</code>).</li>
+</ul>
+<p>This is why the typo bus from the start stays untyped even after you write a union: if the names are built with <code>"order." + status</code> or an un-annotated template string, they are <code>string</code>, and any string is accepted. Build names where a template literal type is expected, or with <code>as const</code>.</p>
+
+<h3>How big can a union get?</h3>
+<p>The cross product grows fast. A four-digit PIN is 10 × 10 × 10 × 10 = 10,000 strings, which the compiler handles. Five digits is 100,000, and that is where it stops:</p>
+<example file="explode.ts" project="explode" check="tsc-error">
+type Digit = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9";
+
+type FourDigitPin = `${Digit}${Digit}${Digit}${Digit}`;
+type FiveDigitPin = `${Digit}${Digit}${Digit}${Digit}${Digit}`;
+</example>
+<output kind="tsc">
+explode.ts:4:21 - error TS2590: Expression produces a union type that is too complex to represent.
+
+4 type FiveDigitPin = `${Digit}${Digit}${Digit}${Digit}${Digit}`;
+                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 1 error in explode.ts:4
+</output>
+<p>Long before this limit, large unions make the editor slow and error messages unreadable. Use unions for sets you would be willing to read, such as twenty event names. For shapes, such as "ORD- followed by a number", use a pattern with a <code>string</code> or <code>number</code> hole.</p>
+</section>
+
+<section>
+<h2 id="parsing">Taking strings apart with infer</h2>
+<p>A template literal type in the <code>extends</code> clause of a conditional type is a <strong>string pattern</strong>, and <code>infer</code> can capture the pieces. This is the type-level twin of a regular expression with groups, but much simpler: each <code>infer</code> in the middle captures as little as possible, up to the first place where the text after it matches.</p>
+<example file="parse.ts" project="build">
+import type { Equal, Expect } from "./type-tests.js";
+
+type SplitName<S> = S extends `${infer Entity}.${infer Action}` ? [Entity, Action] : [S];
+
+type S1 = Expect<Equal<SplitName<"order.paid">, ["order", "paid"]>>;
+type S2 = Expect<Equal<SplitName<"order.item.added">, ["order", "item.added"]>>;
+type S3 = Expect<Equal<SplitName<"heartbeat">, ["heartbeat"]>>;
+
+type Split<S extends string, D extends string> =
+  S extends `${infer Head}${D}${infer Tail}` ? [Head, ...Split<Tail, D>] : [S];
+type S4 = Expect<Equal<Split<"lagos,abuja,kano", ",">, ["lagos", "abuja", "kano"]>>;
+
+type TrimStart<S extends string> = S extends ` ${infer Rest}` ? TrimStart<Rest> : S;
+type S5 = Expect<Equal<TrimStart<"   PSK_1042">, "PSK_1042">>;
+
+type ParseAmount<S> = S extends `${infer Kobo extends number} kobo` ? Kobo : never;
+type S6 = Expect<Equal<ParseAmount<"150000 kobo">, 150000>>;
+type S7 = Expect<Equal<ParseAmount<"lots of kobo">, never>>;
+
+console.log("string patterns compiled");
+</example>
+<output>
+string patterns compiled
+</output>
+<ul>
+<li><code>S2</code>: <code>Entity</code> stops at the <em>first</em> dot and <code>Action</code>, the last <code>infer</code>, takes the rest.</li>
+<li><code>Split</code> recurses on the tail, exactly like the recursive types in <a href="/learn/ts-conditional-types#recursion">Conditional types</a>. Each step handles one piece; the base case is a string without the delimiter.</li>
+<li><code>infer Kobo extends number</code> (<code>S6</code>) converts the captured text into a number literal type when it is a valid number, and fails the match otherwise (<code>S7</code>).</li>
+</ul>
+
+<h3>Route parameters</h3>
+<p>Web frameworks describe routes as strings with named holes: <code>/shops/:shopId/orders/:orderId</code>. The handler receives the matched values as an object. Normally that object is typed <code>Record&lt;string, string&gt;</code>, and <code>params.orderID</code> (wrong case) compiles and is <code>undefined</code> at runtime. With a recursive pattern, the parameter names come from the path itself:</p>
+<example file="router.ts" project="routes">
+export type ParamNames<Path extends string> =
+  Path extends `${string}:${infer Param}/${infer Rest}` ? Param | ParamNames<`/${Rest}`>
+  : Path extends `${string}:${infer Param}` ? Param
+  : never;
+
+export type Params<Path extends string> = { readonly [K in ParamNames<Path>]: string };
+
+export function route<const Path extends string>(path: Path, handler: (params: Params<Path>) => string) {
+  const pattern = path.split("/");
+  return (url: string): string | null => {
+    const parts = url.split("/");
+    if (parts.length !== pattern.length) return null;
+    const params: Record<string, string> = {};
+    for (let i = 0; i < pattern.length; i++) {
+      const segment = pattern[i];
+      if (segment.startsWith(":")) params[segment.slice(1)] = decodeURIComponent(parts[i]);
+      else if (segment !== parts[i]) return null;
+    }
+    return handler(params as Params<Path>);
+  };
+}
+</example>
+<p><code>ParamNames</code> finds the first <code>:</code>, captures the name up to the next <code>/</code>, and recurses on the rest; the second branch handles a parameter at the very end. The mapped type <code>Params</code> turns the names into an object type. The one cast connects the runtime loop to that computed type, the same pattern as in the conditional types build. Now the handler knows its parameters:</p>
+<example file="routes.ts" project="routes">
+import { route } from "./router.js";
+
+const getOrder = route("/shops/:shopId/orders/:orderId", (params) => {
+  return `order ${params.orderId} in shop ${params.shopId}`;
+});
+const health = route("/health", () => "ok");
+
+console.log(getOrder("/shops/ada-stores/orders/ORD-1042"));
+console.log(getOrder("/shops/ada-stores/refunds/RF-7"));
+console.log(health("/health"));
+</example>
+<output>
+order ORD-1042 in shop ada-stores
+null
+ok
+</output>
+<example file="routes-wrong.ts" project="routes" check="tsc-error">
+import { route } from "./router.js";
+
+route("/shops/:shopId/orders/:orderId", (params) => `order ${params.orderID}`);
+route("/health", (params) => params.shopId);
+</example>
+<output kind="tsc">
+routes-wrong.ts:3:69 - error TS2551: Property 'orderID' does not exist on type 'Params<"/shops/:shopId/orders/:orderId">'. Did you mean 'orderId'?
+
+3 route("/shops/:shopId/orders/:orderId", (params) => `order ${params.orderID}`);
+                                                                      ~~~~~~~
+
+routes-wrong.ts:4:37 - error TS2339: Property 'shopId' does not exist on type 'Params<"/health">'.
+
+4 route("/health", (params) => params.shopId);
+                                      ~~~~~~
+
+
+Found 2 errors in the same file, starting at: routes-wrong.ts:3
+</output>
+<p>The compiler even suggests the right spelling, and a route without parameters gets an empty params object. It still cannot know whether <code>ORD-1042</code> is a real order: the type checks the <em>names</em>, the handler must still check the <em>values</em>.</p>
+</section>
+
+<section>
+<h2 id="keys">Generating keys</h2>
+<p>Combined with key remapping from <a href="/learn/ts-mapped-types">Mapped types</a>, template literal types generate property names. Many codebases prefer handler objects with methods named after events, such as <code>onOrderPaid</code>. The method names can be computed from the event names, so they never drift:</p>
+<example file="handler-names.ts" project="keys">
+interface OrderEvents {
+  "order.placed": { orderId: string; totalKobo: number };
+  "order.paid": { orderId: string; reference: string };
+  "order.cancelled": { orderId: string; reason: string };
+}
+
+type HandlerName<N extends string> = N extends `${infer Entity}.${infer Action}` ? `on${Capitalize<Entity>}${Capitalize<Action>}` : never;
+
+type OrderHandlers = {
+  [N in keyof OrderEvents as HandlerName<N>]?: (payload: OrderEvents[N]) => void;
+};
+
+const notifications: OrderHandlers = {
+  onOrderPaid: (payload) => console.log(`receipt for ${payload.orderId}, ref ${payload.reference}`),
+  onOrderCancelled: (payload) => console.log(`refund started for ${payload.orderId}: ${payload.reason}`),
+};
+
+function dispatch<N extends keyof OrderEvents>(handlers: OrderHandlers, name: N, payload: OrderEvents[N]): void {
+  const [entity, action] = name.split(".");
+  const key = `on${entity[0].toUpperCase()}${entity.slice(1)}${action[0].toUpperCase()}${action.slice(1)}`;
+  const handler = (handlers as Record<string, ((payload: OrderEvents[N]) => void) | undefined>)[key];
+  handler?.(payload);
+}
+
+dispatch(notifications, "order.paid", { orderId: "ORD-1042", reference: "PSK_77" });
+dispatch(notifications, "order.placed", { orderId: "ORD-1043", totalKobo: 900_000 });
+dispatch(notifications, "order.cancelled", { orderId: "ORD-1044", reason: "out of stock" });
+</example>
+<output>
+receipt for ORD-1042, ref PSK_77
+refund started for ORD-1044: out of stock
+</output>
+<p>Only two lines are printed: every handler is optional, and <code>order.placed</code> has none. Inside the <code>as</code> clause, <code>HandlerName&lt;N&gt;</code> turns <code>"order.paid"</code> into <code>"onOrderPaid"</code>, and the value type uses the <em>original</em> key <code>N</code> to find the payload, so <code>payload.reference</code> is known inside <code>onOrderPaid</code>. Misspell a method (<code>onOrderPayed</code>) and the object literal is rejected as having an unknown property. The runtime <code>dispatch</code> computes the same name with string methods; the two must agree, which is what the tests at the end of the lesson check.</p>
+</section>
+
+<section>
+<h2 id="permissions">Permission strings</h2>
+<p>Role-based systems often write permissions as <code>resource:action</code> strings, with wildcards: <code>orders:*</code> means every action on orders, and <code>*</code> means everything. Template literal types describe both the exact permissions and the grants that may contain wildcards:</p>
+<example file="permissions.ts" project="permissions">
+type Resource = "orders" | "refunds" | "products";
+type Action = "read" | "create" | "approve";
+
+type Permission = `${Resource}:${Action}`;
+type Grant = Permission | `${Resource}:*` | "*";
+
+function can(grants: readonly Grant[], needed: Permission): boolean {
+  const [resource] = needed.split(":");
+  return grants.some((grant) => grant === "*" || grant === needed || grant === `${resource}:*`);
+}
+
+const cashier: Grant[] = ["orders:read", "orders:create", "refunds:read"];
+const supervisor: Grant[] = ["orders:*", "refunds:*"];
+const owner: Grant[] = ["*"];
+
+for (const [role, grants] of [["cashier", cashier], ["supervisor", supervisor], ["owner", owner]] as const) {
+  console.log(role.padEnd(10), can(grants, "refunds:approve"), can(grants, "products:create"));
+}
+</example>
+<output>
+cashier    false false
+supervisor true false
+owner      true true
+</output>
+<p>Wildcards are only allowed in grants, never in a check: <code>can(grants, "orders:*")</code> does not compile, because asking "may this user do anything to orders?" is almost always a bug. Typos in either place are caught too:</p>
+<example file="permission-typos.ts" project="permissions" check="tsc-error">
+type Resource = "orders" | "refunds" | "products";
+type Action = "read" | "create" | "approve";
+type Permission = `${Resource}:${Action}`;
+type Grant = Permission | `${Resource}:*` | "*";
+
+const auditor: Grant[] = ["order:read", "refunds:*"];
+const needed: Permission = "refunds:*";
+</example>
+<output kind="tsc">
+permission-typos.ts:6:27 - error TS2820: Type '"order:read"' is not assignable to type 'Grant'. Did you mean '"orders:read"'?
+
+6 const auditor: Grant[] = ["order:read", "refunds:*"];
+                            ~~~~~~~~~~~~
+
+permission-typos.ts:7:7 - error TS2322: Type '"refunds:*"' is not assignable to type '"orders:approve" | "orders:create" | "orders:read" | "products:approve" | "products:create" | "products:read" | "refunds:approve" | "refunds:create" | "refunds:read"'.
+
+7 const needed: Permission = "refunds:*";
+        ~~~~~~
+
+
+Found 2 errors in the same file, starting at: permission-typos.ts:6
+</output>
+<p>In production, grants usually come from a database, where they are just strings. The type protects the code you write (checks, seed data, tests); a runtime guard must check every grant loaded from storage, exactly like event names from a queue in the build below.</p>
+</section>
+
+<section>
+<h2 id="build">Build: a compile-time safe event name system</h2>
+<reason title="Before you design the event system">
+<p>The shop has order, payment and stock events, each with its own payload. Subscribers may listen to one event, to every event of an entity (<code>order.*</code>), or to everything (<code>*</code>). Before reading the code, think:</p>
+<ul>
+<li>Where is the single source of truth for event names and payloads? What should a new event cost to add?</li>
+<li>A handler subscribed to <code>order.*</code> receives three different payloads. What type should its parameter have, and how does it tell them apart?</li>
+<li>The bus stores handlers for different events in one list. Can a handler for <code>order.paid</code> be stored as a handler for any event? What makes that safe?</li>
+<li>Events also arrive from a message queue as JSON. What can the compiler do about a name that arrives at runtime?</li>
+</ul>
+<answer>
+<p>One interface maps each event name to its payload; names, patterns and payload types are all derived from it, so a new event is one new line. A wildcard handler receives a <strong>discriminated union</strong> of <code>{ name, payload }</code> objects, so checking <code>event.name</code> narrows <code>event.payload</code>. A handler that accepts only <code>order.paid</code> events cannot safely receive every event, so storing it in the shared list needs a cast; what makes it safe is that the bus only ever calls it with events that match its pattern, and a test checks the matcher. Names from the queue are just strings: the compiler cannot see them, so a runtime list of names and a type guard check them, and a type-level test makes sure that list is complete.</p>
+</answer>
+</reason>
+<example file="events.ts" project="events">
+export interface ShopEvents {
+  "order.placed": { orderId: string; totalKobo: number };
+  "order.paid": { orderId: string; reference: string };
+  "order.shipped": { orderId: string; courier: string };
+  "payment.failed": { reference: string; reason: string };
+  "stock.low": { sku: string; left: number };
+}
+
+export type EventName = keyof ShopEvents;
+export type Namespace<N extends string> = N extends `${infer NS}.${string}` ? NS : never;
+export type EventPattern = EventName | `${Namespace<EventName>}.*` | "*";
+
+export type Matching<P extends EventPattern> =
+  P extends "*" ? EventName
+  : P extends `${infer NS}.*` ? Extract<EventName, `${NS}.${string}`>
+  : Extract<P, EventName>;
+
+export type ShopEvent<N extends EventName = EventName> =
+  N extends EventName ? { readonly name: N; readonly payload: ShopEvents[N] } : never;
+
+type AnyHandler = (event: ShopEvent) => void;
+
+export function matches(pattern: EventPattern, name: EventName): boolean {
+  if (pattern === "*") return true;
+  if (pattern.endsWith(".*")) return name.startsWith(pattern.slice(0, -1));
+  return pattern === name;
+}
+
+export function createEventBus() {
+  const subscriptions: { pattern: EventPattern; handler: AnyHandler }[] = [];
+  return {
+    on<P extends EventPattern>(pattern: P, handler: (event: ShopEvent<Matching<P>>) => void): void {
+      subscriptions.push({ pattern, handler: handler as AnyHandler });
+    },
+    emit<N extends EventName>(name: N, payload: ShopEvents[N]): number {
+      const event = { name, payload } as ShopEvent;
+      const targets = subscriptions.filter((subscription) => matches(subscription.pattern, name));
+      for (const subscription of targets) subscription.handler(event);
+      return targets.length;
+    },
+  };
+}
+</example>
+<p>Read the types from the top:</p>
+<ul>
+<li><code>ShopEvents</code> is the source of truth. <code>EventName</code> is its keys.</li>
+<li><code>Namespace</code> takes the part before the first dot, and distributes over the union, so <code>Namespace&lt;EventName&gt;</code> is <code>"order" | "payment" | "stock"</code>. <code>EventPattern</code> adds <code>"order.*"</code>, <code>"payment.*"</code>, <code>"stock.*"</code> and <code>"*"</code>: nine valid patterns, all derived.</li>
+<li><code>Matching&lt;P&gt;</code> turns a pattern back into the event names it covers, using a <code>`${NS}.${string}`</code> pattern with <code>Extract</code>.</li>
+<li><code>ShopEvent&lt;N&gt;</code> distributes over <code>N</code>, so for several names it builds a union of objects, each pairing a name with <em>its</em> payload. That union is discriminated by <code>name</code>.</li>
+<li>The two casts are at the one place where handlers of different types meet in one list, and where the event object is built. <code>matches</code> is what keeps them honest.</li>
+</ul>
+<p>Now the subscribers:</p>
+<example file="shop.ts" project="events">
+import { createEventBus } from "./events.js";
+
+const bus = createEventBus();
+
+bus.on("order.shipped", (event) => {
+  console.log(`SMS: ${event.payload.orderId} is on its way with ${event.payload.courier}`);
+});
+
+bus.on("order.*", (event) => {
+  if (event.name === "order.placed") console.log(`audit: ${event.name}, total ${event.payload.totalKobo} kobo`);
+  else console.log(`audit: ${event.name} ${event.payload.orderId}`);
+});
+
+bus.on("*", (event) => console.log(`metrics: ${event.name}`));
+
+console.log(bus.emit("order.placed", { orderId: "ORD-1042", totalKobo: 1_250_000 }), "handlers");
+console.log(bus.emit("order.shipped", { orderId: "ORD-1042", courier: "GIG Logistics" }), "handlers");
+console.log(bus.emit("stock.low", { sku: "TOTE-01", left: 2 }), "handlers");
+</example>
+<output>
+audit: order.placed, total 1250000 kobo
+metrics: order.placed
+2 handlers
+SMS: ORD-1042 is on its way with GIG Logistics
+audit: order.shipped ORD-1042
+metrics: order.shipped
+3 handlers
+metrics: stock.low
+1 handlers
+</output>
+<p>In the <code>order.*</code> handler, <code>event.payload.totalKobo</code> is only allowed after the <code>event.name === "order.placed"</code> check narrowed the union; every order payload has an <code>orderId</code>, so the <code>else</code> branch may read it without narrowing. Here is what the compiler now stops:</p>
+<example file="mistakes.ts" project="events" check="tsc-error">
+import { createEventBus } from "./events.js";
+
+const bus = createEventBus();
+
+bus.on("order.shiped", () => {});
+bus.on("orders.*", () => {});
+bus.emit("order.paid", { orderId: "ORD-1042" });
+bus.on("order.*", (event) => console.log(event.payload.courier));
+</example>
+<output kind="tsc">
+mistakes.ts:5:8 - error TS2345: Argument of type '"order.shiped"' is not assignable to parameter of type 'EventPattern'.
+
+5 bus.on("order.shiped", () => {});
+         ~~~~~~~~~~~~~~
+
+mistakes.ts:6:8 - error TS2345: Argument of type '"orders.*"' is not assignable to parameter of type 'EventPattern'.
+
+6 bus.on("orders.*", () => {});
+         ~~~~~~~~~~
+
+mistakes.ts:7:24 - error TS2741: Property 'reference' is missing in type '{ orderId: string; }' but required in type '{ orderId: string; reference: string; }'.
+
+7 bus.emit("order.paid", { orderId: "ORD-1042" });
+                         ~~~~~~~~~~~~~~~~~~~~~~~
+
+  events.ts:3:36 - 'reference' is declared here.
+    3   "order.paid": { orderId: string; reference: string };
+                                         ~~~~~~~~~
+
+mistakes.ts:8:56 - error TS2339: Property 'courier' does not exist on type '{ orderId: string; totalKobo: number; } | { orderId: string; reference: string; } | { orderId: string; courier: string; }'.
+  Property 'courier' does not exist on type '{ orderId: string; totalKobo: number; }'.
+
+8 bus.on("order.*", (event) => console.log(event.payload.courier));
+                                                         ~~~~~~~
+
+
+Found 4 errors in the same file, starting at: mistakes.ts:5
+</output>
+<p>The typo from the start of the lesson, a wildcard for an entity that does not exist, a payload missing its <code>reference</code>, and a wildcard handler assuming every order event has a courier. All four were silent bugs with <code>string</code> names.</p>
+
+<h3>Names built from other unions</h3>
+<p>Code often builds event names from data: an order moved to status <code>S</code> publishes <code>`order.${S}`</code>. Template literal types can tell you, before anything runs, which of those names have no event:</p>
+<example file="coverage.ts" project="events">
+import type { EventName } from "./events.js";
+
+type OrderStatus = "placed" | "paid" | "shipped" | "refunded";
+type StatusEvent = `order.${OrderStatus}`;
+type Missing = Exclude<StatusEvent, EventName>;
+
+const missing: Missing[] = ["order.refunded"];
+console.log("statuses without an event:", missing.join(", "));
+</example>
+<output>
+statuses without an event: order.refunded
+</output>
+<p><code>Missing</code> is computed as <code>"order.refunded"</code>, so the array literal compiles only with exactly that value. Add an <code>"order.refunded"</code> entry to <code>ShopEvents</code> and this file stops compiling, which is your reminder to delete the note. In a test file you would write <code>Expect&lt;Equal&lt;Missing, never&gt;&gt;</code> instead, to demand full coverage.</p>
+
+<h3>Names from outside</h3>
+<p>Events from another service arrive through a queue as JSON. Their names are <code>string</code> and the compiler cannot help. A runtime list of names and a type guard do the check, and a type-level test proves the list is complete:</p>
+<example file="inbox.ts" project="events">
+import { createEventBus } from "./events.js";
+import type { EventName } from "./events.js";
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+const EVENT_NAMES = ["order.placed", "order.paid", "order.shipped", "payment.failed", "stock.low"] as const satisfies readonly EventName[];
+type Complete = Expect<Equal<(typeof EVENT_NAMES)[number], EventName>>;
+
+function isEventName(value: string): value is EventName {
+  return (EVENT_NAMES as readonly string[]).includes(value);
+}
+
+const bus = createEventBus();
+bus.on("payment.*", (event) => console.log(`alert: payment ${event.payload.reference} failed: ${event.payload.reason}`));
+
+const fromQueue = [
+  '{"name":"payment.failed","payload":{"reference":"PSK_88","reason":"insufficient funds"}}',
+  '{"name":"payment.refunded","payload":{"reference":"PSK_89"}}',
+];
+
+for (const message of fromQueue) {
+  const { name, payload } = JSON.parse(message) as { name: string; payload: unknown };
+  if (!isEventName(name)) {
+    console.log(`dead-letter: unknown event "${name}"`);
+    continue;
+  }
+  console.log(`accepted ${name}; payload still needs validation:`, typeof payload);
+  if (name === "payment.failed") {
+    bus.emit(name, payload as { reference: string; reason: string });
+  }
+}
+</example>
+<output>
+accepted payment.failed; payload still needs validation: object
+alert: payment PSK_88 failed: insufficient funds
+dead-letter: unknown event "payment.refunded"
+</output>
+<p><code>satisfies readonly EventName[]</code> rejects a misspelt name in the list, and <code>Complete</code> rejects a list that misses one, so the runtime list and the type can never disagree. The name is now checked, but the payload is still unchecked JSON: the <code>as</code> on the last line is only safe after a validator has checked its fields, which <a href="/learn/ts-validation">Runtime validation</a> covers. <a href="/learn/ts-typed-events">Type-safe events</a> later in this course extends this bus with typed middleware and async handlers.</p>
+</section>
+
+<section>
+<h2 id="mistakes">Common mistakes</h2>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Mistake</th><th>What you get</th><th>Fix</th></tr></thead>
+<tbody>
+<tr><td>Building names with <code>+</code> or an un-annotated template string</td><td><code>string</code>; every name accepted</td><td>Build them where a template literal type is expected, or add <code>as const</code></td></tr>
+<tr><td><code>"order.placed" | string</code> as a parameter type</td><td>Just <code>string</code>: the literal is absorbed</td><td>Keep the union closed, or accept <code>EventName | (string &amp; {})</code> only if you must allow unknown names</td></tr>
+<tr><td>Trusting <code>`${number}`</code> as validation</td><td><code>" 42"</code>, <code>"0x1F"</code> and <code>"1e3"</code> pass</td><td>Validate the format at runtime</td></tr>
+<tr><td>Unions of unions of unions</td><td>TS2590, slow editor</td><td>Use a pattern (<code>`ORD-${number}`</code>) instead of listing</td></tr>
+<tr><td>Expecting <code>infer</code> to split at the last delimiter</td><td>The first <code>infer</code> stops at the first match</td><td>Recurse, or put the fixed text at the end of the pattern</td></tr>
+<tr><td>A case-changing function without a matching type</td><td>Returns <code>string</code>, loses the literal</td><td>Return <code>Uppercase&lt;S&gt;</code> and test that the runtime agrees</td></tr>
+<tr><td>Typing outside strings (queue messages, database grants) as the union</td><td>A type that lies</td><td>Guard with a runtime list, pinned to the type by a test</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="testing">Testing string types</h2>
+<p>Template literal types have two kinds of behaviour to test: what the types compute, and whether the runtime string code agrees with them. The handler-name convention is a good example, because it exists twice: once as <code>HandlerName&lt;N&gt;</code> and once as string code in <code>dispatch</code>. A test can pin one to the other in two steps: the compiler checks a table of expected names against the type, and the runtime checks the string code against the same table:</p>
+<example file="events.test.ts" project="events">
+import { matches } from "./events.js";
+import type { EventName, EventPattern, Matching, Namespace } from "./events.js";
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+type T1 = Expect<Equal<Namespace<EventName>, "order" | "payment" | "stock">>;
+type T2 = Expect<Equal<Matching<"order.*">, "order.placed" | "order.paid" | "order.shipped">>;
+type T3 = Expect<Equal<Matching<"stock.low">, "stock.low">>;
+
+// @ts-expect-error: patterns must name a real namespace
+const bad: EventPattern = "refund.*";
+
+type HandlerName<N extends string> = N extends `${infer E}.${infer A}` ? `on${Capitalize<E>}${Capitalize<A>}` : never;
+const expected: { [N in EventName]: HandlerName<N> } = {
+  "order.placed": "onOrderPlaced",
+  "order.paid": "onOrderPaid",
+  "order.shipped": "onOrderShipped",
+  "payment.failed": "onPaymentFailed",
+  "stock.low": "onStockLow",
+};
+const handlerName = (name: string) => "on" + name.replace(/(^|\.)(\w)/g, (_match, _dot, first: string) => first.toUpperCase());
+for (const [name, want] of Object.entries(expected)) {
+  console.log(handlerName(name) === want ? "PASS" : "FAIL", `${name} -> ${handlerName(name)}`);
+}
+
+const cases: [EventPattern, EventName, boolean][] = [
+  ["*", "stock.low", true],
+  ["order.*", "order.paid", true],
+  ["order.*", "payment.failed", false],
+  ["order.paid", "order.placed", false],
+];
+for (const [pattern, name, want] of cases) {
+  console.log(matches(pattern, name) === want ? "PASS" : "FAIL", `${pattern} ~ ${name} = ${want}`);
+}
+</example>
+<output>
+PASS order.placed -> onOrderPlaced
+PASS order.paid -> onOrderPaid
+PASS order.shipped -> onOrderShipped
+PASS payment.failed -> onPaymentFailed
+PASS stock.low -> onStockLow
+PASS * ~ stock.low = true
+PASS order.* ~ order.paid = true
+PASS order.* ~ payment.failed = false
+PASS order.paid ~ order.placed = false
+</output>
+<p>The <code>expected</code> table is typed <code>{ [N in EventName]: HandlerName&lt;N&gt; }</code>, so it must list every event, and each value must be exactly the name the type computes; a wrong entry does not compile. The loop then proves the runtime function produces the same strings. The type tests pin what the types derive; the <code>@ts-expect-error</code> line fails the build if <code>EventPattern</code> ever becomes too loose (for example if someone widens it to <code>`${string}.*`</code>); the runtime table checks <code>matches</code>, which the casts in <code>createEventBus</code> rely on. The <code>bad</code> constant is never used at runtime, and that is fine: it exists for the compiler.</p>
+</section>
+
+<section>
+<h2 id="production">Template literal types in production</h2>
+<ul>
+<li><strong>Keep the naming convention in one place.</strong> Event names, routes and permissions each follow a grammar. Write it once as types, and once as runtime code, and test that they agree.</li>
+<li><strong>Prefer closed sets for things you control</strong> (events you publish, routes you serve) and patterns for things you do not (order references, IDs from other systems).</li>
+<li><strong>Version names instead of changing payloads.</strong> A consumer compiled against an old payload will misread a new one; <code>order.placed.v2</code> is a new event that both versions can handle side by side.</li>
+<li><strong>Watch the error messages.</strong> A parameter typed as a 50-member union produces error messages listing all 50. Name the union (<code>EventPattern</code>) so errors say the name, as they did in the build.</li>
+<li><strong>The boundary is still runtime.</strong> Everything that arrives as text (URLs, queue messages, database rows, environment variables) is <code>string</code> until a runtime check says otherwise.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Environment variable names">
+<p>Config keys in code are camelCase (<code>paystackSecretKey</code>), and environment variables are SCREAMING_SNAKE_CASE (<code>PAYSTACK_SECRET_KEY</code>). <a href="/learn/ts-mapped-types#remapping">Mapped types</a> used plain <code>Uppercase</code> and got <code>WALLET_BALANCEKOBO</code>; this time, put an underscore before each word. Write <code>EnvName&lt;S&gt;</code> that converts one to the other, one character at a time, and a runtime <code>envName</code> that does the same. Check both.</p>
+<solution>
+<example file="env-name.ts" project="ex-env">
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+type EnvName<S extends string> =
+  S extends `${infer C}${infer Rest}`
+    ? `${C extends Lowercase<C> ? Uppercase<C> : `_${C}`}${EnvName<Rest>}`
+    : "";
+
+type E1 = Expect<Equal<EnvName<"paystackSecretKey">, "PAYSTACK_SECRET_KEY">>;
+type E2 = Expect<Equal<EnvName<"port">, "PORT">>;
+type E3 = Expect<Equal<EnvName<"smtp2Host">, "SMTP2_HOST">>;
+
+function envName<S extends string>(key: S): EnvName<S> {
+  return key.replace(/[A-Z]/g, (letter) => `_${letter}`).toUpperCase() as EnvName<S>;
+}
+
+const name = envName("paystackSecretKey");
+console.log(name, envName("smtp2Host"));
+</example>
+<output>
+PAYSTACK_SECRET_KEY SMTP2_HOST
+</output>
+<p><code>`${infer C}${infer Rest}`</code> takes exactly one character into <code>C</code>, because an <code>infer</code> followed directly by another captures as little as possible. A character that is unchanged by <code>Lowercase</code> is lowercase (or a digit) and is simply uppercased; any other gets an underscore first. The base case is the empty string.</p>
+</solution>
+</exercise>
+<exercise title="Parse a money string">
+<p>Prices in a product feed look like <code>"1500.50 NGN"</code>. Write <code>ParseMoney&lt;S&gt;</code> that gives a tuple <code>[amount, currency]</code> with a number literal and one of <code>"NGN" | "USD"</code>, or <code>never</code> for anything else.</p>
+<solution>
+<example file="money.ts" project="ex-money">
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+type Currency = "NGN" | "USD";
+type ParseMoney<S> = S extends `${infer Amount extends number} ${infer C extends Currency}` ? [Amount, C] : never;
+
+type M1 = Expect<Equal<ParseMoney<"1500.5 NGN">, [1500.5, "NGN"]>>;
+type M2 = Expect<Equal<ParseMoney<"20 USD">, [20, "USD"]>>;
+type M3 = Expect<Equal<ParseMoney<"20 EUR">, never>>;
+type M4 = Expect<Equal<ParseMoney<"twenty USD">, never>>;
+
+const sample: ParseMoney<"1500.5 NGN"> = [1500.5, "NGN"];
+console.log(sample);
+</example>
+<output>
+[ 1500.5, 'NGN' ]
+</output>
+<p>Both captures are constrained, so the match only succeeds when the amount is a number and the currency is a known code. Note that the literal <code>"1500.50"</code> would parse to <code>1500.5</code>: the type follows JavaScript's number formatting, not the text.</p>
+</solution>
+</exercise>
+<exercise title="Typed query keys">
+<p>A cache stores values under keys like <code>user:42</code>, <code>order:ORD-1042</code> and <code>cart:42:items</code>. Write a type <code>CacheKey</code> that accepts exactly those three shapes (numbers for user and cart IDs, <code>ORD-</code> plus a number for orders), and one small builder function per shape that returns the exact key. Show one call per shape and one key the type rejects.</p>
+<solution>
+<example file="cache-key.ts" project="ex-cache">
+type CacheKey = `user:${number}` | `order:ORD-${number}` | `cart:${number}:items`;
+
+function userKey<const Id extends number>(id: Id) {
+  return `user:${id}` as const;
+}
+
+function orderKey<const Ref extends `ORD-${number}`>(reference: Ref) {
+  return `order:${reference}` as const;
+}
+
+function cartKey<const Id extends number>(id: Id) {
+  return `cart:${id}:items` as const;
+}
+
+const keys: CacheKey[] = [userKey(42), orderKey("ORD-1042"), cartKey(42)];
+// @ts-expect-error: carts are cached by numeric user id only
+const wrong: CacheKey = "cart:ada:items";
+console.log(keys);
+</example>
+<output>
+[ 'user:42', 'order:ORD-1042', 'cart:42:items' ]
+</output>
+<p>Each builder returns an exact literal such as <code>"user:42"</code>, which fits the <code>CacheKey</code> pattern. The <code>@ts-expect-error</code> line proves that a key with a name instead of an id is rejected.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A template literal type builds strings from types. Unions in the holes produce every combination; a <code>string</code> or <code>number</code> hole makes a pattern.</li>
+<li><code>`${number}`</code> means "readable by <code>Number()</code>", not "digits". Five holes of ten digits hit TS2590.</li>
+<li><code>Uppercase</code>, <code>Lowercase</code>, <code>Capitalize</code> and <code>Uncapitalize</code> transform string types; runtime helpers must return the matching type with one honest cast.</li>
+<li>Template string expressions are <code>string</code> unless written with <code>as const</code> or where a template literal type is expected.</li>
+<li>In a conditional type, a template literal is a string pattern: <code>infer</code> splits names, extracts route parameters and parses numbers, and recursion handles lists.</li>
+<li>Route params, permission grants with wildcards and handler names can all be derived from one source.</li>
+<li>The event bus derives names, wildcard patterns and a discriminated union of events from one interface; names from outside go through a runtime guard whose list is pinned to the type by a test.</li>
+</ul>
+<p>Next: <a href="/learn/ts-inference-deep">Advanced inference</a>, where you learn exactly how TypeScript infers type arguments, and when to reach for <code>satisfies</code>, <code>as</code> or <code>as const</code>.</p>
+</section>

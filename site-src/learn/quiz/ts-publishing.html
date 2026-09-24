@@ -1,0 +1,762 @@
+<question id="pub-folder-vs-tarball" type="choice">
+<q>A package worked perfectly for every app in its own monorepo, but users of the published version get TS7016. Why did the monorepo not show the problem?</q>
+<option>The monorepo used an older TypeScript version</option>
+<option correct>Workspaces link the whole package folder, so the <code>.d.ts</code> files were on disk even though <code>files</code> kept them out of the tarball</option>
+<option>npm strips declaration files from every published package</option>
+<option>TS7016 only happens on Windows</option>
+<explain><p>A workspace link exposes the folder; the registry only receives the tarball. Test what users receive: <code>npm pack --dry-run</code>, publint, and an install of the <code>.tgz</code> file.</p></explain>
+</question>
+
+<question id="pub-why-js" type="choice">
+<q>Why does a TypeScript library publish compiled <code>.js</code> files instead of its <code>.ts</code> sources as the entry point?</q>
+<option>npm refuses to upload <code>.ts</code> files</option>
+<option correct>Node.js will not strip types inside <code>node_modules</code>, bundlers expect JavaScript there, and users' compilers should not re-check your source with their settings</option>
+<option>JavaScript files are always smaller</option>
+<option>Declaration files can only describe <code>.js</code> files in the same folder</option>
+<explain><p>Consumers run and check the compiled output. The source may still be published (for declaration maps), but it is never what <code>exports</code> points at.</p></explain>
+</question>
+
+<question id="pub-build-config" type="choice">
+<q>Why does the lesson's <code>tsconfig.build.json</code> start with <code>"extends": "./tsconfig.json"</code>?</q>
+<option>TypeScript requires every config to extend another one</option>
+<option correct>So the build uses exactly the same strictness and module settings as the check, and only adds what building needs (emit, rootDir, outDir, declarations, include/exclude)</option>
+<option>So that the build also compiles the tests</option>
+<option>So that <code>noEmit</code> stays on during the build</option>
+<explain><p>Two independent configs drift apart: code could pass <code>npm run check</code> with one set of rules and be built with another. Extending keeps one source of truth and overrides only the build-specific options.</p></explain>
+</question>
+
+<question id="pub-rootdir" type="choice">
+<q>With <code>"rootDir": "src"</code> and <code>"outDir": "dist"</code>, where does <code>src/money/format.ts</code> compile to?</q>
+<option><code>dist/src/money/format.js</code></option>
+<option correct><code>dist/money/format.js</code></option>
+<option><code>dist/format.js</code></option>
+<option><code>src/money/format.js</code></option>
+<explain><p>The folder structure <em>inside</em> <code>rootDir</code> is copied into <code>outDir</code>. Without <code>rootDir: "src"</code>, the <code>src</code> folder itself would appear inside <code>dist</code>, and the <code>exports</code> paths would be wrong.</p></explain>
+</question>
+
+<question id="pub-declaration-map" type="choice">
+<q>You publish <code>dist/index.d.ts.map</code> but not <code>src/</code>. What happens when a user presses "go to definition" on one of your functions?</q>
+<option>The editor opens your TypeScript source from GitHub</option>
+<option correct>The map points at <code>../src/index.ts</code>, which is not in the package, so the editor falls back to the <code>.d.ts</code> file</option>
+<option>The editor shows an error and refuses to open anything</option>
+<option>The editor opens <code>dist/index.js</code></option>
+<explain><p>A declaration map is only useful together with the source it points to. Publish <code>src</code> (without tests) as well, or do not bother with declaration maps.</p></explain>
+</question>
+
+<question id="pub-types-first" type="choice">
+<q>Why must <code>"types"</code> come first inside an <code>exports</code> entry?</q>
+<option>JSON objects are sorted alphabetically by npm</option>
+<option>Node.js reads <code>"types"</code> to decide which JavaScript file to load</option>
+<option correct>Conditions are checked in the order written, and TypeScript also matches <code>"import"</code>, <code>"require"</code> and <code>"default"</code>, so if one of those came first TypeScript would stop there</option>
+<option>It is only a style convention</option>
+<explain><p>The first matching condition wins. TypeScript matches <code>types</code> plus the runtime conditions, so <code>types</code> must be ahead of them. Node.js ignores <code>types</code> entirely.</p></explain>
+</question>
+
+<question id="pub-default-last" type="choice">
+<q>An entry is written <code>{ "default": "./dist/index.js", "import": "./dist/index.mjs" }</code>. Which file does an <code>import</code> load?</q>
+<option><code>./dist/index.mjs</code>, because <code>import</code> is more specific</option>
+<option correct><code>./dist/index.js</code>, because <code>default</code> matches everything and comes first</option>
+<option>Neither: Node.js reports an invalid exports map</option>
+<option>Both, merged</option>
+<explain><p>Node.js walks the conditions in order and takes the first match. <code>default</code> always matches, so everything after it is dead. Put <code>default</code> last.</p></explain>
+</question>
+
+<question id="pub-default-vs-import" type="choice">
+<q>An ESM-only package maps <code>"."</code> to <code>{ "types": "./dist/index.d.ts", "import": "./dist/index.js" }</code>. A CommonJS user on Node.js 24 writes <code>require("@naija-shop/naira")</code>. What happens?</q>
+<option>It works, because Node.js 24 can require ES modules</option>
+<option correct>Their type check passes, but Node.js throws <code>ERR_PACKAGE_PATH_NOT_EXPORTED</code>: no condition matches <code>require</code></option>
+<option>Their type check fails with TS7016</option>
+<option>Node.js loads the <code>.d.ts</code> file</option>
+<explain><p>Node.js can load ES modules with <code>require</code>, but only if the exports map offers a condition that <code>require</code> matches. <code>"types"</code> matches for TypeScript, so the compiler is happy. Using <code>"default"</code> for the JavaScript serves both.</p></explain>
+</question>
+
+<question id="pub-unlisted-subpath" type="choice">
+<q>A package's <code>exports</code> lists only <code>"."</code>. A user writes <code>import { parseNaira } from "@naija-shop/naira/dist/index.js"</code>. What happens?</q>
+<option>It works, because the file exists in <code>node_modules</code></option>
+<option correct>TypeScript reports "Cannot find module" (TS2307) and Node.js throws <code>ERR_PACKAGE_PATH_NOT_EXPORTED</code></option>
+<option>It works in Node.js but not in TypeScript</option>
+<option>It works in TypeScript but not in Node.js</option>
+<explain><p>An <code>exports</code> map hides every path it does not list, in both tools. That is what lets you reorganise <code>dist</code> without a major release.</p></explain>
+</question>
+
+<question id="pub-files-allowlist" type="choice">
+<q>A package has <code>"files": ["dist", "src", "!src/**/*.test.ts"]</code>. Which of these ends up in the tarball?</q>
+<option><code>src/index.test.ts</code></option>
+<option><code>.env</code></option>
+<option correct><code>package.json</code> and <code>README.md</code>, even though they are not listed</option>
+<option><code>tsconfig.build.json</code></option>
+<explain><p><code>files</code> is an allow-list, and <code>!</code> removes matches again. npm always adds <code>package.json</code>, the README and the licence file. Everything else unlisted, secrets included, stays out.</p></explain>
+</question>
+
+<question id="pub-publint-vs-attw" type="choice">
+<q>What is the difference between publint and attw?</q>
+<option>They do the same thing; attw is newer</option>
+<option correct>publint checks that <code>package.json</code> fields, condition order and published files are consistent; attw resolves the package as different TypeScript settings would and compares the types found with the JavaScript that runs</option>
+<option>publint checks types, attw checks JavaScript</option>
+<option>publint publishes the package, attw tests it</option>
+<explain><p>They overlap a little but catch different mistakes. In the lesson, publint caught the unpublished <code>.d.ts</code>, while attw caught "masquerading as ESM" declarations in the dual package.</p></explain>
+</question>
+
+<question id="pub-attw-exit" type="choice">
+<q>Run on the broken 1.0.0 package (no <code>.d.ts</code> in the tarball), attw printed "This package does not contain types." What was its exit code, and what follows for CI?</q>
+<option>1, so CI would have stopped the release</option>
+<option correct>0, so attw alone would not have stopped the release; publint, which exited non-zero, would</option>
+<option>2, meaning a warning</option>
+<option>It crashed</option>
+<explain><p>A tool's exit code is what CI acts on. Know how each check reports failure, and combine checks: publint's errors fail the job.</p></explain>
+</question>
+
+<question id="pub-masquerading" type="choice">
+<q>attw reports "Masquerading as ESM" for CommonJS consumers of a dual package. What is wrong?</q>
+<option>The CommonJS build contains <code>import</code> statements</option>
+<option correct>CommonJS consumers are given the ESM declaration files (for example through one shared top-level <code>"types"</code>), so their types describe a module format they do not get</option>
+<option>The package has no ESM build</option>
+<option>The package name starts with <code>@</code></option>
+<explain><p>Each condition needs matching declarations: <code>"import": { "types": esm .d.ts, "default": esm .js }</code> and <code>"require": { "types": cjs .d.ts, "default": cjs .js }</code>, with <code>cjs/package.json</code> saying <code>"type": "commonjs"</code>.</p></explain>
+</question>
+
+<question id="pub-hazard-cause" type="choice">
+<q>What causes the dual-package hazard?</q>
+<option>TypeScript generating two declaration files</option>
+<option correct>One application loading both the ESM and the CommonJS build, which creates two separate copies of every class, cache and piece of module state</option>
+<option>Publishing the same version twice</option>
+<option>Using <code>"default"</code> in the exports map</option>
+<explain><p>Two builds are two modules. An error made by one copy is not an instance of the other copy's class, and state kept in one is invisible to the other. The identical declarations hide it from the compiler.</p></explain>
+</question>
+
+<question id="pub-hazard-defence" type="choice">
+<q>Which is the most reliable way to avoid the dual-package hazard for a new library that targets Node.js 24?</q>
+<option>Check every error with <code>instanceof</code> twice</option>
+<option correct>Ship ESM only, with a <code>"default"</code> condition, so <code>import</code> and <code>require</code> load the same single copy</option>
+<option>Ship CommonJS only</option>
+<option>Give the two builds different class names</option>
+<explain><p>One build means one copy. CommonJS-only would also avoid the hazard but gives up ES module benefits; on Node.js 24 there is no reason to. If two copies are unavoidable, check errors by <code>name</code>, <code>code</code> or a <code>Symbol.for</code> brand.</p></explain>
+</question>
+
+<question id="pub-hazard-output" type="output">
+<q>Two copies of the same error class stand in for the ESM and CommonJS builds of a dual package. What does this print?</q>
+<code file="copies.ts">
+function loadPaymentsModule() {
+  class PaymentError extends Error {
+    readonly code: string;
+    constructor(code: string, message: string) {
+      super(message);
+      this.name = "PaymentError";
+      this.code = code;
+    }
+  }
+  return { PaymentError };
+}
+
+const esm = loadPaymentsModule();
+const cjs = loadPaymentsModule();
+const declined = new cjs.PaymentError("card_declined", "Card declined");
+
+console.log(declined instanceof esm.PaymentError, declined instanceof cjs.PaymentError);
+console.log(declined.name === "PaymentError", declined.code);
+</code>
+<option correct>false true
+true card_declined</option>
+<option>true true
+true card_declined</option>
+<option>false false
+true card_declined</option>
+<option>false true
+false card_declined</option>
+<explain><p>Each call creates a new class, just as each build creates its own. <code>instanceof</code> only recognises instances of the exact class object; the <code>name</code> and <code>code</code> properties travel with the error and work across copies.</p></explain>
+</question>
+
+<question id="pub-symbol-brand" type="output">
+<q>Two module copies each create a brand symbol. What does this print?</q>
+<code file="brand.ts">
+function loadCopy() {
+  return {
+    local: Symbol("payment-error"),
+    shared: Symbol.for("@naija-shop/payment-error"),
+  };
+}
+
+const a = loadCopy();
+const b = loadCopy();
+console.log(a.local === b.local, a.shared === b.shared);
+</code>
+<option correct>false true</option>
+<option>true true</option>
+<option>false false</option>
+<option>true false</option>
+<explain><p><code>Symbol()</code> makes a new, unique symbol every time. <code>Symbol.for(key)</code> looks the key up in a global registry shared by the whole program, so both copies get the same symbol. That is why a <code>Symbol.for</code> brand survives the dual-package hazard.</p></explain>
+</question>
+
+<question id="pub-name-default" type="output">
+<q>The lesson's defence checks <code>error.name</code>. What does this print?</q>
+<code file="names.ts">
+class RefundError extends Error {}
+class PaymentError extends Error {
+  override name = "PaymentError";
+}
+
+console.log(new RefundError("x").name, new PaymentError("y").name);
+</code>
+<option correct>Error PaymentError</option>
+<option>RefundError PaymentError</option>
+<option>Error Error</option>
+<option>RefundError Error</option>
+<explain><p>A subclass inherits <code>name</code> from <code>Error.prototype</code>, which is <code>"Error"</code>, unless it sets its own. Checking by name only works if the library sets it, as <code>PaymentError</code> does.</p></explain>
+</question>
+
+<question id="pub-resolve-order" type="output">
+<q>This function follows an <code>exports</code> entry the way Node.js and TypeScript do: the first condition that matches wins. What does it print?</q>
+<code file="resolve.ts">
+type Entry = string | { [condition: string]: Entry };
+
+function resolve(entry: Entry, conditions: string[]): string | null {
+  if (typeof entry === "string") return entry;
+  for (const [condition, target] of Object.entries(entry)) {
+    if (condition === "default" || conditions.includes(condition)) {
+      const found = resolve(target, conditions);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+const badOrder = { default: "./dist/index.js", types: "./dist/index.d.ts" };
+console.log(resolve(badOrder, ["types", "import"]));
+console.log(resolve(badOrder, ["import"]));
+</code>
+<option correct>./dist/index.js
+./dist/index.js</option>
+<option>./dist/index.d.ts
+./dist/index.js</option>
+<option>./dist/index.d.ts
+./dist/index.d.ts</option>
+<option>null
+./dist/index.js</option>
+<explain><p><code>default</code> matches everything and comes first, so TypeScript (conditions <code>types</code> and <code>import</code>) gets the JavaScript file instead of the declarations. publint reports exactly this.</p></explain>
+</question>
+
+<question id="pub-resolve-nested" type="output">
+<q>Using the same <code>resolve</code> function, what does this print for a dual package?</q>
+<code file="dual.ts">
+type Entry = string | { [condition: string]: Entry };
+
+function resolve(entry: Entry, conditions: string[]): string | null {
+  if (typeof entry === "string") return entry;
+  for (const [condition, target] of Object.entries(entry)) {
+    if (condition === "default" || conditions.includes(condition)) {
+      const found = resolve(target, conditions);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+const entry = {
+  import: { types: "./esm/errors.d.ts", default: "./esm/errors.js" },
+  require: { types: "./cjs/errors.d.ts", default: "./cjs/errors.js" },
+};
+console.log(resolve(entry, ["types", "require"]));
+console.log(resolve(entry, ["import"]));
+console.log(resolve(entry, ["browser"]));
+</code>
+<option correct>./cjs/errors.d.ts
+./esm/errors.js
+null</option>
+<option>./esm/errors.d.ts
+./esm/errors.js
+null</option>
+<option>./cjs/errors.d.ts
+./esm/errors.js
+./esm/errors.js</option>
+<option>./cjs/errors.js
+./esm/errors.js
+null</option>
+<explain><p>TypeScript resolving a <code>require</code> uses <code>types</code> and <code>require</code>, and reaches the CommonJS declarations. Node.js importing gets the ESM JavaScript. With neither <code>import</code> nor <code>require</code> in the list, nothing matches, because this entry has no top-level <code>default</code>.</p></explain>
+</question>
+
+<question id="pub-deps-in-dts" type="choice">
+<q>Your published <code>dist/index.d.ts</code> contains <code>import type { Logger } from "@zudojs/logger"</code>. Where must <code>@zudojs/logger</code> be listed?</q>
+<option><code>devDependencies</code>, because it is only used for types</option>
+<option correct><code>dependencies</code> (or <code>peerDependencies</code>), because every user's compiler must find it to read your declarations</option>
+<option>Nowhere; TypeScript ignores types from other packages in <code>.d.ts</code> files</option>
+<option>In <code>files</code></option>
+<explain><p>Your declarations are compiled by your users. A package they mention must be installed for them, which only happens for <code>dependencies</code> and <code>peerDependencies</code>.</p></explain>
+</question>
+
+<question id="pub-semver-required" type="choice">
+<q>Version 1.1.0 adds a <em>required</em> <code>locale</code> property to the exported <code>FormatOptions</code> interface. The JavaScript still works without it. What kind of change is this?</q>
+<option>Patch: nothing changed at runtime</option>
+<option>Minor: it adds a feature</option>
+<option correct>Major: users who build a <code>FormatOptions</code> object without <code>locale</code> no longer compile</option>
+<option>None: types are not covered by semver</option>
+<explain><p>For a TypeScript package, "breaking" includes "no longer compiles". Make the new property optional with a default and it becomes a minor release.</p></explain>
+</question>
+
+<question id="pub-semver-return" type="choice">
+<q>Which change to a published function's types is breaking for its callers?</q>
+<option>Accepting <code>number | bigint</code> where it accepted <code>number</code></option>
+<option>Adding a new overload</option>
+<option correct>Returning <code>string | null</code> where it returned <code>string</code></option>
+<option>Adding an optional parameter at the end</option>
+<explain><p>A wider return type forces every caller to handle the new case, so existing code stops compiling (or, worse, crashes if it used an assertion). Wider parameters and new overloads keep old calls valid.</p></explain>
+</question>
+
+<question id="pub-semver-implementers" type="choice">
+<q>A package adds a required <code>currency</code> property to an interface it <em>returns</em> (<code>Receipt</code>). Callers who only read receipts are fine. Who can still break?</q>
+<option>Nobody</option>
+<option correct>Users who create their own <code>Receipt</code> objects, such as fakes in tests or implementations of an interface that returns one</option>
+<option>Users on CommonJS</option>
+<option>Users of the ESM build</option>
+<explain><p>Output types are also input types for anyone who implements or fakes them. Their object literals now lack <code>currency</code>. Think in both directions when an exported interface changes.</p></explain>
+</question>
+
+<question id="pub-widened-crash" type="output">
+<q>Version 2 of a parser widened its return type to include <code>undefined</code>, but a caller written for version 1 used a non-null assertion. What does this print?</q>
+<code file="upgrade.ts">
+function parseNairaV2(text: string): number | null | undefined {
+  if (text.trim() === "") return undefined;
+  const cleaned = text.replace(/[₦,]/g, "");
+  return /^\d+$/.test(cleaned) ? Number(cleaned) * 100 : null;
+}
+
+const inputs = ["₦2,500", ""];
+for (const input of inputs) {
+  const kobo = parseNairaV2(input)!;
+  try {
+    console.log(kobo.toFixed(0));
+  } catch (error) {
+    console.log((error as Error).constructor.name);
+  }
+}
+</code>
+<option correct>250000
+TypeError</option>
+<option>250000
+undefined</option>
+<option>250000
+0</option>
+<option>TypeError
+TypeError</option>
+<explain><p>The <code>!</code> silenced the compiler, so the new <code>undefined</code> case reached <code>toFixed</code> and threw. Callers who checked <code>=== null</code> honestly would have got a compile error instead: that is why a wider return type is a major change.</p></explain>
+</question>
+
+<question id="pub-version-sort" type="output">
+<q>A release script sorts published versions as strings. What does this print?</q>
+<code file="versions.ts">
+const versions = ["1.9.0", "1.10.0", "1.2.3"];
+console.log([...versions].sort().at(-1));
+
+const byNumber = [...versions].sort((a, b) => {
+  const [x, y] = [a.split(".").map(Number), b.split(".").map(Number)];
+  return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+});
+console.log(byNumber.at(-1));
+</code>
+<option correct>1.9.0
+1.10.0</option>
+<option>1.10.0
+1.10.0</option>
+<option>1.9.0
+1.9.0</option>
+<option>1.2.3
+1.10.0</option>
+<option>1.10.0
+1.9.0</option>
+<explain><p>String sorting compares character by character, and <code>"9"</code> is greater than <code>"1"</code>, so <code>1.9.0</code> looks newest. Versions must be compared part by part as numbers (and real semver also handles prereleases), which is why tools use a semver library.</p></explain>
+</question>
+
+<question id="pub-cts-form" type="choice">
+<q>In a <code>.cts</code> file, why does the lesson prefer <code>const naira: typeof import("@naija-shop/naira") = require("@naija-shop/naira")</code> over <code>import naira = require("@naija-shop/naira")</code>?</q>
+<option>The <code>import … = require</code> form does not type-check</option>
+<option correct>Both type-check, but <code>import … = require</code> is not erasable syntax, so <code>node legacy.cts</code> refuses it; the <code>require</code> call is plain JavaScript plus a type</option>
+<option>The <code>require</code> call is faster</option>
+<option><code>typeof import</code> loads the module twice</option>
+<explain><p>Node.js type stripping only removes types; it cannot rewrite <code>import =</code>. Erasable syntax keeps every runner (tsc, tsx, Node.js) working on the same file.</p></explain>
+</question>
+
+<question id="pub-cjs-build-ts7" type="choice">
+<q>In TypeScript 7, which settings produce a CommonJS build of an ESM library in the lesson?</q>
+<option><code>"module": "CommonJS"</code> with <code>"moduleResolution": "node10"</code></option>
+<option correct><code>"module": "CommonJS"</code> with <code>"moduleResolution": "bundler"</code>, and <code>verbatimModuleSyntax</code> off</option>
+<option><code>"module": "NodeNext"</code> alone, because it emits both formats</option>
+<option>A <code>.cjs</code> extension on every source file</option>
+<explain><p><code>node10</code> resolution was removed (error TS5108), and <code>NodeNext</code> resolution requires <code>module: NodeNext</code>. With <code>verbatimModuleSyntax</code> on, <code>export</code> in a file emitted as CommonJS is error TS1287.</p></explain>
+</question>
+
+<question id="pub-subpath-types" type="choice">
+<q>You add <code>"./parse": "./dist/parse.js"</code> to <code>exports</code> (a plain string, no conditions), and <code>dist/parse.d.ts</code> is published next to it. Does <code>import { parseNaira } from "@naija-shop/naira/parse"</code> get types?</q>
+<option>No, a subpath without a <code>"types"</code> condition is always untyped</option>
+<option correct>Yes, TypeScript finds the sibling <code>parse.d.ts</code> next to the resolved <code>.js</code> file, but an explicit <code>{ "types", "default" }</code> pair is clearer and does not depend on file placement</option>
+<option>Only if <code>parse.d.ts</code> is listed in <code>files</code> separately</option>
+<option>Only in CommonJS</option>
+<explain><p>After resolving the JavaScript file, TypeScript looks for a declaration with the same name beside it. Relying on that works until someone moves the declarations into a separate folder; explicit conditions say what you mean.</p></explain>
+</question>
+
+<question id="pub-state-copies" type="output">
+<q>A package keeps an exchange-rate cache in module state. Here two calls stand in for the ESM and CommonJS builds being loaded by one application. What does this print?</q>
+<code file="cache-copies.ts">
+function loadRatesModule() {
+  const cache = new Map<string, number>();
+  return {
+    setRate: (currency: string, naira: number) => cache.set(currency, naira),
+    rate: (currency: string) => cache.get(currency) ?? "unknown",
+  };
+}
+
+const esm = loadRatesModule();
+const cjs = loadRatesModule();
+esm.setRate("USD", 1_530);
+console.log(esm.rate("USD"), cjs.rate("USD"));
+</code>
+<option correct>1530 unknown</option>
+<option>1530 1530</option>
+<option>unknown unknown</option>
+<option>1530 undefined</option>
+<explain><p>Each copy has its own <code>cache</code>. Code that went through the CommonJS build never sees the rate the ESM build stored. The dual-package hazard is not only about <code>instanceof</code>; every piece of module state is doubled.</p></explain>
+</question>
+
+<question id="pub-map-sources" type="output">
+<q>A declaration map inside an installed package says <code>"sources": ["../src/index.ts"]</code>. Paths in a map are relative to the map file. Where will the editor look for the source?</q>
+<code file="map-path.ts">
+const mapFile = "file:///app/node_modules/@naija-shop/naira/dist/index.d.ts.map";
+const source = new URL("../src/index.ts", mapFile);
+console.log(source.pathname);
+</code>
+<option correct>/app/node_modules/@naija-shop/naira/src/index.ts</option>
+<option>/app/src/index.ts</option>
+<option>/app/node_modules/@naija-shop/naira/dist/src/index.ts</option>
+<option>/src/index.ts</option>
+<explain><p>The path is resolved against the map's own folder (<code>dist/</code>), so <code>../src/index.ts</code> is inside the package. If <code>src</code> is not in <code>files</code>, that file does not exist and "go to definition" falls back to the <code>.d.ts</code>.</p></explain>
+</question>
+
+<question id="pub-json-order" type="output">
+<q>Condition order in <code>package.json</code> matters because the parsed object keeps it. What does this print?</q>
+<code file="order.ts">
+const pkg = JSON.parse('{"exports": {".": {"default": "./dist/index.js", "types": "./dist/index.d.ts"}}}');
+const conditions = Object.keys(pkg.exports["."]);
+console.log(conditions.join(" then "));
+console.log(conditions.indexOf("types") === 0 ? "types first" : "types not first");
+</code>
+<option correct>default then types
+types not first</option>
+<option>types then default
+types first</option>
+<option>default then types
+types first</option>
+<option>types then default
+types not first</option>
+<explain><p>String keys keep the order in which they were written, so what you type in <code>package.json</code> is exactly the order Node.js and TypeScript check. Nothing sorts them for you.</p></explain>
+</question>
+
+<question id="pub-subpath-string" type="output">
+<q>A subpath in <code>exports</code> can be a plain string. Using the lesson's <code>resolve</code> rules (first matching condition wins, strings match directly), what does this print?</q>
+<code file="subpath.ts">
+type Entry = string | { [condition: string]: Entry };
+
+function resolve(entry: Entry, conditions: string[]): string | null {
+  if (typeof entry === "string") return entry;
+  for (const [condition, target] of Object.entries(entry)) {
+    if (condition === "default" || conditions.includes(condition)) {
+      const found = resolve(target, conditions);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+const exportsMap: Record<string, Entry> = {
+  ".": { types: "./dist/index.d.ts", default: "./dist/index.js" },
+  "./parse": "./dist/parse.js",
+};
+for (const subpath of [".", "./parse", "./dist/index.js"]) {
+  const entry = exportsMap[subpath];
+  console.log(subpath, entry === undefined ? "not exported" : resolve(entry, ["types", "import"]));
+}
+</code>
+<option correct>. ./dist/index.d.ts
+./parse ./dist/parse.js
+./dist/index.js not exported</option>
+<option>. ./dist/index.d.ts
+./parse ./dist/parse.d.ts
+./dist/index.js not exported</option>
+<option>. ./dist/index.js
+./parse ./dist/parse.js
+./dist/index.js ./dist/index.js</option>
+<option>. ./dist/index.d.ts
+./parse not exported
+./dist/index.js not exported</option>
+<explain><p>For <code>"./parse"</code> TypeScript resolves the JavaScript file and then has to find <code>parse.d.ts</code> beside it on its own. A deep path that is not a key is simply not exported. Giving each subpath its own <code>types</code>/<code>default</code> pair removes the guesswork.</p></explain>
+</question>
+
+<question id="pub-code-resolve" type="code" file="resolve.ts">
+<q><p>Write <code>resolve(entry, conditions)</code>: given an exports entry (a path string, or an object of conditions whose values are entries) and the list of active conditions, walk the object keys in order and return the path of the first matching condition, recursing into nested objects. <code>"default"</code> always matches. Return <code>null</code> when nothing matches.</p></q>
+<starter>
+type Entry = string | { [condition: string]: Entry };
+
+function resolve(entry: Entry, conditions: string[]): string | null {
+  return null;
+}
+
+const entry: Entry = {
+  types: "./dist/index.d.ts",
+  node: { import: "./dist/node.js", require: "./dist/node.cjs" },
+  default: "./dist/index.js",
+};
+console.log(resolve(entry, ["types", "import", "node"]));
+console.log(resolve(entry, ["require", "node"]));
+console.log(resolve(entry, ["import", "browser"]));
+</starter>
+<solution>
+type Entry = string | { [condition: string]: Entry };
+
+function resolve(entry: Entry, conditions: string[]): string | null {
+  if (typeof entry === "string") return entry;
+  for (const [condition, target] of Object.entries(entry)) {
+    if (condition !== "default" && !conditions.includes(condition)) continue;
+    const found = resolve(target, conditions);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+const entry: Entry = {
+  types: "./dist/index.d.ts",
+  node: { import: "./dist/node.js", require: "./dist/node.cjs" },
+  default: "./dist/index.js",
+};
+console.log(resolve(entry, ["types", "import", "node"]));
+console.log(resolve(entry, ["require", "node"]));
+console.log(resolve(entry, ["import", "browser"]));
+</solution>
+<expected>
+./dist/index.d.ts
+./dist/node.cjs
+./dist/index.js
+</expected>
+<explain><p>Order is everything: TypeScript's first match is <code>types</code>; Node.js with <code>require</code> skips <code>types</code> and enters <code>node</code>; a browser bundler matches neither and falls through to <code>default</code>. If a nested object matches nothing, the walk continues with the next key.</p></explain>
+</question>
+
+<question id="pub-code-order-lint" type="code" file="lint.ts">
+<q><p>Write <code>lintEntry(entry)</code> in the spirit of publint: for a conditions object, return a list of problems: <code>"types must be first"</code> if a <code>types</code> key exists but is not the first key, and <code>"default must be last"</code> if a <code>default</code> key exists but is not the last. Print the problems for each entry, or <code>ok</code>.</p></q>
+<starter>
+function lintEntry(entry: Record<string, string>): string[] {
+  return [];
+}
+
+const entries: Record<string, string>[] = [
+  { types: "./dist/index.d.ts", default: "./dist/index.js" },
+  { default: "./dist/index.js", types: "./dist/index.d.ts" },
+  { import: "./dist/index.js", types: "./dist/index.d.ts", require: "./dist/index.cjs" },
+];
+for (const entry of entries) {
+  const problems = lintEntry(entry);
+  console.log(problems.length ? problems.join("; ") : "ok");
+}
+</starter>
+<solution>
+function lintEntry(entry: Record<string, string>): string[] {
+  const keys = Object.keys(entry);
+  const problems: string[] = [];
+  if (keys.includes("types") && keys[0] !== "types") problems.push("types must be first");
+  if (keys.includes("default") && keys.at(-1) !== "default") problems.push("default must be last");
+  return problems;
+}
+
+const entries: Record<string, string>[] = [
+  { types: "./dist/index.d.ts", default: "./dist/index.js" },
+  { default: "./dist/index.js", types: "./dist/index.d.ts" },
+  { import: "./dist/index.js", types: "./dist/index.d.ts", require: "./dist/index.cjs" },
+];
+for (const entry of entries) {
+  const problems = lintEntry(entry);
+  console.log(problems.length ? problems.join("; ") : "ok");
+}
+</solution>
+<expected>
+ok
+types must be first; default must be last
+types must be first
+</expected>
+<explain><p>JavaScript objects keep string keys in insertion order, which is also the order they were written in the JSON, so <code>Object.keys</code> shows the order Node.js and TypeScript will check.</p></explain>
+</question>
+
+<question id="pub-code-missing-files" type="code" file="published.ts">
+<q><p>Given the list of files in a tarball and a package's <code>exports</code> (subpath to <code>{ types, default }</code>), print one line per target that is <em>not</em> in the tarball, in the form <code>&lt;subpath&gt; &lt;condition&gt; &lt;path&gt; is not published</code>, or <code>all targets published</code>. Paths in <code>exports</code> start with <code>./</code>; tarball paths do not.</p></q>
+<starter>
+const tarball = ["package.json", "dist/index.js", "dist/parse.js", "dist/parse.d.ts"];
+const exportsMap: Record<string, Record<string, string>> = {
+  ".": { types: "./dist/index.d.ts", default: "./dist/index.js" },
+  "./parse": { types: "./dist/parse.d.ts", default: "./dist/parse.js" },
+};
+
+console.log("all targets published");
+</starter>
+<solution>
+const tarball = ["package.json", "dist/index.js", "dist/parse.js", "dist/parse.d.ts"];
+const exportsMap: Record<string, Record<string, string>> = {
+  ".": { types: "./dist/index.d.ts", default: "./dist/index.js" },
+  "./parse": { types: "./dist/parse.d.ts", default: "./dist/parse.js" },
+};
+
+const published = new Set(tarball);
+const missing: string[] = [];
+for (const [subpath, conditions] of Object.entries(exportsMap)) {
+  for (const [condition, target] of Object.entries(conditions)) {
+    if (!published.has(target.replace(/^\.\//, ""))) missing.push(`${subpath} ${condition} ${target} is not published`);
+  }
+}
+console.log(missing.length ? missing.join("\n") : "all targets published");
+</solution>
+<expected>
+. types ./dist/index.d.ts is not published
+</expected>
+<explain><p>This is publint's third error from the lesson: the exports map promises a file that <code>files</code> kept out of the tarball. Comparing against the tarball list, not the folder, is the whole point.</p></explain>
+</question>
+
+<question id="pub-code-bump" type="code" file="bump.ts">
+<q><p>Write <code>releaseFor(changes)</code>: given a list of changes to a package's public types, return <code>"major"</code> if any change is breaking, otherwise <code>"minor"</code> if any adds something, otherwise <code>"patch"</code>. Breaking: <code>"remove-export"</code>, <code>"required-input-property"</code>, <code>"wider-return"</code>, <code>"narrower-parameter"</code>. Adding: <code>"new-export"</code>, <code>"optional-input-property"</code>, <code>"wider-parameter"</code>. Anything else is a patch.</p></q>
+<starter>
+type Change = string;
+
+function releaseFor(changes: Change[]): "major" | "minor" | "patch" {
+  return "patch";
+}
+
+console.log(releaseFor(["docs", "new-export"]));
+console.log(releaseFor(["optional-input-property", "wider-return"]));
+console.log(releaseFor(["docs"]));
+console.log(releaseFor([]));
+</starter>
+<solution>
+type Change = string;
+
+const BREAKING = new Set(["remove-export", "required-input-property", "wider-return", "narrower-parameter"]);
+const ADDING = new Set(["new-export", "optional-input-property", "wider-parameter"]);
+
+function releaseFor(changes: Change[]): "major" | "minor" | "patch" {
+  if (changes.some((c) => BREAKING.has(c))) return "major";
+  if (changes.some((c) => ADDING.has(c))) return "minor";
+  return "patch";
+}
+
+console.log(releaseFor(["docs", "new-export"]));
+console.log(releaseFor(["optional-input-property", "wider-return"]));
+console.log(releaseFor(["docs"]));
+console.log(releaseFor([]));
+</solution>
+<expected>
+minor
+major
+patch
+patch
+</expected>
+<explain><p>A release is as big as its biggest change. One wider return type makes the whole release major, however many harmless additions come with it.</p></explain>
+</question>
+
+<question id="pub-code-brand" type="code" file="brand-guard.ts">
+<q><p>Make <code>isPaymentError</code> work across two copies of the payments module. Mark every <code>PaymentError</code> with a brand property keyed by <code>Symbol.for("@naija-shop/payment-error")</code>, and check for that brand instead of using <code>instanceof</code>.</p></q>
+<starter>
+function loadPaymentsModule() {
+  class PaymentError extends Error {
+    constructor(readonly code: string) {
+      super(code);
+    }
+  }
+  function isPaymentError(error: unknown): boolean {
+    return error instanceof PaymentError;
+  }
+  return { PaymentError, isPaymentError };
+}
+
+const esm = loadPaymentsModule();
+const cjs = loadPaymentsModule();
+console.log(esm.isPaymentError(new cjs.PaymentError("card_declined")));
+console.log(esm.isPaymentError(new Error("card_declined")));
+</starter>
+<solution>
+const BRAND = Symbol.for("@naija-shop/payment-error");
+
+function loadPaymentsModule() {
+  class PaymentError extends Error {
+    readonly code: string;
+    readonly [BRAND] = true;
+    constructor(code: string) {
+      super(code);
+      this.code = code;
+    }
+  }
+  function isPaymentError(error: unknown): boolean {
+    return typeof error === "object" && error !== null && (error as Record<symbol, unknown>)[BRAND] === true;
+  }
+  return { PaymentError, isPaymentError };
+}
+
+const esm = loadPaymentsModule();
+const cjs = loadPaymentsModule();
+console.log(esm.isPaymentError(new cjs.PaymentError("card_declined")));
+console.log(esm.isPaymentError(new Error("card_declined")));
+</solution>
+<expected>
+true
+false
+</expected>
+<explain><p><code>Symbol.for</code> returns the same symbol in every copy, so the brand set by one copy is recognised by the other. (The solution also replaces the parameter property with a plain field, which keeps the code erasable.)</p></explain>
+</question>
+
+<question id="pub-code-bump-version" type="code" file="version.ts">
+<q><p>Write <code>nextVersion(version, release)</code> for plain <code>major.minor.patch</code> versions: a major bump resets minor and patch to 0, a minor bump resets patch to 0.</p></q>
+<starter>
+function nextVersion(version: string, release: "major" | "minor" | "patch"): string {
+  return version;
+}
+
+console.log(nextVersion("1.0.1", "patch"), nextVersion("1.0.1", "minor"), nextVersion("1.9.4", "major"));
+console.log(nextVersion("1.9.0", "minor"));
+</starter>
+<solution>
+function nextVersion(version: string, release: "major" | "minor" | "patch"): string {
+  const [major, minor, patch] = version.split(".").map(Number);
+  if (release === "major") return `${major + 1}.0.0`;
+  if (release === "minor") return `${major}.${minor + 1}.0`;
+  return `${major}.${minor}.${patch + 1}`;
+}
+
+console.log(nextVersion("1.0.1", "patch"), nextVersion("1.0.1", "minor"), nextVersion("1.9.4", "major"));
+console.log(nextVersion("1.9.0", "minor"));
+</solution>
+<expected>
+1.0.2 1.1.0 2.0.0
+1.10.0
+</expected>
+<explain><p>Each part is a number, so 1.9.0 plus a minor release is 1.10.0, not 2.0.0. This is what <code>npm version patch|minor|major</code> does to <code>package.json</code>.</p></explain>
+</question>
+
+<question id="pub-code-engines" type="code" file="engines.ts">
+<q><p>The package says <code>"engines": { "node": "&gt;=24" }</code>. Write <code>supports(required, running)</code> for requirements of the form <code>"&gt;=N"</code> (N a major version) and running versions like <code>"v24.19.0"</code> or <code>"22.12.0"</code>.</p></q>
+<starter>
+function supports(required: string, running: string): boolean {
+  return true;
+}
+
+for (const running of ["v24.19.0", "22.12.0", "v26.0.1"]) {
+  console.log(running, supports(">=24", running));
+}
+</starter>
+<solution>
+function supports(required: string, running: string): boolean {
+  const minimum = Number(required.replace(">=", ""));
+  const major = Number(running.replace(/^v/, "").split(".")[0]);
+  return major >= minimum;
+}
+
+for (const running of ["v24.19.0", "22.12.0", "v26.0.1"]) {
+  console.log(running, supports(">=24", running));
+}
+</solution>
+<expected>
+v24.19.0 true
+22.12.0 false
+v26.0.1 true
+</expected>
+<explain><p>npm only warns when <code>engines</code> does not match, so a package or server that truly needs Node.js 24 (for example for <code>require</code> of ES modules) should also check at startup, comparing the major version as a number.</p></explain>
+</question>

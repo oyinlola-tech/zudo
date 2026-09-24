@@ -1,0 +1,629 @@
+<question id="tb-alias" type="choice">
+<q>With <code>type OrderId = string</code> and <code>type PaymentId = string</code>, what does <code>refund(orderId, paymentId)</code> do when the function expects <code>(paymentId: PaymentId, orderId: OrderId)</code>?</q>
+<option>TS2345: an <code>OrderId</code> is not a <code>PaymentId</code></option>
+<option correct>It compiles: both aliases are just other names for <code>string</code></option>
+<option>It compiles with a warning</option>
+<option>It fails at runtime with a <code>TypeError</code></option>
+<explain><p>A type alias creates a new name, not a new type. Structurally, both parameters are <code>string</code>, so swapped ids compile. A brand adds a member that makes the types different.</p></explain>
+</question>
+
+<question id="tb-phantom" type="choice">
+<q>What is a <code>PaymentId</code> declared as <code>string &amp; { readonly [brand]: "PaymentId" }</code> at runtime?</q>
+<option>An object with a <code>value</code> and a hidden brand symbol</option>
+<option correct>A plain string; the brand property exists only in the type</option>
+<option>A <code>String</code> wrapper object</option>
+<option>A string with an extra symbol property attached by the compiler</option>
+<explain><p>The brand is a phantom: it is erased with the rest of the types. That is why branded ids cost nothing and still work as map keys, in logs and in SQL parameters.</p></explain>
+</question>
+
+<question id="tb-base-fits" type="choice">
+<q>Which assignment compiles, given <code>const id: OrderId = orderId("ORD-7")</code>?</q>
+<option><code>const p: PaymentId = id</code></option>
+<option><code>const o: OrderId = "ORD-7"</code></option>
+<option correct><code>const s: string = id</code></option>
+<option><code>const o: OrderId = id.trim()</code></option>
+<explain><p>A branded string is a subtype of <code>string</code>, so it fits anywhere a string does. The other direction, and between different brands, is refused. <code>trim()</code> returns a plain <code>string</code>.</p></explain>
+</question>
+
+<question id="tb-cast-where" type="choice">
+<q>Where should <code>value as OrderId</code> appear in a codebase?</q>
+<option>Wherever an order id is needed</option>
+<option>In every test</option>
+<option correct>Only inside the smart constructor, right after the value has been checked</option>
+<option>Nowhere; brands are created automatically by the compiler</option>
+<explain><p>A cast checks nothing. Confining it to the one function that also validates means every <code>OrderId</code> in the program really passed the check. Any other cast is a hole worth flagging in review.</p></explain>
+</question>
+
+<question id="tb-unique-symbol" type="choice">
+<q>What does a non-exported <code>declare const brand: unique symbol</code> key give you over a <code>__brand</code> string key?</q>
+<option>The brand is checked at runtime</option>
+<option>Smaller JavaScript output</option>
+<option correct>Other modules cannot read the brand property or write the brand's shape, so it cannot be forged without importing the helper and casting</option>
+<option>Compatibility between two installed copies of the same library</option>
+<explain><p>Nobody outside the module can name the key. The trade-off goes the other way for duplicate package copies: each copy has its own unique symbol, so their brands do not match, while string keys do.</p></explain>
+</question>
+
+<question id="tb-string-key-read" type="choice">
+<q>With <code>@zudojs/constants</code>'s <code>Brand</code> (a <code>__brand</code> string key), what is <code>createUserId("USR-7").__brand</code>?</q>
+<option>A compile error</option>
+<option correct>It compiles as <code>"UserId"</code>, and is <code>undefined</code> at runtime</option>
+<option>The string <code>"UserId"</code> at runtime</option>
+<option>A symbol</option>
+<explain><p>The property exists only in the type, but a string key can be named, so reading it compiles. That mismatch between type and runtime is one reason application code often prefers a unique symbol key.</p></explain>
+</question>
+
+<question id="tb-dual-package" type="choice">
+<q>An app ends up with two copies of a library that brands ids with a <code>unique symbol</code>. What happens when an id made by one copy is passed to the other?</q>
+<option>It works, because both brands are called <code>"OrderId"</code></option>
+<option correct>It is a compile error: each copy declares its own unique symbol, so the brand types differ</option>
+<option>It throws at runtime</option>
+<option>The id is silently converted</option>
+<explain><p>A <code>unique symbol</code> type is unique per declaration. Two declarations, two keys, two incompatible brands. String-key brands avoid this, which is why a framework-wide package such as <code>@zudojs/constants</code> uses one.</p></explain>
+</question>
+
+<question id="tb-smart" type="choice">
+<q>What makes a constructor "smart"?</q>
+<option>It uses generics</option>
+<option correct>It is the only way to create the branded value, and it checks (and usually normalises) the input before branding it</option>
+<option>It caches the values it creates</option>
+<option>It is a class with a private constructor</option>
+<explain><p>A smart constructor turns "this string passed the check" into a type. Every function that takes the branded type can rely on the check without repeating it.</p></explain>
+</question>
+
+<question id="tb-normalise" type="choice">
+<q>Why should <code>parseOrderId</code> trim and upper-case its input before checking it?</q>
+<option>To make the regular expression shorter</option>
+<option correct>So two spellings of one id (<code>" ord-7"</code> and <code>"ORD-7"</code>) become the same value, and lookups and uniqueness checks cannot miss</option>
+<option>Because branded strings must be upper case</option>
+<option>To prevent SQL injection</option>
+<explain><p>If both spellings were accepted as-is, a record stored under one would not be found by the other. Normalising first gives one canonical form per id. <code>createTenantId</code> does the same with NFKC, trim and lower case.</p></explain>
+</question>
+
+<question id="tb-anchors" type="choice">
+<q>An order id check uses <code>/ORD-\d+/.test(value)</code>. What is wrong with it?</q>
+<option>Nothing</option>
+<option><code>\d</code> does not match digits</option>
+<option correct>Without <code>^</code> and <code>$</code> it accepts any string that merely contains an order id, such as <code>"ORD-7; DROP TABLE orders"</code></option>
+<option>It rejects lower-case input</option>
+<explain><p>An unanchored pattern tests for a match anywhere inside the string. Anchor both ends and bound the length: <code>/^ORD-\d{1,12}$/</code>.</p></explain>
+</question>
+
+<question id="tb-result-throw" type="choice">
+<q>When should a smart constructor return a <code>Result</code> rather than throw?</q>
+<option>Never; constructors always throw</option>
+<option correct>At boundaries where bad input is expected (requests, forms, imports), so the caller can report every problem</option>
+<option>Only for numbers</option>
+<option>Only in tests</option>
+<explain><p>A user typing a bad id is normal, not a bug, so it belongs in the return type. Inside the program, where a bad id means a bug, a throwing variant (like <code>orderId(raw)</code>) is simpler. Offering both is common.</p></explain>
+</question>
+
+<question id="tb-existence" type="choice">
+<q>A function receives an <code>OrderId</code> from <code>parseOrderId</code>. What does the brand guarantee?</q>
+<option>That the order exists in the database</option>
+<option>That the current user may see the order</option>
+<option correct>That the string has the order id format, as checked when it was created</option>
+<option>That the order has been paid</option>
+<explain><p>A brand records facts checked at creation. Existence and permission can change afterwards and must be checked when the id is used, against the database and the permission system.</p></explain>
+</question>
+
+<question id="tb-guard-vs-parse" type="choice">
+<q>What is the difference between <code>isPaymentId(value): value is PaymentId</code> and <code>parsePaymentId(raw): Result&lt;PaymentId, string&gt;</code> in the lesson?</q>
+<option>The guard validates; the parser does not</option>
+<option correct>The guard only checks and narrows the existing variable; the parser may also normalise and returns a new value</option>
+<option>The guard throws on bad input</option>
+<option>There is no difference</option>
+<explain><p>A guard cannot change the value, so it cannot turn <code>"pay-88"</code> into <code>"PAY-88"</code>. Use guards for values already in canonical form, such as ids read back from your own database.</p></explain>
+</question>
+
+<question id="tb-plus" type="choice">
+<q>Why does <code>const total: Kobo = a + b</code> fail when <code>a</code> and <code>b</code> are both <code>Kobo</code>?</q>
+<option>Branded numbers cannot be added</option>
+<option correct>The <code>+</code> operator returns a plain <code>number</code>; the compiler does not know the sum of two kobo amounts is kobo</option>
+<option>Because the sum might overflow</option>
+<option>Because <code>Kobo</code> is a string at runtime</option>
+<explain><p>Operators and methods return the base type. A helper such as <code>addKobo(a, b)</code> re-brands through the constructor, which also checks that the result is still a safe integer.</p></explain>
+</question>
+
+<question id="tb-compare-units" type="choice">
+<q>What does TypeScript report for <code>if (paidNaira === expectedKobo)</code> with <code>Naira</code> and <code>Kobo</code> brands?</q>
+<option>Nothing; comparisons are always allowed</option>
+<option correct>TS2367: the comparison appears to be unintentional because the types have no overlap</option>
+<option>TS2322: the types are not assignable</option>
+<option>It converts one side automatically</option>
+<explain><p>The two brands have different literal types on the same key, so no value can be both. A comparison between them is always false, and TypeScript flags it: a bug that would otherwise fail silently forever.</p></explain>
+</question>
+
+<question id="tb-create-user-id" type="choice">
+<q>What does <code>createUserId</code> from <code>@zudojs/constants</code> do with the empty string <code>""</code>?</q>
+<option>Throws <code>InvalidConstantError</code></option>
+<option correct>Returns it, branded as a <code>UserId</code>: this constructor only applies the brand</option>
+<option>Returns <code>undefined</code></option>
+<option>Generates a new random id</option>
+<explain><p>The id constructors (<code>createUserId</code>, <code>createEventId</code>, <code>createRequestId</code>…) are labelled casts. <code>createTenantId</code>, <code>createEmailAddress</code>, <code>createTimestamp</code> and <code>createUrl</code> validate. Know which kind you call.</p></explain>
+</question>
+
+<question id="tb-tenant" type="choice">
+<q>Why does <code>createTenantId</code> reject <code>"acme/../billing"</code>?</q>
+<option>Tenant ids must be shorter than 10 characters</option>
+<option correct>Tenant ids end up in cache keys, schema names and file paths, so anything that could act as a separator or path segment is refused</option>
+<option>Tenant ids must be numeric</option>
+<option>Because it contains upper-case letters</option>
+<explain><p>Rejecting dangerous characters once, in the constructor, means no use site has to escape them. That is the pay-off of validating on creation.</p></explain>
+</question>
+
+<question id="tb-json" type="choice">
+<q>An <code>OrderId</code> is written to the database and read back. What type does it have when it comes back, and what should happen?</q>
+<option>Still <code>OrderId</code>: brands are stored with the value</option>
+<option correct>A plain <code>string</code> (or <code>unknown</code>); the repository must parse it into an <code>OrderId</code> again</option>
+<option><code>never</code></option>
+<option>A <code>String</code> object</option>
+<explain><p>Brands are erased, so nothing survives a trip through JSON, a database or a URL. Parse at every boundary where data enters the program.</p></explain>
+</question>
+
+<question id="tb-zod" type="choice">
+<q>A project uses both a Zod schema with <code>.brand&lt;"OrderId"&gt;()</code> and a hand-written <code>Brand&lt;string, "OrderId"&gt;</code>. Are the two <code>OrderId</code> types compatible?</q>
+<option>Yes, both are called <code>"OrderId"</code></option>
+<option correct>No: each library uses its own brand key, so they are different types; pick one source of branded types</option>
+<option>Only at runtime</option>
+<option>Only if the regex is the same</option>
+<explain><p>A brand is a property on a particular key. Zod's <code>$brand</code> and your <code>[brand]</code> symbol are different keys, so values from one do not fit the other.</p></explain>
+</question>
+
+<question id="tb-what-to-brand" type="choice">
+<q>Which value gains the most from a brand?</q>
+<option>A loop counter inside one function</option>
+<option>A button label</option>
+<option correct>An amount of money that some functions take in kobo and others in naira</option>
+<option>A boolean flag</option>
+<explain><p>Brand what gets mixed up and costs money or data when it does: ids that travel together, units, validated strings. Local values that never cross a function boundary gain nothing.</p></explain>
+</question>
+
+<question id="tb-basis-points" type="choice">
+<q>Why do banks often express rates in basis points (7.5% = 750 bp)?</q>
+<option>Basis points are more precise than percentages</option>
+<option correct>An integer rate has no "percent or fraction?" ambiguity and no floating-point noise, and a brand makes the unit explicit</option>
+<option>Because JavaScript cannot store 7.5</option>
+<option>Regulators require it in code</option>
+<explain><p><code>7.5</code> could be a percent or a (wrong) fraction; <code>0.075</code> could be mistaken for a percent. A whole number of basis points behind a <code>BasisPoints</code> brand leaves no room for either reading.</p></explain>
+</question>
+
+<question id="tb-naira-tolerance" type="choice">
+<q>The lesson's <code>naira</code> constructor allows a tiny difference when checking for two decimals. Why not test <code>Math.round(amount * 100) === amount * 100</code>?</q>
+<option>It is slower</option>
+<option correct>Floating-point makes <code>19.99 * 100</code> equal <code>1998.9999999999998</code>, so an exact test would reject an everyday price</option>
+<option>It would accept three decimals</option>
+<option>It does not work for negative numbers</option>
+<explain><p>Decimal fractions are not exact in binary. A tolerance of a millionth of a kobo absorbs that noise while still rejecting a real third decimal like ₦50.555, which is half a kobo away from a whole number.</p></explain>
+</question>
+
+<question id="tb-out-parse" type="output">
+<q>What does this print?</q>
+<code file="parse.ts">
+declare const brand: unique symbol;
+type OrderId = string & { readonly [brand]: "OrderId" };
+
+function parseOrderId(raw: string): OrderId | undefined {
+  const value = raw.trim().toUpperCase();
+  return /^ORD-\d{1,12}$/.test(value) ? (value as OrderId) : undefined;
+}
+
+console.log(["  ord-1042", "ORD-", "ORD-12x", "ORD-0007"].map(parseOrderId));
+</code>
+<option correct>[ 'ORD-1042', undefined, undefined, 'ORD-0007' ]</option>
+<option>[ undefined, undefined, undefined, 'ORD-0007' ]</option>
+<option>[ '  ord-1042', undefined, undefined, 'ORD-0007' ]</option>
+<option>[ 'ORD-1042', 'ORD-', undefined, 'ORD-0007' ]</option>
+<explain><p>The input is normalised before the anchored test, so the spaced lower-case id is accepted in canonical form. <code>ORD-</code> has no digits, <code>ORD-12x</code> has a suffix, and leading zeros are allowed by this pattern.</p></explain>
+</question>
+
+<question id="tb-out-unanchored" type="output">
+<q>What does this print?</q>
+<code file="unanchored.ts">
+const loose = /ORD-\d+/;
+const strict = /^ORD-\d{1,12}$/;
+const input = "see ORD-7 and drop everything";
+console.log(loose.test(input), strict.test(input), strict.test("ORD-7"));
+</code>
+<option correct>true false true</option>
+<option>false false true</option>
+<option>true true true</option>
+<option>true false false</option>
+<explain><p>The unanchored pattern finds <code>ORD-7</code> inside the sentence and says yes. A smart constructor with that pattern would brand the whole sentence as an order id.</p></explain>
+</question>
+
+<question id="tb-out-trim" type="output">
+<q>What does this print?</q>
+<code file="trim.ts">
+declare const brand: unique symbol;
+type Sku = string & { readonly [brand]: "Sku" };
+
+const sku = "RICE-5" as Sku;
+const lower: string = sku.toLowerCase();
+console.log(typeof sku, lower, sku.length, `${sku}` === "RICE-5");
+</code>
+<option correct>string rice-5 6 true</option>
+<option>object rice-5 6 true</option>
+<option>string RICE-5 6 true</option>
+<option>string rice-5 7 false</option>
+<explain><p>At runtime a branded string is a plain string, so every string method and template works. The methods return plain <code>string</code>s, which is right: a lower-cased SKU is not a valid SKU.</p></explain>
+</question>
+
+<question id="tb-out-json" type="output">
+<q>What does this print?</q>
+<code file="json.ts">
+declare const brand: unique symbol;
+type PaymentId = string & { readonly [brand]: "PaymentId" };
+
+const id = "PAY-88" as PaymentId;
+const back: unknown = JSON.parse(JSON.stringify({ id }));
+console.log(JSON.stringify({ id }), typeof back === "object" && back !== null && "id" in back ? typeof back.id : "none");
+</code>
+<option correct>{"id":"PAY-88"} string</option>
+<option>{"id":{"value":"PAY-88"}} object</option>
+<option>{"id":"PAY-88","brand":"PaymentId"} string</option>
+<option>{} none</option>
+<explain><p>The brand has no runtime form, so JSON sees an ordinary string, and what comes back is an ordinary string too. It must be parsed into a <code>PaymentId</code> again.</p></explain>
+</question>
+
+<question id="tb-out-float" type="output">
+<q>What does this print?</q>
+<code file="float.ts">
+const amount = 19.99;
+console.log(amount * 100, Math.round(amount * 100), Math.abs(amount * 100 - Math.round(amount * 100)) < 1e-6);
+</code>
+<option correct>1998.9999999999998 1999 true</option>
+<option>1999 1999 true</option>
+<option>1998.9999999999998 1998 false</option>
+<option>1999 1999 false</option>
+<explain><p>19.99 is not exactly representable in binary, so the product is a hair below 1999. Rounding gives the right number of kobo, and a tolerance check accepts it; an exact equality check would have refused it.</p></explain>
+</question>
+
+<question id="tb-out-split" type="output">
+<q>What does this print?</q>
+<code file="split.ts">
+const total = 100000;
+const each = Math.round(total / 3);
+const naive = [each, each, each];
+const base = Math.floor(total / 3);
+const fair = [0, 1, 2].map((i) => base + (i < total - base * 3 ? 1 : 0));
+console.log(naive.reduce((a, b) => a + b), fair.join(","), fair.reduce((a, b) => a + b));
+</code>
+<option correct>99999 33334,33333,33333 100000</option>
+<option>100000 33334,33333,33333 100000</option>
+<option>99999 33333,33333,33334 100000</option>
+<option>100002 33334,33334,33332 100000</option>
+<explain><p>Rounding each share separately loses a kobo. Giving the leftover kobo one at a time to the first shares keeps the total exact, which is how payment systems allocate money.</p></explain>
+</question>
+
+<question id="tb-out-map" type="output">
+<q>What does this print?</q>
+<code file="map-key.ts">
+declare const brand: unique symbol;
+type OrderId = string & { readonly [brand]: "OrderId" };
+const orderId = (raw: string): OrderId => raw.trim().toUpperCase() as OrderId;
+
+const owners = new Map<OrderId, string>([[orderId("ORD-1042"), "Ada"]]);
+console.log(owners.get(orderId(" ord-1042 ")), owners.get("ORD-1042" as OrderId), [...owners.keys()]);
+</code>
+<option correct>Ada Ada [ 'ORD-1042' ]</option>
+<option>undefined Ada [ 'ORD-1042' ]</option>
+<option>Ada undefined [ 'ORD-1042' ]</option>
+<option>Ada Ada [ { value: 'ORD-1042' } ]</option>
+<explain><p>Branded strings are compared as strings, so they work as <code>Map</code> keys, and a normalising constructor makes different spellings find the same entry.</p></explain>
+</question>
+
+<question id="tb-out-max" type="output">
+<q>What does this print?</q>
+<code file="max.ts">
+declare const brand: unique symbol;
+type Kobo = number & { readonly [brand]: "Kobo" };
+const kobo = (n: number): Kobo => {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`not kobo: ${n}`);
+  return n as Kobo;
+};
+
+const bids: readonly Kobo[] = [kobo(250000), kobo(410050), kobo(99000)];
+const highest: number = Math.max(...bids);
+let message: string;
+try {
+  message = String(kobo(highest * 1.075));
+} catch (error) {
+  message = String(error);
+}
+console.log(highest, message);
+</code>
+<option correct>410050 RangeError: not kobo: 440803.75</option>
+<option>410050 440804</option>
+<option>410050 440803.75</option>
+<option>410050.00 440804</option>
+<explain><p><code>Math.max</code> returns a plain number (the brand is gone), and adding 7.5% produces a fraction of a kobo. The constructor refuses it instead of silently storing 440,803.75; the fix is to round first, <code>kobo(Math.round(highest * 1.075))</code>, which is what the money helpers do.</p></explain>
+</question>
+
+<question id="tb-out-constants" type="output">
+<q>What does this print?</q>
+<code file="tenant.ts">
+import { createTenantId, createUserId, InvalidConstantError } from "@zudojs/constants";
+
+const tenants = ["  Mama-Put ", "mama-put", "mama put"].map((raw) => {
+  try {
+    return createTenantId(raw);
+  } catch (error) {
+    return error instanceof InvalidConstantError ? "rejected" : "other";
+  }
+});
+console.log(tenants.join(","), JSON.stringify(createUserId("  ")));
+</code>
+<option correct>mama-put,mama-put,rejected "  "</option>
+<option>Mama-Put,mama-put,rejected "  "</option>
+<option>mama-put,mama-put,mama put rejected</option>
+<option>mama-put,mama-put,rejected rejected</option>
+<explain><p><code>createTenantId</code> normalises (trim, lower case) and rejects the space, so two spellings become one tenant. <code>createUserId</code> validates nothing: it brands even a string of spaces.</p></explain>
+</question>
+
+<question id="tb-out-slice" type="output">
+<q>A smart constructor quotes at most 40 characters of bad input in its error. What does this print?</q>
+<code file="slice.ts">
+function parseSku(raw: string): string {
+  if (/^[A-Z]{2,8}-\d{1,4}$/.test(raw)) return raw;
+  throw new TypeError(`not a SKU: ${JSON.stringify(raw.slice(0, 40))}`);
+}
+
+try {
+  parseSku("X".repeat(10000));
+} catch (error) {
+  console.log(error instanceof TypeError, String(error).length);
+}
+</code>
+<option correct>true 64</option>
+<option>true 10022</option>
+<option>false 64</option>
+<option>true 40</option>
+<explain><p><code>"TypeError: not a SKU: "</code> is 22 characters, then 40 X's inside two quotes: 22 + 42 = 64. Bounding what you echo keeps a 10,000-character attack string out of your logs.</p></explain>
+</question>
+
+<question id="tb-code-payment-id" type="code" file="payment-id.ts">
+<q><p>Finish <code>parsePaymentId</code>: trim and upper-case the input, then accept only <code>PAY-</code> followed by 1 to 12 digits. Return a <code>Result</code>. The program should print <code>PAY-88 | not a payment id: "ORD-7" | not a payment id: "PAY-"</code>.</p></q>
+<starter>
+declare const brand: unique symbol;
+type PaymentId = string & { readonly [brand]: "PaymentId" };
+type Result<T, E> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
+
+function parsePaymentId(raw: string): Result<PaymentId, string> {
+  // your code here
+  return { ok: false, error: "not written yet" };
+}
+
+const show = (r: Result<PaymentId, string>): string => (r.ok ? r.value : r.error);
+console.log([" pay-88 ", "ORD-7", "PAY-"].map(parsePaymentId).map(show).join(" | "));
+</starter>
+<solution>
+declare const brand: unique symbol;
+type PaymentId = string & { readonly [brand]: "PaymentId" };
+type Result<T, E> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
+
+function parsePaymentId(raw: string): Result<PaymentId, string> {
+  const value = raw.trim().toUpperCase();
+  if (!/^PAY-\d{1,12}$/.test(value)) return { ok: false, error: `not a payment id: ${JSON.stringify(raw.trim())}` };
+  return { ok: true, value: value as PaymentId };
+}
+
+const show = (r: Result<PaymentId, string>): string => (r.ok ? r.value : r.error);
+console.log([" pay-88 ", "ORD-7", "PAY-"].map(parsePaymentId).map(show).join(" | "));
+</solution>
+<expected>PAY-88 | not a payment id: "ORD-7" | not a payment id: "PAY-"</expected>
+<explain><p>The cast happens on exactly one line, right after the anchored test passed. Everything that receives a <code>PaymentId</code> from here on can trust its format.</p></explain>
+</question>
+
+<question id="tb-code-kobo" type="code" file="kobo.ts">
+<q><p>Finish <code>kobo</code> (accept only safe integers, otherwise throw a <code>RangeError</code>) and <code>addKobo</code> (sum any number of amounts and re-brand). The program should print <code>2138750 RangeError</code>.</p></q>
+<starter>
+declare const brand: unique symbol;
+type Kobo = number & { readonly [brand]: "Kobo" };
+
+function kobo(amount: number): Kobo {
+  // your code here
+  return amount as Kobo;
+}
+
+function addKobo(...amounts: readonly Kobo[]): Kobo {
+  // your code here
+  return kobo(0);
+}
+
+const total = addKobo(kobo(1850000), kobo(138750), kobo(150000));
+let failure = "none";
+try {
+  kobo(0.5);
+} catch (error) {
+  failure = error instanceof RangeError ? "RangeError" : "other";
+}
+console.log(total, failure);
+</starter>
+<solution>
+declare const brand: unique symbol;
+type Kobo = number & { readonly [brand]: "Kobo" };
+
+function kobo(amount: number): Kobo {
+  if (!Number.isSafeInteger(amount)) throw new RangeError(`kobo must be a whole number, got ${amount}`);
+  return amount as Kobo;
+}
+
+function addKobo(...amounts: readonly Kobo[]): Kobo {
+  return kobo(amounts.reduce((sum, amount) => sum + amount, 0));
+}
+
+const total = addKobo(kobo(1850000), kobo(138750), kobo(150000));
+let failure = "none";
+try {
+  kobo(0.5);
+} catch (error) {
+  failure = error instanceof RangeError ? "RangeError" : "other";
+}
+console.log(total, failure);
+</solution>
+<expected>2138750 RangeError</expected>
+<explain><p><code>Number.isSafeInteger</code> rejects fractions, <code>NaN</code>, <code>Infinity</code> and integers too large to be exact. <code>addKobo</code> re-brands through <code>kobo</code>, so even the sum is checked.</p></explain>
+</question>
+
+<question id="tb-code-guard-filter" type="code" file="guard-filter.ts">
+<q><p>Finish the type guard <code>isOrderId</code> (exact format <code>ORD-</code> plus 1 to 12 digits, no normalising), then keep only the order ids from a mixed list. The program should print <code>ORD-1,ORD-22</code>.</p></q>
+<starter>
+declare const brand: unique symbol;
+type OrderId = string & { readonly [brand]: "OrderId" };
+
+function isOrderId(value: string): value is OrderId {
+  // your code here
+  return false;
+}
+
+const refs = ["ORD-1", "PAY-88", "ord-2", "ORD-22", "ORD-"];
+const orderIds: OrderId[] = refs.filter(isOrderId);
+console.log(orderIds.join(","));
+</starter>
+<solution>
+declare const brand: unique symbol;
+type OrderId = string & { readonly [brand]: "OrderId" };
+
+function isOrderId(value: string): value is OrderId {
+  return /^ORD-\d{1,12}$/.test(value);
+}
+
+const refs = ["ORD-1", "PAY-88", "ord-2", "ORD-22", "ORD-"];
+const orderIds: OrderId[] = refs.filter(isOrderId);
+console.log(orderIds.join(","));
+</solution>
+<expected>ORD-1,ORD-22</expected>
+<explain><p>Passing a type guard to <code>filter</code> narrows the result to <code>OrderId[]</code> without a cast. A guard cannot change the value, so the lower-case <code>ord-2</code> is rejected rather than normalised.</p></explain>
+</question>
+
+<question id="tb-code-format" type="code" file="format.ts">
+<q><p>Finish <code>formatKobo</code>: format an amount in kobo as naira with thousands separators and two decimals, and a leading minus for negatives. The program should print <code>₦21,387.50 -₦25.00 ₦0.05</code>.</p></q>
+<starter>
+declare const brand: unique symbol;
+type Kobo = number & { readonly [brand]: "Kobo" };
+
+function formatKobo(amount: Kobo): string {
+  // your code here
+  return String(amount);
+}
+
+console.log(formatKobo(2138750 as Kobo), formatKobo(-2500 as Kobo), formatKobo(5 as Kobo));
+</starter>
+<solution>
+declare const brand: unique symbol;
+type Kobo = number & { readonly [brand]: "Kobo" };
+
+function formatKobo(amount: Kobo): string {
+  const sign = amount < 0 ? "-" : "";
+  const [whole = "0", fraction = "00"] = (Math.abs(amount) / 100).toFixed(2).split(".");
+  return `${sign}₦${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${fraction}`;
+}
+
+console.log(formatKobo(2138750 as Kobo), formatKobo(-2500 as Kobo), formatKobo(5 as Kobo));
+</solution>
+<expected>₦21,387.50 -₦25.00 ₦0.05</expected>
+<explain><p>Taking the parameter as <code>Kobo</code> means the function cannot be handed naira by mistake: the unit is in the signature. The regular expression inserts a comma before every group of three digits that ends the whole part.</p></explain>
+</question>
+
+<question id="tb-code-rate" type="code" file="rate.ts">
+<q><p>Finish <code>applyRate(amount, rate)</code>: <code>rate</code> is in basis points (750 = 7.5%). Return the result in kobo, rounded to the nearest kobo. The program should print <code>75000 1339 0</code>.</p></q>
+<starter>
+declare const brand: unique symbol;
+type Kobo = number & { readonly [brand]: "Kobo" };
+type BasisPoints = number & { readonly [brand]: "BasisPoints" };
+
+const kobo = (n: number): Kobo => n as Kobo;
+const bp = (n: number): BasisPoints => n as BasisPoints;
+
+function applyRate(amount: Kobo, rate: BasisPoints): Kobo {
+  // your code here
+  return kobo(0);
+}
+
+console.log(applyRate(kobo(1000000), bp(750)), applyRate(kobo(17850), bp(750)), applyRate(kobo(5), bp(750)));
+</starter>
+<solution>
+declare const brand: unique symbol;
+type Kobo = number & { readonly [brand]: "Kobo" };
+type BasisPoints = number & { readonly [brand]: "BasisPoints" };
+
+const kobo = (n: number): Kobo => n as Kobo;
+const bp = (n: number): BasisPoints => n as BasisPoints;
+
+function applyRate(amount: Kobo, rate: BasisPoints): Kobo {
+  return kobo(Math.round((amount * rate) / 10000));
+}
+
+console.log(applyRate(kobo(1000000), bp(750)), applyRate(kobo(17850), bp(750)), applyRate(kobo(5), bp(750)));
+</solution>
+<expected>75000 1339 0</expected>
+<explain><p>10,000 basis points are 100%, so the rate divides by 10,000. 17,850 × 750 / 10,000 = 1,338.75, which rounds to 1,339 kobo; 5 kobo at 7.5% rounds to nothing. Round once, where the calculation ends.</p></explain>
+</question>
+
+<question id="tb-code-email" type="code" file="email.ts">
+<q><p>Finish <code>parseEmail</code>: trim and lower-case, then accept only a simple <code>local@domain.tld</code> shape. Return <code>undefined</code> for anything else. The program should print <code>true ada@example.com undefined</code>.</p></q>
+<starter>
+declare const brand: unique symbol;
+type Email = string & { readonly [brand]: "Email" };
+
+function parseEmail(raw: string): Email | undefined {
+  // your code here
+  return undefined;
+}
+
+const signup = parseEmail(" Ada@Example.COM ");
+const login = parseEmail("ada@example.com");
+console.log(signup !== undefined && signup === login, login, parseEmail("ada@example"));
+</starter>
+<solution>
+declare const brand: unique symbol;
+type Email = string & { readonly [brand]: "Email" };
+
+function parseEmail(raw: string): Email | undefined {
+  const value = raw.trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? (value as Email) : undefined;
+}
+
+const signup = parseEmail(" Ada@Example.COM ");
+const login = parseEmail("ada@example.com");
+console.log(signup !== undefined && signup === login, login, parseEmail("ada@example"));
+</solution>
+<expected>true ada@example.com undefined</expected>
+<explain><p>Normalising makes the sign-up spelling and the login spelling the same <code>Email</code>, so they reach the same account. The format check is deliberately loose; only a confirmation email proves an address works.</p></explain>
+</question>
+
+<question id="tb-code-unique-skus" type="code" file="skus.ts">
+<q><p>Finish <code>parseSkus</code>: normalise each raw SKU (trim, upper case), keep only valid ones (2 to 8 letters, a hyphen, 1 to 4 digits), and remove duplicates while keeping the first-seen order. The program should print <code>RICE-5,OIL-1 | bad: tv, SALT</code>.</p></q>
+<starter>
+declare const brand: unique symbol;
+type Sku = string & { readonly [brand]: "Sku" };
+
+function parseSkus(raws: readonly string[]): { readonly skus: readonly Sku[]; readonly bad: readonly string[] } {
+  // your code here
+  return { skus: [], bad: [] };
+}
+
+const { skus, bad } = parseSkus(["rice-5", " OIL-1", "RICE-5", "tv", "SALT"]);
+console.log(`${skus.join(",")} | bad: ${bad.join(", ")}`);
+</starter>
+<solution>
+declare const brand: unique symbol;
+type Sku = string & { readonly [brand]: "Sku" };
+
+function parseSkus(raws: readonly string[]): { readonly skus: readonly Sku[]; readonly bad: readonly string[] } {
+  const skus = new Set<Sku>();
+  const bad: string[] = [];
+  for (const raw of raws) {
+    const value = raw.trim().toUpperCase();
+    if (/^[A-Z]{2,8}-\d{1,4}$/.test(value)) skus.add(value as Sku);
+    else bad.push(raw.trim());
+  }
+  return { skus: [...skus], bad };
+}
+
+const { skus, bad } = parseSkus(["rice-5", " OIL-1", "RICE-5", "tv", "SALT"]);
+console.log(`${skus.join(",")} | bad: ${bad.join(", ")}`);
+</solution>
+<expected>RICE-5,OIL-1 | bad: tv, SALT</expected>
+<explain><p>Deduplicating <em>after</em> normalising is what makes <code>rice-5</code> and <code>RICE-5</code> one product. A <code>Set</code> keeps insertion order, and branded strings compare as strings, so it works directly on <code>Sku</code> values.</p></explain>
+</question>

@@ -1,0 +1,634 @@
+<question id="bf-base64" type="choice">
+<q>Why is sending a photo base64-encoded inside a JSON body a poor choice?</q>
+<option>JSON cannot contain long strings</option>
+<option correct>Base64 makes the body about a third larger, and JSON must be held in memory whole before it can be parsed</option>
+<option>Base64 is a form of encryption that slows the server down</option>
+<option>Browsers cannot create base64</option>
+<explain><p>Every 3 bytes become 4 characters, and a JSON parser needs the complete text. Multipart sends raw bytes that can be streamed to disk piece by piece.</p></explain>
+</question>
+
+<question id="bf-boundary" type="choice">
+<q>In a <code>multipart/form-data</code> body, what is the <strong>boundary</strong>?</q>
+<option>The maximum size of the upload</option>
+<option correct>A random string, announced in the <code>Content-Type</code> header, that separates the parts</option>
+<option>The first bytes of the file</option>
+<option>The name of the form field</option>
+<explain><p>The client picks a string that does not appear in the data. Each part starts after <code>--BOUNDARY</code>, and the body ends with <code>--BOUNDARY--</code>.</p></explain>
+</question>
+
+<question id="bf-formdata-memory" type="choice">
+<q>Node.js can parse multipart with <code>await request.formData()</code>. Why does the lesson write a streaming parser instead?</q>
+<option><code>formData()</code> does not exist in Node.js</option>
+<option correct><code>formData()</code> reads the whole body into memory first, which is what uploads must avoid</option>
+<option><code>formData()</code> cannot read file parts</option>
+<option>It is faster to parse by hand</option>
+<explain><p>For small forms, <code>formData()</code> is fine. For uploads of many megabytes from many users at once, only a streaming parser keeps memory flat. Production code uses a library such as busboy for this.</p></explain>
+</question>
+
+<question id="bf-split-delimiter" type="choice">
+<q>Why does the parser keep back the last <code>delimiter.length - 1</code> bytes of each chunk when it has not found a delimiter?</q>
+<option>To make chunks equal in size</option>
+<option correct>They might be the start of a delimiter that finishes in the next chunk; writing them out would put part of the boundary into the file</option>
+<option>To compute the SHA-256 checksum</option>
+<option>Because the last bytes of a chunk are always padding</option>
+<explain><p>Network chunks can cut anywhere, including in the middle of <code>\r\n--BOUNDARY</code>. Holding back just less than a full delimiter means a split delimiter is always found once the next chunk arrives.</p></explain>
+</question>
+
+<question id="bf-backpressure" type="choice">
+<q>The parser <code>await</code>s every <code>sink.write</code>. What does that achieve when the disk is slower than the network?</q>
+<option>Nothing; it only makes the code look tidy</option>
+<option correct>The parser stops pulling chunks from the request, so Node.js stops reading the socket and memory stays flat</option>
+<option>The upload fails with a timeout</option>
+<option>Chunks are written out of order</option>
+<explain><p>This is backpressure: the slowest step sets the pace. Without the <code>await</code>, chunks would pile up in memory while the disk catches up.</p></explain>
+</question>
+
+<question id="bf-content-length" type="choice">
+<q>A request says <code>Content-Length: 5000</code>. Why does the server still count the bytes it receives?</q>
+<option>Because the header is in kilobytes</option>
+<option correct>The header is written by the client; the body can be longer, and chunked uploads have no length at all</option>
+<option>Because counting is needed for the checksum</option>
+<option>Because Node.js ignores the header</option>
+<explain><p>A declared length is useful to refuse obviously huge uploads early. The only reliable limit is the one enforced while the bytes stream in.</p></explain>
+</question>
+
+<question id="bf-413" type="choice">
+<q>Which status code means "the upload is larger than the server accepts"?</q>
+<option>400 Bad Request</option>
+<option>415 Unsupported Media Type</option>
+<option correct>413 Content Too Large</option>
+<option>507 Insufficient Storage</option>
+<explain><p>413 is for a body that is too big. 415 is for a type the server does not accept, such as HTML sent as a "photo".</p></explain>
+</question>
+
+<question id="bf-sniff-why" type="choice">
+<q>Why does the server decide a file's type from its first bytes instead of the part's <code>Content-Type</code> or the file extension?</q>
+<option>Because the part has no <code>Content-Type</code></option>
+<option correct>The header and the extension are labels the client chose; the magic number is in the data itself</option>
+<option>Because sniffing is faster than reading a header</option>
+<option>Because browsers do not send extensions</option>
+<explain><p>An attacker names an HTML file <code>photo.jpg</code> and labels it <code>image/jpeg</code>. Its first bytes are still <code>&lt;html&gt;</code>, which is not a JPEG signature.</p></explain>
+</question>
+
+<question id="bf-sniff-limits" type="choice">
+<q>A file starts with a valid JPEG signature. What does that <strong>not</strong> prove?</q>
+<option>That the file claims to be a JPEG</option>
+<option correct>That the rest of the file is a harmless, valid image</option>
+<option>That the first three bytes are FF D8 FF</option>
+<option>That the file is not a PNG</option>
+<explain><p>Sniffing checks the start only. A file can have a valid header and hostile data after it. Services that display images to many people often re-encode every upload in a background job, which keeps only real image data.</p></explain>
+</question>
+
+<question id="bf-random-key" type="choice">
+<q>Why is an upload stored under a random id instead of its filename?</q>
+<option>Random ids compress better</option>
+<option correct>The filename is client input: it can contain <code>../</code>, collide with another file, or be very long; a random key avoids all of that</option>
+<option>Filenames are not sent in multipart bodies</option>
+<option>Operating systems forbid dots in filenames</option>
+<explain><p>The client's name is kept only as cleaned-up metadata for display. The storage key, and the extension (from the sniffed type), are chosen by the server.</p></explain>
+</question>
+
+<question id="bf-temp-name" type="choice">
+<q>Why does the sink write to <code>&lt;id&gt;.part</code> and rename it at the end?</q>
+<option>Renaming is faster than writing</option>
+<option correct>A half-written file is never visible under its final name, and a leftover <code>.part</code> file is clearly incomplete</option>
+<option>Because the extension is not known until the end</option>
+<option>To hide the file from the checksum</option>
+<option>Because <code>createWriteStream</code> cannot write <code>.jpg</code> files</option>
+<explain><p>A rename within one file system is atomic: readers see either no file or the complete file. It also makes cleanup of interrupted uploads easy.</p></explain>
+</question>
+
+<question id="bf-wx-flag" type="choice">
+<q>What does the <code>wx</code> flag in <code>createWriteStream(path, { flags: "wx" })</code> do?</q>
+<option>Opens the file for reading and writing</option>
+<option correct>Creates the file for writing, and fails if a file with that name already exists</option>
+<option>Writes the file with execute permission</option>
+<option>Appends to the file</option>
+<explain><p>It guarantees an upload never overwrites an existing file, even if two random ids ever collided or a bug reused one.</p></explain>
+</question>
+
+<question id="bf-cleanup" type="choice">
+<q>A request contains a valid photo, then an unexpected field that makes it fail. What should happen to the photo already written?</q>
+<option>Keep it; it was valid</option>
+<option correct>Delete it: the request failed as a whole, and an orphaned file would never be referenced</option>
+<option>Rename it to <code>.part</code></option>
+<option>Move it to a quarantine folder forever</option>
+<explain><p>A rejected request must leave nothing behind, or the disk slowly fills with files nobody can find or delete. That is why <code>abort</code> also removes a finished file.</p></explain>
+</question>
+
+<question id="bf-display-name" type="choice">
+<q>What is the cleaned-up display name (<code>passwd.jpg</code> from <code>../../etc/passwd.jpg</code>) used for?</q>
+<option>As the storage path</option>
+<option correct>Only for showing people, for example in a list or a download header</option>
+<option>To decide the file type</option>
+<option>As the signature secret</option>
+<explain><p>It keeps the seller's friendly name without letting it touch the file system. Even cleaned, it is still client input, so it is never used to build a path.</p></explain>
+</question>
+
+<question id="bf-signed-url" type="choice">
+<q>What makes a signed URL impossible to forge?</q>
+<option>The URL is long and hard to guess</option>
+<option correct>It carries an HMAC of the path and the expiry, made with a secret only the server knows</option>
+<option>It uses HTTPS</option>
+<option>It contains the user's password</option>
+<explain><p>Anyone can read the path and the expiry in the URL. Without the secret, nobody can compute a matching signature for a changed path or a later expiry.</p></explain>
+</question>
+
+<question id="bf-sign-expiry" type="choice">
+<q>Why must the expiry time be <strong>inside</strong> the signed data, not just added to the URL?</q>
+<option>To make the URL shorter</option>
+<option correct>Otherwise anyone could change <code>expires</code> to a later time and the signature would still match</option>
+<option>Because HMAC needs a number</option>
+<option>Because browsers cache URLs with dates</option>
+<explain><p>Everything that limits a permission (path, method, expiry) must be signed. Unsigned parts of the URL are just suggestions.</p></explain>
+</question>
+
+<question id="bf-timing-safe" type="choice">
+<q>Why does <code>checkSignedUrl</code> compare signatures with <code>timingSafeEqual</code> instead of <code>===</code>?</q>
+<option><code>===</code> cannot compare strings</option>
+<option correct><code>===</code> stops at the first different character, and the time difference can leak the signature piece by piece</option>
+<option><code>timingSafeEqual</code> also checks the expiry</option>
+<option>To support base64url</option>
+<explain><p>A comparison whose time does not depend on where the inputs differ gives an attacker nothing to measure.</p></explain>
+</question>
+
+<question id="bf-revoke" type="choice">
+<q>A signed download link leaked. How can you stop it working before it expires?</q>
+<option>You cannot do anything</option>
+<option correct>Rotate the signing secret, or include a per-file version in what is signed and change it</option>
+<option>Delete the user's account</option>
+<option>Change the file's extension</option>
+<explain><p>A signed URL is valid as long as its signature checks out. Changing the secret invalidates every link; a per-file version invalidates just one. Short lifetimes limit the damage in the first place.</p></explain>
+</question>
+
+<question id="bf-nosniff" type="choice">
+<q>What does the response header <code>X-Content-Type-Options: nosniff</code> tell the browser?</q>
+<option>Not to cache the file</option>
+<option correct>To use the declared <code>Content-Type</code> and not guess a different type from the content</option>
+<option>To download the file instead of showing it</option>
+<option>That the file was scanned for viruses</option>
+<explain><p>Browsers used to "sniff" and could decide that an "image" was really HTML and run it. <code>nosniff</code> turns that off, so the server's (sniffed and trusted) type is the only one.</p></explain>
+</question>
+
+<question id="bf-attachment" type="choice">
+<q>Why serve uploaded PDFs with <code>Content-Disposition: attachment</code>?</q>
+<option>It makes the download faster</option>
+<option correct>The browser saves the file instead of rendering it inside your site, where active content could run with your site's origin</option>
+<option>It compresses the file</option>
+<option>It is required for all files over 1 MB</option>
+<explain><p>Documents can contain scripts and links. Downloading them, and serving user content from a separate domain, keeps them away from your site's cookies and pages.</p></explain>
+</question>
+
+<question id="bf-object-storage" type="choice">
+<q>Two servers behind a load balancer save uploads to their own local folders. What goes wrong?</q>
+<option>Nothing, as long as both folders exist</option>
+<option correct>A file uploaded through one server is missing when a request lands on the other, and files are lost when a server is replaced</option>
+<option>Uploads become slower</option>
+<option>Signed URLs stop working</option>
+<explain><p>Local disks are per machine. Object storage (S3, GCS, R2, MinIO) gives every server the same bucket, and it outlives any single server.</p></explain>
+</question>
+
+<question id="bf-presigned-put" type="choice">
+<q>With a presigned PUT URL, who sends the file's bytes to the bucket?</q>
+<option>Your API server, after receiving them from the browser</option>
+<option correct>The browser, directly; your API only checked the user and signed the URL</option>
+<option>A background job</option>
+<option>The CDN</option>
+<explain><p>Your servers never carry the bytes, which saves bandwidth and memory. Afterwards, the client tells your API the upload is done, and a background job checks the object before it is published.</p></explain>
+</question>
+
+<question id="bf-where-metadata" type="choice">
+<q>Where should the record "seller 7 uploaded products/7/5f0c.jpg, 48,213 bytes, SHA-256 …, pending review" live?</q>
+<option>Only in the file name</option>
+<option correct>In your database, while the bytes live in object storage</option>
+<option>In the signed URL</option>
+<option>In the browser's local storage</option>
+<explain><p>Metadata is what you query, join, authorise and delete by. Keeping it in the database, pointing at the object's key, lets you find every file of a product or user, for example to erase it.</p></explain>
+</question>
+
+<question id="bf-exif" type="choice">
+<q>Why do many services re-encode uploaded photos before publishing them?</q>
+<option>To change the file name</option>
+<option correct>Re-encoding keeps only image data: it removes hidden payloads and EXIF metadata such as the GPS position where the photo was taken</option>
+<option>To make every photo a PNG</option>
+<option>Because browsers cannot show JPEGs</option>
+<explain><p>It is slow and can crash on hostile files, so it runs in a background job while the upload stays pending.</p></explain>
+</question>
+
+<question id="bf-out-headers" type="output">
+<q>The parser reads a part's headers. What does this print?</q>
+<code file="part-headers.ts">
+const block = 'Content-Disposition: form-data; name="photo"; filename="../../rice.jpg"\r\nContent-Type: text/html';
+
+const headers = new Map<string, string>();
+for (const line of block.split("\r\n")) {
+  const colon = line.indexOf(":");
+  headers.set(line.slice(0, colon).trim().toLowerCase(), line.slice(colon + 1).trim());
+}
+const disposition = headers.get("content-disposition") ?? "";
+console.log(/\bname="([^"]*)"/.exec(disposition)?.[1], /\bfilename="([^"]*)"/.exec(disposition)?.[1], headers.get("content-type"));
+</code>
+<option>photo rice.jpg image/jpeg</option>
+<option correct>photo ../../rice.jpg text/html</option>
+<option>photo ../../rice.jpg image/jpeg</option>
+<option>undefined ../../rice.jpg text/html</option>
+<explain><p>The parser reports exactly what the client wrote, including a path in the filename and a content type that does not match the extension. Deciding what to trust is the next step's job.</p></explain>
+</question>
+
+<question id="bf-out-delimiter-split" type="output">
+<q>Two chunks arrive, and the delimiter is split between them. What does this print?</q>
+<code file="split.ts" browser="no">
+const delimiter = Buffer.from("\r\n--XYZ");
+const chunks = [Buffer.from("ABCDEF\r\n-"), Buffer.from("-XYZ--\r\n")];
+
+let pending = Buffer.alloc(0);
+const written: string[] = [];
+for (const chunk of chunks) {
+  pending = Buffer.concat([pending, chunk]);
+  const at = pending.indexOf(delimiter);
+  if (at === -1) {
+    const safe = pending.length - (delimiter.length - 1);
+    written.push(pending.subarray(0, safe).toString());
+    pending = pending.subarray(safe);
+  } else {
+    written.push(pending.subarray(0, at).toString());
+    break;
+  }
+}
+console.log(written);
+</code>
+<option>[ 'ABCDEF\r\n-', '' ]</option>
+<option correct>[ 'ABC', 'DEF' ]</option>
+<option>[ 'ABCDEF' ]</option>
+<option>[ 'AB', 'CDEF' ]</option>
+<explain><p>The delimiter is 7 bytes, so the parser holds back the last 6 bytes of the first chunk (<code>DEF\r\n-</code>), which might be the start of a delimiter, and writes only <code>ABC</code>. With the second chunk the full delimiter appears, and the rest of the data, <code>DEF</code>, is written. The file is exactly <code>ABCDEF</code>, with no piece of the boundary in it.</p></explain>
+</question>
+
+<question id="bf-out-limit" type="output">
+<q>A sink with a 10-byte limit receives three chunks. What does this print?</q>
+<code file="limit.ts">
+const limit = 10;
+let size = 0;
+const results: string[] = [];
+
+for (const chunk of ["rice", "-photo", "-extra-bytes"]) {
+  size += chunk.length;
+  if (size > limit) {
+    results.push(`413 after ${size} bytes`);
+    break;
+  }
+  results.push(`kept ${size}`);
+}
+console.log(results.join(", "));
+</code>
+<option>kept 4, kept 10, kept 22</option>
+<option correct>kept 4, kept 10, 413 after 22 bytes</option>
+<option>kept 4, 413 after 10 bytes</option>
+<option>413 after 4 bytes</option>
+<explain><p>Exactly 10 bytes is allowed; the third chunk pushes the total past the limit, and the upload stops right there, without reading the rest of the body.</p></explain>
+</question>
+
+<question id="bf-out-sniff" type="output">
+<q>What does this print?</q>
+<code file="sniff.ts">
+function sniff(head: Uint8Array): string {
+  const is = (signature: number[], offset = 0) => signature.every((byte, i) => head[offset + i] === byte);
+  if (is([0xff, 0xd8, 0xff])) return "image/jpeg";
+  if (is([0x89, 0x50, 0x4e, 0x47])) return "image/png";
+  if (is([0x25, 0x50, 0x44, 0x46])) return "application/pdf";
+  return "unknown";
+}
+
+const text = (s: string) => new TextEncoder().encode(s);
+console.log(sniff(new Uint8Array([0xff, 0xd8, 0xff, 0xdb])), sniff(text("%PDF-1.7")), sniff(text("<svg onload=alert(1)>")), sniff(new Uint8Array([0x89, 0x50])));
+</code>
+<option>image/jpeg application/pdf image/svg+xml image/png</option>
+<option correct>image/jpeg application/pdf unknown unknown</option>
+<option>image/jpeg unknown unknown image/png</option>
+<option>unknown application/pdf unknown unknown</option>
+<explain><p><code>%PDF</code> is <code>25 50 44 46</code>. The SVG (which can contain scripts) matches nothing on the allow-list. The two-byte input is too short to match the four-byte PNG signature: missing bytes are <code>undefined</code>, which equals no byte.</p></explain>
+</question>
+
+<question id="bf-out-display-name" type="output">
+<q>What does this print?</q>
+<code file="display-name.ts">
+function displayName(filename: string | undefined): string {
+  const base = (filename ?? "").split(/[\\/]/).pop() ?? "";
+  const clean = base.replace(/[^\w. -]/g, "_").replace(/^\.+/, "").slice(0, 100);
+  return clean === "" ? "upload" : clean;
+}
+
+console.log(["../../etc/passwd.jpg", "C:\\Users\\ada\\rice.jpg", ".env", "photo\";.jpg", undefined].map(displayName));
+</code>
+<option>[ 'passwd.jpg', 'rice.jpg', '.env', 'photo";.jpg', 'upload' ]</option>
+<option correct>[ 'passwd.jpg', 'rice.jpg', 'env', 'photo__.jpg', 'upload' ]</option>
+<option>[ '../../etc/passwd.jpg', 'rice.jpg', 'env', 'photo__.jpg', 'upload' ]</option>
+<option>[ 'passwd.jpg', 'C__Users_ada_rice.jpg', 'env', 'photo__.jpg', '' ]</option>
+<explain><p>Both kinds of path separator are split away, leading dots are removed (no hidden files), and characters such as quotes, which could break a <code>Content-Disposition</code> header, become underscores. A missing name gets a default.</p></explain>
+</question>
+
+<question id="bf-out-hmac" type="output">
+<q>What does this print?</q>
+<code file="hmac.ts" browser="no">
+import { createHmac } from "node:crypto";
+
+const secret = "demo-secret-for-this-question-only";
+const sign = (path: string, expires: number) => createHmac("sha256", secret).update(`${path}\n${expires}`).digest("base64url");
+
+const original = sign("/files/9b2c.jpg", 1_790_251_800);
+console.log(original === sign("/files/9b2c.jpg", 1_790_251_800));
+console.log(original === sign("/files/7f1a.jpg", 1_790_251_800));
+console.log(original === sign("/files/9b2c.jpg", 1_790_338_200));
+console.log(original.length);
+</code>
+<option>true
+true
+true
+43</option>
+<option correct>true
+false
+false
+43</option>
+<option>true
+false
+true
+64</option>
+<option>false
+false
+false
+43</option>
+<explain><p>The same inputs always give the same signature; a different path or expiry gives a different one. A SHA-256 HMAC is 32 bytes, which is 43 characters in base64url without padding.</p></explain>
+</question>
+
+<question id="bf-out-expiry" type="output">
+<q>A link expires at 1,000 seconds. What does this print?</q>
+<code file="expiry.ts">
+const check = (now: number, expires: number) => (now < expires ? "ok" : "expired");
+console.log([999, 1_000, 1_001].map((now) => check(now, 1_000)));
+</code>
+<option>[ 'ok', 'ok', 'expired' ]</option>
+<option correct>[ 'ok', 'expired', 'expired' ]</option>
+<option>[ 'ok', 'ok', 'ok' ]</option>
+<option>[ 'expired', 'expired', 'expired' ]</option>
+<explain><p>The link is valid strictly before its expiry time. At the expiry second itself it is already refused.</p></explain>
+</question>
+
+<question id="bf-out-base64" type="output">
+<q>What does this print?</q>
+<code file="base64.ts" browser="no">
+const photo = Buffer.alloc(3_000_000, 0x42);
+const encoded = photo.toString("base64");
+console.log(photo.length, encoded.length, (encoded.length / photo.length).toFixed(2));
+</code>
+<option>3000000 3000000 1.00</option>
+<option correct>3000000 4000000 1.33</option>
+<option>3000000 6000000 2.00</option>
+<option>3000000 3750000 1.25</option>
+<explain><p>Base64 turns every 3 bytes into 4 characters, so 3 MB becomes 4 MB of text, before JSON escaping and parsing make it worse.</p></explain>
+</question>
+
+<question id="bf-out-wx" type="output">
+<q>What does this print?</q>
+<code file="wx.ts" browser="no">
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const dir = await mkdtemp(join(tmpdir(), "uploads-"));
+const path = join(dir, "5f0c2e4e.jpg");
+
+await writeFile(path, "first upload", { flag: "wx" });
+try {
+  await writeFile(path, "second upload", { flag: "wx" });
+  console.log("overwritten");
+} catch (error) {
+  console.log(error instanceof Error && "code" in error ? error.code : error);
+}
+await rm(dir, { recursive: true });
+</code>
+<option>overwritten</option>
+<option correct>EEXIST</option>
+<option>ENOENT</option>
+<option>EACCES</option>
+<explain><p>With <code>wx</code>, creating a file that already exists fails with <code>EEXIST</code> instead of silently replacing it. An upload can never overwrite another file by accident.</p></explain>
+</question>
+
+<question id="bf-out-checksum" type="output">
+<q>Two sellers upload the same photo under different names. What does this print?</q>
+<code file="checksum.ts" browser="no">
+import { createHash } from "node:crypto";
+
+const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+
+const photo = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
+const fromAda = sha256(photo);
+const fromBola = sha256(new Uint8Array(photo));
+const edited = sha256(new Uint8Array([...photo, 4]));
+
+console.log(fromAda === fromBola, fromAda === edited, fromAda.length);
+</code>
+<option>false false 64</option>
+<option correct>true false 64</option>
+<option>true true 32</option>
+<option>true false 32</option>
+<explain><p>A checksum depends only on the bytes, not on names or who uploaded them, so identical files have identical hashes and any change gives a new one. SHA-256 is 32 bytes, 64 hex characters. Stored with the metadata, it detects corruption and duplicates.</p></explain>
+</question>
+
+<question id="bf-code-boundary" type="code" file="boundary.ts">
+<q><p>Write <code>boundaryFrom(contentType)</code>: return the boundary from <code>multipart/form-data; boundary=…</code> (1 to 70 characters, optionally in quotes), or throw <code>Error("not multipart")</code>.</p></q>
+<starter>
+function boundaryFrom(contentType: string | undefined): string {
+  return contentType ?? "";
+}
+
+for (const header of ["multipart/form-data; boundary=----abc123", 'multipart/form-data; boundary="x y"', "application/json", undefined]) {
+  try {
+    console.log(boundaryFrom(header));
+  } catch (error) {
+    console.log(error instanceof Error ? error.message : error);
+  }
+}
+</starter>
+<solution>
+function boundaryFrom(contentType: string | undefined): string {
+  const match = /^multipart\/form-data;\s*boundary=(?:"([^"]{1,70})"|([^\s;]{1,70}))$/i.exec(contentType ?? "");
+  const boundary = match?.[1] ?? match?.[2];
+  if (boundary === undefined) throw new Error("not multipart");
+  return boundary;
+}
+
+for (const header of ["multipart/form-data; boundary=----abc123", 'multipart/form-data; boundary="x y"', "application/json", undefined]) {
+  try {
+    console.log(boundaryFrom(header));
+  } catch (error) {
+    console.log(error instanceof Error ? error.message : error);
+  }
+}
+</solution>
+<expected>
+----abc123
+x y
+not multipart
+not multipart
+</expected>
+<explain><p>The boundary comes from a header the client wrote, so it is checked: the right media type, a sane length, and the quoted form handled. Anything else is a 400.</p></explain>
+</question>
+
+<question id="bf-code-sniff" type="code" file="sniff-png.ts">
+<q><p>Write <code>isPng(bytes)</code>: true only when the first 8 bytes are <code>89 50 4E 47 0D 0A 1A 0A</code>.</p></q>
+<starter>
+function isPng(bytes: Uint8Array): boolean {
+  return bytes.length > 0;
+}
+
+const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+const fake = new TextEncoder().encode("PNG but really text");
+console.log(isPng(png), isPng(fake), isPng(png.subarray(0, 4)));
+</starter>
+<solution>
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+function isPng(bytes: Uint8Array): boolean {
+  return PNG_SIGNATURE.every((byte, i) => bytes[i] === byte);
+}
+
+const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+const fake = new TextEncoder().encode("PNG but really text");
+console.log(isPng(png), isPng(fake), isPng(png.subarray(0, 4)));
+</solution>
+<expected>true false false</expected>
+<explain><p>Every signature byte must match. A text that merely contains "PNG" fails at the first byte, and a truncated header fails because the missing bytes are <code>undefined</code>.</p></explain>
+</question>
+
+<question id="bf-code-limit" type="code" file="size-limit.ts">
+<q><p>Finish <code>makeCounter(limit)</code>: its <code>add(chunk)</code> adds the chunk's length and throws <code>Error("413: over LIMIT bytes")</code> as soon as the total passes the limit.</p></q>
+<starter>
+function makeCounter(limit: number) {
+  let size = 0;
+  return {
+    add(chunk: Uint8Array): number {
+      return size;
+    },
+  };
+}
+
+const counter = makeCounter(8);
+try {
+  for (const chunk of [new Uint8Array(3), new Uint8Array(5), new Uint8Array(1)]) console.log("total", counter.add(chunk));
+} catch (error) {
+  console.log(error instanceof Error ? error.message : error);
+}
+</starter>
+<solution>
+function makeCounter(limit: number) {
+  let size = 0;
+  return {
+    add(chunk: Uint8Array): number {
+      size += chunk.length;
+      if (size > limit) throw new Error(`413: over ${limit} bytes`);
+      return size;
+    },
+  };
+}
+
+const counter = makeCounter(8);
+try {
+  for (const chunk of [new Uint8Array(3), new Uint8Array(5), new Uint8Array(1)]) console.log("total", counter.add(chunk));
+} catch (error) {
+  console.log(error instanceof Error ? error.message : error);
+}
+</solution>
+<expected>
+total 3
+total 8
+413: over 8 bytes
+</expected>
+<explain><p>The limit is checked on every chunk, so the upload stops the moment it becomes too big, whatever the request's headers claimed.</p></explain>
+</question>
+
+<question id="bf-code-display-name" type="code" file="clean-name.ts">
+<q><p>Write <code>displayName(filename)</code>: keep only the last path segment (split on <code>/</code> and <code>\</code>), replace anything other than letters, digits, <code>_</code>, <code>.</code>, <code>-</code> and space with <code>_</code>, remove leading dots, and use <code>"upload"</code> if nothing is left.</p></q>
+<starter>
+function displayName(filename: string): string {
+  return filename;
+}
+
+console.log(["../../app/config.json", "..\\..\\boot.ini", "...", "Rice & Beans.jpg"].map(displayName));
+</starter>
+<solution>
+function displayName(filename: string): string {
+  const base = filename.split(/[\\/]/).pop() ?? "";
+  const clean = base.replace(/[^\w. -]/g, "_").replace(/^\.+/, "");
+  return clean === "" ? "upload" : clean;
+}
+
+console.log(["../../app/config.json", "..\\..\\boot.ini", "...", "Rice & Beans.jpg"].map(displayName));
+</solution>
+<expected>[ 'config.json', 'boot.ini', 'upload', 'Rice _ Beans.jpg' ]</expected>
+<explain><p>The result is safe to show and to put in a header. It is still never used as a storage path: the stored file is named by a random key.</p></explain>
+</question>
+
+<question id="bf-code-sign" type="code" file="sign-link.ts">
+<q><p>Write <code>isValid(path, expires, sig, now)</code> using the provided <code>sign</code> function: the signature must match <code>sign(path, expires)</code> and <code>now</code> must be before <code>expires</code>.</p></q>
+<starter>
+function sign(path: string, expires: number): string {
+  let hash = 0;
+  for (const char of `${path}\n${expires}\nserver-secret`) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return hash.toString(16);
+}
+
+function isValid(path: string, expires: number, sig: string, now: number): boolean {
+  return true;
+}
+
+const sig = sign("/files/9b2c.jpg", 1_000);
+console.log(isValid("/files/9b2c.jpg", 1_000, sig, 500), isValid("/files/7f1a.jpg", 1_000, sig, 500), isValid("/files/9b2c.jpg", 9_000, sig, 500), isValid("/files/9b2c.jpg", 1_000, sig, 1_000));
+</starter>
+<solution>
+function sign(path: string, expires: number): string {
+  let hash = 0;
+  for (const char of `${path}\n${expires}\nserver-secret`) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return hash.toString(16);
+}
+
+function isValid(path: string, expires: number, sig: string, now: number): boolean {
+  return sig === sign(path, expires) && now < expires;
+}
+
+const sig = sign("/files/9b2c.jpg", 1_000);
+console.log(isValid("/files/9b2c.jpg", 1_000, sig, 500), isValid("/files/7f1a.jpg", 1_000, sig, 500), isValid("/files/9b2c.jpg", 9_000, sig, 500), isValid("/files/9b2c.jpg", 1_000, sig, 1_000));
+</solution>
+<expected>true false false false</expected>
+<explain><p>Changing the path or the expiry breaks the signature, and an expired link is refused. The toy <code>sign</code> here only shows the shape: a real server uses an HMAC with a random secret (<code>createHmac</code>) and compares with <code>timingSafeEqual</code>.</p></explain>
+</question>
+
+<question id="bf-code-storage-key" type="code" file="storage-key.ts">
+<q><p>Write <code>storageKey(productId, id, type)</code> that builds an object key like <code>products/7/5f0c.jpg</code>, taking the extension from the sniffed type (never from the client's filename).</p></q>
+<starter>
+type ImageType = "image/jpeg" | "image/png" | "image/webp";
+
+function storageKey(productId: number, id: string, type: ImageType, clientName: string): string {
+  return `products/${productId}/${clientName}`;
+}
+
+console.log(storageKey(7, "5f0c", "image/png", "../../evil.html"));
+console.log(storageKey(12, "9b2c", "image/jpeg", "rice.png"));
+</starter>
+<solution>
+type ImageType = "image/jpeg" | "image/png" | "image/webp";
+
+const EXTENSIONS: Record<ImageType, string> = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp" };
+
+function storageKey(productId: number, id: string, type: ImageType, clientName: string): string {
+  return `products/${productId}/${id}${EXTENSIONS[type]}`;
+}
+
+console.log(storageKey(7, "5f0c", "image/png", "../../evil.html"));
+console.log(storageKey(12, "9b2c", "image/jpeg", "rice.png"));
+</solution>
+<expected>
+products/7/5f0c.png
+products/12/9b2c.jpg
+</expected>
+<explain><p>The key is built only from values the server controls: the product id it authorised, a random id, and the sniffed type. The client's name, even a misleading <code>rice.png</code> for a JPEG, does not appear.</p></explain>
+</question>

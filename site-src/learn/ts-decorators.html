@@ -1,0 +1,1235 @@
+---
+title: Decorators
+description: Write TC39 standard decorators for classes, methods, fields and accessors, see the JavaScript tsc really emits, and compare them with legacy experimentalDecorators.
+minutes: 60
+youNeed: Classes, Conditional types, and the three type-safe infrastructure lessons before this one
+youBuild: Audit, retry, bind, validation and registration decorators for a payments service, column metadata that generates SQL, a type-checked injectable decorator, and a side-by-side look at legacy decorator metadata
+keywords: typescript decorators, tc39 decorators, method decorator, class decorator, field decorator, accessor keyword, addInitializer, context.metadata, Symbol.metadata, experimentalDecorators, emitDecoratorMetadata, reflect-metadata, decorator emit
+objectives: Explain what a decorator is at runtime and when it runs, and apply one by hand without the @ syntax | Write typed class, method, field and accessor decorators, including decorator factories, with the standard context object | Use addInitializer and context.metadata, polyfill Symbol.metadata, and avoid the inherited-metadata bug | Read the JavaScript tsc emits for a decorated class and know which runtimes can run decorators | Compare standard decorators with experimentalDecorators and emitDecoratorMetadata, and explain why frameworks relied on them
+---
+<section>
+<h2 id="problem">The payout nobody audited</h2>
+<p>A payments service must write an audit entry for every operation that moves money: regulators ask for it, and so do angry customers. Each method starts with the same line:</p>
+<example file="problem.ts" project="problem">
+const audit: string[] = [];
+
+class PaymentService {
+  charge(customerId: string, kobo: number): string {
+    audit.push(`charge(${customerId}, ${kobo})`);
+    return `charged ${customerId} ₦${kobo / 100}`;
+  }
+
+  refund(customerId: string, kobo: number): string {
+    audit.push(`refund(${customerId}, ${kobo})`);
+    return `refunded ${customerId} ₦${kobo / 100}`;
+  }
+
+  // added last week by a new teammate
+  payout(merchantId: string, kobo: number): string {
+    return `paid out ${merchantId} ₦${kobo / 100}`;
+  }
+}
+
+const payments = new PaymentService();
+payments.charge("cus_ada", 1_850_000);
+payments.refund("cus_ada", 50_000);
+payments.payout("mer_tunde", 9_000_000);
+console.log(audit);
+</example>
+<output>
+[ 'charge(cus_ada, 1850000)', 'refund(cus_ada, 50000)' ]
+</output>
+<p>₦90,000 left the company and the audit log says nothing. The rule "audit every money method" lives in a comment and in everyone's memory, and memory failed. The same shape appears everywhere in backend code: log this, time that, retry this network call, check that permission, register this class as a handler. Each is a <strong>cross-cutting concern</strong>, a rule that cuts across many methods and is not their business logic.</p>
+<p>A <strong>decorator</strong> lets you write such a rule once, as a function, and attach it to a class or member with one visible line: <code>@audited</code>. In this lesson you write decorators of every kind with the TC39 standard syntax that TypeScript 5.0 and later support, read the JavaScript the compiler turns them into, check which runtimes can run them, and compare them with the older <code>experimentalDecorators</code> that many frameworks were built on.</p>
+</section>
+
+<section>
+<h2 id="what">What a decorator is</h2>
+<p>A decorator is an ordinary function. JavaScript calls it once, when the class is <em>defined</em> (not each time a method is called), with two arguments: the thing being decorated (here, the method) and a <strong>context</strong> object that describes it (its name, its kind, and a few tools you will meet below). Whatever it returns replaces the original. You can do all of that by hand, without any new syntax:</p>
+<example file="by-hand.ts" project="by-hand">
+const audit: string[] = [];
+
+function audited<Args extends unknown[], R>(method: (...args: Args) => R, context: { name: string }) {
+  return function (this: unknown, ...args: Args): R {
+    audit.push(`${context.name}(${args.join(", ")})`);
+    return method.apply(this, args);
+  };
+}
+
+class PaymentService {
+  charge(customerId: string, kobo: number): string {
+    return `charged ${customerId} ₦${kobo / 100}`;
+  }
+  payout(merchantId: string, kobo: number): string {
+    return `paid out ${merchantId} ₦${kobo / 100}`;
+  }
+}
+
+PaymentService.prototype.charge = audited(PaymentService.prototype.charge, { name: "charge" });
+PaymentService.prototype.payout = audited(PaymentService.prototype.payout, { name: "payout" });
+
+const payments = new PaymentService();
+console.log(payments.charge("cus_ada", 1_850_000));
+console.log(payments.payout("mer_tunde", 9_000_000));
+console.log(audit);
+</example>
+<output>
+charged cus_ada ₦18500
+paid out mer_tunde ₦90000
+[ 'charge(cus_ada, 1850000)', 'payout(mer_tunde, 9000000)' ]
+</output>
+<p>The replacement function is a <strong>wrapper</strong>: it does the extra work, then calls the original with the same <code>this</code> and arguments, and returns its result. The <code>@</code> syntax does the same replacement for you, right where the method is written, so the rule is visible and cannot be forgotten in another file. Here is the typed version, written against TypeScript's built-in decorator types:</p>
+<example file="audited.ts" project="payments" browser="no">
+export const auditLog: string[] = [];
+
+export function audited<This, Args extends unknown[], R>(
+  method: (this: This, ...args: Args) => R,
+  context: ClassMethodDecoratorContext<This, (this: This, ...args: Args) => R>,
+): (this: This, ...args: Args) => R {
+  const name = String(context.name);
+  return function (this: This, ...args: Args): R {
+    auditLog.push(`${name}(${args.join(", ")})`);
+    return method.apply(this, args);
+  };
+}
+</example>
+<example file="payments.ts" project="payments" browser="no">
+import { audited, auditLog } from "./audited.js";
+
+class PaymentService {
+  @audited
+  charge(customerId: string, kobo: number): string {
+    return `charged ${customerId} ₦${kobo / 100}`;
+  }
+
+  @audited
+  refund(customerId: string, kobo: number): string {
+    return `refunded ${customerId} ₦${kobo / 100}`;
+  }
+
+  @audited
+  payout(merchantId: string, kobo: number): string {
+    return `paid out ${merchantId} ₦${kobo / 100}`;
+  }
+}
+
+const payments = new PaymentService();
+payments.charge("cus_ada", 1_850_000);
+payments.refund("cus_ada", 50_000);
+console.log(payments.payout("mer_tunde", 9_000_000));
+console.log(auditLog);
+</example>
+<output>
+paid out mer_tunde ₦90000
+[
+  'charge(cus_ada, 1850000)',
+  'refund(cus_ada, 50000)',
+  'payout(mer_tunde, 9000000)'
+]
+</output>
+<ul>
+<li><code>ClassMethodDecoratorContext&lt;This, Value&gt;</code> is the context type for methods. <code>This</code> is the class instance type and <code>Value</code> the method's type, so one generic decorator works for any method and keeps its exact parameter and return types. <code>context.name</code> is a <code>string | symbol</code>, hence <code>String(…)</code>.</li>
+<li>The decorator's return type must be assignable to the method it replaces. A wrapper that returned a <code>number</code> for a <code>string</code> method would not compile.</li>
+<li>These examples are marked "Node.js only": the next section explains why no browser, and not even plain Node, can run the <code>@</code> syntax today.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="runtimes">Where decorators can run</h2>
+<p>Standard decorators come from a TC39 proposal that has been at Stage 3 since 2022: the design is settled, but engines have been slow to ship it. At the time of writing, neither Node.js 24 nor Chromium 150 can parse <code>@audited</code>, and neither defines <code>Symbol.metadata</code>, which you will need later. So decorated code must always be <strong>compiled</strong> into plain JavaScript first:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>How you run it</th><th>Decorators work?</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td><code>tsc</code>, then <code>node</code></td><td>Yes</td><td>tsc rewrites decorators into helper calls (shown later in this lesson)</td></tr>
+<tr><td><code>tsx</code>, esbuild and the bundlers and test runners built on such transpilers</td><td>Yes</td><td>esbuild rewrites them the same way (check your tool's documentation for the decorator version it supports)</td></tr>
+<tr><td><code>node file.ts</code> (type stripping)</td><td>No</td><td>Stripping only removes types; <code>@</code> is JavaScript syntax the engine does not know yet</td></tr>
+<tr><td>This site's browser terminal</td><td>No</td><td>Its compiler (Babel) is not configured for decorators</td></tr>
+<tr><td>Node.js 24 or a browser, directly</td><td>No</td><td>No native support</td></tr>
+</tbody>
+</table></div>
+<shell title="node file.ts with a decorator (Node.js 24 from nodejs.org)">
+$ node account.ts
+file:///home/you/project/account.ts:11
+  @logged
+  ^
+
+SyntaxError: Invalid or unexpected token
+    at compileSourceTextModule (node:internal/modules/esm/utils:318:16)
+    …
+
+Node.js v24.19.0
+</shell>
+<p>Node's type stripping passed the <code>@logged</code> line through untouched, because it is not a type, and the engine refused it. That is also why the examples with <code>@</code> on this page run on your computer with <code>npx tsx</code>, not in the browser terminal. The examples without the syntax, like the one above that applies a decorator by hand, still run in the browser.</p>
+</section>
+
+<section>
+<h2 id="kinds">Every kind of decorator</h2>
+<p>A decorator can sit on a class, a method, a getter, a setter, a field or an auto-accessor. The context's <code>kind</code> says which, and the rules differ in what the decorator receives and what its return value means:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Kind</th><th>First argument</th><th>Return value (optional)</th><th>Context type</th></tr></thead>
+<tbody>
+<tr><td><code>"class"</code></td><td>The class</td><td>A replacement class</td><td><code>ClassDecoratorContext</code></td></tr>
+<tr><td><code>"method"</code></td><td>The method</td><td>A replacement method</td><td><code>ClassMethodDecoratorContext</code></td></tr>
+<tr><td><code>"getter"</code> / <code>"setter"</code></td><td>The getter or setter</td><td>A replacement</td><td><code>ClassGetterDecoratorContext</code> / <code>ClassSetterDecoratorContext</code></td></tr>
+<tr><td><code>"field"</code></td><td><code>undefined</code> (the field does not exist yet)</td><td>A function that transforms the field's initial value</td><td><code>ClassFieldDecoratorContext</code></td></tr>
+<tr><td><code>"accessor"</code></td><td><code>{ get, set }</code> of the hidden storage</td><td><code>{ get?, set?, init? }</code></td><td><code>ClassAccessorDecoratorContext</code></td></tr>
+</tbody>
+</table></div>
+<p>Every context also has <code>name</code>, <code>static</code> and <code>private</code> (for members), <code>addInitializer</code> and <code>metadata</code>.</p>
+
+<h3 id="factories">Decorator factories: @retry(3)</h3>
+<p>A decorator that needs settings is written as a <strong>decorator factory</strong>: a function that takes the settings and returns the decorator. <code>@retry(3)</code> calls <code>retry(3)</code> first, and the returned function is the decorator. Payment verification calls fail on flaky networks, so this one retries async methods:</p>
+<example file="retry.ts" project="retry">
+function retry(attempts: number) {
+  return function <This, Args extends unknown[], R>(
+    method: (this: This, ...args: Args) => Promise<R>,
+    context: ClassMethodDecoratorContext<This, (this: This, ...args: Args) => Promise<R>>,
+  ) {
+    return async function (this: This, ...args: Args): Promise<R> {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return await method.apply(this, args);
+        } catch (error) {
+          console.log(`${String(context.name)} attempt ${attempt} failed: ${(error as Error).message}`);
+          if (attempt >= attempts) throw error;
+        }
+      }
+    };
+  };
+}
+
+class PaystackClient {
+  #drops = 2;
+
+  @retry(3)
+  async verify(reference: string): Promise<string> {
+    if (this.#drops-- > 0) throw new Error("ECONNRESET");
+    return `${reference}: success`;
+  }
+
+  @retry(2)
+  async refund(reference: string): Promise<string> {
+    throw new Error(`gateway refused ${reference}`);
+  }
+}
+
+const client = new PaystackClient();
+console.log(await client.verify("PSK_1042"));
+await client.refund("PSK_1042").catch((error: unknown) => console.log("gave up:", (error as Error).message));
+</example>
+<output>
+verify attempt 1 failed: ECONNRESET
+verify attempt 2 failed: ECONNRESET
+PSK_1042: success
+refund attempt 1 failed: gateway refused PSK_1042
+refund attempt 2 failed: gateway refused PSK_1042
+gave up: gateway refused PSK_1042
+</output>
+<p>The decorator's parameter type says "a method that returns a <code>Promise</code>", so TypeScript refuses it on a synchronous method. Decorators are type-checked like calls, and the error names both directions (what the decorator accepts and what it would return):</p>
+<example file="retry-misuse.ts" project="retry-misuse" check="tsc-error">
+function retry(attempts: number) {
+  return function <This, Args extends unknown[], R>(
+    method: (this: This, ...args: Args) => Promise<R>,
+    context: ClassMethodDecoratorContext<This, (this: This, ...args: Args) => Promise<R>>,
+  ) {
+    return method;
+  };
+}
+
+class Ledger {
+  @retry(3)
+  balance(accountId: string): number {
+    return accountId.length;
+  }
+}
+</example>
+<output kind="tsc">
+retry-misuse.ts:11:4 - error TS1241: Unable to resolve signature of method decorator when called as an expression.
+  Argument of type '(accountId: string) => number' is not assignable to parameter of type '(this: Ledger, accountId: string) => Promise<unknown>'.
+    Type 'number' is not assignable to type 'Promise<unknown>'.
+
+11   @retry(3)
+      ~~~~~~~~
+
+retry-misuse.ts:11:4 - error TS1270: Decorator function return type '(this: Ledger, accountId: string) => Promise<unknown>' is not assignable to type 'void | ((accountId: string) => number)'.
+  Type '(this: Ledger, accountId: string) => Promise<unknown>' is not assignable to type '(accountId: string) => number'.
+    Type 'Promise<unknown>' is not assignable to type 'number'.
+
+11   @retry(3)
+      ~~~~~~~~
+
+
+Found 2 errors in the same file, starting at: retry-misuse.ts:11
+</output>
+
+<h3 id="fields">Fields and accessors</h3>
+<p>A field decorator runs before the field exists, so it receives <code>undefined</code>. What it can return is an <strong>initializer</strong>: a function that receives the field's initial value and returns the value to store. That makes it good for normalising defaults, and useless for checking later assignments, which it never sees. For those, TypeScript 4.9 added the <code>accessor</code> keyword: <code>accessor stock = 5</code> declares a getter and setter backed by hidden private storage, and an accessor decorator can wrap both:</p>
+<example file="fields.ts" project="fields">
+function trimmedLower<This>(_value: undefined, context: ClassFieldDecoratorContext<This, string>) {
+  return (initial: string) => initial.trim().toLowerCase();
+}
+
+function nonNegative<This>(
+  target: ClassAccessorDecoratorTarget<This, number>,
+  context: ClassAccessorDecoratorContext<This, number>,
+): ClassAccessorDecoratorResult<This, number> {
+  const check = (value: number) => {
+    if (value < 0) throw new RangeError(`${String(context.name)} cannot be negative (got ${value})`);
+    return value;
+  };
+  return {
+    init: check,
+    set(value) {
+      target.set.call(this, check(value));
+    },
+  };
+}
+
+class Product {
+  @trimmedLower email = "  SALES@Shop.NG ";
+  @trimmedLower sku = " RICE-50KG";
+  @nonNegative accessor stock = 5;
+  priceKobo = 7_500_000;
+}
+
+const rice = new Product();
+console.log(rice.email, rice.sku, rice.stock);
+rice.email = "  STILL@UPPER.NG ";
+console.log(JSON.stringify(rice.email));
+try {
+  rice.stock = -3;
+} catch (error) {
+  console.log(String(error));
+}
+console.log(rice.stock, Object.keys(rice));
+</example>
+<output>
+sales@shop.ng rice-50kg 5
+"  STILL@UPPER.NG "
+RangeError: stock cannot be negative (got -3)
+5 [ 'email', 'sku', 'priceKobo' ]
+</output>
+<p>The later assignment to <code>email</code> kept its spaces and capitals: the field decorator only ran on the initial value. The accessor refused <code>-3</code> both at construction (<code>init</code>) and on assignment (<code>set</code>). <code>Object.keys</code> shows no <code>stock</code>: an auto-accessor stores its value in a private slot and exposes it through a getter and setter on the prototype, which also means it does not appear in <code>JSON.stringify</code>. Validation like this is convenient for invariants inside your own objects. It is not a replacement for validating input at the edge of the program (<a href="/learn/ts-validation">Runtime validation</a>).</p>
+
+<h3 id="classes">Class decorators and registration</h3>
+<p>Class decorators are how frameworks <em>discover</em> your code: "this class handles <code>order.place</code>", "this class is a controller for <code>/orders</code>". A decorator factory can check the class against the command it claims to handle, which gives you the typed handler table of <a href="/learn/ts-typed-cqrs">Type-safe CQRS</a> in decorator form:</p>
+<example file="registry.ts" project="registry" browser="no">
+export interface Commands {
+  "order.place": { customerId: string; skus: string[] };
+  "order.cancel": { orderId: string };
+}
+
+export interface CommandHandler<K extends keyof Commands> {
+  execute(input: Commands[K]): string;
+}
+
+const handlers = new Map<keyof Commands, CommandHandler<keyof Commands>>();
+
+export function handles<K extends keyof Commands>(type: K) {
+  return function (value: new () => CommandHandler<K>, context: ClassDecoratorContext): void {
+    context.addInitializer(() => {
+      if (handlers.has(type)) throw new Error(`two handlers for ${type}`);
+      handlers.set(type, new value() as CommandHandler<keyof Commands>);
+    });
+  };
+}
+
+export function execute<K extends keyof Commands>(type: K, input: Commands[K]): string {
+  const handler = handlers.get(type) as CommandHandler<K> | undefined;
+  if (!handler) return `no handler for ${type}`;
+  return handler.execute(input);
+}
+</example>
+<example file="place-order.ts" project="registry" browser="no">
+import { handles } from "./registry.js";
+import type { Commands } from "./registry.js";
+
+@handles("order.place")
+export class PlaceOrderHandler {
+  execute(input: Commands["order.place"]): string {
+    return `order for ${input.customerId}: ${input.skus.join(", ")}`;
+  }
+}
+</example>
+<example file="wrong-handler.ts" project="registry" check="tsc-error">
+import { handles } from "./registry.js";
+
+@handles("order.cancel")
+export class CancelOrderHandler {
+  execute(input: { orderId: number }): string {
+    return `cancel ${input.orderId}`;
+  }
+}
+</example>
+<output kind="tsc">
+wrong-handler.ts:3:2 - error TS1238: Unable to resolve signature of class decorator when called as an expression.
+  Argument of type 'typeof CancelOrderHandler' is not assignable to parameter of type 'new () => CommandHandler<"order.cancel">'.
+    Type 'CancelOrderHandler' is not assignable to type 'CommandHandler<"order.cancel">'.
+      Types of property 'execute' are incompatible.
+        Type '(input: { orderId: number; }) => string' is not assignable to type '(input: { orderId: string; }) => string'.
+          Types of parameters 'input' and 'input' are incompatible.
+            Type '{ orderId: string; }' is not assignable to type '{ orderId: number; }'.
+              Types of property 'orderId' are incompatible.
+                Type 'string' is not assignable to type 'number'.
+
+3 @handles("order.cancel")
+   ~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 1 error in wrong-handler.ts:3
+</output>
+<p>A handler whose input does not match its command does not compile. Now the trap that every decorator-based framework shares. The decorator registers the class when the class is <em>defined</em>, which happens when its module is <em>imported</em>. A program that never imports <code>place-order.ts</code> never runs the decorator:</p>
+<example file="main-forgot.ts" project="registry" browser="no">
+import { execute } from "./registry.js";
+
+console.log(execute("order.place", { customerId: "cus_ada", skus: ["RICE-50KG"] }));
+</example>
+<output>
+no handler for order.place
+</output>
+<example file="main.ts" project="registry" browser="no">
+import "./place-order.js";
+import { execute } from "./registry.js";
+
+console.log(execute("order.place", { customerId: "cus_ada", skus: ["RICE-50KG"] }));
+console.log(execute("order.cancel", { orderId: "ORD-1" }));
+</example>
+<output>
+order for cus_ada: RICE-50KG
+no handler for order.cancel
+</output>
+<p>That is why decorator-based frameworks ask you to list your controllers or modules somewhere, or scan folders at startup, and why a bundler that removes "unused" modules can silently drop a handler. Registration by decorator is still registration at runtime: <code>"order.cancel"</code> has no handler and nothing told you at compile time.</p>
+</section>
+
+<section>
+<h2 id="initializers">addInitializer, and the order things happen in</h2>
+<p><code>context.addInitializer(fn)</code> schedules code to run later: for instance members, at the start of every constructor call (before field initializers); for static members and classes, once, right after the class is defined. The classic use is binding a method to its instance, so it can be passed around as a callback without losing <code>this</code>:</p>
+<example file="bound.ts" project="bound">
+function bound<This extends object, Args extends unknown[], R>(
+  method: (this: This, ...args: Args) => R,
+  context: ClassMethodDecoratorContext<This, (this: This, ...args: Args) => R>,
+): void {
+  const name = context.name;
+  context.addInitializer(function (this: This) {
+    Object.defineProperty(this, name, { value: method.bind(this), writable: true, configurable: true });
+  });
+}
+
+class Cart {
+  readonly items: number[] = [];
+
+  add(kobo: number): void {
+    this.items.push(kobo);
+  }
+
+  @bound
+  total(): string {
+    return `₦${this.items.reduce((sum, kobo) => sum + kobo, 0) / 100}`;
+  }
+}
+
+const cart = new Cart();
+cart.add(750_000);
+cart.add(120_000);
+
+const { total } = cart;
+console.log(total());
+console.log(["checkout"].map(cart.total));
+
+const { add } = cart;
+try {
+  add(5_000);
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+₦8700
+[ '₦8700' ]
+TypeError: Cannot read properties of undefined (reading 'items')
+</output>
+<p><code>total</code> keeps working when it is taken off the object; the undecorated <code>add</code> does not, because a method called on its own has no <code>this</code> (<a href="/learn/js-this">this in JavaScript</a>). The decorator returned nothing, so the method itself was not replaced; the initializer added a bound copy on each instance.</p>
+<p>When several decorators are involved, the order matters and surprises people. Predict this before you read the output:</p>
+<example file="order.ts" project="order">
+function trace(label: string) {
+  console.log(`evaluate ${label}`);
+  return function (_value: unknown, context: DecoratorContext): void {
+    console.log(`apply ${label} to ${context.kind} ${String(context.name)}`);
+    context.addInitializer(() => console.log(`initializer of ${label}`));
+  };
+}
+
+@trace("class")
+class Order {
+  @trace("status field") status = "new";
+
+  @trace("outer")
+  @trace("inner")
+  place(): string {
+    return "placed";
+  }
+
+  @trace("static method")
+  static fromCart(): Order {
+    return new Order();
+  }
+}
+
+console.log("--- class defined");
+new Order();
+console.log("--- first order built");
+new Order();
+</example>
+<output>
+evaluate class
+evaluate status field
+evaluate outer
+evaluate inner
+evaluate static method
+apply static method to method fromCart
+apply inner to method place
+apply outer to method place
+apply status field to field status
+apply class to class Order
+initializer of static method
+initializer of class
+--- class defined
+initializer of inner
+initializer of outer
+initializer of status field
+--- first order built
+initializer of inner
+initializer of outer
+initializer of status field
+</output>
+<ul>
+<li>All decorator <em>expressions</em> are evaluated first, top to bottom, in source order: that is when a factory like <code>trace("outer")</code> runs.</li>
+<li>Then they are <em>applied</em>: static members first, then instance methods, then fields, and the class decorator last, after the class body is complete. On one member, the decorator closest to it is applied first: <code>inner</code> wraps the method, then <code>outer</code> wraps the result, so at call time <code>outer</code>'s wrapper runs first.</li>
+<li>Static and class initializers run once, when the class is defined. Instance initializers run on every <code>new</code>.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="metadata">Metadata: context.metadata and Symbol.metadata</h2>
+<p>Decorators on different members often need to build one shared description of the class: an ORM wants every column, a validator every rule, an API generator every route. Each decorator receives the same <code>context.metadata</code> object for its class, and after the class is defined that object is available as <code>TheClass[Symbol.metadata]</code>. Two practical problems come first:</p>
+<ul>
+<li><strong><code>Symbol.metadata</code> does not exist yet</strong> in Node.js 24 or Chromium. TypeScript's emitted code only creates the metadata object if the symbol exists, so without it <code>context.metadata</code> is <code>undefined</code>. The fix is a tiny <strong>polyfill</strong>, loaded before any decorated class.</li>
+<li><strong>The types.</strong> With the default <code>lib</code>, TypeScript does not know <code>Symbol.metadata</code> and types <code>context.metadata</code> as possibly <code>undefined</code>. Adding <code>"ESNext.Decorators"</code> to <code>lib</code> declares both. That is a promise about the runtime which only the polyfill keeps.</li>
+</ul>
+<file name="tsconfig.json" project="meta">
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "lib": ["ES2024", "ESNext.Decorators"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "noEmit": true,
+    "verbatimModuleSyntax": true
+  }
+}
+</file>
+<example file="polyfill.ts" project="meta" browser="no">
+if (typeof Symbol.metadata !== "symbol") {
+  Object.defineProperty(Symbol, "metadata", { value: Symbol.for("Symbol.metadata") });
+}
+</example>
+<p>Using <code>Symbol.for("Symbol.metadata")</code> matters: it is the same symbol esbuild (and so <code>tsx</code>) falls back to, so code compiled by either tool finds the same metadata. Now a <code>@column</code> decorator that records each field's database type:</p>
+<example file="columns.ts" project="meta" browser="no">
+import "./polyfill.js";
+
+type ColumnType = "text" | "integer" | "boolean";
+
+function column(type: ColumnType) {
+  return function (_value: undefined, context: ClassFieldDecoratorContext) {
+    const columns = (context.metadata.columns ??= {}) as Record<string, ColumnType>;
+    columns[String(context.name)] = type;
+  };
+}
+
+function columnsOf(type: abstract new (...args: never[]) => object): Record<string, ColumnType> {
+  return (type[Symbol.metadata]?.columns ?? {}) as Record<string, ColumnType>;
+}
+
+class Product {
+  @column("text") sku = "";
+  @column("integer") priceKobo = 0;
+  cachedLabel = "";
+}
+
+class PerishableProduct extends Product {
+  @column("integer") shelfLifeDays = 0;
+}
+
+console.log(columnsOf(Product));
+console.log(columnsOf(PerishableProduct));
+</example>
+<output>
+{ sku: 'text', priceKobo: 'integer', shelfLifeDays: 'integer' }
+{ sku: 'text', priceKobo: 'integer', shelfLifeDays: 'integer' }
+</output>
+<p>Look at the first line: <code>Product</code> now claims a <code>shelfLifeDays</code> column it does not have. A subclass's metadata object <em>inherits</em> from its parent's through the prototype chain, so that <code>PerishableProduct</code> sees the parent's columns. <code>context.metadata.columns ??= {}</code> found the parent's inherited <code>columns</code> object and added to it. Every metadata decorator must create its own copy before writing:</p>
+<example file="columns-fixed.ts" project="meta" browser="no">
+import "./polyfill.js";
+
+type ColumnType = "text" | "integer" | "boolean";
+type Columns = Record<string, ColumnType>;
+
+function column(type: ColumnType) {
+  return function (_value: undefined, context: ClassFieldDecoratorContext) {
+    const metadata = context.metadata;
+    if (!Object.hasOwn(metadata, "columns")) metadata.columns = { ...(metadata.columns as Columns | undefined) };
+    (metadata.columns as Columns)[String(context.name)] = type;
+  };
+}
+
+function columnsOf(type: abstract new (...args: never[]) => object): Columns {
+  return (type[Symbol.metadata]?.columns ?? {}) as Columns;
+}
+
+class Product {
+  @column("text") sku = "";
+  @column("integer") priceKobo = 0;
+  cachedLabel = "";
+}
+
+class PerishableProduct extends Product {
+  @column("integer") shelfLifeDays = 0;
+}
+
+console.log(columnsOf(Product));
+console.log(columnsOf(PerishableProduct));
+
+function createTableSql(table: string, type: abstract new (...args: never[]) => object): string {
+  const sqlType = { text: "TEXT", integer: "INTEGER", boolean: "BOOLEAN" } as const;
+  const columns = Object.entries(columnsOf(type)).map(([name, kind]) => `${name} ${sqlType[kind]}`);
+  return `CREATE TABLE ${table} (${columns.join(", ")})`;
+}
+console.log(createTableSql("perishables", PerishableProduct));
+</example>
+<output>
+{ sku: 'text', priceKobo: 'integer' }
+{ sku: 'text', priceKobo: 'integer', shelfLifeDays: 'integer' }
+CREATE TABLE perishables (sku TEXT, priceKobo INTEGER, shelfLifeDays INTEGER)
+</output>
+<p>The subclass starts from a copy of its parent's columns and adds its own; the parent is untouched. Metadata values are typed <code>unknown</code> (the object is a <code>Record&lt;PropertyKey, unknown&gt;</code>), so reading them back needs a cast; keep the reading and writing in one small module that owns the key.</p>
+<p>Without the polyfill, the two compilers fail differently, which is the worst kind of bug. Under <code>tsx</code>, esbuild uses its fallback symbol, the decorators write metadata, and <code>columnsOf</code> reads <code>Product[undefined]</code>, so every class silently has no columns. Under <code>tsc</code>, the metadata object is never created and the first decorator crashes:</p>
+<shell title="columns.ts without the polyfill, compiled with tsc">
+$ npx tsc --noEmit false --outDir dist
+$ node dist/columns.js
+file:///home/you/project/dist/columns.js:37
+        const columns = (context.metadata.columns ??= {});
+                                 ^
+
+TypeError: Cannot read properties of undefined (reading 'columns')
+    at file:///home/you/project/dist/columns.js:37:34
+    at __esDecorate (file:///home/you/project/dist/columns.js:12:40)
+    …
+</shell>
+</section>
+
+<section>
+<h2 id="emit">What tsc really emits</h2>
+<p>Because no engine runs decorators natively yet, the compiler rewrites them. Here is a small wallet with one method decorator, and below it the exact file <code>tsc</code> writes for it with this course's settings (<code>target: ES2024</code>):</p>
+<example file="wallet.ts" project="emit" browser="no">
+function logged(method: (this: Wallet, kobo: number) => number, context: ClassMethodDecoratorContext) {
+  return function (this: Wallet, kobo: number): number {
+    console.log(`${String(context.name)}(${kobo})`);
+    return method.call(this, kobo);
+  };
+}
+
+export class Wallet {
+  balanceKobo = 0;
+
+  @logged
+  topUp(kobo: number): number {
+    return (this.balanceKobo += kobo);
+  }
+}
+</example>
+<file name="dist/wallet.js" project="emit" check="emit">
+var __runInitializers = (this && this.__runInitializers) || function (thisArg, initializers, value) {
+    var useValue = arguments.length > 2;
+    for (var i = 0; i < initializers.length; i++) {
+        value = useValue ? initializers[i].call(thisArg, value) : initializers[i].call(thisArg);
+    }
+    return useValue ? value : void 0;
+};
+var __esDecorate = (this && this.__esDecorate) || function (ctor, descriptorIn, decorators, contextIn, initializers, extraInitializers) {
+    function accept(f) { if (f !== void 0 && typeof f !== "function") throw new TypeError("Function expected"); return f; }
+    var kind = contextIn.kind, key = kind === "getter" ? "get" : kind === "setter" ? "set" : "value";
+    var target = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
+    var descriptor = descriptorIn || (target ? Object.getOwnPropertyDescriptor(target, contextIn.name) : {});
+    var _, done = false;
+    for (var i = decorators.length - 1; i >= 0; i--) {
+        var context = {};
+        for (var p in contextIn) context[p] = p === "access" ? {} : contextIn[p];
+        for (var p in contextIn.access) context.access[p] = contextIn.access[p];
+        context.addInitializer = function (f) { if (done) throw new TypeError("Cannot add initializers after decoration has completed"); extraInitializers.push(accept(f || null)); };
+        var result = (0, decorators[i])(kind === "accessor" ? { get: descriptor.get, set: descriptor.set } : descriptor[key], context);
+        if (kind === "accessor") {
+            if (result === void 0) continue;
+            if (result === null || typeof result !== "object") throw new TypeError("Object expected");
+            if (_ = accept(result.get)) descriptor.get = _;
+            if (_ = accept(result.set)) descriptor.set = _;
+            if (_ = accept(result.init)) initializers.unshift(_);
+        }
+        else if (_ = accept(result)) {
+            if (kind === "field") initializers.unshift(_);
+            else descriptor[key] = _;
+        }
+    }
+    if (target) Object.defineProperty(target, contextIn.name, descriptor);
+    done = true;
+};
+function logged(method, context) {
+    return function (kobo) {
+        console.log(`${String(context.name)}(${kobo})`);
+        return method.call(this, kobo);
+    };
+}
+let Wallet = (() => {
+    let _instanceExtraInitializers = [];
+    let _topUp_decorators;
+    return class Wallet {
+        static {
+            const _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
+            _topUp_decorators = [logged];
+            __esDecorate(this, null, _topUp_decorators, { kind: "method", name: "topUp", static: false, private: false, access: { has: obj => "topUp" in obj, get: obj => obj.topUp }, metadata: _metadata }, null, _instanceExtraInitializers);
+            if (_metadata) Object.defineProperty(this, Symbol.metadata, { enumerable: true, configurable: true, writable: true, value: _metadata });
+        }
+        balanceKobo = (__runInitializers(this, _instanceExtraInitializers), 0);
+        topUp(kobo) {
+            return (this.balanceKobo += kobo);
+        }
+    };
+})();
+export { Wallet };
+</file>
+<p>Read it from the bottom up; it demystifies everything in this lesson:</p>
+<ul>
+<li>The class is defined inside a function, and its <code>static { … }</code> block runs once while the class is being defined. There, <code>__esDecorate</code> calls <code>logged</code> with the original <code>topUp</code> and a context object built right there: <code>kind</code>, <code>name</code>, <code>static</code>, <code>private</code>, an <code>access</code> object, and <code>metadata</code>.</li>
+<li><code>metadata</code> is <code>Object.create(null)</code> only if <code>typeof Symbol === "function" &amp;&amp; Symbol.metadata</code>. That is the line that made <code>context.metadata</code> <code>undefined</code> without the polyfill.</li>
+<li><code>__esDecorate</code> loops over the decorators from last to first (closest first), and finally writes the returned wrapper onto the prototype with <code>Object.defineProperty</code>. The <code>done</code> flag makes <code>addInitializer</code> throw if a decorator saves it and calls it later.</li>
+<li>The first field's initializer is <code>(__runInitializers(this, _instanceExtraInitializers), 0)</code>: the instance initializers from <code>addInitializer</code> run at the start of construction, then the field gets its value <code>0</code>.</li>
+</ul>
+<p>So a decorator costs one function call per decorated member when the class is defined, plus whatever the wrapper does on every call. The wrapper is where performance goes: keep it thin.</p>
+</section>
+
+<section>
+<h2 id="legacy">The other decorators: experimentalDecorators</h2>
+<p>Years before the standard, TypeScript shipped its own decorators behind the <code>experimentalDecorators</code> option, based on an early draft of the proposal. Angular, NestJS, TypeORM, InversifyJS and class-validator were built on them, so you will meet them in existing code. They are a <em>different feature</em> that happens to use the same <code>@</code>:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th></th><th>Standard (TS 5.0+, default)</th><th>Legacy (<code>experimentalDecorators: true</code>)</th></tr></thead>
+<tbody>
+<tr><td>Method decorator signature</td><td><code>(method, context)</code></td><td><code>(target, propertyKey, descriptor)</code></td></tr>
+<tr><td>Parameter decorators</td><td>Not supported</td><td><code>constructor(@Inject("clock") clock)</code></td></tr>
+<tr><td>Field decorators</td><td>Return an initializer</td><td>Receive the prototype, cannot see the value</td></tr>
+<tr><td>Metadata</td><td><code>context.metadata</code> / <code>Symbol.metadata</code></td><td><code>emitDecoratorMetadata</code> + the <code>reflect-metadata</code> library</td></tr>
+<tr><td>Future</td><td>The JavaScript standard</td><td>TypeScript-only; supported for compatibility</td></tr>
+</tbody>
+</table></div>
+<p>A decorator written for one mode does not work in the other. Here is a legacy method decorator and a parameter decorator in a project that uses the standard mode:</p>
+<example file="legacy-in-standard.ts" project="mixed" check="tsc-error">
+function logged(target: object, propertyKey: string, descriptor: PropertyDescriptor): void {
+  const original = descriptor.value as (...args: unknown[]) => unknown;
+  descriptor.value = function (this: unknown, ...args: unknown[]) {
+    console.log(`-> ${propertyKey}`);
+    return original.apply(this, args);
+  };
+}
+
+class Account {
+  @logged
+  deposit(kobo: number): number {
+    return kobo;
+  }
+}
+
+function Inject(token: string) {
+  return (target: object, key: string | undefined, index: number) => {};
+}
+
+class Checkout {
+  constructor(@Inject("clock") readonly clock: object) {}
+}
+</example>
+<output kind="tsc">
+legacy-in-standard.ts:10:3 - error TS1241: Unable to resolve signature of method decorator when called as an expression.
+  The runtime will invoke the decorator with 2 arguments, but the decorator expects 3.
+
+10   @logged
+     ~~~~~~~
+
+  legacy-in-standard.ts:1:54 - An argument for 'descriptor' was not provided.
+    1 function logged(target: object, propertyKey: string, descriptor: PropertyDescriptor): void {
+                                                           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+legacy-in-standard.ts:21:15 - error TS1206: Decorators are not valid here.
+
+21   constructor(@Inject("clock") readonly clock: object) {}
+                 ~
+
+
+Found 2 errors in the same file, starting at: legacy-in-standard.ts:10
+</output>
+
+<h3 id="design-metadata">emitDecoratorMetadata: types that survive compilation</h3>
+<p>The legacy mode has one feature the standard does not: with <code>emitDecoratorMetadata</code>, <code>tsc</code> writes the <em>types</em> of a decorated class's constructor parameters into the output, as runtime values. That is what let frameworks inject constructor arguments with no tokens at all: read the parameter types, look each up in the container. <code>reflect-metadata</code> provides the <code>Reflect.metadata</code> function that the emitted code calls; the small shim below stands in for it:</p>
+<file name="tsconfig.json" project="legacy">
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "noEmit": true,
+    "verbatimModuleSyntax": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  }
+}
+</file>
+<example file="reflect-shim.ts" project="legacy" browser="no">
+const store = new WeakMap<object, Map<string, unknown>>();
+
+Object.assign(Reflect, {
+  metadata: (key: string, value: unknown) => (target: object) => {
+    const entries = store.get(target) ?? new Map<string, unknown>();
+    entries.set(key, value);
+    store.set(target, entries);
+  },
+});
+
+export function getMetadata(key: string, target: object): unknown {
+  return store.get(target)?.get(key);
+}
+</example>
+<example file="services.ts" project="legacy" browser="no">
+import { getMetadata } from "./reflect-shim.js";
+
+export interface Clock {
+  now(): Date;
+}
+
+export class Mailer {
+  send(to: string): string {
+    return `mail to ${to}`;
+  }
+}
+
+function Injectable(): ClassDecorator {
+  return () => {};
+}
+
+@Injectable()
+export class OrderService {
+  constructor(
+    readonly mailer: Mailer,
+    readonly clock: Clock,
+    readonly limitKobo: number,
+  ) {}
+}
+
+console.log(getMetadata("design:paramtypes", OrderService));
+</example>
+<output>
+undefined
+</output>
+<p><code>undefined</code>: this page runs examples with <code>tsx</code>, and esbuild, which <code>tsx</code> uses, does <strong>not</strong> implement <code>emitDecoratorMetadata</code>: it needs type information, which only a type-aware compiler has. Other fast transpilers differ, so check the documentation of whatever runs your tests. Here is what <code>tsc</code> writes:</p>
+<file name="dist/services.js" project="legacy" check="emit">
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+import { getMetadata } from "./reflect-shim.js";
+export class Mailer {
+    send(to) {
+        return `mail to ${to}`;
+    }
+}
+function Injectable() {
+    return () => { };
+}
+let OrderService = class OrderService {
+    mailer;
+    clock;
+    limitKobo;
+    constructor(mailer, clock, limitKobo) {
+        this.mailer = mailer;
+        this.clock = clock;
+        this.limitKobo = limitKobo;
+    }
+};
+OrderService = __decorate([
+    Injectable(),
+    __metadata("design:paramtypes", [Mailer, Object, Number])
+], OrderService);
+export { OrderService };
+console.log(getMetadata("design:paramtypes", OrderService));
+</file>
+<shell title="the same program compiled with tsc">
+$ npx tsc --noEmit false --outDir dist
+$ node dist/services.js
+[ [class Mailer], [Function: Object], [Function: Number] ]
+</shell>
+<p>Look at the <code>__metadata</code> line. The class <code>Mailer</code> survived as a value, but the interface <code>Clock</code> became <code>Object</code> and <code>number</code> became <code>Number</code>: interfaces and primitives have no runtime identity, so a framework cannot know which clock you wanted. That is why legacy DI frameworks still need <code>@Inject(TOKEN)</code> for interfaces, and why this whole mechanism depends on one compiler, one option and one library all being present. The standard decorators deliberately have no type metadata and no parameter decorators; frameworks moving to them pass explicit tokens instead, as your container in <a href="/learn/ts-typed-di">the DI lesson</a> did.</p>
+<warn title="IF YOU MAINTAIN A LEGACY-DECORATOR PROJECT">Keep <code>experimentalDecorators</code> exactly as the framework's documentation says, compile with <code>tsc</code> (or a tool that supports decorator metadata, such as SWC with the right options) for the test runner too, and never mix libraries written for the two modes.</warn>
+</section>
+
+<section>
+<h2 id="frameworks">Why frameworks use decorators</h2>
+<p>Decorators let a framework read your intentions from the code itself: <em>this class is a controller at <code>/orders</code>, this method handles <code>POST</code>, this field must be an e-mail, this class is injectable</em>. The alternative is a separate registration file that repeats every name, and drifts. They also let the framework wrap your methods (transactions, caching, permission checks) without you calling it. The price is that behaviour is added somewhere you do not see, registration depends on imports, and the code only runs through a compiler.</p>
+<p>With standard decorators you can keep most of the type safety of the earlier lessons. This <code>@injectable</code> registers a class under a token and checks the constructor against its dependency tokens, using the <code>TypesOf</code> type from <a href="/learn/ts-typed-di">the DI lesson</a>:</p>
+<example file="injectable.ts" project="inject" browser="no">
+export class Token<T> {
+  declare readonly __type: T;
+  constructor(readonly name: string) {}
+}
+type TypesOf<D extends readonly Token<unknown>[]> = { -readonly [I in keyof D]: D[I] extends Token<infer U> ? U : never };
+
+interface Registration {
+  readonly deps: readonly Token<unknown>[];
+  readonly create: (...deps: never[]) => unknown;
+}
+const registrations = new Map<Token<unknown>, Registration>();
+
+export function injectable<T, const D extends readonly Token<unknown>[]>(token: Token<T>, deps: D) {
+  return function (value: new (...deps: TypesOf<D>) => T, context: ClassDecoratorContext): void {
+    registrations.set(token, { deps, create: (...args: TypesOf<D>) => new value(...args) });
+    context.addInitializer(() => console.log(`registered ${String(context.name)} as ${token.name}`));
+  };
+}
+
+export function provide<T>(token: Token<T>, value: T): void {
+  registrations.set(token, { deps: [], create: () => value });
+}
+
+export function resolve<T>(token: Token<T>): T {
+  const registration = registrations.get(token);
+  if (!registration) throw new Error(`nothing registered for ${token.name}`);
+  const args = registration.deps.map((dep) => resolve(dep));
+  return (registration.create as (...deps: unknown[]) => unknown)(...args) as T;
+}
+</example>
+<example file="checkout.ts" project="inject" browser="no">
+import { Token, injectable, provide, resolve } from "./injectable.js";
+
+interface Clock {
+  now(): Date;
+}
+class Cart {
+  readonly items = ["RICE-50KG", "OIL-5L"];
+}
+
+const CLOCK = new Token<Clock>("Clock");
+const CART = new Token<Cart>("Cart");
+const CHECKOUT = new Token<CheckoutService>("CheckoutService");
+
+@injectable(CHECKOUT, [CART, CLOCK])
+class CheckoutService {
+  constructor(
+    private readonly cart: Cart,
+    private readonly clock: Clock,
+  ) {}
+  summary(): string {
+    return `${this.cart.items.length} items on ${this.clock.now().toISOString().slice(0, 10)}`;
+  }
+}
+
+provide(CLOCK, { now: () => new Date("2026-09-24T09:00:00Z") });
+provide(CART, new Cart());
+console.log(resolve(CHECKOUT).summary());
+</example>
+<output>
+registered CheckoutService as CheckoutService
+2 items on 2026-09-24
+</output>
+<example file="checkout-wrong.ts" project="inject" check="tsc-error">
+import { Token, injectable } from "./injectable.js";
+
+interface Clock {
+  now(): Date;
+}
+class Cart {
+  readonly items: string[] = [];
+}
+
+const CLOCK = new Token<Clock>("Clock");
+const CART = new Token<Cart>("Cart");
+const CHECKOUT = new Token<CheckoutService>("CheckoutService");
+
+@injectable(CHECKOUT, [CLOCK, CART])
+class CheckoutService {
+  constructor(
+    private readonly cart: Cart,
+    private readonly clock: Clock,
+  ) {}
+}
+</example>
+<output kind="tsc">
+checkout-wrong.ts:14:2 - error TS1238: Unable to resolve signature of class decorator when called as an expression.
+  Argument of type 'typeof CheckoutService' is not assignable to parameter of type 'new (deps_0: Clock, deps_1: Cart) => CheckoutService'.
+    Types of parameters 'cart' and 'deps_0' are incompatible.
+      Property 'items' is missing in type 'Clock' but required in type 'Cart'.
+
+14 @injectable(CHECKOUT, [CLOCK, CART])
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  checkout-wrong.ts:7:12 - 'items' is declared here.
+    7   readonly items: string[] = [];
+                 ~~~~~
+
+
+Found 1 error in checkout-wrong.ts:14
+</output>
+<p>Swapped tokens are a compile error at the decorator, which is more than <code>emitDecoratorMetadata</code>-based injection ever checked. Everything from the DI lesson's "limits" section still applies: a token that is never provided fails only at runtime.</p>
+
+<h3 id="zudo">Decorators in ZudoJS</h3>
+<p>Most ZudoJS packages avoid decorators and use explicit functions (<code>createToken</code>, <code>registerFactory</code>, <code>defineEvent</code>), which run anywhere and need no compiler option. <code>@zudojs/cqrs</code> is the exception: <code>CommandHandlerFor(type)</code> and <code>QueryHandlerFor(type)</code> mark a class as the handler for a request type. They are typed as the legacy <code>ClassDecorator</code>, but they only use the class they receive, so they work with standard decorators too. They only <em>mark</em> the class; discovering marked classes and registering them on a bus is your code's job:</p>
+<example file="zudo-handlers.ts" project="zudo" browser="no">
+import { CommandHandlerFor, createCommand, createCommandBus, getCqrsType } from "@zudojs/cqrs";
+
+@CommandHandlerFor("order.place")
+class PlaceOrderHandler {
+  execute(command: { type: string; customerId: string }): string {
+    return `ORD for ${command.customerId}`;
+  }
+}
+
+const bus = createCommandBus();
+for (const handler of [PlaceOrderHandler]) {
+  const type = getCqrsType(handler);
+  if (type) bus.register(type, new handler());
+}
+
+console.log(getCqrsType(PlaceOrderHandler), bus.getCommandTypes());
+console.log(await bus.execute<{ type: string; customerId: string }, string>(createCommand("order.place", { customerId: "cus_ada" })));
+</example>
+<output>
+order.place [ 'order.place' ]
+ORD for cus_ada
+</output>
+<p>The type string passed to <code>CommandHandlerFor</code> is a plain <code>string</code>, not checked against any command type, and the result type in <code>execute</code> is the claim you met in <a href="/learn/ts-typed-cqrs#zudo">Type-safe CQRS</a>. <a href="/learn/zudo-cqrs">CQRS in ZudoJS</a> covers the package itself.</p>
+</section>
+
+<section>
+<h2 id="mistakes">Common mistakes</h2>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Mistake</th><th>What happens</th><th>Fix</th></tr></thead>
+<tbody>
+<tr><td>Running decorated code with <code>node file.ts</code> or in a browser</td><td><code>SyntaxError</code> at the <code>@</code></td><td>Compile with <code>tsc</code>, <code>tsx</code> or a bundler</td></tr>
+<tr><td>Expecting a field decorator to see later assignments</td><td>Only the initial value is transformed</td><td>Use an <code>accessor</code> decorator</td></tr>
+<tr><td>Writing to <code>context.metadata.x ??= …</code> in a subclass</td><td>The parent's metadata is changed</td><td><code>Object.hasOwn</code> check, then copy</td></tr>
+<tr><td>Using <code>context.metadata</code> without a <code>Symbol.metadata</code> polyfill</td><td><code>undefined</code> under tsc, silently different under tsx</td><td>Polyfill with <code>Symbol.for("Symbol.metadata")</code>, loaded first</td></tr>
+<tr><td>Registering by decorator, then not importing the module</td><td>The handler silently does not exist</td><td>Import handler modules explicitly, or check registrations at startup</td></tr>
+<tr><td>Mixing legacy and standard decorator libraries</td><td>TS1241 or runtime nonsense</td><td>One mode per project, matching your framework</td></tr>
+<tr><td>Relying on <code>emitDecoratorMetadata</code> under esbuild or <code>tsx</code></td><td>No metadata; injection gets <code>undefined</code></td><td>Use a compiler that emits it, or explicit tokens</td></tr>
+<tr><td>Heavy work in a method wrapper</td><td>Every call pays for it</td><td>Keep wrappers thin; do setup in the decorator, once</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="testing">Testing decorators</h2>
+<p>A decorator is a function, so test it as one: call it with a function and a context object, and check what the wrapper does. No class, no <code>@</code>, no special compiler needed, which means this test runs in the browser terminal too:</p>
+<file name="audited.ts" project="decorator-test">
+export const auditLog: string[] = [];
+
+export function audited<This, Args extends unknown[], R>(
+  method: (this: This, ...args: Args) => R,
+  context: ClassMethodDecoratorContext<This, (this: This, ...args: Args) => R>,
+): (this: This, ...args: Args) => R {
+  const name = String(context.name);
+  return function (this: This, ...args: Args): R {
+    auditLog.push(`${name}(${args.join(", ")})`);
+    return method.apply(this, args);
+  };
+}
+</file>
+<example file="audited.test.ts" project="decorator-test">
+import { audited, auditLog } from "./audited.js";
+
+type Charge = (this: unknown, customerId: string, kobo: number) => string;
+
+const context = { kind: "method", name: "charge" } as ClassMethodDecoratorContext<unknown, Charge>;
+const charge: Charge = (customerId, kobo) => `charged ${customerId} ₦${kobo / 100}`;
+const wrapped = audited(charge, context);
+
+console.log(wrapped.call(undefined, "cus_ada", 1_850_000));
+console.log(auditLog.length === 1 && auditLog[0] === "charge(cus_ada, 1850000)" ? "PASS audit entry" : `FAIL ${auditLog}`);
+</example>
+<output>
+charged cus_ada ₦18500
+PASS audit entry
+</output>
+<p>The cast builds a partial context with only what this decorator reads; a decorator that uses <code>addInitializer</code> or <code>metadata</code> needs those in the fake too. Then add one test that uses the real <code>@</code> syntax on a real class, compiled by the same tool as production, because that is where evaluation order, <code>this</code> binding and metadata actually happen.</p>
+</section>
+
+<section>
+<h2 id="production">Decorators in production</h2>
+<ul>
+<li><strong>Choose the mode deliberately.</strong> New code: standard decorators (the default since TypeScript 5.0). Existing Angular, NestJS or TypeORM code: whatever that framework requires, usually <code>experimentalDecorators</code>.</li>
+<li><strong>Your build tool is part of the semantics.</strong> The same file behaved differently under tsc and esbuild in this lesson (metadata). Use one compiler for tests and production, or test with both.</li>
+<li><strong>Decorators hide behaviour.</strong> Reserve them for genuinely cross-cutting rules, keep each one small and named for what it does (<code>@audited</code>, <code>@retry(3)</code>), and prefer plain function calls for logic that belongs to one method.</li>
+<li><strong>Registration by decorator needs a startup check.</strong> Compare the registered handlers or routes with the list you expect before serving traffic.</li>
+<li><strong>Watch for the standard landing in engines.</strong> When Node.js and browsers ship native decorators and <code>Symbol.metadata</code>, the polyfill becomes a no-op and the emitted helpers can go away, with no change to your source.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="@deprecated, warned once">
+<p>Write a decorator factory <code>deprecated(replacement)</code> for methods. The first call to a deprecated method logs <code>"NAME is deprecated, use REPLACEMENT"</code>; later calls stay silent. Put it on a <code>getBalance</code> method whose replacement is <code>balanceKobo</code>.</p>
+<solution>
+<example file="deprecated.ts" project="ex-deprecated">
+function deprecated(replacement: string) {
+  return function <This, Args extends unknown[], R>(
+    method: (this: This, ...args: Args) => R,
+    context: ClassMethodDecoratorContext<This, (this: This, ...args: Args) => R>,
+  ) {
+    let warned = false;
+    return function (this: This, ...args: Args): R {
+      if (!warned) {
+        warned = true;
+        console.log(`${String(context.name)} is deprecated, use ${replacement}`);
+      }
+      return method.apply(this, args);
+    };
+  };
+}
+
+class Account {
+  balanceKobo = 2_500_000;
+
+  @deprecated("balanceKobo")
+  getBalance(): string {
+    return `₦${this.balanceKobo / 100}`;
+  }
+}
+
+const a = new Account();
+const b = new Account();
+console.log(a.getBalance());
+console.log(b.getBalance());
+</example>
+<output>
+getBalance is deprecated, use balanceKobo
+₦25000
+₦25000
+</output>
+<p>The <code>warned</code> flag lives in the decorator's closure, which is created once per decorated method, so it is shared by all instances: the second account does not warn again. For "once per instance", keep the flag in a <code>WeakSet</code> of instances instead.</p>
+</solution>
+</exercise>
+<exercise title="@memoize with a cache per instance">
+<p>Shipping fees are expensive to compute. Write <code>@memoize</code> for one-argument methods: it caches results per instance and per argument. Use a <code>WeakMap</code> from instance to cache so that dropped instances can be garbage-collected. Show that the second call with the same destination does not recompute.</p>
+<solution>
+<example file="memoize.ts" project="ex-memoize">
+function memoize<This extends object, A, R>(
+  method: (this: This, arg: A) => R,
+  _context: ClassMethodDecoratorContext<This, (this: This, arg: A) => R>,
+) {
+  const caches = new WeakMap<This, Map<A, R>>();
+  return function (this: This, arg: A): R {
+    let cache = caches.get(this);
+    if (!cache) caches.set(this, (cache = new Map()));
+    if (!cache.has(arg)) cache.set(arg, method.call(this, arg));
+    return cache.get(arg)!;
+  };
+}
+
+class ShippingCalculator {
+  computed = 0;
+
+  @memoize
+  feeKobo(state: string): number {
+    this.computed++;
+    return state === "Lagos" ? 150_000 : 350_000;
+  }
+}
+
+const shipping = new ShippingCalculator();
+console.log(shipping.feeKobo("Lagos"), shipping.feeKobo("Kano"), shipping.feeKobo("Lagos"));
+console.log("computed", shipping.computed, "times");
+console.log(new ShippingCalculator().feeKobo("Lagos"));
+</example>
+<output>
+150000 350000 150000
+computed 2 times
+150000
+</output>
+<p>Memoizing is only correct for methods whose result depends on nothing but the argument (and the instance's fixed state). A fee that depends on today's fuel price must not be cached forever; that is a caching policy (<a href="/learn/backend-caching">Caching</a>), not a decorator.</p>
+</solution>
+</exercise>
+<exercise title="An accessor that limits length">
+<p>Write <code>maxLength(n)</code> for <code>accessor</code> fields of type <code>string</code>: it trims the value and throws a <code>RangeError</code> if the result is longer than <code>n</code>, both for the initial value and for later assignments. Use it on a customer's display name.</p>
+<solution>
+<example file="max-length.ts" project="ex-max-length">
+function maxLength(limit: number) {
+  return function <This>(
+    target: ClassAccessorDecoratorTarget<This, string>,
+    context: ClassAccessorDecoratorContext<This, string>,
+  ): ClassAccessorDecoratorResult<This, string> {
+    const check = (value: string) => {
+      const trimmed = value.trim();
+      if (trimmed.length > limit) throw new RangeError(`${String(context.name)} is longer than ${limit} characters`);
+      return trimmed;
+    };
+    return {
+      init: check,
+      set(value) {
+        target.set.call(this, check(value));
+      },
+    };
+  };
+}
+
+class Customer {
+  @maxLength(12) accessor displayName = "  Ada  ";
+}
+
+const customer = new Customer();
+console.log(JSON.stringify(customer.displayName));
+customer.displayName = " Chiamaka E. ";
+console.log(customer.displayName);
+try {
+  customer.displayName = "Oluwatobiloba Adeyemi";
+} catch (error) {
+  console.log(String(error));
+}
+console.log(customer.displayName);
+</example>
+<output>
+"Ada"
+Chiamaka E.
+RangeError: displayName is longer than 12 characters
+Chiamaka E.
+</output>
+<p>The failed assignment left the old value in place, because <code>check</code> throws before <code>target.set</code> runs. Note that the factory's returned function is itself generic in <code>This</code>, so the decorator works in any class.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A decorator is a function called once when the class is defined, with the decorated value and a context object; what it returns replaces the original. You can apply one by hand.</li>
+<li>Kinds: class, method, getter, setter, field (returns an initializer) and <code>accessor</code> (wraps get, set and init). Type them with <code>ClassMethodDecoratorContext&lt;This, Value&gt;</code> and friends; decorators are type-checked like calls. Factories such as <code>@retry(3)</code> return the decorator.</li>
+<li>Expressions are evaluated top to bottom; decorators are applied closest first, static before instance, methods before fields, the class last. <code>addInitializer</code> runs per instance or once per class.</li>
+<li><code>context.metadata</code> becomes <code>Class[Symbol.metadata]</code>. Polyfill <code>Symbol.metadata</code> with <code>Symbol.for("Symbol.metadata")</code>, add the <code>ESNext.Decorators</code> lib, and copy inherited metadata before writing.</li>
+<li>No engine runs decorators natively yet: tsc and esbuild rewrite them into helpers such as <code>__esDecorate</code>; <code>node file.ts</code> and the browser terminal cannot run them.</li>
+<li><code>experimentalDecorators</code> is a different, older feature with parameter decorators and <code>emitDecoratorMetadata</code>. Its metadata turns interfaces into <code>Object</code>, and esbuild-based tools do not emit it.</li>
+<li>Frameworks use decorators to register and wrap your code declaratively; registration still happens at runtime, when the module is imported.</li>
+</ul>
+<p>Next: <a href="/learn/ts-declarations">Declaration files</a>, where you describe JavaScript libraries, including decorator-based ones, to the type checker.</p>
+</section>

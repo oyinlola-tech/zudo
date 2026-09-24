@@ -1,0 +1,681 @@
+<question id="cr-guessable" type="choice">
+<q>A reset token is built as <code>`${userId}-${Date.now().toString(36)}`</code>. Why is it unsafe?</q>
+<option>It is too short to fit in a URL</option>
+<option correct>Nothing in it is secret: an attacker who knows the user id and roughly when the reset was requested can try every millisecond of that window</option>
+<option>Base 36 cannot be decoded</option>
+<option>It is safe if the token is also hashed before storage</option>
+<explain><p>Hashing a guessable value does not make it unguessable: the attacker hashes their guesses too. A token must come from a secure random generator, 32 bytes for anything that grants access.</p></explain>
+</question>
+
+<question id="cr-base64" type="choice">
+<q>A download link carries <code>base64url(JSON.stringify({ attachment: 7, user: "ada" }))</code>. What stops a user from changing it to attachment 8?</q>
+<option>Base64 is encrypted, so they cannot read it</option>
+<option>The link is too long to edit by hand</option>
+<option correct>Nothing: base64 is an encoding. The value needs a signature (an HMAC with a server key) that the server checks</option>
+<option>The browser refuses edited links</option>
+<explain><p>Anyone can decode, edit and re-encode base64. A signed value adds an HMAC over the data, which only the key holder can produce.</p></explain>
+</question>
+
+<question id="cr-entropy" type="choice">
+<q>How many bits of entropy does a 6-digit numeric code have, roughly?</q>
+<option>6</option>
+<option correct>About 19 (log<sub>2</sub> of 1,000,000)</option>
+<option>60</option>
+<option>256</option>
+<explain><p>Each digit adds log<sub>2</sub>(10) ≈ 3.3 bits, so six digits are about 19.9 bits: fine for a code that expires quickly and allows few attempts, hopeless as a long-lived secret.</p></explain>
+</question>
+
+<question id="cr-entropy-output" type="output">
+<q>What does this entropy calculator print?</q>
+<code file="bits.js">
+const bits = (length, alphabet) => Math.floor(length * Math.log2(alphabet));
+
+console.log(bits(6, 10), bits(10, 32), bits(32, 16), bits(12, 31));
+</code>
+<option correct>19 50 128 59</option>
+<option>6 10 32 12</option>
+<option>60 320 512 372</option>
+<option>20 50 128 60</option>
+<explain><p>Bits = length × log<sub>2</sub>(alphabet size), rounded down: a 32-symbol alphabet gives exactly 5 bits per character, hex gives 4, digits about 3.32.</p></explain>
+</question>
+
+<question id="cr-public-ids" type="choice">
+<q>Why give tasks and invoices a random public id (like <code>inv_5f2c…</code>) next to the <code>serial</code> primary key?</q>
+<option>Random ids make joins faster</option>
+<option correct>Sequential ids reveal volumes and invite trying the neighbours; random 128-bit ids are unguessable, while the serial key stays for joins and indexes</option>
+<option>So the id can be used as a password</option>
+<option>PostgreSQL cannot index serial columns</option>
+<explain><p>Public ids appear in URLs and logs, so they are not secrets, but they should not be enumerable. You still need an authorization check on every request.</p></explain>
+</question>
+
+<question id="cr-prefix" type="choice">
+<q>What is the prefix in tokens like <code>reset_…</code> or <code>lat_…</code> for?</q>
+<option>It is part of the secret and adds entropy</option>
+<option correct>It says what a string is, so you, your logs and secret scanners can recognise a leaked token; it is not secret</option>
+<option>It encrypts the token</option>
+<option>It makes the token shorter</option>
+<explain><p>A recognisable prefix lets tools such as GitHub secret scanning flag an API key pushed by mistake, and lets your code refuse the wrong kind of token early.</p></explain>
+</question>
+
+<question id="cr-math-random" type="choice">
+<q>Which of these may be used to create a session token?</q>
+<option><code>Math.random().toString(36).slice(2)</code></option>
+<option><code>sha256(userId + Date.now())</code></option>
+<option correct><code>await generateSessionToken()</code> from <code>@zudojs/crypto</code></option>
+<option>An auto-increment counter in the database</option>
+<explain><p>Only a cryptographically secure random source makes an unguessable token. <code>Math.random</code> is predictable, and hashing predictable inputs keeps them predictable.</p></explain>
+</question>
+
+<question id="cr-token-lengths" type="output">
+<q>What does this print about tokens made by <code>@zudojs/crypto</code>?</q>
+<code file="token-lengths.js" browser="no">
+import { generateApiKey, generatePasswordResetToken, generateToken } from "@zudojs/crypto";
+
+const reset = await generatePasswordResetToken();
+const apiKey = await generateApiKey();
+const invoice = await generateToken({ bytes: 16, encoding: "hex", prefix: "inv_" });
+console.log(reset.slice(0, 6), reset.length, apiKey.slice(0, 4), apiKey.length, invoice.length);
+</code>
+<option correct>reset_ 49 lat_ 47 36</option>
+<option>reset_ 32 lat_ 32 16</option>
+<option>reset_ 38 lat_ 36 20</option>
+<option>reset_ 70 lat_ 68 36</option>
+<explain><p>32 random bytes are 43 base64url characters, plus the prefix: 6 + 43 = 49 and 4 + 43 = 47. 16 bytes in hex are 32 characters, plus <code>inv_</code>: 36.</p></explain>
+</question>
+
+<question id="cr-hash-token" type="choice">
+<q>Why is a fast SHA-256 hash good enough for storing reset tokens, when it is wrong for passwords?</q>
+<option>Tokens are shorter than passwords</option>
+<option correct>A token has 256 random bits, so there is nothing to guess however fast the hash; a password is chosen by a person and can be one of a few million common ones</option>
+<option>SHA-256 is slow on purpose</option>
+<option>Tokens are never stored</option>
+<explain><p>Slow password hashes exist to make guessing expensive. A random 32-byte token cannot be guessed at any speed, so the only goal is that a leaked table contains nothing usable.</p></explain>
+</question>
+
+<question id="cr-hash-token-output" type="output">
+<q>What does this print?</q>
+<code file="hash-token.js" browser="no">
+import { hashToken, sha256, verifyTokenHash } from "@zudojs/crypto";
+
+const stored = await hashToken("reset_abc");
+console.log(stored.length, stored === (await sha256("reset_abc")));
+console.log(await verifyTokenHash("reset_abc", stored), await verifyTokenHash("reset_abd", stored));
+</code>
+<option correct>64 true
+true false</option>
+<option>32 true
+true false</option>
+<option>64 false
+true false</option>
+<option>64 true
+true true</option>
+<explain><p><code>hashToken</code> is the SHA-256 of the token as 64 hex characters, the same value <code>sha256</code> gives. <code>verifyTokenHash</code> hashes the candidate and compares in constant time.</p></explain>
+</question>
+
+<question id="cr-reset-single-use" type="choice">
+<q>In <code>redeem</code>, why is the reset row deleted <em>before</em> checking whether it has expired?</q>
+<option>To save a database query</option>
+<option correct>So every token works at most once: an expired token cannot be tried again, and a valid one cannot be replayed</option>
+<option>Because expired rows cannot be read</option>
+<option>It makes no difference</option>
+<explain><p>Deleting first makes "at most once" true in every path, including the failing ones. In SQL this is one <code>DELETE … WHERE token_hash = $1 RETURNING user_id, expires_at</code>.</p></explain>
+</question>
+
+<question id="cr-reset-same-answer" type="choice">
+<q>The reset form answers "If that address has an account, we sent a reset link" for every address. Why?</q>
+<option>To save sending e-mails</option>
+<option correct>A different answer for unknown addresses would let anyone find out which e-mails have accounts (account enumeration)</option>
+<option>Because the server cannot know whether an account exists</option>
+<option>It is required by the e-mail provider</option>
+<explain><p>Registered e-mail addresses are valuable to attackers for phishing and password guessing. The response, and ideally its timing, must not depend on whether the account exists.</p></explain>
+</question>
+
+<question id="cr-reset-flow" type="output">
+<q>This store keeps one reset token per user and deletes a token when it is redeemed. What is printed?</q>
+<code file="reset-store.js">
+const rows = new Map();
+let counter = 0;
+function issue(userId) {
+  for (const [token, row] of rows) if (row.userId === userId) rows.delete(token);
+  const token = `t${++counter}`;
+  rows.set(token, { userId, expiresAt: 100 });
+  return token;
+}
+function redeem(token, now) {
+  const row = rows.get(token);
+  if (!row) return null;
+  rows.delete(token);
+  return row.expiresAt > now ? row.userId : null;
+}
+
+const a = issue("u-ada");
+const b = issue("u-ada");
+console.log(redeem(a, 10), redeem(b, 10), redeem(b, 10));
+const c = issue("u-ada");
+console.log(redeem(c, 150), redeem(c, 50));
+</code>
+<option correct>null u-ada null
+null null</option>
+<option>u-ada u-ada null
+null u-ada</option>
+<option>null u-ada u-ada
+null u-ada</option>
+<option>null u-ada null
+null u-ada</option>
+<explain><p>Issuing <code>b</code> cancelled <code>a</code>. <code>b</code> worked once. <code>c</code> was redeemed too late, and because the row is deleted even when expired, the second attempt finds nothing.</p></explain>
+</question>
+
+<question id="cr-hmac-vs-hash" type="choice">
+<q>What does an HMAC prove that a plain SHA-256 hash cannot?</q>
+<option>That the data is encrypted</option>
+<option correct>That the data was produced by someone who has the secret key, and was not changed since</option>
+<option>That the data is small</option>
+<option>That the data came from a specific person, verifiable by anyone</option>
+<explain><p>Anyone can recompute a plain hash of changed data. Only key holders can compute a matching HMAC. Proof that <em>anyone</em> can verify, without being able to sign, needs a public-key signature instead.</p></explain>
+</question>
+
+<question id="cr-hmac-short-key" type="output">
+<q>What happens here?</q>
+<code file="short-key.js" browser="no">
+import { hmacSha256 } from "@zudojs/crypto";
+
+try {
+  await hmacSha256("order 1042 paid", new TextEncoder().encode("secret"));
+  console.log("signed");
+} catch (error) {
+  console.log(error.name, "-", error.message);
+}
+</code>
+<option correct>RangeError - HMAC key must be at least 16 bytes.</option>
+<option>signed</option>
+<option>CryptoError - Invalid key.</option>
+<option>TypeError - key must be a string</option>
+<explain><p>The package refuses HMAC keys under 16 bytes: a short, human-chosen "secret" can be guessed offline from one signed value. Use 32 random bytes from the environment.</p></explain>
+</question>
+
+<question id="cr-known-answer" type="choice">
+<q>What is a "test vector", and why test an HMAC wrapper against one?</q>
+<option>A random input that changes every run</option>
+<option correct>An input with a published correct output (for example from RFC 4231); matching it proves the wrapper uses the algorithm, key and encoding correctly</option>
+<option>A list of attack payloads</option>
+<option>A benchmark of how fast the hash runs</option>
+<explain><p>You cannot tell by looking whether a digest is right. A known-answer test catches a wrong algorithm, a key passed as text instead of bytes, or a wrong encoding.</p></explain>
+</question>
+
+<question id="cr-sha256-abc" type="output">
+<q>What does this print? (It is the standard SHA-256 test vector.)</q>
+<code file="sha256-abc.js" browser="no">
+import { sha256 } from "@zudojs/crypto";
+
+const digest = await sha256("abc");
+console.log(digest.length, digest.slice(0, 8));
+</code>
+<option correct>64 ba7816bf</option>
+<option>32 ba7816bf</option>
+<option>64 a9993e36</option>
+<option>44 ungWv48B</option>
+<explain><p>A SHA-256 digest is 32 bytes, which is 64 hex characters, and the published digest of "abc" starts with <code>ba7816bf</code>. (<code>a9993e36</code> is the start of SHA-1 of "abc".)</p></explain>
+</question>
+
+<question id="cr-timing" type="choice">
+<q>Why compare an incoming API key with <code>timingSafeEqualString</code> instead of <code>===</code>?</q>
+<option><code>===</code> gives wrong answers for long strings</option>
+<option correct><code>===</code> stops at the first different character, so its time leaks how much of a guess is right; the helper always takes the same time</option>
+<option><code>timingSafeEqualString</code> is faster</option>
+<option>It hashes the key before comparing</option>
+<explain><p>Over many requests an attacker can average the tiny time differences and find a secret one character at a time. Constant-time comparison removes that signal.</p></explain>
+</question>
+
+<question id="cr-compare-output" type="output">
+<q>What do the constant-time helpers return?</q>
+<code file="compare.js" browser="no">
+import { timingSafeEqualEncoded, timingSafeEqualString } from "@zudojs/crypto";
+
+console.log(timingSafeEqualString("lat_7f3a", "lat_7f3a"), timingSafeEqualString("lat_7f3a", "lat_7f"));
+console.log(timingSafeEqualEncoded("7F3A", "7f3a", "hex"), timingSafeEqualEncoded("a*c", "abc", "base64url"));
+</code>
+<option correct>true false
+true false</option>
+<option>true false
+false false</option>
+<option>true
+RangeError: lengths differ</option>
+<option>true false
+true true</option>
+<explain><p>Different lengths and invalid input give <code>false</code> instead of throwing. <code>timingSafeEqualEncoded</code> compares the decoded bytes, so upper- and lower-case hex for the same bytes are equal.</p></explain>
+</question>
+
+<question id="cr-db-lookup" type="choice">
+<q>A reset token is looked up with <code>WHERE token_hash = $1</code>, a normal (not constant-time) index lookup. Is that a timing leak?</q>
+<option>Yes, always use a constant-time loop over all rows</option>
+<option correct>No: the attacker cannot choose what the hash of their guess starts with, so timing that depends on the stored hash tells them nothing useful about any token</option>
+<option>Yes, unless the table is small</option>
+<option>No, because databases are always constant-time</option>
+<explain><p>Timing attacks need the attacker to control the compared value byte by byte. Hashing first destroys that control. This is one more reason to store and look up token hashes.</p></explain>
+</question>
+
+<question id="cr-password-policy" type="output">
+<q>What does this print?</q>
+<code file="password-policy.js" browser="no">
+import { hashPassword, isValidPassword } from "@zudojs/crypto";
+
+console.log(isValidPassword("abc"), isValidPassword("a long passphrase"));
+const result = await hashPassword("abc");
+console.log(result.encoded.startsWith("v1$scrypt$"));
+try {
+  await hashPassword("abc", { cost: 1024 });
+} catch (error) {
+  console.log(error.name);
+}
+</code>
+<option correct>false true
+true
+RangeError</option>
+<option>false true
+RangeError</option>
+<option>true true
+true
+RangeError</option>
+<option>false true
+true
+true</option>
+<explain><p><code>hashPassword</code> refuses a cost below 16384 but hashes a 3-character password without complaint. The minimum length is your policy: check it with <code>isValidPassword</code> or a schema at registration.</p></explain>
+</question>
+
+<question id="cr-password-self-describing" type="choice">
+<q>A stored password hash looks like <code>v1$scrypt$16384$8$5$…$…</code>. Why store the algorithm and cost settings with it?</q>
+<option>So the password can be decrypted later</option>
+<option correct>So hashes made with older settings still verify after you raise the cost, and you can re-hash them at the next login</option>
+<option>So attackers know which algorithm to use</option>
+<option>It is required by scrypt</option>
+<explain><p>The verifier reads the parameters from the stored value itself. That makes upgrading possible without resetting everyone's password.</p></explain>
+</question>
+
+<question id="cr-aead" type="choice">
+<q>What does the authentication tag in AES-256-GCM do?</q>
+<option>It compresses the ciphertext</option>
+<option correct>It lets decryption detect any change to the ciphertext, the IV or the AAD, and refuse instead of returning wrong data</option>
+<option>It stores the key</option>
+<option>It makes the ciphertext the same each time</option>
+<explain><p>Encryption without authentication can be tampered with silently. GCM is authenticated encryption: decryption either returns exactly what was sealed or fails.</p></explain>
+</question>
+
+<question id="cr-aad" type="choice">
+<q>Bank details are sealed with <code>aad: utf8Encode("freelancer:17")</code>. What does that stop?</q>
+<option>Anyone reading the ciphertext</option>
+<option correct>Someone with database access copying freelancer 17's sealed value into another freelancer's row: it only decrypts with the same AAD</option>
+<option>The key from leaking</option>
+<option>Nothing; AAD is only a comment</option>
+<explain><p>AAD is not encrypted, but it is covered by the tag. Binding each value to its owner turns "swap two encrypted fields" into a decryption failure.</p></explain>
+</question>
+
+<question id="cr-envelope-output" type="output">
+<q>How many dot-separated parts does an envelope have, and what are the first two?</q>
+<code file="envelope.js" browser="no">
+import { encryptEnvelope, randomBytesSecure, utf8Encode } from "@zudojs/crypto";
+
+const sealed = await encryptEnvelope(utf8Encode("0123456789 GTBank"), await randomBytesSecure(32));
+const parts = sealed.split(".");
+console.log(parts.length, parts[0], parts[1]);
+</code>
+<option correct>5 v1 aes-256-gcm</option>
+<option>3 v1 aes-256-gcm</option>
+<option>4 aes-256-gcm v1</option>
+<option>5 aes-256-gcm v1</option>
+<explain><p>The envelope is <code>version.algorithm.iv.tag.ciphertext</code>. Recording the version and algorithm is what lets you change either later without guessing how old values were made.</p></explain>
+</question>
+
+<question id="cr-decrypt-errors" type="output">
+<q>What is printed when the AAD does not match?</q>
+<code file="wrong-owner.js" browser="no">
+import { decryptEnvelope, encryptEnvelope, randomBytesSecure, utf8Encode } from "@zudojs/crypto";
+
+const key = await randomBytesSecure(32);
+const sealed = await encryptEnvelope(utf8Encode("0123456789"), key, { aad: utf8Encode("freelancer:17") });
+try {
+  await decryptEnvelope(sealed, key, utf8Encode("freelancer:18"));
+} catch (error) {
+  console.log(error.name, error.code, error.statusCode, error.message);
+}
+</code>
+<option correct>CryptoError ERR_CRYPTO_CIPHER 500 Decryption failed.</option>
+<option>CryptoError ERR_CRYPTO_CIPHER 400 AAD mismatch.</option>
+<option>Error undefined undefined Unsupported state or unable to authenticate data</option>
+<option>nothing: it returns the plaintext</option>
+<explain><p>GCM does not say why decryption failed, and neither does the package. For your own stored data a 500 is right; for values a client sent you, catch it and answer with a generic 400.</p></explain>
+</question>
+
+<question id="cr-iv-reuse" type="choice">
+<q><code>encrypt(plaintext, key, { iv })</code> lets you pass your own IV. What is the rule?</q>
+<option>Always pass a fixed IV so results are reproducible</option>
+<option>Use the current timestamp as the IV</option>
+<option correct>Don't pass one: a repeated IV with the same key breaks GCM's secrecy and lets tags be forged, and the package generates a fresh random IV when you leave it out</option>
+<option>Use the user id as the IV</option>
+<explain><p>The package does not stop you from reusing an IV, so the safe habit is never to supply one. <code>encryptEnvelope</code> and <code>encryptString</code> without <code>iv</code> always use a new random one.</p></explain>
+</question>
+
+<question id="cr-key-load" type="output">
+<q>A deploy sets <code>PAYOUT_KEY</code> to a 5-byte value by mistake. What happens at start-up?</q>
+<code file="load-key.js" browser="no">
+import { createCryptoKey, CryptoAlgorithm, fromBase64 } from "@zudojs/crypto";
+
+try {
+  await createCryptoKey(fromBase64("c2hvcnQ="), { algorithm: CryptoAlgorithm.AES_256_GCM, keyId: "payouts" });
+  console.log("loaded");
+} catch (error) {
+  console.log(error.name, "-", error.message);
+}
+</code>
+<option correct>CryptoError - Algorithm "aes-256-gcm" requires a 32-byte key, received 5 bytes.</option>
+<option>loaded</option>
+<option>TypeError - Invalid Base64 value.</option>
+<option>CryptoError - Decryption failed.</option>
+<explain><p>Loading the key refuses the wrong size at once, so the mistake is found at start-up, not at the first payout. The message states sizes, never the key.</p></explain>
+</question>
+
+<question id="cr-key-id" type="choice">
+<q>Why does the lesson's vault prefix every sealed value with the key id, as in <code>2026-09:v1.aes-256-gcm.…</code>?</q>
+<option>To make the value longer</option>
+<option correct>So after a new key is added, each value says which key opens it: old values keep working, and a job can find and re-seal the ones on the old key</option>
+<option>Because the key id is the encryption key</option>
+<option>So the database can index it</option>
+<explain><p>Key rotation needs old and new keys side by side for a while. Without the id you would have to try every key on every value.</p></explain>
+</question>
+
+<question id="cr-key-log" type="choice">
+<q>Which of these is safe to write to your logs?</q>
+<option><code>key.bytes()</code> as base64</option>
+<option>The reset token from the e-mail link</option>
+<option correct>The key's <code>keyId</code> and <code>fingerprint</code></option>
+<option>The decrypted bank account number, if the log level is debug</option>
+<explain><p>A fingerprint is a hash that identifies a key without revealing it, so you can tell which key a server loaded. Keys, tokens and decrypted data never belong in logs.</p></explain>
+</question>
+
+<question id="cr-rotation-steps" type="choice">
+<q>What is the right order for rotating an encryption key?</q>
+<option>Remove the old key, then re-encrypt everything with the new one</option>
+<option correct>Add the new key and make it current; keep the old key for reading; re-seal old values in the background; remove the old key when nothing uses it</option>
+<option>Replace the key in the environment variable and restart</option>
+<option>Decrypt everything, delete the key, then encrypt again with the same key</option>
+<explain><p>Every step keeps every value readable. Removing or replacing the old key first would make existing values unreadable.</p></explain>
+</question>
+
+<question id="cr-signed-order" type="choice">
+<q>A signed value is checked in this order: format, key id, signature, purpose, expiry. Why check the signature before parsing the payload?</q>
+<option>Parsing is slower than an HMAC</option>
+<option correct>Until the signature matches, the payload is attacker-controlled; checking first means your JSON parser and your logic only ever see data you signed</option>
+<option>The purpose is inside the signature</option>
+<option>The order does not matter</option>
+<explain><p>Verify, then parse, then act: the same rule as for webhooks. It shrinks what an attacker can reach to one HMAC comparison.</p></explain>
+</question>
+
+<question id="cr-purpose" type="choice">
+<q>Download links and e-mail confirmation links are signed with the same key. What goes wrong without a <code>purpose</code> field?</q>
+<option>Nothing, the key is the same</option>
+<option correct>A value signed for one feature is accepted by another, for example a download link replayed as an e-mail confirmation</option>
+<option>The links become too long</option>
+<option>The HMAC fails</option>
+<explain><p>A signature proves <em>you</em> produced the value, not <em>for what</em>. Binding the purpose into the signed data stops cross-feature replay.</p></explain>
+</question>
+
+<question id="cr-bearer" type="choice">
+<q>A signed download link is a bearer token. What does that mean for its design?</q>
+<option>It must be encrypted</option>
+<option correct>Whoever holds it can use it until it expires, so keep it short-lived, put the user id inside, and never put secrets in the payload (it is only signed)</option>
+<option>It can only be used by the person who received the e-mail</option>
+<option>It must be stored in the database</option>
+<explain><p>The signature protects against changes, not against copying. Short lifetimes limit the damage of a forwarded or leaked link.</p></explain>
+</question>
+
+<question id="cr-signature-vs-hmac" type="choice">
+<q>A partner must verify receipts you send them, but must not be able to create receipts. What do you use?</q>
+<option>HMAC with a key you share with the partner</option>
+<option>AES-256-GCM encryption</option>
+<option correct>A public-key signature (Ed25519): you sign with the private key, they verify with the public key</option>
+<option>SHA-256 of the receipt</option>
+<explain><p>With an HMAC, anyone who can verify can also sign. A signature separates the two: the private key signs, the public key only verifies.</p></explain>
+</question>
+
+<question id="cr-bytes-vs-chars" type="output">
+<q>What does this print?</q>
+<code file="bytes.js">
+const text = "₦45,000";
+console.log(text.length, new TextEncoder().encode(text).length);
+</code>
+<option correct>7 9</option>
+<option>7 7</option>
+<option>9 9</option>
+<option>7 14</option>
+<explain><p>The naira sign is one character but 3 bytes in UTF-8. Anything you hash, sign or encrypt is bytes, so size limits must count bytes.</p></explain>
+</question>
+
+<question id="cr-code-random-token" type="code" file="random-token.js">
+<q><p>Write <code>randomToken(bytes)</code> with the Web Crypto API (<code>crypto.getRandomValues</code>): fill a <code>Uint8Array</code> of <code>bytes</code> random bytes and return it as lower-case hex. Print the length for 16 and 32 bytes, and whether two tokens differ.</p></q>
+<starter>
+function randomToken(bytes) {
+  // your code here
+}
+
+console.log(randomToken(16).length, randomToken(32).length);
+console.log(randomToken(32) !== randomToken(32), /^[0-9a-f]+$/.test(randomToken(8)));
+</starter>
+<solution>
+function randomToken(bytes) {
+  const buffer = crypto.getRandomValues(new Uint8Array(bytes));
+  return Array.from(buffer, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+console.log(randomToken(16).length, randomToken(32).length);
+console.log(randomToken(32) !== randomToken(32), /^[0-9a-f]+$/.test(randomToken(8)));
+</solution>
+<expected>
+32 64
+true true
+</expected>
+<explain><p><code>crypto.getRandomValues</code> is the secure generator in both browsers and Node.js. Each byte becomes two hex characters, and <code>padStart</code> keeps bytes below 16 from losing their leading zero.</p></explain>
+</question>
+
+<question id="cr-code-invite" type="code" file="invite.js">
+<q><p>Write <code>inviteCode()</code>: 12 characters chosen with <code>crypto.getRandomValues</code> from the 32-character alphabet <code>ABCDEFGHJKLMNPQRSTUVWXYZ23456789</code>, grouped as <code>XXXX-XXXX-XXXX</code>. Because 256 is a multiple of 32, <code>byte % 32</code> has no bias here.</p></q>
+<starter>
+const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function inviteCode() {
+  // your code here
+}
+
+const code = inviteCode();
+console.log(/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/.test(code), code.length);
+</starter>
+<solution>
+const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function inviteCode() {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  const raw = Array.from(bytes, (b) => ALPHABET[b % ALPHABET.length]).join("");
+  return raw.match(/.{4}/g).join("-");
+}
+
+const code = inviteCode();
+console.log(/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/.test(code), code.length);
+</solution>
+<expected>
+true 14
+</expected>
+<explain><p>With an alphabet of 32, every byte value maps to exactly 8 characters, so each is equally likely. With an alphabet of 31 or 36, <code>%</code> would favour some characters; <code>randomFromAlphabet</code> in <code>@zudojs/crypto</code> handles any size without that bias.</p></explain>
+</question>
+
+<question id="cr-code-hmac" type="code" file="hmac-webcrypto.js">
+<q><p>Write <code>hmacHex(keyBytes, message)</code> with Web Crypto: import the key with <code>crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"])</code>, sign the UTF-8 bytes of the message, and return hex. Check it against RFC 4231 test case 1.</p></q>
+<starter>
+async function hmacHex(keyBytes, message) {
+  // your code here
+}
+
+const key = new Uint8Array(20).fill(0x0b);
+const mac = await hmacHex(key, "Hi There");
+console.log(mac.length, mac === "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7");
+</starter>
+<solution>
+async function hmacHex(keyBytes, message) {
+  const key = await crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+  return Array.from(new Uint8Array(signature), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+const key = new Uint8Array(20).fill(0x0b);
+const mac = await hmacHex(key, "Hi There");
+console.log(mac.length, mac === "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7");
+</solution>
+<expected>
+64 true
+</expected>
+<explain><p>Matching the published vector proves the key, algorithm and encoding are right. <code>hmacSha256</code> from <code>@zudojs/crypto</code> gives the same result with one call on the server.</p></explain>
+</question>
+
+<question id="cr-code-constant-time" type="code" file="constant-time.js">
+<q><p>Write <code>safeEqual(a, b)</code> for two strings that does not stop early: if the lengths differ, return <code>false</code>; otherwise combine <code>a.charCodeAt(i) ^ b.charCodeAt(i)</code> for every position with <code>|=</code> and return whether the result is 0.</p></q>
+<starter>
+function safeEqual(a, b) {
+  // your code here
+}
+
+console.log(safeEqual("lat_7f3a9c", "lat_7f3a9c"), safeEqual("lat_7f3a9c", "lat_7f3a9d"), safeEqual("abc", "abcd"));
+</starter>
+<solution>
+function safeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+console.log(safeEqual("lat_7f3a9c", "lat_7f3a9c"), safeEqual("lat_7f3a9c", "lat_7f3a9d"), safeEqual("abc", "abcd"));
+</solution>
+<expected>
+true false false
+</expected>
+<explain><p>XOR is 0 only for equal characters, and <code>|=</code> remembers any difference without branching, so every comparison of equal-length strings does the same work. The length of a signature is not secret, so returning early on a length mismatch is fine.</p></explain>
+</question>
+
+<question id="cr-code-sign-verify" type="code" file="signed-value.js">
+<q><p>Finish <code>verify(value, now)</code> for values made by <code>sign</code>. Return <code>"bad signature"</code> when the HMAC does not match, <code>"expired"</code> when <code>exp &lt;= now</code>, and otherwise the data object. Check the signature before parsing.</p></q>
+<starter>
+const key = crypto.getRandomValues(new Uint8Array(32));
+const hmacKey = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+const toHex = (buf) => Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+const mac = async (text) => toHex(await crypto.subtle.sign("HMAC", hmacKey, new TextEncoder().encode(text)));
+
+async function sign(data, exp) {
+  const payload = btoa(JSON.stringify({ data, exp }));
+  return `${payload}.${await mac(payload)}`;
+}
+
+async function verify(value, now) {
+  // your code here
+}
+
+const value = await sign({ attachment: 7 }, 1000);
+console.log(await verify(value, 500));
+console.log(await verify(value, 1000));
+console.log(await verify(btoa(JSON.stringify({ data: { attachment: 8 }, exp: 1000 })) + "." + value.split(".")[1], 500));
+</starter>
+<solution>
+const key = crypto.getRandomValues(new Uint8Array(32));
+const hmacKey = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+const toHex = (buf) => Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+const mac = async (text) => toHex(await crypto.subtle.sign("HMAC", hmacKey, new TextEncoder().encode(text)));
+
+async function sign(data, exp) {
+  const payload = btoa(JSON.stringify({ data, exp }));
+  return `${payload}.${await mac(payload)}`;
+}
+
+async function verify(value, now) {
+  const [payload, signature] = value.split(".");
+  if (signature !== (await mac(payload))) return "bad signature";
+  const { data, exp } = JSON.parse(atob(payload));
+  if (exp <= now) return "expired";
+  return data;
+}
+
+const value = await sign({ attachment: 7 }, 1000);
+console.log(await verify(value, 500));
+console.log(await verify(value, 1000));
+console.log(await verify(btoa(JSON.stringify({ data: { attachment: 8 }, exp: 1000 })) + "." + value.split(".")[1], 500));
+</solution>
+<expected>
+{ attachment: 7 }
+expired
+bad signature
+</expected>
+<explain><p>The edited payload keeps the old signature, which no longer matches. In production compare the two MACs in constant time (<code>timingSafeEqualEncoded</code>), and add a key id and a purpose, as the lesson's <code>signValue</code> does.</p></explain>
+</question>
+
+<question id="cr-code-key-length" type="code" file="load-key.js">
+<q><p>Write <code>loadKey(base64)</code>: decode the base64 text with <code>atob</code> into a <code>Uint8Array</code>; throw <code>Error("encryption key is not set")</code> for a missing or empty value, and <code>Error("encryption key must be 32 bytes, got N")</code> for any other length. Return the bytes.</p></q>
+<starter>
+function loadKey(base64) {
+  // your code here
+}
+
+const good = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+for (const value of [good, "c2hvcnQ=", undefined]) {
+  try {
+    console.log("loaded", loadKey(value).length, "bytes");
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</starter>
+<solution>
+function loadKey(base64) {
+  if (!base64) throw new Error("encryption key is not set");
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  if (bytes.length !== 32) throw new Error(`encryption key must be 32 bytes, got ${bytes.length}`);
+  return bytes;
+}
+
+const good = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+for (const value of [good, "c2hvcnQ=", undefined]) {
+  try {
+    console.log("loaded", loadKey(value).length, "bytes");
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</solution>
+<expected>
+loaded 32 bytes
+encryption key must be 32 bytes, got 5
+encryption key is not set
+</expected>
+<explain><p>Check keys once, at start-up, and fail loudly. The messages name the problem and the sizes, never the key. <code>createCryptoKey</code> does the size check for you in the real code.</p></explain>
+</question>
+
+<question id="cr-code-sha256" type="code" file="token-hash.js">
+<q><p>Write <code>hashToken(token)</code> with <code>crypto.subtle.digest("SHA-256", …)</code> over the UTF-8 bytes of the token, returning lower-case hex. Show that the hash is 64 characters and does not contain the token.</p></q>
+<starter>
+async function hashToken(token) {
+  // your code here
+}
+
+const token = "reset_ExampleOnly";
+const stored = await hashToken(token);
+console.log(stored.length, stored.includes(token), stored === (await hashToken(token)));
+</starter>
+<solution>
+async function hashToken(token) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+const token = "reset_ExampleOnly";
+const stored = await hashToken(token);
+console.log(stored.length, stored.includes(token), stored === (await hashToken(token)));
+</solution>
+<expected>
+64 false true
+</expected>
+<explain><p>The same token always gives the same hash, which is what makes the database lookup work, and the hash reveals nothing about the token. <code>hashToken</code> from <code>@zudojs/crypto</code> returns exactly this.</p></explain>
+</question>

@@ -49,6 +49,8 @@ const left = [...document.querySelectorAll("#cart li")].map((li) => li.dataset.s
 console.log("still in the cart:", left);
 </example>
 <output>
+removing rice-5kg
+still in the cart: [ 'palm-oil-1l', 'garri-2kg' ]
 </output>
 <p>Rice was removed. Garri was not: its button was created <em>after</em> the loop ran, so it never got a listener. The loop attached listeners to the buttons that existed at that moment, and nothing else. Re-running the loop after every change would fix that, and introduce the opposite bug: the old buttons would get a second listener each time, and one click would remove, or charge, twice.</p>
 <p>The real fix uses the way events travel through the DOM tree: a single listener on the <code>&lt;ul&gt;</code> can handle clicks on every button inside it, including buttons that do not exist yet. To get there, you need to know exactly what happens between "the user clicks" and "your function runs".</p>
@@ -90,9 +92,14 @@ button.addEventListener("click", (event) => {
 button.click();
 </example>
 <output>
+type: click
+constructor: PointerEvent
+target: remove-rice currentTarget: remove-rice
+bubbles: true cancelable: true
+isTrusted: false
 </output>
 <ul>
-<li><code>type</code> is the event's name. <code>click</code> events are <code>MouseEvent</code>s, which also carry the pointer position and which modifier keys were held.</li>
+<li><code>type</code> is the event's name. The constructor tells you what kind of event it is: modern browsers fire <code>click</code> as a <code>PointerEvent</code>, a kind of <code>MouseEvent</code>, which also carries the pointer position and which modifier keys were held.</li>
 <li><code>target</code> is the element the event happened on. <code>currentTarget</code> is the element whose listener is running now. Here they are the same button; with delegation they are not.</li>
 <li><code>bubbles</code> and <code>cancelable</code> say whether the event travels up the tree and whether its default action can be stopped. Both are explained below.</li>
 <li><code>isTrusted</code> is <code>false</code> because code created this click, not a person. Browsers let only trusted events do a few sensitive things, such as opening a pop-up or going full screen.</li>
@@ -110,6 +117,9 @@ button.addEventListener("click", () => console.log("listener 2"));
 button.click();
 </example>
 <output>
+cart: removing rice
+listener 1
+listener 2
 </output>
 <p>The analytics handler is gone. In a real page, two scripts written by two teams would never know they were overwriting each other.</p>
 <note>Listeners declared with <code>function</code> get <code>this</code> set to <code>currentTarget</code>; arrow functions keep the <code>this</code> from outside. <a href="/learn/js-this#events">this in depth</a> covers it. Reading <code>event.currentTarget</code> says what you mean in both kinds of function.</note>
@@ -143,7 +153,8 @@ button.click();
 const phases = { 1: "capture", 2: "target", 3: "bubble" };
 const name = (node) => (node === window ? "window" : node === document ? "document" : node.id || node.className);
 
-for (const node of [window, document, document.querySelector("#cart"), document.querySelector("#line-rice"), document.querySelector("#remove-rice")]) {
+const path = [window, document, "#cart", "#line-rice", "#remove-rice", ".icon"].map((n) => (typeof n === "string" ? document.querySelector(n) : n));
+for (const node of path) {
   node.addEventListener("click", (e) => console.log(`${name(e.currentTarget)} ${phases[e.eventPhase]}`), { capture: true });
   node.addEventListener("click", (e) => console.log(`${name(e.currentTarget)} ${phases[e.eventPhase]}`));
 }
@@ -151,8 +162,20 @@ for (const node of [window, document, document.querySelector("#cart"), document.
 document.querySelector(".icon").click();
 </example>
 <output>
+window capture
+document capture
+cart capture
+line-rice capture
+remove-rice capture
+icon target
+icon target
+remove-rice bubble
+line-rice bubble
+cart bubble
+document bubble
+window bubble
 </output>
-<p>The event went down through the capture listeners, reached the button and the icon's parents, and came back up through the bubble listeners. The icon itself had no listener, but the event still passed through it. Nearly all events bubble; a few don't, notably <code>focus</code>, <code>blur</code>, <code>mouseenter</code>, <code>mouseleave</code> and <code>load</code>. For focus there are bubbling twins, <code>focusin</code> and <code>focusout</code>.</p>
+<p>The event went down through the capture listeners of every ancestor, reached the icon (the target, where both of its listeners run in the target phase), and came back up through the bubble listeners. Every ancestor heard the click, although it happened on a small <code>&lt;span&gt;</code> inside the button. Nearly all events bubble; a few don't, notably <code>focus</code>, <code>blur</code>, <code>mouseenter</code>, <code>mouseleave</code> and <code>load</code>. For focus there are bubbling twins, <code>focusin</code> and <code>focusout</code>.</p>
 
 <h3>Stopping propagation</h3>
 <p><code>event.stopPropagation()</code> stops the event from travelling any further: listeners on later nodes of the path do not run. (Other listeners on the <em>same</em> node still run; <code>stopImmediatePropagation()</code> stops those too.) It sounds useful, and it is usually a bug waiting to happen. A common pattern: a drop-down menu closes when you click anywhere else, using a listener on <code>document</code>. Then someone adds a widget that stops propagation "so its clicks don't do anything else":</p>
@@ -176,6 +199,10 @@ document.querySelector("#remove-rice").click();
 console.log("menu open?", menu.open);
 </example>
 <output>
+gift checkbox: stopped propagation
+menu open? true
+document: click outside, menu closed
+menu open? false
 </output>
 <p>Clicking the checkbox left the menu open, because the document never heard about the click. The same thing breaks analytics, keyboard shortcuts and anything else that listens on an ancestor. Instead of stopping the event, let listeners that care check <code>event.target</code> and decide for themselves, which is exactly what delegation does.</p>
 </section>
@@ -207,6 +234,12 @@ const notCancelled = help.dispatchEvent(event);
 console.log("dispatchEvent returned", notCancelled, "defaultPrevented:", event.defaultPrevented);
 </example>
 <output>
+open the help panel instead of leaving the page
+still on the page: about:srcdoc
+gift wrap needs at least two items
+gift checked? false
+open the help panel instead of leaving the page
+dispatchEvent returned false defaultPrevented: true
 </output>
 <p>The preview did not navigate away, and the checkbox stayed unticked. <code>dispatchEvent</code> returns <code>false</code> when a listener cancelled the event, which is how your own code can offer "cancel this" to its listeners.</p>
 <p>Two details prevent confusing bugs. First, <code>preventDefault()</code> on a non-cancelable event does nothing. Second, listeners for scrolling and touch events are often added with <code>{ passive: true }</code>, a promise that the listener will not call <code>preventDefault()</code>. The browser can then scroll straight away instead of waiting for your code, and it ignores <code>preventDefault()</code> in such a listener.</p>
@@ -238,6 +271,9 @@ cart.click();
 console.log("still in the cart:", [...cart.children].map((li) => li.dataset.sku));
 </example>
 <output>
+removing rice-5kg
+removing garri-2kg
+still in the cart: [ 'palm-oil-1l' ]
 </output>
 <p>Three details make a delegated listener robust:</p>
 <ul>
@@ -312,6 +348,8 @@ console.log([...list.children].map((li) => `${li.querySelector(".toggle").checke
 console.log(document.querySelector(".summary").textContent);
 </example>
 <output>
+[ '[x] Buy detergent', '[x] Clean the Okafor flat' ]
+0 of 2 tasks left
 </output>
 <p>The third click landed on the title text, inside the <code>&lt;label&gt;</code>. Clicking a label clicks its checkbox (another default action), which fired a <code>change</code> event and ticked task 3. The checkbox listener uses <code>change</code> rather than <code>click</code> because <code>change</code> fires for every way of ticking a box: mouse, label, or the space bar.</p>
 </section>
@@ -351,6 +389,9 @@ addToCart("palm-oil-1l", 1);
 console.log("badge:", document.querySelector("#badge").textContent);
 </example>
 <output>
+analytics: rice-5kg added, cart has 2
+analytics: palm-oil-1l added, cart has 3
+badge: 3
 </output>
 <p>The cart knows nothing about badges or analytics; they listen on <code>document</code> and hear the event because it bubbles. A namespace in the name, such as <code>cart:</code>, avoids clashing with built-in event names. <code>dispatchEvent</code> is <strong>synchronous</strong>: all listeners have run by the time it returns, which is why the badge was already up to date on the last line.</p>
 <p><code>EventTarget</code> is also a class you can extend, so your own objects can have events without any DOM element. It exists in Node.js too, so this style works on both sides:</p>
@@ -375,6 +416,8 @@ try {
 }
 </example>
 <output>
+changed: { sku: 'rice-5kg', quantity: 2 }
+RangeError bad quantity 0
 </output>
 </section>
 
@@ -437,6 +480,13 @@ form.elements.leaveAtGate.checked = true;
 form.requestSubmit();
 </example>
 <output>
+fix these fields: [ 'phone' ]
+send to the server: {
+  name: 'Chioma Eze',
+  phone: '08031234567',
+  slot: 'evening',
+  leaveAtGate: 'on'
+}
 </output>
 <p>Things to notice:</p>
 <ul>
@@ -504,6 +554,10 @@ input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true 
 console.log("input events: 6, searches:", searches);
 </example>
 <output>
+search #1 for "ric": [ 'Rice 5kg', 'Rice 10kg' ]
+search #2 for "rice 1": [ 'Rice 10kg' ]
+cleared
+input events: 6, searches: 2
 </output>
 <p>Six input events produced two searches: one when the user paused after "ric", and one after "rice 1". Each keystroke cleared the previous timer, so only the last one in a burst survives. Setting <code>input.value</code> from code does not fire any event, which is why the example dispatches <code>input</code> itself.</p>
 <p>A debounce reduces the number of requests, but the answers can still arrive in the wrong order, and a slow answer for "ric" can land after the answer for "rice 1". The fix is to cancel the previous request with an <code>AbortController</code> each time a new search starts; <a href="/learn/browser-networking#abort">Networking from JavaScript</a> adds it to this search box. A related tool, <strong>throttle</strong>, runs a function at most once per period while events keep coming, which suits scroll and resize handlers.</p>
@@ -539,8 +593,13 @@ button.click();
 document.dispatchEvent(new KeyboardEvent("keydown", { key: "n" }));
 </example>
 <output>
+arrow listener
+once listener
+signal listener
+--- abort
+arrow listener
 </output>
-<p>The first removal did nothing: two arrow functions with the same code are two different objects. Keep a reference to any listener you want to remove. <code>{ once: true }</code> removes the listener after its first call. The <code>signal</code> option is the cleanest tool for a whole view: pass one <code>AbortSignal</code> to every listener it adds, and a single <code>controller.abort()</code> removes them all when the view closes. It is the same <code>AbortController</code> that cancels requests, so one abort can stop a view's listeners and its pending fetches together.</p>
+<p>The first removal did nothing: two arrow functions with the same code are two different objects, so "arrow listener" still runs, even after the abort, and nothing can remove it now. Keep a reference to any listener you want to remove. <code>{ once: true }</code> removes the listener after its first call. The <code>signal</code> option is the cleanest tool for a whole view: pass one <code>AbortSignal</code> to every listener it adds, and a single <code>controller.abort()</code> removes them all when the view closes. It is the same <code>AbortController</code> that cancels requests, so one abort can stop a view's listeners and its pending fetches together.</p>
 </section>
 
 <section>
@@ -719,6 +778,13 @@ await new Promise((resolve) => setTimeout(resolve, 200));
 show("after checkout");
 </example>
 <output>
+added: rice-5kg×2, palm-oil-1l×1 | Total: ₦19,300 | badge 3 | -
+bad quantity: rice-5kg×2, palm-oil-1l×2 | Total: ₦21,600 | badge 4 | "abc" is not a quantity. Use Remove to take an item out.
+too many: rice-5kg×2, palm-oil-1l×2 | Total: ₦21,600 | badge 4 | At most 20 of each item.
+removed: rice-5kg×2 | Total: ₦17,000 | badge 2 | -
+sending order: {"rice-5kg":2}
+submit ignored
+after checkout: (empty) | Total: ₦0 | badge 0 | Order placed. Thank you!
 </output>
 <p>Follow the output line by line:</p>
 <ul>
@@ -798,6 +864,9 @@ document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
 document.querySelector("#help").click();
 </example>
 <output>
+after inside click, hidden: false
+closed by outside click | hidden: true
+closed by Escape | hidden: true
 </output>
 <p><code>menu.contains(event.target)</code> decides "inside or outside" without stopping anyone's event. The last click printed nothing: the abort removed both listeners when the menu closed, so a closed menu does not keep reacting.</p>
 </solution>
@@ -832,6 +901,7 @@ await new Promise((resolve) => {
 console.log("calls:", calls, "runs between 3 and 5:", runs >= 3 && runs <= 5);
 </example>
 <output>
+calls: 10 runs between 3 and 5: true
 </output>
 <p>Timers are never exact, so the test checks a range rather than an exact count. A debounce would have run once, after the calls stopped; a throttle runs regularly while they continue, which is what a scroll position indicator needs.</p>
 </solution>
@@ -841,26 +911,31 @@ console.log("calls:", calls, "runs between 3 and 5:", runs >= 3 && runs <= 5);
 <solution>
 <example file="shortcut.js" project="checkout-form" runtime="dom">
 const nameBox = document.querySelector('input[name="name"]');
+const phone = document.querySelector('input[name="phone"]');
 
 document.addEventListener("keydown", (event) => {
   const typing = event.target.closest("input, textarea, select, [contenteditable]");
   if (event.key !== "n" || typing || event.ctrlKey || event.metaKey || event.altKey) return;
   event.preventDefault();
   nameBox.focus();
-  console.log("shortcut: focused the name box");
 });
 
-document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "n", bubbles: true, cancelable: true }));
-console.log("active element:", document.activeElement.name);
+function press(target, options = {}) {
+  const event = new KeyboardEvent("keydown", { key: "n", bubbles: true, cancelable: true, ...options });
+  target.dispatchEvent(event);
+  return event.defaultPrevented ? "shortcut ran" : "left alone";
+}
 
-const phone = document.querySelector('input[name="phone"]');
-phone.focus();
-phone.dispatchEvent(new KeyboardEvent("keydown", { key: "n", bubbles: true, cancelable: true }));
-console.log("active element:", document.activeElement.name);
+console.log("n on the page:", press(document.body));
+console.log("n in the phone box:", press(phone));
+console.log("Ctrl+n on the page:", press(document.body, { ctrlKey: true }));
 </example>
 <output>
+n on the page: shortcut ran
+n in the phone box: left alone
+Ctrl+n on the page: left alone
 </output>
-<p>The listener sits on <code>document</code> and uses the target to decide. <code>preventDefault()</code> stops the "n" from being typed into the box it just focused. Ignoring presses with <kbd>Ctrl</kbd>, <kbd>Cmd</kbd> or <kbd>Alt</kbd> keeps browser shortcuts working.</p>
+<p>The listener sits on <code>document</code> and uses the target to decide. The test reads <code>defaultPrevented</code> to see whether the shortcut ran; in the real page, <code>preventDefault()</code> also stops the "n" from being typed into the box it just focused. Ignoring presses with <kbd>Ctrl</kbd>, <kbd>Cmd</kbd> or <kbd>Alt</kbd> keeps browser shortcuts working.</p>
 </solution>
 </exercise>
 </section>

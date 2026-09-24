@@ -1,0 +1,827 @@
+---
+title: Runtime validation
+description: See why a type annotation on parsed JSON checks nothing, then validate data at runtime by hand, with a schema you build, with Zod, Valibot and JSON Schema, and infer types from schemas.
+minutes: 60
+youNeed: Types meet the runtime, Generics and tsconfig in depth
+youBuild: A validated order endpoint, a 60-line schema library with type inference, and the same contract in Zod, Valibot and JSON Schema
+keywords: runtime validation, typescript validation, JSON.parse any, zod, valibot, json schema, ajv, schema type inference, z.infer, InferOutput, safeParse, validation errors, coercion, mass assignment, parse dont validate
+objectives: Explain why an annotation such as const body: User = JSON.parse(text) validates nothing | Write a validator by hand, and see why hand-written validators drift from their types | Build a small schema library whose types are inferred from the schema | Validate the same contract with Zod, Valibot and JSON Schema, and read their issues | Choose between them for a backend, a browser bundle or a cross-language API | Handle coercion, unknown keys, refinements and size limits safely, and test a validator
+---
+<section>
+<h2 id="problem">A type annotation that checks nothing</h2>
+<p>Here is a signup handler that compiles under the strictest <a href="/learn/ts-tsconfig">tsconfig</a> in this course:</p>
+<example file="signup.ts">
+type NewUser = {
+  email: string;
+  name: string;
+};
+
+function createUser(input: NewUser) {
+  return { id: 1, role: "customer", ...input, email: input.email.toLowerCase() };
+}
+
+function handleSignup(rawBody: string) {
+  const body: NewUser = JSON.parse(rawBody);
+  return createUser(body);
+}
+
+console.log(handleSignup('{"email": "Ada@Example.com", "name": "Ada"}'));
+console.log(handleSignup('{"email": "bola@example.com", "name": "Bola", "role": "admin"}'));
+try {
+  console.log(handleSignup('{"email": 42}'));
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+{ id: 1, role: 'customer', email: 'ada@example.com', name: 'Ada' }
+{ id: 1, role: 'admin', email: 'bola@example.com', name: 'Bola' }
+TypeError: input.email.toLowerCase is not a function
+</output>
+<p>Three requests, three different outcomes, and only the first is correct. The second client made itself an <code>admin</code>, because <code>...input</code> copied a field that the type does not even mention. The third crashed with a <code>TypeError</code>, on a line TypeScript promised was safe.</p>
+<p>The reason is the one from <a href="/learn/ts-runtime#gap">Types meet the runtime</a>: <code>JSON.parse</code> returns <code>any</code>, and <code>const body: NewUser = …</code> is not a check. It is a <em>claim</em>, and the compiler accepts claims about <code>any</code> without question. When the code runs, the types are gone (<a href="/learn/ts-compiler#erasure">type erasure</a>); only JavaScript is left, and JavaScript does whatever the data says.</p>
+<p>So data from outside (request bodies, query strings, environment variables, files, other services' responses, even your own database after a migration) must be checked <strong>at runtime</strong>, by code that looks at the actual value. That is <strong>runtime validation</strong>. This lesson starts where <a href="/learn/ts-runtime#validator">ts-runtime's hand-written validator</a> stopped: why hand-written validators do not scale, how a schema can produce both the check and the type, and how Zod, Valibot and JSON Schema do it in practice.</p>
+</section>
+
+<section>
+<h2 id="two-kinds">Compile-time safety and runtime safety</h2>
+<p>TypeScript and a validator protect different things, and a backend needs both:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th></th><th>Compile-time (TypeScript)</th><th>Runtime (validation)</th></tr></thead>
+<tbody>
+<tr><td>Checks</td><td>Your code: that it uses values consistently with their declared types</td><td>The data: that an actual value has the shape and rules you require</td></tr>
+<tr><td>When</td><td>Before the program runs, once</td><td>Every time data arrives</td></tr>
+<tr><td>Knows about</td><td>Types you wrote or inferred</td><td>The real bytes a client sent</td></tr>
+<tr><td>Cost</td><td>None at runtime</td><td>Some CPU per request</td></tr>
+<tr><td>Can express</td><td>Shapes, unions, "might be undefined"</td><td>Also: "at least 3 characters", "a valid e-mail", "check-out after check-in", "at most 100 items"</td></tr>
+</tbody>
+</table></div>
+<p>The two meet at the <strong>boundary</strong>, the place where outside data enters your program. The validator turns an <code>unknown</code> value into a typed value (or a list of problems); from there on, TypeScript keeps the rest of the program consistent with that type. A validator is how you <em>earn</em> the type that the annotation above only claimed.</p>
+<reason title="What can a client actually send?">
+<p>A shop's API accepts new orders: a customer e-mail, a list of items (a SKU and a quantity each), and an optional priority, "normal" or "express". Before writing any validation code, list what could arrive in the body instead of a perfect order.</p>
+<ul>
+<li>What can be wrong with the <em>shape</em>: the top-level value, missing fields, wrong types?</li>
+<li>What can be wrong with <em>values</em> whose type is right?</li>
+<li>What extra things might arrive, and why would they be dangerous?</li>
+<li>Which problems can only be seen by looking at two fields together?</li>
+<li>What should the client get back when there are several problems?</li>
+</ul>
+<answer>
+<p><strong>Shape:</strong> not JSON at all; JSON that is <code>null</code>, an array or a string instead of an object; a missing <code>items</code>; <code>items</code> as an object; <code>quantity</code> as the string <code>"2"</code> (common from HTML forms).</p>
+<p><strong>Values:</strong> an e-mail without <code>@</code>; an empty <code>items</code> list; quantity 0, −3, 2.5 or 1e9; a SKU with spaces or 10,000 characters; a priority of <code>"urgent"</code>; strings with leading or trailing spaces.</p>
+<p><strong>Extras:</strong> fields the server sets itself: <code>id</code>, <code>status: "paid"</code>, <code>totalKobo: 1</code>, <code>role</code>. Copying them in is <strong>mass assignment</strong>, the bug from the signup handler. Also <code>__proto__</code> keys, very deep nesting, or a 50 MB body meant to exhaust memory.</p>
+<p><strong>Cross-field:</strong> the same SKU twice; a delivery date before the order date; more items than are in stock (that one needs the database, so it is a business rule, not validation).</p>
+<p><strong>Response:</strong> every problem at once, each with a path (<code>items[0].quantity</code>) and a message, and a 400 or 422 status (<a href="/learn/rest-design">REST design</a>). One problem at a time makes clients guess and retry.</p>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="by-hand">Validating by hand, and how it drifts</h2>
+<p>A hand-written validator takes <code>unknown</code>, checks every field, and builds a new object from the checked fields only (<a href="/learn/ts-runtime#validator">ts-runtime</a> built one for tasks). It works. Its weakness is that the type and the checks are two separate pieces of code that must be kept in step by hand:</p>
+<example file="drift.ts">
+type Customer = {
+  email: string;
+  name: string;
+  phone: string;
+};
+
+function parseCustomer(value: unknown): Customer {
+  if (typeof value !== "object" || value === null) throw new Error("customer must be an object");
+  const input = value as Record<string, unknown>;
+  if (typeof input.email !== "string" || !input.email.includes("@")) throw new Error("email is invalid");
+  if (typeof input.name !== "string" || input.name.trim() === "") throw new Error("name is required");
+  return input as Customer;
+}
+
+const customer = parseCustomer(JSON.parse('{"email": "ada@example.com", "name": "Ada"}'));
+try {
+  console.log(customer.phone.startsWith("+234"));
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+TypeError: Cannot read properties of undefined (reading 'startsWith')
+</output>
+<p>Someone added <code>phone</code> to the type last month and forgot the validator. Nothing warned them: the final <code>input as Customer</code> is an assertion, and assertions are never checked (<a href="/learn/ts-assertions">Type assertions</a>). The validator also returns the input object itself, so any extra field the client sent comes along. Both bugs come from the same root: <strong>the type and the validator are written separately</strong>, so they can disagree. The fix is to write the rules <em>once</em>, as data, and derive both the runtime check and the static type from them. That data is called a <strong>schema</strong>.</p>
+</section>
+
+<section>
+<h2 id="build">Build: a schema library with type inference</h2>
+<p>Before using a library, build a small one. It is about 60 lines, and it shows exactly what Zod, Valibot and <code>@zudojs/schema</code> do inside. The idea:</p>
+<ul>
+<li>A schema is an object with a <code>parse(value, path)</code> method that returns either the checked value or a list of issues.</li>
+<li>The schema's TypeScript type carries the type of value it produces: <code>Schema&lt;string&gt;</code>, <code>Schema&lt;number&gt;</code>.</li>
+<li>Combinators build bigger schemas from smaller ones: <code>object({ … })</code>, <code>array(…)</code>. Their return types are computed from their arguments.</li>
+<li>A type <code>Infer&lt;S&gt;</code> reads the produced type back out of any schema.</li>
+</ul>
+<file name="mini-schema.ts" project="mini">
+export type Issue = { path: string; message: string };
+export type Result<T> = { ok: true; value: T } | { ok: false; issues: Issue[] };
+
+export interface Schema<T> {
+  parse(value: unknown, path?: string): Result<T>;
+}
+
+export type Infer<S> = S extends Schema<infer T> ? T : never;
+
+const fail = (path: string, message: string): Result<never> => ({ ok: false, issues: [{ path: path || "(root)", message }] });
+const describe = (value: unknown) => (value === null ? "null" : Array.isArray(value) ? "array" : typeof value);
+
+export function string(rules: { min?: number; max?: number; pattern?: RegExp } = {}): Schema<string> {
+  return {
+    parse(value, path = "") {
+      if (typeof value !== "string") return fail(path, `expected a string, got ${describe(value)}`);
+      const text = value.trim();
+      if (rules.min !== undefined && text.length < rules.min) return fail(path, `must be at least ${rules.min} characters`);
+      if (rules.max !== undefined && text.length > rules.max) return fail(path, `must be at most ${rules.max} characters`);
+      if (rules.pattern && !rules.pattern.test(text)) return fail(path, `must match ${rules.pattern}`);
+      return { ok: true, value: text };
+    },
+  };
+}
+
+export function integer(rules: { min?: number; max?: number } = {}): Schema<number> {
+  return {
+    parse(value, path = "") {
+      if (typeof value !== "number" || !Number.isInteger(value)) return fail(path, `expected a whole number, got ${describe(value)}`);
+      if (rules.min !== undefined && value < rules.min) return fail(path, `must be at least ${rules.min}`);
+      if (rules.max !== undefined && value > rules.max) return fail(path, `must be at most ${rules.max}`);
+      return { ok: true, value };
+    },
+  };
+}
+
+export function oneOf<const T extends readonly string[]>(options: T): Schema<T[number]> {
+  return {
+    parse(value, path = "") {
+      const match = options.find((option) => option === value);
+      return match !== undefined ? { ok: true, value: match } : fail(path, `must be one of ${options.join(", ")}`);
+    },
+  };
+}
+
+export function array<T>(item: Schema<T>, rules: { min?: number; max?: number } = {}): Schema<T[]> {
+  return {
+    parse(value, path = "") {
+      if (!Array.isArray(value)) return fail(path, `expected an array, got ${describe(value)}`);
+      if (rules.min !== undefined && value.length < rules.min) return fail(path, `must have at least ${rules.min} item(s)`);
+      if (rules.max !== undefined && value.length > rules.max) return fail(path, `must have at most ${rules.max} items`);
+      const items: T[] = [];
+      const issues: Issue[] = [];
+      value.forEach((element, i) => {
+        const result = item.parse(element, `${path}[${i}]`);
+        if (result.ok) items.push(result.value);
+        else issues.push(...result.issues);
+      });
+      return issues.length > 0 ? { ok: false, issues } : { ok: true, value: items };
+    },
+  };
+}
+
+export function object<Shape extends Record<string, Schema<unknown>>>(shape: Shape): Schema<{ [K in keyof Shape]: Infer<Shape[K]> }> {
+  return {
+    parse(value, path = "") {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) return fail(path, `expected an object, got ${describe(value)}`);
+      const input = value as Record<string, unknown>;
+      const output: Record<string, unknown> = {};
+      const issues: Issue[] = [];
+      for (const key of Object.keys(shape)) {
+        const result = shape[key].parse(input[key], path ? `${path}.${key}` : key);
+        if (result.ok) output[key] = result.value;
+        else issues.push(...result.issues);
+      }
+      return issues.length > 0 ? { ok: false, issues } : { ok: true, value: output as { [K in keyof Shape]: Infer<Shape[K]> } };
+    },
+  };
+}
+
+export function withDefault<T>(inner: Schema<T>, fallback: T): Schema<T> {
+  return { parse: (value, path = "") => (value === undefined ? { ok: true, value: fallback } : inner.parse(value, path)) };
+}
+</file>
+<p>Two lines do the type-level work. <code>Infer&lt;S&gt;</code> uses <code>infer</code> to pull <code>T</code> out of <code>Schema&lt;T&gt;</code> (<a href="/learn/ts-conditional-types">conditional types</a> go deeper). And <code>object</code>'s return type, <code>Schema&lt;{ [K in keyof Shape]: Infer&lt;Shape[K]&gt; }&gt;</code>, is a <strong>mapped type</strong>: for every key in the shape, the output has that key, with the type its schema produces. The one <code>as</code> inside <code>object</code> is justified: the loop has just checked every key of the shape. Now the order contract, written once:</p>
+<file name="order-schema.ts" project="mini">
+import { array, integer, object, oneOf, string, withDefault, type Infer } from "./mini-schema.js";
+
+export const NewOrderSchema = object({
+  customerEmail: string({ max: 254, pattern: /^[^@\s]+@[^@\s]+\.[^@\s]+$/ }),
+  items: array(object({ sku: string({ pattern: /^[A-Z]+-\d+$/ }), quantity: integer({ min: 1, max: 50 }) }), { min: 1, max: 100 }),
+  priority: withDefault(oneOf(["normal", "express"]), "normal"),
+});
+
+export type NewOrder = Infer<typeof NewOrderSchema>;
+</file>
+<example file="order-demo.ts" project="mini">
+import { NewOrderSchema } from "./order-schema.js";
+
+const good = NewOrderSchema.parse({ customerEmail: " ada@example.com ", items: [{ sku: "RICE-5", quantity: 2 }], role: "admin" });
+if (good.ok) console.log(good.value);
+
+const bad = NewOrderSchema.parse({ customerEmail: "ada@", items: [{ sku: "rice", quantity: 0 }, { sku: "EGG-30" }], priority: "urgent" });
+if (!bad.ok) console.log(bad.issues);
+</example>
+<output>
+{
+  customerEmail: 'ada@example.com',
+  items: [ { sku: 'RICE-5', quantity: 2 } ],
+  priority: 'normal'
+}
+[
+  {
+    path: 'customerEmail',
+    message: 'must match /^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/'
+  },
+  { path: 'items[0].sku', message: 'must match /^[A-Z]+-\\d+$/' },
+  { path: 'items[0].quantity', message: 'must be at least 1' },
+  {
+    path: 'items[1].quantity',
+    message: 'expected a whole number, got undefined'
+  },
+  { path: 'priority', message: 'must be one of normal, express' }
+]
+</output>
+<p>Everything the hand-written validator struggled with comes for free. All five problems are reported at once, each with a path, including the missing quantity of the second item. The e-mail was trimmed, the default priority filled in, and <code>role: "admin"</code> was dropped, because <code>object</code> builds its output from the shape's keys only. And <code>NewOrder</code> was never written by hand. To prove the compiler really computed it, assign something wrong:</p>
+<example file="order-type.ts" project="mini" check="tsc-error">
+import type { NewOrder } from "./order-schema.js";
+
+const order: NewOrder = { customerEmail: "ada@example.com", items: [{ sku: "RICE-5", quantity: "2" }], priority: "urgent" };
+</example>
+<output kind="tsc">
+order-type.ts:3:86 - error TS2322: Type 'string' is not assignable to type 'number'.
+
+3 const order: NewOrder = { customerEmail: "ada@example.com", items: [{ sku: "RICE-5", quantity: "2" }], priority: "urgent" };
+                                                                                       ~~~~~~~~
+
+  order-schema.ts:5:67 - The expected type comes from property 'quantity' which is declared here on type '{ sku: string; quantity: number; }'
+    5   items: array(object({ sku: string({ pattern: /^[A-Z]+-\d+$/ }), quantity: integer({ min: 1, max: 50 }) }), { min: 1, max: 100 }),
+                                                                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+order-type.ts:3:104 - error TS2322: Type '"urgent"' is not assignable to type '"express" | "normal"'.
+
+3 const order: NewOrder = { customerEmail: "ada@example.com", items: [{ sku: "RICE-5", quantity: "2" }], priority: "urgent" };
+                                                                                                         ~~~~~~~~
+
+  order-schema.ts:6:3 - The expected type comes from property 'priority' which is declared here on type '{ customerEmail: string; items: { sku: string; quantity: number; }[]; priority: "express" | "normal"; }'
+    6   priority: withDefault(oneOf(["normal", "express"]), "normal"),
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 2 errors in the same file, starting at: order-type.ts:3
+</output>
+<p>The type knows that <code>quantity</code> is a number and <code>priority</code> is <code>"normal" | "express"</code>, because the schema says so. Change the schema and the type changes with it; there is nothing left to drift. This technique, a runtime value whose TypeScript type describes what it produces, is called <strong>schema type inference</strong>, and every library below is built on it. The handler now looks like this:</p>
+<example file="handler.ts" project="mini">
+import { NewOrderSchema, type NewOrder } from "./order-schema.js";
+
+function placeOrder(order: NewOrder) {
+  const units = order.items.reduce((sum, item) => sum + item.quantity, 0);
+  return { id: 2208, status: "pending", units, ...order };
+}
+
+function handleNewOrder(rawBody: string) {
+  let body: unknown;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    return { status: 400, body: { error: "body is not valid JSON" } };
+  }
+  const result = NewOrderSchema.parse(body);
+  if (!result.ok) return { status: 422, body: { error: "invalid order", issues: result.issues } };
+  return { status: 201, body: placeOrder(result.value) };
+}
+
+console.log(JSON.stringify(handleNewOrder('{"customerEmail": "ada@example.com", "items": [{"sku": "RICE-5", "quantity": 2}], "status": "paid"}')));
+console.log(JSON.stringify(handleNewOrder('{"customerEmail": "ada@example.com", "items": []}')));
+</example>
+<output>
+{"status":201,"body":{"id":2208,"status":"pending","units":2,"customerEmail":"ada@example.com","items":[{"sku":"RICE-5","quantity":2}],"priority":"normal"}}
+{"status":422,"body":{"error":"invalid order","issues":[{"path":"items","message":"must have at least 1 item(s)"}]}}
+</output>
+<p>The client's <code>"status": "paid"</code> never reached <code>placeOrder</code>: spreading <code>...order</code> is safe here because <code>order</code> is the validated copy, not the raw body. This is the idea sometimes summarised as <strong>"parse, don't validate"</strong>: instead of checking a value and then carrying on with the original, turn it into a new, typed value, and use only that.</p>
+<p>A real library adds much more: optional keys, unions, transforms, custom messages, e-mail and URL formats, async checks, performance work. Let us look at three.</p>
+</section>
+
+<section>
+<h2 id="zod">Zod</h2>
+<p><strong>Zod</strong> is the most widely used TypeScript validation library. Its API is a chain of methods on schema objects, much like the one you just built. The same order contract in Zod 4:</p>
+<example file="order-zod.ts" project="zod" browser="no">
+import * as z from "zod";
+
+const NewOrder = z.object({
+  customerEmail: z.email(),
+  items: z
+    .array(z.object({ sku: z.string().regex(/^[A-Z]+-\d+$/), quantity: z.number().int().min(1).max(50) }))
+    .min(1)
+    .max(100),
+  deliveryNote: z.string().trim().max(200).optional(),
+  priority: z.enum(["normal", "express"]).default("normal"),
+});
+
+type NewOrder = z.infer<typeof NewOrder>;
+
+const ok = NewOrder.safeParse({ customerEmail: "ada@example.com", items: [{ sku: "RICE-5", quantity: 2 }], role: "admin" });
+if (ok.success) {
+  const order: NewOrder = ok.data;
+  console.log(order);
+}
+
+const bad = NewOrder.safeParse({ customerEmail: "ada@", items: [{ sku: "rice", quantity: 0 }], priority: "urgent" });
+if (!bad.success) {
+  for (const issue of bad.error.issues) console.log(`${issue.path.join(".")}: ${issue.message}`);
+}
+</example>
+<output>
+{
+  customerEmail: 'ada@example.com',
+  items: [ { sku: 'RICE-5', quantity: 2 } ],
+  priority: 'normal'
+}
+customerEmail: Invalid email address
+items.0.sku: Invalid string: must match pattern /^[A-Z]+-\d+$/
+items.0.quantity: Too small: expected number to be >=1
+priority: Invalid option: expected one of "normal"|"express"
+</output>
+<ul>
+<li><code>z.infer&lt;typeof NewOrder&gt;</code> is the <code>Infer</code> you wrote: the type comes from the schema.</li>
+<li><code>safeParse</code> returns <code>{ success: true, data }</code> or <code>{ success: false, error }</code>, a discriminated union, so TypeScript knows <code>data</code> exists only after checking <code>success</code>. <code>parse</code> returns the data or throws a <code>ZodError</code>.</li>
+<li>Each issue has a <code>code</code>, a <code>path</code> (an array such as <code>["items", 0, "quantity"]</code>) and a <code>message</code>.</li>
+<li>Unknown keys like <code>role</code> are stripped by default. <code>z.strictObject({...})</code> rejects them with an <code>unrecognized_keys</code> issue instead, which is better when a typo in a field name should be reported, not silently ignored.</li>
+</ul>
+<p>Zod has helpers for turning issues into responses: <code>z.flattenError(error)</code> groups messages by top-level field (good for forms), and <code>z.prettifyError(error)</code> makes a readable text block (good for logs and CLIs):</p>
+<example file="zod-errors.ts" project="zod" browser="no">
+import * as z from "zod";
+
+const Signup = z.object({
+  email: z.email(),
+  name: z.string().trim().min(2),
+  age: z.number().int().min(18),
+});
+
+const result = Signup.safeParse({ email: "bola", name: " B ", age: 16.5 });
+if (!result.success) {
+  console.log(z.flattenError(result.error).fieldErrors);
+  console.log(z.prettifyError(result.error));
+}
+</example>
+<output>
+{
+  email: [ 'Invalid email address' ],
+  name: [ 'Too small: expected string to have >=2 characters' ],
+  age: [ 'Invalid input: expected int, received number' ]
+}
+✖ Invalid email address
+  → at email
+✖ Too small: expected string to have >=2 characters
+  → at name
+✖ Invalid input: expected int, received number
+  → at age
+</output>
+<h3>Coercion, transforms and refinements</h3>
+<p>Query strings, form fields and environment variables are always text. <code>z.coerce.number()</code> converts before checking. Converting is where the traps are, so look at what it does with edge cases:</p>
+<example file="zod-coerce.ts" project="zod" browser="no">
+import * as z from "zod";
+
+const ProductQuery = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  inStock: z.stringbool().optional(),
+});
+console.log(ProductQuery.parse({ page: "3", inStock: "false" }));
+console.log(ProductQuery.parse({}));
+
+console.log(z.coerce.number().parse(""), z.coerce.boolean().parse("false"));
+</example>
+<output>
+{ page: 3, inStock: false }
+{ page: 1 }
+0 true
+</output>
+<p>The last line is a warning. <code>z.coerce.number()</code> calls <code>Number(value)</code>, and <code>Number("")</code> is 0; <code>z.coerce.boolean()</code> calls <code>Boolean(value)</code>, and any non-empty string, including <code>"false"</code>, is <code>true</code>. For booleans from text, use <code>z.stringbool()</code>, which only accepts words like <code>"true"</code>/<code>"false"</code>/<code>"yes"</code>/<code>"no"</code>. For numbers, decide whether an empty field means "missing" and handle it before coercing.</p>
+<p><code>.transform</code> converts a checked value into another type (the output type changes with it), and <code>.refine</code> adds a rule of your own, including rules across several fields:</p>
+<example file="zod-refine.ts" project="zod" browser="no">
+import * as z from "zod";
+
+const NairaToKobo = z
+  .string()
+  .regex(/^₦?\d{1,3}(,\d{3})*(\.\d{2})?$/, "must look like ₦8,500.00")
+  .transform((text) => {
+    const [naira, kobo = "00"] = text.replace("₦", "").replaceAll(",", "").split(".");
+    return Number(naira) * 100 + Number(kobo);
+  });
+
+const Booking = z
+  .object({ room: z.string(), checkIn: z.iso.date(), checkOut: z.iso.date(), deposit: NairaToKobo })
+  .refine((b) => b.checkOut > b.checkIn, { message: "checkOut must be after checkIn", path: ["checkOut"] });
+
+type BookingInput = z.input<typeof Booking>;
+type Booking = z.output<typeof Booking>;
+
+const input: BookingInput = { room: "Ocean 4", checkIn: "2026-10-02", checkOut: "2026-10-05", deposit: "₦25,000.00" };
+const booking: Booking = Booking.parse(input);
+console.log(booking);
+
+const wrong = Booking.safeParse({ ...input, checkOut: "2026-10-01", deposit: "25.000,00" });
+if (!wrong.success) console.log(wrong.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`));
+</example>
+<output>
+{
+  room: 'Ocean 4',
+  checkIn: '2026-10-02',
+  checkOut: '2026-10-05',
+  deposit: 2500000
+}
+[
+  'deposit: must look like ₦8,500.00',
+  'checkOut: checkOut must be after checkIn'
+]
+</output>
+<p>With a transform, the input type and the output type differ: <code>deposit</code> is a string going in and a number of kobo coming out. <code>z.input</code> and <code>z.output</code> name the two (<code>z.infer</code> is the output). Notice also that the refinement ran on the second input even though <code>deposit</code> had failed: a failed format check such as a regex does not stop parsing, so you get both issues at once. A field with the wrong <em>type</em> (a number for <code>room</code>) does stop it, and then the refinement is skipped, because it could not safely read the fields.</p>
+</section>
+
+<section>
+<h2 id="valibot">Valibot</h2>
+<p><strong>Valibot</strong> solves the same problem with a different design: instead of methods on schema objects, every check is a separate function, and you combine them with <code>pipe</code>. Here is the same contract in Valibot 1:</p>
+<example file="order-valibot.ts" project="valibot" browser="no">
+import * as v from "valibot";
+
+const NewOrder = v.object({
+  customerEmail: v.pipe(v.string(), v.email()),
+  items: v.pipe(
+    v.array(
+      v.object({
+        sku: v.pipe(v.string(), v.regex(/^[A-Z]+-\d+$/)),
+        quantity: v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(50)),
+      }),
+    ),
+    v.minLength(1),
+    v.maxLength(100),
+  ),
+  deliveryNote: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(200))),
+  priority: v.optional(v.picklist(["normal", "express"]), "normal"),
+});
+
+type NewOrder = v.InferOutput<typeof NewOrder>;
+
+const ok = v.safeParse(NewOrder, { customerEmail: "ada@example.com", items: [{ sku: "RICE-5", quantity: 2 }], role: "admin" });
+if (ok.success) {
+  const order: NewOrder = ok.output;
+  console.log(order);
+}
+
+const bad = v.safeParse(NewOrder, { customerEmail: "ada@", items: [{ sku: "rice", quantity: 0 }], priority: "urgent" });
+if (!bad.success) console.log(v.summarize(bad.issues));
+</example>
+<output>
+{
+  customerEmail: 'ada@example.com',
+  items: [ { sku: 'RICE-5', quantity: 2 } ],
+  priority: 'normal'
+}
+× Invalid email: Received "ada@"
+  → at customerEmail
+× Invalid format: Expected /^[A-Z]+-\d+$/ but received "rice"
+  → at items.0.sku
+× Invalid value: Expected >=1 but received 0
+  → at items.0.quantity
+× Invalid type: Expected ("normal" | "express") but received "urgent"
+  → at priority
+</output>
+<p>The same ideas under other names: <code>v.InferOutput</code> (and <code>v.InferInput</code>) instead of <code>z.infer</code>, <code>v.safeParse(schema, value)</code> returning <code>{ success, output, issues }</code>, <code>v.picklist</code> for a fixed set of strings, <code>v.optional(schema, default)</code> for defaults, <code>v.strictObject</code> to reject unknown keys, <code>v.summarize</code> and <code>v.flatten</code> for messages. Unknown keys are stripped here too. Notice the messages say what was received (<code>Received "ada@"</code>): convenient in logs, but think before echoing user input back in an API response.</p>
+<h3>Why the function style exists: bundle size</h3>
+<p>In a browser app, every kilobyte of JavaScript must be downloaded and parsed on the user's phone. A bundler removes code nobody uses, a step called <strong>tree shaking</strong>, but it can only remove whole functions or modules, not unused methods on a class. Zod's methods live on its schema classes, so using <code>z.string()</code> brings in most of the string checks. Valibot's checks are separate functions, so a form that uses five of them ships only those five. For a backend this barely matters; for a signup form on a slow mobile connection it can. (Zod also offers a function-style build, <code>zod/mini</code>, for the same reason.)</p>
+</section>
+
+<section>
+<h2 id="json-schema">JSON Schema</h2>
+<p>Zod and Valibot schemas are TypeScript code. <strong>JSON Schema</strong> is a different kind of thing: a standard for writing a schema as a <em>JSON document</em>. Because it is just data, any language can read it. A Python service, a Go client, an API gateway and a documentation site can all use the same file, and OpenAPI (<a href="/learn/zudo-openapi">OpenAPI with ZudoJS</a>) describes request and response bodies with it. The order contract as JSON Schema:</p>
+<file name="new-order.schema.json" project="ajv">
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shop.example/schemas/new-order.json",
+  "type": "object",
+  "properties": {
+    "customerEmail": { "type": "string", "format": "email" },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "sku": { "type": "string", "pattern": "^[A-Z]+-\\d+$" },
+          "quantity": { "type": "integer", "minimum": 1 }
+        },
+        "required": ["sku", "quantity"],
+        "additionalProperties": false
+      }
+    },
+    "priority": { "enum": ["normal", "express"], "default": "normal" }
+  },
+  "required": ["customerEmail", "items"],
+  "additionalProperties": false
+}
+</file>
+<p>A JSON Schema does nothing by itself; a <strong>validator</strong> reads it and checks values against it. The standard one for JavaScript is <strong>Ajv</strong>, which compiles a schema into a fast JavaScript function. It is not installed in this course's browser terminal, so here is a run on a computer (<code>npm install ajv ajv-formats</code>; e-mail and other formats live in the second package):</p>
+<file name="validate-order.js" project="ajv">
+import { readFileSync } from "node:fs";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import addFormats from "ajv-formats";
+
+const schema = JSON.parse(readFileSync("./new-order.schema.json", "utf8"));
+const ajv = new Ajv2020({ allErrors: true, useDefaults: true });
+addFormats(ajv);
+const validate = ajv.compile(schema);
+
+const good = { customerEmail: "ada@example.com", items: [{ sku: "RICE-5", quantity: 2 }] };
+console.log(validate(good), good);
+
+const bad = { customerEmail: "ada@", items: [{ sku: "rice", quantity: 0 }], priority: "urgent", role: "admin" };
+console.log(validate(bad));
+for (const error of validate.errors) {
+  console.log(`${error.instancePath || "(root)"} ${error.message}`);
+}
+</file>
+<shell title="Terminal (a real run: Node.js 24, Ajv 8.20)">
+$ node validate-order.js
+true {
+  customerEmail: 'ada@example.com',
+  items: [ { sku: 'RICE-5', quantity: 2 } ],
+  priority: 'normal'
+}
+false
+(root) must NOT have additional properties
+/customerEmail must match format "email"
+/items/0/sku must match pattern "^[A-Z]+-\d+$"
+/items/0/quantity must be >= 1
+/priority must be equal to one of the allowed values
+</shell>
+<p>Three differences from the TypeScript libraries show up at once:</p>
+<ul>
+<li><strong>No type inference.</strong> <code>validate(good)</code> returns a boolean; nothing turns the JSON document into a TypeScript type. You write the type separately (and it can drift), use a type guard (<code>ajv.compile&lt;NewOrder&gt;(schema)</code> gives you <code>value is NewOrder</code>), or generate types with a tool such as <code>json-schema-to-ts</code> or TypeBox.</li>
+<li><strong>It changes the input in place.</strong> <code>useDefaults</code> wrote <code>priority: 'normal'</code> into <code>good</code> itself. Zod and Valibot return a new object.</li>
+<li><strong>Unknown keys are an error</strong> here (<code>additionalProperties: false</code>) rather than silently removed; Ajv can also remove them with <code>removeAdditional</code>.</li>
+</ul>
+<h3>Generating JSON Schema from Zod</h3>
+<p>You do not have to choose one or the other. Zod 4 can translate a schema into JSON Schema, so TypeScript code stays the single source of truth while other tools get the standard format:</p>
+<example file="to-json-schema.ts" project="zod" browser="no">
+import * as z from "zod";
+
+const OrderItem = z.object({
+  sku: z.string().regex(/^[A-Z]+-\d+$/),
+  quantity: z.number().int().min(1).max(50),
+});
+
+console.log(JSON.stringify(z.toJSONSchema(OrderItem), null, 2));
+</example>
+<output>
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "sku": {
+      "type": "string",
+      "pattern": "^[A-Z]+-\\d+$"
+    },
+    "quantity": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 50
+    }
+  },
+  "required": [
+    "sku",
+    "quantity"
+  ],
+  "additionalProperties": false
+}
+</output>
+<p>Read the translation critically: it says <code>"additionalProperties": false</code>, but the Zod schema <em>strips</em> unknown keys rather than rejecting them. A client that follows the JSON Schema is fine, but the two validators disagree about a request with extra fields. Translations are close, not identical; checks written in code, like <code>.refine</code> and <code>.transform</code>, cannot be expressed in JSON at all.</p>
+</section>
+
+<section>
+<h2 id="compare">Choosing a validator</h2>
+<div class="lx-table-wrap"><table>
+<thead><tr><th></th><th>Hand-written</th><th>Zod</th><th>Valibot</th><th>JSON Schema + Ajv</th><th><code>@zudojs/schema</code></th></tr></thead>
+<tbody>
+<tr><td>Type from the rules</td><td>No: written twice, can drift</td><td>Yes: <code>z.infer</code></td><td>Yes: <code>v.InferOutput</code></td><td>No (tools can generate it)</td><td>Yes: <code>Infer</code></td></tr>
+<tr><td>Style</td><td>Plain code</td><td>Method chains</td><td>Functions + <code>pipe</code></td><td>JSON document</td><td>Method chains</td></tr>
+<tr><td>Other languages can use it</td><td>No</td><td>Via <code>z.toJSONSchema</code></td><td>Via an add-on package</td><td>Yes, it is the standard</td><td>No</td></tr>
+<tr><td>Bundle size in a browser</td><td>Smallest</td><td>Larger (<code>zod/mini</code> is smaller)</td><td>Small, tree-shakes per check</td><td>Ajv is large; schemas can be precompiled</td><td>Part of ZudoJS</td></tr>
+<tr><td>Transforms, custom rules</td><td>Anything</td><td>Yes</td><td>Yes</td><td>Limited to the standard's keywords</td><td>Yes</td></tr>
+<tr><td>Fits best</td><td>One or two tiny shapes, no dependencies</td><td>Most TypeScript backends and apps</td><td>Browser forms where size matters</td><td>Contracts shared across languages, OpenAPI</td><td>ZudoJS applications</td></tr>
+</tbody>
+</table></div>
+<p>ZudoJS has its own schema library, <code>@zudojs/schema</code>, built on the same idea: describe the data once, get the check and the type. It is what the framework's HTTP layer, configuration and OpenAPI generation use, so in a ZudoJS app you validate with it rather than adding a second library:</p>
+<example file="order-zudo.ts">
+import { schema, type Infer } from "@zudojs/schema";
+
+const NewOrder = schema.object({
+  customerEmail: schema.string().email(),
+  items: schema.array(schema.object({ sku: schema.string().regex(/^[A-Z]+-\d+$/), quantity: schema.number().int().positive() })).min(1),
+  priority: schema.default(schema.enum(["normal", "express"]), "normal"),
+});
+type NewOrder = Infer<typeof NewOrder>;
+
+const result = NewOrder.safeParse({ customerEmail: "ada@", items: [{ sku: "rice", quantity: 0 }], priority: "urgent" });
+if (!result.success) console.log(result.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`));
+
+const ok = NewOrder.safeParse({ customerEmail: "ada@example.com", items: [{ sku: "RICE-5", quantity: 2 }], role: "admin" });
+if (ok.success) {
+  const order: NewOrder = ok.data;
+  console.log(order);
+}
+</example>
+<output>
+[
+  'customerEmail: Invalid email format',
+  'items.0.sku: String does not match pattern',
+  'items.0.quantity: Expected positive number, received 0',
+  'priority: Expected one of "normal", "express"'
+]
+{
+  customerEmail: 'ada@example.com',
+  items: [ { sku: 'RICE-5', quantity: 2 } ],
+  priority: 'normal'
+}
+</output>
+<p>The shape of the API will look familiar by now. <a href="/learn/zudo-validation">Schemas and validation in depth</a> uses it on every part of a request: route parameters, query strings with coercion, bodies, partial updates and responses.</p>
+</section>
+
+<section>
+<h2 id="production">Validation in production</h2>
+<ul>
+<li><strong>Validate once, at the boundary, and pass the typed result inward.</strong> Services and repositories take <code>NewOrder</code>, never <code>unknown</code>, and never re-check.</li>
+<li><strong>Use the parsed output, never the raw input.</strong> The output is the allow-listed copy. Spreading or saving the raw body brings mass assignment back.</li>
+<li><strong>Limit size before parsing.</strong> A schema's <code>.max(100)</code> runs <em>after</em> <code>JSON.parse</code> has built the whole object in memory. Cap the request body size (1 MB is common) in the HTTP layer first, and put maximums on every string and array in the schema.</li>
+<li><strong>Be careful with coercion.</strong> <code>Number("")</code> is 0 and <code>Boolean("false")</code> is <code>true</code>. Coerce only where the input really is text (query strings, form fields, environment variables), never in JSON bodies, where the client can send real numbers.</li>
+<li><strong>Validation is not authorisation.</strong> A perfectly valid <code>{ "accountId": 7 }</code> may point at someone else's account. Check permissions after validating, with the typed value.</li>
+<li><strong>Return every issue, with paths, as a 422</strong> (or 400), but do not echo large or sensitive input back; a message and a path are enough. Log the details on the server.</li>
+<li><strong>Validate data from other services and your own storage too</strong> when it can change without your code changing: third-party APIs, message queues, JSON columns, files. A schema at those boundaries turns a mysterious crash deep in the code into a clear error at the edge.</li>
+<li><strong>Share schemas, not just types.</strong> If the browser and the server both validate the same form, export the schema from one module and import it in both, so the rules cannot drift between them.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="testing">Testing a validator</h2>
+<p>A validator is a function from <code>unknown</code> to a result, which makes it easy to test. Use a table of cases: every rule gets one input just inside the limit and one just outside, plus the shape errors (not an object, <code>null</code>, an array). Then, because the whole point is to survive <em>anything</em>, throw random data at it. <strong>fast-check</strong> generates thousands of random JSON values, and checks a property for each: the validator never throws, and everything it accepts really matches the type:</p>
+<example file="order-property.ts" project="mini" browser="no">
+import fc from "fast-check";
+import { NewOrderSchema } from "./order-schema.js";
+
+let accepted = 0;
+fc.assert(
+  fc.property(fc.jsonValue(), (value) => {
+    const result = NewOrderSchema.parse(value);
+    if (!result.ok) return result.issues.length > 0;
+    accepted++;
+    return typeof result.value.customerEmail === "string" && result.value.items.length > 0;
+  }),
+  { numRuns: 2000, seed: 42 },
+);
+console.log(`2000 random JSON values: none crashed the validator, ${accepted} accepted`);
+
+const almostValid = fc.record({
+  customerEmail: fc.constantFrom("ada@example.com", "ada@", "", 42),
+  items: fc.array(fc.record({ sku: fc.constantFrom("RICE-5", "rice", ""), quantity: fc.integer({ min: -2, max: 60 }) }), { maxLength: 3 }),
+});
+let valid = 0;
+fc.assert(
+  fc.property(almostValid, (value) => {
+    const result = NewOrderSchema.parse(value);
+    if (result.ok) {
+      valid++;
+      return result.value.items.every((item) => item.quantity >= 1 && item.quantity <= 50);
+    }
+    return true;
+  }),
+  { numRuns: 2000, seed: 42 },
+);
+console.log(`2000 near-miss orders: every accepted order has quantities from 1 to 50 (${valid} accepted)`);
+</example>
+<output>
+2000 random JSON values: none crashed the validator, 0 accepted
+2000 near-miss orders: every accepted order has quantities from 1 to 50 (48 accepted)
+</output>
+<p>Random JSON almost never looks like an order, so the first property mostly proves that nothing crashes the validator on garbage. The second generator builds <strong>near misses</strong>, values close to valid with bad fields mixed in, which is where the boundary bugs hide. If a property ever fails, fast-check shrinks the input to a minimal failing case, the same idea as the <a href="/learn/debug-method#isolate">shrinker in the debugging lesson</a>. <a href="/learn/testing-strategies">Testing strategies</a> covers property-based testing properly.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Add a field without drift">
+<p>Add an optional <code>couponCode</code> (uppercase letters and digits, 4 to 12 characters) to the mini library's <code>NewOrderSchema</code>. You need an <code>optional</code> combinator first. Show that <code>NewOrder</code> now includes <code>couponCode</code> with no other edit.</p>
+<solution>
+<example file="coupon.ts" project="mini">
+import { object, string, integer, array, type Infer, type Schema } from "./mini-schema.js";
+
+function optional<T>(inner: Schema<T>): Schema<T | undefined> {
+  return { parse: (value, path = "") => (value === undefined ? { ok: true, value: undefined } : inner.parse(value, path)) };
+}
+
+const NewOrderSchema = object({
+  customerEmail: string({ pattern: /^[^@\s]+@[^@\s]+\.[^@\s]+$/ }),
+  items: array(object({ sku: string({ pattern: /^[A-Z]+-\d+$/ }), quantity: integer({ min: 1 }) }), { min: 1 }),
+  couponCode: optional(string({ min: 4, max: 12, pattern: /^[A-Z0-9]+$/ })),
+});
+type NewOrder = Infer<typeof NewOrderSchema>;
+
+const order: NewOrder = { customerEmail: "ada@example.com", items: [{ sku: "RICE-5", quantity: 1 }], couponCode: undefined };
+console.log(order.couponCode);
+console.log(NewOrderSchema.parse({ customerEmail: "ada@example.com", items: [{ sku: "RICE-5", quantity: 1 }], couponCode: "WELCOME10" }));
+console.log(NewOrderSchema.parse({ customerEmail: "ada@example.com", items: [{ sku: "RICE-5", quantity: 1 }], couponCode: "no" }));
+</example>
+<output>
+undefined
+{
+  ok: true,
+  value: {
+    customerEmail: 'ada@example.com',
+    items: [ [Object] ],
+    couponCode: 'WELCOME10'
+  }
+}
+{
+  ok: false,
+  issues: [ { path: 'couponCode', message: 'must be at least 4 characters' } ]
+}
+</output>
+<p>The type gained <code>couponCode: string | undefined</code> automatically. (In this small library the key is still required in the <em>type</em>, with <code>undefined</code> allowed; real libraries make it an optional key, <code>couponCode?: string</code>, with a little more type-level work.)</p>
+</solution>
+</exercise>
+<exercise title="Query strings with Zod">
+<p>Write a Zod schema for <code>GET /products?page=2&amp;perPage=20&amp;category=grains</code>: <code>page</code> defaults to 1 and <code>perPage</code> to 20, both whole numbers, <code>perPage</code> at most 100; <code>category</code> is optional, one of <code>grains</code>, <code>dairy</code>, <code>drinks</code>. Parse <code>Object.fromEntries(new URLSearchParams(query))</code> for three queries, including one with <code>perPage=500</code>.</p>
+<solution>
+<example file="product-query.ts" project="zod" browser="no">
+import * as z from "zod";
+
+const ProductQuery = z.strictObject({
+  page: z.coerce.number().int().min(1).default(1),
+  perPage: z.coerce.number().int().min(1).max(100).default(20),
+  category: z.enum(["grains", "dairy", "drinks"]).optional(),
+});
+
+for (const query of ["page=2&perPage=20&category=grains", "", "perPage=500&sort=price"]) {
+  const result = ProductQuery.safeParse(Object.fromEntries(new URLSearchParams(query)));
+  console.log(result.success ? result.data : result.error.issues.map((i) => i.message));
+}
+</example>
+<output>
+{ page: 2, perPage: 20, category: 'grains' }
+{ page: 1, perPage: 20 }
+[ 'Too big: expected number to be <=100', 'Unrecognized key: "sort"' ]
+</output>
+<p><code>z.coerce</code> is right here because query values are always text. <code>strictObject</code> reports the unknown <code>sort</code> parameter instead of silently ignoring it, so a client that misspells a filter finds out. Both problems in the last query are reported together.</p>
+</solution>
+</exercise>
+<exercise title="Same rules, three validators">
+<p>A transfer request has <code>fromAccount</code> and <code>toAccount</code> (10-digit strings) and <code>amountKobo</code> (a whole number from 100 to 50,000,000), and the two accounts must differ. Write it in Valibot, using <code>v.forward</code> and <code>v.partialCheck</code> for the cross-field rule, and run it on a valid transfer and on a transfer to the same account.</p>
+<solution>
+<example file="transfer-valibot.ts" project="valibot" browser="no">
+import * as v from "valibot";
+
+const AccountNumber = v.pipe(v.string(), v.regex(/^\d{10}$/, "must be 10 digits"));
+
+const Transfer = v.pipe(
+  v.object({
+    fromAccount: AccountNumber,
+    toAccount: AccountNumber,
+    amountKobo: v.pipe(v.number(), v.integer(), v.minValue(100), v.maxValue(50_000_000)),
+  }),
+  v.forward(
+    v.partialCheck([["fromAccount"], ["toAccount"]], (t) => t.fromAccount !== t.toAccount, "must differ from fromAccount"),
+    ["toAccount"],
+  ),
+);
+
+for (const input of [
+  { fromAccount: "0123456789", toAccount: "9876543210", amountKobo: 500000 },
+  { fromAccount: "0123456789", toAccount: "0123456789", amountKobo: 500000 },
+]) {
+  const result = v.safeParse(Transfer, input);
+  console.log(result.success ? result.output : v.flatten(result.issues).nested);
+}
+</example>
+<output>
+{
+  fromAccount: '0123456789',
+  toAccount: '9876543210',
+  amountKobo: 500000
+}
+{ toAccount: [ 'must differ from fromAccount' ] }
+</output>
+<p><code>partialCheck</code> runs as soon as the fields it names are valid, even if other fields have errors, and <code>forward</code> attaches the issue to <code>toAccount</code>, so a form can show it next to the right input. The type from <code>v.InferOutput&lt;typeof Transfer&gt;</code> is unaffected by the check.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Summary</h2>
+<ul>
+<li><code>const body: User = JSON.parse(text)</code> is a claim, not a check. Types are erased; data from outside must be validated at runtime, at the boundary.</li>
+<li>TypeScript checks your code; a validator checks your data. The validator turns <code>unknown</code> into a typed value, and TypeScript takes it from there.</li>
+<li>Hand-written validators work but drift from their types. A schema written once can produce both the check and the type (<code>Infer</code>, <code>z.infer</code>, <code>v.InferOutput</code>).</li>
+<li>Parse, don't validate: use the returned, allow-listed copy, never the raw input, and report every issue with its path.</li>
+<li>Zod: method chains, the most common choice. Valibot: functions and <code>pipe</code>, smallest in the browser. JSON Schema with Ajv: a language-neutral document for shared contracts and OpenAPI, without type inference. <code>@zudojs/schema</code> in ZudoJS apps.</li>
+<li>Coerce only text inputs, and know that <code>Number("")</code> is 0 and <code>Boolean("false")</code> is true. Limit sizes before parsing. Validation is not authorisation.</li>
+<li>Test validators with a table of boundary cases and with random and near-miss inputs.</li>
+</ul>
+<p>Next: <a href="/learn/ts-errors">Typed error handling</a>, where the failures that validation reports, and every other failure, get types of their own.</p>
+</section>

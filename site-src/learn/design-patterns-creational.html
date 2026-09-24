@@ -1,0 +1,735 @@
+---
+title: Creational patterns
+description: Fix real object-creation bugs with factories, abstract factories and builders, then see why a DI container's singleton lifetime beats the singleton pattern.
+minutes: 55
+youNeed: SOLID, DRY, KISS and YAGNI, Classes in TypeScript and SQL basics
+youBuild: A payment provider factory routed by country, per-environment infrastructure families, an immutable SQL query builder run against PostgreSQL, and a singleton replaced by a container lifetime
+keywords: design patterns, creational patterns, factory pattern, factory function, abstract factory, builder pattern, query builder, fluent interface, immutable builder, singleton pattern, singleton lifetime, dependency injection, typescript design patterns, zudojs container
+objectives: Replace creation logic copied across a codebase with one factory that fails fast on unknown input | Use an abstract factory to guarantee that infrastructure parts come from the same environment | Decide between an options object and a builder, and write an immutable builder that produces parameterised SQL | Explain why tests that share a singleton depend on their order, and replace it with a lifetime chosen in the composition root | Recognise where ZudoJS uses factories and lifetimes
+---
+<section>
+<h2 id="problem">The refund that went to the wrong provider</h2>
+<p>A shop sells across West and East Africa. Each country uses a different payment provider: Paystack in Nigeria, Flutterwave in Ghana, and since June, M-Pesa in Kenya. The code that picks the provider was written with <code>if</code>s, and then copied: once in the checkout, once in the refund handler, and once in the webhook that confirms payments. When Kenya launched, the developer found two of the three copies:</p>
+<example file="problem.ts">
+interface Charge {
+  readonly provider: string;
+  readonly reference: string;
+  readonly amountKobo: number;
+}
+
+// checkout.ts
+function chargeCustomer(country: string, amountKobo: number): Charge {
+  if (country === "NG") return { provider: "paystack", reference: "PSK-1", amountKobo };
+  if (country === "GH") return { provider: "flutterwave", reference: "FLW-1", amountKobo };
+  if (country === "KE") return { provider: "mpesa", reference: "MP-1", amountKobo }; // added in June
+  throw new Error(`no payment provider for ${country}`);
+}
+
+// refunds.ts, written two years ago
+function refundCustomer(country: string, charge: Charge): string {
+  if (country === "NG") return `paystack refunds ${charge.reference}`;
+  if (country === "GH") return `flutterwave refunds ${charge.reference}`;
+  return `stripe refunds ${charge.reference}`; // the old default
+}
+
+const charge = chargeCustomer("KE", 500_000);
+console.log(charge);
+console.log(refundCustomer("KE", charge));
+</example>
+<output>
+{ provider: 'mpesa', reference: 'MP-1', amountKobo: 500000 }
+stripe refunds MP-1
+</output>
+<p>Every Kenyan refund is sent to Stripe, which has never heard of charge <code>MP-1</code>. The customer waits for money that never comes. The bug is not in any single line. The knowledge "which provider serves which country, and how to build it" is <em>copied</em>, so the copies drifted apart: the DRY problem from <a href="/learn/design-solid#dry">the last lesson</a>, in the specific form of <strong>object creation</strong>.</p>
+<p>Creating objects is where a lot of design goes wrong: <code>new</code> spread across the code ties every caller to concrete classes, their constructor arguments and their configuration. The <strong>creational patterns</strong> are named solutions to recurring creation problems. A <strong>design pattern</strong> is a well-known, reusable shape of solution to a problem that keeps coming up; the classic catalogue is the 1994 book <em>Design Patterns</em> by Gamma, Helm, Johnson and Vlissides (the "Gang of Four"). The names are the useful part: "put a factory here" says in three words what would otherwise take a paragraph.</p>
+<p>This lesson covers four: <strong>factory</strong>, <strong>abstract factory</strong>, <strong>builder</strong> and <strong>singleton</strong>. Each starts from a bug like the one above. They are written in TypeScript with functions and small classes, as <a href="/learn/ts-oop">Object-oriented TypeScript</a> and <a href="/learn/ts-functional">Functional TypeScript</a> taught, not as the deep class hierarchies of the 1994 book.</p>
+</section>
+
+<section>
+<h2 id="factory">Factory: one place that knows how to build it</h2>
+<reason title="Choosing a payment provider: what can go wrong?">
+<p>Before writing the factory, think through the creation problem itself:</p>
+<ul>
+<li>What should happen for a country the shop does not serve yet, such as <code>"ZA"</code>? When should you find out: at the first South African checkout, or earlier?</li>
+<li>Each provider needs a secret key. What if the Kenyan key is missing from the production configuration?</li>
+<li>A customer paid in Kenya and later moved to Ghana. Which provider must refund them?</li>
+<li>Next year, Kenya switches from M-Pesa to Flutterwave. What happens to refunds of payments made before the switch?</li>
+<li>How will tests get a provider that does not move money?</li>
+</ul>
+<answer>
+<ul>
+<li>An unknown country is a programming or configuration error. It should fail loudly with a clear message, and a startup check should try every configured country so the error appears at deploy time, not when a customer pays.</li>
+<li>Also fail fast: the factory should refuse to build a provider without its key, at startup. A provider that fails on the first charge is much worse.</li>
+<li>The provider that <em>took</em> the payment, whatever the customer's country is now. So a charge must record the provider's name, and refunds must build the provider from that name, not from the country.</li>
+<li>Same answer: routing (country → provider) and construction (provider name → object) are two separate facts. Changing the routing must not change which provider refunds old charges.</li>
+<li>The service should receive the factory as a dependency, so a test can pass one that builds fakes.</li>
+</ul>
+</answer>
+</reason>
+<p>A <strong>factory</strong> is a function (or a method) whose job is to create objects, so that callers ask for "a payment provider for Kenya" instead of calling <code>new</code> on a specific class. Following the reasoning above, the shop gets two small, separate tables: one that routes countries to provider names, and one that knows how to build each provider:</p>
+<example file="payments.ts" project="payments">
+export type Country = "NG" | "GH" | "KE";
+export type ProviderName = "paystack" | "flutterwave" | "mpesa";
+
+export interface PaymentProvider {
+  readonly name: ProviderName;
+  charge(amountKobo: number): Promise<{ readonly provider: ProviderName; readonly chargeId: string }>;
+  refund(chargeId: string): Promise<string>;
+}
+
+export type ProviderKeys = Readonly<Record<ProviderName, string | undefined>>;
+
+function simulatedProvider(name: ProviderName, prefix: string, key: string | undefined): PaymentProvider {
+  if (!key) throw new Error(`missing secret key for ${name}`);
+  let next = 1;
+  return {
+    name,
+    async charge() {
+      return { provider: name, chargeId: `${prefix}-${next++}` };
+    },
+    async refund(chargeId) {
+      return `${name} refunded ${chargeId}`;
+    },
+  };
+}
+
+const builders: Record<ProviderName, (keys: ProviderKeys) => PaymentProvider> = {
+  paystack: (keys) => simulatedProvider("paystack", "PSK", keys.paystack),
+  flutterwave: (keys) => simulatedProvider("flutterwave", "FLW", keys.flutterwave),
+  mpesa: (keys) => simulatedProvider("mpesa", "MP", keys.mpesa),
+};
+
+const routes: Record<Country, ProviderName> = { NG: "paystack", GH: "flutterwave", KE: "mpesa" };
+
+export function providerFor(country: string): ProviderName {
+  if (!Object.hasOwn(routes, country)) throw new Error(`no payment provider for country "${country}"`);
+  return routes[country as Country];
+}
+
+export function createPaymentProvider(name: ProviderName, keys: ProviderKeys): PaymentProvider {
+  return builders[name](keys);
+}
+</example>
+<p>The simulated providers stand in for real SDK clients so the example runs anywhere; <a href="/learn/design-patterns-structural#adapter">Structural patterns</a> shows how a real SDK is wrapped to fit an interface like <code>PaymentProvider</code>. Now the checkout and the refund handler ask the factory, and the charge carries the provider's name:</p>
+<example file="factory-test.ts" project="payments">
+import { createPaymentProvider, providerFor, type ProviderKeys } from "./payments.js";
+
+const keys: ProviderKeys = { paystack: "sk_test_ng", flutterwave: "sk_test_gh", mpesa: "sk_test_ke" };
+const check = (name: string, ok: boolean) => console.log(`${ok ? "PASS" : "FAIL"} ${name}`);
+
+// checkout: route by country, remember who took the money
+const charge = await createPaymentProvider(providerFor("KE"), keys).charge(500_000);
+console.log(charge);
+
+// refund: build the provider that took the payment, not the one for the country
+console.log(await createPaymentProvider(charge.provider, keys).refund(charge.chargeId));
+
+try {
+  providerFor("ZA");
+} catch (error) {
+  console.log((error as Error).message);
+}
+try {
+  createPaymentProvider("mpesa", { ...keys, mpesa: undefined });
+} catch (error) {
+  console.log((error as Error).message);
+}
+
+const countries = ["NG", "GH", "KE"];
+check("every served country builds at startup", countries.every((c) => createPaymentProvider(providerFor(c), keys)));
+</example>
+<output>
+{ provider: 'mpesa', chargeId: 'MP-1' }
+mpesa refunded MP-1
+no payment provider for country "ZA"
+missing secret key for mpesa
+PASS every served country builds at startup
+</output>
+<p>The last line is a <strong>startup check</strong>: building every provider once when the application starts turns a missing key into a failed deploy instead of a failed payment.</p>
+
+<h3>Let the compiler keep the tables complete</h3>
+<p>The tables are typed as <code>Record&lt;Country, …&gt;</code> and <code>Record&lt;ProviderName, …&gt;</code>, not as plain objects. A <code>Record</code> over a union requires a key for <em>every</em> member. When someone adds South Africa to <code>Country</code> but forgets the route, the code does not compile, which is exactly the check the copied <code>if</code>s never had:</p>
+<example file="record-complete.ts" check="tsc-error">
+type Country = "NG" | "GH" | "KE" | "ZA";
+type ProviderName = "paystack" | "flutterwave" | "mpesa";
+
+const routes: Record<Country, ProviderName> = { NG: "paystack", GH: "flutterwave", KE: "mpesa" };
+console.log(routes);
+</example>
+<output kind="tsc">
+record-complete.ts:4:7 - error TS2741: Property 'ZA' is missing in type '{ NG: "paystack"; GH: "flutterwave"; KE: "mpesa"; }' but required in type 'Record<Country, ProviderName>'.
+
+4 const routes: Record<Country, ProviderName> = { NG: "paystack", GH: "flutterwave", KE: "mpesa" };
+        ~~~~~~
+
+
+Found 1 error in record-complete.ts:4
+</output>
+
+<h3>Kinds of factory</h3>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Form</th><th>Example</th><th>Use it when</th></tr></thead>
+<tbody>
+<tr><td><strong>Factory function</strong></td><td><code>createPaymentProvider(name, keys)</code></td><td>the caller should not know which class it gets. The everyday form in TypeScript.</td></tr>
+<tr><td><strong>Static factory method</strong> (named constructor)</td><td><code>Order.create(…)</code> in <a href="/learn/design-principles#encapsulation">Design principles</a>, <code>Money.fromNaira(12.5)</code></td><td>construction must validate or compute, or several ways to create need clear names.</td></tr>
+<tr><td><strong>Factory method</strong> (the Gang of Four version)</td><td>a base class calls <code>this.createProvider()</code>, subclasses override it</td><td>rarely in TypeScript. Passing a factory function in does the same job without inheritance.</td></tr>
+<tr><td><strong>Injected factory</strong></td><td>a service receives <code>makeProvider: (name) =&gt; PaymentProvider</code></td><td>the service must create objects at run time (one per request or per country) and tests must control what it creates.</td></tr>
+</tbody>
+</table></div>
+<p>The last row matters for testing. A service that calls <code>createPaymentProvider</code> directly is coupled to the real providers again. A service that <em>receives</em> the factory lets a test pass <code>() =&gt; fakeProvider</code>, the same move as injecting the gateway in <a href="/learn/design-principles#coupling">Design principles</a>.</p>
+</section>
+
+<section>
+<h2 id="abstract-factory">Abstract factory: parts that must match</h2>
+<p>The shop lets customers upload photos of damaged deliveries. The web server stores the file and queues a job; a worker process makes a thumbnail. Storage and queue are each configurable, with <code>STORAGE=disk|s3</code> and <code>QUEUE=memory|redis</code>. On the new staging server someone copied the queue setting from production and the storage setting from a laptop:</p>
+<example file="mixed-family.ts">
+const bucket = new Map<string, string>(); // stands in for S3: every machine sees it
+const redisList: { job: string; key: string }[] = []; // stands in for Redis: every machine sees it
+
+function diskStorage(disk: Map<string, string>) {
+  return { put: (key: string, body: string) => void disk.set(key, body), get: (key: string) => disk.get(key) };
+}
+
+// staging: STORAGE=disk (from a laptop .env), QUEUE=redis (from production)
+const webMachineDisk = new Map<string, string>();
+diskStorage(webMachineDisk).put("uploads/7.jpg", "<jpeg bytes>");
+redisList.push({ job: "thumbnail", key: "uploads/7.jpg" });
+
+// the worker runs on another machine, with its own disk
+const workerMachineDisk = new Map<string, string>();
+for (const job of redisList) {
+  console.log(`worker: ${job.job} ${job.key} ->`, diskStorage(workerMachineDisk).get(job.key) ?? "file not found");
+}
+console.log("files in the shared bucket:", bucket.size);
+</example>
+<output>
+worker: thumbnail uploads/7.jpg -> file not found
+files in the shared bucket: 0
+</output>
+<p>Each setting was valid on its own. The <em>combination</em> is broken: a shared queue announces a file that lives on one machine's local disk. Disk storage only works with an in-process queue (everything on one machine), and a shared queue only works with shared storage. These parts form a <strong>family</strong>, and families must not be mixed.</p>
+<p>An <strong>abstract factory</strong> is an object that creates a whole family of related objects, so that picking the factory picks every part at once. The configuration changes from two independent switches to one:</p>
+<example file="infrastructure.ts" project="infra">
+export interface FileStorage {
+  readonly kind: string;
+  put(key: string, body: string): Promise<void>;
+  get(key: string): Promise<string | undefined>;
+}
+
+export interface JobQueue {
+  readonly kind: string;
+  enqueue(job: string, key: string): Promise<void>;
+  take(): Promise<{ job: string; key: string } | undefined>;
+}
+
+export interface Infrastructure {
+  readonly name: string;
+  createStorage(): FileStorage;
+  createQueue(): JobQueue;
+}
+
+/** One machine: local disk and an in-process queue. */
+export function localInfrastructure(): Infrastructure {
+  const disk = new Map<string, string>();
+  const jobs: { job: string; key: string }[] = [];
+  return {
+    name: "local",
+    createStorage: () => ({ kind: "disk", put: async (k, b) => void disk.set(k, b), get: async (k) => disk.get(k) }),
+    createQueue: () => ({ kind: "memory", enqueue: async (job, key) => void jobs.push({ job, key }), take: async () => jobs.shift() }),
+  };
+}
+
+/** Many machines: shared object storage and a shared queue (simulated here by one shared object). */
+export function cloudInfrastructure(cloud: { bucket: Map<string, string>; list: { job: string; key: string }[] }): Infrastructure {
+  return {
+    name: "cloud",
+    createStorage: () => ({ kind: "s3", put: async (k, b) => void cloud.bucket.set(k, b), get: async (k) => cloud.bucket.get(k) }),
+    createQueue: () => ({ kind: "redis", enqueue: async (job, key) => void cloud.list.push({ job, key }), take: async () => cloud.list.shift() }),
+  };
+}
+
+export type Environment = "local" | "cloud";
+</example>
+<p>In a real project, <code>cloudInfrastructure</code> would wrap the AWS SDK and a Redis client, and the <code>cloud</code> parameter would be their connection settings. Here a shared object plays both services, so the example runs. The upload flow and the worker only see <code>FileStorage</code> and <code>JobQueue</code>; the composition root chooses the family:</p>
+<example file="families-test.ts" project="infra">
+import { cloudInfrastructure, localInfrastructure, type Infrastructure } from "./infrastructure.js";
+
+async function upload(infra: Infrastructure): Promise<void> {
+  await infra.createStorage().put("uploads/7.jpg", "<jpeg bytes>");
+  await infra.createQueue().enqueue("thumbnail", "uploads/7.jpg");
+}
+
+async function work(infra: Infrastructure): Promise<string> {
+  const job = await infra.createQueue().take();
+  if (job === undefined) return "no job";
+  const file = await infra.createStorage().get(job.key);
+  return `${infra.name}: ${job.job} ${job.key} -> ${file ?? "file not found"}`;
+}
+
+// local: web and worker share one process, so they share one family instance
+const local = localInfrastructure();
+await upload(local);
+console.log(await work(local));
+
+// cloud: two machines, two family instances, one shared cloud
+const cloud = { bucket: new Map<string, string>(), list: [] as { job: string; key: string }[] };
+const webMachine = cloudInfrastructure(cloud);
+const workerMachine = cloudInfrastructure(cloud);
+await upload(webMachine);
+console.log(await work(workerMachine));
+</example>
+<output>
+local: thumbnail uploads/7.jpg -> <jpeg bytes>
+cloud: thumbnail uploads/7.jpg -> <jpeg bytes>
+</output>
+<p>Mixing disk with Redis is no longer something a configuration file can express. That is the point of the pattern: it turns "these must match" from a rule people must remember into a structure the code enforces. A test environment is one more family, whose parts record what happened.</p>
+<note>In modern TypeScript the "abstract factory" is often just an object of factory functions, or one module per environment, chosen in the composition root. A DI container with a set of registrations per environment is a generalised abstract factory. ZudoJS takes the idea further for external platforms in <a href="/learn/zudo-adapters">Adapters</a>, where adapters are registered and looked up by the capabilities they provide.</note>
+</section>
+
+<section>
+<h2 id="builder">Builder: constructing complex things step by step</h2>
+<p>Creating a delivery needs eight values. The function takes them in order:</p>
+<example file="positional.ts">
+function createDelivery(recipient: string, phone: string, street: string, city: string, state: string, express: boolean, fragile: boolean, notes?: string): string {
+  return `${recipient} (${phone}), ${street}, ${city}, ${state}${express ? ", EXPRESS" : ""}${fragile ? ", FRAGILE" : ""}${notes ? `, note: ${notes}` : ""}`;
+}
+
+console.log(createDelivery("Ada Obi", "Lagos", "12 Allen Avenue", "Ikeja", "08031234567", true, false));
+</example>
+<output>
+Ada Obi (Lagos), 12 Allen Avenue, Ikeja, 08031234567, EXPRESS
+</output>
+<p>The phone number and the state were swapped. Both are strings, so TypeScript is happy, and the rider will call "Lagos". Two booleans in a row (<code>true, false</code>) are just as easy to swap, and nobody reading the call can tell which is which. In TypeScript the first fix is not a pattern at all, it is an <strong>options object</strong>: every value gets its name at the call site.</p>
+<example file="options-object.ts">
+interface DeliveryRequest {
+  readonly recipient: string;
+  readonly phone: string;
+  readonly address: { readonly street: string; readonly city: string; readonly state: string };
+  readonly express?: boolean;
+  readonly fragile?: boolean;
+  readonly notes?: string;
+}
+
+function createDelivery(request: DeliveryRequest): string {
+  const { recipient, phone, address, express = false, fragile = false } = request;
+  return `${recipient} (${phone}), ${address.street}, ${address.city}, ${address.state}${express ? ", EXPRESS" : ""}${fragile ? ", FRAGILE" : ""}`;
+}
+
+console.log(createDelivery({
+  recipient: "Ada Obi",
+  phone: "08031234567",
+  address: { street: "12 Allen Avenue", city: "Ikeja", state: "Lagos" },
+  express: true,
+}));
+</example>
+<output>
+Ada Obi (08031234567), 12 Allen Avenue, Ikeja, Lagos, EXPRESS
+</output>
+<p>For most "too many parameters" problems, stop here (KISS). The <strong>builder</strong> pattern is for objects that are genuinely built in steps: many optional parts, rules that span several parts, and a final step that assembles the result. The standard example in backend code is a query.</p>
+
+<h3>A query builder</h3>
+<p>The admin screen searches orders by any combination of status, customer, minimum total and date range, sorted and paged. Building the SQL by gluing strings together is how SQL injection happens (<a href="/learn/sql-basics#injection">SQL basics</a>). A builder collects the filters as <em>placeholders plus values</em> and only assembles the text at the end:</p>
+<example file="order-query.ts" project="query">
+type Status = "pending" | "paid" | "refunded";
+type Column = "placed_at" | "total_kobo";
+
+interface Filter {
+  readonly sql: string;
+  readonly value: string | number;
+}
+
+export class OrderQuery {
+  private constructor(
+    private readonly filters: readonly Filter[],
+    private readonly order: string,
+    private readonly max: number,
+  ) {}
+
+  static all(): OrderQuery {
+    return new OrderQuery([], "placed_at DESC", 50);
+  }
+
+  status(status: Status): OrderQuery {
+    return this.where("status = ?", status);
+  }
+
+  customer(email: string): OrderQuery {
+    return this.where("email = ?", email.toLowerCase());
+  }
+
+  minTotal(kobo: number): OrderQuery {
+    return this.where("total_kobo >= ?", kobo);
+  }
+
+  sortBy(column: Column, direction: "ASC" | "DESC"): OrderQuery {
+    return new OrderQuery(this.filters, `${column} ${direction}`, this.max);
+  }
+
+  limit(max: number): OrderQuery {
+    if (!Number.isInteger(max) || max < 1 || max > 100) throw new Error(`limit must be 1 to 100, got ${max}`);
+    return new OrderQuery(this.filters, this.order, max);
+  }
+
+  build(): { text: string; values: (string | number)[] } {
+    const values = this.filters.map((filter) => filter.value);
+    const conditions = this.filters.map((filter, i) => filter.sql.replace("?", `$${i + 1}`));
+    const where = conditions.length > 0 ? ` WHERE ${conditions.join(" AND ")}` : "";
+    return { text: `SELECT id, email, status, total_kobo FROM orders${where} ORDER BY ${this.order} LIMIT ${this.max}`, values };
+  }
+
+  private where(sql: string, value: string | number): OrderQuery {
+    return new OrderQuery([...this.filters, { sql, value }], this.order, this.max);
+  }
+}
+</example>
+<p>Each method returns a new builder, so calls chain into a sentence. An API shaped like this is called a <strong>fluent interface</strong>:</p>
+<example file="query-build.ts" project="query">
+import { OrderQuery } from "./order-query.js";
+
+const query = OrderQuery.all().status("paid").minTotal(1_000_000).sortBy("total_kobo", "DESC").limit(10).build();
+console.log(query.text);
+console.log(query.values);
+
+const hostile = OrderQuery.all().customer("x' OR '1'='1").build();
+console.log(hostile.text.includes("OR '1'='1'"), hostile.values);
+
+try {
+  OrderQuery.all().limit(5000);
+} catch (error) {
+  console.log((error as Error).message);
+}
+</example>
+<output>
+SELECT id, email, status, total_kobo FROM orders WHERE status = $1 AND total_kobo >= $2 ORDER BY total_kobo DESC LIMIT 10
+[ 'paid', 1000000 ]
+false [ "x' or '1'='1" ]
+limit must be 1 to 100, got 5000
+</output>
+<p>Look at what the builder guarantees. User input only ever travels in <code>values</code>, never in the SQL text, so the hostile e-mail is harmless. The sort column and direction are unions, so a caller cannot pass arbitrary SQL there. The limit is checked when it is set. And every combination of filters produces correct <code>$1</code>, <code>$2</code> numbering, which is the fiddly part people get wrong by hand. The built query runs unchanged on PostgreSQL:</p>
+<example file="query-run.ts" project="query" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+import { OrderQuery } from "./order-query.js";
+
+const db = new PGlite();
+await db.exec(`
+  CREATE TABLE orders (id serial PRIMARY KEY, email text NOT NULL, status text NOT NULL,
+    total_kobo integer NOT NULL, placed_at timestamptz NOT NULL);
+  INSERT INTO orders (email, status, total_kobo, placed_at) VALUES
+    ('ada@shop.ng', 'paid', 1441575, '2026-03-01T10:00:00Z'),
+    ('bola@shop.ng', 'paid', 483750, '2026-03-02T11:00:00Z'),
+    ('ada@shop.ng', 'refunded', 2500000, '2026-03-03T12:00:00Z'),
+    ('chi@shop.ng', 'paid', 3200000, '2026-03-04T13:00:00Z');
+`);
+
+const { text, values } = OrderQuery.all().status("paid").minTotal(1_000_000).sortBy("total_kobo", "DESC").build();
+console.log((await db.query(text, values)).rows);
+await db.close();
+</example>
+<output>
+[
+  { id: 4, email: 'chi@shop.ng', status: 'paid', total_kobo: 3200000 },
+  { id: 1, email: 'ada@shop.ng', status: 'paid', total_kobo: 1441575 }
+]
+</output>
+
+<h3>Why the builder is immutable</h3>
+<p>Every method above returns a <em>new</em> <code>OrderQuery</code> and never changes <code>this</code>. Many builders are written the other way, changing themselves and returning <code>this</code>. That looks the same in a single chain, but breaks as soon as someone reuses a partly built query:</p>
+<example file="mutable-builder.ts">
+class MutableQuery {
+  private readonly conditions: string[] = [];
+
+  where(condition: string): this {
+    this.conditions.push(condition);
+    return this;
+  }
+
+  build(): string {
+    return `SELECT * FROM orders WHERE ${this.conditions.join(" AND ")}`;
+  }
+}
+
+const paid = new MutableQuery().where("status = 'paid'");
+const bigOrders = paid.where("total_kobo >= 1000000");
+const adasOrders = paid.where("email = 'ada@shop.ng'");
+
+console.log(bigOrders.build());
+console.log(adasOrders.build());
+</example>
+<output>
+SELECT * FROM orders WHERE status = 'paid' AND total_kobo >= 1000000 AND email = 'ada@shop.ng'
+SELECT * FROM orders WHERE status = 'paid' AND total_kobo >= 1000000 AND email = 'ada@shop.ng'
+</output>
+<p><code>paid</code>, <code>bigOrders</code> and <code>adasOrders</code> are the same object, so both queries got both filters and Ada's order history silently hides her small orders. With the immutable <code>OrderQuery</code>, a base query can be shared safely, which is how admin screens are usually built: a base query per screen, with filters added per request.</p>
+<tip>Builders are also common in tests, as <strong>test data builders</strong>: <code>anOrder().paid().withTotal(500_000).build()</code> gives valid defaults for everything a test does not care about. In TypeScript, a function with defaults and a <code>Partial</code> of overrides, <code>makeOrder({ status: "paid" })</code>, usually does the same job with less code.</tip>
+</section>
+
+<section>
+<h2 id="singleton">Singleton, and why DI usually replaces it</h2>
+<p>The <strong>singleton</strong> pattern makes a class that can only ever have one instance and gives everyone global access to it, usually through a static <code>getInstance()</code>. It solves a real problem: some things should exist once per process, such as the configuration or a database connection pool. Here is the shop's configuration as a classic singleton, and two tests that use it:</p>
+<example file="singleton-problem.ts">
+class AppConfig {
+  static #instance: AppConfig | undefined;
+  readonly values = new Map<string, string>();
+
+  private constructor() {}
+
+  static getInstance(): AppConfig {
+    this.#instance ??= new AppConfig();
+    return this.#instance;
+  }
+}
+
+function maxQuantity(): number {
+  return Number(AppConfig.getInstance().values.get("MAX_QUANTITY") ?? "10");
+}
+
+// test 1: a shop that limits orders to 2 items
+AppConfig.getInstance().values.set("MAX_QUANTITY", "2");
+console.log("test 1:", maxQuantity() === 2 ? "PASS" : "FAIL");
+
+// test 2: the default limit
+console.log("test 2:", maxQuantity() === 10 ? "PASS" : "FAIL", `(got ${maxQuantity()})`);
+</example>
+<output>
+test 1: PASS
+test 2: FAIL (got 2)
+</output>
+<p>Test 2 is correct and fails anyway, because test 1 left its setting in the one shared instance. Run test 2 alone and it passes. Tests whose result depends on which tests ran before them are among the most expensive bugs a team can have: they fail at random in CI, and people learn to re-run until green. The singleton caused two separate problems:</p>
+<ul>
+<li><strong>Hidden dependency.</strong> Nothing in <code>maxQuantity()</code>'s signature says it reads configuration. You only find out by reading its body, and a test cannot pass a different configuration in.</li>
+<li><strong>Global mutable state.</strong> "Exactly one instance" became "one instance shared by every test in the process", the global coupling from <a href="/learn/design-principles#coupling">Design principles</a>.</li>
+</ul>
+<p>An ES module is also a singleton: <code>export const config = loadConfig()</code> runs once, and every importer gets the same object. That has the same two problems, plus a third: the work happens at import time, so merely importing the file reads the environment or opens a connection.</p>
+
+<h3>One instance is a lifetime, not a class property</h3>
+<p>The need behind the singleton is real, but "there is one of these" is not something the class should decide. It is a decision about <strong>lifetime</strong>, and it belongs in the composition root: create the object once there and pass it to everyone who needs it. Tests then create their own:</p>
+<example file="injected-config.ts">
+interface AppConfig {
+  readonly maxQuantity: number;
+}
+
+function loadConfig(env: Readonly<Record<string, string | undefined>>): AppConfig {
+  return Object.freeze({ maxQuantity: Number(env["MAX_QUANTITY"] ?? "10") });
+}
+
+function canOrder(quantity: number, config: AppConfig): boolean {
+  return quantity <= config.maxQuantity;
+}
+
+// production: the composition root loads it once and passes it on
+const config = loadConfig({ MAX_QUANTITY: "5" });
+console.log("production allows 4:", canOrder(4, config));
+
+// tests: each builds exactly the configuration it needs
+console.log("test 1:", canOrder(3, loadConfig({ MAX_QUANTITY: "2" })) === false ? "PASS" : "FAIL");
+console.log("test 2:", canOrder(10, loadConfig({})) === true ? "PASS" : "FAIL");
+</example>
+<output>
+production allows 4: true
+test 1: PASS
+test 2: PASS
+</output>
+<p>The configuration is also frozen, so no code can change it after startup. Freezing turns "shared" from dangerous into harmless: shared <em>immutable</em> state has none of the singleton's problems.</p>
+<p>When the application has dozens of such objects, passing them by hand gets tedious, and a <strong>DI container</strong> takes over. A container makes "singleton" one of several lifetimes you choose per registration. With <code>@zudojs/container</code>, which <a href="/learn/zudo-container#lifetimes">The ZudoJS container</a> covers in full, the payment provider from the start of this lesson is registered as a factory with a singleton lifetime:</p>
+<example file="container-lifetime.ts">
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+
+interface Config {
+  readonly country: string;
+}
+interface Provider {
+  readonly name: string;
+}
+
+const CONFIG = createToken<Config>("config");
+const PROVIDER = createToken<Provider>("payment provider");
+
+let built = 0;
+const app = createContainer();
+app.registerValue(CONFIG, { country: "KE" });
+app.registerFactory(PROVIDER, (config) => {
+  built++;
+  return { name: config.country === "KE" ? "mpesa" : "paystack" };
+}, [CONFIG], { scope: ContainerScope.SINGLETON });
+
+console.log(app.resolve(PROVIDER), app.resolve(PROVIDER) === app.resolve(PROVIDER), "built:", built);
+
+// a test builds its own container: its own "singleton", nothing shared with the app
+const testContainer = createContainer();
+testContainer.registerValue(CONFIG, { country: "NG" });
+testContainer.registerFactory(PROVIDER, () => ({ name: "fake" }), [CONFIG], { scope: ContainerScope.SINGLETON });
+console.log(testContainer.resolve(PROVIDER), "app still has:", app.resolve(PROVIDER).name);
+
+await app.dispose();
+await testContainer.dispose();
+</example>
+<output>
+{ name: 'mpesa' } true built: 1
+{ name: 'fake' } app still has: mpesa
+</output>
+<p><code>registerFactory</code> is the factory pattern, the container calls it for you with its dependencies (<code>[CONFIG]</code>), and <code>ContainerScope.SINGLETON</code> means "call it once per container". One per container, not one per process, is the difference that matters: every test gets a fresh world. <a href="/learn/ts-typed-di">Typed dependency injection</a> shows how a container like this is typed and built.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th></th><th>Singleton pattern</th><th>Singleton lifetime (DI)</th></tr></thead>
+<tbody>
+<tr><td>Who decides there is one?</td><td>the class itself</td><td>the composition root or container</td></tr>
+<tr><td>How do users get it?</td><td>global access: <code>getInstance()</code></td><td>passed in as a parameter or constructor argument</td></tr>
+<tr><td>Visible in signatures?</td><td>no, hidden dependency</td><td>yes</td></tr>
+<tr><td>Tests</td><td>share one instance, order-dependent</td><td>each test builds its own</td></tr>
+<tr><td>Two of them (a read replica, a second tenant)?</td><td>impossible without rewriting</td><td>register or create a second one</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="failures">When creational patterns go wrong</h2>
+<ul>
+<li><strong>Factories that read globals.</strong> A factory that calls <code>process.env</code> inside itself is a hidden dependency with a nicer name. Pass the configuration in, as <code>createPaymentProvider(name, keys)</code> does.</li>
+<li><strong>Factories that hide failure.</strong> Returning a default provider for an unknown country is exactly the <code>stripe</code> bug from the start. A factory should refuse unknown input loudly.</li>
+<li><strong>Pattern stacking.</strong> <code>PaymentProviderFactoryFactory</code>, or an abstract factory with one family, adds names and hides nothing. Introduce the abstract factory when a second family exists and mixing them is a real risk.</li>
+<li><strong>Builders for simple objects.</strong> A builder for a three-field object is more code than the object. Reach for an options object first.</li>
+<li><strong>Mutable builders shared between callers</strong>, as shown above. Return new builders.</li>
+<li><strong>Singletons holding request data.</strong> A singleton that stores "the current user" leaks one user's data into another request as soon as two requests overlap. Per-request data needs a per-request (scoped) lifetime or explicit parameters.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="zudo">Where ZudoJS uses these patterns</h2>
+<ul>
+<li><strong>Factory functions as the public API.</strong> Almost every ZudoJS package is used through a <code>createX</code> function (<code>createContainer</code>, <code>createLogger</code>, <code>createEventBus</code>…) rather than <code>new</code> on exported classes. The package can then change which class it returns, validate options, and freeze the result.</li>
+<li><strong>Factory providers and lifetimes.</strong> The container's <code>registerFactory</code> and its singleton, scoped and transient lifetimes, above and in <a href="/learn/zudo-container">The ZudoJS container</a>.</li>
+<li><strong>Families of adapters.</strong> <a href="/learn/zudo-adapters">Adapters</a> registers implementations of external-platform contracts and looks them up by capability, the abstract factory idea applied to a whole framework.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Launch South Africa">
+<p>The shop launches in South Africa with a new provider, Ozow. Change the factory's types and tables so <code>providerFor("ZA")</code> works and refunds go to Ozow. What does the compiler force you to update, and what does it not catch?</p>
+<solution>
+<example file="launch-za.ts">
+type Country = "NG" | "GH" | "KE" | "ZA";
+type ProviderName = "paystack" | "flutterwave" | "mpesa" | "ozow";
+
+interface PaymentProvider {
+  readonly name: ProviderName;
+  refund(chargeId: string): string;
+}
+
+const make = (name: ProviderName, key: string | undefined): PaymentProvider => {
+  if (!key) throw new Error(`missing secret key for ${name}`);
+  return { name, refund: (chargeId) => `${name} refunded ${chargeId}` };
+};
+
+const keys: Record<ProviderName, string | undefined> = { paystack: "k1", flutterwave: "k2", mpesa: "k3", ozow: "k4" };
+const builders: Record<ProviderName, () => PaymentProvider> = {
+  paystack: () => make("paystack", keys.paystack),
+  flutterwave: () => make("flutterwave", keys.flutterwave),
+  mpesa: () => make("mpesa", keys.mpesa),
+  ozow: () => make("ozow", keys.ozow),
+};
+const routes: Record<Country, ProviderName> = { NG: "paystack", GH: "flutterwave", KE: "mpesa", ZA: "ozow" };
+
+const provider = builders[routes["ZA"]]();
+console.log(provider.name, provider.refund("OZ-1"));
+console.log(Object.keys(routes).map((country) => builders[routes[country as Country]]().name));
+</example>
+<output>
+ozow ozow refunded OZ-1
+[ 'paystack', 'flutterwave', 'mpesa', 'ozow' ]
+</output>
+<p>Adding <code>"ZA"</code> and <code>"ozow"</code> to the unions made the compiler demand a route, a builder and a key entry, because all three are <code>Record</code>s over those unions. What it cannot catch is a missing key <em>value</em> in the production environment; the startup check (building every routed provider, the last line) catches that at deploy time.</p>
+</solution>
+</exercise>
+
+<exercise title="Extend the query builder">
+<p>Add <code>placedBetween(from, to)</code> to <code>OrderQuery</code> as a new builder in your own file: it should add two filters, <code>placed_at &gt;= $n</code> and <code>placed_at &lt; $n</code>, and refuse a range where <code>from</code> is not before <code>to</code>. Show that a shared base query is not changed.</p>
+<solution>
+<example file="between.ts">
+type Filter = { readonly sql: string; readonly value: string | number };
+
+class OrderSearch {
+  private constructor(private readonly filters: readonly Filter[]) {}
+
+  static all(): OrderSearch {
+    return new OrderSearch([]);
+  }
+
+  status(status: string): OrderSearch {
+    return new OrderSearch([...this.filters, { sql: "status = ?", value: status }]);
+  }
+
+  placedBetween(from: string, to: string): OrderSearch {
+    if (!(Date.parse(from) < Date.parse(to))) throw new Error(`empty date range: ${from} to ${to}`);
+    return new OrderSearch([...this.filters, { sql: "placed_at >= ?", value: from }, { sql: "placed_at < ?", value: to }]);
+  }
+
+  build(): { text: string; values: (string | number)[] } {
+    const where = this.filters.map((f, i) => f.sql.replace("?", `$${i + 1}`)).join(" AND ");
+    return { text: `SELECT * FROM orders${where ? ` WHERE ${where}` : ""}`, values: this.filters.map((f) => f.value) };
+  }
+}
+
+const paid = OrderSearch.all().status("paid");
+const march = paid.placedBetween("2026-03-01T00:00:00Z", "2026-04-01T00:00:00Z");
+
+console.log(march.build());
+console.log(paid.build().text);
+try {
+  paid.placedBetween("2026-04-01T00:00:00Z", "2026-03-01T00:00:00Z");
+} catch (error) {
+  console.log((error as Error).message);
+}
+</example>
+<output>
+{
+  text: 'SELECT * FROM orders WHERE status = $1 AND placed_at >= $2 AND placed_at < $3',
+  values: [ 'paid', '2026-03-01T00:00:00Z', '2026-04-01T00:00:00Z' ]
+}
+SELECT * FROM orders WHERE status = $1
+empty date range: 2026-04-01T00:00:00Z to 2026-03-01T00:00:00Z
+</output>
+<p>A half-open range (<code>&gt;=</code> start, <code>&lt;</code> end) never counts an order twice when you page through consecutive months. The check <code>!(a &lt; b)</code> also rejects unparseable dates, because a comparison with <code>NaN</code> is always false. The base query <code>paid</code> kept its single filter.</p>
+</solution>
+</exercise>
+
+<exercise title="Remove a singleton">
+<p>A <code>Clock</code> singleton makes invoice tests depend on the real date. Replace it: <code>isOverdue</code> should receive a clock object, production passes one that reads the real time, and a test passes a fixed one. Test an invoice due on 1 March against 28 February and 2 March.</p>
+<solution>
+<example file="clock.ts">
+interface Clock {
+  now(): Date;
+}
+
+const systemClock: Clock = { now: () => new Date() };
+const fixedClock = (iso: string): Clock => ({ now: () => new Date(iso) });
+
+function isOverdue(invoice: { dueAt: string }, clock: Clock): boolean {
+  return clock.now().getTime() > Date.parse(invoice.dueAt);
+}
+
+const invoice = { dueAt: "2026-03-01T00:00:00Z" };
+console.log("before:", isOverdue(invoice, fixedClock("2026-02-28T12:00:00Z")));
+console.log("after:", isOverdue(invoice, fixedClock("2026-03-02T00:00:00Z")));
+console.log("system clock is a Clock:", typeof systemClock.now().getTime() === "number");
+</example>
+<output>
+before: false
+after: true
+system clock is a Clock: true
+</output>
+<p>The clock is now a visible dependency. Production creates <code>systemClock</code> once in the composition root (a singleton lifetime), and every test picks its own moment in time, so the tests pass on any day they are run.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A <strong>factory</strong> puts the knowledge "how to build this, and which one" in one place. Fail fast on unknown input, check every configuration at startup, and let <code>Record</code> types keep the tables complete.</li>
+<li>Keep routing and construction separate, and record which implementation did the work, so later actions (refunds) use the right one.</li>
+<li>An <strong>abstract factory</strong> creates a family of parts that must match, so a configuration cannot mix them.</li>
+<li>For many parameters, start with an <strong>options object</strong>. Use a <strong>builder</strong> for step-by-step construction with rules, such as a query; make it immutable so partial builders can be shared.</li>
+<li>The <strong>singleton</strong> pattern hides dependencies and shares mutable state between tests. Make "one instance" a lifetime chosen in the composition root or a container, and freeze what is shared.</li>
+</ul>
+<p>Next: <a href="/learn/design-patterns-structural">Structural patterns</a>, for wrapping and connecting objects: adapter, decorator, proxy and repository.</p>
+</section>

@@ -1,0 +1,756 @@
+---
+title: Types are not security
+description: See why a TypeScript type cannot decide who may do what, then build a refund endpoint with runtime validation, explicit authorization, branded ids and unloggable secrets.
+minutes: 55
+youNeed: Runtime validation, Branded types, and Browser attacks and defences
+youBuild: A refund endpoint for a shop that validates every request with Zod, decides access from the server-side session, keeps its payment key in an unloggable Secret type, and proves each rule with tests
+keywords: typescript security, runtime validation, zod strictObject, type assertion as, authorization, rbac abac, deny by default, branded types, secret type, redact secrets, api boundary, untrusted input, property-based testing, fast-check
+objectives: Explain what compile-time types, runtime validation and security controls each protect, and what each cannot | Replace a type assertion on request data with a strict runtime schema that rejects wrong shapes and unknown fields | Take identity from the server-side session and write an explicit, deny-by-default authorization check | Use branded types so only validated and authorized values reach the code that acts on them | Wrap secrets in a type that cannot be printed, logged or serialized by accident | Test the rules with wrong-shaped input, hostile-looking bodies and a property-based test
+---
+<section>
+<h2 id="problem">A refund approved by its own request</h2>
+<p>Your shop has a small admin API. Support staff use it to approve refunds: a customer's parcel arrived broken, support checks the photos, and approves ₦45,000 back to the customer's card. A new endpoint was written in a hurry, in TypeScript, and it compiles without a single error:</p>
+<pre><code>interface User { id: string; role: "customer" | "support" | "manager" }
+interface RefundBody { user: User; orderId: string; amountKobo: number }
+
+function handleRefund(request: { body: unknown }) {
+  const body = request.body as RefundBody;
+  if (body.user.role === "manager") {
+    return approveRefund(body.orderId, body.amountKobo);
+  }
+  return { status: 403 };
+}</code></pre>
+<p>Every line has a type. The editor autocompletes <code>body.user.role</code>. The compiler even checks that <code>"manager"</code> is one of the allowed roles. And the endpoint is badly broken, in three separate ways:</p>
+<ol>
+<li><strong><code>as RefundBody</code> checks nothing.</strong> A type assertion is a promise you make to the compiler: "trust me, this value has this shape". The compiler believes you and removes the type when it produces JavaScript. At runtime <code>request.body</code> is whatever arrived over the network. <code>amountKobo</code> could be a string, a negative number or ten digits long.</li>
+<li><strong>The role comes from the request body.</strong> The client writes the body. A user's role is a fact your server knows (from its own session store or database), not something the caller gets to state. Here the <em>authorization decision</em>, "may this person approve refunds?", is made on data the caller controls. Any customer who can send a request can write any role they like.</li>
+<li><strong>Nothing checks the order.</strong> Does it exist? How much was paid? Has part of it been refunded already? Is the person approving the refund also the person who placed the order?</li>
+</ol>
+<p>TypeScript could not warn about any of this, because none of it is a type error. This lesson is about the three different layers that people often mix up:</p>
+<ul>
+<li><strong>Types protect developers.</strong> They catch mistakes in your own code while you write it: a misspelled field, a string passed where a number belongs, a missing case.</li>
+<li><strong>Runtime validation protects the application.</strong> It checks that data from outside really has the shape and ranges your code assumes, before the code uses it.</li>
+<li><strong>Security controls protect the system.</strong> Authentication, authorization, secret handling, rate limits and audit logs decide who may do what, and keep a record.</li>
+</ul>
+<p>You already know the first two from <a href="/learn/ts-runtime">TypeScript and JavaScript together</a>, <a href="/learn/ts-validation">Runtime validation</a> and <a href="/learn/ts-branded-types">Branded types</a>. Here you combine all three into one endpoint, and learn where each one stops. You will not run the broken version: the rest of the lesson builds the correct one, step by step, and tests it.</p>
+</section>
+
+<section>
+<h2 id="layers">Three layers, three jobs</h2>
+<p>Start with what a type really is at runtime: nothing. TypeScript removes all types when it compiles to JavaScript (this is called <strong>type erasure</strong>). Here is a payment parsed from JSON and asserted to be a <code>Payment</code>. The assertion changes the compiler's opinion, not the value:</p>
+<example file="erased.ts" browser="no">
+interface Payment {
+  orderId: string;
+  amountKobo: number;
+}
+
+const payment = JSON.parse('{"orderId":"ORD-1042","amountKobo":"4500000"}') as Payment;
+
+console.log(typeof payment.amountKobo);
+console.log(payment.amountKobo + 500_000);
+</example>
+<output>
+string
+4500000500000
+</output>
+<p>The compiler was sure <code>amountKobo</code> is a number, so it allowed <code>+</code>. At runtime it was a string, and <code>+</code> glued the digits together. No error, no warning: a wrong amount that looks like a right one. That is the typical failure when types are trusted at a boundary.</p>
+<p>Types are still extremely useful, for <em>your own</em> code. Once a value is known to be correct, the compiler makes sure every function that uses it does so correctly. Here the arguments are swapped, and the compiler refuses to build:</p>
+<example file="swapped.ts" check="tsc-error">
+function refund(orderId: string, amountKobo: number): string {
+  return `refund ${amountKobo} kobo on ${orderId}`;
+}
+
+console.log(refund(4_500_000, "ORD-1042"));
+</example>
+<output kind="tsc">
+swapped.ts:5:20 - error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+
+5 console.log(refund(4_500_000, "ORD-1042"));
+                     ~~~~~~~~~
+
+
+Found 1 error in swapped.ts:5
+</output>
+<p>So each layer has its own job, its own moment, and its own blind spot:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Layer</th><th>Runs</th><th>Protects against</th><th>Cannot see</th></tr></thead>
+<tbody>
+<tr><td>Types (TypeScript)</td><td>At compile time, on your source code</td><td>Your own mistakes: wrong argument order, a missing field, a forgotten case</td><td>Anything that arrives at runtime: requests, files, database rows, environment variables</td></tr>
+<tr><td>Runtime validation (Zod, Valibot, JSON Schema)</td><td>On every request, before your code uses the data</td><td>Wrong shapes, wrong types, out-of-range values, unexpected fields, oversized input</td><td>Whether a perfectly well-formed request is <em>allowed</em></td></tr>
+<tr><td>Security controls (authentication, authorization, secrets, limits, logs)</td><td>On every request, with the server's own knowledge</td><td>Wrong people doing things, leaked keys, abuse, actions nobody can trace</td><td>Bugs in the code they protect</td></tr>
+</tbody>
+</table></div>
+<p>A well-formed request from the wrong person passes validation. A request from the right person with a string amount passes authorization. You need all three, in order: <strong>authenticate</strong> (who is calling?), <strong>validate</strong> (is the request well-formed?), <strong>authorize</strong> (may this caller do this to this object?), then act.</p>
+<note title="CODE REVIEW">Search the diff for <code>as</code> applied to anything that came from outside: <code>req.body as</code>, <code>JSON.parse(…) as</code>, <code>await res.json() as</code>, <code>row as</code>. Each one is a place where a check should be and is not.</note>
+<reason title="Before you write the handler: what can you trust?">
+<p>A refund request reaches your server. It has headers (including a session token) and a JSON body with an order id, an amount and a reason. Before looking at any code, decide:</p>
+<ul>
+<li>Which of these values did the <em>caller</em> write, and which does the <em>server</em> know on its own?</li>
+<li>Where should the caller's identity and role come from?</li>
+<li>The body is supposed to be an object. What else could it be? What if it has extra fields that the code does not expect, such as <code>role</code> or <code>approved</code>?</li>
+<li>The amount is well-formed and the caller is support staff. What else must be true before money moves?</li>
+<li>What should the caller learn when a check fails? What should the log record?</li>
+</ul>
+<answer>
+<p>The caller wrote <strong>everything</strong> in the request: the headers, the token, the whole body. The only thing the server knows by itself is what it stored: the session behind the token, the user's role, the order and its payments. So the token is used only as a key to look up the server's own session record, and the role comes from that record. A role in the body is ignored, or better, rejected as an unknown field.</p>
+<p>The body could be anything JSON allows: an array, a string, <code>null</code>, a number, an object with the wrong types, a very long string, extra keys. A strict schema accepts exactly one shape and rejects the rest, including unknown keys, so a field nobody planned for can never slip into later code.</p>
+<p>A valid amount from support staff is still not enough. The order must exist; the amount must not exceed what was paid minus what was already refunded; the approver must not be the customer who placed the order (a rule called <strong>separation of duties</strong>); and support staff may have a limit. These rules use the server's data, not the request's.</p>
+<p>The caller learns the status code and a short reason, never internal details. The log records who did what to which order, and the decision, but never the token, keys or card data.</p>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="validate">Runtime validation at the boundary</h2>
+<p>A <strong>trust boundary</strong> is any place where data enters your code from something you do not control: an HTTP request, a message queue, a file upload, a webhook, even your own database (a row written by an older version of the code may not match today's types). At every boundary the value's type is <code>unknown</code>, and a schema turns it into a typed value or a list of problems.</p>
+<p>The refund service keeps its schemas in one file. Everything is <strong>strict</strong>: <code>z.strictObject</code> rejects keys it does not know, instead of silently dropping them. Every string and number has limits, so no field can be empty, negative or enormous:</p>
+<file name="schemas.ts" project="refunds">
+import * as z from "zod";
+
+export const UserId = z.string().regex(/^usr_[a-z0-9]{3,20}$/).brand<"UserId">();
+export type UserId = z.infer<typeof UserId>;
+
+export const OrderId = z.string().regex(/^ORD-\d{4,10}$/, "must look like ORD-1042").brand<"OrderId">();
+export type OrderId = z.infer<typeof OrderId>;
+
+// Whole kobo, more than zero, at most ₦1,000,000.
+export const Kobo = z.number().int().positive().max(100_000_000).brand<"Kobo">();
+export type Kobo = z.infer<typeof Kobo>;
+
+export const RefundRequest = z.strictObject({
+  orderId: OrderId,
+  amountKobo: Kobo,
+  reason: z.string().trim().min(3).max(500),
+});
+export type RefundRequest = z.infer<typeof RefundRequest>;
+</file>
+<p>Now test the schema the way you would test any security rule: with the one shape it must accept and every wrong shape you can think of. Each input below is something a client could send. Only the first is well-formed:</p>
+<example file="validate.ts" project="refunds" browser="no">
+import { RefundRequest } from "./schemas.js";
+
+const bodies: Array<[string, unknown]> = [
+  ["well-formed", { orderId: "ORD-1042", amountKobo: 4_500_000, reason: "Parcel arrived broken" }],
+  ["amount as text", { orderId: "ORD-1042", amountKobo: "4500000", reason: "Parcel arrived broken" }],
+  ["negative amount", { orderId: "ORD-1042", amountKobo: -500, reason: "Parcel arrived broken" }],
+  ["fraction of a kobo", { orderId: "ORD-1042", amountKobo: 12.5, reason: "Parcel arrived broken" }],
+  ["extra role field", { orderId: "ORD-1042", amountKobo: 4_500_000, reason: "Broken", role: "manager" }],
+  ["missing reason", { orderId: "ORD-1042", amountKobo: 4_500_000 }],
+  ["reason too long", { orderId: "ORD-1042", amountKobo: 4_500_000, reason: "x".repeat(501) }],
+  ["array", [{ orderId: "ORD-1042" }]],
+  ["null", null],
+];
+
+for (const [label, body] of bodies) {
+  const result = RefundRequest.safeParse(body);
+  const verdict = result.success
+    ? "accepted"
+    : result.error.issues.map((issue) => `${issue.path.join(".") || "(body)"} ${issue.code}`).join(", ");
+  console.log(label.padEnd(20), verdict);
+}
+</example>
+<output>
+well-formed          accepted
+amount as text       amountKobo invalid_type
+negative amount      amountKobo too_small
+fraction of a kobo   amountKobo invalid_type
+extra role field     (body) unrecognized_keys
+missing reason       reason invalid_type
+reason too long      reason too_big
+array                (body) invalid_type
+null                 (body) invalid_type
+</output>
+<p>Read the results as a checklist of what the endpoint will never see again:</p>
+<ul>
+<li>A text amount is refused (<code>invalid_type</code>), not quietly converted. Converting <code>"4500000"</code> would be harmless; converting <code>""</code> or <code>"1e9"</code> would not, so a strict boundary asks the client to send the right type.</li>
+<li>The <code>role</code> field is rejected with <code>unrecognized_keys</code>. With a plain <code>z.object</code> it would be stripped, which is also safe for this handler. Rejecting is better: a client that sends <code>role</code> is either confused or probing, and either way you want to know. It also protects against <strong>mass assignment</strong>, the bug where extra request fields are copied straight into a database row (<code>{ ...body }</code>) and set columns the client should never touch.</li>
+<li>Limits (<code>max(500)</code>, <code>max(100_000_000)</code>) bound how much work and storage a single request can cost. Pair them with a request body size limit, checked <em>before</em> <code>JSON.parse</code> runs (see <a href="/learn/zudo-security#limits">Request limits</a>).</li>
+</ul>
+<p>What the schema returns is a <strong>new object</strong> built from the checked fields, not the original. Code after the boundary never touches the raw body again, so nothing the client added can reach it. This habit is often summed up as <strong>parse, don't validate</strong>: do not just answer "is it OK?" and keep using the original, turn it into a value of a more precise type.</p>
+<note title="CODE REVIEW">Every handler parameter that comes from a request should be typed <code>unknown</code> until a schema has parsed it. Object schemas at a boundary should be strict, with a maximum on every string, number and array.</note>
+</section>
+
+<section>
+<h2 id="brands">Branded types: validated values only</h2>
+<p>The schemas above end in <code>.brand&lt;"OrderId"&gt;()</code>. A <strong>brand</strong> (from <a href="/learn/ts-branded-types">Branded types</a>) is an invisible tag that exists only in the type system. The only way to get an <code>OrderId</code> is to run the schema, so a function that takes an <code>OrderId</code> can rely on it having been validated. A plain string will not do, even a correct-looking one:</p>
+<example file="brand-check.ts" project="refunds" check="tsc-error">
+import { OrderId, type OrderId as OrderIdType } from "./schemas.js";
+
+function loadOrder(id: OrderIdType): string {
+  return `SELECT … WHERE id = ${JSON.stringify(id)}`;
+}
+
+const fromUrl = "ORD-1042";
+loadOrder(fromUrl);
+loadOrder(OrderId.parse(fromUrl));
+</example>
+<output kind="tsc">
+brand-check.ts:8:11 - error TS2345: Argument of type 'string' is not assignable to parameter of type 'string & $brand<"OrderId">'.
+  Type 'string' is not assignable to type '$brand<"OrderId">'.
+
+8 loadOrder(fromUrl);
+            ~~~~~~~
+
+
+Found 1 error in brand-check.ts:8
+</output>
+<p>The second call compiles because <code>OrderId.parse</code> returns an <code>OrderId</code>. The compiler now enforces "validate before use" for you: a new developer who forgets to parse the id gets an error, not a bug. This is the one place where types really do help security: not by checking data, but by making it impossible to <em>skip</em> the check that does.</p>
+<p>A brand is only as good as the places that create it. If someone writes <code>"ORD-1042" as OrderId</code>, the brand is a lie again. Keep the <code>as</code> casts that create brands inside the schema file, and treat any other one as a review finding.</p>
+<note title="CODE REVIEW">Functions that act on sensitive data (money, ids, permissions) should take branded types, not <code>string</code> and <code>number</code>. Any <code>as SomeBrand</code> outside the module that owns the brand is a finding.</note>
+</section>
+
+<section>
+<h2 id="authorization">Authorization: decided by the server, denied by default</h2>
+<p><strong>Authentication</strong> answers "who is calling?". <strong>Authorization</strong> answers "may this caller do this action to this object?". The broken handler failed at both: it read the identity from the body, and it had one rule (the role) where several were needed.</p>
+<h3>Where identity comes from</h3>
+<p>After login (see <a href="/learn/sec-authentication">Authentication</a>), the client holds a session token. The server keeps a record for each token: the user id and the roles, loaded from its own database. The handler looks the token up and gets an <strong>actor</strong>: the authenticated user the request acts for. Nothing in the body can change it.</p>
+<h3>Authorization models</h3>
+<p>There are three common ways to express the rules. Real systems usually combine them:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Model</th><th>The rule looks at</th><th>Example</th></tr></thead>
+<tbody>
+<tr><td><strong>RBAC</strong> (role-based)</td><td>The actor's roles</td><td>Only support staff and managers approve refunds.</td></tr>
+<tr><td><strong>ABAC</strong> (attribute-based)</td><td>Attributes of the actor, the object and the request</td><td>Support staff may approve up to ₦50,000; the amount must not exceed what is left to refund.</td></tr>
+<tr><td><strong>Ownership / relationships</strong></td><td>How the actor relates to the object</td><td>Nobody approves a refund on an order they placed themselves.</td></tr>
+</tbody>
+</table></div>
+<p>Whatever the model, write the rules as one explicit function that returns a decision with a reason, and make <strong>deny</strong> the answer whenever no rule says "allow". A missing <code>if</code> then fails closed (refuses) instead of open (allows).</p>
+<file name="access.ts" project="refunds">
+import type { Kobo, OrderId, UserId } from "./schemas.js";
+
+export type Role = "customer" | "support" | "manager";
+
+export interface Actor {
+  readonly userId: UserId;
+  readonly role: Role;
+}
+
+export interface Order {
+  readonly id: OrderId;
+  readonly customerId: UserId;
+  readonly paidKobo: number;
+  readonly refundedKobo: number;
+}
+
+export type Decision =
+  | { readonly allowed: true }
+  | { readonly allowed: false; readonly status: 403 | 422; readonly reason: string };
+
+const SUPPORT_LIMIT_KOBO = 5_000_000; // ₦50,000
+
+export function decideRefund(actor: Actor, order: Order, amount: Kobo): Decision {
+  if (actor.role !== "support" && actor.role !== "manager") {
+    return { allowed: false, status: 403, reason: "only support staff and managers approve refunds" };
+  }
+  if (order.customerId === actor.userId) {
+    return { allowed: false, status: 403, reason: "you cannot approve a refund on your own order" };
+  }
+  if (amount > order.paidKobo - order.refundedKobo) {
+    return { allowed: false, status: 422, reason: "amount is more than what is left to refund" };
+  }
+  if (actor.role === "support" && amount > SUPPORT_LIMIT_KOBO) {
+    return { allowed: false, status: 403, reason: "support staff approve up to ₦50,000" };
+  }
+  if (actor.role === "support" || actor.role === "manager") return { allowed: true };
+  return { allowed: false, status: 403, reason: "no rule allows this" };
+}
+</file>
+<p>The last two lines look redundant: the first check already refused everyone else. They are there on purpose. If someone later adds a <code>"finance"</code> role to <code>Role</code> and edits the first check carelessly, the function still ends in "deny". Test every rule, including the default:</p>
+<example file="decide.ts" project="refunds" browser="no">
+import { decideRefund, type Actor, type Order } from "./access.js";
+import { Kobo, OrderId, UserId } from "./schemas.js";
+
+const order: Order = {
+  id: OrderId.parse("ORD-1042"),
+  customerId: UserId.parse("usr_chidi"),
+  paidKobo: 9_000_000,
+  refundedKobo: 2_000_000,
+};
+const actor = (id: string, role: Actor["role"]): Actor => ({ userId: UserId.parse(id), role });
+
+const cases: Array<[string, Actor, number]> = [
+  ["customer", actor("usr_bola", "customer"), 1_000_000],
+  ["support, own order", actor("usr_chidi", "support"), 1_000_000],
+  ["support, ₦45,000", actor("usr_ada", "support"), 4_500_000],
+  ["support, ₦60,000", actor("usr_ada", "support"), 6_000_000],
+  ["manager, ₦60,000", actor("usr_emeka", "manager"), 6_000_000],
+  ["manager, ₦80,000", actor("usr_emeka", "manager"), 8_000_000],
+];
+
+for (const [label, who, amount] of cases) {
+  const decision = decideRefund(who, order, Kobo.parse(amount));
+  console.log(label.padEnd(20), decision.allowed ? "allowed" : `${decision.status} ${decision.reason}`);
+}
+</example>
+<output>
+customer             403 only support staff and managers approve refunds
+support, own order   403 you cannot approve a refund on your own order
+support, ₦45,000     allowed
+support, ₦60,000     403 support staff approve up to ₦50,000
+manager, ₦60,000     allowed
+manager, ₦80,000     422 amount is more than what is left to refund
+</output>
+<p>The order was paid ₦90,000 and ₦20,000 is already refunded, so ₦70,000 is left. The manager may approve ₦60,000 but not ₦80,000; the second is a business rule (<code>422</code>, "unprocessable"), not a permission problem (<code>403</code>, "forbidden"), and the status says so.</p>
+<h3>Make "authorized" a type too</h3>
+<p>One risk remains: a later change that calls the payment code directly and forgets <code>decideRefund</code>. Use a brand again. The only function that can create an <code>ApprovedRefund</code> is the one that asks <code>decideRefund</code>; the function that moves money accepts nothing else:</p>
+<file name="approval.ts" project="refunds">
+import { decideRefund, type Actor, type Decision, type Order } from "./access.js";
+import type { RefundRequest, UserId } from "./schemas.js";
+
+declare const approved: unique symbol;
+
+export type ApprovedRefund = RefundRequest & {
+  readonly approvedBy: UserId;
+  readonly [approved]: true;
+};
+
+export function approve(actor: Actor, order: Order, request: RefundRequest): ApprovedRefund | Exclude<Decision, { allowed: true }> {
+  const decision = decideRefund(actor, order, request.amountKobo);
+  if (!decision.allowed) return decision;
+  return { ...request, approvedBy: actor.userId } as ApprovedRefund;
+}
+</file>
+<p><code>declare const approved: unique symbol</code> creates a symbol type that exists only for the compiler, so no other file can write the <code>[approved]</code> key. Now a payment function that asks for an <code>ApprovedRefund</code> cannot receive a request that skipped the check:</p>
+<example file="skip-check.ts" project="refunds" check="tsc-error">
+import type { ApprovedRefund } from "./approval.js";
+import { RefundRequest } from "./schemas.js";
+
+function sendToGateway(refund: ApprovedRefund): void {
+  console.log(`refunding ${refund.amountKobo} on ${refund.orderId}`);
+}
+
+const request = RefundRequest.parse({ orderId: "ORD-1042", amountKobo: 4_500_000, reason: "Parcel arrived broken" });
+sendToGateway(request);
+</example>
+<output kind="tsc">
+skip-check.ts:9:15 - error TS2345: Argument of type '{ orderId: string & $brand<"OrderId">; amountKobo: number & $brand<"Kobo">; reason: string; }' is not assignable to parameter of type 'ApprovedRefund'.
+  Type '{ orderId: string & $brand<"OrderId">; amountKobo: number & $brand<"Kobo">; reason: string; }' is missing the following properties from type '{ readonly approvedBy: string & $brand<"UserId">; readonly [approved]: true; }': approvedBy, [approved]
+
+9 sendToGateway(request);
+                ~~~~~~~
+
+
+Found 1 error in skip-check.ts:9
+</output>
+<note title="CODE REVIEW">For every new endpoint, ask: where does the actor come from (it must be the session, never the request), which function makes the authorization decision, and does that function end in "deny"? Look for role or user-id fields in request schemas: they are almost always a bug.</note>
+</section>
+
+<section>
+<h2 id="secrets">Secrets that cannot be logged by accident</h2>
+<p>The refund service calls a payment gateway with an API key. That key is a <strong>secret</strong>: anyone who has it can move your money. The most common way secrets leak is not an attack; it is a log line. Someone logs the configuration object while debugging, an error message includes a URL with the key in it, or an exception tracker captures the local variables. Those logs are then copied to places with far weaker protection than your server.</p>
+<p>A <code>string</code> type cannot help: to the compiler, a key is text like any other. So give secrets their own type, a class that holds the value in a private field and answers "[redacted]" to every way of printing it. The real value is only available through a method with a name you can search for:</p>
+<file name="secret.ts" project="refunds">
+import { inspect } from "node:util";
+
+export class Secret<T = string> {
+  readonly #value: T;
+
+  constructor(value: T) {
+    this.#value = value;
+  }
+
+  /** The only way to read the value. Call it at the point of use, never earlier. */
+  reveal(): T {
+    return this.#value;
+  }
+
+  toString(): string {
+    return "[redacted]";
+  }
+
+  toJSON(): string {
+    return "[redacted]";
+  }
+
+  [inspect.custom](): string {
+    return "Secret([redacted])";
+  }
+}
+</file>
+<ul>
+<li><code>#value</code> is a JavaScript <strong>private field</strong>: not a property, so <code>Object.keys</code>, spreading and <code>JSON.stringify</code> cannot see it.</li>
+<li><code>toString</code> covers template strings and string concatenation; <code>toJSON</code> covers <code>JSON.stringify</code>, which structured loggers use.</li>
+<li><code>inspect.custom</code> is the symbol Node.js's <code>console.log</code> and <code>util.inspect</code> call to print an object.</li>
+</ul>
+<p>Now try every accidental way of printing a configuration that contains the key:</p>
+<example file="secret-leaks.ts" project="refunds" browser="no">
+import { Secret } from "./secret.js";
+
+const config = {
+  gatewayUrl: "https://payments.example/v1",
+  gatewayKey: new Secret("sk_live_example_not_a_real_key_000000"),
+};
+
+console.log(config);
+console.log(`key is ${config.gatewayKey}`);
+console.log(JSON.stringify(config));
+console.log("spread:", { ...config.gatewayKey });
+console.log(new Error("gateway refused key " + config.gatewayKey).message);
+console.log(Object.keys(config.gatewayKey).length);
+console.log("usable where needed:", config.gatewayKey.reveal().startsWith("sk_live_"));
+</example>
+<output>
+{
+  gatewayUrl: 'https://payments.example/v1',
+  gatewayKey: Secret([redacted])
+}
+key is [redacted]
+{"gatewayUrl":"https://payments.example/v1","gatewayKey":"[redacted]"}
+spread: {}
+gateway refused key [redacted]
+0
+usable where needed: true
+</output>
+<p>Every accidental path prints <code>[redacted]</code>; only the deliberate <code>reveal()</code> gets the value. The type system adds a second guard. A function that needs the raw key (such as an HTTP client setting a header) takes a <code>string</code>, and a <code>Secret</code> is not a string, so it cannot be passed by mistake:</p>
+<example file="secret-type.ts" project="refunds" check="tsc-error">
+import { Secret } from "./secret.js";
+
+function authorizationHeader(key: string): string {
+  return `Bearer ${key}`;
+}
+
+const key = new Secret("sk_live_example_not_a_real_key_000000");
+authorizationHeader(key);
+authorizationHeader(key.reveal());
+</example>
+<output kind="tsc">
+secret-type.ts:8:21 - error TS2345: Argument of type 'Secret<string>' is not assignable to parameter of type 'string'.
+
+8 authorizationHeader(key);
+                      ~~~
+
+
+Found 1 error in secret-type.ts:8
+</output>
+<h3>Loading secrets at startup</h3>
+<p>Secrets come from the environment or a secret store, never from source code (<a href="/learn/sec-crypto#secrets">Cryptography for developers</a> covers where they live and how to rotate them). Validate them like any other input, at startup, and wrap them immediately. A missing or malformed key then stops the service before it takes a single request, and the error names the variable without printing its value:</p>
+<file name="env.ts" project="refunds">
+import * as z from "zod";
+import { Secret } from "./secret.js";
+
+const Env = z.object({
+  GATEWAY_URL: z.url({ protocol: /^https$/ }),
+  GATEWAY_KEY: z.string().min(32).transform((value) => new Secret(value)),
+});
+
+export type Env = z.infer<typeof Env>;
+
+export function loadEnv(source: Record<string, string | undefined>): Env {
+  const result = Env.safeParse(source);
+  if (!result.success) {
+    const problems = result.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`);
+    throw new Error(`invalid configuration: ${problems.join("; ")}`);
+  }
+  return result.data;
+}
+</file>
+<example file="env-check.ts" project="refunds" browser="no">
+import { loadEnv } from "./env.js";
+
+const good = loadEnv({ GATEWAY_URL: "https://payments.example/v1", GATEWAY_KEY: "sk_live_" + "a".repeat(32) });
+console.log(good);
+
+try {
+  loadEnv({ GATEWAY_URL: "http://payments.example/v1", GATEWAY_KEY: "sk_live_short" });
+} catch (error) {
+  console.log((error as Error).message);
+  console.log("value in message:", (error as Error).message.includes("sk_live_short"));
+}
+</example>
+<output>
+{
+  GATEWAY_URL: 'https://payments.example/v1',
+  GATEWAY_KEY: Secret([redacted])
+}
+invalid configuration: GATEWAY_URL: Invalid URL; GATEWAY_KEY: Too small: expected string to have >=32 characters
+value in message: false
+</output>
+<p>In the real service you call <code>loadEnv(process.env)</code> once, at startup. Plain <code>http</code> is refused for the gateway, because the key would travel unencrypted.</p>
+<note title="CODE REVIEW">Secrets are typed <code>Secret</code> from the moment they are loaded, <code>reveal()</code> appears only where the value is sent, and no log, error message or response includes a configuration object built from raw strings.</note>
+</section>
+
+<section>
+<h2 id="build">Build: the refund endpoint</h2>
+<p>Now put the layers together, in the order from the start of the lesson: authenticate, validate, load, authorize, act, record. The handler takes its dependencies as parameters (sessions, orders, the gateway, the audit log), which is what makes it easy to test. It is written against plain request and response objects so you can see every step; in a real application a framework such as <a href="/learn/zudo-http">@zudojs/http</a> supplies them.</p>
+<file name="refunds.ts" project="refunds">
+import type { Actor, Order } from "./access.js";
+import { approve, type ApprovedRefund } from "./approval.js";
+import { RefundRequest, type OrderId } from "./schemas.js";
+
+export interface HttpRequest {
+  readonly headers: Readonly<Record<string, string | undefined>>;
+  readonly body: unknown;
+}
+export interface HttpResponse {
+  readonly status: number;
+  readonly body: Readonly<Record<string, unknown>>;
+}
+export interface RefundDeps {
+  readonly sessions: ReadonlyMap<string, Actor>;
+  readonly orders: ReadonlyMap<OrderId, Order>;
+  readonly gateway: (refund: ApprovedRefund) => Promise<void>;
+  readonly audit: (entry: Readonly<Record<string, unknown>>) => void;
+}
+
+export async function handleRefund(request: HttpRequest, deps: RefundDeps): Promise<HttpResponse> {
+  const token = request.headers.authorization?.match(/^Bearer ([\w-]{1,200})$/)?.[1];
+  const actor = token === undefined ? undefined : deps.sessions.get(token);
+  if (actor === undefined) return { status: 401, body: { error: "log in first" } };
+
+  const parsed = RefundRequest.safeParse(request.body);
+  if (!parsed.success) {
+    const fields = parsed.error.issues.map((issue) => issue.path.join(".") || "(body)");
+    return { status: 400, body: { error: "invalid refund request", fields } };
+  }
+
+  const order = deps.orders.get(parsed.data.orderId);
+  if (order === undefined) return { status: 404, body: { error: "no such order" } };
+
+  const result = approve(actor, order, parsed.data);
+  const entry = { actor: actor.userId, order: order.id, amountKobo: parsed.data.amountKobo };
+  if ("allowed" in result) {
+    deps.audit({ ...entry, decision: "denied", reason: result.reason });
+    return { status: result.status, body: { error: result.reason } };
+  }
+
+  await deps.gateway(result);
+  deps.audit({ ...entry, decision: "approved" });
+  return { status: 200, body: { refunded: result.amountKobo, orderId: result.orderId } };
+}
+</file>
+<p>A few details worth noticing:</p>
+<ul>
+<li>The token must match a strict pattern before it is used as a map key, so a malformed header is simply "not logged in".</li>
+<li>The <code>400</code> response names the fields that failed, not the values that were sent. Echoing input back is how responses turn into reflected XSS (<a href="/learn/sec-web#xss">Browser attacks and defences</a>).</li>
+<li>A missing order returns <code>404</code> before authorization. For objects whose <em>existence</em> is sensitive (another customer's order, seen by a customer), return <code>404</code> for "not allowed" too, so the answer does not reveal what exists.</li>
+<li>Denials are recorded as well as approvals. A burst of denied refunds from one account is exactly what a security team wants to see.</li>
+</ul>
+<p>Now the tests. They use fake sessions, orders and gateway, and include the hostile-looking requests: a customer whose body claims to be a manager, and a support agent approving their own order:</p>
+<example file="refund-tests.ts" project="refunds" browser="no">
+import type { Actor, Order } from "./access.js";
+import type { ApprovedRefund } from "./approval.js";
+import { handleRefund, type HttpRequest } from "./refunds.js";
+import { OrderId, UserId } from "./schemas.js";
+
+const sessions = new Map<string, Actor>([
+  ["tok-bola", { userId: UserId.parse("usr_bola"), role: "customer" }],
+  ["tok-ada", { userId: UserId.parse("usr_ada"), role: "support" }],
+  ["tok-chidi", { userId: UserId.parse("usr_chidi"), role: "support" }],
+]);
+const order: Order = { id: OrderId.parse("ORD-1042"), customerId: UserId.parse("usr_chidi"), paidKobo: 9_000_000, refundedKobo: 0 };
+const sent: ApprovedRefund[] = [];
+const auditLog: string[] = [];
+const deps = {
+  sessions,
+  orders: new Map([[order.id, order]]),
+  gateway: async (refund: ApprovedRefund) => void sent.push(refund),
+  audit: (entry: object) => void auditLog.push(JSON.stringify(entry)),
+};
+
+const refund = { orderId: "ORD-1042", amountKobo: 4_500_000, reason: "Parcel arrived broken" };
+const as = (token: string | undefined, body: unknown): HttpRequest => ({
+  headers: { authorization: token && `Bearer ${token}` },
+  body,
+});
+
+const cases: Array<[string, HttpRequest, number]> = [
+  ["no session", as(undefined, refund), 401],
+  ["customer claims manager", as("tok-bola", { ...refund, role: "manager" }), 400],
+  ["customer, clean body", as("tok-bola", refund), 403],
+  ["amount as text", as("tok-ada", { ...refund, amountKobo: "4500000" }), 400],
+  ["unknown order", as("tok-ada", { ...refund, orderId: "ORD-9999" }), 404],
+  ["support, own order", as("tok-chidi", refund), 403],
+  ["support, ₦45,000", as("tok-ada", refund), 200],
+];
+
+for (const [label, request, expected] of cases) {
+  const response = await handleRefund(request, deps);
+  const mark = response.status === expected ? "PASS" : "FAIL";
+  console.log(mark, label.padEnd(24), response.status, JSON.stringify(response.body));
+}
+console.log("refunds sent to the gateway:", sent.length);
+console.log(auditLog.at(-1));
+</example>
+<output>
+PASS no session               401 {"error":"log in first"}
+PASS customer claims manager  400 {"error":"invalid refund request","fields":["(body)"]}
+PASS customer, clean body     403 {"error":"only support staff and managers approve refunds"}
+PASS amount as text           400 {"error":"invalid refund request","fields":["amountKobo"]}
+PASS unknown order            404 {"error":"no such order"}
+PASS support, own order       403 {"error":"you cannot approve a refund on your own order"}
+PASS support, ₦45,000         200 {"refunded":4500000,"orderId":"ORD-1042"}
+refunds sent to the gateway: 1
+{"actor":"usr_ada","order":"ORD-1042","amountKobo":4500000,"decision":"approved"}
+</output>
+<p>Every rule from the reasoning block is now a test that passes. The customer who wrote <code>role: "manager"</code> into the body got <code>400</code> from the schema before any authorization code ran; even with a non-strict schema, the role would have come from the session and the answer would have been <code>403</code>. Exactly one refund reached the gateway.</p>
+<note title="CODE REVIEW">Read a handler top to bottom and check the order: identity from the session, then the schema, then loading, then one authorization function, then the action. Each early return should have a test.</note>
+</section>
+
+<section>
+<h2 id="property">Testing with inputs you did not think of</h2>
+<p>The table above tests the inputs <em>you</em> imagined. A <strong>property-based test</strong> states a rule that must hold for every input, then lets a library generate hundreds of random inputs to try to break it. The <a href="https://fast-check.dev/">fast-check</a> library can generate any JSON value: nested objects, arrays, odd strings, huge numbers, keys like <code>__proto__</code>.</p>
+<p>The property here: <em>whatever body a customer sends, the handler never throws, never answers 200, and never calls the gateway.</em></p>
+<example file="refund-property.ts" project="refunds" browser="no">
+import fc from "fast-check";
+import type { Actor } from "./access.js";
+import { handleRefund } from "./refunds.js";
+import { UserId } from "./schemas.js";
+
+const customer: Actor = { userId: UserId.parse("usr_bola"), role: "customer" };
+let gatewayCalls = 0;
+const deps = {
+  sessions: new Map([["tok-bola", customer]]),
+  orders: new Map(),
+  gateway: async () => void gatewayCalls++,
+  audit: () => {},
+};
+
+const anyBody = fc.oneof(
+  fc.jsonValue(),
+  fc.record({ orderId: fc.string(), amountKobo: fc.anything(), reason: fc.string(), role: fc.constant("manager") }),
+);
+
+await fc.assert(
+  fc.asyncProperty(anyBody, async (body) => {
+    const response = await handleRefund({ headers: { authorization: "Bearer tok-bola" }, body }, deps);
+    return response.status !== 200;
+  }),
+  { numRuns: 500, seed: 20260924 },
+);
+console.log("500 random bodies: none approved, gateway calls:", gatewayCalls);
+</example>
+<output>
+500 random bodies: none approved, gateway calls: 0
+</output>
+<p>If a run fails, fast-check prints the input that broke the rule, <strong>shrunk</strong> to the smallest version that still fails, and the seed to replay it. A fixed <code>seed</code> keeps the example repeatable; in a test suite you usually let it vary, so every run explores new inputs.</p>
+<note title="CODE REVIEW">Security rules ("never approves", "never throws", "never returns another user's data") are good candidates for property tests. Ask for one when a pull request changes validation or authorization.</note>
+</section>
+
+<section>
+<h2 id="limits">What validation does not do</h2>
+<p>A value that passes the schema is <em>well-formed</em>. It is not automatically <em>safe to use everywhere</em>. The refund <code>reason</code> can be any text of 3 to 500 characters, including characters that mean something in HTML, SQL or a shell. Safety depends on where the value goes next:</p>
+<ul>
+<li>Into a web page: encode for HTML when you output it (<a href="/learn/sec-web#xss">Browser attacks and defences</a>).</li>
+<li>Into SQL, a program's arguments, a file path or an outbound URL: use parameters, argument arrays, confined paths and allow-lists (<a href="/learn/sec-injection">Writing injection-safe code</a>).</li>
+<li>Into a regular expression engine or a deep merge: bound the length and ignore dangerous keys (also in <a href="/learn/sec-injection">Writing injection-safe code</a>).</li>
+</ul>
+<p>Some other gaps to keep in mind:</p>
+<ul>
+<li><strong><code>any</code> leaks in quietly.</strong> <code>JSON.parse</code>, <code>response.json()</code> and many libraries return <code>any</code>, which switches type checking off for everything it touches. Assign their results to <code>unknown</code> and parse. Keep <code>strict</code> on in <a href="/learn/ts-tsconfig">tsconfig</a> (it makes <code>catch</code> variables <code>unknown</code> too), and let a linter flag <code>any</code> and unchecked casts.</li>
+<li><strong>Responses are a boundary too.</strong> Returning a whole database row can leak fields such as password hashes or internal notes. Build responses from an explicit output type or schema (<a href="/learn/ts-api-layers">Type-safe API layers</a> uses DTOs for this).</li>
+<li><strong>Check and use at the same time.</strong> If you check the remaining refundable amount, then later write the refund, two approvals in parallel can both pass the check. The final guard belongs in the database: a transaction or a constraint (<a href="/learn/zudo-transactions">Transactions</a>).</li>
+<li><strong>Your own dependencies can lie.</strong> A type definition for a library describes what its authors intended. Validate data from other services exactly like data from users.</li>
+</ul>
+<note title="CODE REVIEW">For each validated field, ask where it goes next and whether that destination has its own defence. A schema is never the whole answer to "is this safe?".</note>
+</section>
+
+<section>
+<h2 id="review">A code-review checklist</h2>
+<p>The checks from every section, in one place:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Look for</th><th>Ask</th></tr></thead>
+<tbody>
+<tr><td><code>as</code> on outside data, <code>any</code></td><td>Is there a schema instead? Is the value <code>unknown</code> until parsed?</td></tr>
+<tr><td>Request schemas</td><td>Strict objects? A limit on every string, number and array? No <code>role</code>, <code>userId</code>, <code>isAdmin</code> or <code>price</code> fields the server should decide itself?</td></tr>
+<tr><td>Identity</td><td>Does the actor come from the server-side session or a verified token, never the body or query?</td></tr>
+<tr><td>Authorization</td><td>Is there one function that decides, with a reason, ending in deny? Does it check the object (ownership, amounts), not only the role?</td></tr>
+<tr><td>Brands</td><td>Do sensitive functions take branded, validated types? Is every <code>as Brand</code> inside the module that owns it?</td></tr>
+<tr><td>Secrets</td><td>Typed as <code>Secret</code> from load time? Validated at startup? Never logged, returned or put in error messages?</td></tr>
+<tr><td>Responses and logs</td><td>Built from explicit fields? No echo of raw input, no tokens, no internal errors?</td></tr>
+<tr><td>Tests</td><td>One per early return, hostile-looking bodies included, and a property test for the rules that must always hold?</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="production">In production</h2>
+<ul>
+<li><strong>Use shared, tested building blocks.</strong> In a ZudoJS application, <a href="/learn/zudo-validation">@zudojs/schema</a> validates at the route, <a href="/learn/zudo-permissions">@zudojs/permissions</a> expresses RBAC and ABAC rules with deny by default and an explain mode, and <a href="/learn/zudo-types-constants">@zudojs/constants</a> provides branded ids. The hand-written versions here show what those packages do for you.</li>
+<li><strong>Authorize in the service layer, not only in routes.</strong> The same action is often reachable from an HTTP route, a queue consumer and an admin script. If the check lives in one route, the other two skip it.</li>
+<li><strong>Log decisions, not data.</strong> Record actor, action, object, decision and reason. Leave out tokens, keys, card numbers and full request bodies. Redaction in the logger (see <a href="/learn/zudo-logging">Logging</a>) is a safety net for the day someone logs the wrong object anyway.</li>
+<li><strong>Keep secrets out of reach.</strong> Load them from a secret store, give each service only the secrets it needs, and rotate them. A <code>Secret</code> type prevents accidents in your code; it does nothing against someone who can read the process's memory or environment.</li>
+<li><strong>Fail closed.</strong> If the session store, the permission service or the configuration is unavailable, refuse the request. An authorization check that returns "allow" on error is a check an attacker can switch off by overloading it.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Add a finance role">
+<p>The finance team may approve refunds of any size, but only after the order is at least 7 days old (fraud checks take a week). Add <code>"finance"</code> to <code>Role</code>, add <code>paidAt</code> (a <code>Date</code>) to <code>Order</code>, and pass <code>now</code> to <code>decideRefund</code>. Which existing line would have kept the system safe if you had added the role to the type but forgotten the rule?</p>
+<solution>
+<p>The new rule, written as its own check before the final "allow":</p>
+<pre><code>if (actor.role === "finance") {
+  const ageMs = now.getTime() - order.paidAt.getTime();
+  if (ageMs &lt; 7 * 24 * 60 * 60 * 1000) {
+    return { allowed: false, status: 403, reason: "finance approves refunds after 7 days" };
+  }
+  return { allowed: true };
+}</code></pre>
+<p>The first check must also let <code>"finance"</code> through, or the new rule is never reached. If you had only added <code>"finance"</code> to the <code>Role</code> type, the first check (<code>role !== "support" &amp;&amp; role !== "manager"</code>) would have refused finance users, and the final line would have denied them anyway: the system fails closed. The opposite style, <code>if (role === "customer") deny; else allow</code>, would have silently allowed every new role. Add tests for a 6-day-old and an 8-day-old order.</p>
+</solution>
+</exercise>
+
+<exercise title="A schema for changing a user's email">
+<p>Write a strict Zod schema for <code>PATCH /me/email</code>, whose body has <code>email</code> and <code>currentPassword</code>. The email must be valid and at most 254 characters, stored in lower case. The password must be 8 to 200 characters. Show that a body with an extra <code>userId</code> field and a body with a 300-character email are both refused, and that the error does not contain the password.</p>
+<solution>
+<example file="change-email.ts" browser="no">
+import * as z from "zod";
+
+const ChangeEmail = z.strictObject({
+  email: z.string().max(254).pipe(z.email()).transform((email) => email.toLowerCase()),
+  currentPassword: z.string().min(8).max(200),
+});
+
+console.log(ChangeEmail.parse({ email: "Ada@Example.com", currentPassword: "correct horse battery" }));
+
+for (const body of [
+  { email: "ada@example.com", currentPassword: "correct horse battery", userId: "usr_emeka" },
+  { email: "a".repeat(290) + "@example.com", currentPassword: "correct horse battery" },
+]) {
+  const result = ChangeEmail.safeParse(body);
+  if (!result.success) {
+    const text = JSON.stringify(result.error.issues);
+    console.log(result.error.issues.map((issue) => issue.code), "password in error:", text.includes("correct horse"));
+  }
+}
+</example>
+<output>
+{ email: 'ada@example.com', currentPassword: 'correct horse battery' }
+[ 'unrecognized_keys' ] password in error: false
+[ 'too_big' ] password in error: false
+</output>
+<p>The user whose email changes is the actor from the session, so the body has no <code>userId</code>; the strict schema turns an attempt to name another user into a <code>400</code>. Checking <code>max(254)</code> before the email format keeps the format check from running on huge strings. And the handler must still verify <code>currentPassword</code> against the stored hash: validation says it is a sensible string, not that it is correct.</p>
+</solution>
+</exercise>
+
+<exercise title="Redact nested secrets in a log line">
+<p>A colleague's logger calls <code>JSON.stringify</code> on whatever it is given. Show that an object containing a <code>Secret</code> two levels deep, inside an array, is still logged as <code>[redacted]</code>, and explain why no special code in the logger was needed.</p>
+<solution>
+<example file="nested-secret.ts" project="refunds" browser="no">
+import { Secret } from "./secret.js";
+
+const event = {
+  service: "refunds",
+  gateways: [{ name: "primary", key: new Secret("sk_live_example_not_a_real_key_000000") }],
+};
+console.log(JSON.stringify(event));
+</example>
+<output>
+{"service":"refunds","gateways":[{"name":"primary","key":"[redacted]"}]}
+</output>
+<p><code>JSON.stringify</code> calls <code>toJSON()</code> on every object it meets, at any depth, and uses the result in place of the object. The secret redacts itself wherever it ends up; the logger does not need to know about it. That is the advantage of putting the protection on the value rather than in every place that might print it.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Summary</h2>
+<ul>
+<li>Types protect developers at compile time and disappear at runtime. A type assertion on outside data (<code>body as User</code>) checks nothing.</li>
+<li>Runtime validation protects the application: at every trust boundary, parse <code>unknown</code> data with a strict schema that has limits, and use only the parsed result.</li>
+<li>Security controls protect the system. Identity comes from the server's session, never the request. Authorization is one explicit function that checks the actor, the object and the amount, and ends in deny.</li>
+<li>Branded types turn "validate first" and "authorize first" into compiler errors, as long as brands are only created by the code that checks.</li>
+<li>A <code>Secret</code> type with a private field, <code>toString</code>, <code>toJSON</code> and <code>inspect.custom</code> keeps keys out of logs and error messages; load and validate secrets at startup.</li>
+<li>Well-formed is not the same as safe: each destination (HTML, SQL, shell, file system, URLs) still needs its own defence.</li>
+</ul>
+<p>This is the last lesson of the security course. Next, the course on software design starts with <a href="/learn/design-principles">Design principles</a>, where separating concerns, like the layers in this lesson, becomes the main tool.</p>
+</section>

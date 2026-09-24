@@ -1,0 +1,787 @@
+<question id="td-unrepresentable" type="choice">
+<q>What does "make illegal states unrepresentable" mean in practice?</q>
+<option>Validate every object with a schema before saving it</option>
+<option correct>Design the types so that a state the business forbids cannot be built, or cannot be passed where it would do harm</option>
+<option>Throw an error whenever an illegal state is detected</option>
+<option>Hide illegal states from the user interface</option>
+<explain><p>The goal is to move rules from runtime checks that someone must remember into types the compiler checks everywhere. Runtime checks remain for the rules types cannot express.</p></explain>
+</question>
+
+<question id="td-invariant" type="choice">
+<q>Which of these is an <strong>invariant</strong> of the shop's domain?</q>
+<option>The checkout button is green</option>
+<option correct>A refund never exceeds what is left on the captured payment</option>
+<option>Orders are stored in PostgreSQL</option>
+<option>The API returns JSON</option>
+<explain><p>An invariant is a rule that must hold for the model at all times. Colours, storage engines and formats are decisions about other layers, not rules of the domain.</p></explain>
+</question>
+
+<question id="td-flags" type="choice">
+<q>The naive order had <code>status: string</code>, <code>paid: boolean</code> and an optional <code>paymentId</code>. What is the core problem with that design?</q>
+<option>Booleans are slow to store</option>
+<option correct>The fields can combine in ways the business never allows, such as <code>paid: true</code> with no payment id, and nothing ties them together</option>
+<option>Optional properties are not allowed in strict mode</option>
+<option>A string status cannot be saved in a database</option>
+<explain><p>A product of independent fields allows every combination. A discriminated union with one interface per state allows exactly the combinations that exist, and ties each piece of data to the state that has it.</p></explain>
+</question>
+
+<question id="td-one-state" type="choice">
+<q>Why does the model have no function that takes a <code>PaidOrder</code> and returns a <code>PaidOrder</code>?</q>
+<option>Because interfaces cannot be returned from functions</option>
+<option correct>Because paying again is not a legal move, and if no function can express it, no code can perform it</option>
+<option>Because paid orders are frozen at runtime</option>
+<option>Because TypeScript forbids functions that return their parameter type</option>
+<explain><p>Transitions define the allowed moves. <code>markPaid</code> accepts only a <code>PendingOrder</code>, so a paid order cannot be passed to it, and there is no other way to produce a <code>PaidOrder</code> from a paid one.</p></explain>
+</question>
+
+<question id="td-once-runtime" type="choice">
+<q><code>payOrder</code> accepts only a <code>PendingOrder</code>. Why can the same order still be paid twice without a version check?</q>
+<option>Because <code>PendingOrder</code> is not readonly</option>
+<option correct>Two requests can each load the order while it is still pending and each hold a valid <code>PendingOrder</code>; types describe values, not whether they are still current</option>
+<option>Because <code>payOrder</code> uses spread</option>
+<option>Because TypeScript does not check function arguments at runtime</option>
+<explain><p>Types cannot express "this value may be used once" or "this value is outdated". Only the store, which sees every request, can refuse the second write, for example with a version check.</p></explain>
+</question>
+
+<question id="td-version" type="choice">
+<q>How does the lesson's <code>VersionedStore</code> refuse the second of two concurrent payments?</q>
+<option>It locks the order for 30 seconds</option>
+<option>It compares the payment ids</option>
+<option correct>Each transition increments <code>version</code>, and a save succeeds only if the stored version is exactly one less than the new one</option>
+<option>It throws when two objects have the same id</option>
+<explain><p>Both requests started from version 1 and produced version 2. The first save moves the store to version 2; the second finds 2 where it expected 1 and is refused as stale. This is optimistic concurrency control.</p></explain>
+</question>
+
+<question id="td-sql" type="choice">
+<q>What is the database equivalent of the version check?</q>
+<option><code>SELECT * FROM orders WHERE id = $1</code>, then compare in code</option>
+<option correct><code>UPDATE orders SET … WHERE id = $1 AND version = $2</code>, then check that exactly one row changed</option>
+<option>A foreign key from payments to orders</option>
+<option><code>DELETE</code> the old row before inserting the new one</option>
+<explain><p>Putting the expected version in the <code>WHERE</code> clause makes the check and the write one atomic statement. Reading first and comparing in code leaves a gap in which another request can write.</p></explain>
+</question>
+
+<question id="td-nonempty" type="choice">
+<q>Which type makes <code>[]</code> a compile error for an order's lines?</q>
+<option><code>readonly OrderLine[]</code></option>
+<option><code>Array&lt;OrderLine&gt; &amp; { length: number }</code></option>
+<option correct><code>readonly [OrderLine, ...OrderLine[]]</code></option>
+<option><code>Partial&lt;OrderLine[]&gt;</code></option>
+<explain><p>A tuple with one required element followed by a rest element needs at least one item. TypeScript reports "Source has 0 element(s) but target requires 1".</p></explain>
+</question>
+
+<question id="td-snapshot" type="choice">
+<q>Why does an <code>OrderLine</code> store <code>unitPrice</code> instead of looking the price up from the product when needed?</q>
+<option>To save a database query</option>
+<option correct>The order must keep the price the customer agreed to, even if the catalogue price changes later</option>
+<option>Because branded types cannot refer to other entities</option>
+<option>Because products are immutable</option>
+<explain><p>Choosing between copying data (a snapshot) and referring to it is a domain decision. Prices on past orders are facts about that moment and must not change with the catalogue.</p></explain>
+</question>
+
+<question id="td-total" type="choice">
+<q>Why does <code>newOrder</code> compute <code>total</code> itself instead of taking it as a parameter?</q>
+<option>Parameters cannot be branded</option>
+<option correct>So no caller can create an order whose total disagrees with its lines</option>
+<option>Because the total is only needed for display</option>
+<option>To make the function impure</option>
+<explain><p>Derived data that is supplied separately can drift from the data it derives from. Computing it in the only constructor removes the possibility.</p></explain>
+</question>
+
+<question id="td-refund-type" type="choice">
+<q>Which rule about refunds does the <em>type</em> of <code>applyRefund(payment: CapturedPayment, …)</code> enforce?</q>
+<option>The refund amount is at most what is left on the payment</option>
+<option correct>Only a captured payment can be refunded; initiated, failed and fully refunded payments do not fit</option>
+<option>The refund is made by finance staff</option>
+<option>The refund is recorded in the ledger</option>
+<explain><p>The parameter type encodes the state. The amount rule compares two runtime numbers and is a <code>Result</code>; the permission comes from the use case's permit parameter.</p></explain>
+</question>
+
+<question id="td-refund-result" type="choice">
+<q>Why does <code>applyRefund</code> return <code>CapturedPayment | RefundedPayment</code> rather than always a <code>CapturedPayment</code>?</q>
+<option>To make the return type longer</option>
+<option correct>A partial refund leaves the payment captured, but refunding the rest ends it; the result's state depends on the amount</option>
+<option>Because unions are faster to check</option>
+<option>Because refunds can fail</option>
+<explain><p>The caller must narrow the result before refunding again. A fully refunded payment then cannot be passed to another refund, which is exactly the rule.</p></explain>
+</question>
+
+<question id="td-permit" type="choice">
+<q>What stops code outside <code>users.ts</code> from creating a <code>Permit&lt;"payment:refund"&gt;</code> without calling <code>authorize</code>?</q>
+<option>The permit is checked against a database</option>
+<option>The permit object is frozen</option>
+<option correct>The permit's brand is keyed by a <code>unique symbol</code> that is not exported, so no other module can write an object with that property</option>
+<option>Permissions are private fields of <code>User</code></option>
+<explain><p>An object literal with <code>by</code> and <code>permission</code> is still missing <code>[permitBrand]</code>, and nobody outside the module can name that key. A cast could still forge one, which is why casts outside constructors deserve review.</p></explain>
+</question>
+
+<question id="td-permit-kind" type="choice">
+<q>Why is <code>Permit&lt;"order:pay"&gt;</code> not accepted where <code>Permit&lt;"payment:refund"&gt;</code> is expected?</q>
+<option>Because permits are classes</option>
+<option correct>The brand's type is the permission literal itself, and <code>"order:pay"</code> is not <code>"payment:refund"</code></option>
+<option>Because <code>authorize</code> returns a <code>Result</code></option>
+<option>Because permits expire</option>
+<explain><p>Parameterising the permit by its permission turns "authorized for something" into "authorized for this". A permit for one operation cannot be reused for another.</p></explain>
+</question>
+
+<question id="td-rbac-resource" type="choice">
+<q>Ada has the <code>order:pay</code> permission. Why does <code>payOrder</code> still compare <code>permit.by</code> with <code>order.customer</code>?</q>
+<option>It is redundant; the permit already proves it</option>
+<option correct>The role says Ada may pay orders in general; whether she may pay <em>this</em> order depends on its data, which only a runtime check can compare</option>
+<option>To log who paid</option>
+<option>Because permits do not record a user</option>
+<explain><p>Role-based permissions answer "may this kind of user do this kind of thing?". Resource rules like ownership depend on the specific record and stay runtime checks inside the use case.</p></explain>
+</question>
+
+<question id="td-events" type="choice">
+<q>Why do the use cases <em>return</em> their events instead of publishing them directly?</q>
+<option>Publishing is not possible in TypeScript</option>
+<option correct>The functions stay pure and testable, and the events are part of the result type, so the shell cannot ignore that they exist</option>
+<option>Events must be sorted first</option>
+<option>To make events optional</option>
+<explain><p>A pure use case returns everything that happened: new states, events and ledger transactions. The shell saves and publishes them, ideally in the same database transaction.</p></explain>
+</question>
+
+<question id="td-ledger-ctor" type="choice">
+<q>Why is "debits equal credits" enforced by the <code>transaction()</code> smart constructor and not by a type?</q>
+<option>Because ledgers are stored in a database</option>
+<option correct>It is a rule about the sum of a list of runtime numbers, which no type can compute</option>
+<option>Because brands cannot be used on objects</option>
+<option>Because transactions are rare</option>
+<explain><p>Types can say "a non-empty list of entries", but not "whose amounts sum to zero". A constructor checks the sums once and brands the result, so every function that accepts a <code>Transaction</code> can trust it.</p></explain>
+</question>
+
+<question id="td-ledger-throw" type="choice">
+<q>Why does <code>transaction()</code> throw on unbalanced entries instead of returning a <code>Result</code>?</q>
+<option>Throwing is always better</option>
+<option correct>The entries are built by our own code, so an unbalanced transaction is a bug, not an expected user mistake</option>
+<option>Because <code>Result</code> cannot hold objects</option>
+<option>To save memory</option>
+<explain><p>Expected failures caused by users belong in the return type; programming errors should fail loudly. A ledger that does not balance means the code is wrong.</p></explain>
+</question>
+
+<question id="td-tools" type="choice">
+<q>Which tool fits the rule "this payment belongs to this order"?</q>
+<option>A branded <code>PaymentId</code> type</option>
+<option>A discriminated union</option>
+<option correct>A runtime check comparing <code>payment.orderId</code> with <code>order.id</code></option>
+<option>A <code>NonEmpty</code> tuple</option>
+<explain><p>The rule relates two values that exist only at runtime. Types can require a captured payment and a pending order; whether they belong together must be compared.</p></explain>
+</question>
+
+<question id="td-check-constraint" type="choice">
+<q>What does a database <code>CHECK</code> constraint such as "<code>status = 'paid'</code> implies <code>payment_id IS NOT NULL</code>" add to the model?</q>
+<option>Nothing; the TypeScript types already guarantee it</option>
+<option correct>It enforces the same rule for every writer, including scripts, migrations and other services that never see your types</option>
+<option>It makes queries faster</option>
+<option>It replaces the need to parse rows</option>
+<explain><p>Types protect only code that is type-checked with your model. The database is shared, so mirroring the union's rules there keeps illegal rows out regardless of who writes them.</p></explain>
+</question>
+
+<question id="td-parse-rows" type="choice">
+<q>A repository reads a row with <code>status = 'paid'</code> and <code>payment_id = NULL</code>. What should it do?</q>
+<option>Return a <code>PaidOrder</code> with <code>paymentId: null as never</code></option>
+<option>Treat it as pending</option>
+<option correct>Report the row as corrupt instead of producing a half-valid order</option>
+<option>Silently skip it</option>
+<explain><p>The repository is a boundary, like a request handler. It parses rows into the precise union and refuses rows that no state allows, so corrupt data is noticed where it enters the program.</p></explain>
+</question>
+
+<question id="td-dto" type="choice">
+<q>Why keep API response types (DTOs) separate from the domain types?</q>
+<option>Domain types cannot be serialised</option>
+<option correct>The API is a public contract that must stay stable, while domain types change with the business; mapping at the edge lets each evolve on its own</option>
+<option>DTOs are faster</option>
+<option>Because domain types use brands</option>
+<explain><p>If the response type is the domain type, every internal change (a new state, a renamed field) breaks clients. A mapper at the edge absorbs those changes.</p></explain>
+</question>
+
+<question id="td-model-everything" type="choice">
+<q>Where does illegal-state modelling pay off least?</q>
+<option>Payments and refunds</option>
+<option>Permissions</option>
+<option>The ledger</option>
+<option correct>A newsletter preference toggle</option>
+<explain><p>The technique costs types, constructors and transitions. It pays for itself where mistakes cost money or trust, not for simple settings with no rules.</p></explain>
+</question>
+
+<question id="td-expect-two" type="choice">
+<q>A type test reads <code>// @ts-expect-error</code> above <code>refundPayment(payPermit, failedPayment, …)</code>. Why is it a weak test?</q>
+<option>Because <code>@ts-expect-error</code> is deprecated</option>
+<option correct>The line has two errors (wrong permit and failed payment); if failed payments became refundable, the permit error alone would keep the test passing</option>
+<option>Because the function is never called</option>
+<option>Because type tests cannot test parameters</option>
+<explain><p>The directive only checks that some error occurs. Keep exactly one mistake per expected error, so the test fails when that one rule is lost.</p></explain>
+</question>
+
+<question id="td-pure" type="choice">
+<q>The use cases never read the clock; <code>at</code> timestamps are passed in. Why?</q>
+<option>Reading the clock is slow</option>
+<option correct>It keeps the domain pure: the same function behaves the same in tests, request handlers and queue workers</option>
+<option>Timestamps must be branded</option>
+<option>Because <code>Date</code> is not available in TypeScript</option>
+<explain><p>The clock is a hidden input. Passing time in (from the shell) is the functional core, imperative shell idea applied to a whole domain.</p></explain>
+</question>
+
+<question id="td-out-nonempty" type="output">
+<q>What does this print?</q>
+<code file="non-empty.ts">
+type NonEmpty<T> = readonly [T, ...T[]];
+
+const lines: NonEmpty<string> = ["RICE-5", "OIL-1"];
+const first: string = lines[0];
+const more: NonEmpty<string> = [...lines, "SALT"];
+console.log(first, lines.length, more.length, Array.isArray(more));
+</code>
+<option correct>RICE-5 2 3 true</option>
+<option>RICE-5 1 2 true</option>
+<option>undefined 2 3 true</option>
+<option>RICE-5 2 3 false</option>
+<explain><p>At runtime a non-empty tuple is an ordinary array. The type guarantees that <code>lines[0]</code> exists, so it is typed <code>string</code>, not <code>string | undefined</code>.</p></explain>
+</question>
+
+<question id="td-out-versions" type="output">
+<q>What does this print?</q>
+<code file="versions.ts">
+interface Pending { readonly status: "pending"; readonly version: number }
+interface Paid { readonly status: "paid"; readonly version: number; readonly paymentId: string }
+interface Shipped { readonly status: "shipped"; readonly version: number; readonly paymentId: string; readonly tracking: string }
+
+const pay = (o: Pending, paymentId: string): Paid => ({ ...o, status: "paid", paymentId, version: o.version + 1 });
+const ship = (o: Paid, tracking: string): Shipped => ({ ...o, status: "shipped", tracking, version: o.version + 1 });
+
+const pending: Pending = { status: "pending", version: 1 };
+const shipped = ship(pay(pending, "PAY-88"), "GIG-7");
+console.log(pending.version, shipped.version, shipped.paymentId, Object.keys(shipped).join(","));
+</code>
+<option correct>1 3 PAY-88 status,version,paymentId,tracking</option>
+<option>3 3 PAY-88 status,version,paymentId,tracking</option>
+<option>1 2 PAY-88 status,version,tracking</option>
+<option>1 3 PAY-88 version,status,paymentId,tracking</option>
+<explain><p>Each transition builds a new object, so the pending order is untouched and each step adds one to the version. Spread keeps the original key order, and new keys are added at the end.</p></explain>
+</question>
+
+<question id="td-out-store" type="output">
+<q>What does this print?</q>
+<code file="store.ts">
+class VersionedStore<T extends { readonly id: string; readonly version: number }> {
+  readonly #rows = new Map<string, T>();
+  save(next: T): string {
+    const found = this.#rows.get(next.id)?.version ?? 0;
+    if (found !== next.version - 1) return `stale (found ${found})`;
+    this.#rows.set(next.id, next);
+    return `saved v${next.version}`;
+  }
+}
+
+const store = new VersionedStore<{ id: string; version: number; status: string }>();
+console.log(store.save({ id: "ORD-1", version: 1, status: "pending" }));
+const a = { id: "ORD-1", version: 2, status: "paid" };
+const b = { id: "ORD-1", version: 2, status: "cancelled" };
+console.log(store.save(a), store.save(b), store.save({ id: "ORD-1", version: 3, status: "shipped" }));
+</code>
+<option correct>saved v1
+saved v2 stale (found 2) saved v3</option>
+<option>saved v1
+saved v2 saved v2 saved v3</option>
+<option>saved v1
+saved v2 stale (found 2) stale (found 2)</option>
+<option>saved v1
+stale (found 1) stale (found 1) saved v3</option>
+<explain><p>Both <code>a</code> and <code>b</code> were derived from version 1. Whichever saves first wins; the other is stale. The shipping change, derived from the saved version 2, then succeeds.</p></explain>
+</question>
+
+<question id="td-out-refunds" type="output">
+<q>What does this print?</q>
+<code file="refunds.ts">
+type Payment = { status: "captured"; amount: number; refunded: number } | { status: "refunded"; amount: number };
+
+function refund(p: { status: "captured"; amount: number; refunded: number }, amount: number): Payment | string {
+  const left = p.amount - p.refunded;
+  if (amount > left) return `only ${left} left`;
+  return amount === left ? { status: "refunded", amount: p.amount } : { ...p, refunded: p.refunded + amount };
+}
+
+const first = refund({ status: "captured", amount: 2020000, refunded: 0 }, 320000);
+if (typeof first !== "string" && first.status === "captured") {
+  console.log(refund(first, 2000000), JSON.stringify(refund(first, 1700000)));
+}
+</code>
+<option correct>only 1700000 left {"status":"refunded","amount":2020000}</option>
+<option>only 2020000 left {"status":"refunded","amount":2020000}</option>
+<option>only 1700000 left {"status":"captured","amount":2020000,"refunded":2020000}</option>
+<option>{"status":"refunded","amount":2020000} only 1700000 left</option>
+<explain><p>After refunding 320,000, 1,700,000 is left: more is refused, exactly the rest ends the payment. The final state is built fresh, so the <code>refunded</code> counter of a captured payment does not linger.</p></explain>
+</question>
+
+<question id="td-out-authorize" type="output">
+<q>What does this print?</q>
+<code file="roles.ts">
+const ROLE_PERMISSIONS = {
+  customer: ["order:place", "order:pay"],
+  warehouse: ["order:ship"],
+  finance: ["payment:refund"],
+} as const satisfies Record<string, readonly string[]>;
+
+type Role = keyof typeof ROLE_PERMISSIONS;
+type Permission = (typeof ROLE_PERMISSIONS)[Role][number];
+
+const can = (roles: readonly Role[], permission: Permission): boolean =>
+  roles.some((role) => (ROLE_PERMISSIONS[role] as readonly Permission[]).includes(permission));
+
+console.log(can(["customer"], "payment:refund"), can(["customer", "finance"], "payment:refund"), can([], "order:pay"));
+</code>
+<option correct>false true false</option>
+<option>false false false</option>
+<option>true true false</option>
+<option>false true true</option>
+<explain><p>A user has the union of their roles' permissions. A customer alone cannot refund; a customer who is also in finance can; a user with no roles can do nothing.</p></explain>
+</question>
+
+<question id="td-out-ledger" type="output">
+<q>What does this print?</q>
+<code file="ledger.ts">
+interface Entry { readonly account: string; readonly side: "debit" | "credit"; readonly amount: number }
+
+function balanced(entries: readonly Entry[]): string {
+  const sum = (side: Entry["side"]) => entries.filter((e) => e.side === side).reduce((s, e) => s + e.amount, 0);
+  return sum("debit") === sum("credit") ? "balanced" : `off by ${sum("debit") - sum("credit")}`;
+}
+
+console.log(balanced([
+  { account: "bank", side: "debit", amount: 2020000 },
+  { account: "sales", side: "credit", amount: 1700000 },
+  { account: "vat", side: "credit", amount: 320000 },
+]), balanced([
+  { account: "refunds", side: "debit", amount: 320000 },
+  { account: "bank", side: "credit", amount: 32000 },
+]));
+</code>
+<option correct>balanced off by 288000</option>
+<option>balanced balanced</option>
+<option>off by 0 off by 288000</option>
+<option>balanced off by -288000</option>
+<explain><p>A transaction may have more than two entries; only the totals per side must match. The second has a typo (one zero missing), which the check catches: 320,000 − 32,000 = 288,000.</p></explain>
+</question>
+
+<question id="td-out-fresh-state" type="output">
+<q>What does this print?</q>
+<code file="fresh.ts">
+const captured = { id: "PAY-88", status: "captured", amount: 2020000, refunded: 1700000, capturedAt: "2026-09-24" };
+
+const spread = { ...captured, status: "refunded", refundedAt: "2026-09-26" };
+const fresh = { id: captured.id, status: "refunded", amount: captured.amount, capturedAt: captured.capturedAt, refundedAt: "2026-09-26" };
+
+console.log("refunded" in spread, "refunded" in fresh, Object.keys(fresh).length);
+</code>
+<option correct>true false 5</option>
+<option>false false 5</option>
+<option>true true 6</option>
+<option>false true 5</option>
+<explain><p>Spread copies every property, including ones that belong only to the old state. Building the final state explicitly leaves the partial-refund counter behind, so the stored object matches its type exactly.</p></explain>
+</question>
+
+<question id="td-out-events" type="output">
+<q>What does this print?</q>
+<code file="events.ts">
+type DomainEvent =
+  | { readonly type: "order.paid"; readonly amount: number }
+  | { readonly type: "payment.refunded"; readonly amount: number }
+  | { readonly type: "order.shipped"; readonly trackingCode: string };
+
+const events: readonly DomainEvent[] = [
+  { type: "order.paid", amount: 2020000 },
+  { type: "order.shipped", trackingCode: "GIG-7" },
+  { type: "payment.refunded", amount: 320000 },
+  { type: "order.paid", amount: 60000 },
+];
+
+const net = events.reduce((sum, e) => (e.type === "order.paid" ? sum + e.amount : e.type === "payment.refunded" ? sum - e.amount : sum), 0);
+console.log(net, events.filter((e) => e.type === "order.paid").length);
+</code>
+<option correct>1760000 2</option>
+<option>2400000 2</option>
+<option>1760000 3</option>
+<option>2080000 2</option>
+<explain><p>2,020,000 + 60,000 − 320,000 = 1,760,000. Checking <code>type</code> narrows each event, so <code>amount</code> is only read on events that have it.</p></explain>
+</question>
+
+<question id="td-out-frozen-permit" type="output">
+<q>What does this print?</q>
+<code file="permit.ts">
+const permit = Object.freeze({ by: "USR-3", permission: "payment:refund" });
+const stolen = { ...permit, by: "USR-1" };
+const changed = Reflect.set(permit, "by", "USR-1");
+console.log(changed, permit.by, stolen.by, Object.isFrozen(stolen));
+</code>
+<option correct>false USR-3 USR-1 false</option>
+<option>true USR-1 USR-1 false</option>
+<option>false USR-3 USR-1 true</option>
+<option>true USR-3 USR-1 false</option>
+<explain><p><code>Reflect.set</code> reports whether a write succeeded; on a frozen object it fails and the permit keeps its user. A spread copy is a new, unfrozen object; in TypeScript it would also lose the permit's brand, so it could not be passed where a <code>Permit</code> is required.</p></explain>
+</question>
+
+<question id="td-out-parse-row" type="output">
+<q>What does this print?</q>
+<code file="row.ts">
+interface Row { readonly status: string; readonly payment_id: string | null }
+
+function state(row: Row): string {
+  switch (row.status) {
+    case "pending":
+      return "pending";
+    case "paid":
+      return row.payment_id === null ? "corrupt: paid without payment" : `paid by ${row.payment_id}`;
+    default:
+      return `corrupt: unknown status ${row.status}`;
+  }
+}
+
+console.log([{ status: "paid", payment_id: "PAY-88" }, { status: "paid", payment_id: null }, { status: "Paid", payment_id: "PAY-9" }].map(state).join(" | "));
+</code>
+<option correct>paid by PAY-88 | corrupt: paid without payment | corrupt: unknown status Paid</option>
+<option>paid by PAY-88 | paid by null | paid by PAY-9</option>
+<option>paid by PAY-88 | corrupt: paid without payment | paid by PAY-9</option>
+<option>paid by PAY-88 | pending | corrupt: unknown status Paid</option>
+<explain><p>The parser accepts only rows that match a state exactly. <code>"Paid"</code> with a capital letter is not <code>"paid"</code>, and a paid row without a payment id is refused instead of becoming a half-valid order.</p></explain>
+</question>
+
+<question id="td-code-cancel" type="code" file="cancel.ts">
+<q><p>Finish <code>cancel(order, reason)</code>: it only accepts a pending order, returns a cancelled order with the reason and the version increased by one, and leaves the original untouched. The program should print <code>pending 1 cancelled 2 out of stock</code>.</p></q>
+<starter>
+interface PendingOrder {
+  readonly id: string;
+  readonly status: "pending";
+  readonly version: number;
+}
+interface CancelledOrder {
+  readonly id: string;
+  readonly status: "cancelled";
+  readonly version: number;
+  readonly reason: string;
+}
+
+function cancel(order: PendingOrder, reason: string): CancelledOrder {
+  // your code here
+  return { id: order.id, status: "cancelled", version: 0, reason: "" };
+}
+
+const order: PendingOrder = { id: "ORD-1042", status: "pending", version: 1 };
+const cancelled = cancel(order, "out of stock");
+console.log(order.status, order.version, cancelled.status, cancelled.version, cancelled.reason);
+</starter>
+<solution>
+interface PendingOrder {
+  readonly id: string;
+  readonly status: "pending";
+  readonly version: number;
+}
+interface CancelledOrder {
+  readonly id: string;
+  readonly status: "cancelled";
+  readonly version: number;
+  readonly reason: string;
+}
+
+function cancel(order: PendingOrder, reason: string): CancelledOrder {
+  return { ...order, status: "cancelled", reason, version: order.version + 1 };
+}
+
+const order: PendingOrder = { id: "ORD-1042", status: "pending", version: 1 };
+const cancelled = cancel(order, "out of stock");
+console.log(order.status, order.version, cancelled.status, cancelled.version, cancelled.reason);
+</solution>
+<expected>pending 1 cancelled 2 out of stock</expected>
+<explain><p>The parameter type is the rule: only pending orders can be cancelled. Returning a new object keeps the old state intact, and the version bump lets the store detect a concurrent change.</p></explain>
+</question>
+
+<question id="td-code-refund" type="code" file="refund.ts">
+<q><p>Finish <code>applyRefund</code>: refuse <code>0</code> and anything above what is left; a refund of exactly what is left returns a fresh refunded payment (no <code>refunded</code> field); otherwise return the captured payment with <code>refunded</code> increased. The program should print <code>captured 320000 | exceeds 1700000 | refunded | nothing</code>.</p></q>
+<starter>
+interface Captured { readonly status: "captured"; readonly amount: number; readonly refunded: number }
+interface Refunded { readonly status: "refunded"; readonly amount: number }
+type Outcome = Captured | Refunded | { readonly problem: "nothing" } | { readonly problem: "exceeds"; readonly remaining: number };
+
+function applyRefund(payment: Captured, amount: number): Outcome {
+  // your code here
+  return payment;
+}
+
+const show = (o: Outcome): string =>
+  "problem" in o ? (o.problem === "exceeds" ? `exceeds ${o.remaining}` : o.problem) : o.status === "captured" ? `captured ${o.refunded}` : o.status;
+
+const payment: Captured = { status: "captured", amount: 2020000, refunded: 0 };
+const partial = applyRefund(payment, 320000);
+const next = "status" in partial && partial.status === "captured" ? partial : payment;
+console.log([partial, applyRefund(next, 2000000), applyRefund(next, 1700000), applyRefund(next, 0)].map(show).join(" | "));
+</starter>
+<solution>
+interface Captured { readonly status: "captured"; readonly amount: number; readonly refunded: number }
+interface Refunded { readonly status: "refunded"; readonly amount: number }
+type Outcome = Captured | Refunded | { readonly problem: "nothing" } | { readonly problem: "exceeds"; readonly remaining: number };
+
+function applyRefund(payment: Captured, amount: number): Outcome {
+  if (amount === 0) return { problem: "nothing" };
+  const left = payment.amount - payment.refunded;
+  if (amount > left) return { problem: "exceeds", remaining: left };
+  if (amount === left) return { status: "refunded", amount: payment.amount };
+  return { ...payment, refunded: payment.refunded + amount };
+}
+
+const show = (o: Outcome): string =>
+  "problem" in o ? (o.problem === "exceeds" ? `exceeds ${o.remaining}` : o.problem) : o.status === "captured" ? `captured ${o.refunded}` : o.status;
+
+const payment: Captured = { status: "captured", amount: 2020000, refunded: 0 };
+const partial = applyRefund(payment, 320000);
+const next = "status" in partial && partial.status === "captured" ? partial : payment;
+console.log([partial, applyRefund(next, 2000000), applyRefund(next, 1700000), applyRefund(next, 0)].map(show).join(" | "));
+</solution>
+<expected>captured 320000 | exceeds 1700000 | refunded | nothing</expected>
+<explain><p>The type restricts refunds to captured payments; the function enforces the amount rules that depend on runtime numbers. The order of checks matters: zero first, then the upper bound, then "exactly the rest".</p></explain>
+</question>
+
+<question id="td-code-authorize" type="code" file="authorize.ts">
+<q><p>Finish <code>authorize(user, permission)</code>: return a frozen permit <code>{ by, permission }</code> if any of the user's roles grants the permission, otherwise <code>undefined</code>. The program should print <code>USR-3 payment:refund | denied | USR-5 order:ship</code>.</p></q>
+<starter>
+const ROLE_PERMISSIONS = {
+  customer: ["order:place", "order:pay"],
+  warehouse: ["order:ship"],
+  finance: ["payment:refund"],
+  admin: ["order:place", "order:pay", "order:ship", "payment:refund"],
+} as const;
+
+type Role = keyof typeof ROLE_PERMISSIONS;
+type Permission = (typeof ROLE_PERMISSIONS)[Role][number];
+interface User { readonly id: string; readonly roles: readonly Role[] }
+interface Permit<P extends Permission> { readonly by: string; readonly permission: P }
+
+function authorize<P extends Permission>(user: User, permission: P): Permit<P> | undefined {
+  // your code here
+  return undefined;
+}
+
+const show = (p: Permit<Permission> | undefined): string => (p ? `${p.by} ${p.permission}` : "denied");
+console.log([
+  authorize({ id: "USR-3", roles: ["finance"] }, "payment:refund"),
+  authorize({ id: "USR-1", roles: ["customer"] }, "payment:refund"),
+  authorize({ id: "USR-5", roles: ["customer", "admin"] }, "order:ship"),
+].map(show).join(" | "));
+</starter>
+<solution>
+const ROLE_PERMISSIONS = {
+  customer: ["order:place", "order:pay"],
+  warehouse: ["order:ship"],
+  finance: ["payment:refund"],
+  admin: ["order:place", "order:pay", "order:ship", "payment:refund"],
+} as const;
+
+type Role = keyof typeof ROLE_PERMISSIONS;
+type Permission = (typeof ROLE_PERMISSIONS)[Role][number];
+interface User { readonly id: string; readonly roles: readonly Role[] }
+interface Permit<P extends Permission> { readonly by: string; readonly permission: P }
+
+function authorize<P extends Permission>(user: User, permission: P): Permit<P> | undefined {
+  const granted = user.roles.some((role) => (ROLE_PERMISSIONS[role] as readonly Permission[]).includes(permission));
+  return granted ? Object.freeze({ by: user.id, permission }) : undefined;
+}
+
+const show = (p: Permit<Permission> | undefined): string => (p ? `${p.by} ${p.permission}` : "denied");
+console.log([
+  authorize({ id: "USR-3", roles: ["finance"] }, "payment:refund"),
+  authorize({ id: "USR-1", roles: ["customer"] }, "payment:refund"),
+  authorize({ id: "USR-5", roles: ["customer", "admin"] }, "order:ship"),
+].map(show).join(" | "));
+</solution>
+<expected>USR-3 payment:refund | denied | USR-5 order:ship</expected>
+<explain><p>The <code>as readonly Permission[]</code> widens one role's literal tuple so <code>includes</code> accepts any permission. In the lesson the permit also carries a symbol brand, so only this function can create one.</p></explain>
+</question>
+
+<question id="td-code-transaction" type="code" file="transaction.ts">
+<q><p>Finish <code>transaction(memo, entries)</code>: throw a <code>RangeError</code> when the debits do not equal the credits, otherwise return a frozen <code>{ memo, entries }</code>. The program should print <code>refund on PAY-88 true | RangeError</code>.</p></q>
+<starter>
+interface Entry { readonly account: string; readonly side: "debit" | "credit"; readonly amount: number }
+interface Transaction { readonly memo: string; readonly entries: readonly [Entry, ...Entry[]] }
+
+function transaction(memo: string, entries: readonly [Entry, ...Entry[]]): Transaction {
+  // your code here
+  return { memo: "", entries };
+}
+
+const ok = transaction("refund on PAY-88", [
+  { account: "refunds", side: "debit", amount: 320000 },
+  { account: "bank", side: "credit", amount: 320000 },
+]);
+let failure = "none";
+try {
+  transaction("broken", [{ account: "bank", side: "debit", amount: 1 }]);
+} catch (error) {
+  failure = error instanceof RangeError ? "RangeError" : "other";
+}
+console.log(ok.memo, Object.isFrozen(ok), "|", failure);
+</starter>
+<solution>
+interface Entry { readonly account: string; readonly side: "debit" | "credit"; readonly amount: number }
+interface Transaction { readonly memo: string; readonly entries: readonly [Entry, ...Entry[]] }
+
+function transaction(memo: string, entries: readonly [Entry, ...Entry[]]): Transaction {
+  const total = (side: Entry["side"]) => entries.filter((e) => e.side === side).reduce((sum, e) => sum + e.amount, 0);
+  if (total("debit") !== total("credit")) throw new RangeError(`unbalanced transaction "${memo}"`);
+  return Object.freeze({ memo, entries });
+}
+
+const ok = transaction("refund on PAY-88", [
+  { account: "refunds", side: "debit", amount: 320000 },
+  { account: "bank", side: "credit", amount: 320000 },
+]);
+let failure = "none";
+try {
+  transaction("broken", [{ account: "bank", side: "debit", amount: 1 }]);
+} catch (error) {
+  failure = error instanceof RangeError ? "RangeError" : "other";
+}
+console.log(ok.memo, Object.isFrozen(ok), "|", failure);
+</solution>
+<expected>refund on PAY-88 true | RangeError</expected>
+<explain><p>The non-empty tuple type guarantees at least one entry; only the constructor can guarantee the sums match. Freezing keeps a checked transaction from being changed afterwards.</p></explain>
+</question>
+
+<question id="td-code-ship" type="code" file="ship.ts">
+<q><p>Finish <code>shipAll</code>: from a list of orders in mixed states, ship every paid order (status <code>"shipped"</code>, a tracking code <code>GIG-</code> plus its position in the list, version plus one) and leave the others unchanged. The program should print <code>shipped:GIG-0 pending shipped:GIG-2 cancelled</code>.</p></q>
+<starter>
+type Order =
+  | { readonly id: string; readonly status: "pending"; readonly version: number }
+  | { readonly id: string; readonly status: "paid"; readonly version: number; readonly paymentId: string }
+  | { readonly id: string; readonly status: "shipped"; readonly version: number; readonly paymentId: string; readonly trackingCode: string }
+  | { readonly id: string; readonly status: "cancelled"; readonly version: number; readonly reason: string };
+
+function shipAll(orders: readonly Order[]): readonly Order[] {
+  // your code here
+  return orders;
+}
+
+const orders: readonly Order[] = [
+  { id: "ORD-1", status: "paid", version: 2, paymentId: "PAY-1" },
+  { id: "ORD-2", status: "pending", version: 1 },
+  { id: "ORD-3", status: "paid", version: 2, paymentId: "PAY-3" },
+  { id: "ORD-4", status: "cancelled", version: 2, reason: "customer request" },
+];
+console.log(shipAll(orders).map((o) => (o.status === "shipped" ? `shipped:${o.trackingCode}` : o.status)).join(" "));
+</starter>
+<solution>
+type Order =
+  | { readonly id: string; readonly status: "pending"; readonly version: number }
+  | { readonly id: string; readonly status: "paid"; readonly version: number; readonly paymentId: string }
+  | { readonly id: string; readonly status: "shipped"; readonly version: number; readonly paymentId: string; readonly trackingCode: string }
+  | { readonly id: string; readonly status: "cancelled"; readonly version: number; readonly reason: string };
+
+function shipAll(orders: readonly Order[]): readonly Order[] {
+  return orders.map((order, index) =>
+    order.status === "paid" ? { ...order, status: "shipped", trackingCode: `GIG-${index}`, version: order.version + 1 } : order,
+  );
+}
+
+const orders: readonly Order[] = [
+  { id: "ORD-1", status: "paid", version: 2, paymentId: "PAY-1" },
+  { id: "ORD-2", status: "pending", version: 1 },
+  { id: "ORD-3", status: "paid", version: 2, paymentId: "PAY-3" },
+  { id: "ORD-4", status: "cancelled", version: 2, reason: "customer request" },
+];
+console.log(shipAll(orders).map((o) => (o.status === "shipped" ? `shipped:${o.trackingCode}` : o.status)).join(" "));
+</solution>
+<expected>shipped:GIG-0 pending shipped:GIG-2 cancelled</expected>
+<explain><p>Inside the ternary, <code>order</code> is narrowed to the paid member, so the spread has a <code>paymentId</code> and the result fits the shipped member. Only paid orders are transformed; the others pass through as the same objects.</p></explain>
+</question>
+
+<question id="td-code-parse-row" type="code" file="parse-row.ts">
+<q><p>Finish <code>parseRow</code>: turn a database row into an order state, or an error string. <code>pending</code> needs nothing; <code>paid</code> needs <code>payment_id</code>; <code>cancelled</code> needs <code>cancel_reason</code>; anything else is an unknown status. The program should print <code>pending | paid PAY-88 | ORD-3: paid without payment_id | ORD-4: unknown status "archived"</code>.</p></q>
+<starter>
+interface Row { readonly id: string; readonly status: string; readonly payment_id: string | null; readonly cancel_reason: string | null }
+type State = { readonly status: "pending" } | { readonly status: "paid"; readonly paymentId: string } | { readonly status: "cancelled"; readonly reason: string };
+
+function parseRow(row: Row): State | string {
+  // your code here
+  return "not written";
+}
+
+const show = (s: State | string): string => (typeof s === "string" ? s : s.status === "paid" ? `paid ${s.paymentId}` : s.status);
+const rows: Row[] = [
+  { id: "ORD-1", status: "pending", payment_id: null, cancel_reason: null },
+  { id: "ORD-2", status: "paid", payment_id: "PAY-88", cancel_reason: null },
+  { id: "ORD-3", status: "paid", payment_id: null, cancel_reason: null },
+  { id: "ORD-4", status: "archived", payment_id: null, cancel_reason: null },
+];
+console.log(rows.map(parseRow).map(show).join(" | "));
+</starter>
+<solution>
+interface Row { readonly id: string; readonly status: string; readonly payment_id: string | null; readonly cancel_reason: string | null }
+type State = { readonly status: "pending" } | { readonly status: "paid"; readonly paymentId: string } | { readonly status: "cancelled"; readonly reason: string };
+
+function parseRow(row: Row): State | string {
+  switch (row.status) {
+    case "pending":
+      return { status: "pending" };
+    case "paid":
+      return row.payment_id === null ? `${row.id}: paid without payment_id` : { status: "paid", paymentId: row.payment_id };
+    case "cancelled":
+      return row.cancel_reason === null ? `${row.id}: cancelled without cancel_reason` : { status: "cancelled", reason: row.cancel_reason };
+    default:
+      return `${row.id}: unknown status ${JSON.stringify(row.status)}`;
+  }
+}
+
+const show = (s: State | string): string => (typeof s === "string" ? s : s.status === "paid" ? `paid ${s.paymentId}` : s.status);
+const rows: Row[] = [
+  { id: "ORD-1", status: "pending", payment_id: null, cancel_reason: null },
+  { id: "ORD-2", status: "paid", payment_id: "PAY-88", cancel_reason: null },
+  { id: "ORD-3", status: "paid", payment_id: null, cancel_reason: null },
+  { id: "ORD-4", status: "archived", payment_id: null, cancel_reason: null },
+];
+console.log(rows.map(parseRow).map(show).join(" | "));
+</solution>
+<expected>pending | paid PAY-88 | ORD-3: paid without payment_id | ORD-4: unknown status "archived"</expected>
+<explain><p>The row type is honest about what the database can hold; the parser is the one place that turns it into the precise union, and it names the row and the problem when the data does not fit any state.</p></explain>
+</question>
+
+<question id="td-code-balance" type="code" file="balance.ts">
+<q><p>Finish <code>balances</code>: from a list of ledger transactions, compute each account's balance (debits add, credits subtract) and return them sorted by account name. The program should print <code>bank:1700000 refunds:320000 sales:-2020000 total:0</code>.</p></q>
+<starter>
+interface Entry { readonly account: string; readonly side: "debit" | "credit"; readonly amount: number }
+interface Transaction { readonly memo: string; readonly entries: readonly Entry[] }
+
+function balances(ledger: readonly Transaction[]): readonly (readonly [string, number])[] {
+  // your code here
+  return [];
+}
+
+const ledger: Transaction[] = [
+  { memo: "payment", entries: [{ account: "bank", side: "debit", amount: 2020000 }, { account: "sales", side: "credit", amount: 2020000 }] },
+  { memo: "refund", entries: [{ account: "refunds", side: "debit", amount: 320000 }, { account: "bank", side: "credit", amount: 320000 }] },
+];
+const result = balances(ledger);
+const total = result.reduce((sum, [, amount]) => sum + amount, 0);
+console.log(result.map(([account, amount]) => `${account}:${amount}`).join(" "), `total:${total}`);
+</starter>
+<solution>
+interface Entry { readonly account: string; readonly side: "debit" | "credit"; readonly amount: number }
+interface Transaction { readonly memo: string; readonly entries: readonly Entry[] }
+
+function balances(ledger: readonly Transaction[]): readonly (readonly [string, number])[] {
+  const totals = new Map<string, number>();
+  for (const entry of ledger.flatMap((t) => t.entries)) {
+    const signed = entry.side === "debit" ? entry.amount : -entry.amount;
+    totals.set(entry.account, (totals.get(entry.account) ?? 0) + signed);
+  }
+  return [...totals].sort(([a], [b]) => a.localeCompare(b));
+}
+
+const ledger: Transaction[] = [
+  { memo: "payment", entries: [{ account: "bank", side: "debit", amount: 2020000 }, { account: "sales", side: "credit", amount: 2020000 }] },
+  { memo: "refund", entries: [{ account: "refunds", side: "debit", amount: 320000 }, { account: "bank", side: "credit", amount: 320000 }] },
+];
+const result = balances(ledger);
+const total = result.reduce((sum, [, amount]) => sum + amount, 0);
+console.log(result.map(([account, amount]) => `${account}:${amount}`).join(" "), `total:${total}`);
+</solution>
+<expected>bank:1700000 refunds:320000 sales:-2020000 total:0</expected>
+<explain><p>Because every transaction was balanced when it was created, the balances of all accounts always sum to zero. That total is a cheap health check to run on the whole ledger.</p></explain>
+</question>

@@ -1,0 +1,748 @@
+<question id="taf-any-args" type="choice">
+<q>A command table is typed <code>Record&lt;string, (...args: any[]) =&gt; string&gt;</code>. What does that cost?</q>
+<option>Nothing; each handler still checks its own parameters at every call</option>
+<option correct>Calls through the table are not checked: swapped, missing or extra arguments all compile, because <code>any[]</code> accepts anything</option>
+<option>Handlers can no longer declare parameter types</option>
+<option>The table cannot be iterated</option>
+<explain><p>The handlers' parameter types only protect direct calls. Through a table typed with <code>any[]</code>, the compiler checks nothing, so mistakes turn into wrong results at runtime, such as a refund of ₦NaN.</p></explain>
+</question>
+
+<question id="taf-implementation-hidden" type="choice">
+<q>Which call compiles?</q>
+<code file="a.ts">function charge(method: "card", card: Card, amountKobo: number): string;
+function charge(method: "transfer", account: BankAccount, amountKobo: number): string;
+function charge(method: "card" | "transfer", source: Card | BankAccount, amountKobo: number): string {
+  return `${method} ${amountKobo}`;
+}</code>
+<option><code>charge("card", someBankAccount, 500)</code></option>
+<option correct><code>charge("transfer", someBankAccount, 500)</code></option>
+<option><code>charge(methodFromForm, someSource, 500)</code> where <code>methodFromForm: "card" | "transfer"</code></option>
+<option><code>charge("card", someCard)</code></option>
+<explain><p>Only the overload signatures are visible to callers. The implementation signature would accept the other calls, but it is hidden. A union argument matches no single overload, and every overload needs three arguments.</p></explain>
+</question>
+
+<question id="taf-union-overload" type="choice">
+<q>Callers of <code>charge</code> usually hold the method as a <code>"card" | "transfer"</code> union from a form. What is the better design?</q>
+<option>Add more overloads until every union is covered</option>
+<option>Cast the argument with <code>as "card"</code></option>
+<option correct>One signature taking a discriminated union argument, such as <code>charge({ method: "card", card, amountKobo })</code></option>
+<option>Make every parameter <code>any</code></option>
+<explain><p>Overloads never split a union across signatures. A discriminated union argument keeps each method paired with its details, and callers holding a union of payment requests can pass it directly.</p></explain>
+</question>
+
+<question id="taf-overload-order" type="choice">
+<q>What is the type of <code>customer</code>?</q>
+<code file="a.ts">function lookup(id: number | string): Customer | undefined;
+function lookup(id: number): Customer;
+function lookup(id: number | string): Customer | undefined {
+  return customers.find((c) => String(c.id) === String(id));
+}
+const customer = lookup(7);</code>
+<option><code>Customer</code></option>
+<option correct><code>Customer | undefined</code></option>
+<option><code>Customer | Customer | undefined</code></option>
+<option>A compile error: the overloads conflict</option>
+<explain><p>Overloads are tried from top to bottom and the first one that fits wins. The general signature matches <code>7</code>, so the specific one below it is never chosen. Put specific overloads first.</p></explain>
+</question>
+
+<question id="taf-returntype-overloads" type="choice">
+<q><code>find</code> has two overloads: <code>(id: string): Order | undefined</code> then <code>(ids: string[]): Order[]</code>. What is <code>ReturnType&lt;typeof find&gt;</code>?</q>
+<option><code>Order | undefined</code></option>
+<option correct><code>Order[]</code></option>
+<option><code>Order | Order[] | undefined</code></option>
+<option><code>never</code></option>
+<explain><p><code>ReturnType</code> and <code>Parameters</code> are conditional types with <code>infer</code>, and <code>infer</code> only sees the last overload. Name the type you need directly instead.</p></explain>
+</question>
+
+<question id="taf-call-signature" type="choice">
+<q>Which type describes a function that formats kobo <strong>and</strong> has a <code>currency</code> property?</q>
+<option><code>(kobo: number) =&gt; string &amp; { currency: string }</code></option>
+<option correct><code>{ (kobo: number): string; currency: string }</code></option>
+<option><code>{ kobo: number; currency: string }</code></option>
+<option><code>Function &amp; string</code></option>
+<explain><p>An object type with a call signature describes a callable value that can also have properties. In the first option, the <code>&amp;</code> binds to the return type, so it describes a function returning <code>string &amp; { currency: string }</code>.</p></explain>
+</question>
+
+<question id="taf-object-assign" type="choice">
+<q>Why does <code>Object.assign(format, { currency, symbol })</code> fit a <code>MoneyFormatter</code> type with a call signature and two properties?</q>
+<option>Because <code>Object.assign</code> returns <code>any</code></option>
+<option correct>Because it returns its first argument with the properties added, typed as the intersection of the function type and the properties object</option>
+<option>Because it creates a new class</option>
+<option>Because functions are compatible with every object type</option>
+<explain><p>The result type is <code>typeof format &amp; { currency: string; symbol: string }</code>: callable, and with both properties, which is exactly what the interface asks for.</p></explain>
+</question>
+
+<question id="taf-two-call-signatures" type="choice">
+<q>What does an object type with two call signatures describe?</q>
+<option>Two functions stored in one object</option>
+<option correct>One function with two overloads</option>
+<option>A function that must be called twice</option>
+<option>A constructor and a method</option>
+<explain><p><code>{ (id: string): Order | undefined; (ids: readonly string[]): Order[] }</code> is how overloads are written as a type, for example for a parameter that receives an overloaded function.</p></explain>
+</question>
+
+<question id="taf-construct-signature" type="choice">
+<q>A registry stores payment gateway <em>classes</em>, to create instances by name later. Which type fits an element?</q>
+<option><code>PaymentGateway</code></option>
+<option correct><code>new (secretKey: string) =&gt; PaymentGateway</code></option>
+<option><code>(secretKey: string) =&gt; PaymentGateway</code></option>
+<option><code>typeof PaymentGateway</code>, where <code>PaymentGateway</code> is an interface</option>
+<explain><p>A construct signature describes something you call with <code>new</code>. <code>PaymentGateway</code> is the instance type, a call signature cannot be used with <code>new</code>, and an interface has no <code>typeof</code> because it is not a value.</p></explain>
+</question>
+
+<question id="taf-static-in-construct" type="choice">
+<q>How can a construct signature type also require a static <code>provider</code> property on the class?</q>
+<option>It cannot; static members are not part of any type</option>
+<option correct>Write it as an object type: <code>{ new (secretKey: string): PaymentGateway; readonly provider: string }</code></option>
+<option>Add <code>static provider: string</code> to the <code>PaymentGateway</code> interface</option>
+<option>Use <code>InstanceType</code></option>
+<explain><p>Static members belong to the class value, so they appear next to the construct signature, not on the instance type. A class with <code>static readonly provider = "paystack"</code> then fits by shape.</p></explain>
+</question>
+
+<question id="taf-abstract-new" type="choice">
+<q>Why does <code>const creatable: new () =&gt; Gateway = Gateway;</code> fail when <code>Gateway</code> is an abstract class?</q>
+<option>Because abstract classes cannot be used as values at all</option>
+<option correct>Because a normal construct signature promises that <code>new</code> works, and an abstract class cannot be instantiated; <code>abstract new () =&gt; Gateway</code> accepts it</option>
+<option>Because abstract classes have no constructor</option>
+<option>Because the constructor must take a parameter</option>
+<explain><p>A function that only inspects classes (for <code>instanceof</code> checks or metadata) should accept <code>abstract new (…) =&gt; T</code>, which both abstract and concrete classes fit.</p></explain>
+</question>
+
+<question id="taf-this-param-erased" type="choice">
+<q>What happens to <code>this: Cart</code> in <code>add(this: Cart, sku: string)</code> when the code is compiled?</q>
+<option>It becomes the first real parameter</option>
+<option correct>It is erased; the compiled function has one parameter, <code>sku</code></option>
+<option>It is turned into a <code>bind</code> call</option>
+<option>It becomes a runtime check that throws if <code>this</code> is wrong</option>
+<explain><p>A <code>this</code> parameter exists only for the checker, which uses it to reject calls where <code>this</code> would be wrong. Nothing checks at runtime.</p></explain>
+</question>
+
+<question id="taf-detached" type="choice">
+<q>With <code>add(this: Cart, sku: string)</code> declared on <code>cart</code>, which line is a compile error?</q>
+<option><code>cart.add("TOTE-01")</code></option>
+<option correct><code>const add = cart.add; add("TOTE-01")</code></option>
+<option><code>cart.add.call(cart, "TOTE-01")</code></option>
+<option><code>const add = cart.add.bind(cart); add("TOTE-01")</code></option>
+<explain><p>A detached call has no object before the dot, so <code>this</code> is <code>void</code>: TS2684. <code>call</code> and <code>bind</code> supply the object explicitly.</p></explain>
+</question>
+
+<question id="taf-settimeout-gap" type="choice">
+<q>Why is <code>setTimeout(cart.add, 0, "MUG-07")</code> <strong>not</strong> reported, even though <code>add</code> declares <code>this: Cart</code>?</q>
+<option>Because <code>setTimeout</code> binds <code>this</code> automatically</option>
+<option correct>Because <code>setTimeout</code>'s callback type does not declare <code>this</code>, and the check only works where both sides mention it</option>
+<option>Because timers run in a different realm</option>
+<option>Because the extra argument is ignored</option>
+<explain><p>The method is passed as a value to a parameter whose type says nothing about <code>this</code>, so there is nothing to compare. At runtime, <code>this</code> is wrong. Bind the method or wrap it in an arrow function when passing it on.</p></explain>
+</question>
+
+<question id="taf-omit-this" type="choice">
+<q>What is <code>OmitThisParameter&lt;typeof describe&gt;</code>?</q>
+<code file="a.ts">function describe(this: { name: string; stock: number }, prefix: string): string {
+  return `${prefix} ${this.name}: ${this.stock} left`;
+}</code>
+<option><code>(this: { name: string; stock: number }) =&gt; string</code></option>
+<option correct><code>(prefix: string) =&gt; string</code></option>
+<option><code>{ name: string; stock: number }</code></option>
+<option><code>string</code></option>
+<explain><p>It removes the <code>this</code> parameter and keeps the rest, which is exactly the type of <code>describe.bind(someProduct)</code>. <code>ThisParameterType</code> would give the object type.</p></explain>
+</question>
+
+<question id="taf-bind-first-type" type="choice">
+<q>What is the type of <code>refund1042</code>?</q>
+<code file="a.ts">function refund(orderId: string, amountKobo: number, reason: string): string {
+  return `${orderId} ${amountKobo} ${reason}`;
+}
+function bindFirst<F, A extends unknown[], R>(fn: (first: F, ...rest: A) => R, first: F): (...rest: A) => R {
+  return (...rest) => fn(first, ...rest);
+}
+const refund1042 = bindFirst(refund, "ORD-1042");</code>
+<option><code>(...rest: unknown[]) =&gt; string</code></option>
+<option correct><code>(amountKobo: number, reason: string) =&gt; string</code></option>
+<option><code>(orderId: string, amountKobo: number, reason: string) =&gt; string</code></option>
+<option><code>() =&gt; string</code></option>
+<explain><p>Matching <code>refund</code> against <code>(first: F, ...rest: A) =&gt; R</code> captures the remaining parameters as the tuple <code>[amountKobo: number, reason: string]</code>, labels included.</p></explain>
+</question>
+
+<question id="taf-concat" type="choice">
+<q>What is the return type of <code>concat</code> for <code>concat(["ORD-7", 900] as const, [true] as const)</code>?</q>
+<code file="a.ts">function concat<A extends readonly unknown[], B extends readonly unknown[]>(a: A, b: B): [...A, ...B] {
+  return [...a, ...b];
+}</code>
+<option><code>unknown[]</code></option>
+<option><code>(string | number | boolean)[]</code></option>
+<option correct><code>["ORD-7", 900, true]</code></option>
+<option><code>[readonly ["ORD-7", 900], readonly [true]]</code></option>
+<explain><p>A tuple type can spread other tuple types. Each position of both inputs is kept, in order. Without <code>as const</code>, the inputs would be arrays and the result an array too.</p></explain>
+</question>
+
+<question id="taf-fewer-params" type="choice">
+<q>Why does <code>skus.map((sku) =&gt; sku.toLowerCase())</code> compile, when <code>map</code> passes three arguments to its callback?</q>
+<option>Because <code>map</code> is special-cased by the compiler</option>
+<option correct>Because a function that takes fewer parameters can always stand in for one that is given more: it simply ignores the extra arguments</option>
+<option>Because the extra arguments are <code>undefined</code></option>
+<option>Because arrow functions have no fixed parameter count</option>
+<explain><p>Ignoring arguments is always safe, so TypeScript allows callbacks with fewer parameters. The reverse, a callback that needs more parameters than it will be given, is an error.</p></explain>
+</question>
+
+<question id="taf-void-return" type="choice">
+<q><code>forEach</code> expects a callback returning <code>void</code>. Why is <code>skus.forEach((sku) =&gt; labels.push(sku))</code> allowed, although <code>push</code> returns a number?</q>
+<option>Because <code>void</code> and <code>number</code> are the same type</option>
+<option correct>Because a <code>void</code> return type in a callback type means "the caller will not use the result", so a function returning anything fits</option>
+<option>Because arrow functions without braces always return <code>void</code></option>
+<option>It is not allowed; it is a compile error</option>
+<explain><p>This rule exists so one-line arrow callbacks work. It applies to function <em>types</em>; a function declared with <code>: void</code> itself must still not return a value.</p></explain>
+</question>
+
+<question id="taf-contravariance" type="choice">
+<q>Under <code>strict</code>, which assignment is refused?</q>
+<code file="a.ts">interface PaymentEvent { reference: string; amountKobo: number }
+interface CardEvent extends PaymentEvent { last4: string }
+
+const cardOnly = (event: CardEvent) => console.log(event.last4);
+const anyPayment = (event: PaymentEvent) => console.log(event.reference);</code>
+<option><code>const h: (event: CardEvent) =&gt; void = anyPayment;</code></option>
+<option correct><code>const h: (event: PaymentEvent) =&gt; void = cardOnly;</code></option>
+<option>Both</option>
+<option>Neither</option>
+<explain><p>Parameters are contravariant: a replacement must accept at least what the original accepted. A handler for any payment can handle card events, but a card-only handler would be given bank transfers too.</p></explain>
+</question>
+
+<question id="taf-method-bivariance" type="choice">
+<q><code>interface Notifier { notify(event: OrderEvent): void }</code> accepts a notifier whose <code>notify</code> only takes <code>ShippedEvent</code>. Why?</q>
+<option>Because <code>ShippedEvent</code> extends <code>OrderEvent</code>, so it is safe</option>
+<option correct>Because parameters of method signatures are checked bivariantly; only function-typed properties get the strict contravariant check</option>
+<option>Because interfaces are not checked under <code>strict</code></option>
+<option>Because <code>void</code> methods are not checked</option>
+<explain><p>Method bivariance is kept for compatibility with many built-in types, and it is unsound. Write the member as a property, <code>notify: (event: OrderEvent) =&gt; void</code>, to get the strict check.</p></explain>
+</question>
+
+<question id="taf-top-function" type="choice">
+<q>Which type accepts <strong>every</strong> function, including <code>(orderId: string) =&gt; string</code>, without using <code>any</code>?</q>
+<option><code>(...args: unknown[]) =&gt; unknown</code></option>
+<option correct><code>(...args: never) =&gt; unknown</code></option>
+<option><code>() =&gt; unknown</code></option>
+<option><code>(...args: string[]) =&gt; unknown</code></option>
+<explain><p>With contravariant parameters, a function needing a <code>string</code> cannot accept <code>unknown</code> arguments. <code>never</code> is assignable to every parameter type, so every function fits. Calling such a function then requires a cast, which is where you promise the arguments are right.</p></explain>
+</question>
+
+<question id="taf-function-type" type="choice">
+<q>Why should you avoid the built-in <code>Function</code> type for "any function"?</q>
+<option>It does not exist in strict mode</option>
+<option correct>It accepts calls with any arguments and returns <code>any</code>, so neither side of the call is checked</option>
+<option>It only matches arrow functions</option>
+<option>It cannot be used as a parameter type</option>
+<explain><p><code>Function</code> behaves like an untyped callable. Use <code>(...args: never) =&gt; unknown</code> to accept any function, and a precise signature wherever you call it.</p></explain>
+</question>
+
+<question id="taf-router-parse-first" type="choice">
+<q>In the router's <code>command({ usage, parse, run })</code>, why is <code>parse</code> written before <code>run</code>?</q>
+<option>Because the router calls <code>parse</code> first at runtime</option>
+<option correct>Because <code>A</code> is inferred from <code>parse</code>'s return type, and context-sensitive functions in an object literal are processed in order; <code>run</code> needs <code>A</code> for its parameters</option>
+<option>Because object properties must be in alphabetical order</option>
+<option>It does not matter in any way</option>
+<explain><p>Producer before consumer. If <code>run</code> came first, its parameters would be checked while <code>A</code> was still unknown.</p></explain>
+</question>
+
+<question id="taf-router-two-paths" type="choice">
+<q>What protects <code>router.exec("/refund 500000 ORD-1042")</code> from refunding the wrong thing?</q>
+<option>The compiler, because <code>run</code>'s parameters are typed</option>
+<option correct>The command's <code>parse</code> function, which validates the text at runtime and returns a usage message</option>
+<option>The <code>Parameters</code> type on <code>run</code></option>
+<option>Nothing; text commands cannot be checked</option>
+<explain><p>Text from a chat is a runtime string the compiler never sees. The typed <code>run</code> path protects calls written in code; <code>parse</code> is the only protection for text.</p></explain>
+</question>
+
+<question id="taf-out-untyped" type="output">
+<q>This compiles. What does it print?</q>
+<code file="untyped.ts">
+type Handler = (...args: any[]) => string;
+
+const commands: Record<string, Handler> = {
+  restock: (sku: string, quantity: number) => `${sku}: +${quantity * 1} units`,
+};
+
+console.log(commands.restock("TOTE-01", 12));
+console.log(commands.restock(12, "TOTE-01"));
+console.log(commands.restock("TOTE-01"));
+</code>
+<option correct>TOTE-01: +12 units
+12: +NaN units
+TOTE-01: +NaN units</option>
+<option>TOTE-01: +12 units
+TOTE-01: +12 units
+TOTE-01: +0 units</option>
+<option>TOTE-01: +12 units
+12: +TOTE-01 units
+TOTE-01: +undefined units</option>
+<option>TOTE-01: +12 units
+TypeError: quantity is not a number</option>
+<explain><p><code>"TOTE-01" * 1</code> and <code>undefined * 1</code> are both <code>NaN</code>. Nothing throws, so the wrong calls produce plausible-looking nonsense. The <code>any[]</code> table let all three compile.</p></explain>
+</question>
+
+<question id="taf-out-parseint" type="output">
+<q>A callback may be given more arguments than it uses, and TypeScript allows <code>parseInt</code> here. What does this print?</q>
+<code file="parse-int.ts">
+const quantities = ["10", "10", "10"];
+console.log(quantities.map(parseInt), quantities.map((text) => parseInt(text, 10)));
+</code>
+<option correct>[ 10, NaN, 2 ] [ 10, 10, 10 ]</option>
+<option>[ 10, 10, 10 ] [ 10, 10, 10 ]</option>
+<option>[ 10, NaN, NaN ] [ 10, 10, 10 ]</option>
+<option>[ NaN, NaN, NaN ] [ 10, 10, 10 ]</option>
+<explain><p><code>map</code> passes the index as the second argument, and <code>parseInt</code>'s second parameter is the radix: base 0 means "decide yourself" (10), base 1 is invalid (NaN), and "10" in base 2 is 2. Both parameters are numbers, so the types allow it. Pass a small arrow function instead of a function with optional parameters.</p></explain>
+</question>
+
+<question id="taf-out-callable" type="output">
+<q>What does this print?</q>
+<code file="callable.ts">
+interface MoneyFormatter {
+  (kobo: number): string;
+  readonly currency: string;
+}
+
+const naira: MoneyFormatter = Object.assign((kobo: number) => `₦${(kobo / 100).toFixed(2)}`, { currency: "NGN" });
+
+function vat(kobo: number): number {
+  return Math.round(kobo * vat.rate);
+}
+vat.rate = 0.075;
+
+console.log(naira(150_050), naira.currency, typeof naira, vat(2_000_000));
+</code>
+<option correct>₦1500.50 NGN function 150000</option>
+<option>₦1500.50 NGN object 150000</option>
+<option>₦150050.00 NGN function 150000</option>
+<option>₦1500.50 undefined function NaN</option>
+<explain><p>A callable object is still a function, so <code>typeof</code> says <code>"function"</code>. The <code>rate</code> property is assigned before <code>vat</code> is called, so the calculation uses it: 7.5% of 2,000,000 kobo.</p></explain>
+</question>
+
+<question id="taf-out-registry" type="output">
+<q>What does this print?</q>
+<code file="registry.ts">
+interface Gateway {
+  charge(amountKobo: number): string;
+}
+interface GatewayClass {
+  new (secretKey: string): Gateway;
+  readonly provider: string;
+}
+
+class Paystack implements Gateway {
+  static readonly provider = "paystack";
+  constructor(private readonly key: string) {}
+  charge(amountKobo: number): string {
+    return `paystack:${amountKobo}:${this.key.length}`;
+  }
+}
+
+class Flutterwave implements Gateway {
+  static readonly provider = "flutterwave";
+  constructor(private readonly key: string) {}
+  charge(amountKobo: number): string {
+    return `flutterwave:${amountKobo}:${this.key.length}`;
+  }
+}
+
+const registry: GatewayClass[] = [Paystack, Flutterwave];
+const Chosen = registry.find((g) => g.provider === "flutterwave") ?? Paystack;
+console.log(new Chosen("FLWSECK").charge(5000), registry.map((g) => g.provider).join("|"));
+</code>
+<option correct>flutterwave:5000:7 paystack|flutterwave</option>
+<option>paystack:5000:7 paystack|flutterwave</option>
+<option>flutterwave:5000:7 Paystack|Flutterwave</option>
+<option>flutterwave:5000:FLWSECK paystack|flutterwave</option>
+<explain><p>The registry holds classes, found by their static <code>provider</code>. <code>new Chosen(…)</code> works because the element type has a construct signature. Class names and <code>provider</code> values are different things.</p></explain>
+</question>
+
+<question id="taf-out-class-detached" type="output">
+<q>Class methods have no declared <code>this</code> parameter, so this compiles. What does it print?</q>
+<code file="detached.ts">
+class Cart {
+  items: string[] = [];
+  add(sku: string): number {
+    return this.items.push(sku);
+  }
+  addLater = (sku: string): number => this.items.push(sku);
+}
+
+const cart = new Cart();
+const add = cart.add;
+const addLater = cart.addLater;
+try {
+  add("TOTE-01");
+} catch (error) {
+  console.log(error instanceof TypeError);
+}
+console.log(addLater("MUG-07"), cart.items);
+</code>
+<option correct>true
+1 [ 'MUG-07' ]</option>
+<option>2 [ 'TOTE-01', 'MUG-07' ]</option>
+<option>true
+2 [ 'TOTE-01', 'MUG-07' ]</option>
+<option>false
+1 [ 'MUG-07' ]</option>
+<explain><p>The detached prototype method runs with <code>this</code> undefined (modules are strict), so reading <code>this.items</code> throws a <code>TypeError</code>. The arrow-function property captured <code>this</code> when the object was created, so it still works when detached.</p></explain>
+</question>
+
+<question id="taf-out-bind-first" type="output">
+<q>What does this print?</q>
+<code file="bind-first.ts">
+function bindFirst<F, A extends unknown[], R>(fn: (first: F, ...rest: A) => R, first: F): (...rest: A) => R {
+  return (...rest) => fn(first, ...rest);
+}
+
+function transfer(fromAccount: string, toAccount: string, amountKobo: number): string {
+  return `${fromAccount} -> ${toAccount}: ${amountKobo}`;
+}
+
+const fromTreasury = bindFirst(transfer, "ACC-TREASURY");
+const toSupplier = bindFirst(fromTreasury, "ACC-KANO-TEXTILES");
+console.log(toSupplier(2_500_000), fromTreasury.length);
+</code>
+<option correct>ACC-TREASURY -> ACC-KANO-TEXTILES: 2500000 0</option>
+<option>ACC-TREASURY -> ACC-KANO-TEXTILES: 2500000 2</option>
+<option>ACC-KANO-TEXTILES -> ACC-TREASURY: 2500000 0</option>
+<option>ACC-TREASURY -> ACC-KANO-TEXTILES: 2500000 3</option>
+<explain><p>Each <code>bindFirst</code> fills in one argument, and the types follow: <code>toSupplier</code> is <code>(amountKobo: number) =&gt; string</code>. At runtime the returned function uses a rest parameter, which does not count toward <code>length</code>, so it is 0 even though the type has two parameters.</p></explain>
+</question>
+
+<question id="taf-out-bivariance" type="output">
+<q>This compiles because of method bivariance. What does it print?</q>
+<code file="bivariance.ts">
+interface OrderEvent {
+  orderId: string;
+}
+interface ShippedEvent extends OrderEvent {
+  courier: string;
+}
+interface Notifier {
+  notify(event: OrderEvent): string;
+}
+
+const sms: Notifier = {
+  notify: (event: ShippedEvent) => `${event.orderId} is with ${event.courier.toUpperCase()}`,
+};
+
+for (const event of [{ orderId: "ORD-1", courier: "gig" }, { orderId: "ORD-2" }]) {
+  try {
+    console.log(sms.notify(event));
+  } catch (error) {
+    console.log(`${event.orderId} failed:`, error instanceof TypeError);
+  }
+}
+</code>
+<option correct>ORD-1 is with GIG
+ORD-2 failed: true</option>
+<option>ORD-1 is with GIG
+ORD-2 is with undefined</option>
+<option>ORD-1 is with gig
+ORD-2 failed: true</option>
+<option>ORD-1 is with GIG
+ORD-2 is with UNDEFINED</option>
+<explain><p>The shipped-only handler was accepted for every order event. An event without a courier reaches it, and <code>undefined.toUpperCase()</code> throws. A property-style member would have been refused at compile time.</p></explain>
+</question>
+
+<question id="taf-out-router" type="output">
+<q>What does this print?</q>
+<code file="router.ts">
+function parseRefund(tokens: readonly string[]): [orderId: string, amountKobo: number] | string {
+  const [orderId, raw] = tokens;
+  if (!orderId?.startsWith("ORD-")) return "order id must start with ORD-";
+  if (raw === undefined || !/^\d+$/.test(raw)) return "amount must be whole kobo";
+  return [orderId, Number(raw)];
+}
+
+function exec(line: string): string {
+  const [head, ...tokens] = line.trim().split(/\s+/);
+  if (head !== "/refund") return `unknown command ${head}`;
+  const parsed = parseRefund(tokens);
+  return typeof parsed === "string" ? `usage: /refund <orderId> <amountKobo> (${parsed})` : `refund ${parsed[1]} on ${parsed[0]}`;
+}
+
+console.log(exec("/refund ORD-9 2500"));
+console.log(exec("/refund 2500 ORD-9"));
+console.log(exec("/refund ORD-9 25.00"));
+</code>
+<option correct>refund 2500 on ORD-9
+usage: /refund &lt;orderId&gt; &lt;amountKobo&gt; (order id must start with ORD-)
+usage: /refund &lt;orderId&gt; &lt;amountKobo&gt; (amount must be whole kobo)</option>
+<option>refund 2500 on ORD-9
+refund ORD-9 on 2500
+refund 25 on ORD-9</option>
+<option>refund 2500 on ORD-9
+usage: /refund &lt;orderId&gt; &lt;amountKobo&gt; (amount must be whole kobo)
+usage: /refund &lt;orderId&gt; &lt;amountKobo&gt; (amount must be whole kobo)</option>
+<option>refund 2500 on ORD-9
+usage: /refund &lt;orderId&gt; &lt;amountKobo&gt; (order id must start with ORD-)
+refund 25 on ORD-9</option>
+<explain><p>The swapped line fails the order-id check first. The decimal amount fails the whole-kobo check, because <code>25.00</code> is not digits only. The parser is the only thing standing between chat text and a refund, so it must be strict.</p></explain>
+</question>
+
+<question id="taf-out-once" type="output">
+<q>What does this print?</q>
+<code file="once.ts">
+function once<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  let done = false;
+  let result: R;
+  return (...args) => {
+    if (!done) {
+      result = fn(...args);
+      done = true;
+    }
+    return result;
+  };
+}
+
+let charges = 0;
+const chargeCard = once((amountKobo: number) => {
+  charges++;
+  return `charged ${amountKobo}`;
+});
+
+console.log(chargeCard(5000), chargeCard(9000), charges);
+</code>
+<option correct>charged 5000 charged 5000 1</option>
+<option>charged 5000 charged 9000 2</option>
+<option>charged 5000 undefined 1</option>
+<option>charged 5000 charged 9000 1</option>
+<explain><p>Later calls return the first result without calling the function again, whatever arguments they pass. For a payment that must happen at most once, that is the point; for other uses, surprising results like this are why <code>once</code> should be used deliberately.</p></explain>
+</question>
+
+<question id="taf-code-once" type="code" file="once.ts">
+<q><p>Finish <code>once(fn)</code>: the returned function has the same parameters and result as <code>fn</code>, runs <code>fn</code> on the first call, and returns the first result on every later call. The program should print <code>receipt ORD-1 receipt ORD-1 1</code>.</p></q>
+<starter>
+function once<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  // your code here
+  return fn;
+}
+
+let sent = 0;
+const sendReceipt = once((orderId: string) => {
+  sent++;
+  return `receipt ${orderId}`;
+});
+
+console.log(sendReceipt("ORD-1"), sendReceipt("ORD-2"), sent);
+</starter>
+<solution>
+function once<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  let done = false;
+  let result: R;
+  return (...args) => {
+    if (!done) {
+      result = fn(...args);
+      done = true;
+    }
+    return result;
+  };
+}
+
+let sent = 0;
+const sendReceipt = once((orderId: string) => {
+  sent++;
+  return `receipt ${orderId}`;
+});
+
+console.log(sendReceipt("ORD-1"), sendReceipt("ORD-2"), sent);
+</solution>
+<expected>receipt ORD-1 receipt ORD-1 1</expected>
+<explain><p>The generic rest parameter <code>A</code> keeps the parameter list, so <code>sendReceipt</code> still requires an order id. A separate <code>done</code> flag works even when <code>fn</code> returns <code>undefined</code>.</p></explain>
+</question>
+
+<question id="taf-code-bind-first" type="code" file="bind-first.ts">
+<q><p>Finish <code>bindFirst(fn, first)</code>: it returns a function that takes the remaining parameters and calls <code>fn</code> with <code>first</code> in front. The program should print <code>refund 5000 on ORD-1042: damaged</code>.</p></q>
+<starter>
+function bindFirst<F, A extends unknown[], R>(fn: (first: F, ...rest: A) => R, first: F): (...rest: A) => R {
+  // your code here
+  return (...rest) => fn(...(rest as unknown as [F, ...A]));
+}
+
+function refund(orderId: string, amountKobo: number, reason: string): string {
+  return `refund ${amountKobo} on ${orderId}: ${reason}`;
+}
+
+const refundOrder = bindFirst(refund, "ORD-1042");
+console.log(refundOrder(5000, "damaged"));
+</starter>
+<solution>
+function bindFirst<F, A extends unknown[], R>(fn: (first: F, ...rest: A) => R, first: F): (...rest: A) => R {
+  return (...rest) => fn(first, ...rest);
+}
+
+function refund(orderId: string, amountKobo: number, reason: string): string {
+  return `refund ${amountKobo} on ${orderId}: ${reason}`;
+}
+
+const refundOrder = bindFirst(refund, "ORD-1042");
+console.log(refundOrder(5000, "damaged"));
+</solution>
+<expected>refund 5000 on ORD-1042: damaged</expected>
+<explain><p>Spreading <code>rest</code> after <code>first</code> matches the pattern <code>(first: F, ...rest: A)</code>, so no cast is needed. The starter's cast compiled and passed the arguments in the wrong positions: another reason to distrust casts.</p></explain>
+</question>
+
+<question id="taf-code-callable" type="code" file="formatter.ts">
+<q><p>Finish <code>makeFormatter</code> so it returns a callable object: calling it formats kobo as <code>symbol + amount with two decimals</code>, and it has <code>currency</code> and <code>symbol</code> properties. The program should print <code>$19.99 USD $</code>.</p></q>
+<starter>
+interface MoneyFormatter {
+  (kobo: number): string;
+  readonly currency: string;
+  readonly symbol: string;
+}
+
+function makeFormatter(currency: string, symbol: string): MoneyFormatter {
+  // your code here
+  return Object.assign(() => "", { currency: "", symbol: "" });
+}
+
+const dollars = makeFormatter("USD", "$");
+console.log(dollars(1999), dollars.currency, dollars.symbol);
+</starter>
+<solution>
+interface MoneyFormatter {
+  (kobo: number): string;
+  readonly currency: string;
+  readonly symbol: string;
+}
+
+function makeFormatter(currency: string, symbol: string): MoneyFormatter {
+  const format = (minor: number) => `${symbol}${(minor / 100).toFixed(2)}`;
+  return Object.assign(format, { currency, symbol });
+}
+
+const dollars = makeFormatter("USD", "$");
+console.log(dollars(1999), dollars.currency, dollars.symbol);
+</solution>
+<expected>$19.99 USD $</expected>
+<explain><p><code>Object.assign</code> adds the properties to the function itself and returns it, typed as the function and the properties together, which matches the call signature and both properties.</p></explain>
+</question>
+
+<question id="taf-code-gateway" type="code" file="gateway.ts">
+<q><p>Finish <code>createGateway(provider, key)</code>: find the class in the registry by its static <code>provider</code>, throw <code>new Error("no gateway called NAME")</code> if there is none, and return a new instance. The program should print <code>paystack charged 5000</code> then <code>Error: no gateway called stripe</code>.</p></q>
+<starter>
+interface Gateway {
+  charge(amountKobo: number): string;
+}
+interface GatewayClass {
+  new (secretKey: string): Gateway;
+  readonly provider: string;
+}
+
+class Paystack implements Gateway {
+  static readonly provider = "paystack";
+  constructor(private readonly key: string) {}
+  charge(amountKobo: number): string {
+    return `paystack charged ${amountKobo}`;
+  }
+}
+
+const registry: readonly GatewayClass[] = [Paystack];
+
+function createGateway(provider: string, key: string): Gateway {
+  // your code here
+  return new Paystack(key);
+}
+
+console.log(createGateway("paystack", "sk_test_1").charge(5000));
+try {
+  createGateway("stripe", "sk_test_2");
+} catch (error) {
+  console.log(String(error));
+}
+</starter>
+<solution>
+interface Gateway {
+  charge(amountKobo: number): string;
+}
+interface GatewayClass {
+  new (secretKey: string): Gateway;
+  readonly provider: string;
+}
+
+class Paystack implements Gateway {
+  static readonly provider = "paystack";
+  constructor(private readonly key: string) {}
+  charge(amountKobo: number): string {
+    return `paystack charged ${amountKobo}`;
+  }
+}
+
+const registry: readonly GatewayClass[] = [Paystack];
+
+function createGateway(provider: string, key: string): Gateway {
+  const GatewayType = registry.find((candidate) => candidate.provider === provider);
+  if (!GatewayType) throw new Error(`no gateway called ${provider}`);
+  return new GatewayType(key);
+}
+
+console.log(createGateway("paystack", "sk_test_1").charge(5000));
+try {
+  createGateway("stripe", "sk_test_2");
+} catch (error) {
+  console.log(String(error));
+}
+</solution>
+<expected>
+paystack charged 5000
+Error: no gateway called stripe
+</expected>
+<explain><p>The element type's construct signature is what allows <code>new GatewayType(key)</code>, and its <code>provider</code> property is the class's static field. Throwing for an unknown provider is better than falling back to a default gateway silently.</p></explain>
+</question>
+
+<question id="taf-code-parse" type="code" file="parse.ts">
+<q><p>Finish <code>parseRestock(tokens)</code>. Return <code>[sku, quantity]</code> when there is a SKU and a positive whole quantity, otherwise the message <code>"need a sku and a positive whole quantity"</code>. The program should print <code>[ 'TOTE-01', 12 ] need a sku and a positive whole quantity need a sku and a positive whole quantity</code>.</p></q>
+<starter>
+function parseRestock(tokens: readonly string[]): [sku: string, quantity: number] | string {
+  // your code here
+  return [tokens[0], Number(tokens[1])];
+}
+
+console.log(parseRestock(["TOTE-01", "12"]), parseRestock(["TOTE-01", "-3"]), parseRestock(["TOTE-01", "1.5"]));
+</starter>
+<solution>
+function parseRestock(tokens: readonly string[]): [sku: string, quantity: number] | string {
+  const [sku, raw] = tokens;
+  const quantity = Number(raw);
+  if (!sku || !Number.isInteger(quantity) || quantity <= 0) return "need a sku and a positive whole quantity";
+  return [sku, quantity];
+}
+
+console.log(parseRestock(["TOTE-01", "12"]), parseRestock(["TOTE-01", "-3"]), parseRestock(["TOTE-01", "1.5"]));
+</solution>
+<expected>[ 'TOTE-01', 12 ] need a sku and a positive whole quantity need a sku and a positive whole quantity</expected>
+<explain><p>The labelled tuple return type is the command's argument list, written once. <code>Number.isInteger</code> rejects <code>1.5</code> and <code>NaN</code> (from a missing or non-numeric token) in one check.</p></explain>
+</question>
+
+<question id="taf-code-bind-method" type="code" file="bind.ts">
+<q><p>The cart's <code>add</code> method is passed to <code>forEach</code> and loses <code>this</code>. Fix the last lines without changing the class, so the program prints <code>3 [ 'TOTE-01', 'MUG-07', 'MAT-03' ]</code>.</p></q>
+<starter>
+class Cart {
+  items: string[] = [];
+  add(sku: string): void {
+    this.items.push(sku);
+  }
+}
+
+const cart = new Cart();
+try {
+  ["TOTE-01", "MUG-07", "MAT-03"].forEach(cart.add);
+} catch (error) {
+  console.log(String(error));
+}
+console.log(cart.items.length, cart.items);
+</starter>
+<solution>
+class Cart {
+  items: string[] = [];
+  add(sku: string): void {
+    this.items.push(sku);
+  }
+}
+
+const cart = new Cart();
+["TOTE-01", "MUG-07", "MAT-03"].forEach((sku) => cart.add(sku));
+console.log(cart.items.length, cart.items);
+</solution>
+<expected>3 [ 'TOTE-01', 'MUG-07', 'MAT-03' ]</expected>
+<explain><p>Wrapping the call in an arrow function keeps <code>cart</code> before the dot, so <code>this</code> is right. <code>forEach(cart.add.bind(cart))</code> also works. The arrow version also stops <code>forEach</code>'s extra arguments (index and array) from reaching <code>add</code>.</p></explain>
+</question>

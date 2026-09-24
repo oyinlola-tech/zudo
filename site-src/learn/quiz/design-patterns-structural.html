@@ -1,0 +1,879 @@
+<question id="sp-adapter-purpose" type="choice">
+<q>What does an <strong>adapter</strong> do?</q>
+<option>It adds logging and retries to an object</option>
+<option correct>It implements the interface your code expects by calling a different interface (usually third-party), translating in both directions</option>
+<option>It creates objects of the right class</option>
+<option>It stores objects in a database</option>
+<explain><p>Your services depend on <code>SmsSender</code>; the adapter turns those calls into the vendor SDK's calls and turns the vendor's answers back into <code>SmsResult</code>.</p></explain>
+</question>
+
+<question id="sp-adapter-translations" type="choice">
+<q>Which list covers what an SMS adapter must translate?</q>
+<option>Only the method name</option>
+<option>The method name and the API key</option>
+<option correct>The request shape, data formats (such as phone numbers), the response shape, and errors</option>
+<option>Only errors, since the rest is the same for every vendor</option>
+<explain><p>The login outage came from two missed translations: the number format and a failure reported inside a successful response. An adapter that skips any of the four leaks the vendor into your code.</p></explain>
+</question>
+
+<question id="sp-error-in-success" type="choice">
+<q>A vendor's SDK does not throw for an invalid number; it resolves with <code>status: "InvalidPhoneNumber"</code> inside the response. What should the adapter do?</q>
+<option>Nothing; no exception means success</option>
+<option>Throw a generic <code>Error</code> for every non-success status</option>
+<option correct>Read the status and return <code>{ ok: false, reason: "invalid_number" }</code>, so callers see the failure in the shape they already handle</option>
+<option>Retry until the status is <code>"Success"</code></option>
+<explain><p>Callers only understand your result type. Mapping the vendor's in-band failure into it is the adapter's job; retrying a permanent failure would never succeed.</p></explain>
+</question>
+
+<question id="sp-normalise-once" type="choice">
+<q>Why does the lesson normalise phone numbers in one shared <code>nigerianE164</code> function before each adapter converts to its vendor's format?</q>
+<option>Because adapters may not contain regular expressions</option>
+<option correct>So there is one definition of a valid number; each adapter only converts from the canonical form to its vendor's format</option>
+<option>Because the vendors require it</option>
+<option>To make the adapters slower</option>
+<explain><p>Validation is shop knowledge (DRY), while "no plus sign" or "plus sign" is vendor knowledge. Keeping them apart means a new vendor needs only its own small conversion.</p></explain>
+</question>
+
+<question id="sp-acl" type="choice">
+<q>What is an <strong>anti-corruption layer</strong>?</q>
+<option>A security filter that blocks SQL injection</option>
+<option correct>A layer of adapters that keeps an external system's vocabulary, types and quirks from spreading into your own code</option>
+<option>A layer that encrypts data at rest</option>
+<option>A test that detects corrupted files</option>
+<explain><p>If a vendor's response type appears in a service's signature, the layer has a hole. Everything inside the layer speaks your domain's language.</p></explain>
+</question>
+
+<question id="sp-facade" type="choice">
+<q>How does a <strong>facade</strong> differ from an adapter?</q>
+<option>They are the same pattern</option>
+<option correct>A facade puts one simple interface in front of a complicated subsystem; an adapter converts one interface into another that callers expect</option>
+<option>A facade is only for user interfaces</option>
+<option>An adapter always wraps several objects, a facade exactly one</option>
+<explain><p>A <code>checkout()</code> in front of pricing, payment and stock is a facade. <code>termiiSender</code> is an adapter. Wrappers around big SDKs are often a bit of both.</p></explain>
+</question>
+
+<question id="sp-contract-adapters" type="choice">
+<q>Why run one contract test against every SMS adapter?</q>
+<option>To measure which vendor is faster</option>
+<option correct>All adapters promise the same behaviour through the same interface, so one suite proves each one keeps the promise (valid number delivered, invalid number reported, network error mapped)</option>
+<option>Because TypeScript cannot check adapters</option>
+<option>To avoid writing an interface</option>
+<explain><p>This is Liskov substitution in practice. The contract would have caught the login outage before the vendor switch shipped.</p></explain>
+</question>
+
+<question id="sp-decorator-def" type="choice">
+<q>What makes an object a <strong>decorator</strong>?</q>
+<option>It is written with the <code>@</code> syntax</option>
+<option correct>It implements the same interface as the object it wraps, forwards calls to it, and adds behaviour before or after</option>
+<option>It extends the class it decorates</option>
+<option>It changes the interface of the wrapped object</option>
+<explain><p>Because the interface is the same, callers cannot tell a decorated sender from a plain one, and decorators can be stacked. TypeScript's <code>@decorator</code> syntax is a separate language feature.</p></explain>
+</question>
+
+<question id="sp-retry-which" type="choice">
+<q>Which SMS failure should a retry decorator retry?</q>
+<option><code>invalid_number</code></option>
+<option><code>rejected</code> (the vendor blocked the sender id)</option>
+<option correct><code>unavailable</code> (the connection dropped)</option>
+<option>All of them, three times each</option>
+<explain><p>Only transient failures can succeed on a second try. Invalid numbers and rejections are permanent; retrying wastes time and money.</p></explain>
+</question>
+
+<question id="sp-retry-idempotent" type="choice">
+<q>A retry after a dropped connection sends the message again, but the provider had actually received the first request. When is that acceptable?</q>
+<option>Always; duplicates are the provider's problem</option>
+<option correct>Only when repeating the operation is harmless (idempotent), or when the provider supports an idempotency key that makes it ignore the duplicate</option>
+<option>Never; network errors must not be retried</option>
+<option>Only for payments</option>
+<explain><p>A dropped connection does not tell you whether the request arrived. A duplicate login code is harmless; a duplicate charge is not.</p></explain>
+</question>
+
+<question id="sp-backoff" type="choice">
+<q>Why do production retries wait longer between attempts (backoff) and add some randomness (jitter)?</q>
+<option>To make logs easier to read</option>
+<option correct>To give a struggling service time to recover, and to stop thousands of clients from retrying at exactly the same moments</option>
+<option>Because JavaScript timers are inaccurate</option>
+<option>To use up the request's time budget</option>
+<explain><p>Immediate, synchronised retries can turn a short outage into a longer one. Backoff spreads the load over time; jitter spreads it across clients.</p></explain>
+</question>
+
+<question id="sp-decorator-order" type="choice">
+<q><code>withLogging(withRetry(sender))</code> versus <code>withRetry(withLogging(sender))</code>, for a send that fails twice and then succeeds. Which is true?</q>
+<option>Both log three lines</option>
+<option correct>The first logs one line (the final result); the second logs one line per attempt</option>
+<option>The first logs three lines; the second logs one</option>
+<option>The order of decorators never matters</option>
+<explain><p>The outermost decorator sees one call in and one result out. A decorator inside the retry sees every attempt.</p></explain>
+</question>
+
+<question id="sp-inject-wait" type="choice">
+<q>Why is the wait function injected into <code>withRetry</code> instead of calling <code>setTimeout</code> directly?</q>
+<option>Because <code>setTimeout</code> does not work in async functions</option>
+<option correct>So tests run instantly and can check exactly which waits happened (100 ms, then 200 ms), while production passes a real sleep</option>
+<option>So the retry can run in parallel</option>
+<option>To make the decorator a singleton</option>
+<explain><p>Time is part of the outside world, like the network. Injecting it (a wait function, a clock) makes timing behaviour testable and deterministic.</p></explain>
+</question>
+
+<question id="sp-mask-logs" type="choice">
+<q>Why does the logging decorator write <code>+234****567</code> instead of the full phone number?</q>
+<option>To save disk space</option>
+<option correct>Logs are copied, shipped and kept for a long time; full phone numbers there are personal data that should not be exposed</option>
+<option>Because the vendor requires masked numbers</option>
+<option>Because the full number is not available to the decorator</option>
+<explain><p>A logging decorator sees every argument of every call. Masking belongs in it, so no call site can forget.</p></explain>
+</question>
+
+<question id="sp-cache-key" type="choice">
+<q>A caching decorator is put in front of <code>getAccountSummary(token)</code> and caches by the URL path only. What goes wrong?</q>
+<option>Nothing; caching is always safe</option>
+<option correct>The first user's summary is cached and served to everyone who requests the same path: a data leak</option>
+<option>The cache fills up too slowly</option>
+<option>The TTL becomes zero</option>
+<explain><p>Anything that depends on who is asking must include the caller in the key, or not be cached at all.</p></explain>
+</question>
+
+<question id="sp-proxy-vs-decorator" type="choice">
+<q>A proxy and a decorator can look identical in code. What is the difference?</q>
+<option>A proxy always uses JavaScript's built-in <code>Proxy</code></option>
+<option correct>The intent: a decorator adds behaviour; a proxy controls access to the real object (whether, when or how it is reached)</option>
+<option>A decorator changes the interface, a proxy does not</option>
+<option>A proxy can only wrap classes</option>
+<explain><p>Lazy creation, permission checks and forwarding over the network are access control. Logging and retries are added behaviour. The names help readers understand why the wrapper exists.</p></explain>
+</question>
+
+<question id="sp-lazy-promise" type="choice">
+<q>A lazy proxy does <code>if (real === undefined) real = await create()</code>. Two requests arrive at the same moment. What happens, and what is the fix?</q>
+<option>Nothing goes wrong; JavaScript is single-threaded</option>
+<option correct>Both see <code>undefined</code> before the first <code>await</code> finishes and create two objects. Cache the promise (<code>real ??= create()</code>) so both wait for the same creation</option>
+<option>The second request throws</option>
+<option>The fix is to make <code>create</code> synchronous</option>
+<explain><p>The check and the assignment are separated by an <code>await</code>, which lets the other request run in between. A promise exists immediately, so the second caller finds it.</p></explain>
+</question>
+
+<question id="sp-lazy-failure" type="choice">
+<q>The lazy proxy caches the creation promise. The first creation fails because the font files are missing. What should happen next time?</q>
+<option>Return the same rejected promise forever</option>
+<option correct>Clear the cached promise on failure, so a later call can try again (for example after the files are restored)</option>
+<option>Create a new object on every call from now on</option>
+<option>Return <code>undefined</code></option>
+<explain><p>A cached rejection turns a temporary problem into a permanent one until restart. Remove it in a <code>catch</code> and rethrow.</p></explain>
+</question>
+
+<question id="sp-protection-bypass" type="choice">
+<q>A protection proxy checks <code>role === "admin"</code> before <code>exportAllCustomers</code>. When does it protect nothing?</q>
+<option>When the user is an admin</option>
+<option correct>When other code can still import or receive the real, unwrapped service and call it directly</option>
+<option>When the method is async</option>
+<option>When the proxy is created per user</option>
+<explain><p>An access check that can be walked around is decoration. The raw service must never be handed out; only the guarded one is.</p></explain>
+</question>
+
+<question id="sp-remote-proxy" type="choice">
+<q>Which of these is a <strong>remote proxy</strong>?</q>
+<option>A cache in front of a slow function</option>
+<option correct>An RPC client object whose methods look local but send each call to another service over the network</option>
+<option>A retry decorator</option>
+<option>An in-memory repository</option>
+<explain><p>The caller uses a normal interface; the proxy hides serialization and the network. That convenience also hides latency and partial failure, which callers must still handle.</p></explain>
+</question>
+
+<question id="sp-builtin-proxy" type="choice">
+<q>Why does calling a method through <code>new Proxy(account, {})</code> fail when the method reads a <code>#private</code> field?</q>
+<option>Proxies cannot forward method calls</option>
+<option correct>The method runs with <code>this</code> set to the proxy, which is not an instance of the class and so has no private field</option>
+<option>Private fields are removed when an object is proxied</option>
+<option>It does not fail</option>
+<explain><p>Private fields belong to real instances only. This is one reason plain wrapper objects are usually clearer than the built-in <code>Proxy</code> for these patterns.</p></explain>
+</question>
+
+<question id="sp-repository-purpose" type="choice">
+<q>What problem does a <strong>repository</strong> solve?</q>
+<option>It makes SQL run faster</option>
+<option correct>SQL and row mapping for one kind of domain object are scattered across services; a repository puts them behind one collection-like interface in domain terms</option>
+<option>It replaces the database</option>
+<option>It creates database tables</option>
+<explain><p>When the <code>total</code> column was renamed, four files broke. With a repository, one file changes and services never see column names.</p></explain>
+</question>
+
+<question id="sp-generic-repo" type="choice">
+<q>What is wrong with a generic <code>Repository&lt;T&gt;</code> that offers <code>findWhere(filter: any)</code>?</q>
+<option>Generics are not allowed in repositories</option>
+<option correct>It leaks the query language into every service, so storage details spread again; methods should be named after domain questions like <code>findOverdue(now)</code></option>
+<option>It is too slow</option>
+<option>Nothing, it is the recommended design</option>
+<explain><p>The point of a repository is to hide storage. A method that takes a storage-shaped filter hides nothing.</p></explain>
+</question>
+
+<question id="sp-aggregate" type="choice">
+<q>An order and its lines are always saved and loaded together. How many repositories should they have?</q>
+<option>Two: one per table</option>
+<option correct>One: a repository per aggregate (objects that change together), so an order is always saved with its lines</option>
+<option>None; use raw SQL</option>
+<option>One per line item</option>
+<explain><p>Two repositories invite saving an order without its lines. One repository keeps the aggregate consistent.</p></explain>
+</question>
+
+<question id="sp-n-plus-one" type="choice">
+<q>A repository loads 50 orders, then runs one query per order to load its lines. What is this called, and why is it a problem?</q>
+<option>Lazy loading; it is always fine</option>
+<option correct>The N+1 query problem: 51 round trips to the database instead of one or two, which is slow under load</option>
+<option>A transaction; it locks the table</option>
+<option>A cache miss; it cannot be fixed</option>
+<explain><p>Load related data in one query (a join) or one query per kind (all lines for these 50 orders).</p></explain>
+</question>
+
+<question id="sp-bigint" type="choice">
+<q>Why does the PostgreSQL repository cast <code>total_kobo::int</code>, and why does the contract check that amounts are numbers?</q>
+<option>Because PostgreSQL cannot store integers</option>
+<option correct>The <code>pg</code> driver returns <code>bigint</code> columns as strings, so without the cast services would receive text and <code>total + fee</code> would join strings</option>
+<option>Because JavaScript has no integer type</option>
+<option>To make the query faster</option>
+<explain><p>Only a contract run against the real database sees what the driver actually returns. The in-memory version would never show it.</p></explain>
+</question>
+
+<question id="sp-upsert" type="choice">
+<q>Why is the repository's <code>save</code> written as an upsert (<code>INSERT … ON CONFLICT (id) DO UPDATE</code>)?</q>
+<option>Upserts are faster than inserts</option>
+<option correct>So saving the same order again updates it instead of failing or duplicating, which matches the collection-like meaning of <code>save</code> and makes it safe to repeat</option>
+<option>Because PostgreSQL requires it</option>
+<option>To delete old orders</option>
+<explain><p>The contract checks it: after saving ORD-2 twice, there is one ORD-2 with the new status.</p></explain>
+</question>
+
+<question id="sp-out-in-band" type="output">
+<q>What does this print?</q>
+<code file="in-band.ts">
+const sdk = {
+  send: async (to: string) => ({ status: /^\+234\d{10}$/.test(to) ? "Success" : "InvalidPhoneNumber" }),
+};
+
+async function sendCode(to: string): Promise<string> {
+  try {
+    await sdk.send(to);
+    return "sent";
+  } catch {
+    return "failed";
+  }
+}
+
+async function sendCodeChecked(to: string): Promise<string> {
+  const response = await sdk.send(to);
+  return response.status === "Success" ? "sent" : `failed: ${response.status}`;
+}
+
+console.log(await sendCode("08031234567"), await sendCodeChecked("08031234567"));
+</code>
+<option>failed failed: InvalidPhoneNumber</option>
+<option correct>sent failed: InvalidPhoneNumber</option>
+<option>sent sent</option>
+<option>failed sent</option>
+<explain><p>The SDK does not throw, so the first version reports success. Only reading the status inside the response reveals the failure. That reading belongs in the adapter.</p></explain>
+</question>
+
+<question id="sp-out-e164" type="output">
+<q>What does this print?</q>
+<code file="e164.ts">
+function nigerianE164(input: string): string | undefined {
+  const digits = input.replace(/[\s-]/g, "");
+  if (/^\+234\d{10}$/.test(digits)) return digits;
+  if (/^234\d{10}$/.test(digits)) return `+${digits}`;
+  if (/^0\d{10}$/.test(digits)) return `+234${digits.slice(1)}`;
+  return undefined;
+}
+
+console.log(["0803-123-4567", "2348031234567", "803 123 4567"].map(nigerianE164));
+</code>
+<option>[ '+2348031234567', '+2348031234567', '+2348031234567' ]</option>
+<option correct>[ '+2348031234567', '+2348031234567', undefined ]</option>
+<option>[ undefined, '+2348031234567', undefined ]</option>
+<option>[ '+234803-123-4567', '+2348031234567', undefined ]</option>
+<explain><p>Spaces and dashes are removed first. The third number has only ten digits and no leading 0 or country code, so it matches no pattern.</p></explain>
+</question>
+
+<question id="sp-out-retry" type="output">
+<q>What does this print?</q>
+<code file="retry.ts">
+type Result = { ok: boolean; reason?: string };
+let calls = 0;
+const flaky = async (): Promise<Result> => (++calls === 1 ? { ok: false, reason: "unavailable" } : { ok: true });
+
+async function withRetry(send: () => Promise<Result>, attempts: number): Promise<Result> {
+  let result = await send();
+  for (let i = 2; i <= attempts && !result.ok && result.reason === "unavailable"; i++) result = await send();
+  return result;
+}
+
+const result = await withRetry(flaky, 3);
+console.log(result.ok, calls);
+</code>
+<option>true 3</option>
+<option correct>true 2</option>
+<option>false 1</option>
+<option>false 3</option>
+<explain><p>The first call fails with a transient error, the second succeeds, and the loop stops as soon as the result is ok. Three attempts is a maximum, not a target.</p></explain>
+</question>
+
+<question id="sp-out-order" type="output">
+<q>What does this print?</q>
+<code file="order.ts">
+type Send = () => Promise<string>;
+const log: string[] = [];
+
+const logged = (name: string, send: Send): Send => async () => {
+  log.push(`${name} in`);
+  const result = await send();
+  log.push(`${name} out`);
+  return result;
+};
+
+const send = logged("outer", logged("inner", async () => "ok"));
+await send();
+console.log(log.join(", "));
+</code>
+<option>inner in, outer in, outer out, inner out</option>
+<option correct>outer in, inner in, inner out, outer out</option>
+<option>outer in, outer out, inner in, inner out</option>
+<option>inner in, inner out, outer in, outer out</option>
+<explain><p>The outermost decorator runs first on the way in and last on the way out, like layers of an onion. Middleware pipelines behave the same way.</p></explain>
+</question>
+
+<question id="sp-out-ttl" type="output">
+<q>What does this print?</q>
+<code file="ttl.ts">
+let now = 0;
+let calls = 0;
+const cache = new Map<string, { value: number; expires: number }>();
+
+function cachedRate(pair: string, ttl: number): number {
+  const hit = cache.get(pair);
+  if (hit && hit.expires > now) return hit.value;
+  calls++;
+  cache.set(pair, { value: 1500, expires: now + ttl });
+  return 1500;
+}
+
+cachedRate("USD/NGN", 1000);
+now = 999;
+cachedRate("USD/NGN", 1000);
+now = 1000;
+cachedRate("USD/NGN", 1000);
+cachedRate("GBP/NGN", 1000);
+console.log(calls);
+</code>
+<option>1</option>
+<option>2</option>
+<option correct>3</option>
+<option>4</option>
+<explain><p>First call: miss (1). At 999 the entry (expires at 1000) is still fresh: hit. At 1000, <code>1000 &gt; 1000</code> is false, so it has expired: miss (2). A different pair is a different key: miss (3).</p></explain>
+</question>
+
+<question id="sp-out-lazy" type="output">
+<q>What does this print?</q>
+<code file="lazy.ts">
+let created = 0;
+const create = async () => {
+  created++;
+  await Promise.resolve();
+  return { render: (n: string) => `PDF ${n}` };
+};
+
+let cached: ReturnType<typeof create> | undefined;
+const render = async (n: string) => {
+  cached ??= create();
+  return (await cached).render(n);
+};
+
+const pages = await Promise.all([render("A"), render("B"), render("C")]);
+console.log(pages.length, created);
+</code>
+<option>3 3</option>
+<option correct>3 1</option>
+<option>1 1</option>
+<option>3 0</option>
+<explain><p>The first call stores the promise synchronously, before any <code>await</code>, so the other two find it and wait for the same creation.</p></explain>
+</question>
+
+<question id="sp-out-private-proxy" type="output">
+<q>What does this print?</q>
+<code file="private-proxy.ts">
+class Wallet {
+  #kobo = 250000;
+  balance() { return this.#kobo; }
+}
+
+const wallet = new Wallet();
+const viaProxy = new Proxy(wallet, {});
+
+console.log(wallet.balance());
+try {
+  console.log(viaProxy.balance());
+} catch (error) {
+  console.log(error instanceof TypeError);
+}
+</code>
+<option>250000
+250000</option>
+<option correct>250000
+true</option>
+<option>250000
+false</option>
+<option>true
+true</option>
+<explain><p>Called on the real instance, the method works. Called through the proxy, <code>this</code> is the proxy, which has no <code>#kobo</code>, so reading it throws a <code>TypeError</code>.</p></explain>
+</question>
+
+<question id="sp-out-guard" type="output">
+<q>What does this print?</q>
+<code file="guard.ts">
+type Role = "admin" | "support";
+const service = { refund: async (id: string) => `refunded ${id}` };
+
+const guarded = (role: Role) => ({
+  refund: async (id: string) => {
+    if (role !== "admin") return "forbidden";
+    return service.refund(id);
+  },
+});
+
+console.log(await guarded("support").refund("ORD-9"), await service.refund("ORD-9"));
+</code>
+<option>forbidden forbidden</option>
+<option correct>forbidden refunded ORD-9</option>
+<option>refunded ORD-9 refunded ORD-9</option>
+<option>refunded ORD-9 forbidden</option>
+<explain><p>The guard works, but the unwrapped <code>service</code> is still reachable and refunds anyway. A protection proxy only protects if the raw object is never handed out.</p></explain>
+</question>
+
+<question id="sp-out-bigint-string" type="output">
+<q>A driver returned a <code>bigint</code> column as a string. What does this print?</q>
+<code file="bigint.ts">
+const row = { total_kobo: "1441575" as unknown as number };
+const deliveryKobo = 150000;
+
+console.log(row.total_kobo + deliveryKobo, Number(row.total_kobo) + deliveryKobo);
+</code>
+<option>1591575 1591575</option>
+<option correct>1441575150000 1591575</option>
+<option>NaN 1591575</option>
+<option>1441575150000 1441575150000</option>
+<explain><p>The <code>as unknown as number</code> lie hides the string from TypeScript, so <code>+</code> joins text. The mapping in the repository is where a string must be converted, and a contract test against the real driver is how you find out.</p></explain>
+</question>
+
+<question id="sp-out-race" type="output">
+<q>What does this print?</q>
+<code file="race.ts">
+const never = new Promise<string>(() => {});
+let timer: ReturnType<typeof setTimeout> | undefined;
+const timeout = new Promise<string>((resolve) => {
+  timer = setTimeout(() => resolve("timed out"), 10);
+});
+
+console.log(await Promise.race([never, timeout]));
+console.log(await Promise.race([Promise.resolve("sent"), new Promise<string>((r) => setTimeout(() => r("late"), 10))]));
+clearTimeout(timer);
+</code>
+<option>timed out
+late</option>
+<option correct>timed out
+sent</option>
+<option>sent
+sent</option>
+<option>It never finishes</option>
+<explain><p><code>Promise.race</code> settles with the first promise to settle. The hanging promise never does, so the timer wins; an already resolved promise wins over a 10 ms timer.</p></explain>
+</question>
+
+<question id="sp-code-adapter" type="code" file="adapter.ts">
+<q><p>Write <code>vendorSender(sdk)</code>, an adapter implementing <code>SmsSender</code> for the SDK below. It must pass the number without the leading <code>+</code>, return <code>{ ok: true, messageId: ref }</code> when <code>accepted</code>, <code>{ ok: false, reason: "invalid_number" }</code> when <code>error === "BAD_MSISDN"</code>, and <code>{ ok: false, reason: "unavailable" }</code> when the SDK throws. The program should print <code>true false invalid_number false unavailable</code>.</p></q>
+<starter>
+type SmsResult = { ok: true; messageId: string } | { ok: false; reason: "invalid_number" | "rejected" | "unavailable" };
+type SmsSender = { send(to: string, text: string): Promise<SmsResult> };
+
+const sdk = {
+  down: false,
+  async dispatch(msisdn: string): Promise<{ accepted: boolean; ref?: string; error?: string }> {
+    if (this.down) throw new Error("ETIMEDOUT");
+    return /^234\d{10}$/.test(msisdn) ? { accepted: true, ref: "V-1" } : { accepted: false, error: "BAD_MSISDN" };
+  },
+};
+
+// write vendorSender here
+
+const sender = vendorSender(sdk);
+const a = await sender.send("+2348031234567", "hi");
+const b = await sender.send("+234803", "hi");
+sdk.down = true;
+const c = await sender.send("+2348031234567", "hi");
+console.log(a.ok, b.ok, b.ok ? "" : b.reason, c.ok, c.ok ? "" : c.reason);
+</starter>
+<solution>
+type SmsResult = { ok: true; messageId: string } | { ok: false; reason: "invalid_number" | "rejected" | "unavailable" };
+type SmsSender = { send(to: string, text: string): Promise<SmsResult> };
+
+const sdk = {
+  down: false,
+  async dispatch(msisdn: string): Promise<{ accepted: boolean; ref?: string; error?: string }> {
+    if (this.down) throw new Error("ETIMEDOUT");
+    return /^234\d{10}$/.test(msisdn) ? { accepted: true, ref: "V-1" } : { accepted: false, error: "BAD_MSISDN" };
+  },
+};
+
+function vendorSender(vendor: typeof sdk): SmsSender {
+  return {
+    async send(to) {
+      try {
+        const response = await vendor.dispatch(to.replace(/^\+/, ""));
+        if (response.accepted && response.ref) return { ok: true, messageId: response.ref };
+        return { ok: false, reason: response.error === "BAD_MSISDN" ? "invalid_number" : "rejected" };
+      } catch {
+        return { ok: false, reason: "unavailable" };
+      }
+    },
+  };
+}
+
+const sender = vendorSender(sdk);
+const a = await sender.send("+2348031234567", "hi");
+const b = await sender.send("+234803", "hi");
+sdk.down = true;
+const c = await sender.send("+2348031234567", "hi");
+console.log(a.ok, b.ok, b.ok ? "" : b.reason, c.ok, c.ok ? "" : c.reason);
+</solution>
+<expected>true false invalid_number false unavailable</expected>
+<explain><p>The adapter translates the number format, the response and the exception. Services only ever see <code>SmsResult</code>.</p></explain>
+</question>
+
+<question id="sp-code-retry" type="code" file="retry-code.ts">
+<q><p>Write <code>withRetry(sender, attempts)</code>: call <code>sender.send</code>, and while the result is <code>{ ok: false, reason: "unavailable" }</code> and attempts remain, call it again. Other failures must not be retried. The program should print <code>true 3</code> then <code>invalid_number 1</code>.</p></q>
+<starter>
+type Result = { ok: true } | { ok: false; reason: "unavailable" | "invalid_number" };
+type Sender = { send(): Promise<Result> };
+
+function failing(times: number, reason: "unavailable" | "invalid_number"): Sender & { calls: number } {
+  const s = {
+    calls: 0,
+    async send(): Promise<Result> {
+      s.calls++;
+      return s.calls <= times ? { ok: false, reason } : { ok: true };
+    },
+  };
+  return s;
+}
+
+// write withRetry here
+
+const flaky = failing(2, "unavailable");
+const r1 = await withRetry(flaky, 3).send();
+console.log(r1.ok, flaky.calls);
+
+const bad = failing(5, "invalid_number");
+const r2 = await withRetry(bad, 3).send();
+console.log(r2.ok ? "ok" : r2.reason, bad.calls);
+</starter>
+<solution>
+type Result = { ok: true } | { ok: false; reason: "unavailable" | "invalid_number" };
+type Sender = { send(): Promise<Result> };
+
+function failing(times: number, reason: "unavailable" | "invalid_number"): Sender & { calls: number } {
+  const s = {
+    calls: 0,
+    async send(): Promise<Result> {
+      s.calls++;
+      return s.calls <= times ? { ok: false, reason } : { ok: true };
+    },
+  };
+  return s;
+}
+
+function withRetry(sender: Sender, attempts: number): Sender {
+  return {
+    async send() {
+      let result = await sender.send();
+      for (let i = 2; i <= attempts && !result.ok && result.reason === "unavailable"; i++) {
+        result = await sender.send();
+      }
+      return result;
+    },
+  };
+}
+
+const flaky = failing(2, "unavailable");
+const r1 = await withRetry(flaky, 3).send();
+console.log(r1.ok, flaky.calls);
+
+const bad = failing(5, "invalid_number");
+const r2 = await withRetry(bad, 3).send();
+console.log(r2.ok ? "ok" : r2.reason, bad.calls);
+</solution>
+<expected>
+true 3
+invalid_number 1
+</expected>
+<explain><p>Two transient failures, then success on the third attempt. A permanent failure returns at once: retrying it could never help.</p></explain>
+</question>
+
+<question id="sp-code-mask" type="code" file="mask.ts">
+<q><p>Write <code>withLogging(sender, log)</code> that calls the wrapped sender and then logs <code>"&lt;masked&gt;: &lt;status&gt;"</code>, where the masked number keeps the first 4 and last 3 characters with <code>****</code> between, and the status is <code>ok</code> or the failure reason. The program should print <code>[ '+234****567: ok' ]</code>.</p></q>
+<starter>
+type Result = { ok: true } | { ok: false; reason: string };
+type Sender = { send(to: string): Promise<Result> };
+
+const sender: Sender = { send: async () => ({ ok: true }) };
+
+// write withLogging here
+
+const lines: string[] = [];
+await withLogging(sender, (line) => lines.push(line)).send("+2348031234567");
+console.log(lines);
+</starter>
+<solution>
+type Result = { ok: true } | { ok: false; reason: string };
+type Sender = { send(to: string): Promise<Result> };
+
+const sender: Sender = { send: async () => ({ ok: true }) };
+
+function withLogging(inner: Sender, log: (line: string) => void): Sender {
+  return {
+    async send(to) {
+      const result = await inner.send(to);
+      const masked = `${to.slice(0, 4)}****${to.slice(-3)}`;
+      log(`${masked}: ${result.ok ? "ok" : result.reason}`);
+      return result;
+    },
+  };
+}
+
+const lines: string[] = [];
+await withLogging(sender, (line) => lines.push(line)).send("+2348031234567");
+console.log(lines);
+</solution>
+<expected>[ '+234****567: ok' ]</expected>
+<explain><p>The decorator has the same interface as the sender, returns the same result, and keeps the full number out of the logs.</p></explain>
+</question>
+
+<question id="sp-code-cache" type="code" file="cache-code.ts">
+<q><p>Write <code>withCache(source, ttl, clock)</code> for a <code>price(sku)</code> source: return the cached value while <code>clock.now()</code> is before the entry's expiry, otherwise call the source and store the new value until <code>now + ttl</code>. The program should print <code>1 2</code>.</p></q>
+<starter>
+type Source = { price(sku: string): Promise<number> };
+type Clock = { now(): number };
+
+let calls = 0;
+const slow: Source = { price: async () => (calls++, 850000) };
+let time = 0;
+const clock: Clock = { now: () => time };
+
+// write withCache here
+
+const prices = withCache(slow, 1000, clock);
+await prices.price("RICE-5KG");
+await prices.price("RICE-5KG");
+const before = calls;
+time = 1000;
+await prices.price("RICE-5KG");
+console.log(before, calls);
+</starter>
+<solution>
+type Source = { price(sku: string): Promise<number> };
+type Clock = { now(): number };
+
+let calls = 0;
+const slow: Source = { price: async () => (calls++, 850000) };
+let time = 0;
+const clock: Clock = { now: () => time };
+
+function withCache(source: Source, ttl: number, c: Clock): Source {
+  const entries = new Map<string, { value: number; expires: number }>();
+  return {
+    async price(sku) {
+      const hit = entries.get(sku);
+      if (hit && hit.expires > c.now()) return hit.value;
+      const value = await source.price(sku);
+      entries.set(sku, { value, expires: c.now() + ttl });
+      return value;
+    },
+  };
+}
+
+const prices = withCache(slow, 1000, clock);
+await prices.price("RICE-5KG");
+await prices.price("RICE-5KG");
+const before = calls;
+time = 1000;
+await prices.price("RICE-5KG");
+console.log(before, calls);
+</solution>
+<expected>1 2</expected>
+<explain><p>Two reads within the TTL cost one call. At exactly the expiry time the entry is stale, so a second call is made. The injected clock makes that edge testable without waiting.</p></explain>
+</question>
+
+<question id="sp-code-lazy" type="code" file="lazy-code.ts">
+<q><p>Write <code>lazy(create)</code>: it returns a function <code>get()</code> that starts <code>create()</code> on the first call and returns the same promise to every caller. The program should print <code>1 true</code>.</p></q>
+<starter>
+let created = 0;
+const createRenderer = async () => {
+  created++;
+  await new Promise((r) => setTimeout(r, 5));
+  return { name: "pdf" };
+};
+
+// write lazy here
+
+const get = lazy(createRenderer);
+const [a, b] = await Promise.all([get(), get()]);
+console.log(created, a === b);
+</starter>
+<solution>
+let created = 0;
+const createRenderer = async () => {
+  created++;
+  await new Promise((r) => setTimeout(r, 5));
+  return { name: "pdf" };
+};
+
+function lazy<T>(create: () => Promise<T>): () => Promise<T> {
+  let pending: Promise<T> | undefined;
+  return () => {
+    pending ??= create();
+    return pending;
+  };
+}
+
+const get = lazy(createRenderer);
+const [a, b] = await Promise.all([get(), get()]);
+console.log(created, a === b);
+</solution>
+<expected>1 true</expected>
+<explain><p>Storing the promise, not the finished object, means the second caller joins the creation already in progress instead of starting another.</p></explain>
+</question>
+
+<question id="sp-code-guard" type="code" file="guard-code.ts">
+<q><p>Write <code>guardedPayouts(user, payouts)</code>, a protection proxy: <code>list()</code> is allowed for everyone, <code>approve(id)</code> only for users with role <code>"finance"</code>; others get <code>new Error("forbidden")</code>. The program should print <code>2</code>, <code>forbidden</code>, <code>approved PO-1</code>.</p></q>
+<starter>
+type User = { name: string; role: "finance" | "support" };
+type Payouts = { list(): string[]; approve(id: string): string };
+
+const payouts: Payouts = { list: () => ["PO-1", "PO-2"], approve: (id) => `approved ${id}` };
+
+// write guardedPayouts here
+
+const support = guardedPayouts({ name: "Musa", role: "support" }, payouts);
+console.log(support.list().length);
+try {
+  support.approve("PO-1");
+} catch (error) {
+  console.log((error as Error).message);
+}
+console.log(guardedPayouts({ name: "Ngozi", role: "finance" }, payouts).approve("PO-1"));
+</starter>
+<solution>
+type User = { name: string; role: "finance" | "support" };
+type Payouts = { list(): string[]; approve(id: string): string };
+
+const payouts: Payouts = { list: () => ["PO-1", "PO-2"], approve: (id) => `approved ${id}` };
+
+function guardedPayouts(user: User, inner: Payouts): Payouts {
+  return {
+    list: () => inner.list(),
+    approve(id) {
+      if (user.role !== "finance") throw new Error("forbidden");
+      return inner.approve(id);
+    },
+  };
+}
+
+const support = guardedPayouts({ name: "Musa", role: "support" }, payouts);
+console.log(support.list().length);
+try {
+  support.approve("PO-1");
+} catch (error) {
+  console.log((error as Error).message);
+}
+console.log(guardedPayouts({ name: "Ngozi", role: "finance" }, payouts).approve("PO-1"));
+</solution>
+<expected>
+2
+forbidden
+approved PO-1
+</expected>
+<explain><p>The proxy has the same interface and decides per call whether to let it through. It only protects if code outside receives the guarded object, never <code>payouts</code> itself.</p></explain>
+</question>
+
+<question id="sp-code-memory-repo" type="code" file="memory-repo.ts">
+<q><p>Write a <code>MemoryCustomerRepository</code> with <code>save(customer)</code> (stores e-mails in lower case, replacing any customer with the same id) and <code>findByEmail(email)</code> (case-insensitive, returns the customer or <code>undefined</code>). The program should print <code>Ada Obi</code>, <code>1</code>, <code>undefined</code>.</p></q>
+<starter>
+type Customer = { id: string; name: string; email: string };
+
+// write MemoryCustomerRepository here
+
+const repo = new MemoryCustomerRepository();
+await repo.save({ id: "C1", name: "Ada", email: "Ada@Shop.ng" });
+await repo.save({ id: "C1", name: "Ada Obi", email: "ada@shop.ng" });
+console.log((await repo.findByEmail("ADA@SHOP.NG"))?.name);
+console.log(repo.count);
+console.log(await repo.findByEmail("nobody@shop.ng"));
+</starter>
+<solution>
+type Customer = { id: string; name: string; email: string };
+
+class MemoryCustomerRepository {
+  readonly #rows = new Map<string, Customer>();
+
+  get count(): number {
+    return this.#rows.size;
+  }
+
+  async save(customer: Customer): Promise<void> {
+    this.#rows.set(customer.id, { ...customer, email: customer.email.toLowerCase() });
+  }
+
+  async findByEmail(email: string): Promise<Customer | undefined> {
+    const wanted = email.toLowerCase();
+    return [...this.#rows.values()].find((c) => c.email === wanted);
+  }
+}
+
+const repo = new MemoryCustomerRepository();
+await repo.save({ id: "C1", name: "Ada", email: "Ada@Shop.ng" });
+await repo.save({ id: "C1", name: "Ada Obi", email: "ada@shop.ng" });
+console.log((await repo.findByEmail("ADA@SHOP.NG"))?.name);
+console.log(repo.count);
+console.log(await repo.findByEmail("nobody@shop.ng"));
+</solution>
+<expected>
+Ada Obi
+1
+undefined
+</expected>
+<explain><p>Saving the same id twice replaces instead of duplicating, and e-mail lookups ignore case. Those rules would go into a contract test shared with the database version.</p></explain>
+</question>
+
+<question id="sp-code-row-mapper" type="code" file="row-mapper.ts">
+<q><p>Write <code>toOrder(row)</code> that maps a database row <code>{ id, customer_email, total_kobo, placed_at }</code> (where <code>total_kobo</code> arrives as a string) into <code>{ id, email, totalKobo, placedAt }</code> with <code>totalKobo</code> as a number and <code>placedAt</code> as a <code>Date</code>. The program should print <code>1591575 2026-03-01T10:00:00.000Z</code>.</p></q>
+<starter>
+type OrderRow = { id: string; customer_email: string; total_kobo: string; placed_at: string };
+type Order = { id: string; email: string; totalKobo: number; placedAt: Date };
+
+// write toOrder here
+
+const order = toOrder({ id: "ORD-1", customer_email: "ada@shop.ng", total_kobo: "1441575", placed_at: "2026-03-01T10:00:00Z" });
+console.log(order.totalKobo + 150000, order.placedAt.toISOString());
+</starter>
+<solution>
+type OrderRow = { id: string; customer_email: string; total_kobo: string; placed_at: string };
+type Order = { id: string; email: string; totalKobo: number; placedAt: Date };
+
+function toOrder(row: OrderRow): Order {
+  return {
+    id: row.id,
+    email: row.customer_email,
+    totalKobo: Number(row.total_kobo),
+    placedAt: new Date(row.placed_at),
+  };
+}
+
+const order = toOrder({ id: "ORD-1", customer_email: "ada@shop.ng", total_kobo: "1441575", placed_at: "2026-03-01T10:00:00Z" });
+console.log(order.totalKobo + 150000, order.placedAt.toISOString());
+</solution>
+<expected>1591575 2026-03-01T10:00:00.000Z</expected>
+<explain><p>The mapping from storage shape to domain shape lives in one function inside the repository. Services get camelCase names, numbers and dates, and never see a column name.</p></explain>
+</question>

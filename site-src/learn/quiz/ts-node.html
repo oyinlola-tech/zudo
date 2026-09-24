@@ -1,0 +1,869 @@
+<question id="tsn-types-source" type="choice">
+<q>A new TypeScript project imports <code>node:fs/promises</code> and tsc says <code>Cannot find name 'node:fs/promises'</code>. Where do the missing types come from?</q>
+<option>From Node.js itself: upgrading Node.js adds them</option>
+<option correct>From the <code>@types/node</code> package, which describes Node.js in declaration files</option>
+<option>From TypeScript's built-in <code>lib.dom.d.ts</code></option>
+<option>From <code>tsx</code>, which generates them when it runs</option>
+<explain><p>Node.js ships no TypeScript types. The DefinitelyTyped project publishes them as <code>@types/node</code>: <code>.d.ts</code> files that only describe the API. You install it and list <code>"node"</code> in the <code>types</code> field of <code>tsconfig.json</code>.</p></explain>
+</question>
+
+<question id="tsn-dev-dependency" type="choice">
+<q>Why is <code>@types/node</code> installed with <code>-D</code> (as a development dependency)?</q>
+<option>Because it is only allowed in development, never in production builds</option>
+<option correct>Because types are only used while writing and checking code; nothing in them runs</option>
+<option>Because it is large and <code>-D</code> compresses it</option>
+<option>Because <code>-D</code> makes tsc load it automatically without <code>tsconfig.json</code></option>
+<explain><p>Declaration files contain no runnable code. The compiler reads them; the running server never does. So they belong with the other build tools in <code>devDependencies</code>.</p></explain>
+</question>
+
+<question id="tsn-types-version" type="choice">
+<q>Your servers run Node.js 24, but the project installed the newest <code>@types/node</code>, which describes a later Node.js. What can go wrong?</q>
+<option>Nothing: newer types are always backwards compatible</option>
+<option>tsc refuses to run until the versions match</option>
+<option correct>Code can use a function that type-checks but does not exist in Node.js 24, and it crashes at runtime</option>
+<option>Every <code>node:</code> import becomes <code>any</code></option>
+<explain><p>The types only describe an API; they do not check which Node.js will run the code. If they describe a newer release, you can call something your runtime lacks and get <code>is not a function</code> in production. Pin <code>@types/node</code> to the Node.js major version you deploy.</p></explain>
+</question>
+
+<question id="tsn-env-type" type="choice">
+<q>With <code>@types/node</code> and <code>strict</code> on, what is the type of <code>process.env["TOKEN_SECRET"]</code>?</q>
+<option><code>string</code></option>
+<option correct><code>string | undefined</code></option>
+<option><code>any</code></option>
+<option><code>string | number | undefined</code></option>
+<explain><p>Environment variables are always text, and any of them can be missing. That is exactly what <code>string | undefined</code> says, so the compiler makes you handle the missing case.</p></explain>
+</question>
+
+<question id="tsn-env-merging" type="choice">
+<q>A developer adds <code>interface ProcessEnv { TOKEN_SECRET: string }</code> inside <code>declare global { namespace NodeJS { … } }</code>. What does that change?</q>
+<option>Node.js now refuses to start when <code>TOKEN_SECRET</code> is missing</option>
+<option>tsx checks the variable when the program starts</option>
+<option correct>Only the type: <code>process.env.TOKEN_SECRET</code> is typed <code>string</code>, but it can still be <code>undefined</code> at runtime</option>
+<option>It sets a default value of <code>""</code></option>
+<explain><p>Declaration merging is a promise to the compiler that nothing verifies. When the server starts without the variable, code that trusted the type crashes, often far from startup. Parse the environment in code instead.</p></explain>
+</question>
+
+<question id="tsn-env-param" type="choice">
+<q>Why does <code>loadConfig(env: Env)</code> take the environment as a parameter instead of reading <code>process.env</code> inside?</q>
+<option>Because <code>process.env</code> cannot be read inside a function</option>
+<option correct>So tests can pass a plain object, and the function has no hidden input</option>
+<option>Because reading <code>process.env</code> is slow</option>
+<option>So TypeScript can infer the type of every variable</option>
+<explain><p>A function whose inputs are all parameters is easy to test: pass <code>{ PORT: "-1" }</code> and check the error. The server passes <code>process.env</code>, which fits the <code>Env</code> type.</p></explain>
+</question>
+
+<question id="tsn-all-problems" type="choice">
+<q>Why does the lesson's <code>loadConfig</code> collect every problem before throwing, instead of throwing at the first one?</q>
+<option>Throwing is slow, so it is done only once</option>
+<option>Because <code>ConfigError</code> can only be created once</option>
+<option correct>So the person deploying sees every wrong setting at once, instead of fixing one per restart</option>
+<option>So the server can start anyway with the valid settings</option>
+<explain><p>A deployment with three wrong settings should take one fix, not three restarts. The server still refuses to start; it just says everything that is wrong.</p></explain>
+</question>
+
+<question id="tsn-log-config" type="choice">
+<q>At startup you want to log the configuration the server is using. What should the log line contain for <code>tokenSecret</code>?</q>
+<option>The whole secret, so operators can check it</option>
+<option>The first 8 characters of the secret</option>
+<option correct>Something about the secret that is safe, like its length, but never its value</option>
+<option>The secret encoded in base64</option>
+<explain><p>Logs are copied, shipped to other services and read by many people. A secret in a log is a leaked secret; even part of one helps an attacker. base64 is an encoding, not protection. Log that it is set and how long it is.</p></explain>
+</question>
+
+<question id="tsn-readfile-overload" type="choice">
+<q>What is the type of <code>data</code> in <code>const data = await readFile("prices.json");</code>?</q>
+<option><code>string</code></option>
+<option correct>A <code>Buffer</code> (shown as <code>NonSharedBuffer</code>)</option>
+<option><code>unknown</code></option>
+<option><code>any</code>, because the file could contain anything</option>
+<explain><p><code>readFile</code> has overloads. Without an encoding it returns the raw bytes as a <code>Buffer</code>; with <code>"utf8"</code> it returns a <code>string</code>. The compiler picks the return type from the arguments.</p></explain>
+</question>
+
+<question id="tsn-enoent-only" type="choice">
+<q><code>readTextIfExists</code> returns <code>undefined</code> when the error code is <code>ENOENT</code>, and throws every other error again. Why not return <code>undefined</code> for every error?</q>
+<option>Because other errors have no <code>code</code> property</option>
+<option correct>Because a permission or disk error would then look like "no file yet", and the program would start over with empty data</option>
+<option>Because re-throwing is required by TypeScript</option>
+<option>Because <code>ENOENT</code> is the only error <code>readFile</code> can throw</option>
+<explain><p>Only "the file does not exist" is an expected, harmless case. <code>EACCES</code> or <code>EISDIR</code> mean something is broken; hiding them turns a loud failure into silent data loss.</p></explain>
+</question>
+
+<question id="tsn-json-unknown" type="choice">
+<q>Why does the lesson write <code>const data: unknown = JSON.parse(text);</code>?</q>
+<option>Because <code>JSON.parse</code> returns <code>unknown</code> already</option>
+<option correct><code>JSON.parse</code> returns <code>any</code>, which turns type checking off; <code>unknown</code> forces a check before use</option>
+<option>To make parsing faster</option>
+<option>So that invalid JSON returns <code>undefined</code></option>
+<explain><p>With <code>any</code>, <code>data.quantity.toFixed()</code> compiles whatever the file contains. Storing the result as <code>unknown</code> means nothing can touch it until a type guard proves its shape.</p></explain>
+</question>
+
+<question id="tsn-req-url" type="choice">
+<q>Inside a server's request handler, why is <code>req.url</code> typed <code>string | undefined</code>?</q>
+<option>Because clients may send requests without a URL</option>
+<option correct>Because the same <code>IncomingMessage</code> type is used for client responses, where there is no URL</option>
+<option>Because the URL is only available after the body has been read</option>
+<option>It is a mistake in <code>@types/node</code> that you should fix with <code>!</code></option>
+<explain><p>For a server, Node.js always fills in the method and URL. But <code>IncomingMessage</code> also represents the response an HTTP client receives, which has neither. A fallback like <code>req.url ?? "/"</code> handles the type honestly.</p></explain>
+</question>
+
+<question id="tsn-address-cases" type="choice">
+<q>After <code>server.listen(0)</code>, what can <code>server.address()</code> return, according to its type?</q>
+<option>Only an <code>AddressInfo</code> object with a <code>port</code></option>
+<option>A port number</option>
+<option correct>An <code>AddressInfo</code>, a string (a Unix socket path), or <code>null</code> (not listening yet)</option>
+<option>A <code>URL</code> object</option>
+<explain><p>That is why the lesson checks <code>address === null || typeof address === "string"</code> before reading <code>address.port</code>. Writing <code>as AddressInfo</code> would silently ignore two real cases.</p></explain>
+</question>
+
+<question id="tsn-header-array" type="choice">
+<q>A request arrives with the <code>Idempotency-Key</code> header twice, with the values <code>t-1</code> and <code>t-2</code>. What does <code>req.headers["idempotency-key"]</code> give, and how do you insist on exactly one value?</q>
+<option><code>"t-1"</code>; nothing more is needed</option>
+<option><code>["t-1", "t-2"]</code>; check <code>Array.isArray</code></option>
+<option correct><code>"t-1, t-2"</code>, joined into one string; read <code>req.headersDistinct</code> and accept only a list of length 1</option>
+<option><code>undefined</code>, because duplicate headers are dropped</option>
+<explain><p>For most headers Node.js joins repeated values with a comma, so <code>req.headers</code> cannot show that there were two. <code>req.headersDistinct</code> keeps each value separately. For a security-relevant header, two values are suspicious, and "missing" (a 400) is the safe answer.</p></explain>
+</question>
+
+<question id="tsn-content-length" type="choice">
+<q>Why does <code>sendJson</code> set <code>content-length</code> with <code>Buffer.byteLength(text)</code> instead of <code>text.length</code>?</q>
+<option>Because <code>text.length</code> is slower</option>
+<option correct>Because the header counts bytes, and characters like <code>₦</code> take more than one byte in UTF-8</option>
+<option>Because <code>text.length</code> includes the quotes of the JSON</option>
+<option>Because <code>Buffer.byteLength</code> also compresses the body</option>
+<explain><p><code>"₦"</code> has length 1 but is 3 bytes. A too-small <code>content-length</code> makes the client cut the body off; a too-large one makes it wait for bytes that never come.</p></explain>
+</question>
+
+<question id="tsn-uint8-param" type="choice">
+<q>You write a function that hashes bytes. Which parameter type makes it work with both <code>Buffer</code>s and the output of <code>TextEncoder</code>?</q>
+<option><code>Buffer</code></option>
+<option correct><code>Uint8Array</code></option>
+<option><code>string</code></option>
+<option><code>ArrayBuffer</code></option>
+<explain><p><code>Buffer</code> is a subclass of <code>Uint8Array</code>, so a <code>Buffer</code> fits a <code>Uint8Array</code> parameter. A plain <code>Uint8Array</code> does not fit a <code>Buffer</code> parameter, because it lacks methods such as <code>toString("hex")</code>.</p></explain>
+</question>
+
+<question id="tsn-chunk-claim" type="choice">
+<q>A stage is declared as <code>async function* toLines(chunks: AsyncIterable&lt;string&gt;)</code> and receives a file stream opened without an encoding. What happens?</q>
+<option>tsc reports that a stream of buffers is not an iterable of strings</option>
+<option correct>It compiles, because stream chunks are typed <code>any</code>, and at runtime it receives <code>Buffer</code>s</option>
+<option>Node.js converts the chunks to strings automatically because of the annotation</option>
+<option>It throws a <code>TypeError</code> on the first chunk</option>
+<explain><p>Types are erased at runtime, and a stream's chunks are <code>any</code>, so nothing checks the annotation. It is a claim you must make true at the source, for example with <code>{ encoding: "utf8" }</code>.</p></explain>
+</question>
+
+<question id="tsn-split-char" type="choice">
+<q>A report reads a file in small chunks and decodes each chunk with <code>chunk.toString()</code>. Some customer names come out with <code>�</code> in them. What is the fix?</q>
+<option>Use bigger chunks, so it happens less often</option>
+<option>Replace <code>�</code> with <code>?</code> after decoding</option>
+<option correct>Let the stream decode (<code>encoding: "utf8"</code>), which keeps a character that is split across chunks together</option>
+<option>Use <code>latin1</code> instead of UTF-8</option>
+<explain><p>A multi-byte character can be cut between two chunks, and decoding each half alone produces replacement characters. The stream's own decoder carries the unfinished bytes over to the next chunk. Bigger chunks only make the bug rarer.</p></explain>
+</question>
+
+<question id="tsn-emitter-typo" type="choice">
+<q>With <code>new EventEmitter&lt;ShopEvents&gt;()</code> from <code>@types/node</code>, which mistake does tsc report?</q>
+<option>Both a misspelt event name and a wrong payload</option>
+<option correct>A wrong payload for a known event, but not a misspelt event name</option>
+<option>A misspelt event name, but not a wrong payload</option>
+<option>Neither: the type parameter is only documentation</option>
+<explain><p>For names in the map, arguments are checked. Names outside the map are allowed on purpose and get <code>any[]</code>, so a typo compiles and the emit goes nowhere. A small wrapper whose methods take <code>keyof Events</code> closes that gap.</p></explain>
+</question>
+
+<question id="tsn-stdio-null" type="choice">
+<q>You call <code>spawn(cmd, args, { stdio: ["ignore", "inherit", "inherit"] })</code>. What is the type of <code>child.stdout</code>?</q>
+<option><code>Readable</code></option>
+<option correct><code>null</code></option>
+<option><code>Writable</code></option>
+<option><code>string</code></option>
+<explain><p><code>@types/node</code> reads your <code>stdio</code> option. With <code>"inherit"</code>, the child writes straight to your terminal and there is no stream to read, so the type is <code>null</code>. With <code>"pipe"</code> it is a <code>Readable</code>.</p></explain>
+</question>
+
+<question id="tsn-sigterm-result" type="choice">
+<q>A supervisor sends <code>SIGTERM</code> to a worker and later sees exit code <code>0</code> and signal <code>null</code>. What does that tell you?</q>
+<option>The worker was killed by the signal before it could react</option>
+<option correct>The worker handled the signal, finished its work and exited on its own</option>
+<option>The signal was never delivered</option>
+<option>The operating system sent <code>SIGKILL</code> afterwards</option>
+<explain><p>A process killed by a signal reports <code>code: null</code> and the signal's name. Code 0 with no signal means the worker's <code>SIGTERM</code> handler ran and the process ended normally: a graceful shutdown.</p></explain>
+</question>
+
+<question id="tsn-tsx-no-check" type="choice">
+<q>Your server runs with <code>tsx src/server.ts</code> in production. A pull request adds a type error. What stops it from being deployed?</q>
+<option>tsx refuses to run files with type errors</option>
+<option>Node.js checks types when it loads the file</option>
+<option correct>Nothing, unless CI runs <code>tsc --noEmit</code> and blocks the merge</option>
+<option><code>@types/node</code> throws at startup</option>
+<explain><p>tsx and Node.js 24 strip types without checking them. Only <code>tsc</code> checks. Make <code>tsc --noEmit</code> a required step in CI.</p></explain>
+</question>
+
+<question id="tsn-strip-enum" type="choice">
+<q>You run <code>node src/status.ts</code> with Node.js 24, and the file declares an <code>enum</code>. What happens, and which tsconfig option warns you earlier?</q>
+<option>It runs fine; Node.js compiles enums</option>
+<option correct>Node.js throws <code>ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX</code>; <code>erasableSyntaxOnly</code> makes tsc report it while you write</option>
+<option>Node.js ignores the enum and every use becomes <code>undefined</code>; <code>strict</code> reports it</option>
+<option>Node.js prints a warning and continues; <code>noEmit</code> reports it</option>
+<explain><p>Node.js only deletes type syntax. An <code>enum</code> or a parameter property produces JavaScript, so it cannot simply be deleted, and Node.js refuses the file. <code>erasableSyntaxOnly</code> makes tsc reject that syntax up front.</p></explain>
+</question>
+
+<question id="tsn-out-empty-port" type="output">
+<q>The deployment sets <code>PORT</code> to an empty string. What does this print?</q>
+<code file="empty-port.ts">
+const env: Record<string, string | undefined> = { PORT: "" };
+const port = Number(env["PORT"] ?? "3000");
+console.log(port, Number.isInteger(port));
+</code>
+<option>3000 true</option>
+<option correct>0 true</option>
+<option>NaN false</option>
+<option>undefined false</option>
+<explain><p><code>??</code> only replaces <code>null</code> and <code>undefined</code>. An empty string is kept, and <code>Number("")</code> is <code>0</code>, a valid-looking integer. That is why the lesson checks the raw text with a regular expression before converting.</p></explain>
+</question>
+
+<question id="tsn-out-number-loose" type="output">
+<q>What does this print?</q>
+<code file="loose.ts">
+const raw = ["80.5", "-1", " 80", ""];
+console.log(raw.map(Number));
+console.log(raw.map((text) => /^\d{1,5}$/.test(text)));
+</code>
+<option>[ NaN, NaN, NaN, NaN ]
+[ false, false, false, false ]</option>
+<option correct>[ 80.5, -1, 80, 0 ]
+[ false, false, false, false ]</option>
+<option>[ 80.5, -1, 80, 0 ]
+[ false, false, true, false ]</option>
+<option>[ 80, -1, 80, NaN ]
+[ false, false, true, false ]</option>
+<explain><p><code>Number</code> is forgiving: it accepts decimals, signs, surrounding spaces and turns <code>""</code> into 0. None of those is a valid port. The regular expression only accepts 1 to 5 digits and nothing else.</p></explain>
+</question>
+
+<question id="tsn-out-bytes" type="output">
+<q>What does this print?</q>
+<code file="bytes.ts" browser="no">
+const price = "₦500";
+console.log(price.length, Buffer.byteLength(price));
+</code>
+<option>4 4</option>
+<option correct>4 6</option>
+<option>6 4</option>
+<option>4 5</option>
+<explain><p><code>length</code> counts UTF-16 code units: 4. In UTF-8, <code>₦</code> takes 3 bytes and each digit 1, so the byte length is 6.</p></explain>
+</question>
+
+<question id="tsn-out-uint8" type="output">
+<q>What does this print?</q>
+<code file="encode.ts">
+const bytes = new TextEncoder().encode("Ok");
+console.log(bytes.toString());
+console.log(bytes.length);
+</code>
+<option>Ok
+2</option>
+<option>4f6b
+2</option>
+<option correct>79,107
+2</option>
+<option>[79, 107]
+2</option>
+<explain><p><code>TextEncoder</code> returns a plain <code>Uint8Array</code>. Its <code>toString</code> joins the byte values with commas. It has no encoding argument; that is a <code>Buffer</code> feature.</p></explain>
+</question>
+
+<question id="tsn-out-enoent" type="output">
+<q>What does this print?</q>
+<code file="missing.ts" browser="no">
+import { readFile } from "node:fs/promises";
+
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error && typeof error.code === "string";
+}
+
+try {
+  await readFile("no-such-cart.json", "utf8");
+  console.log("read it");
+} catch (error) {
+  console.log(isErrnoException(error) ? error.code : "other error");
+}
+</code>
+<option correct>ENOENT</option>
+<option>other error</option>
+<option>read it</option>
+<option>undefined</option>
+<explain><p>A missing file rejects with an error whose <code>code</code> is <code>"ENOENT"</code>. The guard proves that the caught value is an <code>Error</code> with a string <code>code</code>, so reading <code>error.code</code> type-checks.</p></explain>
+</question>
+
+<question id="tsn-out-guard-plain" type="output">
+<q>What does this print?</q>
+<code file="guard.ts">
+function isErrnoLike(error: unknown): error is Error & { code: string } {
+  return error instanceof Error && "code" in error && typeof error.code === "string";
+}
+
+const checks: unknown[] = [
+  new Error("disk full"),
+  Object.assign(new Error("no file"), { code: "ENOENT" }),
+  { code: "ENOENT", message: "looks like an error" },
+];
+console.log(checks.map(isErrnoLike));
+</code>
+<option>[ true, true, true ]</option>
+<option>[ false, true, true ]</option>
+<option correct>[ false, true, false ]</option>
+<option>[ true, true, false ]</option>
+<explain><p>The first is an <code>Error</code> without a <code>code</code>. The third has a <code>code</code> but is a plain object, not an <code>Error</code>. Only the second passes both checks.</p></explain>
+</question>
+
+<question id="tsn-out-single-header" type="output">
+<q>This helper reads a <code>headersDistinct</code>-style object, where every header maps to a list of values. What does it print?</q>
+<code file="headers.ts">
+type DistinctHeaders = Record<string, string[] | undefined>;
+
+function singleHeader(headers: DistinctHeaders, name: string): string | undefined {
+  const values = headers[name];
+  return values?.length === 1 ? values[0] : undefined;
+}
+
+const headers: DistinctHeaders = { "idempotency-key": ["t-1", "t-2"], "x-request-id": ["r-9"] };
+console.log(singleHeader(headers, "idempotency-key"));
+console.log(singleHeader(headers, "x-request-id"));
+console.log(singleHeader(headers, "authorization"));
+</code>
+<option>t-1
+r-9
+undefined</option>
+<option>t-1, t-2
+r-9
+undefined</option>
+<option correct>undefined
+r-9
+undefined</option>
+<option>undefined
+r-9
+</option>
+<explain><p>Two values are refused, a single value is returned, and a missing header is <code>undefined</code>. For a header that must have exactly one value, two values count as "not given".</p></explain>
+</question>
+
+<question id="tsn-out-frozen" type="output">
+<q>The config object is frozen. What does this print?</q>
+<code file="frozen.ts">
+const config: { port: number } = Object.freeze({ port: 3000 });
+
+try {
+  config.port = 80;
+  console.log("changed to", config.port);
+} catch (error) {
+  console.log(error instanceof TypeError ? error.message : error);
+}
+</code>
+<option>changed to 80</option>
+<option>changed to 3000</option>
+<option correct>Cannot assign to read only property 'port' of object '#&lt;Object&gt;'</option>
+<option>Cannot find name 'port'</option>
+<explain><p>The annotation <code>{ port: number }</code> drops <code>readonly</code>, so the assignment compiles. At runtime the object is frozen, and in a module (always strict mode) writing to a frozen property throws a <code>TypeError</code>. Keep <code>readonly</code> in the type so the compiler catches it first.</p></explain>
+</question>
+
+<question id="tsn-out-emit-typo" type="output">
+<q>What does this print?</q>
+<code file="emit-typo.ts" browser="no">
+import { EventEmitter } from "node:events";
+
+interface ShopEvents {
+  "payment.received": [orderId: number];
+}
+
+const shop = new EventEmitter<ShopEvents>();
+shop.on("payment.received", (orderId) => console.log("receipt for", orderId));
+
+console.log(shop.emit("payment.recieved", 1001));
+console.log(shop.emit("payment.received", 1002));
+</code>
+<option>receipt for 1001
+true
+receipt for 1002
+true</option>
+<option correct>false
+receipt for 1002
+true</option>
+<option>false
+false</option>
+<option>It does not compile</option>
+<explain><p>The misspelt name compiles, because <code>@types/node</code> allows names outside the map. <code>emit</code> returns <code>false</code> when no listener exists for the event, so the first line is <code>false</code> and no receipt is printed.</p></explain>
+</question>
+
+<question id="tsn-out-emit-sync" type="output">
+<q>In what order are the lines printed?</q>
+<code file="emit-order.ts" browser="no">
+import { EventEmitter } from "node:events";
+
+const shop = new EventEmitter<{ paid: [orderId: number] }>();
+shop.on("paid", (orderId) => console.log(`listener: order ${orderId}`));
+
+console.log("before emit");
+shop.emit("paid", 7);
+console.log("after emit");
+</code>
+<option>before emit
+after emit
+listener: order 7</option>
+<option correct>before emit
+listener: order 7
+after emit</option>
+<option>listener: order 7
+before emit
+after emit</option>
+<option>before emit
+after emit</option>
+<explain><p><code>emit</code> calls every listener synchronously, in the order they were added, before it returns. Types do not change that behaviour.</p></explain>
+</question>
+
+<question id="tsn-out-to-lines" type="output">
+<q>This is the lesson's <code>toLines</code> stage, fed three chunks. What does it print?</q>
+<code file="lines.ts">
+async function* toLines(chunks: AsyncIterable<string>): AsyncGenerator<string> {
+  let rest = "";
+  for await (const chunk of chunks) {
+    rest += chunk;
+    const lines = rest.split("\n");
+    rest = lines.pop() ?? "";
+    yield* lines;
+  }
+  if (rest !== "") yield rest;
+}
+
+async function* chunks(): AsyncGenerator<string> {
+  yield "1;Ada;5";
+  yield "00\n2;Bo";
+  yield "la;700";
+}
+
+const lines: string[] = [];
+for await (const line of toLines(chunks())) lines.push(line);
+console.log(lines);
+</code>
+<option>[ '1;Ada;5', '00', '2;Bola;700' ]</option>
+<option correct>[ '1;Ada;500', '2;Bola;700' ]</option>
+<option>[ '1;Ada;500' ]</option>
+<option>[ '1;Ada;500', '2;Bo', 'la;700' ]</option>
+<explain><p>Chunk boundaries do not match line boundaries. <code>rest</code> keeps the unfinished end of the text until the next chunk arrives, and the last line, which has no final newline, is yielded after the loop.</p></explain>
+</question>
+
+<question id="tsn-out-exit-code" type="output">
+<q>What does this print?</q>
+<code file="child.ts" browser="no">
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const run = promisify(execFile);
+
+try {
+  await run(process.execPath, ["-e", "process.exit(4)"]);
+  console.log("ok");
+} catch (error) {
+  const code = error instanceof Error && "code" in error ? error.code : "unknown";
+  console.log("failed with", code);
+}
+</code>
+<option>ok</option>
+<option correct>failed with 4</option>
+<option>failed with unknown</option>
+<option>failed with EXIT</option>
+<explain><p>A child that exits with a non-zero code makes the promise reject. The error carries the exit code in <code>code</code>. The guard <code>"code" in error</code> is needed because the catch variable is <code>unknown</code>.</p></explain>
+</question>
+
+<question id="tsn-out-parse-env" type="output">
+<q>What does this print?</q>
+<code file="dotenv.ts" browser="no">
+import { parseEnv } from "node:util";
+
+const env = parseEnv("PORT=8080\nSHOP_NAME=\"Mama Put\"\n");
+console.log(env);
+console.log(typeof env["PORT"]);
+</code>
+<option>{ PORT: 8080, SHOP_NAME: 'Mama Put' }
+number</option>
+<option correct>{ PORT: '8080', SHOP_NAME: 'Mama Put' }
+string</option>
+<option>{ PORT: '8080', SHOP_NAME: '"Mama Put"' }
+string</option>
+<option>{ PORT: '8080' }
+string</option>
+<explain><p><code>parseEnv</code> understands <code>.env</code> syntax, including quotes, but every value is still a string. Turning <code>"8080"</code> into a checked number is the config loader's job.</p></explain>
+</question>
+
+<question id="tsn-out-narrow-env" type="output">
+<q>What does this print?</q>
+<code file="node-env.ts">
+type NodeEnv = "development" | "test" | "production";
+const NODE_ENVS: readonly NodeEnv[] = ["development", "test", "production"];
+
+function isNodeEnv(value: string): value is NodeEnv {
+  return (NODE_ENVS as readonly string[]).includes(value);
+}
+
+for (const raw of ["production", "Production", "prod"]) {
+  console.log(raw, isNodeEnv(raw));
+}
+</code>
+<option>production true
+Production true
+prod true</option>
+<option>production true
+Production true
+prod false</option>
+<option correct>production true
+Production false
+prod false</option>
+<option>production false
+Production false
+prod false</option>
+<explain><p><code>includes</code> compares exactly, so capitals and abbreviations are refused. The <code>as readonly string[]</code> widens the array so <code>includes</code> accepts any string; the guard's return type then narrows the value.</p></explain>
+</question>
+
+<question id="tsn-code-parse-port" type="code" file="port.ts">
+<q><p>Write <code>parsePort(raw: string | undefined): number</code>. Missing means <code>3000</code>. Otherwise the text must be 1 to 5 digits and at most 65535, or it throws <code>Error("bad PORT: " + raw)</code>. The program prints the results for four inputs.</p></q>
+<starter>
+function parsePort(raw: string | undefined): number {
+  return Number(raw);
+}
+
+for (const raw of [undefined, "8080", "80.5", ""]) {
+  try {
+    console.log(parsePort(raw));
+  } catch (error) {
+    console.log(error instanceof Error ? error.message : error);
+  }
+}
+</starter>
+<solution>
+function parsePort(raw: string | undefined): number {
+  if (raw === undefined) return 3000;
+  const port = Number(raw);
+  if (!/^\d{1,5}$/.test(raw) || port > 65535) throw new Error("bad PORT: " + raw);
+  return port;
+}
+
+for (const raw of [undefined, "8080", "80.5", ""]) {
+  try {
+    console.log(parsePort(raw));
+  } catch (error) {
+    console.log(error instanceof Error ? error.message : error);
+  }
+}
+</solution>
+<expected>
+3000
+8080
+bad PORT: 80.5
+bad PORT:
+</expected>
+<explain><p>Check the text before converting it. <code>Number("")</code> is 0 and <code>Number("80.5")</code> is 80.5, and neither is a port. Only a missing value gets the default; an empty string is a mistake.</p></explain>
+</question>
+
+<question id="tsn-code-config-problems" type="code" file="config.ts">
+<q><p>Finish <code>loadConfig</code> so it collects <strong>every</strong> problem and throws one <code>Error</code> whose message is the problems joined with <code>"; "</code>. Rules: <code>TOKEN_SECRET</code> at least 32 characters (<code>"TOKEN_SECRET too short"</code>), <code>NODE_ENV</code> one of <code>development</code>, <code>test</code>, <code>production</code>, default <code>development</code> (<code>"bad NODE_ENV"</code>).</p></q>
+<starter>
+type Env = Readonly<Record<string, string | undefined>>;
+
+function loadConfig(env: Env): { nodeEnv: string; tokenSecret: string } {
+  const tokenSecret = env["TOKEN_SECRET"] ?? "";
+  if (tokenSecret.length < 32) throw new Error("TOKEN_SECRET too short");
+  return { nodeEnv: env["NODE_ENV"] ?? "development", tokenSecret };
+}
+
+for (const env of [{ TOKEN_SECRET: "x".repeat(32) }, { NODE_ENV: "prod", TOKEN_SECRET: "abc" }]) {
+  try {
+    console.log(loadConfig(env).nodeEnv);
+  } catch (error) {
+    console.log(error instanceof Error ? error.message : error);
+  }
+}
+</starter>
+<solution>
+type Env = Readonly<Record<string, string | undefined>>;
+
+function loadConfig(env: Env): { nodeEnv: string; tokenSecret: string } {
+  const problems: string[] = [];
+  const tokenSecret = env["TOKEN_SECRET"] ?? "";
+  if (tokenSecret.length < 32) problems.push("TOKEN_SECRET too short");
+  const nodeEnv = env["NODE_ENV"] ?? "development";
+  if (!["development", "test", "production"].includes(nodeEnv)) problems.push("bad NODE_ENV");
+  if (problems.length > 0) throw new Error(problems.join("; "));
+  return { nodeEnv, tokenSecret };
+}
+
+for (const env of [{ TOKEN_SECRET: "x".repeat(32) }, { NODE_ENV: "prod", TOKEN_SECRET: "abc" }]) {
+  try {
+    console.log(loadConfig(env).nodeEnv);
+  } catch (error) {
+    console.log(error instanceof Error ? error.message : error);
+  }
+}
+</solution>
+<expected>
+development
+TOKEN_SECRET too short; bad NODE_ENV
+</expected>
+<explain><p>Push each problem into a list and throw once at the end. The person fixing the deployment then sees both mistakes in one go.</p></explain>
+</question>
+
+<question id="tsn-code-redact" type="code" file="describe.ts">
+<q><p>Write <code>describeConfig(config)</code> for the startup log. It returns <code>port=PORT secret=[N chars]</code> and must never contain the secret itself.</p></q>
+<starter>
+interface Config {
+  readonly port: number;
+  readonly tokenSecret: string;
+}
+
+function describeConfig(config: Config): string {
+  return JSON.stringify(config);
+}
+
+console.log(describeConfig({ port: 8080, tokenSecret: "k".repeat(64) }));
+</starter>
+<solution>
+interface Config {
+  readonly port: number;
+  readonly tokenSecret: string;
+}
+
+function describeConfig(config: Config): string {
+  return `port=${config.port} secret=[${config.tokenSecret.length} chars]`;
+}
+
+console.log(describeConfig({ port: 8080, tokenSecret: "k".repeat(64) }));
+</solution>
+<expected>port=8080 secret=[64 chars]</expected>
+<explain><p><code>JSON.stringify(config)</code> is the easy way to leak a secret into logs. Build the log line from the fields that are safe, and describe the secret without showing it.</p></explain>
+</question>
+
+<question id="tsn-code-errno" type="code" file="errno.ts">
+<q><p>Write the guard <code>isErrnoLike(error: unknown): error is Error &amp; { code: string }</code> and use it in <code>loadOrDefault</code>: when <code>read</code> throws an error with code <code>ENOENT</code>, return <code>"[]"</code>; re-throw anything else.</p></q>
+<starter>
+function isErrnoLike(error: unknown): error is Error & { code: string } {
+  return false;
+}
+
+function loadOrDefault(read: () => string): string {
+  try {
+    return read();
+  } catch (error) {
+    return "[]";
+  }
+}
+
+const missing = () => { throw Object.assign(new Error("no file"), { code: "ENOENT" }); };
+const denied = () => { throw Object.assign(new Error("permission denied"), { code: "EACCES" }); };
+
+console.log(loadOrDefault(missing));
+try {
+  loadOrDefault(denied);
+} catch (error) {
+  console.log(isErrnoLike(error) ? error.code : "?");
+}
+</starter>
+<solution>
+function isErrnoLike(error: unknown): error is Error & { code: string } {
+  return error instanceof Error && "code" in error && typeof error.code === "string";
+}
+
+function loadOrDefault(read: () => string): string {
+  try {
+    return read();
+  } catch (error) {
+    if (isErrnoLike(error) && error.code === "ENOENT") return "[]";
+    throw error;
+  }
+}
+
+const missing = () => { throw Object.assign(new Error("no file"), { code: "ENOENT" }); };
+const denied = () => { throw Object.assign(new Error("permission denied"), { code: "EACCES" }); };
+
+console.log(loadOrDefault(missing));
+try {
+  loadOrDefault(denied);
+} catch (error) {
+  console.log(isErrnoLike(error) ? error.code : "?");
+}
+</solution>
+<expected>
+[]
+EACCES
+</expected>
+<explain><p>Only "no such file" has a safe default. A permission error must reach the caller, or the program would carry on as if the data were empty.</p></explain>
+</question>
+
+<question id="tsn-code-strict-emitter" type="code" file="emitter.ts">
+<q><p>Finish the tiny strict emitter: <code>on</code> adds a listener to the list for its name, and <code>emit</code> calls every listener for that name with the arguments and returns whether there was one. Its method signatures only accept names from <code>Events</code>.</p></q>
+<starter>
+class StrictEmitter<Events extends { [K in keyof Events]: unknown[] }> {
+  private readonly listeners: { [K in keyof Events]?: ((...args: Events[K]) => void)[] } = {};
+
+  on<K extends keyof Events>(name: K, listener: (...args: Events[K]) => void): this {
+    return this;
+  }
+
+  emit<K extends keyof Events>(name: K, ...args: Events[K]): boolean {
+    return false;
+  }
+}
+
+interface ShopEvents {
+  paid: [orderId: number, amountKobo: number];
+}
+
+const shop = new StrictEmitter<ShopEvents>();
+shop.on("paid", (orderId, amountKobo) => console.log(`order ${orderId}: ₦${amountKobo / 100}`));
+console.log(shop.emit("paid", 1001, 4_500_000));
+</starter>
+<solution>
+class StrictEmitter<Events extends { [K in keyof Events]: unknown[] }> {
+  private readonly listeners: { [K in keyof Events]?: ((...args: Events[K]) => void)[] } = {};
+
+  on<K extends keyof Events>(name: K, listener: (...args: Events[K]) => void): this {
+    (this.listeners[name] ??= []).push(listener);
+    return this;
+  }
+
+  emit<K extends keyof Events>(name: K, ...args: Events[K]): boolean {
+    const list = this.listeners[name] ?? [];
+    for (const listener of list) listener(...args);
+    return list.length > 0;
+  }
+}
+
+interface ShopEvents {
+  paid: [orderId: number, amountKobo: number];
+}
+
+const shop = new StrictEmitter<ShopEvents>();
+shop.on("paid", (orderId, amountKobo) => console.log(`order ${orderId}: ₦${amountKobo / 100}`));
+console.log(shop.emit("paid", 1001, 4_500_000));
+</solution>
+<expected>
+order 1001: ₦45000
+true
+</expected>
+<explain><p>The storage is a mapped type: for each event name, a list of listeners of exactly that event's shape, so no cast is needed. The public methods are what matter: <code>name: K</code> with <code>K extends keyof Events</code> refuses any name outside the map, and <code>...args: Events[K]</code> ties the arguments to that name.</p></explain>
+</question>
+
+<question id="tsn-code-to-orders" type="code" file="orders.ts">
+<q><p>Write the async generator stage <code>toOrders(lines)</code>: split each line <code>id;customer;amountKobo</code>, skip lines that do not have three parts, and yield typed <code>OrderLine</code> objects. Then total the kobo.</p></q>
+<starter>
+interface OrderLine {
+  readonly id: number;
+  readonly customer: string;
+  readonly amountKobo: number;
+}
+
+async function* toOrders(lines: AsyncIterable<string>): AsyncGenerator<OrderLine> {
+  // your code here
+}
+
+async function* lines(): AsyncGenerator<string> {
+  yield "1;Ada;500000";
+  yield "broken line";
+  yield "2;Bola;125000";
+}
+
+let total = 0;
+for await (const order of toOrders(lines())) total += order.amountKobo;
+console.log(`₦${total / 100}`);
+</starter>
+<solution>
+interface OrderLine {
+  readonly id: number;
+  readonly customer: string;
+  readonly amountKobo: number;
+}
+
+async function* toOrders(lines: AsyncIterable<string>): AsyncGenerator<OrderLine> {
+  for await (const line of lines) {
+    const [id, customer, amount] = line.split(";");
+    if (id === undefined || customer === undefined || amount === undefined) continue;
+    yield { id: Number(id), customer, amountKobo: Number(amount) };
+  }
+}
+
+async function* lines(): AsyncGenerator<string> {
+  yield "1;Ada;500000";
+  yield "broken line";
+  yield "2;Bola;125000";
+}
+
+let total = 0;
+for await (const order of toOrders(lines())) total += order.amountKobo;
+console.log(`₦${total / 100}`);
+</solution>
+<expected>₦6250</expected>
+<explain><p>Destructuring an array can give <code>undefined</code> for missing parts, and with the lesson's strict settings TypeScript knows it. Checking all three before yielding both skips the broken line and narrows the types to <code>string</code>.</p></explain>
+</question>
+
+<question id="tsn-code-byte-length" type="code" file="byte-length.ts">
+<q><p>Write <code>byteLength(text)</code> without <code>Buffer</code>, using <code>TextEncoder</code>, so it works in the browser too. Print the character count and byte count of <code>"₦45,000"</code>.</p></q>
+<starter>
+function byteLength(text: string): number {
+  return text.length;
+}
+
+const price = "₦45,000";
+console.log(price.length, byteLength(price));
+</starter>
+<solution>
+function byteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+const price = "₦45,000";
+console.log(price.length, byteLength(price));
+</solution>
+<expected>7 9</expected>
+<explain><p><code>TextEncoder</code> encodes to UTF-8, where <code>₦</code> takes 3 bytes. The number of bytes is what a <code>content-length</code> header or a size limit must use.</p></explain>
+</question>
+
+<question id="tsn-code-narrow-address" type="code" file="address.ts">
+<q><p><code>server.address()</code> can return an object with a <code>port</code>, a string, or <code>null</code>. Write <code>portOf(address)</code> that returns the port, or throws <code>Error("not a TCP address")</code> for the other two cases, without using <code>as</code>.</p></q>
+<starter>
+interface AddressInfo {
+  readonly address: string;
+  readonly family: string;
+  readonly port: number;
+}
+
+function portOf(address: AddressInfo | string | null): number {
+  return 0;
+}
+
+for (const address of [{ address: "::", family: "IPv6", port: 41234 }, "/tmp/shop.sock", null]) {
+  try {
+    console.log(portOf(address));
+  } catch (error) {
+    console.log(error instanceof Error ? error.message : error);
+  }
+}
+</starter>
+<solution>
+interface AddressInfo {
+  readonly address: string;
+  readonly family: string;
+  readonly port: number;
+}
+
+function portOf(address: AddressInfo | string | null): number {
+  if (address === null || typeof address === "string") throw new Error("not a TCP address");
+  return address.port;
+}
+
+for (const address of [{ address: "::", family: "IPv6", port: 41234 }, "/tmp/shop.sock", null]) {
+  try {
+    console.log(portOf(address));
+  } catch (error) {
+    console.log(error instanceof Error ? error.message : error);
+  }
+}
+</solution>
+<expected>
+41234
+not a TCP address
+not a TCP address
+</expected>
+<explain><p>After ruling out <code>null</code> and strings, only <code>AddressInfo</code> is left, so TypeScript lets you read <code>port</code>. A cast would compile too, but it would return <code>undefined</code> for a socket path instead of failing clearly.</p></explain>
+</question>

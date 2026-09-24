@@ -1,0 +1,855 @@
+---
+title: Typing database code
+description: Give database rows honest TypeScript types: row types, nullable columns, entities and DTOs, typed repositories, generated types, and when a query builder or ORM helps.
+minutes: 55
+youNeed: Operating databases, Generic API design in TypeScript, and the BookStore data lesson
+youBuild: Typed row mappers, a repository with branded ids and safe sorting, a type generator that reads the live schema, and a tiny typed query builder
+keywords: typescript database types, row type, nullable column, entity vs dto, repository pattern typescript, branded ids, pg bigint string, numeric string, zod row validation, generated types, information_schema, query builder typing, kysely, prisma, drizzle, orm trade-offs
+objectives: Explain why query<T> is an unchecked assertion, and what the pg and PGlite drivers really return for each column type | Write row types that match the database exactly, including null, and map them to entities | Keep entities, input DTOs and response DTOs apart so secrets never leak into responses | Type a repository with branded ids and an allow-listed sort, and validate rows at the boundary | Generate row types from the live schema and choose between raw SQL, codegen, query builders and ORMs
+---
+<section>
+<h2 id="problem">A type that compiled and lied</h2>
+<p>Here is the shop's order list, written the way many TypeScript codebases start. There is an <code>Order</code> interface, the query passes it as a type argument, and <code>tsc</code> is perfectly happy. The shop data lives in a module the other examples use too:</p>
+<file name="db.ts" project="typed">
+import { PGlite } from "@electric-sql/pglite";
+
+export interface Queryable {
+  query<T>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
+}
+
+export async function openShop(): Promise<PGlite> {
+  const db = new PGlite();
+  await db.exec(`
+    create table customers (
+      id integer generated always as identity primary key,
+      email text not null unique,
+      full_name text not null,
+      phone text,
+      password_hash text not null
+    );
+    create table orders (
+      id integer generated always as identity primary key,
+      customer_id integer not null references customers (id),
+      status text not null check (status in ('pending', 'paid', 'shipped', 'cancelled')),
+      total_kobo bigint not null,
+      note text,
+      placed_at timestamptz not null
+    );
+    insert into customers (email, full_name, phone, password_hash) values
+      ('ada@example.com', 'Ada Okafor', '0803 000 0001', 'scrypt$16384$c2FsdA$aGFzaA'),
+      ('tunde@example.com', 'Tunde Bello', null, 'scrypt$16384$c2FsdB$aGFzaB');
+    insert into orders (customer_id, status, total_kobo, note, placed_at) values
+      (1, 'paid', 2180000, 'Leave at the gate', '2026-09-01 09:30:00+00'),
+      (1, 'pending', 450000, null, '2026-09-20 14:05:00+00'),
+      (2, 'shipped', 1450000, null, '2026-09-10 11:00:00+00');
+  `);
+  return db;
+}
+</file>
+<example file="problem.ts" project="typed" browser="no">
+import { openShop } from "./db.js";
+
+interface Order {
+  id: number;
+  customerId: number;
+  totalKobo: number;
+  note: string;
+  placedAt: Date;
+}
+
+const db = await openShop();
+const { rows } = await db.query<Order>("select * from orders order by id");
+
+for (const order of rows) {
+  try {
+    console.log(`order ${order.id} for customer ${order.customerId}: ₦${order.totalKobo / 100}, note ${order.note.toUpperCase()}`);
+  } catch (error) {
+    console.log(`order ${order.id}: ${(error as Error).message}`);
+  }
+}
+await db.close();
+</example>
+<output>
+order 1 for customer undefined: ₦NaN, note LEAVE AT THE GATE
+order 2: Cannot read properties of null (reading 'toUpperCase')
+order 3: Cannot read properties of null (reading 'toUpperCase')
+</output>
+<p>Every line of this is wrong, and the compiler saw none of it. The rows have <code>customer_id</code>, not <code>customerId</code>, so the customer is <code>undefined</code> and the total is <code>NaN</code>. Orders 2 and 3 have no note, so <code>note</code> is <code>null</code> and their lines crashed. The type <code>Order</code> described what the developer hoped for, not what the database sends.</p>
+<p>The reason: the <code>&lt;Order&gt;</code> in <code>db.query&lt;Order&gt;(…)</code> is not checked against anything. The driver cannot know at compile time what a SQL string returns, so its type parameter is just a promise you make, exactly like the <code>as</code> assertions in <a href="/learn/ts-assertions">Type assertions</a>. This lesson is about making that promise true, and about checking it where it can be broken.</p>
+</section>
+
+<section>
+<h2 id="driver-types">What the driver really returns</h2>
+<p>Before you can type a row, you need to know what JavaScript value each PostgreSQL type becomes. PGlite converts values like this:</p>
+<example file="driver-types.ts" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+const { rows } = await db.query<Record<string, unknown>>(`
+  select 42::integer as int4, 42::bigint as int8, 9007199254740993::bigint as huge_int8,
+         count(*) as count, 12.50::numeric(10, 2) as numeric, 0.5::double precision as float8,
+         true as bool, timestamptz '2026-09-24 10:00:00+00' as timestamptz, date '2026-09-24' as date,
+         '{"tier": "gold"}'::jsonb as jsonb, array[1, 2] as int_array, null::text as missing`);
+
+for (const [column, value] of Object.entries(rows[0]!)) {
+  const type = value === null ? "null" : value instanceof Date ? "Date" : Array.isArray(value) ? "array" : typeof value;
+  const shown = value instanceof Date ? value.toISOString() : typeof value === "bigint" ? `${value}n` : JSON.stringify(value);
+  console.log(column.padEnd(12), type.padEnd(7), shown);
+}
+await db.close();
+</example>
+<output>
+int4         number  42
+int8         number  42
+huge_int8    bigint  9007199254740993n
+count        number  1
+numeric      string  "12.50"
+float8       number  0.5
+bool         boolean true
+timestamptz  Date    2026-09-24T10:00:00.000Z
+date         Date    2026-09-24T00:00:00.000Z
+jsonb        object  {"tier":"gold"}
+int_array    array   [1,2]
+missing      null    null
+</output>
+<p>The <code>pg</code> driver, which you use against a PostgreSQL server, makes different choices for some of the same types. The same query, run against the Docker server from <a href="/learn/db-transactions#two-sessions">the transactions lesson</a> from a computer in Lagos (<code>TZ=Africa/Lagos</code>):</p>
+<file name="types-pg.js" project="types-pg">
+import pg from "pg";
+
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const { rows } = await pool.query(`
+  select 42::integer as int4, 42::bigint as int8, count(*) as count, 12.50::numeric(10, 2) as numeric,
+         0.5::double precision as float8, true as bool, timestamptz '2026-09-24 10:00:00+00' as timestamptz,
+         date '2026-09-24' as date, '{"tier": "gold"}'::jsonb as jsonb, array[1, 2] as int_array, null::text as missing`);
+for (const [column, value] of Object.entries(rows[0])) {
+  const type = value === null ? "null" : value instanceof Date ? "Date" : Array.isArray(value) ? "array" : typeof value;
+  console.log(column.padEnd(12), type.padEnd(7), value instanceof Date ? value.toISOString() : JSON.stringify(value));
+}
+await pool.end();
+</file>
+<shell>
+$ TZ=Africa/Lagos node types-pg.js
+int4         number  42
+int8         string  "42"
+count        string  "1"
+numeric      string  "12.50"
+float8       number  0.5
+bool         boolean true
+timestamptz  Date    2026-09-24T10:00:00.000Z
+date         Date    2026-09-23T23:00:00.000Z
+jsonb        object  {"tier":"gold"}
+int_array    array   [1,2]
+missing      null    null
+</shell>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>PostgreSQL type</th><th>PGlite gives</th><th><code>pg</code> gives</th><th>Why it matters</th></tr></thead>
+<tbody>
+<tr><td><code>integer</code>, <code>smallint</code>, <code>real</code>, <code>double precision</code></td><td><code>number</code></td><td><code>number</code></td><td>Safe: always fits.</td></tr>
+<tr><td><code>bigint</code>, and <code>count(*)</code></td><td><code>number</code>, or <code>bigint</code> when too large</td><td><code>string</code></td><td>A 64-bit integer can exceed <code>Number.MAX_SAFE_INTEGER</code>. Your type must say which you get.</td></tr>
+<tr><td><code>numeric</code></td><td><code>string</code></td><td><code>string</code></td><td>Exact decimals would lose digits as a <code>number</code>.</td></tr>
+<tr><td><code>timestamptz</code></td><td><code>Date</code></td><td><code>Date</code></td><td>An absolute moment: correct in any time zone.</td></tr>
+<tr><td><code>date</code></td><td><code>Date</code> at UTC midnight</td><td><code>Date</code> at <em>local</em> midnight</td><td>With <code>pg</code> in Lagos, 24 September became 23 September 23:00 UTC: an off-by-one-day bug waiting to happen.</td></tr>
+<tr><td><code>json</code>, <code>jsonb</code></td><td>parsed value</td><td>parsed value</td><td>Its shape is whatever someone stored: <code>unknown</code> until validated.</td></tr>
+<tr><td>any nullable column</td><td><code>null</code></td><td><code>null</code></td><td>Never <code>undefined</code>: a column is always present in the row.</td></tr>
+</tbody>
+</table></div>
+<p>So the honest TypeScript type depends on the driver. With <code>pg</code>, a <code>bigint</code> column is <code>string</code>; with PGlite it is <code>number | bigint</code>. Both drivers let you change their parsers (<a href="#production">In production</a> shows how), and whatever you choose, write it down in one place: the row type.</p>
+<reason title="Before you type a table">
+<p>Look at one table, <code>orders</code>, and answer these before writing any TypeScript for it:</p>
+<ul>
+<li>Which columns can be <code>null</code>? Is <code>null</code> a real state ("no note") or a missing value that should have been required?</li>
+<li>What does the driver return for each column's type, including <code>bigint</code>, <code>numeric</code> and <code>date</code>?</li>
+<li>Which names does the database use, and which does your TypeScript code use?</li>
+<li>Who else writes to this table: another service, an admin running SQL by hand, an old migration? Could a row exist that your types say is impossible?</li>
+<li>Which columns must never leave the server?</li>
+<li>Which parts of a query are values (safe as <code>$1</code> parameters) and which are identifiers such as a sort column (which parameters cannot carry)?</li>
+</ul>
+<answer>
+<ul>
+<li><code>note</code> and <code>customers.phone</code> are nullable on purpose. Every other column is <code>not null</code>, and the row type must say so exactly: <code>note: string | null</code>.</li>
+<li><code>total_kobo</code> is <code>bigint</code>, so <code>number | bigint</code> with PGlite or <code>string</code> with <code>pg</code>. Money must become an exact number before arithmetic.</li>
+<li><code>snake_case</code> in SQL, <code>camelCase</code> in TypeScript: one mapping function per table does the renaming, so it happens in exactly one place.</li>
+<li>Anything that can write SQL can break your assumptions, so rows entering from the database are, like request bodies, data from outside your program. Validate them where drift would be expensive.</li>
+<li><code>customers.password_hash</code>. It belongs in the entity for the login code, never in a response. That calls for a separate response type and an explicit mapping.</li>
+<li>Values go in parameters. The sort column must come from a fixed allow-list, which a union type can enforce at compile time.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="row-types">Row types: the database, exactly</h2>
+<p>A <strong>row type</strong> describes what one row of a query really contains, in the database's own names and the driver's own value types. It is not pretty, and it is not meant to be used across the app. Its job is to be true:</p>
+<file name="rows.ts" project="typed">
+export type OrderStatus = "pending" | "paid" | "shipped" | "cancelled";
+
+/* What PGlite returns for `select * from orders`. */
+export interface OrderRow {
+  id: number;
+  customer_id: number;
+  status: OrderStatus;
+  total_kobo: number | bigint;
+  note: string | null;
+  placed_at: Date;
+}
+
+export interface CustomerRow {
+  id: number;
+  email: string;
+  full_name: string;
+  phone: string | null;
+  password_hash: string;
+}
+</file>
+<p>Once <code>note</code> is typed as <code>string | null</code>, the crash from the opening example becomes a compile error, which is where you want to find it:</p>
+<example file="note.ts" project="typed" check="tsc-error">
+import type { OrderRow } from "./rows.js";
+
+export function shoutNote(row: OrderRow): string {
+  return row.note.toUpperCase();
+}
+</example>
+<output kind="tsc">
+note.ts:4:10 - error TS18047: 'row.note' is possibly 'null'.
+
+4   return row.note.toUpperCase();
+           ~~~~~~~~
+
+
+Found 1 error in note.ts:4
+</output>
+<p>The fix is to decide what "no note" means for this function, which is a business decision the type forced you to make: <code>row.note?.toUpperCase() ?? "(no note)"</code>.</p>
+<h3>Nullable is not optional</h3>
+<p>A column that can be <code>null</code> is still always <em>present</em> in the row. So in a row type, write <code>note: string | null</code>, not <code>note?: string</code>. The optional form means "the property may be missing, and if present is a string", which says nothing about <code>null</code>. The difference survives into JSON, which drops <code>undefined</code> and keeps <code>null</code>:</p>
+<example file="null-vs-undefined.ts">
+const fromDatabase = { id: 2, note: null };
+const withUndefined = { id: 2, note: undefined };
+
+console.log(JSON.stringify(fromDatabase));
+console.log(JSON.stringify(withUndefined));
+console.log("note" in fromDatabase, "note" in JSON.parse(JSON.stringify(withUndefined)));
+</example>
+<output>
+{"id":2,"note":null}
+{"id":2}
+true false
+</output>
+<p>A client reading your API can tell "this order has no note" (<code>"note": null</code>) from "this response does not include notes" (no key). Keep <code>null</code> for the first meaning, all the way from the column to the JSON.</p>
+</section>
+
+<section>
+<h2 id="entities">Entities and mappers</h2>
+<p>The rest of the application should not care about <code>snake_case</code> or about which driver returned a <code>bigint</code> as a string. It works with <strong>entities</strong>: the application's own model of a thing, with its own names and value types. One <strong>mapper</strong> function per table turns a row into an entity. It is also the one place where awkward values are converted, and where a conversion can fail loudly:</p>
+<file name="entities.ts" project="typed">
+import type { CustomerRow, OrderRow, OrderStatus } from "./rows.js";
+
+export interface Order {
+  readonly id: number;
+  readonly customerId: number;
+  readonly status: OrderStatus;
+  readonly totalKobo: number;
+  readonly note: string | null;
+  readonly placedAt: Date;
+}
+
+export interface Customer {
+  readonly id: number;
+  readonly email: string;
+  readonly fullName: string;
+  readonly phone: string | null;
+  readonly passwordHash: string;
+}
+
+/* bigint columns arrive as number or bigint (PGlite) or string (pg). Money must be an exact, safe integer. */
+export function toKobo(value: number | bigint | string): number {
+  const n = Number(value);
+  if (!Number.isSafeInteger(n)) throw new RangeError(`amount ${String(value)} is not a safe integer number of kobo`);
+  return n;
+}
+
+export function toOrder(row: OrderRow): Order {
+  return {
+    id: row.id,
+    customerId: row.customer_id,
+    status: row.status,
+    totalKobo: toKobo(row.total_kobo),
+    note: row.note,
+    placedAt: row.placed_at,
+  };
+}
+
+export function toCustomer(row: CustomerRow): Customer {
+  return {
+    id: row.id,
+    email: row.email,
+    fullName: row.full_name,
+    phone: row.phone,
+    passwordHash: row.password_hash,
+  };
+}
+</file>
+<example file="mapping.ts" project="typed" browser="no">
+import { openShop } from "./db.js";
+import { toKobo, toOrder } from "./entities.js";
+import type { OrderRow } from "./rows.js";
+
+const db = await openShop();
+const { rows } = await db.query<OrderRow>("select * from orders order by id");
+for (const order of rows.map(toOrder)) {
+  console.log(order.id, order.customerId, order.status, `₦${order.totalKobo / 100}`, order.note ?? "(no note)");
+}
+
+for (const raw of ["2180000", 9007199254740993n]) {
+  try {
+    console.log("toKobo:", toKobo(raw));
+  } catch (error) {
+    console.log("toKobo:", (error as Error).message);
+  }
+}
+await db.close();
+</example>
+<output>
+1 1 paid ₦21800 Leave at the gate
+2 1 pending ₦4500 (no note)
+3 2 shipped ₦14500 (no note)
+toKobo: 2180000
+toKobo: amount 9007199254740993 is not a safe integer number of kobo
+</output>
+<p>The mapper accepted <code>pg</code>'s string form of a <code>bigint</code> and refused a value too large to be exact as a JavaScript number. For a shop, a total of 90 trillion naira is a bug, not a sale, and failing at the mapper points straight at it. (Keeping money as <code>bigint</code> throughout is the other valid choice; what matters is that the entity type says which one, and the mapper enforces it.)</p>
+<p>The entity has <code>readonly</code> properties. Entities are passed around the application; <code>readonly</code> stops a function from quietly changing a customer that another part of the request is still using. Changes go through the repository, which you will meet shortly.</p>
+</section>
+
+<section>
+<h2 id="dtos">Entities are not DTOs</h2>
+<p>A <strong>DTO</strong> (data transfer object) is the shape of data crossing a boundary: what a client sends in a request, or what the API sends back. <a href="/learn/ts-api-layers">Type-safe API architecture</a> introduced them. They differ from the entity on purpose:</p>
+<ul>
+<li>The <strong>response DTO</strong> leaves out what the client must not see (<code>passwordHash</code>) and may add what it needs (a formatted total).</li>
+<li>The <strong>input DTOs</strong> leave out what the client must not set (<code>id</code>, <code>passwordHash</code>, <code>status</code>), and an update DTO makes fields optional.</li>
+</ul>
+<p>Now the trap. TypeScript types are <strong>structural</strong>: an object with <em>more</em> properties than a type asks for still fits it. So this compiles, and ships the password hash to every client:</p>
+<example file="leak.ts" project="typed" browser="no">
+import { openShop } from "./db.js";
+import { toCustomer, type Customer } from "./entities.js";
+import type { CustomerRow } from "./rows.js";
+
+interface CustomerResponse {
+  id: number;
+  email: string;
+  fullName: string;
+}
+
+function toResponse(customer: Customer): CustomerResponse {
+  return customer;
+}
+
+const db = await openShop();
+const { rows } = await db.query<CustomerRow>("select * from customers where id = $1", [1]);
+console.log(JSON.stringify(toResponse(toCustomer(rows[0]!))));
+await db.close();
+</example>
+<output>
+{"id":1,"email":"ada@example.com","fullName":"Ada Okafor","phone":"0803 000 0001","passwordHash":"scrypt$16384$c2FsdA$aGFzaA"}
+</output>
+<p><code>Customer</code> has every property <code>CustomerResponse</code> needs, so it is assignable to it, and at runtime it is still the same object with <code>passwordHash</code> inside. <code>Omit&lt;Customer, "passwordHash"&gt;</code> would have the same problem: types describe what you may <em>read</em>, they never remove properties. Only code that builds a new object does:</p>
+<file name="dtos.ts" project="typed">
+import type { Customer } from "./entities.js";
+
+export interface CustomerResponse {
+  readonly id: number;
+  readonly email: string;
+  readonly fullName: string;
+  readonly phone: string | null;
+}
+
+export interface CreateCustomerInput {
+  readonly email: string;
+  readonly fullName: string;
+  readonly phone: string | null;
+  readonly password: string;
+}
+
+export type UpdateCustomerInput = Partial<Pick<CreateCustomerInput, "fullName" | "phone">>;
+
+export function toCustomerResponse(customer: Customer): CustomerResponse {
+  return { id: customer.id, email: customer.email, fullName: customer.fullName, phone: customer.phone };
+}
+</file>
+<p>Writing the response as an object literal also switches on TypeScript's <strong>excess property check</strong>: in a fresh object literal, a property the target type does not declare is an error. If someone adds the hash to the mapper "for debugging", the compiler objects:</p>
+<example file="excess.ts" project="typed" check="tsc-error">
+import type { Customer } from "./entities.js";
+import type { CustomerResponse } from "./dtos.js";
+
+export function toCustomerResponse(customer: Customer): CustomerResponse {
+  return {
+    id: customer.id,
+    email: customer.email,
+    fullName: customer.fullName,
+    phone: customer.phone,
+    passwordHash: customer.passwordHash,
+  };
+}
+</example>
+<output kind="tsc">
+excess.ts:10:5 - error TS2353: Object literal may only specify known properties, and 'passwordHash' does not exist in type 'CustomerResponse'.
+
+10     passwordHash: customer.passwordHash,
+       ~~~~~~~~~~~~
+
+
+Found 1 error in excess.ts:10
+</output>
+<p>That check only applies to object literals, which is one more reason to write mappers field by field. <code>UpdateCustomerInput</code> shows the other direction: <code>Pick</code> chooses the fields a customer may change at all, and <code>Partial</code> makes each of them optional for a PATCH request, so <code>email</code> and <code>password</code> cannot be changed through this path even by accident.</p>
+</section>
+
+<section>
+<h2 id="validation">Checking rows at the boundary</h2>
+<p>Row types can still drift from the database. A colleague's migration adds the status <code>'refunded'</code>; another service writes a row with a <code>null</code> the types say is impossible. The row type and the mapper would pass those values along unchecked, and the failure would surface far away. Where that risk matters (data written by other systems, <code>jsonb</code> columns, reports that feed money decisions), validate rows when they enter your program, as you validate request bodies. <strong>zod</strong> describes the shape once and checks it at runtime:</p>
+<example file="validate-rows.ts" project="typed" browser="no">
+import { z } from "zod";
+import { openShop } from "./db.js";
+
+const OrderRowSchema = z.object({
+  id: z.number().int(),
+  customer_id: z.number().int(),
+  status: z.enum(["pending", "paid", "shipped", "cancelled"]),
+  total_kobo: z.union([z.number().int(), z.bigint()]),
+  note: z.string().nullable(),
+  placed_at: z.date(),
+});
+
+const db = await openShop();
+await db.exec(`
+  alter table orders drop constraint orders_status_check;
+  insert into orders (customer_id, status, total_kobo, placed_at) values (2, 'refunded', 1450000, now());
+`);
+
+const { rows } = await db.query<unknown>("select * from orders order by id");
+for (const raw of rows) {
+  const result = OrderRowSchema.safeParse(raw);
+  if (result.success) {
+    console.log(`order ${result.data.id}: ok (${result.data.status})`);
+  } else {
+    console.log(`order ${(raw as { id: number }).id}: invalid`, result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`));
+  }
+}
+await db.close();
+</example>
+<output>
+order 1: ok (paid)
+order 2: ok (pending)
+order 3: ok (shipped)
+order 4: invalid [
+  'status: Invalid option: expected one of "pending"|"paid"|"shipped"|"cancelled"'
+]
+</output>
+<p>Typing the query as <code>&lt;unknown&gt;</code> is the honest starting point: TypeScript forces you through the schema before you can touch a field. The schema then tells you precisely which row and which column broke the contract, instead of an order page crashing three layers later. <code>z.infer&lt;typeof OrderRowSchema&gt;</code> would even give you the row type for free, so the type and the check cannot disagree. Validation costs a little time per row; use it where drift is likely or expensive, not on every hot query.</p>
+</section>
+
+<section>
+<h2 id="repositories">Typed repositories</h2>
+<p>A <strong>repository</strong> owns the SQL for one table and speaks entities to the rest of the app; <a href="/learn/bookstore-data#repositories">the BookStore</a> built its first ones. With types, a repository can also rule out whole classes of mistakes at compile time. Two of them:</p>
+<ul>
+<li><strong>Mixing up ids.</strong> A customer id and an order id are both numbers, so <code>findById(customerId)</code> compiles and returns the wrong order. A <strong>branded type</strong> (<a href="/learn/ts-generic-design">Generic API design</a>) makes them different types that are still plain numbers at runtime.</li>
+<li><strong>Unsafe sorting.</strong> A sort column cannot be a <code>$1</code> parameter, so it is pasted into SQL. A union of allowed names, mapped to fixed SQL fragments, means only known fragments can ever be pasted.</li>
+</ul>
+<file name="orders-repo.ts" project="typed">
+import type { Queryable } from "./db.js";
+import { toOrder, type Order } from "./entities.js";
+import type { OrderRow, OrderStatus } from "./rows.js";
+
+declare const brand: unique symbol;
+export type Brand<T, B extends string> = T & { readonly [brand]: B };
+export type OrderId = Brand<number, "OrderId">;
+export type CustomerId = Brand<number, "CustomerId">;
+
+export const orderId = (n: number) => n as OrderId;
+export const customerId = (n: number) => n as CustomerId;
+
+export type OrderSort = "newest" | "oldest" | "biggest";
+const ORDER_BY: Record<OrderSort, string> = {
+  newest: "placed_at desc, id desc",
+  oldest: "placed_at, id",
+  biggest: "total_kobo desc, id",
+};
+
+export interface NewOrder {
+  readonly customerId: CustomerId;
+  readonly totalKobo: number;
+  readonly note: string | null;
+}
+
+export class OrderRepository {
+  constructor(private readonly db: Queryable) {}
+
+  async findById(id: OrderId): Promise<Order | undefined> {
+    const { rows } = await this.db.query<OrderRow>("select * from orders where id = $1", [id]);
+    return rows[0] === undefined ? undefined : toOrder(rows[0]);
+  }
+
+  async listForCustomer(customer: CustomerId, options: { sort: OrderSort; status?: OrderStatus }): Promise<Order[]> {
+    const { rows } = await this.db.query<OrderRow>(
+      `select * from orders where customer_id = $1 and ($2::text is null or status = $2)
+       order by ${ORDER_BY[options.sort]}`,
+      [customer, options.status ?? null],
+    );
+    return rows.map(toOrder);
+  }
+
+  async create(input: NewOrder): Promise<Order> {
+    const { rows } = await this.db.query<OrderRow>(
+      `insert into orders (customer_id, status, total_kobo, note, placed_at)
+       values ($1, 'pending', $2, $3, now()) returning *`,
+      [input.customerId, input.totalKobo, input.note],
+    );
+    return toOrder(rows[0]!);
+  }
+}
+</file>
+<p><code>findById</code> returns <code>Promise&lt;Order | undefined&gt;</code>: "not found" is a normal outcome the caller must handle, and the type makes forgetting it a compile error. <code>ORDER_BY</code> is typed <code>Record&lt;OrderSort, string&gt;</code>, so adding a sort option without its SQL does not compile either. Use it:</p>
+<example file="use-repo.ts" project="typed" browser="no">
+import { openShop } from "./db.js";
+import { OrderRepository, customerId, orderId } from "./orders-repo.js";
+
+const db = await openShop();
+const orders = new OrderRepository(db);
+
+const newest = await orders.listForCustomer(customerId(1), { sort: "newest" });
+console.log(newest.map((o) => `${o.id}:${o.status}`));
+
+const pendingOnly = await orders.listForCustomer(customerId(1), { sort: "biggest", status: "pending" });
+console.log(pendingOnly.map((o) => `${o.id}:${o.totalKobo}`));
+
+const created = await db.transaction(async (tx) => {
+  const inTx = new OrderRepository(tx);
+  return inTx.create({ customerId: customerId(2), totalKobo: 250000, note: "Call on arrival" });
+});
+console.log(created.id, created.status, created.note);
+
+const missing = await orders.findById(orderId(99));
+console.log(missing ?? "order 99 not found");
+await db.close();
+</example>
+<output>
+[ '2:pending', '1:paid' ]
+[ '2:450000' ]
+4 pending Call on arrival
+order 99 not found
+</output>
+<p>The repository takes a <code>Queryable</code>, so the same class runs on the database or inside a transaction: <code>tx</code> fits the interface too. That is how several repositories take part in one transaction. And the brand does its job at compile time:</p>
+<example file="brand-error.ts" project="typed" check="tsc-error">
+import { openShop } from "./db.js";
+import { OrderRepository, customerId } from "./orders-repo.js";
+
+const db = await openShop();
+const orders = new OrderRepository(db);
+await orders.findById(customerId(1));
+await orders.listForCustomer(customerId(1), { sort: "price" });
+</example>
+<output kind="tsc">
+brand-error.ts:6:23 - error TS2345: Argument of type 'CustomerId' is not assignable to parameter of type 'OrderId'.
+  Type 'CustomerId' is not assignable to type '{ readonly [brand]: "OrderId"; }'.
+    Types of property '[brand]' are incompatible.
+      Type '"CustomerId"' is not assignable to type '"OrderId"'.
+
+6 await orders.findById(customerId(1));
+                        ~~~~~~~~~~~~~
+
+brand-error.ts:7:47 - error TS2322: Type '"price"' is not assignable to type 'OrderSort'.
+
+7 await orders.listForCustomer(customerId(1), { sort: "price" });
+                                                ~~~~
+
+  orders-repo.ts:34:58 - The expected type comes from property 'sort' which is declared here on type '{ sort: OrderSort; status?: OrderStatus | undefined; }'
+    34   async listForCustomer(customer: CustomerId, options: { sort: OrderSort; status?: OrderStatus }): Promise<Order[]> {
+                                                                ~~~~
+
+
+Found 2 errors in the same file, starting at: brand-error.ts:6
+</output>
+<p>Both mistakes, a customer id where an order id belongs and a sort the SQL does not know, are caught before the code runs.</p>
+</section>
+
+<section>
+<h2 id="generated">Generating types from the schema</h2>
+<p>Hand-written row types drift: someone adds a column or makes one nullable in a migration and forgets the TypeScript. The database already knows every column, its type and whether it can be null, in <code>information_schema.columns</code>. A <strong>type generator</strong> reads that and writes the row types for you:</p>
+<example file="generate.ts" project="typed" browser="no">
+import { openShop } from "./db.js";
+
+const TS_TYPES: Record<string, string> = {
+  int2: "number", int4: "number", float4: "number", float8: "number",
+  int8: "number | bigint", numeric: "string",
+  text: "string", varchar: "string", uuid: "string",
+  bool: "boolean", timestamptz: "Date", date: "Date",
+  jsonb: "unknown", json: "unknown",
+};
+
+interface ColumnInfo {
+  table_name: string;
+  column_name: string;
+  udt_name: string;
+  is_nullable: "YES" | "NO";
+}
+
+const pascal = (name: string) => name.replace(/(^|_)(\w)/g, (_, __, c: string) => c.toUpperCase()).replace(/s$/, "");
+
+const db = await openShop();
+const { rows } = await db.query<ColumnInfo>(`
+  select table_name, column_name, udt_name, is_nullable
+  from information_schema.columns
+  where table_schema = 'public'
+  order by table_name, ordinal_position`);
+
+const tables = Map.groupBy(rows, (c) => c.table_name);
+for (const [table, columns] of tables) {
+  console.log(`export interface ${pascal(table)}Row {`);
+  for (const c of columns) {
+    const type = TS_TYPES[c.udt_name] ?? "unknown";
+    console.log(`  ${c.column_name}: ${type}${c.is_nullable === "YES" ? " | null" : ""};`);
+  }
+  console.log("}");
+}
+await db.close();
+</example>
+<output>
+export interface CustomerRow {
+  id: number;
+  email: string;
+  full_name: string;
+  phone: string | null;
+  password_hash: string;
+}
+export interface OrderRow {
+  id: number;
+  customer_id: number;
+  status: string;
+  total_kobo: number | bigint;
+  note: string | null;
+  placed_at: Date;
+}
+</output>
+<p>Save that output to a file such as <code>src/db/rows.generated.ts</code>, commit it, and run the generator in CI against a database migrated from scratch. If the output differs from the committed file, the build fails: the types can no longer drift from the schema silently. Notice what the generator cannot know: that <code>status</code> only allows four values (it is <code>text</code> with a <code>check</code>). A PostgreSQL <code>enum</code> type or a lookup table would carry that information; otherwise you narrow it by hand, as <code>rows.ts</code> did.</p>
+<p>Real projects use a maintained tool instead of writing this: <strong>kysely-codegen</strong> and <strong>pg-to-ts</strong> generate table types like the ones above; <strong>pgtyped</strong> and <strong>sqlc</strong> go further and read each SQL <em>query</em> to generate its exact parameter and result types, including joins and computed columns.</p>
+</section>
+
+<section>
+<h2 id="builders">Query builders and ORMs</h2>
+<p>Row types describe tables, but <code>db.query&lt;OrderRow&gt;("select id, status from orders")</code> still claims the result has every column. The next step is to let TypeScript <em>derive</em> the result type from the query. That is what a typed <strong>query builder</strong> does. Here is the core trick in a few lines: a <code>Database</code> interface lists the tables, and the selected columns become the result type with <code>Pick</code>:</p>
+<file name="builder.ts" project="typed">
+import type { Queryable } from "./db.js";
+import type { CustomerRow, OrderRow } from "./rows.js";
+
+export interface Database {
+  orders: OrderRow;
+  customers: CustomerRow;
+}
+
+export async function selectFrom<T extends keyof Database, C extends keyof Database[T] & string>(
+  db: Queryable,
+  table: T,
+  columns: readonly C[],
+  where: Partial<Database[T]> = {},
+): Promise<Pick<Database[T], C>[]> {
+  const keys = Object.keys(where) as (keyof Database[T] & string)[];
+  const conditions = keys.map((key, i) => `"${key}" = $${i + 1}`);
+  const sql =
+    `select ${columns.map((c) => `"${c}"`).join(", ")} from "${table}"` +
+    (conditions.length > 0 ? ` where ${conditions.join(" and ")}` : "") +
+    " order by 1";
+  const { rows } = await db.query<Pick<Database[T], C>>(sql, keys.map((key) => where[key]));
+  return rows;
+}
+</file>
+<example file="use-builder.ts" project="typed" browser="no">
+import { selectFrom } from "./builder.js";
+import { openShop } from "./db.js";
+
+const db = await openShop();
+const paid = await selectFrom(db, "orders", ["id", "total_kobo"], { status: "paid" });
+console.log(paid, paid[0]?.total_kobo);
+
+const people = await selectFrom(db, "customers", ["email", "phone"]);
+console.log(people.map((p) => `${p.email}: ${p.phone ?? "no phone"}`));
+await db.close();
+</example>
+<output>
+[ { id: 1, total_kobo: 2180000 } ] 2180000
+[ 'ada@example.com: 0803 000 0001', 'tunde@example.com: no phone' ]
+</output>
+<p>Hover over <code>paid</code> in an editor and its type is <code>Pick&lt;OrderRow, "id" | "total_kobo"&gt;[]</code>: exactly the columns selected. Table names, column names and filter values are all checked against the <code>Database</code> interface, and identifiers only ever come from that checked list. A misspelled column, or a filter value of the wrong type, fails at compile time:</p>
+<example file="builder-error.ts" project="typed" check="tsc-error">
+import { selectFrom } from "./builder.js";
+import { openShop } from "./db.js";
+
+const db = await openShop();
+await selectFrom(db, "orders", ["id", "totl_kobo"]);
+await selectFrom(db, "orders", ["id"], { status: "refunded" });
+</example>
+<output kind="tsc">
+builder-error.ts:5:39 - error TS2820: Type '"totl_kobo"' is not assignable to type '"customer_id" | "id" | "note" | "placed_at" | "status" | "total_kobo"'. Did you mean '"total_kobo"'?
+
+5 await selectFrom(db, "orders", ["id", "totl_kobo"]);
+                                        ~~~~~~~~~~~
+
+builder-error.ts:6:42 - error TS2322: Type '"refunded"' is not assignable to type 'OrderStatus | undefined'.
+
+6 await selectFrom(db, "orders", ["id"], { status: "refunded" });
+                                           ~~~~~~
+
+
+Found 2 errors in the same file, starting at: builder-error.ts:5
+</output>
+<p><strong>Kysely</strong> is a full query builder built on exactly this idea, covering joins, aggregates and subqueries. <strong>ORMs</strong> (object-relational mappers) go further: they own the schema definition and generate both the SQL and the types. <strong>Prisma</strong> generates a client from its own schema file (and is what <a href="/learn/zudo-database">@zudojs/database</a> builds on); <strong>Drizzle</strong> declares tables in TypeScript; <strong>TypeORM</strong> uses decorated classes.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Approach</th><th>Types come from</th><th>Strengths</th><th>Costs</th></tr></thead>
+<tbody>
+<tr><td>Raw SQL + hand-written row types</td><td>You</td><td>Full SQL power, no dependency, obvious performance</td><td>Types can drift; every mapper by hand</td></tr>
+<tr><td>Raw SQL + codegen (pgtyped, sqlc)</td><td>The database and your queries</td><td>Exact types per query, SQL stays SQL</td><td>A build step; dynamic queries are awkward</td></tr>
+<tr><td>Query builder (Kysely)</td><td>A <code>Database</code> interface, often generated</td><td>Result types follow the query, composable dynamic filters</td><td>A new API to learn; very complex SQL still needs raw fragments</td></tr>
+<tr><td>ORM (Prisma, Drizzle, TypeORM)</td><td>The ORM's schema</td><td>Fast CRUD, relations, migrations included</td><td>Hidden SQL (watch for N+1), less control over locks and plans, the schema lives in the tool</td></tr>
+</tbody>
+</table></div>
+<p>None of them removes the need for what the last four lessons taught. An ORM still needs the right indexes, still loses updates in read-modify-write code, and still needs expand-and-contract migrations. Pick the approach whose failure modes your team can see: many teams use an ORM or builder for everyday CRUD and drop to typed raw SQL for reports and concurrency-sensitive statements.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing typed database code</h2>
+<p>Two kinds of tests keep database types honest. <strong>Type tests</strong> prove that mistakes do not compile. A line marked <code>// @ts-expect-error</code> must contain a type error, or <code>tsc</code> fails, so it is a test that runs every time the project is type-checked:</p>
+<example file="type-tests.ts" project="typed">
+import type { CustomerResponse } from "./dtos.js";
+import { customerId, orderId, type OrderId } from "./orders-repo.js";
+import type { OrderRow } from "./rows.js";
+
+export function typeTests(row: OrderRow, response: CustomerResponse): void {
+  // @ts-expect-error: note can be null
+  row.note.trim();
+
+  // @ts-expect-error: a customer id is not an order id
+  const wrong: OrderId = customerId(1);
+
+  // @ts-expect-error: responses never carry the password hash
+  void response.passwordHash;
+
+  const right: OrderId = orderId(1);
+  void [wrong, right];
+}
+console.log("type tests compiled");
+</example>
+<output>
+type tests compiled
+</output>
+<p>If someone makes <code>note</code> non-nullable by mistake or adds <code>passwordHash</code> to the response type, the corresponding line stops being an error and the type check fails. <strong>Integration tests</strong> cover the other half: run every repository method against a real database (PGlite in-process, or PostgreSQL in CI), and validate what comes back with the row schemas from the validation section. Together with the generator's drift check, that closes the gap between what the types say and what the database does.</p>
+</section>
+
+<section>
+<h2 id="production">In production</h2>
+<ul>
+<li><strong>Configure the driver once.</strong> With <code>pg</code>, <code>pg.types.setTypeParser(20, (v) => BigInt(v))</code> returns <code>bigint</code> columns as <code>bigint</code>; <code>pg.types.setTypeParser(1082, (v) => v)</code> keeps <code>date</code> columns as <code>"2026-09-24"</code> strings and avoids the local-midnight bug. Do it at startup, in one module, and make the row types match.</li>
+<li><strong>Run servers in UTC</strong> and use <code>timestamptz</code>, so dates do not depend on where the code runs.</li>
+<li><strong>Money</strong>: integer minor units as <code>number</code> after a safe-integer check, or <code>bigint</code>, or <code>numeric</code> strings handled with a decimal library. Never floats, and never mixed within one codebase.</li>
+<li><strong>Keep secrets out of entities where possible.</strong> Select <code>password_hash</code> only in the login query, into its own small type, rather than loading it with every customer.</li>
+<li><strong>Treat <code>jsonb</code> as <code>unknown</code></strong> until a schema has checked it. Whatever wrote it, years ago, did not know your current type.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Type the payments table">
+<p>A <code>payments</code> table has <code>id integer</code>, <code>order_id integer not null</code>, <code>amount numeric(12, 2) not null</code> (in naira, from an old integration), <code>failure_reason text</code> (null when the payment succeeded) and <code>paid_at timestamptz</code> (null until paid). Write <code>PaymentRow</code>, a <code>Payment</code> entity with <code>amountKobo: number</code>, and <code>toPayment</code>, converting the naira string to kobo exactly (no floating point).</p>
+<solution>
+<example file="payments.ts" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+interface PaymentRow {
+  id: number;
+  order_id: number;
+  amount: string;
+  failure_reason: string | null;
+  paid_at: Date | null;
+}
+
+interface Payment {
+  readonly id: number;
+  readonly orderId: number;
+  readonly amountKobo: number;
+  readonly failureReason: string | null;
+  readonly paidAt: Date | null;
+}
+
+function nairaToKobo(amount: string): number {
+  const match = /^(\d+)\.(\d{2})$/.exec(amount);
+  if (!match) throw new RangeError(`not a naira amount with 2 decimals: ${amount}`);
+  const kobo = Number(match[1]) * 100 + Number(match[2]);
+  if (!Number.isSafeInteger(kobo)) throw new RangeError(`amount too large: ${amount}`);
+  return kobo;
+}
+
+function toPayment(row: PaymentRow): Payment {
+  return {
+    id: row.id,
+    orderId: row.order_id,
+    amountKobo: nairaToKobo(row.amount),
+    failureReason: row.failure_reason,
+    paidAt: row.paid_at,
+  };
+}
+
+const db = new PGlite();
+await db.exec(`
+  create table payments (id integer primary key, order_id integer not null, amount numeric(12, 2) not null,
+                         failure_reason text, paid_at timestamptz);
+  insert into payments values (1, 1, 1150.15, 'card declined', null), (2, 1, 1150.15, null, '2026-09-01 09:31:00+00');
+`);
+const { rows } = await db.query<PaymentRow>("select * from payments order by id");
+console.log(rows.map(toPayment));
+console.log(Number("1150.15") * 100, nairaToKobo("1150.15"));
+await db.close();
+</example>
+<output>
+[
+  {
+    id: 1,
+    orderId: 1,
+    amountKobo: 115015,
+    failureReason: 'card declined',
+    paidAt: null
+  },
+  {
+    id: 2,
+    orderId: 1,
+    amountKobo: 115015,
+    failureReason: null,
+    paidAt: 2026-09-01T09:31:00.000Z
+  }
+]
+115015.00000000001 115015
+</output>
+<p>The last line shows why the string is parsed as digits: floating-point arithmetic on the naira value can be off by a fraction of a kobo, which is enough to break an equality check against the provider's amount.</p>
+</solution>
+</exercise>
+
+<exercise title="Stop the leak">
+<p>A teammate writes <code>return { ...customer, orderCount }</code> in a handler whose return type is <code>CustomerSummary { id; fullName; orderCount }</code>. It compiles. What goes out in the response, why does TypeScript allow it, and how do you fix it so the compiler protects you next time?</p>
+<solution>
+<p>The response contains every property of the customer entity, including <code>email</code>, <code>phone</code> and <code>passwordHash</code>, plus <code>orderCount</code>. The excess property check does not fire, because properties that come from a spread are not checked as excess, and structurally the object has everything <code>CustomerSummary</code> needs. Fix it by listing fields: <code>return { id: customer.id, fullName: customer.fullName, orderCount }</code>. Now any extra property someone adds to that literal is a compile error, and add a <code>// @ts-expect-error</code> type test that reads <code>passwordHash</code> from a <code>CustomerSummary</code>, plus a response test that asserts the exact set of JSON keys.</p>
+</solution>
+</exercise>
+
+<exercise title="Choose the approach">
+<p>Pick an approach for each team: (a) two developers building an admin panel with mostly CRUD screens, no SQL experience; (b) a payments team whose statements use <code>for update</code>, CTEs and serializable retries; (c) a reporting service with 40 complex read-only queries; (d) an API with dynamic filters and sorting chosen by the client.</p>
+<solution>
+<p>(a) An ORM such as Prisma or Drizzle: fast CRUD and migrations, with the indexes and N+1 queries watched. (b) Typed raw SQL, or a query builder with raw fragments: they need exact control over locks, isolation and statement shape, and the lessons' repositories fit that well. (c) Raw SQL with codegen (pgtyped or sqlc): every report query gets exact result types without rewriting SQL in another API. (d) A query builder such as Kysely: composable, typed conditions, with sort columns from an allow-list rather than pasted text.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="summary">Summary</h2>
+<ul>
+<li><code>query&lt;T&gt;</code> is an unchecked promise. Know what your driver returns: <code>bigint</code> and <code>count</code> are strings in <code>pg</code>, <code>numeric</code> is a string in both, <code>date</code> is a timezone trap, nullable columns are <code>null</code>, never <code>undefined</code>.</li>
+<li>Row types mirror the database exactly (<code>snake_case</code>, <code>| null</code>, driver value types). One mapper per table turns rows into entities and converts awkward values, failing loudly.</li>
+<li>Entities, input DTOs and response DTOs are different types. Structural typing lets extra properties through, so build responses field by field; excess property checks then guard the literal.</li>
+<li>Validate rows where the database can drift from your types, starting from <code>unknown</code>. Typed repositories add branded ids, <code>| undefined</code> for "not found", allow-listed sorting, and accept a transaction through the same interface.</li>
+<li>Generate row types from <code>information_schema</code> (or with a tool) and fail CI on drift. Query builders derive result types from the query; ORMs own the schema. Choose by the failure modes your team can see.</li>
+</ul>
+<p>That completes Database engineering. The next course, <a href="/learn/api-pagination-versioning">API engineering</a>, builds APIs on top of this foundation: pagination, versioning, idempotent payments and rate limits.</p>
+</section>

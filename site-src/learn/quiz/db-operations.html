@@ -1,0 +1,762 @@
+<question id="dbo-why-pool" type="choice">
+<q>Why do servers talk to PostgreSQL through a connection pool instead of opening a connection per request?</q>
+<option>PostgreSQL only accepts pooled connections</option>
+<option correct>Each connection is a server process that costs time to open (network, authentication, TLS) and memory while open, and the server caps how many can exist</option>
+<option>Pools make queries run in parallel on one connection</option>
+<option>Pools encrypt the connection</option>
+<explain><p>Reusing a few open connections removes the setup cost from every request and keeps the total under <code>max_connections</code>.</p></explain>
+</question>
+
+<question id="dbo-pool-budget" type="choice">
+<q>PostgreSQL allows 100 connections. You run 6 app servers, each with <code>new pg.Pool({ max: 20 })</code>. What happens at peak traffic?</q>
+<option>Nothing: pools share connections across servers</option>
+<option correct>The servers try to open up to 120 connections and some fail with "sorry, too many clients already" (53300)</option>
+<option>PostgreSQL raises its limit automatically</option>
+<option>Each pool shrinks itself to fit</option>
+<explain><p>Pools do not know about each other. Instances × pool size (plus migrations, cron and people) must stay below <code>max_connections</code>, or you need a pooler such as PgBouncer.</p></explain>
+</question>
+
+<question id="dbo-bigger-pool" type="choice">
+<q>The lesson's pool of 20 finished 20 <code>pg_sleep(0.2)</code> queries faster than a pool of 5. Why doesn't that mean "bigger pools are always faster"?</q>
+<option>Because <code>pg_sleep</code> is not allowed in production</option>
+<option correct>Sleeping uses no CPU or disk; real queries compete for a fixed number of cores and disks, so beyond a point more connections only add switching and memory</option>
+<option>Because pools larger than 10 are refused</option>
+<option>Because a larger pool uses more JavaScript memory</option>
+<explain><p>A database server with 8 cores cannot execute 200 CPU-bound queries faster than 20. Size pools from the database's capacity, then measure.</p></explain>
+</question>
+
+<question id="dbo-leak" type="choice">
+<q>A site works for an hour after each restart, then every request hangs, while the database looks idle. What is the most likely cause?</q>
+<option>The database ran out of disk</option>
+<option correct>A code path acquires a pooled client and never releases it (for example on an error), until the pool is empty</option>
+<option>Too many indexes</option>
+<option>The pool's <code>max</code> is too large</option>
+<explain><p>A leaked client never returns. Once all are leaked, every request waits for a connection. Release in <code>finally</code>, set <code>connectionTimeoutMillis</code> so the failure is loud, and monitor the pool's waiting count.</p></explain>
+</question>
+
+<question id="dbo-pgbouncer" type="choice">
+<q>What does PgBouncer in transaction pooling mode change?</q>
+<option>It caches query results</option>
+<option correct>A real server connection is lent to a client only for the length of a transaction, so many client connections share few server connections</option>
+<option>It makes every statement its own transaction</option>
+<option>It replicates writes to replicas</option>
+<explain><p>It lets hundreds of app processes use a database that should hold only dozens of connections. The catch: session state (<code>set</code>, session advisory locks, <code>listen</code>) does not stick to a client between transactions.</p></explain>
+</question>
+
+<question id="dbo-rolling" type="choice">
+<q>Why did renaming <code>phone</code> to <code>phone_number</code> in one migration break checkouts, although the new code used the new name correctly?</q>
+<option>Renames are not supported by PostgreSQL</option>
+<option correct>During the rolling deploy, servers still running the old code queried <code>phone</code>, which no longer existed</option>
+<option>The migration ran in the wrong transaction</option>
+<option>The new code was cached</option>
+<explain><p>For some minutes, old and new versions share one database. Every schema state must work with every version running at that moment, which a one-step rename cannot.</p></explain>
+</question>
+
+<question id="dbo-expand-order" type="choice">
+<q>What is the correct order for an expand and contract column rename?</q>
+<option>Drop the old column, add the new one, deploy new code</option>
+<option>Deploy new code, then add the new column</option>
+<option correct>Add the new column and keep both in sync, backfill, deploy code that uses the new column, then (in a later deploy) drop the old one</option>
+<option>Rename the column and restart all servers at the same instant</option>
+<explain><p>Each step is compatible with every version running at that moment. The old column is removed only when no running code uses it.</p></explain>
+</question>
+
+<question id="dbo-lock-queue" type="choice">
+<q>An instant <code>alter table … add column</code> is waiting for its lock behind a long report transaction. Why do simple <code>select</code>s on the table start hanging too?</q>
+<option>Because <code>add column</code> rewrites the table</option>
+<option correct>They queue behind the waiting <code>ACCESS EXCLUSIVE</code> lock request, which itself waits for the report</option>
+<option>Because the report locked the whole database</option>
+<option>Because the pool is too small</option>
+<explain><p>Lock requests are served in order. The migration's request conflicts with everything, so every later query waits behind it. <code>lock_timeout</code> makes the migration give up instead of freezing the table.</p></explain>
+</question>
+
+<question id="dbo-lock-timeout" type="choice">
+<q>What does <code>set lock_timeout = '2s'</code> before a migration achieve?</q>
+<option>The migration finishes within 2 seconds</option>
+<option correct>If the migration cannot get its lock within 2 seconds it fails (55P03) instead of blocking everyone behind it; you retry it later</option>
+<option>Other sessions give up their locks after 2 seconds</option>
+<option>It releases the lock 2 seconds after the migration starts</option>
+<explain><p>It limits waiting for locks, not the work itself. A failed attempt is harmless and retryable; a frozen table is an outage.</p></explain>
+</question>
+
+<question id="dbo-not-valid" type="choice">
+<q>What does adding a check constraint with <code>not valid</code> do?</q>
+<option>It adds a constraint that is never enforced</option>
+<option correct>It enforces the rule on new and changed rows immediately, but skips checking existing rows until <code>validate constraint</code> runs</option>
+<option>It checks only existing rows</option>
+<option>It disables the constraint during migrations</option>
+<explain><p>Adding the constraint becomes quick, and the full scan happens later in <code>validate constraint</code>, under a lock that does not block writes. Existing bad rows can be fixed in between.</p></explain>
+</question>
+
+<question id="dbo-set-not-null" type="choice">
+<q>How do you make an existing column <code>not null</code> on a large, busy table without a long exclusive lock?</q>
+<option><code>alter table … alter column … set not null</code> directly; it is always instant</option>
+<option correct>Add <code>check (col is not null) not valid</code>, validate it, then <code>set not null</code>, which can use the validated check instead of scanning</option>
+<option>Drop and recreate the table</option>
+<option>It is impossible</option>
+<explain><p>A plain <code>set not null</code> scans the whole table under an exclusive lock. PostgreSQL 12+ skips that scan when a validated check constraint already proves no nulls exist.</p></explain>
+</question>
+
+<question id="dbo-backfill" type="choice">
+<q>Why backfill ten million rows in batches of a few thousand instead of one <code>update</code>?</q>
+<option>One <code>update</code> cannot change more than a million rows</option>
+<option correct>A single huge update is one long transaction: it locks every row it touched until the end, floods WAL to replicas, and loses all its work if it fails or is cancelled</option>
+<option>Batches use less disk in total</option>
+<option>Because triggers only fire in batches</option>
+<explain><p>Small batches commit often, can be paused, resumed after a crash, throttled, and watched. Each touches few rows for a short time.</p></explain>
+</question>
+
+<question id="dbo-forward-only" type="choice">
+<q>A migration that ran in production last week has a bug. What should you do?</q>
+<option>Edit the migration file and rerun it</option>
+<option>Run the migration's down script, then fix it</option>
+<option correct>Write a new migration that corrects the problem</option>
+<option>Delete its row from <code>schema_migrations</code> and run it again</option>
+<explain><p>Databases that already ran the old version will never run an edited one, and down scripts can destroy data written since. Fix forward; the checksum check refuses in-place edits.</p></explain>
+</question>
+
+<question id="dbo-seed-kinds" type="choice">
+<q>Which rows belong in a seed that runs on every deploy, including production?</q>
+<option>Fake customers and orders for demos</option>
+<option>The rows a particular test needs</option>
+<option correct>Reference data the application needs everywhere, such as delivery zones or order statuses</option>
+<option>A copy of yesterday's production data</option>
+<option>None: seeds never run in production</option>
+<explain><p>Reference data is part of the application's correct behaviour. Development data must never reach production, and test fixtures belong to the tests that use them.</p></explain>
+</question>
+
+<question id="dbo-idempotent" type="choice">
+<q>Why must a deploy-time seed be idempotent?</q>
+<option>So it runs faster</option>
+<option correct>Because it runs on every deploy: running it again must give the same result, with no duplicates and no errors</option>
+<option>So it can be rolled back</option>
+<option>Because PostgreSQL requires it</option>
+<explain><p><code>insert … on conflict (natural key) do update</code> or <code>do nothing</code> makes a seed safe to repeat. Plain <code>insert</code>s duplicate rows or fail on the second run.</p></explain>
+</question>
+
+<question id="dbo-natural-key-seed" type="choice">
+<q>A seed inserts child categories with <code>parent_id = 3</code>, a generated id copied from the developer's laptop. What is the problem?</q>
+<option>Nothing, ids are the same everywhere</option>
+<option correct>Generated ids differ between databases, so on another database the children may point at the wrong parent or none</option>
+<option>Foreign keys cannot reference generated ids</option>
+<option>The seed will be too slow</option>
+<explain><p>Seeds must refer to rows by stable natural keys (a slug or code) and look up ids inside the insert, as the lesson's tree seed does.</p></explain>
+</question>
+
+<question id="dbo-replica-not-backup" type="choice">
+<q>Why is a streaming replica not a backup?</q>
+<option>Replicas are slower</option>
+<option correct>It copies every change within moments, including a <code>delete</code> without <code>where</code> or a bad migration</option>
+<option>Replicas cannot be read</option>
+<option>It is a backup, as long as it is synchronous</option>
+<explain><p>Replication protects against losing a server. Backups (and point-in-time recovery) protect against losing data through mistakes, which replicas faithfully reproduce.</p></explain>
+</question>
+
+<question id="dbo-rpo" type="choice">
+<q>You take a <code>pg_dump</code> every night at 02:00. At 17:30 someone deletes all orders. With only the dump, what is lost?</q>
+<option>Nothing</option>
+<option correct>Every change made between 02:00 and 17:30: that gap is the recovery point</option>
+<option>Only the deleted orders</option>
+<option>The whole database</option>
+<explain><p>A dump is a snapshot. Your recovery point objective (RPO) with nightly dumps is up to 24 hours. Point-in-time recovery, from a base backup plus archived WAL, can restore to 17:29:59.</p></explain>
+</question>
+
+<question id="dbo-restore-test" type="choice">
+<q>What proves that your backups work?</q>
+<option>The backup job exits with code 0</option>
+<option>The backup file is larger than yesterday's</option>
+<option correct>Regularly restoring the latest backup into a scratch database and running checks against it</option>
+<option>The cloud provider's dashboard shows a green tick</option>
+<explain><p>Backups fail in quiet ways: wrong database, missing permissions, corrupted files, an encryption key nobody has. Only a restore proves a backup, and it also measures your recovery time.</p></explain>
+</question>
+
+<question id="dbo-async-lag" type="choice">
+<q>With default (asynchronous) streaming replication, what can a read from a replica return right after a commit on the primary?</q>
+<option>An error</option>
+<option correct>Data from just before that commit, if the replica has not replayed it yet</option>
+<option>Uncommitted data</option>
+<option>Always the newest data</option>
+<explain><p>The primary does not wait for replicas, so they lag by milliseconds normally and by much more under load. Synchronous replication removes the lag for confirmed commits at the cost of slower commits.</p></explain>
+</question>
+
+<question id="dbo-ryw" type="choice">
+<q>Ada pays for an order and is redirected to her order page, which reads from a replica and shows "unpaid". Which guarantee is broken, and what is a simple fix?</q>
+<option>Durability; use synchronous commit</option>
+<option correct>Read-your-writes; send a user's reads to the primary for a short time after that user writes</option>
+<option>Atomicity; wrap the page in a transaction</option>
+<option>Isolation; use serializable</option>
+<explain><p>Users expect to see their own changes. Sticky reads after a write, or waiting until the replica has replayed the write's WAL position, keeps that promise while other reads still use replicas.</p></explain>
+</question>
+
+<question id="dbo-rename-run" type="output">
+<q>What does this print?</q>
+<code file="rename.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table products (id int primary key, title text not null);
+  insert into products values (1, 'Rice 5kg');
+  alter table products rename column title to name;
+`);
+for (const sql of ["select name from products", "select title from products"]) {
+  try {
+    console.log((await db.query(sql)).rows[0]);
+  } catch (error) {
+    console.log(error.code);
+  }
+}
+await db.close();
+</code>
+<option correct>{ name: 'Rice 5kg' }
+42703</option>
+<option>{ name: 'Rice 5kg' }
+{ title: 'Rice 5kg' }</option>
+<option>42703
+{ title: 'Rice 5kg' }</option>
+<option>{ name: 'Rice 5kg' }
+42P01</option>
+<explain><p>After the rename, any code still using <code>title</code> fails with <code>42703</code> (undefined column). <code>42P01</code> would be an undefined table.</p></explain>
+</question>
+
+<question id="dbo-trigger-sync" type="output">
+<q>During the expand step, an old server inserts using only the old column. What does this print?</q>
+<code file="sync.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table customers (id int generated always as identity primary key, phone text, phone_number text);
+  create function sync_phone() returns trigger language plpgsql as $$
+  begin
+    new.phone_number := coalesce(new.phone_number, new.phone);
+    new.phone := coalesce(new.phone, new.phone_number);
+    return new;
+  end $$;
+  create trigger sync before insert or update on customers for each row execute function sync_phone();
+  insert into customers (phone) values ('0803 000 0001');
+  insert into customers (phone_number) values ('0805 000 0002');
+`);
+console.log((await db.query("select phone, phone_number from customers order by id")).rows);
+await db.close();
+</code>
+<option correct>[
+  { phone: '0803 000 0001', phone_number: '0803 000 0001' },
+  { phone: '0805 000 0002', phone_number: '0805 000 0002' }
+]</option>
+<option>[
+  { phone: '0803 000 0001', phone_number: null },
+  { phone: null, phone_number: '0805 000 0002' }
+]</option>
+<option>[
+  { phone: '0803 000 0001', phone_number: '0803 000 0001' },
+  { phone: null, phone_number: '0805 000 0002' }
+]</option>
+<option>An error: a trigger cannot change the row</option>
+<explain><p>A <code>before</code> trigger can change the row being written. Whichever column a version writes, the trigger fills the other, so old and new servers both see complete data.</p></explain>
+</question>
+
+<question id="dbo-not-valid-run" type="output">
+<q>What does this print?</q>
+<code file="not-valid.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table products (id int primary key, price_kobo int not null);
+  insert into products values (1, 950000), (2, 0);
+  alter table products add constraint price_positive check (price_kobo > 0) not valid;
+`);
+const results = [];
+for (const sql of [
+  "insert into products values (3, 0)",
+  "update products set price_kobo = 280000 where id = 1",
+  "alter table products validate constraint price_positive",
+]) {
+  try {
+    await db.exec(sql);
+    results.push("ok");
+  } catch (error) {
+    results.push(error.code);
+  }
+}
+console.log(results.join(" "));
+await db.close();
+</code>
+<option correct>23514 ok 23514</option>
+<option>ok ok 23514</option>
+<option>23514 ok ok</option>
+<option>ok ok ok</option>
+<explain><p>New rows are checked at once, so product 3 is refused. Updating product 1 to a valid price is fine. Validation scans the old rows and finds product 2 with a price of 0, so it fails until that row is fixed.</p></explain>
+</question>
+
+<question id="dbo-batches-run" type="output">
+<q>How many batches does this backfill run?</q>
+<code file="batches.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table orders (id int primary key, total_kobo int not null, total_naira numeric);
+  insert into orders select n, n * 100, null from generate_series(1, 2500) as n;
+`);
+let batches = 0;
+for (;;) {
+  const { affectedRows } = await db.query(
+    "update orders set total_naira = total_kobo / 100.0 where id in (select id from orders where total_naira is null limit 1000)");
+  if (affectedRows === 0) break;
+  batches++;
+}
+console.log(batches);
+await db.close();
+</code>
+<option correct>3</option>
+<option>2</option>
+<option>4</option>
+<option>2500</option>
+<explain><p>1,000 + 1,000 + 500 rows. The fourth query finds no rows left and ends the loop without counting a batch.</p></explain>
+</question>
+
+<question id="dbo-seed-run" type="output">
+<q>The seed runs twice. What does this print?</q>
+<code file="seed.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec("create table zones (code text primary key, fee_kobo int not null)");
+
+async function seed(fee) {
+  await db.query("insert into zones values ('ABJ', $1) on conflict (code) do nothing", [fee]);
+  await db.query("insert into zones values ('LAG', $1) on conflict (code) do update set fee_kobo = excluded.fee_kobo", [fee]);
+}
+
+await seed(150000);
+await seed(200000);
+const { rows } = await db.query("select code, fee_kobo from zones order by code");
+console.log(rows.map((r) => `${r.code}=${r.fee_kobo}`).join(" "));
+await db.close();
+</code>
+<option correct>ABJ=150000 LAG=200000</option>
+<option>ABJ=200000 LAG=200000</option>
+<option>ABJ=150000 LAG=150000</option>
+<option>An error on the second run: duplicate key</option>
+<explain><p><code>do nothing</code> keeps the existing ABJ row; <code>do update</code> overwrites LAG with the new value (<code>excluded</code> is the row that was proposed). Neither duplicates nor fails.</p></explain>
+</question>
+
+<question id="dbo-conflict-ids" type="output">
+<q>What does this print?</q>
+<code file="conflict-ids.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec("create table categories (id int generated always as identity primary key, slug text unique not null)");
+for (const slug of ["rice", "oil", "rice", "rice", "beans"]) {
+  await db.query("insert into categories (slug) values ($1) on conflict (slug) do nothing", [slug]);
+}
+console.log((await db.query("select id, slug from categories order by id")).rows.map((r) => `${r.id}:${r.slug}`).join(" "));
+await db.close();
+</code>
+<option correct>1:rice 2:oil 5:beans</option>
+<option>1:rice 2:oil 3:beans</option>
+<option>1:rice 2:oil 3:rice 4:rice 5:beans</option>
+<option>3:rice 2:oil 5:beans</option>
+<explain><p>Each attempted insert draws the next identity value before the conflict is detected, and a skipped row does not give it back. That is why seeds must never depend on generated ids.</p></explain>
+</question>
+
+<question id="dbo-concurrently-run" type="output">
+<q>A migration tool wraps every migration in a transaction. What does this print?</q>
+<code file="concurrently.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec("create table orders (id int primary key, customer_id int not null)");
+try {
+  await db.transaction(async (tx) => {
+    await tx.exec("create index concurrently orders_customer_idx on orders (customer_id)");
+  });
+} catch (error) {
+  console.log(error.message);
+}
+await db.exec("create index concurrently orders_customer_idx on orders (customer_id)");
+console.log((await db.query("select indexname from pg_indexes where tablename = 'orders' order by 1")).rows.map((r) => r.indexname));
+await db.close();
+</code>
+<option correct>CREATE INDEX CONCURRENTLY cannot run inside a transaction block
+[ 'orders_customer_idx', 'orders_pkey' ]</option>
+<option>[ 'orders_customer_idx', 'orders_pkey' ]</option>
+<option>CREATE INDEX CONCURRENTLY cannot run inside a transaction block
+[ 'orders_pkey' ]</option>
+<option>deadlock detected
+[ 'orders_customer_idx', 'orders_pkey' ]</option>
+<explain><p>A concurrent index build commits several internal transactions of its own, so it refuses to run inside yours. Migration tools need a way to run such a migration outside a transaction.</p></explain>
+</question>
+
+<question id="dbo-restore-run" type="output">
+<q>What does this print?</q>
+<code file="restore.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const live = new PGlite();
+await live.exec("create table orders (id int primary key); insert into orders select generate_series(1, 300);");
+const backup = await live.dumpDataDir("gzip");
+await live.exec("insert into orders select generate_series(301, 350)");
+await live.exec("delete from orders where id <= 100");
+
+const restored = new PGlite({ loadDataDir: backup });
+const count = async (db) => (await db.query("select count(*)::int as n from orders")).rows[0].n;
+console.log(await count(live), await count(restored));
+await live.close();
+await restored.close();
+</code>
+<option correct>250 300</option>
+<option>250 350</option>
+<option>300 300</option>
+<option>250 250</option>
+<explain><p>The backup captured 300 orders. The 50 orders written after it are not in it (that is the recovery point), and the later delete is not either, which is the point of having it.</p></explain>
+</question>
+
+<question id="dbo-pool-run" type="output">
+<q>A pool with one connection. What does this print?</q>
+<code file="pool.js">
+const idle = ["conn1"];
+const waiting = [];
+const log = [];
+
+async function acquire(who) {
+  if (idle.length > 0) return idle.pop();
+  log.push(`${who} waits`);
+  return new Promise((resolve) => waiting.push(resolve));
+}
+function release(conn) {
+  const next = waiting.shift();
+  if (next) next(conn);
+  else idle.push(conn);
+}
+
+async function request(who) {
+  const conn = await acquire(who);
+  log.push(`${who} runs`);
+  await Promise.resolve();
+  release(conn);
+}
+
+await Promise.all([request("A"), request("B"), request("C")]);
+console.log(log.join(", "));
+</code>
+<option correct>B waits, C waits, A runs, B runs, C runs</option>
+<option>A runs, B runs, C runs</option>
+<option>A runs, B waits, B runs, C waits, C runs</option>
+<option>A runs, B waits, C waits, B runs, C runs</option>
+<explain><p>All three call <code>acquire</code> before any <code>await</code> resumes: A takes the only connection (but logs "runs" only after its <code>await</code>), B and C find none and queue. Then A runs and releases to B, which releases to C, in queue order.</p></explain>
+</question>
+
+<question id="dbo-code-pool-size" type="code" file="pool-size.js">
+<q><p>Write <code>poolPerInstance({ maxConnections, reserved, fixed, instances })</code>: the largest pool size each app instance may use so that <code>instances × pool + fixed + reserved</code> stays within <code>maxConnections</code>. Return 0 if even that is impossible.</p></q>
+<starter>
+function poolPerInstance({ maxConnections, reserved, fixed, instances }) {
+  // your code here
+}
+
+console.log(poolPerInstance({ maxConnections: 100, reserved: 10, fixed: 10, instances: 4 }));
+console.log(poolPerInstance({ maxConnections: 200, reserved: 10, fixed: 15, instances: 30 }));
+console.log(poolPerInstance({ maxConnections: 20, reserved: 10, fixed: 15, instances: 2 }));
+</starter>
+<solution>
+function poolPerInstance({ maxConnections, reserved, fixed, instances }) {
+  const available = maxConnections - reserved - fixed;
+  return available <= 0 ? 0 : Math.floor(available / instances);
+}
+
+console.log(poolPerInstance({ maxConnections: 100, reserved: 10, fixed: 10, instances: 4 }));
+console.log(poolPerInstance({ maxConnections: 200, reserved: 10, fixed: 15, instances: 30 }));
+console.log(poolPerInstance({ maxConnections: 20, reserved: 10, fixed: 15, instances: 2 }));
+</solution>
+<expected>
+20
+5
+0
+</expected>
+<explain><p>Work from the database's limit down, and round down. At 30 instances each pool may hold only 5, which is a sign to cap scaling or add PgBouncer.</p></explain>
+</question>
+
+<question id="dbo-code-upsert" type="code" file="upsert.js">
+<q><p>Write an idempotent seed on a <code>Map</code>. <code>seed(table, rows, mode)</code> inserts each row by its <code>code</code>; for an existing code, <code>"nothing"</code> keeps the stored row and <code>"update"</code> replaces it. Running the same seed twice must not change the result.</p></q>
+<starter>
+function seed(table, rows, mode) {
+  // your code here
+}
+
+const zones = new Map();
+seed(zones, [{ code: "LAG", fee: 1500 }, { code: "ABJ", fee: 3500 }], "update");
+zones.get("ABJ").fee = 3000;
+seed(zones, [{ code: "LAG", fee: 2000 }, { code: "ABJ", fee: 3500 }, { code: "KAN", fee: 4000 }], "nothing");
+console.log([...zones.values()]);
+</starter>
+<solution>
+function seed(table, rows, mode) {
+  for (const row of rows) {
+    if (!table.has(row.code) || mode === "update") table.set(row.code, { ...row });
+  }
+}
+
+const zones = new Map();
+seed(zones, [{ code: "LAG", fee: 1500 }, { code: "ABJ", fee: 3500 }], "update");
+zones.get("ABJ").fee = 3000;
+seed(zones, [{ code: "LAG", fee: 2000 }, { code: "ABJ", fee: 3500 }, { code: "KAN", fee: 4000 }], "nothing");
+console.log([...zones.values()]);
+</solution>
+<expected>
+[
+  { code: 'LAG', fee: 1500 },
+  { code: 'ABJ', fee: 3000 },
+  { code: 'KAN', fee: 4000 }
+]
+</expected>
+<explain><p>With "nothing", existing rows (including the hand-edited ABJ fee) are kept and only KAN is new, like <code>on conflict do nothing</code>. Copying the row (<code>{ ...row }</code>) keeps the seed's input from being changed through the table.</p></explain>
+</question>
+
+<question id="dbo-code-batches" type="code" file="batches.js">
+<q><p>Plan a keyset backfill. Write <code>batches(maxId, size)</code> that returns <code>[from, to]</code> id ranges (inclusive) covering 1 to <code>maxId</code>, each at most <code>size</code> ids, for queries like <code>where id between $1 and $2</code>.</p></q>
+<starter>
+function batches(maxId, size) {
+  // your code here
+}
+
+console.log(batches(25000, 10000));
+console.log(batches(3, 10));
+</starter>
+<solution>
+function batches(maxId, size) {
+  const ranges = [];
+  for (let from = 1; from <= maxId; from += size) {
+    ranges.push([from, Math.min(from + size - 1, maxId)]);
+  }
+  return ranges;
+}
+
+console.log(batches(25000, 10000));
+console.log(batches(3, 10));
+</solution>
+<expected>
+[ [ 1, 10000 ], [ 10001, 20000 ], [ 20001, 25000 ] ]
+[ [ 1, 3 ] ]
+</expected>
+<explain><p>Ranges on the primary key use its index and never re-scan finished work, unlike repeatedly searching for <code>is null</code> rows. Commit after each range, and you can resume from the last finished one.</p></explain>
+</question>
+
+<question id="dbo-code-lsn" type="code" file="lsn.js">
+<q><p>Keep read-your-writes with replicas. WAL positions (LSNs) look like <code>"0/7000A28"</code>: two hexadecimal numbers. Write <code>lsnToBigInt(lsn)</code> (high part × 2<sup>32</sup> + low part) and <code>pickReplica(replicas, needed)</code> returning the name of the first replica whose replayed LSN is at or past <code>needed</code>, or <code>"primary"</code>.</p></q>
+<starter>
+function lsnToBigInt(lsn) {
+  // your code here
+}
+
+function pickReplica(replicas, needed) {
+  // your code here
+}
+
+const replicas = [
+  { name: "replica-a", replayed: "0/7000900" },
+  { name: "replica-b", replayed: "0/7000A28" },
+];
+console.log(pickReplica(replicas, "0/7000A00"));
+console.log(pickReplica(replicas, "0/7000B00"));
+console.log(lsnToBigInt("1/0") > lsnToBigInt("0/FFFFFFFF"));
+</starter>
+<solution>
+function lsnToBigInt(lsn) {
+  const [high, low] = lsn.split("/");
+  return (BigInt(`0x${high}`) << 32n) + BigInt(`0x${low}`);
+}
+
+function pickReplica(replicas, needed) {
+  const target = lsnToBigInt(needed);
+  const ready = replicas.find((r) => lsnToBigInt(r.replayed) >= target);
+  return ready ? ready.name : "primary";
+}
+
+const replicas = [
+  { name: "replica-a", replayed: "0/7000900" },
+  { name: "replica-b", replayed: "0/7000A28" },
+];
+console.log(pickReplica(replicas, "0/7000A00"));
+console.log(pickReplica(replicas, "0/7000B00"));
+console.log(lsnToBigInt("1/0") > lsnToBigInt("0/FFFFFFFF"));
+</solution>
+<expected>
+replica-b
+primary
+true
+</expected>
+<explain><p>After a write, the app notes <code>pg_current_wal_lsn()</code>; a replica is safe for that user once its <code>pg_last_wal_replay_lsn()</code> has passed it. Comparing LSNs as strings would be wrong ("0/9" &gt; "0/10"), hence the numeric conversion.</p></explain>
+</question>
+
+<question id="dbo-code-compat" type="code" file="compat.js">
+<q><p>Check a migration plan. Each schema step lists the columns that exist; each app version lists the columns it uses. Write <code>broken(step, running, versions)</code> returning the running versions that use a column the step does not have.</p></q>
+<starter>
+const versions = { v1: ["email", "phone"], v2: ["email", "phone_number"] };
+const steps = [
+  { name: "rename in one go", columns: ["email", "phone_number"], running: ["v1", "v2"] },
+  { name: "expand", columns: ["email", "phone", "phone_number"], running: ["v1", "v2"] },
+  { name: "contract", columns: ["email", "phone_number"], running: ["v2"] },
+];
+
+function broken(step, running, versions) {
+  // your code here
+}
+
+for (const step of steps) console.log(step.name, broken(step, step.running, versions));
+</starter>
+<solution>
+const versions = { v1: ["email", "phone"], v2: ["email", "phone_number"] };
+const steps = [
+  { name: "rename in one go", columns: ["email", "phone_number"], running: ["v1", "v2"] },
+  { name: "expand", columns: ["email", "phone", "phone_number"], running: ["v1", "v2"] },
+  { name: "contract", columns: ["email", "phone_number"], running: ["v2"] },
+];
+
+function broken(step, running, versions) {
+  const columns = new Set(step.columns);
+  return running.filter((v) => versions[v].some((column) => !columns.has(column)));
+}
+
+for (const step of steps) console.log(step.name, broken(step, step.running, versions));
+</solution>
+<expected>
+rename in one go [ 'v1' ]
+expand []
+contract []
+</expected>
+<explain><p>The one-step rename breaks v1 while it is still running. The expand step keeps both columns, so both versions work, and the contract step is safe only because v1 is no longer running.</p></explain>
+</question>
+
+<question id="dbo-code-retention" type="code" file="retention.js">
+<q><p>Decide which nightly backups to keep: the newest 7 dailies, plus the newest backup of each of the 4 most recent weeks that are not already kept. Weeks are numbered <code>Math.floor(day / 7)</code>. Write <code>keep(days)</code> for a list of backup day numbers and return the kept days, sorted descending.</p></q>
+<starter>
+function keep(days) {
+  // your code here
+}
+
+const days = Array.from({ length: 40 }, (_, i) => 40 - i); // days 40 down to 1
+console.log(keep(days));
+</starter>
+<solution>
+function keep(days) {
+  const sorted = [...days].sort((a, b) => b - a);
+  const kept = new Set(sorted.slice(0, 7));
+  const weeksKept = new Set([...kept].map((d) => Math.floor(d / 7)));
+  let extraWeeks = 0;
+  for (const day of sorted) {
+    const week = Math.floor(day / 7);
+    if (extraWeeks === 4) break;
+    if (!weeksKept.has(week)) {
+      kept.add(day);
+      weeksKept.add(week);
+      extraWeeks++;
+    }
+  }
+  return [...kept].sort((a, b) => b - a);
+}
+
+const days = Array.from({ length: 40 }, (_, i) => 40 - i); // days 40 down to 1
+console.log(keep(days));
+</solution>
+<expected>
+[
+  40, 39, 38, 37, 36,
+  35, 34, 27, 20, 13,
+   6
+]
+</expected>
+<explain><p>Seven dailies cover days 34 to 40 (weeks 4 and 5). The newest backups of the next four weeks are days 27, 20, 13 and 6. Retention rules like this bound storage cost while keeping older restore points; whatever you keep, restore-test it.</p></explain>
+</question>
+
+<question id="dbo-code-rpo" type="code" file="rpo.js">
+<q><p>Compute data loss. Given backup times and the time of an accident (all as <code>"HH:MM"</code> on one day), write <code>lossMinutes(backups, accident)</code>: minutes between the last backup at or before the accident and the accident. Return <code>null</code> if there is no such backup.</p></q>
+<starter>
+function lossMinutes(backups, accident) {
+  // your code here
+}
+
+console.log(lossMinutes(["02:00"], "17:30"));
+console.log(lossMinutes(["00:00", "06:00", "12:00", "18:00"], "17:30"));
+console.log(lossMinutes(["18:00"], "17:30"));
+</starter>
+<solution>
+function lossMinutes(backups, accident) {
+  const minutes = (hhmm) => {
+    const [h, m] = hhmm.split(":").map(Number);
+    return h * 60 + m;
+  };
+  const at = minutes(accident);
+  const before = backups.map(minutes).filter((t) => t <= at);
+  return before.length === 0 ? null : at - Math.max(...before);
+}
+
+console.log(lossMinutes(["02:00"], "17:30"));
+console.log(lossMinutes(["00:00", "06:00", "12:00", "18:00"], "17:30"));
+console.log(lossMinutes(["18:00"], "17:30"));
+</solution>
+<expected>
+930
+330
+null
+</expected>
+<explain><p>With one nightly dump, an accident at 17:30 loses 15.5 hours of orders; four dumps a day cut it to 5.5 hours. Point-in-time recovery reduces it to seconds, which is why production databases archive WAL.</p></explain>
+</question>
+
+<question id="dbo-sync-replication" type="choice">
+<q>What do you gain and lose by making replication synchronous (<code>synchronous_standby_names</code>)?</q>
+<option>You gain faster commits and lose read capacity</option>
+<option correct>A confirmed commit is also on a standby, so failover loses nothing; but every commit waits for the standby, and stalls if no standby answers</option>
+<option>Replicas can accept writes</option>
+<option>Nothing changes except the log format</option>
+<explain><p>Asynchronous replication risks losing the last moments of commits on failover; synchronous replication trades commit latency (and availability, if standbys are down) for zero loss. Many teams use one synchronous standby and more asynchronous ones.</p></explain>
+</question>
+
+<question id="dbo-set-local-run" type="output">
+<q>What does this print?</q>
+<code file="set-local.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+const show = async () => (await db.query("show lock_timeout")).rows[0].lock_timeout;
+const seen = [];
+
+await db.transaction(async (tx) => {
+  await tx.exec("set local lock_timeout = '2s'");
+  seen.push((await tx.query("show lock_timeout")).rows[0].lock_timeout);
+});
+seen.push(await show());
+await db.exec("set lock_timeout = '5s'");
+seen.push(await show());
+console.log(seen.join(" "));
+await db.close();
+</code>
+<option correct>2s 0 5s</option>
+<option>2s 2s 5s</option>
+<option>0 0 5s</option>
+<option>2s 0 0</option>
+<explain><p><code>set local</code> lasts until the end of the transaction, so the migration's timeout cannot leak into other work on a pooled connection. A plain <code>set</code> sticks to the session, which is exactly what breaks behind a transaction-pooling PgBouncer.</p></explain>
+</question>
+
+<question id="dbo-router-run" type="output">
+<q>What does this read router print?</q>
+<code file="router.js">
+const lastWrite = new Map();
+const STICKY_MS = 1000;
+
+function target(user, now) {
+  const at = lastWrite.get(user);
+  return at !== undefined && now - at < STICKY_MS ? "primary" : "replica";
+}
+
+lastWrite.set("ada", 5000);
+console.log(["ada", "tunde"].flatMap((u) => [4000, 5500, 6000].map((t) => `${u}@${t}:${target(u, t)}`)).join(" "));
+</code>
+<option correct>ada@4000:primary ada@5500:primary ada@6000:replica tunde@4000:replica tunde@5500:replica tunde@6000:replica</option>
+<option>ada@4000:replica ada@5500:primary ada@6000:primary tunde@4000:replica tunde@5500:replica tunde@6000:replica</option>
+<option>ada@4000:primary ada@5500:primary ada@6000:primary tunde@4000:replica tunde@5500:replica tunde@6000:replica</option>
+<option>ada@4000:replica ada@5500:primary ada@6000:replica tunde@4000:replica tunde@5500:replica tunde@6000:replica</option>
+<explain><p>The check is <code>now - at &lt; 1000</code>. At 4000 the difference is negative, which is less than 1000, so a clock that goes backwards (or a read that started before the write) also goes to the primary; at 6000 exactly 1000 ms have passed, so Ada is back on the replica. Tunde never wrote, so all his reads use the replica.</p></explain>
+</question>

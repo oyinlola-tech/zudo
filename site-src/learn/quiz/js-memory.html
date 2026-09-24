@@ -1,0 +1,723 @@
+<question id="mem-reference" type="output">
+<q>What does this print?</q>
+<code file="reference.js">
+const cart = { items: ["rice-5kg"] };
+const saved = cart;
+saved.items.push("oil-1l");
+let current = cart;
+current = null;
+console.log(cart.items.length, saved === cart, current);
+</code>
+<option correct>2 true null</option>
+<option>1 false null</option>
+<option>2 false null</option>
+<option>TypeError: Cannot read properties of null</option>
+<explain><p><code>saved</code> is a second reference to the same object, so the push changes <code>cart</code> too. Setting <code>current</code> to <code>null</code> removes one reference; the object is untouched.</p></explain>
+</question>
+
+<question id="mem-when-freed" type="choice">
+<q>When may the garbage collector free an object?</q>
+<option>When you set one variable that points to it to null</option>
+<option>When the function that created it returns</option>
+<option correct>When it can no longer be reached from any root by following references</option>
+<option>When its reference count drops to one</option>
+<explain><p>Reachability from the roots decides. Other references (from other objects, closures, timers, listeners) keep it alive even after the creating function returns or one variable is cleared.</p></explain>
+</question>
+
+<question id="mem-roots" type="choice">
+<q>Which of these is <strong>not</strong> a garbage-collection root?</q>
+<option>A variable declared at the top level of a module</option>
+<option>The callback of a pending setInterval</option>
+<option>A listener registered on a long-lived event emitter (through the emitter)</option>
+<option correct>An object that is only referenced by another unreachable object</option>
+<explain><p>Roots are the starting points: globals, module variables, the stack, and whatever the host holds for you (timers, listeners, pending promise handlers). An object reachable only from garbage is garbage too.</p></explain>
+</question>
+
+<question id="mem-cycles" type="choice">
+<q>An order references its customer and the customer references the order. Nothing else references either. What happens?</q>
+<option>They leak forever, because each keeps the other alive</option>
+<option correct>Both can be collected: neither is reachable from a root</option>
+<option>Only the order is collected</option>
+<option>JavaScript throws a RangeError for circular references</option>
+<explain><p>Mark-and-sweep starts from the roots, so a cycle that no root reaches is never marked. Only pure reference counting (which JavaScript engines do not rely on) had trouble with cycles.</p></explain>
+</question>
+
+<question id="mem-leak-definition" type="choice">
+<q>In a garbage-collected language like JavaScript, what is a memory leak?</q>
+<option>Memory the collector forgot to free because of a bug in the engine</option>
+<option correct>Objects the program no longer needs that are still reachable, usually through a reference someone forgot</option>
+<option>Any object larger than 1 MB</option>
+<option>Memory used by closures</option>
+<explain><p>The collector frees everything unreachable. A leak means you are still holding a path to objects you do not need, so the collector must keep them.</p></explain>
+</question>
+
+<question id="mem-generations" type="choice">
+<q>Why does V8 split the heap into a young and an old generation?</q>
+<option>Young objects are faster to create</option>
+<option correct>Most objects die young, so collecting a small young area often is cheap; survivors move to the old generation, collected less often</option>
+<option>Old objects cannot be collected</option>
+<option>To keep strings separate from numbers</option>
+<explain><p>Temporary objects from each request die quickly and are cleaned up cheaply. A leak shows as an old generation that keeps growing with objects that should have been temporary.</p></explain>
+</question>
+
+<question id="mem-growing-map" type="choice">
+<q>A module-level <code>Map</code> stores each request's result under the request id "in case it is asked again". Why is this a leak?</q>
+<option>Maps cannot hold objects</option>
+<option correct>Request ids are unique, so entries are never reused or removed; the module variable keeps every result reachable forever</option>
+<option>Maps are cleared by the garbage collector every minute</option>
+<option>It is not a leak because the data is in a Map</option>
+<explain><p>A collection with no rule for shrinking grows with traffic until the process runs out of memory. Every growing collection needs a size limit, an expiry, or removal when its owner ends.</p></explain>
+</question>
+
+<question id="mem-strict-global" type="output">
+<q>Modules are always in strict mode. What does this print?</q>
+<code file="strict.js">
+function addToTotal(kobo) {
+  try {
+    runningTotal = kobo;
+    return "created a global";
+  } catch (error) {
+    return error.name;
+  }
+}
+console.log(addToTotal(5000));
+</code>
+<option correct>ReferenceError</option>
+<option>created a global</option>
+<option>TypeError</option>
+<option>undefined</option>
+<explain><p>In old non-strict scripts, assigning to an undeclared variable silently created a global that lived forever. In strict mode (every module), it throws a ReferenceError instead.</p></explain>
+</question>
+
+<question id="mem-listener-leak" type="choice">
+<q>Each request calls <code>priceFeed.addEventListener("change", onChange)</code> on a feed that lives as long as the server, and never removes it. What leaks?</q>
+<option>Nothing; listeners are removed when the request ends</option>
+<option>Only the event name</option>
+<option correct>Every listener closure and everything it uses, and every price change now runs all of them</option>
+<option>Only the last listener</option>
+<explain><p>The emitter holds a reference to each listener; each closure holds its request's data. The leak costs memory and CPU time on every event.</p></explain>
+</question>
+
+<question id="mem-signal-remove" type="output">
+<q>What does this print?</q>
+<code file="signal-remove.js">
+const feed = new EventTarget();
+let calls = 0;
+const page = new AbortController();
+
+feed.addEventListener("change", () => calls++, { signal: page.signal });
+feed.addEventListener("change", () => calls++, { signal: page.signal });
+feed.dispatchEvent(new Event("change"));
+page.abort();
+feed.dispatchEvent(new Event("change"));
+console.log(calls);
+</code>
+<option correct>2</option>
+<option>4</option>
+<option>0</option>
+<option>1</option>
+<explain><p>The first event runs both listeners. Aborting the signal removes every listener registered with it, so the second event runs none.</p></explain>
+</question>
+
+<question id="mem-remove-same-fn" type="output">
+<q>What does this print?</q>
+<code file="remove.js">
+const feed = new EventTarget();
+let calls = 0;
+
+feed.addEventListener("change", () => calls++);
+feed.removeEventListener("change", () => calls++);
+feed.dispatchEvent(new Event("change"));
+console.log(calls);
+</code>
+<option correct>1</option>
+<option>0</option>
+<option>2</option>
+<option>TypeError</option>
+<explain><p><code>removeEventListener</code> needs the very same function object. The second arrow is a new function that was never added, so nothing is removed. Keep a reference to the listener, or use the <code>signal</code> option.</p></explain>
+</question>
+
+<question id="mem-max-listeners" type="choice">
+<q>Node prints <code>MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 change listeners added</code>. What should you do first?</q>
+<option>Call setMaxListeners(0) to silence it</option>
+<option correct>Find out why listeners are added without being removed: it is almost always a real leak</option>
+<option>Restart the server</option>
+<option>Nothing, it is only a warning</option>
+<explain><p>The warning fires when one event gets more than 10 listeners, which usually means listeners are added per request or per connection and never removed. Raise the limit only when many listeners are genuinely intended.</p></explain>
+</question>
+
+<question id="mem-timer-root" type="choice">
+<q>A connection starts <code>setInterval(() =&gt; ping(session), 30_000)</code> and nobody calls <code>clearInterval</code> when the connection closes. What stays alive?</q>
+<option>Nothing, intervals stop when the connection is closed</option>
+<option>Only the interval id</option>
+<option correct>The interval's callback and its closure, including <code>session</code>, forever, and the callback keeps running</option>
+<option>The session until the next garbage collection</option>
+<explain><p>A pending timer is a root: the host holds its callback until it fires, and an interval fires forever. Clear it in the code that ends its owner's life.</p></explain>
+</question>
+
+<question id="mem-unref" type="choice">
+<q>What does <code>timer.unref()</code> do in Node.js?</q>
+<option>Clears the timer</option>
+<option>Makes the timer's callback garbage</option>
+<option correct>Lets the process exit even while this timer is still pending; the timer still fires if the process keeps running</option>
+<option>Removes the reference from the closure to its variables</option>
+<explain><p><code>unref</code> is for background housekeeping timers that should not keep a process alive. It does not free anything and is not a fix for a timer leak.</p></explain>
+</question>
+
+<question id="mem-closure-shared" type="choice">
+<q>Inside <code>loadReport</code>, a large <code>rows</code> array is used by a small <code>debugDump</code> closure that is never called. The function returns a different closure that only uses <code>total</code>. Why can the returned closure keep <code>rows</code> alive?</q>
+<option>All closures copy every variable of their scope</option>
+<option correct>Closures created in the same scope share one context object, and <code>rows</code> is in it because <code>debugDump</code> uses it</option>
+<option>Arrays are never garbage collected</option>
+<option>It cannot; only variables used by the returned closure are kept</option>
+<explain><p>V8 keeps only variables some closure uses, but it keeps them in one shared context per scope. Any long-lived closure from that scope keeps the whole context, including <code>rows</code>.</p></explain>
+</question>
+
+<question id="mem-lru-output" type="output">
+<q>What does this print?</q>
+<code file="lru.js">
+const cache = new Map();
+function set(key, value) {
+  cache.delete(key);
+  cache.set(key, value);
+  if (cache.size > 2) cache.delete(cache.keys().next().value);
+}
+function get(key) {
+  if (!cache.has(key)) return undefined;
+  const value = cache.get(key);
+  cache.delete(key);
+  cache.set(key, value);
+  return value;
+}
+
+set("rice", 9500);
+set("oil", 3200);
+get("rice");
+set("beans", 4800);
+console.log([...cache.keys()]);
+</code>
+<option correct>[ 'rice', 'beans' ]</option>
+<option>[ 'oil', 'beans' ]</option>
+<option>[ 'rice', 'oil', 'beans' ]</option>
+<option>[ 'beans', 'rice' ]</option>
+<explain><p>Reading <code>rice</code> moved it to the end (most recently used). When <code>beans</code> made the cache too big, the first key, <code>oil</code>, was the least recently used and was evicted.</p></explain>
+</question>
+
+<question id="mem-cache-rules" type="choice">
+<q>What does every production cache need so it cannot leak?</q>
+<option>A WeakRef around every value</option>
+<option correct>A bound: a maximum size (for example LRU eviction), an expiry time (TTL), or both</option>
+<option>To be stored in a global variable</option>
+<option>To be cleared on every request</option>
+<explain><p>A cache grows by design, so it needs a rule for shrinking. Size limits bound memory; expiry bounds staleness and removes entries nobody reads.</p></explain>
+</question>
+
+<question id="mem-weakmap-keys" type="output">
+<q>What does this print?</q>
+<code file="weakmap.js">
+const notes = new WeakMap();
+const order = { id: 7 };
+notes.set(order, "gift wrap");
+console.log(notes.get(order));
+try {
+  notes.set("order-7", "gift wrap");
+} catch (error) {
+  console.log(error.name);
+}
+console.log("size" in notes);
+</code>
+<option correct>gift wrap
+TypeError
+false</option>
+<option>gift wrap
+gift wrap
+true</option>
+<option>gift wrap
+TypeError
+true</option>
+<option>undefined
+TypeError
+false</option>
+<explain><p>WeakMap keys must be objects (a string can be recreated, so it could never become unreachable). A WeakMap has no <code>size</code> and cannot be iterated, because its contents change whenever the collector runs.</p></explain>
+</question>
+
+<question id="mem-weakmap-when" type="choice">
+<q>You want to cache a computed total for each order object, for exactly as long as the order object exists. Which structure fits?</q>
+<option>A Map keyed by the order object</option>
+<option correct>A WeakMap keyed by the order object</option>
+<option>An array of [order, total] pairs</option>
+<option>A WeakRef to the total</option>
+<explain><p>A WeakMap entry does not keep its key alive, and disappears when the key is collected. A Map would keep every order alive forever.</p></explain>
+</question>
+
+<question id="mem-weakmap-identity" type="output">
+<q>What does this print?</q>
+<code file="identity.js">
+const totals = new WeakMap();
+let computed = 0;
+const total = (order) => {
+  if (!totals.has(order)) {
+    computed++;
+    totals.set(order, order.kobo * order.qty);
+  }
+  return totals.get(order);
+};
+
+const order = { kobo: 950000, qty: 2 };
+total(order);
+total(order);
+total({ ...order });
+console.log(computed);
+</code>
+<option correct>2</option>
+<option>1</option>
+<option>3</option>
+<option>0</option>
+<explain><p>WeakMap keys are compared by identity. The copy <code>{ ...order }</code> is a different object, so it is a cache miss.</p></explain>
+</question>
+
+<question id="mem-weakref-deref" type="choice">
+<q>What must code always handle when it calls <code>ref.deref()</code> on a <code>WeakRef</code>?</q>
+<option>A thrown error if the object was collected</option>
+<option correct>A return value of <code>undefined</code>, because the target may have been collected</option>
+<option>A promise</option>
+<option>Nothing, deref always returns the object</option>
+<explain><p>A WeakRef does not keep its target alive, so the target can disappear at any time after the current task. Treat <code>undefined</code> as a cache miss and rebuild.</p></explain>
+</question>
+
+<question id="mem-finalization" type="choice">
+<q>Which is a correct use of <code>FinalizationRegistry</code>?</q>
+<option>Saving an order to the database when the order object is collected</option>
+<option>Closing a file handle reliably</option>
+<option correct>Removing a stale entry from a cache of WeakRefs after its target was collected</option>
+<option>Releasing a lock at the end of a request</option>
+<explain><p>The specification does not promise when, or even whether, a finalization callback runs. Use it only for memory bookkeeping; essential clean-up must be explicit (<code>close()</code>, <code>try</code>/<code>finally</code>).</p></explain>
+</question>
+
+<question id="mem-memoryusage-fields" type="choice">
+<q>Which <code>process.memoryUsage()</code> field is closest to what a container's memory limit (and an OOM kill) looks at?</q>
+<option><code>heapUsed</code></option>
+<option><code>heapTotal</code></option>
+<option correct><code>rss</code></option>
+<option><code>arrayBuffers</code></option>
+<explain><p><code>rss</code> (resident set size) is all the memory the process holds: heap, code, stacks and buffers. <code>heapUsed</code> is the best number for spotting a JavaScript object leak, but the limit applies to the whole process.</p></explain>
+</question>
+
+<question id="mem-trend" type="choice">
+<q>A graph of <code>heapUsed</code> shows a sawtooth: it rises, drops sharply, rises again. The low points stay at the same level over a day. What does it show?</q>
+<option>A memory leak</option>
+<option correct>A healthy process: garbage builds up and is collected, and the baseline is flat</option>
+<option>The garbage collector is broken</option>
+<option>The process is about to crash</option>
+<explain><p>Rising and dropping is normal allocation and collection. A leak shows as a baseline (the low points after each collection) that keeps rising.</p></explain>
+</question>
+
+<question id="mem-trend-output" type="output">
+<q>This runs in Node.js with forced garbage collection. What does it print?</q>
+<code file="trend.js" browser="no">
+import v8 from "node:v8";
+import vm from "node:vm";
+v8.setFlagsFromString("--expose-gc");
+const gc = vm.runInNewContext("gc");
+const heap = () => (gc(), process.memoryUsage().heapUsed);
+
+const kept = [];
+function handle(i, keep) {
+  const rows = Array.from({ length: 1000 }, (_, k) => ({ i, k }));
+  if (keep) kept.push(rows);
+  return rows.length;
+}
+
+let before = heap();
+for (let i = 0; i < 300; i++) handle(i, false);
+const cleanGrowth = heap() - before;
+before = heap();
+for (let i = 0; i < 300; i++) handle(i, true);
+const leakyGrowth = heap() - before;
+console.log(cleanGrowth < 1_000_000, leakyGrowth > 5_000_000);
+</code>
+<option correct>true true</option>
+<option>false true</option>
+<option>true false</option>
+<option>false false</option>
+<explain><p>Both loops allocate the same amount, but after a collection only the kept rows remain. Measuring after garbage collection shows retained memory, not allocation.</p></explain>
+</question>
+
+<question id="mem-snapshot-what" type="choice">
+<q>What does a heap snapshot give you that <code>process.memoryUsage()</code> does not?</q>
+<option>The CPU time of each function</option>
+<option correct>Every live object, its type and size, and the chain of references (retainers) that keeps it alive</option>
+<option>A list of all network requests</option>
+<option>Nothing more; it is the same number in a file</option>
+<explain><p><code>memoryUsage</code> tells you <em>that</em> memory grows; a snapshot tells you <em>what</em> is on the heap and <em>why</em> it is still reachable.</p></explain>
+</question>
+
+<question id="mem-snapshot-compare" type="choice">
+<q>What is the most effective way to find a leak with heap snapshots?</q>
+<option>Take one snapshot right after startup</option>
+<option correct>Take a snapshot, run a batch of requests, take another, and compare which object types grew; then follow the retainers of a leaked object</option>
+<option>Take a snapshot every second in production</option>
+<option>Search the snapshot for the word "leak"</option>
+<explain><p>Comparing snapshots isolates what the batch of work left behind. The retainer chain of one leaked object points at the root holding it, and so at the line to fix.</p></explain>
+</question>
+
+<question id="mem-snapshot-cost" type="choice">
+<q>Why should you not casually take heap snapshots on a busy production server?</q>
+<option>Snapshots delete objects</option>
+<option correct>Writing one pauses the process and needs roughly as much extra memory as the heap itself</option>
+<option>Snapshots are only allowed in browsers</option>
+<option>They reset the garbage collector</option>
+<explain><p>Use staging, or take one instance out of the load balancer first. Node can also write a snapshot automatically near the heap limit with <code>--heapsnapshot-near-heap-limit</code>.</p></explain>
+</question>
+
+<question id="mem-restart" type="choice">
+<q>A team's fix for a leak is "restart the service every night". What is wrong with that?</q>
+<option>Nothing; it is the standard fix</option>
+<option correct>It hides the leak until traffic grows enough to crash between restarts, and drops users' connections every night</option>
+<option>Restarts make the leak worse</option>
+<option>Node.js cannot be restarted</option>
+<explain><p>A leak grows with work done, not with time. More traffic means a crash sooner. Reproduce it, snapshot, compare, and fix the reference.</p></explain>
+</question>
+
+<question id="mem-code-lru" type="code" file="lru.js">
+<q><p>Finish <code>createLru(max)</code>: <code>get</code> marks a key as most recently used, and <code>set</code> evicts the least recently used key when there are more than <code>max</code> entries.</p></q>
+<starter>
+function createLru(max) {
+  const map = new Map();
+  return {
+    get(key) {
+      // your code here
+    },
+    set(key, value) {
+      // your code here
+    },
+    keys: () => [...map.keys()],
+  };
+}
+
+const rates = createLru(2);
+rates.set("USD", 1540);
+rates.set("GBP", 1680);
+rates.get("USD");
+rates.set("EUR", 1610);
+console.log(rates.keys(), rates.get("GBP"));
+</starter>
+<solution>
+function createLru(max) {
+  const map = new Map();
+  return {
+    get(key) {
+      if (!map.has(key)) return undefined;
+      const value = map.get(key);
+      map.delete(key);
+      map.set(key, value);
+      return value;
+    },
+    set(key, value) {
+      map.delete(key);
+      map.set(key, value);
+      if (map.size > max) map.delete(map.keys().next().value);
+    },
+    keys: () => [...map.keys()],
+  };
+}
+
+const rates = createLru(2);
+rates.set("USD", 1540);
+rates.set("GBP", 1680);
+rates.get("USD");
+rates.set("EUR", 1610);
+console.log(rates.keys(), rates.get("GBP"));
+</solution>
+<expected>[ 'USD', 'EUR' ] undefined</expected>
+<explain><p>A Map keeps insertion order, so deleting and re-inserting a key moves it to the end. The first key is then always the least recently used, and is the one to evict.</p></explain>
+</question>
+
+<question id="mem-code-signal" type="code" file="signal.js">
+<q><p>Finish <code>openTracker()</code> so that both listeners are registered with one <code>AbortController</code>'s signal, and <code>close()</code> removes them.</p></q>
+<starter>
+const cart = new EventTarget();
+let events = 0;
+
+function openTracker() {
+  // your code here: register "add" and "remove" listeners that do events++
+  return { close() {} };
+}
+
+const tracker = openTracker();
+cart.dispatchEvent(new Event("add"));
+tracker.close();
+cart.dispatchEvent(new Event("remove"));
+cart.dispatchEvent(new Event("add"));
+console.log("events counted:", events);
+</starter>
+<solution>
+const cart = new EventTarget();
+let events = 0;
+
+function openTracker() {
+  const controller = new AbortController();
+  const { signal } = controller;
+  cart.addEventListener("add", () => events++, { signal });
+  cart.addEventListener("remove", () => events++, { signal });
+  return { close: () => controller.abort() };
+}
+
+const tracker = openTracker();
+cart.dispatchEvent(new Event("add"));
+tracker.close();
+cart.dispatchEvent(new Event("remove"));
+cart.dispatchEvent(new Event("add"));
+console.log("events counted:", events);
+</solution>
+<expected>events counted: 1</expected>
+<explain><p>The <code>signal</code> option ties every listener to one controller. Aborting it removes all of them, without keeping references to the listener functions.</p></explain>
+</question>
+
+<question id="mem-code-weakmemo" type="code" file="memo.js">
+<q><p>Finish <code>memoizeByObject(fn)</code> using a <code>WeakMap</code>, so each object's result is computed once and does not keep the object alive.</p></q>
+<starter>
+function memoizeByObject(fn) {
+  // your code here
+}
+
+let calls = 0;
+const vat = memoizeByObject((order) => {
+  calls++;
+  return Math.round(order.kobo * 0.075);
+});
+
+const a = { kobo: 950000 };
+const b = { kobo: 320000 };
+console.log(vat(a), vat(b), vat(a), "calls:", calls);
+</starter>
+<solution>
+function memoizeByObject(fn) {
+  const results = new WeakMap();
+  return (obj) => {
+    if (!results.has(obj)) results.set(obj, fn(obj));
+    return results.get(obj);
+  };
+}
+
+let calls = 0;
+const vat = memoizeByObject((order) => {
+  calls++;
+  return Math.round(order.kobo * 0.075);
+});
+
+const a = { kobo: 950000 };
+const b = { kobo: 320000 };
+console.log(vat(a), vat(b), vat(a), "calls:", calls);
+</solution>
+<expected>71250 24000 71250 calls: 2</expected>
+<explain><p>The WeakMap holds each result only as long as its key object is reachable elsewhere, so the memo cannot grow beyond the objects the program is still using.</p></explain>
+</question>
+
+<question id="mem-code-interval" type="code" file="heartbeat.js">
+<q><p>The connection's <code>close()</code> does not stop its heartbeat, so it keeps running. Store the interval and clear it in <code>close()</code>.</p></q>
+<starter>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let beats = 0;
+const leftovers = [];
+
+function openConnection() {
+  const session = { lastSeen: 0 };
+  leftovers.push(setInterval(() => { beats++; session.lastSeen = beats; }, 5));
+  return { close() {} };
+}
+
+const connection = openConnection();
+await wait(20);
+connection.close();
+const atClose = beats;
+await wait(30);
+console.log("beats after close:", beats - atClose);
+leftovers.forEach(clearInterval);
+</starter>
+<solution>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+let beats = 0;
+const leftovers = [];
+
+function openConnection() {
+  const session = { lastSeen: 0 };
+  const heartbeat = setInterval(() => { beats++; session.lastSeen = beats; }, 5);
+  leftovers.push(heartbeat);
+  return { close: () => clearInterval(heartbeat) };
+}
+
+const connection = openConnection();
+await wait(20);
+connection.close();
+const atClose = beats;
+await wait(30);
+console.log("beats after close:", beats - atClose);
+leftovers.forEach(clearInterval);
+</solution>
+<expected>beats after close: 0</expected>
+<explain><p>A pending interval is a root that keeps its callback and closure (here <code>session</code>) alive and running. The code that ends the connection's life must clear it. (<code>leftovers</code> only exists so the starter can end.)</p></explain>
+</question>
+
+<question id="mem-code-bounded" type="code" file="bounded.js">
+<q><p>The <code>recent</code> map keeps every request forever. Change <code>remember</code> so the map never holds more than 3 entries, dropping the oldest first.</p></q>
+<starter>
+const recent = new Map();
+
+function remember(requestId, result) {
+  recent.set(requestId, result);
+}
+
+for (let i = 1; i <= 1000; i++) remember(`req-${i}`, { ok: true });
+console.log(recent.size, [...recent.keys()]);
+</starter>
+<solution>
+const recent = new Map();
+
+function remember(requestId, result) {
+  recent.set(requestId, result);
+  if (recent.size > 3) recent.delete(recent.keys().next().value);
+}
+
+for (let i = 1; i <= 1000; i++) remember(`req-${i}`, { ok: true });
+console.log(recent.size, [...recent.keys()]);
+</solution>
+<expected>3 [ 'req-998', 'req-999', 'req-1000' ]</expected>
+<explain><p>A Map iterates in insertion order, so its first key is the oldest. Deleting it whenever the size passes the limit bounds the memory, however much traffic arrives.</p></explain>
+</question>
+
+<question id="mem-weakref-same-task" type="output">
+<q>What does this print?</q>
+<code file="weakref.js">
+let report = { month: "2026-09", rows: [1, 2, 3] };
+const ref = new WeakRef(report);
+report = null;
+console.log(ref.deref()?.month);
+</code>
+<option correct>2026-09</option>
+<option>undefined</option>
+<option>null</option>
+<option>TypeError</option>
+<explain><p>Nothing has collected the object yet, and engines also keep any object read through a <code>WeakRef</code> alive until the end of the current task. Only later, after a collection, may <code>deref()</code> return <code>undefined</code>.</p></explain>
+</question>
+
+<question id="mem-once-listener" type="output">
+<q>What does this print?</q>
+<code file="once.js">
+const payments = new EventTarget();
+let receipts = 0;
+payments.addEventListener("paid", () => receipts++, { once: true });
+payments.dispatchEvent(new Event("paid"));
+payments.dispatchEvent(new Event("paid"));
+console.log(receipts);
+</code>
+<option correct>1</option>
+<option>2</option>
+<option>0</option>
+<option>TypeError</option>
+<explain><p>A listener added with <code>{ once: true }</code> is removed right after it runs for the first time, so it cannot pile up. It still stays registered if the event never fires, which is where the <code>signal</code> option helps.</p></explain>
+</question>
+
+<question id="mem-code-remove" type="code" file="remove.js">
+<q><p><code>stopWatching</code> tries to remove the listener with a new arrow function, which removes nothing. Keep a reference to the listener in <code>startWatching</code> and remove that same function.</p></q>
+<starter>
+const feed = new EventTarget();
+let alerts = 0;
+
+function startWatching() {
+  feed.addEventListener("drop", () => alerts++);
+}
+function stopWatching() {
+  feed.removeEventListener("drop", () => alerts++);
+}
+
+startWatching();
+feed.dispatchEvent(new Event("drop"));
+stopWatching();
+feed.dispatchEvent(new Event("drop"));
+console.log("alerts:", alerts);
+</starter>
+<solution>
+const feed = new EventTarget();
+let alerts = 0;
+const onDrop = () => alerts++;
+
+function startWatching() {
+  feed.addEventListener("drop", onDrop);
+}
+function stopWatching() {
+  feed.removeEventListener("drop", onDrop);
+}
+
+startWatching();
+feed.dispatchEvent(new Event("drop"));
+stopWatching();
+feed.dispatchEvent(new Event("drop"));
+console.log("alerts:", alerts);
+</solution>
+<expected>alerts: 1</expected>
+<explain><p><code>removeEventListener</code> matches by function identity. Two arrow functions with the same code are two different functions, so you must keep and pass the one you added.</p></explain>
+</question>
+
+<question id="mem-code-ttl" type="code" file="ttl.js">
+<q><p>Finish <code>createTtlCache(ttlMs, now)</code>: <code>get</code> returns <code>undefined</code> and deletes the entry when it is older than <code>ttlMs</code>. The clock is injected as <code>now</code>, so the test does not wait.</p></q>
+<starter>
+function createTtlCache(ttlMs, now) {
+  const map = new Map();
+  return {
+    set(key, value) {
+      map.set(key, { value, at: now() });
+    },
+    get(key) {
+      // your code here
+    },
+    get size() {
+      return map.size;
+    },
+  };
+}
+
+let clock = 0;
+const quotes = createTtlCache(30_000, () => clock);
+quotes.set("rice-5kg", 950000);
+clock = 10_000;
+console.log(quotes.get("rice-5kg"), quotes.size);
+clock = 45_000;
+console.log(quotes.get("rice-5kg"), quotes.size);
+</starter>
+<solution>
+function createTtlCache(ttlMs, now) {
+  const map = new Map();
+  return {
+    set(key, value) {
+      map.set(key, { value, at: now() });
+    },
+    get(key) {
+      const entry = map.get(key);
+      if (!entry) return undefined;
+      if (now() - entry.at > ttlMs) {
+        map.delete(key);
+        return undefined;
+      }
+      return entry.value;
+    },
+    get size() {
+      return map.size;
+    },
+  };
+}
+
+let clock = 0;
+const quotes = createTtlCache(30_000, () => clock);
+quotes.set("rice-5kg", 950000);
+clock = 10_000;
+console.log(quotes.get("rice-5kg"), quotes.size);
+clock = 45_000;
+console.log(quotes.get("rice-5kg"), quotes.size);
+</solution>
+<expected>
+950000 1
+undefined 0
+</expected>
+<explain><p>Store the time each entry was written. On read, an entry older than the TTL is treated as missing and deleted, so stale data is neither returned nor kept.</p></explain>
+</question>

@@ -1,0 +1,744 @@
+<question id="mono-why-one-owner" type="choice">
+<q>The orders API and the checkout each had their own copy of <code>OrderStatus</code>. Why did neither compiler catch the missing <code>"refunded"</code> label?</q>
+<option>The checkout used JavaScript, not TypeScript</option>
+<option correct>Each compiler only checked its own repository against its own copy of the type; no compiler ever saw both sides of the contract</option>
+<option><code>Record</code> types are not checked for missing keys</option>
+<option>JSON.parse always returns a string</option>
+<explain><p>Types protect a contract only where one compiler sees both sides. With one owner package imported everywhere, adding a status breaks every incomplete <code>Record&lt;OrderStatus, string&gt;</code> in the same commit.</p></explain>
+</question>
+
+<question id="mono-drift-output" type="output">
+<q>Two copies of a status type have drifted apart. What does this print?</q>
+<code file="drift.ts">
+type CheckoutStatus = "pending" | "paid";
+
+const labels: Record<CheckoutStatus, string> = { pending: "Awaiting payment", paid: "Paid" };
+const fromApi = JSON.parse('["paid", "refunded", "pending"]') as CheckoutStatus[];
+
+console.log(fromApi.map((status) => labels[status] ?? `?${status}`).join(" | "));
+</code>
+<option correct>Paid | ?refunded | Awaiting payment</option>
+<option>Paid | undefined | Awaiting payment</option>
+<option>Paid | refunded | Awaiting payment</option>
+<option>Paid | Awaiting payment</option>
+<explain><p><code>labels["refunded"]</code> is <code>undefined</code> at runtime, so the <code>??</code> fallback shows it. The compiler believed the <code>as</code> and saw no problem; only a shared type would have exposed the missing label.</p></explain>
+</question>
+
+<question id="mono-workspace-link" type="choice">
+<q>After <code>npm install</code> in a workspace, what is <code>node_modules/@shop/core</code>?</q>
+<option>A copy of the <code>@shop/core</code> tarball from the npm registry</option>
+<option correct>A symbolic link to the <code>packages/core</code> folder</option>
+<option>An empty folder that TypeScript fills during the build</option>
+<option>A copy of <code>packages/core/src</code></option>
+<explain><p>Workspaces link local packages. A change in <code>packages/core</code> is visible through the link immediately, although dependents still read core's <em>built</em> output through its <code>exports</code> map.</p></explain>
+</question>
+
+<question id="mono-dist-not-src" type="choice">
+<q>In the shop monorepo, <code>@shop/database</code> imports <code>"@shop/core"</code>. Which core files does the compiler read to check database?</q>
+<option><code>packages/core/src/index.ts</code>, through the workspace link</option>
+<option correct><code>packages/core/dist/index.d.ts</code>, found through core's <code>exports</code> map, so core must be built first</option>
+<option>Whatever is newer, the source or the declaration</option>
+<option>Nothing: internal packages are not type-checked</option>
+<explain><p>The link leads to core's <code>package.json</code>, whose <code>"types"</code> condition points into <code>dist</code>. That is why build order matters, and why project references exist.</p></explain>
+</question>
+
+<question id="mono-composite" type="choice">
+<q>Which of these does <code>"composite": true</code> NOT require or imply?</q>
+<option><code>declaration</code> output, because dependents read your <code>.d.ts</code> files</option>
+<option>Every source file matched by <code>include</code> or <code>files</code></option>
+<option>Incremental build information in a <code>.tsbuildinfo</code> file</option>
+<option correct>That the project is published to npm</option>
+<explain><p><code>composite</code> is about being referenced by other projects: declarations, a complete file list and incremental information. Publishing is unrelated; internal packages are usually <code>"private": true</code>.</p></explain>
+</question>
+
+<question id="mono-buildinfo-location" type="choice">
+<q>Why do the shop packages (and ZudoJS's) set <code>"tsBuildInfoFile": "dist/.tsbuildinfo"</code>?</q>
+<option>TypeScript refuses to build without it</option>
+<option correct>So that deleting <code>dist</code> also deletes the build information; otherwise a stale <code>.tsbuildinfo</code> can make the next build think everything is current and emit nothing</option>
+<option>So that the build information is published to npm</option>
+<option>It makes the build faster than the default location</option>
+<explain><p>Incremental builds trust the <code>.tsbuildinfo</code> file. If "clean" removes <code>dist</code> but leaves that file elsewhere, the next build can skip emitting and still exit with 0.</p></explain>
+</question>
+
+<question id="mono-solution-file" type="choice">
+<q>What is the root <code>tsconfig.json</code> with <code>"files": []</code> and a <code>references</code> list for?</q>
+<option>It compiles all packages into one output folder</option>
+<option correct>It is a solution file: it compiles nothing itself and lets <code>tsc -b</code> (and editors) find every project</option>
+<option>It disables type checking for the packages</option>
+<option>It is required by npm workspaces</option>
+<explain><p><code>tsc -b</code> at the root follows the references to every package and builds them in order. <code>"files": []</code> prevents the root from also compiling every <code>.ts</code> file it can see as one big project.</p></explain>
+</question>
+
+<question id="mono-tsc-b" type="choice">
+<q>What does <code>tsc -b</code> do that <code>tsc -p packages/http</code> does not?</q>
+<option>It type-checks more strictly</option>
+<option correct>It builds referenced projects first, in dependency order, and skips projects that are up to date</option>
+<option>It bundles all packages into one file</option>
+<option>It publishes the packages</option>
+<explain><p><code>-b</code> turns <code>tsc</code> into a build orchestrator over the reference graph. <code>-p</code> compiles one project and expects its dependencies' declarations to exist already.</p></explain>
+</question>
+
+<question id="mono-up-to-date-dts" type="choice">
+<q><code>tsc -b --verbose</code> says a dependent is "up to date with .d.ts files from its dependencies" and only updates its output timestamps. What changed?</q>
+<option>Nothing at all</option>
+<option correct>A dependency was rebuilt, but its declaration files came out identical, so the dependent does not need to be checked again</option>
+<option>The dependent's own source changed</option>
+<option>The dependent's tsconfig.json changed</option>
+<explain><p>A change inside a function body changes a package's <code>.js</code> but not its <code>.d.ts</code>. Dependents only see declarations, so their result cannot change.</p></explain>
+</question>
+
+<question id="mono-comment-rebuild" type="choice">
+<q>You add a JSDoc comment to the exported <code>Logger</code> interface. Why does <code>tsc -b</code> rebuild <code>database</code>, <code>auth</code> and <code>http</code>?</q>
+<option>Every change always rebuilds every dependent</option>
+<option correct>Comments are copied into <code>.d.ts</code> files, so logger's declarations changed, and dependents are rebuilt when a dependency's declarations change</option>
+<option>JSDoc comments change the JavaScript output</option>
+<option>The comment made the build information invalid</option>
+<explain><p>The decision is made by comparing declaration output. Even a comment counts, because it is part of the <code>.d.ts</code> file (and useful to users on hover).</p></explain>
+</question>
+
+<question id="mono-missing-ref" type="choice">
+<q><code>http</code> imports <code>@shop/auth</code> and lists it in <code>package.json</code>, but its <code>tsconfig.json</code> has no reference to <code>../auth</code>. What happens?</q>
+<option>The compiler reports a missing reference by name</option>
+<option correct>Building from the root may still work if the solution happens to build auth earlier; building http alone from clean fails with TS2307, because auth is never built</option>
+<option>It always works, because npm linked auth</option>
+<option>TypeScript builds auth automatically because of <code>package.json</code></option>
+<explain><p><code>tsc -b</code> only knows the reference graph. Without the reference, auth is not in http's build at all, and its <code>dist/index.d.ts</code> does not exist when http is compiled.</p></explain>
+</question>
+
+<question id="mono-cycle" type="choice">
+<q>What does error TS6202, "Project references may not form a circular graph", tell you to do?</q>
+<option>Add <code>"composite": false</code> to one of the projects</option>
+<option>Build the two projects twice</option>
+<option correct>Remove the cycle: move the shared piece into a lower package or pass plain data across the boundary, so the dependency points one way</option>
+<option>Merge the reference lists of both projects</option>
+<explain><p>Two projects that need each other's declarations cannot be built in any order. The fix is a design change, not a build trick.</p></explain>
+</question>
+
+<question id="mono-relative-import" type="choice">
+<q><code>database</code> imports <code>"../../core/src/index.js"</code> instead of <code>"@shop/core"</code>, and <code>database</code> references <code>core</code>. What does the lesson show happens?</q>
+<option>TS6059 and TS6307 errors</option>
+<option correct>The build passes (the compiler maps the source to core's declarations), but at runtime Node.js cannot find <code>packages/core/src/index.js</code></option>
+<option>It works both at compile time and at runtime</option>
+<option>Node.js follows the workspace link instead</option>
+<explain><p>The emitted JavaScript keeps the relative path, which points at a folder with only <code>.ts</code> files. Without the reference the compiler reports TS6059/TS6307 instead. Import across packages by name only.</p></explain>
+</question>
+
+<question id="mono-phantom" type="choice">
+<q>What is a phantom dependency?</q>
+<option>A dependency listed in <code>package.json</code> but never imported</option>
+<option correct>A package that code imports without declaring it, which resolves only by accident, for example through npm's root <code>node_modules</code> links</option>
+<option>A dependency that is only used in types</option>
+<option>A package that was unpublished from the registry</option>
+<explain><p>It works while the accident holds: a previous build left output, or the installer hoisted the package. On a clean build, with pnpm, or after publishing, it fails.</p></explain>
+</question>
+
+<question id="mono-phantom-flaky" type="choice">
+<q>With a phantom import of <code>@shop/auth</code> in <code>database</code>, the lesson's clean build failed and the next build passed. Why is that the worst outcome?</q>
+<option>Because the second build is slower</option>
+<option correct>Because it fails on clean machines such as CI and passes on laptops that already have <code>dist</code> folders, so it is hard to reproduce and easy to dismiss</option>
+<option>Because TypeScript deletes auth's output</option>
+<option>Because npm uninstalls auth</option>
+<explain><p>An order-dependent build depends on leftovers. CI should always build from clean, and the real fix is to declare the dependency (and its reference), or remove the import.</p></explain>
+</question>
+
+<question id="mono-pnpm-strict" type="choice">
+<q>Why does pnpm turn the phantom dependency into an error on every machine?</q>
+<option>pnpm runs <code>tsc</code> during install</option>
+<option correct>Each package's own <code>node_modules</code> contains only what that package declares, and there are no root links to every workspace package</option>
+<option>pnpm refuses to install packages with <code>import type</code></option>
+<option>pnpm deletes <code>dist</code> folders</option>
+<explain><p>In the lesson, <code>packages/database/node_modules/@shop</code> held only <code>core</code> and <code>logger</code>, and the root had no <code>node_modules/@shop</code> at all, so <code>@shop/auth</code> could not resolve from database.</p></explain>
+</question>
+
+<question id="mono-workspace-protocol" type="choice">
+<q>Why does the ZudoJS repository require <code>"workspace:*"</code> for every internal dependency instead of a range such as <code>"0.1.0"</code>?</q>
+<option>Ranges are not allowed in pnpm</option>
+<option correct>A hand-written range can resolve to a published copy from the registry, so packages compile against an old tarball and changes to their siblings are invisible</option>
+<option><code>workspace:*</code> makes installs faster</option>
+<option>npm requires it for publishing</option>
+<explain><p>When ZudoJS pinned its siblings to <code>0.1.0</code>, a build break, two failing tests and a timer leak stayed hidden until the packages were linked to source. <code>workspace:*</code> can only mean the local folder.</p></explain>
+</question>
+
+<question id="mono-publish-protocol" type="choice">
+<q>What happens if you publish a package that depends on <code>"@shop/core": "workspace:*"</code> with plain <code>npm publish</code>?</q>
+<option>npm rewrites it to the current version</option>
+<option correct>The literal text <code>workspace:*</code> is uploaded, and nobody can install the package; <code>pnpm publish</code> rewrites it to a real version</option>
+<option>npm refuses to publish scoped packages</option>
+<option>The dependency is silently dropped</option>
+<explain><p>The workspace protocol is a pnpm (and Yarn) feature. The tool that understands it must also be the one that publishes.</p></explain>
+</question>
+
+<question id="mono-rewrite-output" type="output">
+<q>This function mimics how <code>pnpm publish</code> rewrites the workspace protocol. What does it print?</q>
+<code file="rewrite.ts">
+const versions: Record<string, string> = { "@shop/core": "1.4.2", "@shop/logger": "2.0.1" };
+
+function rewrite(deps: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, range] of Object.entries(deps)) {
+    if (!range.startsWith("workspace:")) out[name] = range;
+    else if (range === "workspace:*") out[name] = versions[name]!;
+    else out[name] = range.slice("workspace:".length) + versions[name];
+  }
+  return out;
+}
+
+console.log(rewrite({ "@shop/core": "workspace:*", "@shop/logger": "workspace:^", ms: "^2.1.3" }));
+</code>
+<option correct>{ '@shop/core': '1.4.2', '@shop/logger': '^2.0.1', ms: '^2.1.3' }</option>
+<option>{ '@shop/core': '*', '@shop/logger': '^', ms: '^2.1.3' }</option>
+<option>{ '@shop/core': 'workspace:*', '@shop/logger': 'workspace:^', ms: '^2.1.3' }</option>
+<option>{ '@shop/core': '^1.4.2', '@shop/logger': '^2.0.1', ms: '^2.1.3' }</option>
+<explain><p><code>workspace:*</code> becomes the exact current version, <code>workspace:^</code> becomes a caret range on it, and external ranges pass through untouched. The published <code>package.json</code> only contains real version ranges.</p></explain>
+</question>
+
+<question id="mono-levels-output" type="output">
+<q>What does this build-level computation print?</q>
+<code file="levels.ts">
+const deps = new Map<string, string[]>([
+  ["http", ["auth", "database", "core"]],
+  ["auth", ["core", "logger"]],
+  ["database", ["core", "logger"]],
+  ["core", []],
+  ["logger", []],
+  ["payments", ["core"]],
+]);
+
+const done = new Set<string>();
+while (done.size < deps.size) {
+  const ready = [...deps.keys()].filter((p) => !done.has(p) && deps.get(p)!.every((d) => done.has(d)));
+  console.log(ready.join(", "));
+  ready.forEach((p) => done.add(p));
+}
+</code>
+<option correct>core, logger
+auth, database, payments
+http</option>
+<option>core, logger, payments
+auth, database
+http</option>
+<option>core
+logger
+auth, database, payments
+http</option>
+<option>http, auth, database, core, logger, payments</option>
+<explain><p>Each round takes every package whose dependencies are all done. <code>payments</code> needs only <code>core</code>, but <code>core</code> is not done until the end of round one, so <code>payments</code> joins round two. Packages in one round can be built in parallel.</p></explain>
+</question>
+
+<question id="mono-affected-output" type="output">
+<q>What does this "affected packages" computation print?</q>
+<code file="affected.ts">
+const deps = new Map<string, string[]>([
+  ["http", ["auth", "database"]],
+  ["auth", ["core"]],
+  ["database", ["core", "logger"]],
+  ["reports", ["database"]],
+  ["core", []],
+  ["logger", []],
+]);
+
+function affected(changed: string): string[] {
+  const result = new Set([changed]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [name, needs] of deps) {
+      if (!result.has(name) && needs.some((d) => result.has(d))) {
+        result.add(name);
+        grew = true;
+      }
+    }
+  }
+  return [...result].sort();
+}
+
+console.log(affected("logger").join(" "));
+console.log(affected("auth").join(" "));
+</code>
+<option correct>database http logger reports
+auth http</option>
+<option>database logger
+auth http</option>
+<option>auth core database http logger reports
+auth http</option>
+<option>database http logger reports
+auth core http</option>
+<explain><p>Affected means "depends on the change, directly or indirectly". <code>logger</code> reaches <code>database</code>, and through it <code>http</code> and <code>reports</code>. <code>auth</code> reaches only <code>http</code>; its own dependency <code>core</code> is not affected by a change in <code>auth</code>.</p></explain>
+</question>
+
+<question id="mono-cycle-output" type="output">
+<q>The same level computation, on a graph with a cycle. What does it print?</q>
+<code file="stuck.ts">
+const deps = new Map<string, string[]>([
+  ["core", []],
+  ["auth", ["core", "http"]],
+  ["http", ["auth", "core"]],
+  ["reports", ["http"]],
+]);
+
+const done = new Set<string>();
+while (done.size < deps.size) {
+  const ready = [...deps.keys()].filter((p) => !done.has(p) && deps.get(p)!.every((d) => done.has(d)));
+  if (ready.length === 0) {
+    console.log("stuck:", [...deps.keys()].filter((p) => !done.has(p)).join(", "));
+    break;
+  }
+  console.log("build:", ready.join(", "));
+  ready.forEach((p) => done.add(p));
+}
+</code>
+<option correct>build: core
+stuck: auth, http, reports</option>
+<option>build: core
+stuck: auth, http</option>
+<option>build: core, reports
+stuck: auth, http</option>
+<option>stuck: core, auth, http, reports</option>
+<explain><p><code>auth</code> and <code>http</code> wait for each other forever, and <code>reports</code> waits behind them. The level method lists everything stuck; finding the actual loop needs a depth-first search, as in the lesson's exercise.</p></explain>
+</question>
+
+<question id="mono-tier-output" type="output">
+<q>What does this tier check print?</q>
+<code file="tiers.ts">
+const tiers: Record<string, number> = { core: 0, logger: 0, auth: 1, database: 1, http: 2 };
+const deps: Record<string, string[]> = {
+  auth: ["core", "database"],
+  database: ["core", "http"],
+  http: ["auth", "database"],
+};
+
+for (const [name, needs] of Object.entries(deps)) {
+  for (const dep of needs) {
+    if (tiers[dep]! > tiers[name]!) console.log(`${name} -> ${dep} goes up`);
+  }
+}
+console.log("done");
+</code>
+<option correct>database -> http goes up
+done</option>
+<option>auth -> database goes up
+database -> http goes up
+done</option>
+<option>database -> http goes up
+http -> auth goes up
+done</option>
+<option>done</option>
+<explain><p>Same-tier dependencies (<code>auth</code> on <code>database</code>) pass this rule; only depending on a <em>higher</em> tier is reported. Whether same-tier dependencies are allowed is a policy choice: ZudoJS allows them, and relies on the separate cycle check.</p></explain>
+</question>
+
+<question id="mono-regex-output" type="output">
+<q>A boundary checker finds imports with a regular expression. What does it report for this source?</q>
+<code file="scan.ts">
+const source = `
+import { DomainError } from "@shop/core";
+import type { Session } from "@shop/auth";
+export { createLogger } from "@shop/logger";
+const http = await import("@shop/http");
+`;
+
+const found = [...source.matchAll(/from "(@shop\/[\w-]+)"/g)].map((m) => m[1]);
+console.log(found.join(", "));
+</code>
+<option correct>@shop/core, @shop/auth, @shop/logger</option>
+<option>@shop/core, @shop/auth, @shop/logger, @shop/http</option>
+<option>@shop/core, @shop/logger</option>
+<option>@shop/core</option>
+<explain><p>The pattern sees every <code>from "…"</code>, including <code>import type</code> and <code>export … from</code>, but misses the dynamic <code>import("@shop/http")</code>. That is the limitation the lesson's tip warns about; real tools use the compiler API.</p></explain>
+</question>
+
+<question id="mono-two-copies-output" type="output">
+<q>Two different versions of <code>@shop/core</code> ended up installed, and code checks errors from both. What does this print?</q>
+<code file="versions.ts">
+function loadCore(version: string) {
+  class DomainError extends Error {
+    readonly code: string;
+    constructor(code: string) {
+      super(code);
+      this.code = code;
+    }
+  }
+  return { version, DomainError };
+}
+
+const coreUsedByHttp = loadCore("1.4.2");
+const coreUsedByDatabase = loadCore("1.3.0");
+const thrown = new coreUsedByDatabase.DomainError("ORDER_NOT_FOUND");
+
+console.log(thrown instanceof coreUsedByHttp.DomainError, thrown.code);
+</code>
+<option correct>false ORDER_NOT_FOUND</option>
+<option>true ORDER_NOT_FOUND</option>
+<option>false undefined</option>
+<option>true undefined</option>
+<explain><p>Two installed versions are two modules with two classes, like the dual-package hazard. The shop's <code>http</code> would turn a "not found" into a 500. A workspace with <code>workspace:*</code> guarantees a single local copy of each internal package.</p></explain>
+</question>
+
+<question id="mono-ref-path-output" type="output">
+<q>A tool turns tsconfig reference paths into package names. What does it print?</q>
+<code file="refs.ts">
+const refs = [{ path: "../core" }, { path: "../../packages/logger" }];
+console.log(refs.map((r) => `@shop/${r.path.replace("../", "")}`).join(" "));
+</code>
+<option correct>@shop/core @shop/../packages/logger</option>
+<option>@shop/core @shop/logger</option>
+<option>@shop/core @shop/packages/logger</option>
+<option>@shop/core @shop/../../packages/logger</option>
+<explain><p><code>replace</code> with a string replaces only the first match. The lesson's tool assumes the shop's layout (<code>"../name"</code>); a sturdier version takes the last path segment, for example <code>r.path.split("/").at(-1)</code>, or reads the referenced <code>package.json</code>.</p></explain>
+</question>
+
+<question id="mono-shared-type-home" type="choice">
+<q><code>auth</code> produces <code>AuditEvent</code> objects and <code>database</code> stores them. Both are tier 1. Where should the <code>AuditEvent</code> type live?</q>
+<option>In <code>auth</code>, which creates them</option>
+<option>In <code>database</code>, which stores them</option>
+<option correct>In a lower package both already depend on, such as <code>core</code> (or a new tier-0 package for events)</option>
+<option>Copied into both packages</option>
+<explain><p>Putting it in either peer makes the other depend sideways on it. A shared contract belongs below both parties; copying it brings back the drift problem.</p></explain>
+</question>
+
+<question id="mono-name-vs-tier" type="choice">
+<q>The shop's <code>@shop/core</code> has no dependencies, while ZudoJS's <code>@zudojs/core</code> is in tier 2 and depends on many packages. What does that show?</q>
+<option>One of the two repositories is wrong</option>
+<option correct>A package's name says nothing about its place in the graph; the dependency graph and the tier map do</option>
+<option>Packages called core must always be at the top</option>
+<option>Tiers only apply to pnpm workspaces</option>
+<explain><p>ZudoJS's core wires the framework together, so it sits above what it wires. The shop's core holds shared domain types, so it sits at the bottom. Read the tier map, not the names.</p></explain>
+</question>
+
+<question id="mono-pnpm-filter" type="choice">
+<q>Which pnpm command builds <code>@shop/auth</code> and every package that depends on it?</q>
+<option><code>pnpm --filter "@shop/auth..." run build</code></option>
+<option correct><code>pnpm --filter "...@shop/auth" run build</code></option>
+<option><code>pnpm -r --only @shop/auth run build</code></option>
+<option><code>pnpm build @shop/auth</code></option>
+<explain><p>Three dots <em>before</em> the name add its dependents; three dots <em>after</em> add its dependencies. Dependents are what a change can break, so <code>...@shop/auth</code> is the "affected" selection.</p></explain>
+</question>
+
+<question id="mono-paths-alias" type="choice">
+<q>Why does the lesson advise against mapping <code>"@shop/*"</code> to source folders with the <code>paths</code> compiler option instead of using packages?</q>
+<option><code>paths</code> does not work with <code>strict</code></option>
+<option correct>It bypasses the package boundaries (no <code>exports</code>, no declared dependencies, no references), and Node.js ignores <code>paths</code>, so the runtime needs extra tooling</option>
+<option>It makes type checking slower than project references in every case</option>
+<option>TypeScript 7 removed <code>paths</code></option>
+<explain><p>An alias makes every file of every package importable from everywhere. That skips a build step, but it also skips every check this lesson relies on.</p></explain>
+</question>
+
+<question id="mono-ci-clean" type="choice">
+<q>Why should a monorepo's CI build start from a clean checkout instead of reusing cached <code>dist</code> folders by default?</q>
+<option>Clean builds produce smaller files</option>
+<option correct>Leftover output hides order problems such as phantom dependencies and missing references, which only fail when nothing is built yet</option>
+<option>TypeScript cannot read cached output</option>
+<option>npm requires it</option>
+<explain><p>Every failure in the lesson's phantom dependency and missing reference sections depended on what was, or was not, already built. Caching is fine once it is keyed correctly; the default should be honest.</p></explain>
+</question>
+
+<question id="mono-code-levels" type="code" file="levels.ts">
+<q><p>Write <code>buildLevels(deps)</code>: given a map from package to the packages it depends on, return an array of rounds, where each round lists (in map order) every package whose dependencies are all in earlier rounds. Throw <code>Error("cycle")</code> if a round would be empty while packages remain.</p></q>
+<starter>
+function buildLevels(deps: Map<string, string[]>): string[][] {
+  return [[...deps.keys()]];
+}
+
+const shop = new Map<string, string[]>([
+  ["http", ["auth", "database"]],
+  ["auth", ["core"]],
+  ["database", ["core", "logger"]],
+  ["core", []],
+  ["logger", []],
+]);
+console.log(buildLevels(shop).map((level) => level.join("+")).join(" | "));
+try {
+  buildLevels(new Map([["a", ["b"]], ["b", ["a"]]]));
+} catch (error) {
+  console.log((error as Error).message);
+}
+</starter>
+<solution>
+function buildLevels(deps: Map<string, string[]>): string[][] {
+  const levels: string[][] = [];
+  const done = new Set<string>();
+  while (done.size < deps.size) {
+    const ready = [...deps.keys()].filter((p) => !done.has(p) && deps.get(p)!.every((d) => done.has(d)));
+    if (ready.length === 0) throw new Error("cycle");
+    levels.push(ready);
+    ready.forEach((p) => done.add(p));
+  }
+  return levels;
+}
+
+const shop = new Map<string, string[]>([
+  ["http", ["auth", "database"]],
+  ["auth", ["core"]],
+  ["database", ["core", "logger"]],
+  ["core", []],
+  ["logger", []],
+]);
+console.log(buildLevels(shop).map((level) => level.join("+")).join(" | "));
+try {
+  buildLevels(new Map([["a", ["b"]], ["b", ["a"]]]));
+} catch (error) {
+  console.log((error as Error).message);
+}
+</solution>
+<expected>
+core+logger | auth+database | http
+cycle
+</expected>
+<explain><p>This is a topological sort in rounds (Kahn's algorithm, grouped). The rounds are also the parallelism a build tool can use: everything in one round can build at once.</p></explain>
+</question>
+
+<question id="mono-code-affected" type="code" file="affected.ts">
+<q><p>Write <code>affected(deps, changed)</code>: return the changed package plus every package that depends on it directly or indirectly, sorted alphabetically.</p></q>
+<starter>
+function affected(deps: Map<string, string[]>, changed: string): string[] {
+  return [changed];
+}
+
+const shop = new Map<string, string[]>([
+  ["http", ["auth", "database"]],
+  ["auth", ["core"]],
+  ["database", ["core", "logger"]],
+  ["admin", ["http"]],
+  ["core", []],
+  ["logger", []],
+]);
+console.log(affected(shop, "core").join(" "));
+console.log(affected(shop, "database").join(" "));
+console.log(affected(shop, "admin").join(" "));
+</starter>
+<solution>
+function affected(deps: Map<string, string[]>, changed: string): string[] {
+  const result = new Set([changed]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const [name, needs] of deps) {
+      if (!result.has(name) && needs.some((d) => result.has(d))) {
+        result.add(name);
+        grew = true;
+      }
+    }
+  }
+  return [...result].sort();
+}
+
+const shop = new Map<string, string[]>([
+  ["http", ["auth", "database"]],
+  ["auth", ["core"]],
+  ["database", ["core", "logger"]],
+  ["admin", ["http"]],
+  ["core", []],
+  ["logger", []],
+]);
+console.log(affected(shop, "core").join(" "));
+console.log(affected(shop, "database").join(" "));
+console.log(affected(shop, "admin").join(" "));
+</solution>
+<expected>
+admin auth core database http
+admin database http
+admin
+</expected>
+<explain><p>Keep adding any package that needs something already in the set, until a full pass adds nothing. CI uses exactly this to test only what a change can have broken.</p></explain>
+</question>
+
+<question id="mono-code-tiers" type="code" file="tiers.ts">
+<q><p>Write <code>tierViolations(tiers, deps)</code> that returns one message <code>"&lt;pkg&gt; (tier N) must not depend on &lt;dep&gt; (tier M)"</code> for every dependency on a higher tier, and <code>"&lt;pkg&gt; has no tier"</code> for a package missing from the tier map (check each package once, before its dependencies).</p></q>
+<starter>
+function tierViolations(tiers: Record<string, number>, deps: Record<string, string[]>): string[] {
+  return [];
+}
+
+const tiers = { core: 0, logger: 0, auth: 1, database: 1, http: 2 };
+const deps = { auth: ["core", "http"], database: ["core"], http: ["auth"], reports: ["http"] };
+const problems = tierViolations(tiers, deps);
+console.log(problems.length ? problems.join("\n") : "ok");
+</starter>
+<solution>
+function tierViolations(tiers: Record<string, number>, deps: Record<string, string[]>): string[] {
+  const problems: string[] = [];
+  for (const [name, needs] of Object.entries(deps)) {
+    const own = tiers[name];
+    if (own === undefined) {
+      problems.push(`${name} has no tier`);
+      continue;
+    }
+    for (const dep of needs) {
+      const theirs = tiers[dep];
+      if (theirs !== undefined && theirs > own) problems.push(`${name} (tier ${own}) must not depend on ${dep} (tier ${theirs})`);
+    }
+  }
+  return problems;
+}
+
+const tiers = { core: 0, logger: 0, auth: 1, database: 1, http: 2 };
+const deps = { auth: ["core", "http"], database: ["core"], http: ["auth"], reports: ["http"] };
+const problems = tierViolations(tiers, deps);
+console.log(problems.length ? problems.join("\n") : "ok");
+</solution>
+<expected>
+auth (tier 1) must not depend on http (tier 2)
+reports has no tier
+</expected>
+<explain><p>A package missing from the map must be an error, not a silent tier 0: otherwise any new package could depend on anything. ZudoJS's check fails for an unknown package for the same reason.</p></explain>
+</question>
+
+<question id="mono-code-undeclared" type="code" file="undeclared.ts">
+<q><p>Write <code>undeclaredImports(source, declared, self)</code>: find every <code>@shop/…</code> package the source imports, through <code>from "…"</code> <em>or</em> <code>import("…")</code>, and return (sorted, without duplicates) those that are neither declared nor the package itself.</p></q>
+<starter>
+function undeclaredImports(source: string, declared: string[], self: string): string[] {
+  return [];
+}
+
+const source = `
+import { DomainError } from "@shop/core";
+import type { Session } from "@shop/auth";
+export * from "@shop/database";
+const { handle } = await import("@shop/http");
+import { authenticate } from "@shop/auth";
+`;
+console.log(undeclaredImports(source, ["@shop/core"], "@shop/database"));
+</starter>
+<solution>
+function undeclaredImports(source: string, declared: string[], self: string): string[] {
+  const found = new Set<string>();
+  for (const match of source.matchAll(/(?:from\s+|import\()\s*"(@shop\/[\w-]+)"/g)) found.add(match[1]!);
+  return [...found].filter((name) => name !== self && !declared.includes(name)).sort();
+}
+
+const source = `
+import { DomainError } from "@shop/core";
+import type { Session } from "@shop/auth";
+export * from "@shop/database";
+const { handle } = await import("@shop/http");
+import { authenticate } from "@shop/auth";
+`;
+console.log(undeclaredImports(source, ["@shop/core"], "@shop/database"));
+</solution>
+<expected>
+[ '@shop/auth', '@shop/http' ]
+</expected>
+<explain><p>The pattern now also catches dynamic imports. A <code>Set</code> removes the duplicate <code>@shop/auth</code>, and a package importing its own name (self-reference) is not a dependency.</p></explain>
+</question>
+
+<question id="mono-code-refs" type="code" file="refs.ts">
+<q><p>Write <code>compareReferences(dependencies, references)</code> that returns <code>{ missing, extra }</code>: dependencies without a matching reference, and references without a matching dependency. References are paths like <code>"../core"</code>; take the last path segment as the package folder, and package names are <code>@shop/&lt;folder&gt;</code>.</p></q>
+<starter>
+function compareReferences(dependencies: string[], references: { path: string }[]) {
+  return { missing: [] as string[], extra: [] as string[] };
+}
+
+console.log(compareReferences(["@shop/core", "@shop/auth", "@shop/logger"], [{ path: "../core" }, { path: "../../packages/logger" }, { path: "../database" }]));
+</starter>
+<solution>
+function compareReferences(dependencies: string[], references: { path: string }[]) {
+  const referenced = references.map((ref) => `@shop/${ref.path.split("/").at(-1)}`);
+  return {
+    missing: dependencies.filter((dep) => !referenced.includes(dep)),
+    extra: referenced.filter((ref) => !dependencies.includes(ref)),
+  };
+}
+
+console.log(compareReferences(["@shop/core", "@shop/auth", "@shop/logger"], [{ path: "../core" }, { path: "../../packages/logger" }, { path: "../database" }]));
+</solution>
+<expected>
+{ missing: [ '@shop/auth' ], extra: [ '@shop/database' ] }
+</expected>
+<explain><p>A missing reference makes builds order-dependent; an extra one makes a package wait for, and rebuild after, something it does not use. Both directions are worth reporting.</p></explain>
+</question>
+
+<question id="mono-code-changed-files" type="code" file="changed.ts">
+<q><p>CI knows which files a pull request changed. Write <code>packagesFor(files)</code> that maps each file under <code>packages/&lt;folder&gt;/</code> to <code>@shop/&lt;folder&gt;</code> and returns the distinct package names, sorted; files outside <code>packages/</code> (such as <code>README.md</code>) map to nothing.</p></q>
+<starter>
+function packagesFor(files: string[]): string[] {
+  return [];
+}
+
+console.log(packagesFor([
+  "packages/auth/src/index.ts",
+  "packages/core/src/index.ts",
+  "README.md",
+  "packages/auth/package.json",
+  "tools/check.ts",
+]));
+</starter>
+<solution>
+function packagesFor(files: string[]): string[] {
+  const names = new Set<string>();
+  for (const file of files) {
+    const match = /^packages\/([^/]+)\//.exec(file);
+    if (match) names.add(`@shop/${match[1]}`);
+  }
+  return [...names].sort();
+}
+
+console.log(packagesFor([
+  "packages/auth/src/index.ts",
+  "packages/core/src/index.ts",
+  "README.md",
+  "packages/auth/package.json",
+  "tools/check.ts",
+]));
+</solution>
+<expected>
+[ '@shop/auth', '@shop/core' ]
+</expected>
+<explain><p>Combined with <code>affected</code>, this gives CI the full list to build and test. Changes outside any package (tools, root configs) are the risky case: many teams treat them as "affects everything".</p></explain>
+</question>
+
+<question id="mono-code-has-cycle" type="code" file="has-cycle.ts">
+<q><p>Write <code>findCycle(deps)</code> with depth-first search: return the first loop found as a path such as <code>["auth", "http", "auth"]</code>, or <code>null</code>. Visit packages and dependencies in map and array order.</p></q>
+<starter>
+function findCycle(deps: Map<string, string[]>): string[] | null {
+  return null;
+}
+
+const shop = new Map<string, string[]>([
+  ["core", []],
+  ["auth", ["core", "http"]],
+  ["http", ["database", "auth"]],
+  ["database", ["core"]],
+]);
+console.log(findCycle(shop)?.join(" -> ") ?? "no cycle");
+shop.set("auth", ["core"]);
+console.log(findCycle(shop)?.join(" -> ") ?? "no cycle");
+</starter>
+<solution>
+function findCycle(deps: Map<string, string[]>): string[] | null {
+  const state = new Map<string, "visiting" | "done">();
+  const path: string[] = [];
+  function visit(node: string): string[] | null {
+    if (state.get(node) === "done") return null;
+    if (state.get(node) === "visiting") return [...path.slice(path.indexOf(node)), node];
+    state.set(node, "visiting");
+    path.push(node);
+    for (const dep of deps.get(node) ?? []) {
+      const cycle = visit(dep);
+      if (cycle) return cycle;
+    }
+    path.pop();
+    state.set(node, "done");
+    return null;
+  }
+  for (const node of deps.keys()) {
+    const cycle = visit(node);
+    if (cycle) return cycle;
+  }
+  return null;
+}
+
+const shop = new Map<string, string[]>([
+  ["core", []],
+  ["auth", ["core", "http"]],
+  ["http", ["database", "auth"]],
+  ["database", ["core"]],
+]);
+console.log(findCycle(shop)?.join(" -> ") ?? "no cycle");
+shop.set("auth", ["core"]);
+console.log(findCycle(shop)?.join(" -> ") ?? "no cycle");
+</solution>
+<expected>
+auth -> http -> auth
+no cycle
+</expected>
+<explain><p>"Visiting" marks nodes on the current path. Meeting one again closes a loop, which is the part of the path from that node onward. "Done" nodes were fully explored without a loop and are skipped.</p></explain>
+</question>

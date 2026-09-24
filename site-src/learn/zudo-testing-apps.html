@@ -1,0 +1,1369 @@
+---
+title: Testing a ZudoJS application layer by layer
+description: Test the Task API one layer at a time with Vitest: services, PGlite repositories, auth sessions, events and queues, CQRS buses, HTTP routes and a full workflow.
+minutes: 60
+youNeed: Testing a ZudoJS app, and the lessons on auth, events, queues and CQRS
+youBuild: A Vitest suite of 36 tests that covers every layer of the Task API, from the service rules to an end-to-end workflow over HTTP
+keywords: zudojs testing, vitest, layered testing, unit test, integration test, end-to-end test, pglite, repository contract test, auth session test, event bus test, queue test, cqrs test, http test, test pyramid
+objectives: Decide which layer of an app to test for which bug | Unit-test a service with a fake repository and a test clock | Run one contract suite against a fake and a real PostgreSQL repository | Test sessions, token expiry, events, queues and CQRS buses without waiting or flakiness | Write HTTP and end-to-end tests that drive the real app through its composition root
+---
+<section>
+<h2 id="problem">Green tests, broken app</h2>
+<p>In <a href="/learn/zudo-testing">Testing a ZudoJS app</a> you tested a task service with doubles all around it, and every test passed. Here is a bug that such a suite can never catch. The service asks its repository for tasks and keeps the overdue ones. The unit test uses a fake repository that returns tidy objects. The real repository returns database rows, and someone forgot to map one column name:</p>
+<example file="green-but-broken.js">
+const now = new Date("2026-10-03T09:00:00Z");
+
+function overdue(tasks) {
+  return tasks.filter((task) => task.dueAt < now).map((task) => task.title);
+}
+
+// What the fake repository in the unit test returns
+const fromFake = [{ title: "Buy milk", dueAt: new Date("2026-10-02T09:00:00Z") }];
+// What PostgreSQL returns when the row is not mapped: due_at, not dueAt
+const fromPostgres = [{ title: "Buy milk", due_at: new Date("2026-10-02T09:00:00Z") }];
+
+console.log("unit test with the fake:", overdue(fromFake));
+console.log("production with PostgreSQL:", overdue(fromPostgres));
+</example>
+<output>
+unit test with the fake: [ 'Buy milk' ]
+production with PostgreSQL: []
+</output>
+<p><code>undefined &lt; now</code> is <code>false</code>, so in production nothing is ever overdue, and no reminder is ever sent. The unit test is right about the service and says nothing about the repository. Other bugs hide in the same way: a route that forgot its login check, an event nobody subscribed to, a job that is queued but never processed, a command handler that reads the user from the request body.</p>
+<p>Each <strong>layer</strong> of an application (the rules, the database access, the login, the messages, the HTTP routes) can break in a way that only a test of <em>that</em> layer notices. This lesson tests the Task API one layer at a time, with the cheapest test that can catch each kind of bug, and finishes with one test that drives the whole app like a user.</p>
+</section>
+
+<section>
+<h2 id="plan">The app and its layers</h2>
+<p>The Task API in this lesson lets users sign in, create tasks, assign them to someone else and complete them. When a task is assigned, the assignee gets an e-mail. A request travels through these layers:</p>
+<figure class="lx-diagram">
+<pre>
+ HTTP request
+     │
+     ▼
+ http.ts          routes, login check, body validation, status codes
+     │
+     ▼
+ task.cqrs.ts     commands and queries; who is asking comes from the context
+     │
+     ▼
+ task.service.ts  the rules: who may assign, who may complete, due dates
+     │                    │
+     ▼                    ▼ publishes task.assigned
+ task.repository  notifications.ts ──► email queue ──► mailer
+ (PostgreSQL)
+</pre>
+<figcaption>The Task API's layers. auth.ts and users.ts sit beside the HTTP layer; app.ts connects everything.</figcaption>
+</figure>
+<p>A <strong>unit test</strong> checks one piece with doubles around it, an <strong>integration test</strong> checks a piece together with a real dependency such as the database, and an <strong>end-to-end test</strong> drives the whole app from the outside. The plan for this app:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Layer</th><th>A typical bug</th><th>Test</th><th>Real</th><th>Replaced</th></tr></thead>
+<tbody>
+<tr><td>Service</td><td>A non-owner can assign a task</td><td>Unit</td><td>The service</td><td>Repository, event bus, clock</td></tr>
+<tr><td>Repository</td><td>Wrong SQL, unmapped column, missing constraint</td><td>Integration</td><td>PostgreSQL (PGlite)</td><td>Nothing</td></tr>
+<tr><td>Auth</td><td>A token that outlives its logout</td><td>Integration</td><td><code>@zudojs/auth</code></td><td>Time (Vitest fake <code>Date</code>)</td></tr>
+<tr><td>Events and queue</td><td>No e-mail, two e-mails, no retry</td><td>Unit</td><td>Event bus, queue</td><td>Mailer</td></tr>
+<tr><td>CQRS</td><td>The user taken from the payload</td><td>Unit</td><td>Buses, middleware, service</td><td>Repository</td></tr>
+<tr><td>HTTP</td><td>A route without the login check, a leaked error</td><td>Integration</td><td>Everything but mail</td><td>Mailer, clock</td></tr>
+<tr><td>Workflow</td><td>The pieces do not fit together</td><td>End-to-end</td><td>Everything but mail</td><td>Mailer, clock</td></tr>
+</tbody>
+</table></div>
+<p>Most tests sit in the top rows: they are fast and point at the exact line that broke. The last rows are slower and fewer, but they are the only ones that prove the layers fit. That shape, many small tests and a few big ones, is the <strong>test pyramid</strong> from <a href="/learn/testing-strategies">Testing strategies</a>.</p>
+<reason title="Before you write a single test">
+<p>Take any layer, for example the service. Answer four questions before you open a test file:</p>
+<ol>
+<li>What does this layer decide <em>on its own</em>? That is what its tests must pin down.</li>
+<li>What does it <em>trust</em> from the layer below? Those promises need their own tests, in the layer that makes them.</li>
+<li>What would a bug here look like to a user?</li>
+<li>Which dependency is slow, random or outside your control, and must be replaced?</li>
+</ol>
+<answer>
+<p>For the service: it decides the rules (only the owner assigns; the owner or the assignee completes; a task is completed once; the due date is "now plus n days"). It trusts the repository to store and find tasks correctly, so the repository gets its own tests. A bug looks like "Bola assigned Ada's task to himself" or "the task is due on the wrong day". The clock is outside your control (it changes every run), so it must be replaced. The event bus is replaced by a recording one, so a test can see what was announced.</p>
+<p>For the repository the answers are different: it decides almost nothing, but it translates between objects and SQL, and the database enforces rules of its own (unique titles, allowed statuses). Nothing about that can be tested with a fake, so its tests use a real PostgreSQL. Asking these four questions per layer is how you get the table above.</p>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="setup">Running Vitest on this page</h2>
+<p>The whole suite lives in one project. Vitest reads its settings from <code>vitest.config.ts</code>. The database tests start PostgreSQL, which takes a few seconds, so the time limits are higher than Vitest's defaults (5 seconds per test, 10 per hook):</p>
+<file name="vitest.config.ts" project="app">
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    include: ["tests/**/*.test.ts"],
+    testTimeout: 20_000,
+    hookTimeout: 30_000,
+  },
+});
+</file>
+<p>On your computer you run <code>npx vitest run</code>. So that you can see real results on this page, each example below runs one test file through Vitest's own programming interface, <code>startVitest</code>, and prints one line per test: <code>✓</code> for a pass, <code>×</code> and the error for a failure. You can ignore how it works; it is the same Vitest, without the colours:</p>
+<file name="vitest-run.ts" project="app">
+import { startVitest } from "vitest/node";
+
+/** Runs test files with Vitest and prints one line per test. */
+export async function runTests(...files: string[]): Promise<void> {
+  const vitest = await startVitest("test", files, { watch: false, reporters: [] });
+  for (const file of vitest.state.getTestModules()) {
+    for (const error of file.errors()) console.log(`× ${file.relativeModuleId}: ${error.message}`);
+    for (const test of file.children.allTests()) {
+      const { state, errors = [] } = test.result();
+      console.log(`${state === "passed" ? "✓" : "×"} ${test.fullName}`);
+      for (const error of errors) console.log(`    ${error.message}`);
+    }
+  }
+  await vitest.close();
+}
+</file>
+</section>
+
+<section>
+<h2 id="service">Service unit tests</h2>
+<p>The service works with an interface, <code>TaskRepository</code>, never with SQL. That interface is the seam where a test can put a fake. Here are the types and the interface; the PostgreSQL class that implements it comes in the next section:</p>
+<file name="src/task.repository.ts" project="app">
+import { ConflictError, NotFoundError } from "@zudojs/errors";
+
+export type TaskStatus = "open" | "done";
+export interface Task {
+  readonly id: number;
+  readonly ownerId: string;
+  readonly assigneeId: string | null;
+  readonly title: string;
+  readonly status: TaskStatus;
+  readonly dueAt: Date;
+}
+export type NewTask = Pick<Task, "ownerId" | "title" | "dueAt">;
+export type TaskChanges = Partial<Pick<Task, "assigneeId" | "status">>;
+
+export interface TaskRepository {
+  create(input: NewTask): Promise<Task>;
+  findById(id: number): Promise<Task | undefined>;
+  update(id: number, changes: TaskChanges): Promise<Task>;
+  listVisibleTo(userId: string, status?: TaskStatus): Promise<Task[]>;
+}
+
+/** PGlite, a PGlite transaction and a pg Pool all have this method. */
+export interface Queryable {
+  query<T>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
+}
+
+interface TaskRow {
+  id: number; owner_id: string; assignee_id: string | null; title: string; status: TaskStatus; due_at: Date;
+}
+const toTask = (row: TaskRow): Task => ({
+  id: row.id, ownerId: row.owner_id, assigneeId: row.assignee_id, title: row.title, status: row.status, dueAt: row.due_at,
+});
+
+export class PgTaskRepository implements TaskRepository {
+  constructor(private readonly db: Queryable) {}
+
+  async create(input: NewTask): Promise<Task> {
+    try {
+      const { rows } = await this.db.query<TaskRow>(
+        "INSERT INTO tasks (owner_id, title, due_at) VALUES ($1, $2, $3) RETURNING *",
+        [input.ownerId, input.title, input.dueAt],
+      );
+      return toTask(rows[0]!);
+    } catch (error) {
+      if ((error as { code?: string }).code === "23505") throw new ConflictError(`You already have a task called "${input.title}"`);
+      throw error;
+    }
+  }
+
+  async findById(id: number): Promise<Task | undefined> {
+    const { rows } = await this.db.query<TaskRow>("SELECT * FROM tasks WHERE id = $1", [id]);
+    return rows[0] === undefined ? undefined : toTask(rows[0]);
+  }
+
+  async update(id: number, changes: TaskChanges): Promise<Task> {
+    const { rows } = await this.db.query<TaskRow>(
+      `UPDATE tasks SET assignee_id = CASE WHEN $2 THEN $3 ELSE assignee_id END,
+                        status = COALESCE($4, status)
+       WHERE id = $1 RETURNING *`,
+      [id, "assigneeId" in changes, changes.assigneeId ?? null, changes.status ?? null],
+    );
+    if (rows[0] === undefined) throw new NotFoundError(`Task ${id} not found`);
+    return toTask(rows[0]);
+  }
+
+  async listVisibleTo(userId: string, status?: TaskStatus): Promise<Task[]> {
+    const { rows } = await this.db.query<TaskRow>(
+      `SELECT * FROM tasks WHERE (owner_id = $1 OR assignee_id = $1) AND ($2::text IS NULL OR status = $2)
+       ORDER BY due_at, id`,
+      [userId, status ?? null],
+    );
+    return rows.map(toTask);
+  }
+}
+</file>
+<p>The service receives its three dependencies. <code>events</code> needs only a <code>publishEvent</code> method, and <code>now</code> is a function, so a test can hand in a clock it controls. Notice the rules: a task you cannot see is "not found" (a 404 later, so outsiders learn nothing), and a task you can see but do not own cannot be assigned (a 403):</p>
+<file name="src/task.service.ts" project="app">
+import { AuthorizationError, ConflictError, NotFoundError, ValidationError } from "@zudojs/errors";
+import type { Task, TaskRepository, TaskStatus } from "./task.repository.js";
+
+export interface TaskEvents {
+  publishEvent(input: { type: string; payload: unknown }): Promise<unknown>;
+}
+export interface TaskServiceDeps {
+  readonly tasks: TaskRepository;
+  readonly events: TaskEvents;
+  readonly now: () => Date;
+}
+
+const DAY = 86_400_000;
+
+export function createTaskService({ tasks, events, now }: TaskServiceDeps) {
+  async function visibleTask(userId: string, taskId: number): Promise<Task> {
+    const task = await tasks.findById(taskId);
+    if (task === undefined || (task.ownerId !== userId && task.assigneeId !== userId)) {
+      throw new NotFoundError(`Task ${taskId} not found`);
+    }
+    return task;
+  }
+
+  return {
+    async create(ownerId: string, title: string, dueInDays: number): Promise<Task> {
+      const clean = title.trim();
+      if (clean.length < 3 || clean.length > 200) throw new ValidationError("A title needs 3 to 200 characters");
+      if (!Number.isInteger(dueInDays) || dueInDays < 0 || dueInDays > 365) throw new ValidationError("dueInDays must be 0 to 365");
+      return tasks.create({ ownerId, title: clean, dueAt: new Date(now().getTime() + dueInDays * DAY) });
+    },
+
+    async assign(actorId: string, taskId: number, assigneeId: string): Promise<Task> {
+      const task = await visibleTask(actorId, taskId);
+      if (task.ownerId !== actorId) throw new AuthorizationError("Only the owner can assign a task");
+      const saved = await tasks.update(taskId, { assigneeId });
+      await events.publishEvent({ type: "task.assigned", payload: { taskId, title: task.title, assigneeId } });
+      return saved;
+    },
+
+    async complete(actorId: string, taskId: number): Promise<Task> {
+      const task = await visibleTask(actorId, taskId);
+      if (task.status === "done") throw new ConflictError(`Task ${taskId} is already done`);
+      const saved = await tasks.update(taskId, { status: "done" });
+      await events.publishEvent({ type: "task.completed", payload: { taskId, by: actorId } });
+      return saved;
+    },
+
+    list(userId: string, status?: TaskStatus): Promise<Task[]> {
+      return tasks.listVisibleTo(userId, status);
+    },
+
+    async overdue(userId: string): Promise<Task[]> {
+      const open = await tasks.listVisibleTo(userId, "open");
+      return open.filter((task) => task.dueAt < now());
+    },
+  };
+}
+
+export type TaskService = ReturnType<typeof createTaskService>;
+</file>
+<p>The fake repository keeps tasks in a <code>Map</code>. It is a <strong>fake</strong>, a small working implementation, not a mock: many tests can use it without setting up answers one by one. It copies the real repository's behaviour, including the duplicate-title rule and the sort order, and the next section proves that it does:</p>
+<file name="tests/memory-task-repository.ts" project="app">
+import { ConflictError, NotFoundError } from "@zudojs/errors";
+import type { NewTask, Task, TaskChanges, TaskRepository, TaskStatus } from "../src/task.repository.js";
+
+export class MemoryTaskRepository implements TaskRepository {
+  private readonly rows = new Map<number, Task>();
+
+  async create(input: NewTask): Promise<Task> {
+    for (const row of this.rows.values()) {
+      if (row.ownerId === input.ownerId && row.title === input.title) {
+        throw new ConflictError(`You already have a task called "${input.title}"`);
+      }
+    }
+    const task: Task = { ...input, id: this.rows.size + 1, assigneeId: null, status: "open" };
+    this.rows.set(task.id, task);
+    return task;
+  }
+
+  async findById(id: number): Promise<Task | undefined> {
+    return this.rows.get(id);
+  }
+
+  async update(id: number, changes: TaskChanges): Promise<Task> {
+    const row = this.rows.get(id);
+    if (row === undefined) throw new NotFoundError(`Task ${id} not found`);
+    const updated = { ...row, ...changes };
+    this.rows.set(id, updated);
+    return updated;
+  }
+
+  async listVisibleTo(userId: string, status?: TaskStatus): Promise<Task[]> {
+    return [...this.rows.values()]
+      .filter((t) => (t.ownerId === userId || t.assigneeId === userId) && (status === undefined || t.status === status))
+      .sort((a, b) => a.dueAt.getTime() - b.dueAt.getTime() || a.id - b.id);
+  }
+}
+</file>
+<p>Now the tests. <code>createTestClock</code> and <code>createTestEventBus</code> come from <code>@zudojs/testing</code>, as in the previous lesson. <code>it.each</code> runs one test per row of a table; <code>%s</code> puts the row's first value into the test name:</p>
+<file name="tests/task.service.test.ts" project="app">
+import { beforeEach, describe, expect, it } from "vitest";
+import { assertEventPublished, assertRejects, createTestClock, createTestEventBus } from "@zudojs/testing";
+import type { TestClock, TestEventBus } from "@zudojs/testing";
+import { createTaskService, type TaskService } from "../src/task.service.js";
+import { MemoryTaskRepository } from "./memory-task-repository.js";
+
+let clock: TestClock;
+let events: TestEventBus;
+let service: TaskService;
+
+beforeEach(() => {
+  clock = createTestClock("2026-10-01T09:00:00Z");
+  events = createTestEventBus();
+  service = createTaskService({ tasks: new MemoryTaskRepository(), events, now: () => clock.now });
+});
+
+describe("TaskService", () => {
+  it("trims the title and sets the due date from the clock", async () => {
+    const task = await service.create("ada", "  Buy milk ", 2);
+    expect(task.title).toBe("Buy milk");
+    expect(task.dueAt.toISOString()).toBe("2026-10-03T09:00:00.000Z");
+  });
+
+  it.each([
+    ["a two-letter title", "no", 1, "3 to 200 characters"],
+    ["a 201-letter title", "x".repeat(201), 1, "3 to 200 characters"],
+    ["a due date in the past", "Buy milk", -1, "0 to 365"],
+    ["half a day", "Buy milk", 1.5, "0 to 365"],
+  ])("refuses %s", async (_case, title, days, message) => {
+    await assertRejects(() => service.create("ada", title, days), message);
+  });
+
+  it("lets only the owner assign, and announces it", async () => {
+    const task = await service.create("ada", "Buy milk", 1);
+    await assertRejects(() => service.assign("bola", task.id, "bola"), "not found");
+    await service.assign("ada", task.id, "bola");
+    await assertRejects(() => service.assign("bola", task.id, "chidi"), "Only the owner");
+    assertEventPublished(events.published, "task.assigned");
+    expect(events.findByType("task.assigned").map((r) => r.event.payload))
+      .toEqual([{ taskId: task.id, title: "Buy milk", assigneeId: "bola" }]);
+  });
+
+  it("completes once, and only for people who can see the task", async () => {
+    const task = await service.create("ada", "Buy milk", 1);
+    await service.assign("ada", task.id, "bola");
+    await assertRejects(() => service.complete("chidi", task.id), "not found");
+    expect((await service.complete("bola", task.id)).status).toBe("done");
+    await assertRejects(() => service.complete("ada", task.id), "already done");
+    expect(events.findByType("task.completed")).toHaveLength(1);
+  });
+
+  it("finds overdue tasks by the clock", async () => {
+    await service.create("ada", "Buy milk", 1);
+    await service.create("ada", "File taxes", 7);
+    clock.add({ days: 2 });
+    expect((await service.overdue("ada")).map((t) => t.title)).toEqual(["Buy milk"]);
+  });
+});
+</file>
+<example file="run-service.ts" project="app" browser="no">
+import { runTests } from "./vitest-run.js";
+
+await runTests("tests/task.service.test.ts");
+</example>
+<output>
+✓ TaskService > trims the title and sets the due date from the clock
+✓ TaskService > refuses a two-letter title
+✓ TaskService > refuses a 201-letter title
+✓ TaskService > refuses a due date in the past
+✓ TaskService > refuses half a day
+✓ TaskService > lets only the owner assign, and announces it
+✓ TaskService > completes once, and only for people who can see the task
+✓ TaskService > finds overdue tasks by the clock
+</output>
+<p>These eight tests run in milliseconds and need no database. Each one pins a rule: the trimmed title, the due date computed from the clock, the four kinds of bad input, who may assign, who may complete and how often, and which tasks are overdue after two days of fake time. When one fails, the test name says which rule broke.</p>
+<p>Notice what they do <em>not</em> check: SQL, HTTP status codes or e-mails. Those belong to other layers.</p>
+</section>
+
+<section>
+<h2 id="repository">Repository integration tests with PGlite</h2>
+<p>The real repository writes SQL for PostgreSQL. The table and the repository class:</p>
+<file name="src/db.ts" project="app">
+import type { PGlite } from "@electric-sql/pglite";
+
+export const SCHEMA = `
+  CREATE TABLE tasks (
+    id          SERIAL PRIMARY KEY,
+    owner_id    TEXT NOT NULL,
+    assignee_id TEXT,
+    title       TEXT NOT NULL CHECK (length(title) BETWEEN 3 AND 200),
+    status      TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done')),
+    due_at      TIMESTAMPTZ NOT NULL,
+    UNIQUE (owner_id, title)
+  );
+`;
+
+export async function migrate(db: PGlite): Promise<void> {
+  await db.exec(SCHEMA);
+}
+</file>
+<p>The class is already in <code>src/task.repository.ts</code> above: <code>PgTaskRepository</code>. It depends on a tiny <code>Queryable</code> interface, not on PGlite, so the same class works with PGlite in tests and with a <code>pg</code> connection pool in production. Its <code>toTask</code> function is the mapping that the opening example forgot.</p>
+<h3>One contract, two implementations</h3>
+<p>The fake from the last section is only useful if it behaves like the real thing. So write the repository's tests <em>once</em>, as a function that takes a way to make a repository, and run them against both. This is a <strong>contract test</strong>: the tests describe what every <code>TaskRepository</code> must do:</p>
+<file name="tests/task.repository.contract.ts" project="app">
+import { beforeEach, describe, expect, it } from "vitest";
+import { assertRejects } from "@zudojs/testing";
+import type { TaskRepository } from "../src/task.repository.js";
+
+const monday = new Date("2026-10-05T09:00:00Z");
+const tuesday = new Date("2026-10-06T09:00:00Z");
+
+export function taskRepositoryContract(name: string, makeRepository: () => Promise<TaskRepository>): void {
+  describe(`${name} (TaskRepository contract)`, () => {
+    let repo: TaskRepository;
+    beforeEach(async () => {
+      repo = await makeRepository();
+    });
+
+    it("creates an open, unassigned task and reads it back", async () => {
+      const created = await repo.create({ ownerId: "ada", title: "Buy milk", dueAt: monday });
+      expect(created).toMatchObject({ ownerId: "ada", assigneeId: null, status: "open", title: "Buy milk" });
+      expect(await repo.findById(created.id)).toEqual(created);
+      expect(await repo.findById(999)).toBeUndefined();
+    });
+
+    it("refuses the same title twice for one owner, but not for another", async () => {
+      await repo.create({ ownerId: "ada", title: "Buy milk", dueAt: monday });
+      await assertRejects(() => repo.create({ ownerId: "ada", title: "Buy milk", dueAt: monday }), "already have");
+      await expect(repo.create({ ownerId: "bola", title: "Buy milk", dueAt: monday })).resolves.toBeDefined();
+    });
+
+    it("updates only the fields it is given", async () => {
+      const task = await repo.create({ ownerId: "ada", title: "Buy milk", dueAt: monday });
+      await repo.update(task.id, { assigneeId: "bola" });
+      const done = await repo.update(task.id, { status: "done" });
+      expect(done).toMatchObject({ assigneeId: "bola", status: "done" });
+      await assertRejects(() => repo.update(999, { status: "done" }), "not found");
+    });
+
+    it("lists what a user owns or is assigned, by due date", async () => {
+      const later = await repo.create({ ownerId: "ada", title: "File taxes", dueAt: tuesday });
+      const sooner = await repo.create({ ownerId: "bola", title: "Fix bike", dueAt: monday });
+      await repo.create({ ownerId: "chidi", title: "Not for Ada", dueAt: monday });
+      await repo.update(sooner.id, { assigneeId: "ada" });
+      await repo.update(later.id, { status: "done" });
+      expect((await repo.listVisibleTo("ada")).map((t) => t.title)).toEqual(["Fix bike", "File taxes"]);
+      expect((await repo.listVisibleTo("ada", "open")).map((t) => t.title)).toEqual(["Fix bike"]);
+    });
+  });
+}
+</file>
+<p>Starting PostgreSQL takes seconds, so the test file starts one database for all its tests and gives each test a clean state. A popular trick is to open a transaction before each test and roll it back after:</p>
+<file name="tests/task.repository.test.ts" project="app">
+import { afterAll, afterEach, beforeAll, beforeEach } from "vitest";
+import { PGlite } from "@electric-sql/pglite";
+import { migrate } from "../src/db.js";
+import { PgTaskRepository } from "../src/task.repository.js";
+import { MemoryTaskRepository } from "./memory-task-repository.js";
+import { taskRepositoryContract } from "./task.repository.contract.js";
+
+const db = new PGlite();
+beforeAll(() => migrate(db));
+beforeEach(() => db.exec("BEGIN"));
+afterEach(() => db.exec("ROLLBACK"));
+afterAll(() => db.close());
+
+taskRepositoryContract("MemoryTaskRepository", async () => new MemoryTaskRepository());
+taskRepositoryContract("PgTaskRepository", async () => new PgTaskRepository(db));
+</file>
+<example file="run-repository.ts" project="app" browser="no">
+import { runTests } from "./vitest-run.js";
+
+await runTests("tests/task.repository.test.ts");
+</example>
+<output>
+✓ MemoryTaskRepository (TaskRepository contract) > creates an open, unassigned task and reads it back
+✓ MemoryTaskRepository (TaskRepository contract) > refuses the same title twice for one owner, but not for another
+✓ MemoryTaskRepository (TaskRepository contract) > updates only the fields it is given
+✓ MemoryTaskRepository (TaskRepository contract) > lists what a user owns or is assigned, by due date
+✓ PgTaskRepository (TaskRepository contract) > creates an open, unassigned task and reads it back
+× PgTaskRepository (TaskRepository contract) > refuses the same title twice for one owner, but not for another
+    promise rejected "error: current transaction is aborted, co… { …(18) }" instead of resolving
+✓ PgTaskRepository (TaskRepository contract) > updates only the fields it is given
+✓ PgTaskRepository (TaskRepository contract) > lists what a user owns or is assigned, by due date
+</output>
+<p>The fake passes everything. PostgreSQL fails the duplicate test, and the message is the clue: "current transaction is aborted". When a statement fails inside a PostgreSQL transaction, the whole transaction is broken, and every following statement is refused until the rollback. In production the duplicate insert would not be inside a transaction, and the insert for "bola" would work. The test setup changed the behaviour it was supposed to test.</p>
+<warn title="TEST SETUP CAN CHANGE WHAT YOU TEST">Wrapping each test in a transaction also hides bugs in code that opens its own transactions, and it is invisible to a second connection. Use it only for tests that never expect an error from the database.</warn>
+<p>The fix: empty the table before each test. <code>TRUNCATE … RESTART IDENTITY</code> removes every row and resets the id counter, so the first task is id 1 again, and it takes about a millisecond. One more test checks a rule that only the database enforces, the <code>CHECK</code> on <code>status</code>: code <code>23514</code> is PostgreSQL's "check constraint violated":</p>
+<file name="tests/task.repository.test.ts" project="app">
+import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
+import { PGlite } from "@electric-sql/pglite";
+import { migrate } from "../src/db.js";
+import { PgTaskRepository } from "../src/task.repository.js";
+import { MemoryTaskRepository } from "./memory-task-repository.js";
+import { taskRepositoryContract } from "./task.repository.contract.js";
+
+const db = new PGlite();
+beforeAll(() => migrate(db));
+beforeEach(() => db.exec("TRUNCATE tasks RESTART IDENTITY"));
+afterAll(() => db.close());
+
+taskRepositoryContract("MemoryTaskRepository", async () => new MemoryTaskRepository());
+taskRepositoryContract("PgTaskRepository", async () => new PgTaskRepository(db));
+
+it("lets PostgreSQL refuse a status the code does not know", async () => {
+  const insert = "INSERT INTO tasks (owner_id, title, due_at, status) VALUES ('ada', 'Buy milk', now(), 'shipped')";
+  await expect(db.query(insert)).rejects.toMatchObject({ code: "23514" });
+});
+</file>
+<example file="run-repository-fixed.ts" project="app" browser="no">
+import { runTests } from "./vitest-run.js";
+
+await runTests("tests/task.repository.test.ts");
+</example>
+<output>
+✓ MemoryTaskRepository (TaskRepository contract) > creates an open, unassigned task and reads it back
+✓ MemoryTaskRepository (TaskRepository contract) > refuses the same title twice for one owner, but not for another
+✓ MemoryTaskRepository (TaskRepository contract) > updates only the fields it is given
+✓ MemoryTaskRepository (TaskRepository contract) > lists what a user owns or is assigned, by due date
+✓ PgTaskRepository (TaskRepository contract) > creates an open, unassigned task and reads it back
+✓ PgTaskRepository (TaskRepository contract) > refuses the same title twice for one owner, but not for another
+✓ PgTaskRepository (TaskRepository contract) > updates only the fields it is given
+✓ PgTaskRepository (TaskRepository contract) > lists what a user owns or is assigned, by due date
+✓ lets PostgreSQL refuse a status the code does not know
+</output>
+<p>The contract passes for both, so the service tests that use the fake are telling the truth. If someone changes the SQL sort order, or the fake forgets the duplicate rule, the contract fails for one implementation and not the other. <code>db.ts</code> is also what production runs to create the table, so the tests use the real schema, not a copy.</p>
+</section>
+
+<section>
+<h2 id="auth">Auth tests: sessions and tokens</h2>
+<p>Login is built on <code>@zudojs/auth</code>, from <a href="/learn/zudo-auth">the auth lesson</a>. The user directory keeps users in memory and hashes their passwords. It also answers <code>emailOf</code>, which the notifications need later:</p>
+<file name="src/users.ts" project="app">
+import { hashPassword, normalizeLoginIdentifier, toUserId, verifyPassword } from "@zudojs/auth";
+import type { AuthUser, UserId } from "@zudojs/auth";
+
+interface UserRow {
+  readonly user: AuthUser;
+  readonly passwordHash: string;
+}
+
+export function createUserDirectory() {
+  const byId = new Map<string, UserRow>();
+  const find = (email: string) => [...byId.values()].find((row) => row.user.email === normalizeLoginIdentifier(email));
+
+  return {
+    async register(id: string, email: string, password: string): Promise<AuthUser> {
+      const user: AuthUser = {
+        id: toUserId(id), email: normalizeLoginIdentifier(email), roles: ["user"], active: true, createdAt: new Date(),
+      };
+      byId.set(id, { user, passwordHash: await hashPassword(password) });
+      return user;
+    },
+    findUser: async (email: string) => find(email)?.user ?? null,
+    findUserById: async (id: UserId) => byId.get(id)?.user ?? null,
+    verifyPassword: async (id: UserId, password: string) => {
+      const row = byId.get(id);
+      return row !== undefined && verifyPassword(password, row.passwordHash);
+    },
+    emailOf: async (id: string) => byId.get(id)?.user.email,
+  };
+}
+
+export type UserDirectory = ReturnType<typeof createUserDirectory>;
+</file>
+<file name="src/auth.ts" project="app">
+import { createAuthService, createMemorySessionStore, createMemoryTokenRevocationStore } from "@zudojs/auth";
+import type { TokenConfig } from "@zudojs/auth";
+import type { UserDirectory } from "./users.js";
+
+export function createAuth(token: TokenConfig, users: UserDirectory) {
+  return createAuthService({
+    token,
+    sessionStore: createMemorySessionStore(),
+    sessionTtlSeconds: 30 * 60,
+    absoluteSessionTtlSeconds: 7 * 24 * 60 * 60,
+    findUser: users.findUser,
+    findUserById: users.findUserById,
+    verifyPassword: users.verifyPassword,
+    revocationStore: createMemoryTokenRevocationStore(),
+  });
+}
+
+export type Auth = ReturnType<typeof createAuth>;
+</file>
+<p>You do not test that HS256 works: the package's own tests do that. You test <em>your</em> decisions: the session lengths you chose, that logout really ends access, that the two login failures look the same. Test users and fake secrets go in a <strong>fixtures</strong> file, shared by every test that needs them. Secrets in tests are made-up constants, never your real ones:</p>
+<file name="tests/fixtures.ts" project="app">
+import type { TokenConfig } from "@zudojs/auth";
+import { createUserDirectory } from "../src/users.js";
+
+export const testTokens: TokenConfig = {
+  accessSecret: "test-access-secret-that-is-at-least-32-chars",
+  refreshSecret: "test-refresh-secret-that-is-at-least-32-chars",
+  accessTtl: 15 * 60,
+  refreshTtl: 7 * 24 * 60 * 60,
+  issuer: "task-api",
+  audience: "task-api",
+};
+
+export const PASSWORD = "correct horse battery staple";
+
+export async function usersWithAdaAndBola() {
+  const users = createUserDirectory();
+  await users.register("ada", "ada@example.com", PASSWORD);
+  await users.register("bola", "bola@example.com", PASSWORD);
+  return users;
+}
+</file>
+<p>Tokens and sessions depend on the time, and <code>createAuthService</code> has no option for a test clock. Vitest can replace the global <code>Date</code> instead: <code>vi.useFakeTimers({ toFake: ["Date"] })</code> fakes only <code>Date</code> and leaves real timers alone, and <code>vi.setSystemTime</code> moves it. <code>afterEach</code> puts the real clock back, even when a test fails:</p>
+<file name="tests/auth.test.ts" project="app">
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AuthError } from "@zudojs/auth";
+import { assertRejects } from "@zudojs/testing";
+import { createAuth, type Auth } from "../src/auth.js";
+import { PASSWORD, testTokens, usersWithAdaAndBola } from "./fixtures.js";
+
+let auth: Auth;
+const ada = { identifier: "ada@example.com", password: PASSWORD };
+
+beforeEach(async () => {
+  auth = createAuth(testTokens, await usersWithAdaAndBola());
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe("sessions and tokens", () => {
+  it("gives a token that names the user and the session", async () => {
+    const { tokens, sessionId } = await auth.login({ ...ada, identifier: " ADA@example.com " });
+    const payload = await auth.verifyToken(tokens.accessToken);
+    expect(payload).toMatchObject({ sub: "ada", sid: sessionId, roles: ["user"] });
+  });
+
+  it("answers a wrong password and an unknown email the same way", async () => {
+    const wrong = await assertRejects(() => auth.login({ ...ada, password: "guess" }));
+    const unknown = await assertRejects(() => auth.login({ identifier: "eve@example.com", password: PASSWORD }));
+    expect([wrong.message, (wrong as AuthError).statusCode]).toEqual([unknown.message, (unknown as AuthError).statusCode]);
+  });
+
+  it("kills the access token at logout, not 15 minutes later", async () => {
+    const { tokens, sessionId } = await auth.login(ada);
+    await auth.logout(sessionId, tokens.refreshToken);
+    await assertRejects(() => auth.verifyToken(tokens.accessToken), "no longer active");
+  });
+
+  it("treats a replayed refresh token as theft", async () => {
+    const { tokens } = await auth.login(ada);
+    const next = await auth.refresh(tokens.refreshToken);
+    await assertRejects(() => auth.refresh(tokens.refreshToken), "already been used");
+    await assertRejects(() => auth.verifyToken(next.accessToken), "no longer active");
+  });
+
+  it("expires the token after 15 minutes and the session after 30 idle ones", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const at = (time: string) => vi.setSystemTime(new Date(`2026-10-01T${time}:00Z`));
+    at("09:00");
+    const first = await auth.login(ada);
+    at("09:16");
+    await assertRejects(() => auth.verifyToken(first.tokens.accessToken), "Token expired");
+    const second = await auth.refresh(first.tokens.refreshToken);
+    await expect(auth.verifyToken(second.accessToken)).resolves.toMatchObject({ sub: "ada" });
+    at("09:47");
+    await assertRejects(() => auth.refresh(second.refreshToken), "no longer active");
+  });
+});
+</file>
+<example file="run-auth.ts" project="app" browser="no">
+import { runTests } from "./vitest-run.js";
+
+await runTests("tests/auth.test.ts");
+</example>
+<output>
+✓ sessions and tokens > gives a token that names the user and the session
+✓ sessions and tokens > answers a wrong password and an unknown email the same way
+✓ sessions and tokens > kills the access token at logout, not 15 minutes later
+✓ sessions and tokens > treats a replayed refresh token as theft
+✓ sessions and tokens > expires the token after 15 minutes and the session after 30 idle ones
+</output>
+<p>The last test lives through 47 minutes in a moment. At 09:16 the 15-minute access token is dead but the session is alive, so a refresh works. At 09:47 nobody has used the session for 31 minutes, so it is gone, and so is the refresh. That is the exact behaviour of the <code>sessionTtlSeconds</code> and <code>accessTtl</code> you configured.</p>
+<note>Faking the global <code>Date</code> works, but it is a blunt tool: it changes the time for every library in the test. An injected clock, as <code>createTaskService</code> takes, is easier to reason about. When a library does not accept one, fake <code>Date</code> for as short a time as possible.</note>
+</section>
+
+<section>
+<h2 id="events-queue">Event and queue tests</h2>
+<p>Assigning a task publishes <code>task.assigned</code>. The notifications module listens, looks up the assignee's e-mail address and queues a job. A separate processor sends the e-mail. The route never waits for the mail server:</p>
+<file name="src/notifications.ts" project="app">
+import { JobDuplicateError } from "@zudojs/errors";
+import type { Event, EventBus } from "@zudojs/events";
+import type { Queue } from "@zudojs/queue";
+
+export interface EmailJob {
+  readonly to: string;
+  readonly subject: string;
+}
+export interface Mailer {
+  send(to: string, subject: string): Promise<void>;
+}
+export interface Directory {
+  emailOf(userId: string): Promise<string | undefined>;
+}
+interface TaskAssigned {
+  readonly taskId: number;
+  readonly title: string;
+  readonly assigneeId: string;
+}
+
+export function registerNotifications(events: EventBus, emails: Queue<EmailJob>, directory: Directory): void {
+  events.on<Event<TaskAssigned>>("task.assigned", async ({ payload }) => {
+    const to = await directory.emailOf(payload.assigneeId);
+    if (to === undefined) return;
+    try {
+      await emails.add("send-email", { to, subject: `New task for you: ${payload.title}` }, {
+        deduplicationKey: `assigned:${payload.taskId}:${payload.assigneeId}`,
+      });
+    } catch (error) {
+      if (!(error instanceof JobDuplicateError)) throw error;
+    }
+  });
+}
+
+export function processEmails(emails: Queue<EmailJob>, mailer: Mailer): void {
+  emails.process("send-email", async (job) => {
+    await mailer.send(job.data.to, job.data.subject);
+  });
+}
+</file>
+<p>Three things can go wrong here: no job (the handler was never registered, or the lookup failed), two jobs (the same event arrived twice), and a job that fails and is lost. The tests use a <code>createTestEventBus</code> and a <code>createTestQueue</code>, which are real buses and queues that also record everything.</p>
+<p>A queue runs its jobs in the background, on its own timers. A test that "waits a bit" for them is slow when the wait is long and flaky when it is short. Instead, create the queue with <code>autoProcess: false</code> and run the jobs yourself. <code>claimNextJob</code> takes the next due job and <code>runJob</code> runs it through the processor, retries and dead-letter handling included:</p>
+<file name="tests/drain.ts" project="app">
+import type { Queue } from "@zudojs/queue";
+
+/** Runs every job, including retries, until nothing is left to do. */
+export async function drain<T>(queue: Queue<T>): Promise<void> {
+  for (;;) {
+    const job = await queue.claimNextJob();
+    if (job !== null) {
+      await queue.runJob(job);
+      continue;
+    }
+    const stats = await queue.getStats();
+    if (stats.retrying === 0 && stats.delayed === 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+</file>
+<p>The retry policy (<code>attempts</code> and <code>backoff</code>) is set on the queue, not in <code>notifications.ts</code>. Production passes exponential backoff starting at a second; the test passes a 1 ms fixed backoff, so three attempts take no time. For the mailer the tests use Vitest's <code>vi.fn</code>, because <code>mockRejectedValueOnce</code> makes "fail once, then work" a one-liner:</p>
+<file name="tests/notifications.test.ts" project="app">
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createFixedBackoff, createQueueName } from "@zudojs/queue";
+import { createTestEventBus, createTestQueue } from "@zudojs/testing";
+import type { TestEventBus, TestQueue } from "@zudojs/testing";
+import { processEmails, registerNotifications, type EmailJob, type Mailer } from "../src/notifications.js";
+import { drain } from "./drain.js";
+
+const directory = { emailOf: async (id: string) => ({ bola: "bola@example.com" })[id] };
+const assigned = (taskId: number, assigneeId: string) =>
+  ({ type: "task.assigned", payload: { taskId, title: "Buy milk", assigneeId } });
+
+let events: TestEventBus;
+let emails: TestQueue<EmailJob>;
+let send: ReturnType<typeof vi.fn<Mailer["send"]>>;
+
+beforeEach(() => {
+  events = createTestEventBus();
+  emails = createTestQueue<EmailJob>(createQueueName("emails"), {
+    autoProcess: false,
+    defaultJobOptions: { attempts: 3, backoff: createFixedBackoff(1) },
+  });
+  send = vi.fn<Mailer["send"]>();
+  registerNotifications(events, emails, directory);
+});
+afterEach(async () => {
+  events.dispose();
+  await emails.close();
+});
+
+describe("task.assigned -> email job", () => {
+  it("queues one email for the assignee", async () => {
+    await events.publishEvent(assigned(1, "bola"));
+    expect(emails.findByName("send-email").map((r) => r.job.data))
+      .toEqual([{ to: "bola@example.com", subject: "New task for you: Buy milk" }]);
+  });
+
+  it("queues nothing for a user without an email address", async () => {
+    await events.publishEvent(assigned(1, "ghost"));
+    expect(emails.jobs).toHaveLength(0);
+  });
+
+  it("queues the same assignment only once", async () => {
+    await events.publishEvent(assigned(1, "bola"));
+    const result = await events.publishEvent(assigned(1, "bola"));
+    expect(result.failed).toBe(0);
+    expect(emails.jobs).toHaveLength(1);
+  });
+});
+
+describe("email worker", () => {
+  it("retries when the mail server fails, and sends once", async () => {
+    send.mockRejectedValueOnce(new Error("SMTP 421 try again later")).mockResolvedValue(undefined);
+    processEmails(emails, { send });
+    await events.publishEvent(assigned(1, "bola"));
+    await drain(emails);
+    expect(send.mock.calls).toEqual([
+      ["bola@example.com", "New task for you: Buy milk"],
+      ["bola@example.com", "New task for you: Buy milk"],
+    ]);
+    expect(await emails.getStats()).toMatchObject({ succeeded: 1, retried: 1, deadLettered: 0 });
+  });
+
+  it("dead-letters the job after three failures", async () => {
+    send.mockRejectedValue(new Error("SMTP 550 mailbox unavailable"));
+    processEmails(emails, { send });
+    await events.publishEvent(assigned(1, "bola"));
+    await drain(emails);
+    expect(send).toHaveBeenCalledTimes(3);
+    const [dead] = await emails.getDeadLetterJobs();
+    expect(dead?.job.data.to).toBe("bola@example.com");
+  });
+});
+</file>
+<example file="run-notifications.ts" project="app" browser="no">
+import { runTests } from "./vitest-run.js";
+
+await runTests("tests/notifications.test.ts");
+</example>
+<output>
+✓ task.assigned -> email job > queues one email for the assignee
+✓ task.assigned -> email job > queues nothing for a user without an email address
+✓ task.assigned -> email job > queues the same assignment only once
+✓ email worker > retries when the mail server fails, and sends once
+✓ email worker > dead-letters the job after three failures
+</output>
+<p>The duplicate test publishes the same event twice and still finds one job: the <code>deduplicationKey</code> refused the second job, and the handler caught <code>JobDuplicateError</code> instead of failing (<code>result.failed</code> is 0). The last two tests prove that a mail outage is survived and that a job that keeps failing ends up in the dead-letter list, where someone can see it, instead of vanishing.</p>
+</section>
+
+<section>
+<h2 id="cqrs">CQRS tests</h2>
+<p>The HTTP layer does not call the service directly. It sends commands and queries, as in <a href="/learn/zudo-cqrs">the CQRS lesson</a>. Each handler is one line, and the user always comes from the execution context:</p>
+<file name="src/task.cqrs.ts" project="app">
+import { createCommandBus, createQueryBus, errorMiddleware } from "@zudojs/cqrs";
+import type { CommandOf, CqrsContext, CqrsMiddleware, QueryOf } from "@zudojs/cqrs";
+import { AuthenticationError } from "@zudojs/errors";
+import type { Task, TaskStatus } from "./task.repository.js";
+import type { TaskService } from "./task.service.js";
+
+export type CreateTask = CommandOf<"CreateTask", { title: string; dueInDays: number }>;
+export type AssignTask = CommandOf<"AssignTask", { taskId: number; assigneeId: string }>;
+export type CompleteTask = CommandOf<"CompleteTask", { taskId: number }>;
+export type ListMyTasks = QueryOf<"ListMyTasks", { status?: TaskStatus }>;
+
+function userOf(context?: CqrsContext): string {
+  if (!context?.userId) throw new AuthenticationError("Sign in first");
+  return context.userId;
+}
+
+export function createTaskBuses(service: TaskService, audit: CqrsMiddleware[] = []) {
+  const commands = createCommandBus({ middleware: [...audit, errorMiddleware()] });
+  const queries = createQueryBus({ middleware: [errorMiddleware()] });
+
+  commands.register<CreateTask, Task>("CreateTask", (c, ctx) => service.create(userOf(ctx), c.title, c.dueInDays));
+  commands.register<AssignTask, Task>("AssignTask", (c, ctx) => service.assign(userOf(ctx), c.taskId, c.assigneeId));
+  commands.register<CompleteTask, Task>("CompleteTask", (c, ctx) => service.complete(userOf(ctx), c.taskId));
+  queries.register<ListMyTasks, Task[]>("ListMyTasks", (q, ctx) => service.list(userOf(ctx), q.status));
+
+  return { commands, queries };
+}
+
+export type TaskBuses = ReturnType<typeof createTaskBuses>;
+</file>
+<p>The handlers are too thin to have rules of their own, so what is there to test? The <em>wiring</em>: that every command is registered, that identity comes only from the context, that middleware sees every command, and that an unexpected error does not leak its details. These tests use the real service with the fake repository:</p>
+<file name="tests/task.cqrs.test.ts" project="app">
+import { beforeEach, describe, expect, it } from "vitest";
+import { createExecutionContext, withUser } from "@zudojs/cqrs";
+import type { CqrsMiddleware } from "@zudojs/cqrs";
+import { BaseError } from "@zudojs/errors";
+import { assertRejects, createTestEventBus } from "@zudojs/testing";
+import { createTaskBuses, type CompleteTask, type CreateTask, type ListMyTasks, type TaskBuses } from "../src/task.cqrs.js";
+import type { Task } from "../src/task.repository.js";
+import { createTaskService, type TaskService } from "../src/task.service.js";
+import { MemoryTaskRepository } from "./memory-task-repository.js";
+
+const request = createExecutionContext({ source: "http" });
+const ada = withUser(request, "ada");
+const chidi = withUser(request, "chidi");
+
+let audit: string[];
+let buses: TaskBuses;
+
+function build(service?: TaskService): TaskBuses {
+  const real = createTaskService({
+    tasks: new MemoryTaskRepository(), events: createTestEventBus(), now: () => new Date("2026-10-01T09:00:00Z"),
+  });
+  const auditor: CqrsMiddleware = async (req, ctx, next) => {
+    audit.push(`${ctx?.userId ?? "anonymous"} ${req.type}`);
+    return next(req, ctx);
+  };
+  return createTaskBuses(service ?? real, [auditor]);
+}
+
+beforeEach(() => {
+  audit = [];
+  buses = build();
+});
+
+describe("task buses", () => {
+  it("has a handler for every command the HTTP layer sends", () => {
+    expect([...buses.commands.getCommandTypes()].sort()).toEqual(["AssignTask", "CompleteTask", "CreateTask"]);
+    expect(buses.queries.has("ListMyTasks")).toBe(true);
+  });
+
+  it("takes the user from the context, never from the payload", async () => {
+    const task = await buses.commands.execute<CreateTask, Task>({ type: "CreateTask", title: "Buy milk", dueInDays: 1 }, ada);
+    const forged = { type: "CompleteTask", taskId: task.id, userId: "ada" } as CompleteTask;
+    await assertRejects(() => buses.commands.execute(forged, chidi), "not found");
+    await assertRejects(() => buses.commands.execute(forged), "Sign in first");
+    expect(audit).toEqual(["ada CreateTask", "chidi CompleteTask", "anonymous CompleteTask"]);
+  });
+
+  it("shows a write to the next read", async () => {
+    await buses.commands.execute<CreateTask, Task>({ type: "CreateTask", title: "Buy milk", dueInDays: 1 }, ada);
+    const mine = await buses.queries.execute<ListMyTasks, Task[]>({ type: "ListMyTasks" }, ada);
+    const theirs = await buses.queries.execute<ListMyTasks, Task[]>({ type: "ListMyTasks" }, chidi);
+    expect(mine.map((t) => t.title)).toEqual(["Buy milk"]);
+    expect(theirs).toEqual([]);
+  });
+
+  it("hides the details of an unexpected failure", async () => {
+    const broken = { create: async () => { throw new Error("connection reset by 10.0.0.12:5432"); } } as unknown as TaskService;
+    buses = build(broken);
+    const error = await assertRejects(
+      () => buses.commands.execute({ type: "CreateTask", title: "Buy milk", dueInDays: 1 }, ada),
+      "connection reset",
+    );
+    expect(error).toBeInstanceOf(BaseError);
+    expect(error).toMatchObject({ name: "CqrsError", statusCode: 500, expose: false });
+  });
+});
+</file>
+<example file="run-cqrs.ts" project="app" browser="no">
+import { runTests } from "./vitest-run.js";
+
+await runTests("tests/task.cqrs.test.ts");
+</example>
+<output>
+✓ task buses > has a handler for every command the HTTP layer sends
+✓ task buses > takes the user from the context, never from the payload
+✓ task buses > shows a write to the next read
+✓ task buses > hides the details of an unexpected failure
+</output>
+<ul>
+<li>The forged command carries <code>userId: "ada"</code>, as if Chidi had put it in a request body. The handler ignores it and uses the context, so Chidi gets "not found". The <code>as CompleteTask</code> cast is deliberate: TypeScript would refuse the extra field, and the test lies to the compiler to prove the <em>runtime</em> is safe too.</li>
+<li>The audit log shows all three attempts, including the anonymous one: middleware runs before the handler refuses.</li>
+<li>The last test replaces the service with a broken stub. <code>errorMiddleware</code> wraps the unknown error in a <code>CqrsError</code> with status 500 and <code>expose: false</code>. The message still names the database host, which is fine for your logs; the HTTP layer must not send it to the client. The next section checks that.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="http">HTTP tests</h2>
+<p>The HTTP layer parses bodies, checks the token, turns the URL into a command and maps errors to status codes:</p>
+<file name="src/http.ts" project="app">
+import { AuthError, parseBearerToken } from "@zudojs/auth";
+import { createExecutionContext, withUser } from "@zudojs/cqrs";
+import type { CqrsContext } from "@zudojs/cqrs";
+import { badRequest, createResponseContext, createRouter, notFound } from "@zudojs/http";
+import type { HttpMiddleware, HttpRouter, HttpRouterContext } from "@zudojs/http";
+import { schema } from "@zudojs/schema";
+import type { Auth } from "./auth.js";
+import type { AssignTask, CompleteTask, CreateTask, ListMyTasks, TaskBuses } from "./task.cqrs.js";
+
+const Login = schema.object({ email: schema.string().max(254), password: schema.string().max(1024) });
+const NewTask = schema.object({ title: schema.string().max(200), dueInDays: schema.number().int() });
+const Assign = schema.object({ assigneeId: schema.string().min(1).max(64) });
+
+function body(ctx: HttpRouterContext): unknown {
+  try {
+    return JSON.parse(new TextDecoder().decode(ctx.request.body as Uint8Array));
+  } catch {
+    throw badRequest("Body must be JSON");
+  }
+}
+function taskId(ctx: HttpRouterContext): number {
+  const id = Number(ctx.params.id);
+  if (!Number.isSafeInteger(id) || id < 1) throw notFound("Task not found");
+  return id;
+}
+const json = (status: number, data: unknown) => createResponseContext().setStatus(status).json(data);
+
+export function createHttpApi(auth: Auth, { commands, queries }: TaskBuses): HttpRouter {
+  const requireUser: HttpMiddleware = async (ctx, next) => {
+    const token = parseBearerToken(ctx.request.getHeader("authorization"));
+    const payload = token === null ? null : await auth.verifyToken(token).catch((error: unknown) => {
+      if (error instanceof AuthError) return null;
+      throw error;
+    });
+    if (payload === null) return json(401, { error: "Login required" });
+    ctx.state.set("cqrs", withUser(createExecutionContext({ source: "http" }), payload.sub));
+    return next();
+  };
+  const as = (ctx: HttpRouterContext) => ctx.state.get("cqrs") as CqrsContext;
+  const guarded = { middleware: [requireUser] };
+  const router = createRouter();
+
+  router.post("/auth/login", async (ctx) => {
+    const { email, password } = Login.parse(body(ctx));
+    const { tokens } = await auth.login({ identifier: email, password });
+    return json(200, { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken });
+  });
+  router.post("/tasks", async (ctx) => {
+    const input = NewTask.parse(body(ctx));
+    return json(201, await commands.execute<CreateTask, unknown>({ type: "CreateTask", ...input }, as(ctx)));
+  }, guarded);
+  router.get("/tasks", async (ctx) => {
+    const status = ctx.query.status === "open" || ctx.query.status === "done" ? ctx.query.status : undefined;
+    return json(200, await queries.execute<ListMyTasks, unknown>({ type: "ListMyTasks", status }, as(ctx)));
+  }, guarded);
+  router.post("/tasks/:id/assign", async (ctx) => {
+    const { assigneeId } = Assign.parse(body(ctx));
+    return json(200, await commands.execute<AssignTask, unknown>({ type: "AssignTask", taskId: taskId(ctx), assigneeId }, as(ctx)));
+  }, guarded);
+  router.post("/tasks/:id/complete", async (ctx) => {
+    return json(200, await commands.execute<CompleteTask, unknown>({ type: "CompleteTask", taskId: taskId(ctx) }, as(ctx)));
+  }, guarded);
+  return router;
+}
+</file>
+<p>One file builds the whole app from its parts. This is the <strong>composition root</strong>, from <a href="/learn/zudo-di-architecture">the DI architecture lesson</a>. Everything that differs between production and a test comes in through <code>AppDeps</code>: the database, the users, the mailer, the token secrets, the clock and the queue options:</p>
+<file name="src/app.ts" project="app">
+import type { TokenConfig } from "@zudojs/auth";
+import { createEventBus } from "@zudojs/events";
+import { createExponentialBackoff, createInMemoryQueue, createQueueName } from "@zudojs/queue";
+import type { QueueOptions } from "@zudojs/queue";
+import { createAuth } from "./auth.js";
+import { createHttpApi } from "./http.js";
+import { processEmails, registerNotifications, type EmailJob, type Mailer } from "./notifications.js";
+import { createTaskBuses } from "./task.cqrs.js";
+import { PgTaskRepository, type Queryable } from "./task.repository.js";
+import { createTaskService } from "./task.service.js";
+import type { UserDirectory } from "./users.js";
+
+export interface AppDeps {
+  readonly db: Queryable;
+  readonly users: UserDirectory;
+  readonly mailer: Mailer;
+  readonly tokens: TokenConfig;
+  readonly now?: () => Date;
+  readonly emailQueue?: QueueOptions;
+}
+
+/** The composition root: the one place that builds and connects every part. */
+export function createApp(deps: AppDeps) {
+  const events = createEventBus();
+  const emails = createInMemoryQueue<EmailJob>(createQueueName("emails"), deps.emailQueue ?? {
+    defaultJobOptions: { attempts: 5, backoff: createExponentialBackoff(1_000, { maxDelay: 60_000 }) },
+  });
+  const service = createTaskService({ tasks: new PgTaskRepository(deps.db), events, now: deps.now ?? (() => new Date()) });
+  const buses = createTaskBuses(service);
+  const auth = createAuth(deps.tokens, deps.users);
+  registerNotifications(events, emails, deps.users);
+  processEmails(emails, deps.mailer);
+
+  return {
+    router: createHttpApi(auth, buses),
+    emails,
+    async dispose(): Promise<void> {
+      await emails.close();
+      events.dispose();
+    },
+  };
+}
+</file>
+<p>Because the tests build the app with the same <code>createApp</code> as production, they test the real wiring. A test <strong>harness</strong> hides the setup. The slow parts (PostgreSQL and the password hashes) are made once per file; each test gets a fresh app with empty tables, new buses, a new queue and no sessions:</p>
+<file name="tests/app-harness.ts" project="app">
+import { vi } from "vitest";
+import { PGlite } from "@electric-sql/pglite";
+import { createCleanupManager, createHttpTestClient } from "@zudojs/testing";
+import { createApp } from "../src/app.js";
+import { migrate } from "../src/db.js";
+import type { Mailer } from "../src/notifications.js";
+import type { UserDirectory } from "../src/users.js";
+import { PASSWORD, testTokens, usersWithAdaAndBola } from "./fixtures.js";
+
+/** Slow parts, made once per test file: the database and the password hashes. */
+export async function createSharedParts() {
+  const db = new PGlite();
+  await migrate(db);
+  return { db, users: await usersWithAdaAndBola() };
+}
+
+/** A fresh Task API for one test: empty tables, new buses, queue and sessions. */
+export async function startTestApp({ db, users }: { db: PGlite; users: UserDirectory }) {
+  await db.exec("TRUNCATE tasks RESTART IDENTITY");
+  const cleanup = createCleanupManager();
+  const mailer = { send: vi.fn<Mailer["send"]>().mockResolvedValue(undefined) };
+  const app = createApp({
+    db, users, mailer, tokens: testTokens,
+    now: () => new Date("2026-10-01T09:00:00Z"),
+    emailQueue: { autoProcess: false },
+  });
+  cleanup.register(() => app.dispose(), "app");
+  const client = createHttpTestClient(app.router, { cleanup });
+
+  async function login(email: string): Promise<string> {
+    const res = await client.post("/auth/login").send({ email, password: PASSWORD }).expect(200);
+    return (res.body as { accessToken: string }).accessToken;
+  }
+  return { app, client, mailer, login, dispose: () => cleanup.dispose() };
+}
+</file>
+<p>The HTTP tests check what only this layer decides: the login check, body validation and the status code of every rule. <code>vi.spyOn(shared.db, "query")</code> makes the real database fail once, with an error that names an internal host:</p>
+<file name="tests/http.test.ts" project="app">
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createSharedParts, startTestApp } from "./app-harness.js";
+
+let shared: Awaited<ReturnType<typeof createSharedParts>>;
+let t: Awaited<ReturnType<typeof startTestApp>>;
+let ada: string;
+let bola: string;
+
+beforeAll(async () => {
+  shared = await createSharedParts();
+});
+beforeEach(async () => {
+  t = await startTestApp(shared);
+  ada = await t.login("ada@example.com");
+  bola = await t.login("bola@example.com");
+});
+afterEach(async () => {
+  vi.restoreAllMocks();
+  await t.dispose();
+});
+afterAll(() => shared.db.close());
+
+describe("HTTP API", () => {
+  it("wants a valid token on every task route", async () => {
+    await t.client.get("/tasks").expect(401).expectJson({ error: "Login required" });
+    await t.client.get("/tasks").auth("not-a-token").expect(401);
+  });
+
+  it("answers 201 with the task, 400 for a body it cannot use, 409 for a duplicate", async () => {
+    await t.client.post("/tasks").auth(ada).send({ title: "Buy milk", dueInDays: 1 })
+      .expect(201).expectJson({ id: 1, title: "Buy milk", status: "open", ownerId: "ada" });
+    await t.client.post("/tasks").auth(ada).send("title=Buy milk").expect(400);
+    await t.client.post("/tasks").auth(ada).send({ title: "Buy milk", dueInDays: "soon" }).expect(400);
+    await t.client.post("/tasks").auth(ada).send({ title: "Buy milk", dueInDays: 1 }).expect(409);
+  });
+
+  it("maps the service's rules to status codes", async () => {
+    await t.client.post("/tasks").auth(ada).send({ title: "Buy milk", dueInDays: 1 }).expect(201);
+    await t.client.post("/tasks/1/complete").auth(bola).expect(404);
+    await t.client.post("/tasks/abc/complete").auth(ada).expect(404);
+    await t.client.post("/tasks/1/assign").auth(ada).send({ assigneeId: "bola" }).expect(200);
+    await t.client.post("/tasks/1/assign").auth(bola).send({ assigneeId: "bola" }).expect(403);
+    await t.client.post("/tasks/1/complete").auth(bola).expect(200).expectJson({ status: "done" });
+    await t.client.post("/tasks/1/complete").auth(ada).expect(409);
+  });
+
+  it("never shows the reason for a 500", async () => {
+    vi.spyOn(shared.db, "query").mockRejectedValueOnce(new Error("connection reset by 10.0.0.12:5432"));
+    await t.client.get("/tasks").auth(ada).expect(500).expectJson({ error: "Internal Server Error" });
+  });
+});
+</file>
+<example file="run-http.ts" project="app" browser="no">
+import { runTests } from "./vitest-run.js";
+
+await runTests("tests/http.test.ts");
+</example>
+<output>
+✓ HTTP API > wants a valid token on every task route
+✓ HTTP API > answers 201 with the task, 400 for a body it cannot use, 409 for a duplicate
+✓ HTTP API > maps the service's rules to status codes
+✓ HTTP API > never shows the reason for a 500
+</output>
+<p>One test per behaviour of the layer: 401 for a missing or broken token, 400 for a body that is not JSON or has a wrong type, 409 for the duplicate title from the database, 404 for a task you cannot see or an id that is not a number, 403 for a non-owner assigning, and a 500 whose body is only <code>{ error: "Internal Server Error" }</code>. The database's message, host included, never reaches the client. <code>vi.restoreAllMocks()</code> in <code>afterEach</code> removes the spy, so the next test gets a working database.</p>
+</section>
+
+<section>
+<h2 id="e2e">An end-to-end workflow</h2>
+<p>Every layer is tested. One question is left: do they work <em>together</em>, in the order a real user uses them? An end-to-end test tells one complete story through the public interface, HTTP, and checks what the user would see, including the e-mail.</p>
+<reason title="What makes an end-to-end test flaky?">
+<p>A <strong>flaky</strong> test passes and fails without any change to the code. Before writing the workflow test, list what could make its result change from one run to the next, and decide how to remove each cause.</p>
+<answer>
+<ul>
+<li><strong>Time.</strong> The due date depends on "now". The harness passes a fixed <code>now</code>, so the test can check the exact date.</li>
+<li><strong>Background work.</strong> The e-mail is sent by a queue on its own timers. With <code>autoProcess: false</code> and <code>drain</code>, the test decides when jobs run, and <code>drain</code> returns only when nothing is left.</li>
+<li><strong>Shared state.</strong> Rows or sessions left over from another test. The harness truncates the table and builds a new app, with new sessions and a new queue, for every test.</li>
+<li><strong>Ports and the network.</strong> The HTTP test client starts the server on a free port, and the mail server is a fake. Nothing depends on another program on the machine.</li>
+<li><strong>Order.</strong> Ids are only predictable because the table is reset; the test reads the id from the response anyway, instead of assuming 1.</li>
+</ul>
+</answer>
+</reason>
+<file name="tests/workflow.e2e.test.ts" project="app">
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
+import { createSharedParts, startTestApp } from "./app-harness.js";
+import { drain } from "./drain.js";
+
+let shared: Awaited<ReturnType<typeof createSharedParts>>;
+let t: Awaited<ReturnType<typeof startTestApp>>;
+
+beforeAll(async () => {
+  shared = await createSharedParts();
+});
+beforeEach(async () => {
+  t = await startTestApp(shared);
+});
+afterEach(() => t.dispose());
+afterAll(() => shared.db.close());
+
+it("Ada plans a task, Bola is told, does it, and Ada sees it done", async () => {
+  const ada = await t.login("ada@example.com");
+  const bola = await t.login("bola@example.com");
+
+  const created = await t.client.post("/tasks").auth(ada).send({ title: "Restock the shop", dueInDays: 2 }).expect(201);
+  const { id } = created.body as { id: number };
+  await t.client.post(`/tasks/${id}/assign`).auth(ada).send({ assigneeId: "bola" }).expect(200);
+
+  await drain(t.app.emails);
+  expect(t.mailer.send.mock.calls).toEqual([["bola@example.com", "New task for you: Restock the shop"]]);
+
+  await t.client.get("/tasks?status=open").auth(bola).expect(200).expectJson([{ id, assigneeId: "bola" }]);
+  await t.client.post(`/tasks/${id}/complete`).auth(bola).expect(200);
+  await t.client.get("/tasks?status=done").auth(ada).expect(200)
+    .expectJson([{ id, status: "done", dueAt: "2026-10-03T09:00:00.000Z" }]);
+  await t.client.get("/tasks?status=open").auth(ada).expect(200).expectJson([]);
+});
+</file>
+<example file="run-workflow.ts" project="app" browser="no">
+import { runTests } from "./vitest-run.js";
+
+await runTests("tests/workflow.e2e.test.ts");
+</example>
+<output>
+✓ Ada plans a task, Bola is told, does it, and Ada sees it done
+</output>
+<p>This single test crosses every layer: two real logins, a command through HTTP, the service rule, a PostgreSQL write, an event, a queued job, the processor, the fake mail server, a query filtered by status, and the due date computed from the fixed clock. If <code>createApp</code> forgot <code>registerNotifications</code>, every earlier test would still pass and this one would fail.</p>
+<p>Keep end-to-end tests few and focused on the most important journeys: signing in, the main thing users do, paying. They are the slowest tests you have, and when one fails it only tells you <em>that</em> the journey broke. The layer tests tell you <em>where</em>.</p>
+</section>
+
+<section>
+<h2 id="suite">The whole suite, and running it in CI</h2>
+<p>On your computer, run everything at once. Vitest runs the files in parallel, each in its own worker process with its own PGlite:</p>
+<shell title="Terminal on your computer">
+$ npx vitest run
+
+ RUN  v5.0.1 ~/task-api
+
+
+ Test Files  7 passed (7)
+      Tests  36 passed (36)
+   Start at  23:37:38
+   Duration  9.62s (tests 73%, import 25%, transform 2%)
+</shell>
+<p>While you work on one layer, run only its file, for example <code>npx vitest run tests/task.service.test.ts</code>, or keep <code>npx vitest</code> running in watch mode. Before you push, run everything.</p>
+<h3>Production concerns</h3>
+<ul>
+<li><strong>Keep the slow tests separate.</strong> The naming convention <code>*.e2e.test.ts</code> lets CI run fast tests on every push and the end-to-end tests on every merge: <code>npx vitest run --exclude "**/*.e2e.test.ts"</code>.</li>
+<li><strong>One database per worker.</strong> Parallel test files must never share a database, or one file's <code>TRUNCATE</code> deletes another file's rows mid-test. PGlite gives each file its own. Against a real PostgreSQL server in CI, create one database per worker (Vitest sets <code>VITEST_POOL_ID</code> for this).</li>
+<li><strong>Run the real migrations.</strong> The tests created the table with the same <code>migrate</code> function as production. A hand-written test schema drifts from the real one.</li>
+<li><strong>Never point tests at production.</strong> Tests truncate tables. Test settings, secrets included, are constants in the test files or come from a separate CI configuration.</li>
+<li><strong>Treat a flaky test as a bug.</strong> Find the cause (time, order, shared state, background work) and remove it. A suite that is "usually green" teaches everyone to ignore red.</li>
+<li><strong>Coverage is a map, not a goal.</strong> <code>npx vitest run --coverage</code> shows which lines no test runs. Look there for untested branches, such as the <code>JobDuplicateError</code> catch; do not chase 100%.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Sign out everywhere">
+<p>After a password change, the Task API calls <code>auth.logoutAll(userId)</code>. Write an auth test that logs Ada in on a laptop and a phone, calls <code>logoutAll</code>, and checks that both access tokens are refused, while Bola's session keeps working.</p>
+<solution>
+<file name="tests/logout-all.test.ts" project="app">
+import { expect, it } from "vitest";
+import { toUserId } from "@zudojs/auth";
+import { assertRejects } from "@zudojs/testing";
+import { createAuth } from "../src/auth.js";
+import { PASSWORD, testTokens, usersWithAdaAndBola } from "./fixtures.js";
+
+it("signs Ada out on every device, and nobody else", async () => {
+  const auth = createAuth(testTokens, await usersWithAdaAndBola());
+  const laptop = await auth.login({ identifier: "ada@example.com", password: PASSWORD });
+  const phone = await auth.login({ identifier: "ada@example.com", password: PASSWORD });
+  const bola = await auth.login({ identifier: "bola@example.com", password: PASSWORD });
+
+  await auth.logoutAll(toUserId("ada"));
+
+  await assertRejects(() => auth.verifyToken(laptop.tokens.accessToken), "no longer active");
+  await assertRejects(() => auth.verifyToken(phone.tokens.accessToken), "no longer active");
+  await expect(auth.verifyToken(bola.tokens.accessToken)).resolves.toMatchObject({ sub: "bola" });
+});
+</file>
+<example file="run-logout-all.ts" project="app" browser="no">
+import { runTests } from "./vitest-run.js";
+
+await runTests("tests/logout-all.test.ts");
+</example>
+<output>
+✓ signs Ada out on every device, and nobody else
+</output>
+<p>Checking that Bola is <em>not</em> affected matters as much as checking that Ada is: an implementation that deleted every session would pass the first half.</p>
+</solution>
+</exercise>
+<exercise title="Pin down a tie in the contract">
+<p>Two tasks with the same due date: in which order do they come back? The contract does not say, so the fake and PostgreSQL could disagree, and some day a user would see their list jump around. Decide on "by id" and write a test that runs against both repositories.</p>
+<solution>
+<file name="tests/ordering.test.ts" project="app">
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { PGlite } from "@electric-sql/pglite";
+import { migrate } from "../src/db.js";
+import { PgTaskRepository, type TaskRepository } from "../src/task.repository.js";
+import { MemoryTaskRepository } from "./memory-task-repository.js";
+
+const db = new PGlite();
+beforeAll(() => migrate(db));
+afterAll(() => db.close());
+
+const makers: [string, () => TaskRepository][] = [
+  ["MemoryTaskRepository", () => new MemoryTaskRepository()],
+  ["PgTaskRepository", () => new PgTaskRepository(db)],
+];
+
+describe.each(makers)("%s", (_name, make) => {
+  it("lists tasks with the same due date by id", async () => {
+    const repo = make();
+    const due = new Date("2026-10-05T09:00:00Z");
+    const packBags = await repo.create({ ownerId: "bola", title: "Pack bags", dueAt: due });
+    await repo.create({ ownerId: "bola", title: "Book taxi", dueAt: due });
+    await repo.create({ ownerId: "bola", title: "Call Ada", dueAt: due });
+    await repo.update(packBags.id, { assigneeId: "ada" });
+    expect((await repo.listVisibleTo("bola")).map((t) => t.title)).toEqual(["Pack bags", "Book taxi", "Call Ada"]);
+  });
+});
+</file>
+<example file="run-ordering.ts" project="app" browser="no">
+import { runTests } from "./vitest-run.js";
+
+await runTests("tests/ordering.test.ts");
+</example>
+<output>
+✓ MemoryTaskRepository > lists tasks with the same due date by id
+✓ PgTaskRepository > lists tasks with the same due date by id
+</output>
+<p>Both pass, because the SQL says <code>ORDER BY due_at, id</code> and the fake sorts by <code>dueAt</code>, then <code>id</code>. The <code>update</code> in the middle is what gives the test its teeth. PostgreSQL writes an updated row to a new place in the table, and without a tie-breaker it returns tied rows in storage order. Remove <code>, id</code> from the SQL and this test fails for PostgreSQL with "Book taxi" first; without the update it would still pass by luck. In a real project, add the test to the contract function itself.</p>
+</solution>
+</exercise>
+<exercise title="Which test catches it?">
+<p>For each bug, name the cheapest test in this lesson that fails: (1) someone shortens the SQL in <code>listVisibleTo</code> to <code>ORDER BY id</code>; (2) the route for <code>POST /tasks/:id/complete</code> loses its <code>guarded</code> option; (3) <code>createApp</code> forgets to call <code>processEmails</code>; (4) the service lets the assignee assign; (5) the notifications handler queues <code>to: payload.assigneeId</code> instead of the looked-up address.</p>
+<solution>
+<ol>
+<li>The repository contract, "lists what a user owns or is assigned, by due date", for <code>PgTaskRepository</code> only. The service tests stay green, because they use the fake.</li>
+<li>The HTTP test "maps the service's rules to status codes". Without the middleware no user reaches the context, so Bola's valid token gets <code>401 {"error":"Sign in first"}</code> from the command bus instead of the expected 404. That is <strong>defence in depth</strong>: even with the login check missing, the CQRS layer refused to act for nobody.</li>
+<li>Only the end-to-end test: the job is queued, but no processor runs it, and the mailer is never called. Every layer test builds its own wiring, so none of them notices.</li>
+<li>The service unit test "lets only the owner assign, and announces it".</li>
+<li>The notifications test "queues one email for the assignee", which compares the job data exactly.</li>
+</ol>
+<p>Notice bug 3: a composition mistake can only be caught by a test that uses the composition root. That is the one job no layer test can do.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Every layer can break in a way only its own tests see. Ask what each layer decides, what it trusts, what a bug looks like, and which dependency must be replaced.</li>
+<li>Service unit tests use a fake repository, a recording event bus and a test clock. A repository contract suite runs against the fake and PGlite, so the fake stays honest.</li>
+<li>Test setup can change behaviour: a per-test transaction broke the duplicate test. <code>TRUNCATE … RESTART IDENTITY</code> resets a shared database cheaply.</li>
+<li>Test your auth decisions (session lengths, logout, equal failures) with fake <code>Date</code>; run queue jobs yourself with <code>autoProcess: false</code> and <code>drain</code>; test CQRS wiring and identity from the context.</li>
+<li>HTTP and end-to-end tests build the app with the production <code>createApp</code>, with a harness that shares slow parts and resets the rest. Keep end-to-end tests few; they find wiring bugs nothing else can.</li>
+</ul>
+<p>Next, you make the Task API tell you what it is doing in production, with <a href="/learn/zudo-logging">structured logs</a>.</p>
+</section>

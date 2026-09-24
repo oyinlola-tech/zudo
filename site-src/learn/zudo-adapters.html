@@ -1,0 +1,945 @@
+---
+title: Adapters with @zudojs/adapters
+description: Put a payment provider behind an adapter with @zudojs/adapters, then swap a fake for a real HTTP provider without touching checkout.
+minutes: 55
+youNeed: The lessons on errors, HTTP, testing and the Task API, and ideally Microservices for timeouts and idempotency keys
+youBuild: A PaymentAdapter contract with a fake and an HTTP provider adapter, swapped by configuration, with health checks, timeouts, graceful disposal and one contract test suite for both
+keywords: zudojs adapters, adapter pattern, ports and adapters, payment provider, AdapterRegistry, capabilities, health check, timeout, idempotency key, graceful shutdown, dispose, contract test
+objectives: Define a provider-neutral contract that business logic depends on | Implement a fake and a real HTTP adapter and swap them by configuration | Initialize, health-check, stop and dispose adapters through AdapterRegistry | Turn provider failures into timeout, connection, operation and configuration errors | Test every implementation with one contract suite
+---
+<section>
+<h2 id="problem">Checkout written against one provider</h2>
+<p>ShopFlow takes card payments through a provider, a company whose API charges the card. The first version of checkout called the provider's SDK directly and read its answer as it came back. A year later the business negotiates a cheaper provider. Its API does the same job, with a different shape:</p>
+<example file="coupled.js">
+// Checkout written straight against provider A's SDK response
+function checkoutWithA(response) {
+  if (response.status === "success") return `paid ₦${(response.amount_kobo / 100).toLocaleString("en-NG")}`;
+  return `declined: ${response.gateway_response}`;
+}
+
+// Provider A's answer, and provider B's answer for the same successful payment
+const fromA = { status: "success", amount_kobo: 2_042_500, gateway_response: "Approved" };
+const fromB = { state: "CAPTURED", amount: { value: 20_425, currency: "NGN" }, reason: null };
+
+console.log("provider A:", checkoutWithA(fromA));
+console.log("provider B:", checkoutWithA(fromB));
+</example>
+<output>
+provider A: paid ₦20,425
+provider B: declined: undefined
+</output>
+<p>The payment succeeded, and checkout calls it declined, because it looks for <code>status: "success"</code> and B says <code>state: "CAPTURED"</code>. Now imagine that code in twenty places: checkout, refunds, reports, the admin panel, the tests. Switching provider means editing all of them, and the tests all need the provider's sandbox, so they are slow and fail when the sandbox is down.</p>
+<p>The general solution is the <strong>adapter pattern</strong>, also called <em>ports and adapters</em>. Your code defines the interface it needs, in its own words (the <strong>port</strong>, or contract). For each outside system you write a small class that implements that interface by talking to the system (the <strong>adapter</strong>). Business logic knows only the contract. Swapping providers means writing one new adapter and changing one line of configuration.</p>
+<p><code>@zudojs/adapters</code> gives adapters a shared shape: a name, a version, declared capabilities, a lifecycle (<code>initialize</code>, <code>start</code>, <code>stop</code>, <code>dispose</code>), a <code>health</code> check, a registry that manages them together, and one family of errors in <code>@zudojs/errors</code>. It also defines contracts for platform adapters (HTTP servers, queues, storage, WebSockets); this lesson uses the base contract for a business adapter of your own.</p>
+<shell title="Terminal on your computer">
+$ npm install @zudojs/adapters
+</shell>
+</section>
+
+<section>
+<h2 id="contract">The contract</h2>
+<p>Start from what checkout needs, not from what any provider offers: charge an amount to a card for an order, get back "succeeded" or "declined", and refund a charge. Amounts are in kobo, whole numbers, as in <a href="/learn/logic-math">the lesson on money maths</a>:</p>
+<file name="payments.ts" project="pay">
+import type { LifecycleAdapter } from "@zudojs/adapters";
+
+export interface ChargeRequest {
+  /** Our order reference. The provider must treat it as an idempotency key. */
+  readonly reference: string;
+  readonly amountKobo: number;
+  readonly cardToken: string;
+  readonly email: string;
+}
+
+export type ChargeResult =
+  | { readonly status: "succeeded"; readonly chargeId: string; readonly amountKobo: number }
+  | { readonly status: "declined"; readonly reason: string };
+
+/** What the shop needs from any payment provider. Nothing here is provider-specific. */
+export interface PaymentAdapter extends LifecycleAdapter {
+  readonly features: { readonly refunds: boolean };
+  charge(request: ChargeRequest, options?: { readonly signal?: AbortSignal }): Promise<ChargeResult>;
+  refund(chargeId: string): Promise<void>;
+}
+</file>
+<p><code>PaymentAdapter</code> extends <code>LifecycleAdapter</code> from the package. That gives every payment adapter these members:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Member</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>name</code>, <code>version</code>, <code>metadata</code></td><td>Identify the adapter in logs, health reports and the registry</td></tr>
+<tr><td><code>capabilities</code></td><td>What the adapter's <em>platform</em> can do: <code>http</code>, <code>abortSignal</code>, <code>gracefulShutdown</code>, <code>backgroundTasks</code>, <code>streaming</code> and a few more</td></tr>
+<tr><td><code>initialize()</code></td><td>Prepare: read configuration, check the connection. No work yet</td></tr>
+<tr><td><code>start()</code> / <code>stop()</code></td><td>Begin and end active work; <code>stop</code> does not release resources</td></tr>
+<tr><td><code>dispose()</code></td><td>Release everything: connections, timers, handles</td></tr>
+<tr><td><code>health()</code></td><td>Report <code>healthy</code>, <code>degraded</code> or <code>unhealthy</code></td></tr>
+<tr><td><code>configure(options)</code></td><td>Optional: accept new settings at runtime</td></tr>
+</tbody>
+</table></div>
+<p>All the lifecycle methods are optional: a fake has nothing to connect to. The two payment methods are yours. <code>ChargeRequest.reference</code> is the order's id and doubles as the <strong>idempotency key</strong>: sending the same reference twice must never charge twice. That promise is part of the contract, and every adapter must keep it.</p>
+<h3>Capabilities are about the platform</h3>
+<p>Not every provider can refund through its API. It is tempting to write that into <code>capabilities</code>, but the capability list is fixed, and TypeScript refuses a name it does not know:</p>
+<example file="capabilities.ts" project="pay" check="tsc-error">
+import type { AdapterCapabilities } from "@zudojs/adapters";
+
+export const kobopayCapabilities: AdapterCapabilities = { http: true, abortSignal: true, refunds: false };
+</example>
+<output kind="tsc">
+capabilities.ts:3:90 - error TS2353: Object literal may only specify known properties, and 'refunds' does not exist in type 'AdapterCapabilities'.
+
+3 export const kobopayCapabilities: AdapterCapabilities = { http: true, abortSignal: true, refunds: false };
+                                                                                           ~~~~~~~
+
+
+Found 1 error in capabilities.ts:3
+</output>
+<p>Capabilities describe what the adapter's runtime supports: can it be cancelled with an <code>AbortSignal</code>, does it shut down gracefully, does it run on an edge runtime. What the <em>provider's business API</em> supports goes into your own contract. That is the <code>features</code> field in <code>PaymentAdapter</code>, and checkout can read it.</p>
+</section>
+
+<section>
+<h2 id="fake">A fake provider and the business logic</h2>
+<p>The first adapter is a fake. It keeps charges in a <code>Map</code>, declines the test card <code>tok_declined</code>, keeps the idempotency promise, supports refunds, and is always healthy. It is enough to build and test all of checkout before you have signed a contract with any provider:</p>
+<file name="fake-payments.ts" project="pay">
+import { createHealthyHealth } from "@zudojs/adapters";
+import type { ChargeRequest, ChargeResult, PaymentAdapter } from "./payments.js";
+
+/** An in-memory provider for development and tests. Card "tok_declined" is declined. */
+export class FakePaymentAdapter implements PaymentAdapter {
+  readonly name = "fake-payments";
+  readonly version = "1.0.0";
+  readonly capabilities = { abortSignal: true };
+  readonly features = { refunds: true };
+  readonly charges = new Map<string, ChargeResult>();
+  readonly refunded = new Set<string>();
+
+  async charge(request: ChargeRequest): Promise<ChargeResult> {
+    const previous = this.charges.get(request.reference);
+    if (previous !== undefined) return previous;
+    const result: ChargeResult = request.cardToken === "tok_declined"
+      ? { status: "declined", reason: "insufficient funds" }
+      : { status: "succeeded", chargeId: `fake_ch_${this.charges.size + 1}`, amountKobo: request.amountKobo };
+    this.charges.set(request.reference, result);
+    return result;
+  }
+
+  async refund(chargeId: string): Promise<void> {
+    this.refunded.add(chargeId);
+  }
+
+  health() {
+    return createHealthyHealth();
+  }
+}
+</file>
+<p>Checkout depends on <code>PaymentAdapter</code> only. It turns the adapter's answer into what the shop shows the customer. One outcome is new: <code>unknown</code>, for a charge that timed out. You will see why later in this lesson.</p>
+<file name="checkout.ts" project="pay">
+import { AdapterTimeoutError } from "@zudojs/adapters";
+import type { PaymentAdapter } from "./payments.js";
+
+export interface Order {
+  readonly id: string;
+  readonly totalKobo: number;
+  readonly email: string;
+}
+export type PaymentOutcome =
+  | { readonly orderId: string; readonly state: "paid"; readonly chargeId: string }
+  | { readonly orderId: string; readonly state: "declined"; readonly message: string }
+  | { readonly orderId: string; readonly state: "unknown"; readonly message: string };
+
+/** Business logic: it knows PaymentAdapter, and no provider at all. */
+export function createCheckout(payments: PaymentAdapter) {
+  return {
+    async pay(order: Order, cardToken: string): Promise<PaymentOutcome> {
+      try {
+        const result = await payments.charge({
+          reference: `order-${order.id}`, amountKobo: order.totalKobo, cardToken, email: order.email,
+        });
+        if (result.status === "declined") return { orderId: order.id, state: "declined", message: result.reason };
+        if (result.amountKobo !== order.totalKobo) throw new Error(`Charged ${result.amountKobo}, expected ${order.totalKobo}`);
+        return { orderId: order.id, state: "paid", chargeId: result.chargeId };
+      } catch (error) {
+        if (error instanceof AdapterTimeoutError) {
+          return { orderId: order.id, state: "unknown", message: "No answer from the provider yet; we will confirm by email." };
+        }
+        throw error;
+      }
+    },
+  };
+}
+</file>
+<example file="fake-checkout.ts" project="pay" browser="no">
+import { createCheckout } from "./checkout.js";
+import { FakePaymentAdapter } from "./fake-payments.js";
+
+const payments = new FakePaymentAdapter();
+const checkout = createCheckout(payments);
+const order = { id: "1001", totalKobo: 2_042_500, email: "ada@example.com" };
+
+console.log(await checkout.pay(order, "tok_visa"));
+console.log(await checkout.pay(order, "tok_visa"));
+console.log(await checkout.pay({ ...order, id: "1002" }, "tok_declined"));
+console.log("charges recorded:", payments.charges.size);
+</example>
+<output>
+{ orderId: '1001', state: 'paid', chargeId: 'fake_ch_1' }
+{ orderId: '1001', state: 'paid', chargeId: 'fake_ch_1' }
+{ orderId: '1002', state: 'declined', message: 'insufficient funds' }
+charges recorded: 2
+</output>
+<p>Paying order 1001 twice returned the same charge, and only two charges exist: the double click did not charge Ada twice. Checkout also checks that the provider charged the amount it asked for, because a provider bug or a currency mix-up must never pass silently.</p>
+</section>
+
+<section>
+<h2 id="registry">The adapter registry</h2>
+<p>An app usually has several adapters: payments, SMS, e-mail, storage. An <code>AdapterRegistry</code> holds them by name, so the app can start, check and stop them together. <code>createMockAdapter</code> makes a small adapter for the demo; you will use it again for tests:</p>
+<example file="registry.ts" project="pay" browser="no">
+import { AdapterRegistry, createMockAdapter, isAdapterError } from "@zudojs/adapters";
+import { FakePaymentAdapter } from "./fake-payments.js";
+import type { PaymentAdapter } from "./payments.js";
+
+const adapters = new AdapterRegistry();
+adapters.register(new FakePaymentAdapter());
+adapters.register(createMockAdapter({ name: "SMS", capabilities: { backgroundTasks: true } }));
+console.log(adapters.getNames(), adapters.size);
+
+const payments = adapters.require<PaymentAdapter>(" Fake-Payments ");
+console.log(payments.name, payments.features);
+console.log(adapters.supports("fake-payments", "abortSignal"), adapters.supports("sms", "abortSignal"));
+console.log(adapters.findByCapability("backgroundTasks").map((adapter) => adapter.name));
+
+const mistakes = [
+  () => adapters.register(new FakePaymentAdapter()),
+  () => adapters.require("kobopay"),
+  () => adapters.requireCapability("sms", "abortSignal"),
+  () => adapters.register(createMockAdapter({ name: "  " })),
+];
+for (const mistake of mistakes) {
+  try {
+    mistake();
+  } catch (error) {
+    if (isAdapterError(error)) console.log(`${error.name}: ${error.message}`);
+  }
+}
+</example>
+<output>
+[ 'fake-payments', 'sms' ] 2
+fake-payments { refunds: true }
+true false
+[ 'SMS' ]
+AdapterAlreadyRegisteredError: Adapter "fake-payments" is already registered.
+AdapterNotFoundError: Adapter "kobopay" is not registered.
+AdapterCapabilityMissingError: Adapter "sms" is missing required capability "abortSignal".
+AdapterConfigurationError: Adapter "  " configuration failed.
+</output>
+<ul>
+<li>Names are trimmed and lower-cased, so <code>" Fake-Payments "</code> finds <code>fake-payments</code>. <code>getNames()</code> shows the normalized names; <code>findByCapability</code> returns the adapter objects as they were built, so the SMS adapter still says <code>SMS</code>.</li>
+<li><code>require&lt;PaymentAdapter&gt;(name)</code> returns the adapter with your type, or throws <code>AdapterNotFoundError</code>. <code>get</code> returns <code>undefined</code> instead.</li>
+<li><code>supports</code> answers yes or no; <code>requireCapability</code> throws <code>AdapterCapabilityMissingError</code>. Use the second where the app cannot work without the capability, for example a streaming route that needs <code>streaming</code>.</li>
+<li>A duplicate name and a blank name are refused. Two adapters called "payments" would make <code>require</code> ambiguous.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="provider">A real provider over HTTP</h2>
+<p>Now the real thing. This lesson cannot charge real cards, so the provider, "KoboPay", runs inside the program: a real HTTP server on a free port, with its own API. Its API looks like a typical payment provider: an API key in the <code>Authorization</code> header, an <code>Idempotency-Key</code> header, amounts in kobo, snake_case fields and <code>"failed"</code> instead of "declined". It also has switches to make it slow or failing, which you will use to break things on purpose:</p>
+<file name="kobopay-server.ts" project="pay">
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+
+/**
+ * A pretend payment provider, "KoboPay", running in this process. Its API has its own
+ * shape: snake_case fields, "failed" instead of "declined", an Idempotency-Key header.
+ */
+export async function startKoboPay(secretKey: string) {
+  const charges = new Map<string, object>();
+  const controls = { latencyMs: 0, failNext: 0, chargeCalls: 0 };
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const server = createServer(async (req, res) => {
+    const send = (status: number, body: object) =>
+      res.writeHead(status, { "content-type": "application/json", connection: "close" }).end(JSON.stringify(body));
+    let raw = "";
+    for await (const chunk of req) raw += chunk;
+    await wait(controls.latencyMs);
+    if (req.headers.authorization !== `Bearer ${secretKey}`) return send(401, { error: "invalid_api_key" });
+    if (req.url === "/v1/health") return send(200, { ok: true });
+    if (req.method !== "POST" || req.url !== "/v1/charges") return send(404, { error: "not_found" });
+    if (controls.failNext > 0) {
+      controls.failNext -= 1;
+      return send(503, { error: "temporarily_unavailable" });
+    }
+    const key = String(req.headers["idempotency-key"] ?? "");
+    const previous = charges.get(key);
+    if (previous !== undefined) return send(200, previous);
+    controls.chargeCalls += 1;
+    const input = JSON.parse(raw) as { amount: number; currency: string; source: string };
+    const charge = input.source === "tok_declined"
+      ? { id: `ch_${charges.size + 1}`, status: "failed", amount: input.amount, failure_message: "insufficient_funds" }
+      : { id: `ch_${charges.size + 1}`, status: "succeeded", amount: input.amount, failure_message: null };
+    charges.set(key, charge);
+    send(200, charge);
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return {
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    controls,
+    async stop(): Promise<void> {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    },
+  };
+}
+</file>
+<p>Here is a raw call to its API, so you can see the shape the adapter must translate:</p>
+<example file="raw-api.ts" project="pay" browser="no">
+import { startKoboPay } from "./kobopay-server.js";
+
+const kobopay = await startKoboPay("sk_test_123");
+const response = await fetch(`${kobopay.url}/v1/charges`, {
+  method: "POST",
+  headers: { authorization: "Bearer sk_test_123", "idempotency-key": "order-1001", "content-type": "application/json" },
+  body: JSON.stringify({ amount: 2_042_500, currency: "NGN", source: "tok_declined", email: "ada@example.com" }),
+});
+console.log(response.status, await response.json());
+await kobopay.stop();
+</example>
+<output>
+200 {
+  id: 'ch_1',
+  status: 'failed',
+  amount: 2042500,
+  failure_message: 'insufficient_funds'
+}
+</output>
+<p>The adapter is the only code in ShopFlow that knows this shape. It translates in both directions, and it turns every way the call can fail into an adapter error:</p>
+<file name="kobopay-adapter.ts" project="pay">
+import {
+  AdapterConfigurationError, AdapterConnectionError, AdapterInitializationError, AdapterNotSupportedError,
+  AdapterOperationError, AdapterTimeoutError, createDegradedHealth, createHealthyHealth, createUnhealthyHealth,
+} from "@zudojs/adapters";
+import type { AdapterHealth } from "@zudojs/adapters";
+import type { ChargeRequest, ChargeResult, PaymentAdapter } from "./payments.js";
+
+export interface KoboPayOptions {
+  readonly baseUrl: string | undefined;
+  readonly secretKey: string | undefined;
+  readonly timeoutMs: number;
+  /** A health check slower than this reports "degraded". */
+  readonly slowMs?: number;
+}
+interface KoboPayCharge { id: string; status: "succeeded" | "failed"; amount: number; failure_message: string | null }
+
+/** Translates between the shop's PaymentAdapter contract and KoboPay's HTTP API. */
+export class KoboPayAdapter implements PaymentAdapter {
+  readonly name = "kobopay";
+  readonly version = "1.0.0";
+  readonly capabilities = { http: true, abortSignal: true, gracefulShutdown: true };
+  readonly metadata = { name: "kobopay", version: "1.0.0", description: "KoboPay card payments" };
+  readonly features = { refunds: false };
+  private state: "created" | "ready" | "stopped" | "disposed" = "created";
+  private readonly inFlight = new Map<AbortController, Promise<unknown>>();
+
+  constructor(private readonly options: KoboPayOptions) {}
+
+  async initialize(): Promise<void> {
+    const { baseUrl, secretKey } = this.options;
+    if (!baseUrl || !secretKey) throw new AdapterConfigurationError(this.name, new Error("KOBOPAY_URL and KOBOPAY_SECRET are required"));
+    const health = await this.health();
+    if (health.status === "unhealthy") throw new AdapterInitializationError(this.name, new Error(health.message));
+    this.state = "ready";
+  }
+
+  async charge(request: ChargeRequest, options: { signal?: AbortSignal } = {}): Promise<ChargeResult> {
+    if (this.state !== "ready") throw new AdapterOperationError(this.name, "charge", new Error(`adapter is ${this.state}`));
+    const body = { amount: request.amountKobo, currency: "NGN", source: request.cardToken, email: request.email };
+    const response = await this.call("charge", "/v1/charges", { method: "POST", body: JSON.stringify(body),
+      headers: { "idempotency-key": request.reference, "content-type": "application/json" } }, options.signal);
+    const charge = (await response.json()) as KoboPayCharge;
+    return charge.status === "succeeded"
+      ? { status: "succeeded", chargeId: charge.id, amountKobo: charge.amount }
+      : { status: "declined", reason: (charge.failure_message ?? "declined").replaceAll("_", " ") };
+  }
+
+  async refund(): Promise<void> {
+    throw new AdapterNotSupportedError(this.name, "refund");
+  }
+
+  async health(): Promise<AdapterHealth> {
+    const started = Date.now();
+    try {
+      await this.call("health", "/v1/health", {});
+    } catch (error) {
+      return createUnhealthyHealth(error instanceof Error && error.cause instanceof Error ? error.cause.message : String(error));
+    }
+    const slow = Date.now() - started > (this.options.slowMs ?? 1_000);
+    return slow ? createDegradedHealth("KoboPay answers slowly") : createHealthyHealth();
+  }
+
+  /** Refuses new charges and waits for the ones in flight; each has a timeout, so this ends. */
+  async stop(): Promise<void> {
+    if (this.state === "ready") this.state = "stopped";
+    await Promise.all(this.inFlight.values());
+  }
+
+  /** Aborts anything still running and releases the adapter for good. */
+  dispose(): void {
+    for (const controller of this.inFlight.keys()) controller.abort(new Error("adapter disposed"));
+    this.state = "disposed";
+  }
+
+  private async call(operation: string, path: string, init: RequestInit, signal?: AbortSignal): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = AbortSignal.timeout(this.options.timeoutMs);
+    const request = fetch(this.options.baseUrl + path, {
+      ...init,
+      signal: AbortSignal.any([controller.signal, timeout, ...(signal ? [signal] : [])]),
+      headers: { ...(init.headers as Record<string, string>), authorization: `Bearer ${this.options.secretKey}` },
+    });
+    this.inFlight.set(controller, request.catch(() => undefined));
+    let response: Response;
+    try {
+      response = await request;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      if (timeout.aborted) throw new AdapterTimeoutError(this.name, operation, this.options.timeoutMs, error);
+      if (controller.signal.aborted) throw new AdapterOperationError(this.name, operation, controller.signal.reason);
+      throw new AdapterConnectionError(this.name, error instanceof Error && error.cause ? error.cause : error);
+    } finally {
+      this.inFlight.delete(controller);
+    }
+    if (!response.ok) throw new AdapterOperationError(this.name, operation, new Error(`KoboPay answered ${response.status}`));
+    return response;
+  }
+}
+</file>
+<p>Read it from the bottom. <code>call</code> is the single place where the network is touched:</p>
+<ul>
+<li>Every request gets a <strong>timeout</strong> (<code>AbortSignal.timeout</code>) and a private <code>AbortController</code>, combined with the caller's signal by <code>AbortSignal.any</code>. Whichever fires first cancels the request.</li>
+<li>The failures are sorted into the package's error classes: a timeout becomes <code>AdapterTimeoutError</code>, a refused or broken connection <code>AdapterConnectionError</code>, a cancellation by <code>dispose</code> or an error status from KoboPay <code>AdapterOperationError</code>. The original problem is kept as the error's <code>cause</code>.</li>
+<li><code>charge</code> translates: <code>amountKobo</code> to <code>amount</code>, <code>reference</code> to the <code>Idempotency-Key</code> header, and back from <code>"failed"</code> and <code>"insufficient_funds"</code> to <code>declined</code> and "insufficient funds".</li>
+<li><code>refund</code> throws <code>AdapterNotSupportedError</code>, and <code>features.refunds</code> says so in advance.</li>
+<li><code>initialize</code> refuses missing settings with <code>AdapterConfigurationError</code> and checks that KoboPay answers, so a wrong key stops the app at startup, not at the first customer's checkout.</li>
+<li><code>stop</code> refuses new charges and waits for the ones in flight. <code>dispose</code> aborts whatever is still running.</li>
+</ul>
+<note>The secret key comes in through the constructor, and the constructor's caller reads it from the environment. The adapter never reads <code>process.env</code> itself, never logs the key, and never puts card data in an error message. Payment data is regulated; keep it out of logs and errors entirely.</note>
+</section>
+
+<section>
+<h2 id="swap">Swapping providers without touching checkout</h2>
+<p>One function decides which adapter the shop uses. It reads configuration, builds the adapter, registers it, and runs <code>initializeAll</code> and <code>startAll</code>:</p>
+<file name="payments-setup.ts" project="pay">
+import { AdapterConfigurationError, AdapterRegistry } from "@zudojs/adapters";
+import { FakePaymentAdapter } from "./fake-payments.js";
+import { KoboPayAdapter } from "./kobopay-adapter.js";
+import type { PaymentAdapter } from "./payments.js";
+
+type Env = Readonly<Record<string, string | undefined>>;
+
+/** The only place that knows which provider the shop uses. */
+export async function setUpPayments(env: Env): Promise<{ payments: PaymentAdapter; adapters: AdapterRegistry }> {
+  const provider = env["PAYMENTS_PROVIDER"] ?? "fake";
+  let payments: PaymentAdapter;
+  if (provider === "fake") payments = new FakePaymentAdapter();
+  else if (provider === "kobopay") {
+    payments = new KoboPayAdapter({
+      baseUrl: env["KOBOPAY_URL"], secretKey: env["KOBOPAY_SECRET"], timeoutMs: Number(env["KOBOPAY_TIMEOUT_MS"] ?? 5_000),
+    });
+  } else throw new AdapterConfigurationError(provider, new Error(`Unknown PAYMENTS_PROVIDER "${provider}"`));
+
+  const adapters = new AdapterRegistry();
+  adapters.register(payments);
+  await adapters.initializeAll();
+  await adapters.startAll();
+  return { payments, adapters };
+}
+</file>
+<p>Run the same checkout scenario with both configurations:</p>
+<example file="swap.ts" project="pay" browser="no">
+import { createCheckout } from "./checkout.js";
+import { startKoboPay } from "./kobopay-server.js";
+import { setUpPayments } from "./payments-setup.js";
+
+const kobopay = await startKoboPay("sk_test_123");
+const environments = [
+  { PAYMENTS_PROVIDER: "fake" },
+  { PAYMENTS_PROVIDER: "kobopay", KOBOPAY_URL: kobopay.url, KOBOPAY_SECRET: "sk_test_123", KOBOPAY_TIMEOUT_MS: "2000" },
+];
+
+for (const env of environments) {
+  const { payments, adapters } = await setUpPayments(env);
+  const checkout = createCheckout(payments);
+  const order = { id: "1001", totalKobo: 2_042_500, email: "ada@example.com" };
+  console.log(`--- ${payments.name}`);
+  console.log(await checkout.pay(order, "tok_visa"));
+  console.log(await checkout.pay(order, "tok_visa"));
+  console.log(await checkout.pay({ ...order, id: "1002" }, "tok_declined"));
+  await adapters.disposeAll();
+}
+console.log("KoboPay created", kobopay.controls.chargeCalls, "charges");
+await kobopay.stop();
+</example>
+<output>
+--- fake-payments
+{ orderId: '1001', state: 'paid', chargeId: 'fake_ch_1' }
+{ orderId: '1001', state: 'paid', chargeId: 'fake_ch_1' }
+{ orderId: '1002', state: 'declined', message: 'insufficient funds' }
+--- kobopay
+{ orderId: '1001', state: 'paid', chargeId: 'ch_1' }
+{ orderId: '1001', state: 'paid', chargeId: 'ch_1' }
+{ orderId: '1002', state: 'declined', message: 'insufficient funds' }
+KoboPay created 2 charges
+</output>
+<p>Same three outcomes, with only the charge ids differing. <code>checkout.ts</code> was not changed and does not even know KoboPay exists. The duplicate payment for order 1001 reached KoboPay with the same <code>Idempotency-Key</code>, so KoboPay made two charges for three payments, exactly like the fake. Moving to a third provider later means one new adapter class and one more <code>else if</code> in <code>setUpPayments</code>.</p>
+<h3>When setup fails</h3>
+<p>Configuration mistakes should stop the app at startup with a clear message. Three common ones:</p>
+<example file="init-failures.ts" project="pay" browser="no">
+import { isAdapterError } from "@zudojs/adapters";
+import { startKoboPay } from "./kobopay-server.js";
+import { setUpPayments } from "./payments-setup.js";
+
+const kobopay = await startKoboPay("sk_test_123");
+const attempts = [
+  { PAYMENTS_PROVIDER: "stripe-ish" },
+  { PAYMENTS_PROVIDER: "kobopay", KOBOPAY_URL: kobopay.url },
+  { PAYMENTS_PROVIDER: "kobopay", KOBOPAY_URL: kobopay.url, KOBOPAY_SECRET: "sk_live_wrong" },
+];
+for (const env of attempts) {
+  try {
+    await setUpPayments(env);
+  } catch (error) {
+    const errors = error instanceof AggregateError ? error.errors : [error];
+    if (error instanceof AggregateError) console.log(`AggregateError: ${error.message}`);
+    for (const inner of errors) {
+      if (isAdapterError(inner)) console.log(`  ${inner.name} (${inner.code}): ${inner.message} <- ${(inner.cause as Error).message}`);
+    }
+  }
+}
+await kobopay.stop();
+</example>
+<output>
+  AdapterConfigurationError (ERR_ADAPTER_CONFIGURATION_FAILED): Adapter "stripe-ish" configuration failed. <- Unknown PAYMENTS_PROVIDER "stripe-ish"
+AggregateError: One or more adapters failed to initialize.
+  AdapterConfigurationError (ERR_ADAPTER_CONFIGURATION_FAILED): Adapter "kobopay" configuration failed. <- KOBOPAY_URL and KOBOPAY_SECRET are required
+AggregateError: One or more adapters failed to initialize.
+  AdapterInitializationError (ERR_ADAPTER_INITIALIZATION_FAILED): Adapter "kobopay" failed to initialize. <- KoboPay answered 401
+</output>
+<p><code>initializeAll</code> tries <em>every</em> adapter and then throws one <code>AggregateError</code> with all the failures in <code>errors</code>, so you see every broken adapter at once instead of fixing them one restart at a time. Each inner error says which adapter failed, and its <code>cause</code> says why. Notice the wrong key: KoboPay answered 401 to the health check in <code>initialize</code>, so the app never started with a key that would have failed every payment.</p>
+</section>
+
+<section>
+<h2 id="timeouts">Timeouts and the unknown outcome</h2>
+<p>A network call has a third outcome besides success and failure: no answer. Think it through before looking at the code.</p>
+<reason title="The charge timed out. Did the customer pay?">
+<p>Checkout sent the charge to KoboPay and gave up after the timeout. What do you know at this point? Can you tell the customer "payment failed"? Can you simply try again? What must be true for a retry to be safe?</p>
+<answer>
+<p>You know almost nothing. The request may never have reached KoboPay, or KoboPay may have charged the card and the answer got lost, or it may still be working on it. So:</p>
+<ul>
+<li>Saying "payment failed" is wrong if the card was charged: the customer pays again and is charged twice.</li>
+<li>Saying "paid" is wrong if it was not.</li>
+<li>A retry is safe <strong>only</strong> if it carries the same idempotency key, so KoboPay recognises it and returns the first result instead of charging again. That is why <code>reference</code> is part of the contract.</li>
+</ul>
+<p>The honest answer to the customer is "we don't know yet; we'll confirm". The system then finds out, by retrying with the same key later, or by asking the provider for the charge by reference, or through the provider's webhook (a request the provider sends you when a charge completes).</p>
+</answer>
+</reason>
+<p>Now make KoboPay slower than the adapter's 800 ms timeout. It still charges the card, after 2 seconds, but the answer arrives too late. Then, as a reconciliation job would do, pay the same order again once KoboPay is fast:</p>
+<example file="timeout.ts" project="pay" browser="no">
+import { createCheckout } from "./checkout.js";
+import { startKoboPay } from "./kobopay-server.js";
+import { setUpPayments } from "./payments-setup.js";
+
+const kobopay = await startKoboPay("sk_test_123");
+const { payments, adapters } = await setUpPayments({
+  PAYMENTS_PROVIDER: "kobopay", KOBOPAY_URL: kobopay.url, KOBOPAY_SECRET: "sk_test_123", KOBOPAY_TIMEOUT_MS: "800",
+});
+const checkout = createCheckout(payments);
+const order = { id: "1001", totalKobo: 2_042_500, email: "ada@example.com" };
+
+kobopay.controls.latencyMs = 2_000;
+console.log(await checkout.pay(order, "tok_visa"));
+
+await new Promise((resolve) => setTimeout(resolve, 2_100));
+kobopay.controls.latencyMs = 0;
+console.log(await checkout.pay(order, "tok_visa"));
+console.log("charges KoboPay made:", kobopay.controls.chargeCalls);
+
+await adapters.disposeAll();
+await kobopay.stop();
+</example>
+<output>
+{
+  orderId: '1001',
+  state: 'unknown',
+  message: 'No answer from the provider yet; we will confirm by email.'
+}
+{ orderId: '1001', state: 'paid', chargeId: 'ch_1' }
+charges KoboPay made: 1
+</output>
+<p>Checkout caught <code>AdapterTimeoutError</code> and answered <code>unknown</code>. The second attempt carried the same reference, KoboPay returned the charge it had already made, and the shop learned the order was paid. KoboPay charged once. Without the idempotency key, that retry would have charged Ada twice.</p>
+<warn title="RETRY ONLY WHAT IS SAFE TO REPEAT">A timeout on a <code>GET</code> can be retried freely. A timeout on anything that moves money, sends a message or creates something may only be retried with an idempotency key the other side honours. <a href="/learn/zudo-microservices#failures">The microservices lesson</a> covers retries with backoff and circuit breakers for the calls where retrying is safe.</warn>
+</section>
+
+<section>
+<h2 id="health">Health checks</h2>
+<p><code>registry.healthAll(options)</code> asks every adapter that has a <code>health</code> method and combines the answers: the overall status is the worst one. A check that throws, times out or is aborted counts as <code>unhealthy</code> instead of breaking the report. Two options matter: <code>timeout</code> caps each check, and <code>retry: { attempts, delay }</code> re-runs a check while it reports <code>unhealthy</code>. Here the SMS gateway needs three tries to warm up, and KoboPay is made slow and then switched off:</p>
+<example file="health.ts" project="pay" browser="no">
+import { AdapterRegistry, createMockAdapter, createHealthyHealth, createUnhealthyHealth } from "@zudojs/adapters";
+import { KoboPayAdapter } from "./kobopay-adapter.js";
+import { startKoboPay } from "./kobopay-server.js";
+
+const kobopay = await startKoboPay("sk_test_123");
+const payments = new KoboPayAdapter({ baseUrl: kobopay.url, secretKey: "sk_test_123", timeoutMs: 5_000, slowMs: 800 });
+let smsChecks = 0;
+const sms = createMockAdapter({
+  name: "sms",
+  health: () => (++smsChecks < 3 ? createUnhealthyHealth("gateway warming up") : createHealthyHealth()),
+});
+
+const adapters = new AdapterRegistry();
+adapters.register(payments);
+adapters.register(sms);
+await adapters.initializeAll();
+
+const show = (label: string, report: Awaited<ReturnType<AdapterRegistry["healthAll"]>>) =>
+  console.log(label.padEnd(18), report.status.padEnd(9), Object.entries(report.adapters).sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, health]) => `${name}=${health.status}${health.message ? ` (${health.message})` : ""}`).join(", "));
+
+show("first check", await adapters.healthAll());
+show("with 3 attempts", await adapters.healthAll({ retry: { attempts: 3, delay: 10 } }));
+kobopay.controls.latencyMs = 1_500;
+show("KoboPay slow", await adapters.healthAll());
+show("300 ms time limit", await adapters.healthAll({ timeout: 300 }));
+kobopay.controls.latencyMs = 0;
+await kobopay.stop();
+show("KoboPay down", await adapters.healthAll());
+await adapters.disposeAll();
+</example>
+<output mask="port">
+first check        unhealthy kobopay=healthy, sms=unhealthy (gateway warming up)
+with 3 attempts    healthy   kobopay=healthy, sms=healthy
+KoboPay slow       degraded  kobopay=degraded (KoboPay answers slowly), sms=healthy
+300 ms time limit  unhealthy kobopay=unhealthy (Health check timed out after 300 ms.), sms=healthy
+KoboPay down       unhealthy kobopay=unhealthy (connect ECONNREFUSED 127.0.0.1:42105), sms=healthy
+</output>
+<ul>
+<li>The first report is unhealthy because of SMS alone; the whole app is only as healthy as its worst adapter.</li>
+<li>With <code>attempts: 3</code> (three tries in total, not three extra), SMS recovered on its third check.</li>
+<li>A 1.5-second answer is slower than the adapter's <code>slowMs</code> of 800, so KoboPay reports itself <code>degraded</code>: working, but worth an alert.</li>
+<li>With <code>timeout: 300</code> the registry stops waiting and reports "Health check timed out after 300 ms." A health endpoint must answer quickly, even when a provider hangs.</li>
+<li>With KoboPay stopped, the connection is refused, and the health check says so (the port number is different on every run).</li>
+</ul>
+<p>Two rules for health checks of paid APIs: never do real work in them (checking health must not charge a card), and do not call them on every request, because some providers rate-limit or bill per call. A readiness endpoint that the load balancer polls every few seconds is the right place.</p>
+</section>
+
+<section>
+<h2 id="disposal">Stopping and disposing</h2>
+<p>When the app shuts down, <code>registry.disposeAll()</code> calls <code>stop</code>, then <code>dispose</code>, on every adapter, empties the registry, and reports failures together. Three adapters that log each step, and one whose <code>stop</code> fails:</p>
+<example file="lifecycle.ts" project="pay" browser="no">
+import { AdapterRegistry, createMockAdapter } from "@zudojs/adapters";
+
+function logged(name: string, failOnStop = false) {
+  return createMockAdapter({
+    name,
+    initialize: () => console.log(`${name}: initialize`),
+    start: () => console.log(`${name}: start`),
+    stop: () => {
+      console.log(`${name}: stop`);
+      if (failOnStop) throw new Error("connection pool is busy");
+    },
+    dispose: () => console.log(`${name}: dispose`),
+  });
+}
+
+const adapters = new AdapterRegistry();
+adapters.register(logged("database"));
+adapters.register(logged("payments", true));
+adapters.register(logged("sms"));
+
+await adapters.initializeAll();
+await adapters.startAll();
+try {
+  await adapters.disposeAll();
+} catch (error) {
+  if (error instanceof AggregateError) console.log(`${error.message} ${error.errors.map((e: Error) => e.message)}`);
+}
+console.log("left in the registry:", adapters.size);
+</example>
+<output>
+database: initialize
+payments: initialize
+sms: initialize
+database: start
+payments: start
+sms: start
+database: stop
+database: dispose
+payments: stop
+payments: dispose
+sms: stop
+sms: dispose
+One or more adapters failed to dispose. connection pool is busy
+left in the registry: 0
+</output>
+<p>Two things to notice. <code>payments</code> failed to stop and was still disposed, because leaving its connections open would be worse; the failure is reported in the <code>AggregateError</code> at the end. And the order: the registry initializes, starts, stops and disposes in <strong>registration order</strong>. It does not reverse on the way down, as a cleanup manager or <a href="/learn/zudo-lifecycle">@zudojs/lifecycle</a> does. If one adapter uses another (a payments adapter on top of an HTTP client adapter), do not rely on the registry for the order: manage those two with the lifecycle package, which understands dependencies.</p>
+<p>Now a graceful shutdown with a charge in flight. KoboPay takes a second to answer, and the app is told to stop 100 ms after the charge started:</p>
+<example file="dispose.ts" project="pay" browser="no">
+import { isAdapterError } from "@zudojs/adapters";
+import { startKoboPay } from "./kobopay-server.js";
+import { setUpPayments } from "./payments-setup.js";
+
+const kobopay = await startKoboPay("sk_test_123");
+const { payments, adapters } = await setUpPayments({
+  PAYMENTS_PROVIDER: "kobopay", KOBOPAY_URL: kobopay.url, KOBOPAY_SECRET: "sk_test_123",
+});
+const request = { reference: "order-1003", amountKobo: 950_000, cardToken: "tok_visa", email: "bola@example.com" };
+
+kobopay.controls.latencyMs = 1_000;
+const inFlight = payments.charge(request);
+await new Promise((resolve) => setTimeout(resolve, 100));
+console.log("shutting down");
+await adapters.disposeAll();
+console.log("charge in flight:", await inFlight);
+
+try {
+  await payments.charge(request);
+} catch (error) {
+  if (isAdapterError(error)) console.log(`charge after dispose: ${error.name} <- ${(error.cause as Error).message}`);
+}
+console.log("registered adapters:", adapters.size);
+await kobopay.stop();
+</example>
+<output>
+shutting down
+charge in flight: { status: 'succeeded', chargeId: 'ch_1', amountKobo: 950000 }
+charge after dispose: AdapterOperationError <- adapter is disposed
+registered adapters: 0
+</output>
+<p><code>stop</code> refused new work and waited for the charge in flight, which completed normally: the customer's payment was not cut off halfway. Only then did <code>dispose</code> run. Any later call is refused with a clear error. The waiting cannot hang forever, because every call has its own timeout.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing adapters</h2>
+<p>An adapter is only swappable if every implementation keeps the same promises. As with repositories in <a href="/learn/zudo-testing-apps#repository">Testing a ZudoJS application</a>, write the promises once as a <strong>contract test</strong> and run it against every adapter. The KoboPay run uses the in-process server, so it is fast and needs no network:</p>
+<example file="payments.contract.test.ts" project="pay" browser="no">
+import assert from "node:assert/strict";
+import { after, describe, it } from "node:test";
+import { AdapterNotSupportedError } from "@zudojs/adapters";
+import { FakePaymentAdapter } from "./fake-payments.js";
+import { KoboPayAdapter } from "./kobopay-adapter.js";
+import { startKoboPay } from "./kobopay-server.js";
+import type { PaymentAdapter } from "./payments.js";
+
+const kobopay = await startKoboPay("sk_test_123");
+after(() => kobopay.stop());
+
+const implementations: Record<string, () => PaymentAdapter> = {
+  fake: () => new FakePaymentAdapter(),
+  kobopay: () => new KoboPayAdapter({ baseUrl: kobopay.url, secretKey: "sk_test_123", timeoutMs: 5_000 }),
+};
+
+for (const [name, make] of Object.entries(implementations)) {
+  describe(`${name} (PaymentAdapter contract)`, () => {
+    const payments = make();
+    const request = (reference: string, cardToken = "tok_visa") =>
+      ({ reference: `${name}-${reference}`, amountKobo: 250_050, cardToken, email: "ada@example.com" });
+    after(async () => {
+      await payments.stop?.();
+      await payments.dispose?.();
+    });
+
+    it("starts and reports healthy", async () => {
+      await payments.initialize?.();
+      assert.equal((await payments.health?.())?.status, "healthy");
+    });
+
+    it("charges the exact amount", async () => {
+      const result = await payments.charge(request("a"));
+      assert.equal(result.status === "succeeded" && result.amountKobo, 250_050);
+    });
+
+    it("declines with a readable reason", async () => {
+      assert.deepEqual(await payments.charge(request("b", "tok_declined")), { status: "declined", reason: "insufficient funds" });
+    });
+
+    it("charges one reference only once", async () => {
+      const first = await payments.charge(request("c"));
+      assert.deepEqual(await payments.charge(request("c")), first);
+    });
+
+    it("refunds, or says clearly that it cannot", async () => {
+      const charge = await payments.charge(request("d"));
+      const refund = payments.refund(charge.status === "succeeded" ? charge.chargeId : "none");
+      if (payments.features.refunds) await refund;
+      else await assert.rejects(refund, AdapterNotSupportedError);
+    });
+  });
+}
+</example>
+<output mask="ms,num">
+▶ fake (PaymentAdapter contract)
+  ✔ starts and reports healthy (1.017349ms)
+  ✔ charges the exact amount (0.259001ms)
+  ✔ declines with a readable reason (0.89257ms)
+  ✔ charges one reference only once (0.175589ms)
+  ✔ refunds, or says clearly that it cannot (0.210054ms)
+✔ fake (PaymentAdapter contract) (4.26783ms)
+▶ kobopay (PaymentAdapter contract)
+  ✔ starts and reports healthy (45.89312ms)
+  ✔ charges the exact amount (10.895618ms)
+  ✔ declines with a readable reason (8.81211ms)
+  ✔ charges one reference only once (15.386103ms)
+  ✔ refunds, or says clearly that it cannot (9.325997ms)
+✔ kobopay (PaymentAdapter contract) (92.106189ms)
+ℹ tests 10
+ℹ suites 2
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 230.868559
+</output>
+<p>Ten tests, five promises, two implementations. The refund test shows how a contract handles optional features: an adapter either refunds, or refuses with <code>AdapterNotSupportedError</code>, never something in between. When you add a third provider, add one line to <code>implementations</code>. Against a provider's real sandbox, run the same suite in a separate, scheduled job: slow and network-dependent tests do not belong in every commit.</p>
+<p>Code that works <em>with the registry</em>, rather than with one adapter, is tested with the package's mocks. <code>createMockAdapterRegistry</code> builds a registry from mock adapters in one call. Here is a readiness endpoint, tested in three situations:</p>
+<example file="readiness.ts" project="pay" browser="no">
+import { createMockAdapter, createMockAdapterRegistry, createUnhealthyHealth, createDegradedHealth, createHealthyHealth } from "@zudojs/adapters";
+import type { AdapterRegistry } from "@zudojs/adapters";
+
+/** GET /ready: 503 only when an adapter is unhealthy; degraded still takes traffic. */
+async function readiness(adapters: AdapterRegistry): Promise<{ status: number; body: Record<string, string> }> {
+  const report = await adapters.healthAll({ timeout: 1_000 });
+  const names = Object.keys(report.adapters).sort();
+  const body = Object.fromEntries(names.map((name) => [name, report.adapters[name]!.status]));
+  return { status: report.status === "unhealthy" ? 503 : 200, body };
+}
+
+const cases = {
+  "all fine": [createHealthyHealth()],
+  "payments slow": [createDegradedHealth("slow")],
+  "payments down": [createUnhealthyHealth("ECONNREFUSED")],
+};
+for (const [label, [health]] of Object.entries(cases)) {
+  const { registry } = createMockAdapterRegistry([
+    createMockAdapter({ name: "payments", health: () => health! }),
+    createMockAdapter({ name: "sms", health: () => createHealthyHealth() }),
+  ]);
+  const answer = await readiness(registry);
+  console.log(label.padEnd(14), answer.status, answer.body);
+}
+</example>
+<output>
+all fine       200 { payments: 'healthy', sms: 'healthy' }
+payments slow  200 { payments: 'degraded', sms: 'healthy' }
+payments down  503 { payments: 'unhealthy', sms: 'healthy' }
+</output>
+<p>A slow provider keeps the app in service (200) while a dead one takes it out (503). That policy is a decision worth pinning with a test, so nobody changes it by accident.</p>
+<h3>Production concerns</h3>
+<ul>
+<li><strong>Timeouts shorter than your own.</strong> The adapter's timeout must be shorter than the HTTP request's timeout, or the customer's browser gives up before your code decides anything.</li>
+<li><strong>Idempotency keys everywhere money moves</strong>, and a reconciliation job for every <code>unknown</code> outcome. Most providers also send webhooks; verify their signature before trusting them.</li>
+<li><strong>Configuration is validated at startup</strong>, in <code>initialize</code>, and secrets come from the environment through the composition root.</li>
+<li><strong>Errors keep their cause, not their secrets.</strong> Log the <code>cause</code> for debugging; answer the customer with your own message. Almost every adapter error has <code>expose: false</code> and status 500 (<code>AdapterNotSupportedError</code> is 501), so an error handler that respects <code>expose</code> hides their details automatically.</li>
+<li><strong>Measure every call.</strong> Wrap the adapter (see the first exercise) to record timings and failures per provider, and alert on <code>degraded</code>.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A logging wrapper">
+<p>Write <code>withLogging(inner, log)</code>: it returns a <code>PaymentAdapter</code> that forwards every member to <code>inner</code> and logs each charge's reference, amount and outcome. Register the wrapped adapter and run two payments through the unchanged checkout. This is the <em>decorator</em> pattern: it only works because checkout depends on the contract.</p>
+<solution>
+<example file="decorator.ts" project="pay" browser="no">
+import { AdapterRegistry } from "@zudojs/adapters";
+import { createCheckout } from "./checkout.js";
+import { FakePaymentAdapter } from "./fake-payments.js";
+import type { ChargeRequest, PaymentAdapter } from "./payments.js";
+
+function withLogging(inner: PaymentAdapter, log: (line: string) => void): PaymentAdapter {
+  return {
+    name: inner.name,
+    version: inner.version,
+    capabilities: inner.capabilities,
+    features: inner.features,
+    initialize: () => inner.initialize?.(),
+    stop: () => inner.stop?.(),
+    dispose: () => inner.dispose?.(),
+    health: async () => (await inner.health?.()) ?? { status: "healthy", timestamp: Date.now() },
+    async charge(request: ChargeRequest, options) {
+      try {
+        const result = await inner.charge(request, options);
+        log(`charge ${request.reference} ${request.amountKobo} kobo -> ${result.status}`);
+        return result;
+      } catch (error) {
+        log(`charge ${request.reference} failed: ${(error as Error).name}`);
+        throw error;
+      }
+    },
+    refund: (chargeId) => inner.refund(chargeId),
+  };
+}
+
+const payments = withLogging(new FakePaymentAdapter(), (line) => console.log(`[payments] ${line}`));
+const adapters = new AdapterRegistry();
+adapters.register(payments);
+const checkout = createCheckout(adapters.require<PaymentAdapter>("fake-payments"));
+await checkout.pay({ id: "1001", totalKobo: 2_042_500, email: "ada@example.com" }, "tok_visa");
+await checkout.pay({ id: "1002", totalKobo: 950_000, email: "bola@example.com" }, "tok_declined");
+</example>
+<output>
+[payments] charge order-1001 2042500 kobo -> succeeded
+[payments] charge order-1002 950000 kobo -> declined
+</output>
+<p>The same wrapper works around KoboPay or any future adapter. Put timing, metrics or a circuit breaker in wrappers like this one, and each adapter stays a plain translator.</p>
+</solution>
+</exercise>
+<exercise title="Cancel an order">
+<p>Write <code>cancelOrder(payments, chargeId)</code>. When the adapter supports refunds, refund and return <code>refunded &lt;id&gt;</code>. When it does not, return a note that a person must refund it in the provider's dashboard, without calling <code>refund</code> at all. Try it with the fake and with KoboPay.</p>
+<solution>
+<example file="cancel.ts" project="pay" browser="no">
+import { FakePaymentAdapter } from "./fake-payments.js";
+import { KoboPayAdapter } from "./kobopay-adapter.js";
+import type { PaymentAdapter } from "./payments.js";
+
+async function cancelOrder(payments: PaymentAdapter, chargeId: string): Promise<string> {
+  if (!payments.features.refunds) return `refund ${chargeId} by hand in the ${payments.name} dashboard`;
+  await payments.refund(chargeId);
+  return `refunded ${chargeId}`;
+}
+
+const kobopay = new KoboPayAdapter({ baseUrl: "http://127.0.0.1:1", secretKey: "sk_test_123", timeoutMs: 1_000 });
+console.log(await cancelOrder(new FakePaymentAdapter(), "fake_ch_1"));
+console.log(await cancelOrder(kobopay, "ch_7"));
+</example>
+<output>
+refunded fake_ch_1
+refund ch_7 by hand in the kobopay dashboard
+</output>
+<p>Checking <code>features.refunds</code> first turns a missing feature into a normal business path instead of an error. The KoboPay adapter was never initialized here and its URL points nowhere; that is fine, because <code>cancelOrder</code> never calls the network for it. In a real shop the note would become a task in the back office.</p>
+</solution>
+</exercise>
+<exercise title="Which error?">
+<p>Name the error class for each situation: (1) <code>KOBOPAY_SECRET</code> is missing at startup; (2) the provider's DNS name does not resolve; (3) the provider answered <code>500</code>; (4) no answer within the timeout; (5) someone asks the KoboPay adapter for a refund; (6) the app asks the registry for an adapter called <code>paypal</code>; (7) a route needs the <code>streaming</code> capability and the adapter lacks it.</p>
+<solution>
+<ol>
+<li><code>AdapterConfigurationError</code>, thrown by <code>initialize</code> (and reported inside the <code>AggregateError</code> from <code>initializeAll</code>).</li>
+<li><code>AdapterConnectionError</code>: the request never reached the provider. (During <code>initialize</code> it is wrapped in <code>AdapterInitializationError</code>.)</li>
+<li><code>AdapterOperationError</code>, with the status in its <code>cause</code>.</li>
+<li><code>AdapterTimeoutError</code>, with the limit in its <code>timeout</code> property. The outcome is unknown, not failed.</li>
+<li><code>AdapterNotSupportedError</code> (status 501).</li>
+<li><code>AdapterNotFoundError</code>, from <code>registry.require</code>.</li>
+<li><code>AdapterCapabilityMissingError</code>, from <code>registry.requireCapability</code>.</li>
+</ol>
+<p>Every one of them is an <code>AdapterError</code>, so <code>isAdapterError(error)</code> catches them all in one place, such as an error handler that logs the adapter name.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Business logic depends on a contract in its own words (<code>PaymentAdapter</code>); each provider gets an adapter that translates. Swapping providers is one new class and one configuration value.</li>
+<li><code>LifecycleAdapter</code> gives every adapter a name, capabilities, <code>initialize</code>/<code>start</code>/<code>stop</code>/<code>dispose</code> and <code>health</code>. Capabilities describe the platform; business features belong in your contract.</li>
+<li><code>AdapterRegistry</code> finds adapters by case-insensitive name or capability, and runs the lifecycle for all of them, collecting failures in an <code>AggregateError</code>. It runs in registration order, even when stopping.</li>
+<li>Adapters turn failures into <code>AdapterConfigurationError</code>, <code>AdapterInitializationError</code>, <code>AdapterConnectionError</code>, <code>AdapterOperationError</code>, <code>AdapterTimeoutError</code> and <code>AdapterNotSupportedError</code>. A timed-out charge is an unknown outcome; retry it only with the same idempotency key.</li>
+<li><code>healthAll</code> combines health with a time limit and retries. One contract test suite keeps the fake and the real adapter interchangeable.</li>
+</ul>
+<p>This completes the ZudoJS advanced systems course. Next, you put auth, users, products, orders, payments and notifications together in <a href="/learn/zudo-monolith">one well-structured monolith</a>.</p>
+</section>

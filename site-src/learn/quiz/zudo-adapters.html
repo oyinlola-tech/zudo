@@ -1,0 +1,738 @@
+<question id="ad-why" type="choice">
+<q>Checkout reads the payment provider's SDK response directly in twenty places. What goes wrong when the business switches to another provider?</q>
+<option>Nothing, because all providers use the same JSON</option>
+<option correct>Every place that reads the old provider's shape must change, and until it does, successful payments can be treated as declined</option>
+<option>Only the tests break</option>
+<option>The new provider refuses to work with old code</option>
+<explain><p>Provider-specific shapes (<code>status: "success"</code>, <code>amount_kobo</code>) leak into business logic. An adapter keeps them in one class, so the rest of the app speaks its own contract and a switch touches one place.</p></explain>
+</question>
+
+<question id="ad-coupled-output" type="output">
+<q>Checkout was written for provider A. What does it print for provider B's successful payment?</q>
+<code file="coupled.js">
+function checkoutWithA(response) {
+  if (response.status === "success") return "paid";
+  return `declined: ${response.gateway_response}`;
+}
+const fromB = { state: "CAPTURED", amount: { value: 20_425, currency: "NGN" }, reason: null };
+console.log(checkoutWithA(fromB));
+</code>
+<option correct>declined: undefined</option>
+<option>paid</option>
+<option>declined: null</option>
+<option>TypeError: Cannot read properties of undefined</option>
+<explain><p>B has no <code>status</code> field, so the check fails and the code falls through to "declined", reading a field B does not have either. No error is thrown: the bug is silent, which makes it worse.</p></explain>
+</question>
+
+<question id="ad-port" type="choice">
+<q>In the adapter pattern, who defines the contract (the port) that adapters implement?</q>
+<option>The payment provider</option>
+<option correct>Your application, in its own words, from what the business logic needs</option>
+<option>The adapter package</option>
+<option>The HTTP client library</option>
+<explain><p>The contract describes what checkout needs: charge, refund, succeeded or declined. If it copied one provider's API, the next provider would have to pretend to be the first one, and the coupling would be back.</p></explain>
+</question>
+
+<question id="ad-reference" type="choice">
+<q>Why is <code>reference</code> (the order id) part of <code>ChargeRequest</code>, and not only something an adapter might add?</q>
+<option>So the provider can show it on the bank statement</option>
+<option correct>It is the idempotency key: every adapter must promise that the same reference never charges twice, so checkout can retry safely</option>
+<option>Because the registry needs it to find the adapter</option>
+<option>To make the request larger</option>
+<explain><p>Idempotency is a promise that checkout relies on. Putting it in the contract, and testing it in the contract suite, makes every adapter keep it: the fake by remembering references, KoboPay through the <code>Idempotency-Key</code> header.</p></explain>
+</question>
+
+<question id="ad-idempotency-output" type="output">
+<q>What does this idempotent charge function print?</q>
+<code file="idempotent.js">
+const charges = new Map();
+let providerCalls = 0;
+async function charge(reference, amountKobo) {
+  if (charges.has(reference)) return charges.get(reference);
+  providerCalls += 1;
+  const result = { id: `ch_${providerCalls}`, amountKobo };
+  charges.set(reference, result);
+  return result;
+}
+const a = await charge("order-1001", 2_042_500);
+const b = await charge("order-1001", 2_042_500);
+const c = await charge("order-1002", 950_000);
+console.log(a.id, b.id, c.id, providerCalls);
+</code>
+<option correct>ch_1 ch_1 ch_2 2</option>
+<option>ch_1 ch_2 ch_3 3</option>
+<option>ch_1 ch_1 ch_3 3</option>
+<option>ch_1 ch_1 ch_2 3</option>
+<explain><p>The second call for order 1001 returns the stored result without calling the provider. Two orders, two charges, however often each is retried.</p></explain>
+</question>
+
+<question id="ad-lifecycle-methods" type="choice">
+<q>Which lifecycle method should check that the provider is reachable and the API key works?</q>
+<option><code>start()</code></option>
+<option correct><code>initialize()</code>: prepare and verify, before any work begins</option>
+<option><code>dispose()</code></option>
+<option>The first <code>charge()</code></option>
+<explain><p><code>initialize</code> prepares external resources without starting work. Checking there turns a wrong key into a startup failure, instead of a failed payment for the first customer.</p></explain>
+</question>
+
+<question id="ad-stop-vs-dispose" type="choice">
+<q>What is the difference between <code>stop()</code> and <code>dispose()</code>?</q>
+<option>There is none; they are aliases</option>
+<option correct><code>stop</code> ends active work (no new charges, let running ones finish) but keeps resources; <code>dispose</code> releases everything for good</option>
+<option><code>stop</code> deletes the adapter from the registry; <code>dispose</code> does not</option>
+<option><code>dispose</code> can be undone with <code>start</code></option>
+<explain><p>A graceful shutdown does both, in order: stop taking work, wait for what is running, then release connections and timers. The lesson's KoboPay adapter waits in <code>stop</code> and aborts leftovers in <code>dispose</code>.</p></explain>
+</question>
+
+<question id="ad-capabilities-features" type="choice">
+<q>KoboPay cannot refund through its API. Where should the adapter say so?</q>
+<option>In <code>capabilities</code>, as <code>refunds: false</code></option>
+<option correct>In your own contract, such as <code>features.refunds</code>, because <code>AdapterCapabilities</code> only lists platform abilities and refuses unknown names</option>
+<option>In the adapter's <code>metadata.description</code></option>
+<option>Nowhere; <code>refund</code> just returns</option>
+<explain><p>Capabilities are about the runtime: <code>http</code>, <code>abortSignal</code>, <code>gracefulShutdown</code>, <code>edgeRuntime</code>… TypeScript rejects <code>refunds</code> there (TS2353). Business features belong in the business contract, where checkout can read them.</p></explain>
+</question>
+
+<question id="ad-names-output" type="output">
+<q>What does this print?</q>
+<code file="names.js" browser="no">
+import { AdapterRegistry, createMockAdapter } from "@zudojs/adapters";
+const adapters = new AdapterRegistry();
+adapters.register(createMockAdapter({ name: "Payments" }));
+console.log(adapters.has("payments"), adapters.getNames(), adapters.get("PAYMENTS").name);
+</code>
+<option correct>true [ 'payments' ] Payments</option>
+<option>false [ 'Payments' ] Payments</option>
+<option>true [ 'Payments' ] payments</option>
+<option>true [ 'payments' ] payments</option>
+<explain><p>Names are trimmed and lower-cased for registration and lookup, so any casing finds the adapter and <code>getNames()</code> shows the normalized form. The adapter object itself is stored untouched, so its <code>name</code> is still <code>Payments</code>.</p></explain>
+</question>
+
+<question id="ad-require-get" type="choice">
+<q>When should you use <code>registry.require(name)</code> instead of <code>registry.get(name)</code>?</q>
+<option>Never; <code>get</code> is always better</option>
+<option correct>When the app cannot work without that adapter: <code>require</code> throws <code>AdapterNotFoundError</code>, <code>get</code> returns <code>undefined</code></option>
+<option>When the adapter has capabilities</option>
+<option><code>require</code> also initializes the adapter</option>
+<explain><p>A missing payments adapter is a configuration bug that should stop startup loudly. <code>get</code> fits optional adapters, where your code has a sensible path for "not there".</p></explain>
+</question>
+
+<question id="ad-capability-output" type="output">
+<q>What does this print?</q>
+<code file="capabilities.js" browser="no">
+import { AdapterRegistry, createMockAdapter } from "@zudojs/adapters";
+const adapters = new AdapterRegistry();
+adapters.register(createMockAdapter({ name: "edge-http", capabilities: { http: true, edgeRuntime: true } }));
+adapters.register(createMockAdapter({ name: "node-http", capabilities: { http: true, longRunning: true, gracefulShutdown: true } }));
+console.log(adapters.findByCapability("http").map((a) => a.name));
+console.log(adapters.supports("edge-http", "gracefulShutdown"), adapters.supports("ftp", "http"));
+try { adapters.requireCapability("edge-http", "longRunning"); } catch (error) { console.log(error.name); }
+</code>
+<option correct>[ 'edge-http', 'node-http' ]
+false false
+AdapterCapabilityMissingError</option>
+<option>[ 'node-http' ]
+false false
+AdapterCapabilityMissingError</option>
+<option>[ 'edge-http', 'node-http' ]
+false true
+AdapterNotFoundError</option>
+<option>[ 'edge-http', 'node-http' ]
+false AdapterNotFoundError
+AdapterCapabilityMissingError</option>
+<explain><p>Both adapters declare <code>http</code>. <code>supports</code> answers <code>false</code> both for a missing capability and for an adapter that is not registered, without throwing. <code>requireCapability</code> throws when the adapter exists but lacks the capability.</p></explain>
+</question>
+
+<question id="ad-initall-output" type="output">
+<q>One of two adapters fails to initialize. What does this print?</q>
+<code file="init.js" browser="no">
+import { AdapterRegistry, createMockAdapter } from "@zudojs/adapters";
+const adapters = new AdapterRegistry();
+adapters.register(createMockAdapter({ name: "sms", initialize: () => { throw new Error("no API key"); } }));
+adapters.register(createMockAdapter({ name: "email", initialize: () => console.log("email ready") }));
+try {
+  await adapters.initializeAll();
+} catch (error) {
+  console.log(error.name, error.errors.length, error.errors[0].message);
+}
+</code>
+<option correct>email ready
+AggregateError 1 no API key</option>
+<option>Error 1 no API key</option>
+<option>AggregateError 2 no API key</option>
+<option>email ready
+AdapterInitializationError 1 no API key</option>
+<explain><p><code>initializeAll</code> tries every adapter, even after one fails, and then throws one <code>AggregateError</code> listing the failures. You see all broken adapters in one startup. It does not wrap the errors itself: an adapter that wants <code>AdapterInitializationError</code> throws it from its own <code>initialize</code>.</p></explain>
+</question>
+
+<question id="ad-health-worst-output" type="output">
+<q>What does this print?</q>
+<code file="health.js" browser="no">
+import { AdapterRegistry, createMockAdapter, createDegradedHealth, createHealthyHealth } from "@zudojs/adapters";
+const adapters = new AdapterRegistry();
+adapters.register(createMockAdapter({ name: "payments", health: () => createDegradedHealth("slow") }));
+adapters.register(createMockAdapter({ name: "sms", health: () => createHealthyHealth() }));
+adapters.register(createMockAdapter({ name: "storage" }));
+const report = await adapters.healthAll();
+console.log(report.status, Object.keys(report.adapters).sort());
+</code>
+<option correct>degraded [ 'payments', 'sms' ]</option>
+<option>healthy [ 'payments', 'sms', 'storage' ]</option>
+<option>degraded [ 'payments', 'sms', 'storage' ]</option>
+<option>unhealthy [ 'payments', 'sms' ]</option>
+<explain><p>The overall status is the worst one reported. Only adapters with a <code>health</code> method are asked, so <code>storage</code> is not in the report at all, and it does not count as unhealthy either.</p></explain>
+</question>
+
+<question id="ad-health-timeout-output" type="output">
+<q>An adapter's health check never answers. What does this print?</q>
+<code file="hang.js" browser="no">
+import { AdapterRegistry, createMockAdapter } from "@zudojs/adapters";
+const adapters = new AdapterRegistry();
+adapters.register(createMockAdapter({ name: "sms", health: () => new Promise(() => {}) }));
+const report = await adapters.healthAll({ timeout: 50 });
+console.log(report.status, report.adapters.sms.message);
+</code>
+<option correct>unhealthy Health check timed out after 50 ms.</option>
+<option>The program waits forever</option>
+<option>healthy undefined</option>
+<option>degraded Health check timed out after 50 ms.</option>
+<explain><p>With <code>timeout</code>, the registry stops waiting and reports the adapter as unhealthy. A health endpoint must answer even when a dependency hangs; otherwise the load balancer's check hangs too.</p></explain>
+</question>
+
+<question id="ad-health-retry-output" type="output">
+<q>The SMS gateway is down. How many times is its health check called?</q>
+<code file="retry.js" browser="no">
+import { AdapterRegistry, createMockAdapter } from "@zudojs/adapters";
+let calls = 0;
+const adapters = new AdapterRegistry();
+adapters.register(createMockAdapter({ name: "sms", health: () => { calls += 1; throw new Error("gateway down"); } }));
+const report = await adapters.healthAll({ retry: { attempts: 3 } });
+console.log(calls, report.status, report.adapters.sms.message);
+</code>
+<option correct>3 unhealthy gateway down</option>
+<option>4 unhealthy gateway down</option>
+<option>1 unhealthy gateway down</option>
+<option>3 degraded gateway down</option>
+<explain><p><code>attempts</code> is the total number of tries, not the number of extra ones. A check that throws counts as unhealthy, with the error's message, and unhealthy results are retried until the attempts are used up.</p></explain>
+</question>
+
+<question id="ad-dispose-order-output" type="output">
+<q>In which order are the adapters torn down?</q>
+<code file="dispose.js" browser="no">
+import { AdapterRegistry, createMockAdapter } from "@zudojs/adapters";
+const log = [];
+const adapters = new AdapterRegistry();
+for (const name of ["database", "payments"]) {
+  adapters.register(createMockAdapter({ name, stop: () => log.push(`stop ${name}`), dispose: () => log.push(`dispose ${name}`) }));
+}
+await adapters.disposeAll();
+console.log(log.join(", "), adapters.size);
+</code>
+<option correct>stop database, dispose database, stop payments, dispose payments 0</option>
+<option>stop payments, dispose payments, stop database, dispose database 0</option>
+<option>stop database, stop payments, dispose database, dispose payments 0</option>
+<option>stop database, dispose database, stop payments, dispose payments 2</option>
+<explain><p>The registry tears down one adapter completely (stop, then dispose) before the next, in registration order, and empties itself. It does not reverse the order, so when one adapter depends on another, manage their order with <code>@zudojs/lifecycle</code>.</p></explain>
+</question>
+
+<question id="ad-remove-output" type="output">
+<q>What does this print?</q>
+<code file="remove.js" browser="no">
+import { AdapterRegistry, createMockAdapter } from "@zudojs/adapters";
+const adapters = new AdapterRegistry();
+adapters.register(createMockAdapter({ name: "sms", dispose: () => console.log("sms disposed") }));
+console.log(adapters.remove("sms"), adapters.size);
+adapters.register(createMockAdapter({ name: "sms", dispose: () => console.log("new sms disposed") }));
+console.log(await adapters.removeAndDispose("sms"), adapters.size);
+</code>
+<option correct>true 0
+new sms disposed
+true 0</option>
+<option>sms disposed
+true 0
+new sms disposed
+true 0</option>
+<option>true 0
+true 0</option>
+<option>true 0
+AdapterAlreadyRegisteredError</option>
+<explain><p><code>remove</code> only forgets the adapter: its connections stay open, and the first SMS adapter is never disposed. <code>removeAndDispose</code> also stops and disposes it. Use the second when you replace an adapter at runtime, or you leak the old one.</p></explain>
+</question>
+
+<question id="ad-stop-failure" type="choice">
+<q>During <code>disposeAll</code>, one adapter's <code>stop()</code> throws. What happens to that adapter?</q>
+<option>It stays registered and is never disposed</option>
+<option correct>Its <code>dispose()</code> still runs, the other adapters are torn down too, and the failure is reported in an <code>AggregateError</code> at the end</option>
+<option>The whole process exits</option>
+<option>The error is silently ignored</option>
+<explain><p>Skipping disposal would leave connections and timers with nothing holding a reference to release them. The registry disposes anyway and reports every failure once all adapters were handled.</p></explain>
+</question>
+
+<question id="ad-timeout-unknown" type="choice">
+<q>A charge request times out. What should checkout tell the customer?</q>
+<option>"Payment failed, please try again"</option>
+<option>"Payment successful"</option>
+<option correct>"We don't know yet; we will confirm", and then find out with a retry using the same idempotency key, a lookup by reference or the provider's webhook</option>
+<option>Nothing; just charge again with a new reference</option>
+<explain><p>A timeout means "no answer", not "no charge". The provider may have charged the card. "Failed" invites a second payment, and a retry with a new reference could charge twice.</p></explain>
+</question>
+
+<question id="ad-retry-safe" type="choice">
+<q>Which request is safe to retry after a timeout without any extra protection?</q>
+<option><code>POST /v1/charges</code></option>
+<option><code>POST /v1/refunds</code></option>
+<option correct><code>GET /v1/charges/ch_1</code></option>
+<option><code>POST /v1/sms</code></option>
+<explain><p>Reading does not change anything, so doing it twice is harmless. Charging, refunding and sending a message all have effects, and may only be retried with an idempotency key the other side honours.</p></explain>
+</question>
+
+<question id="ad-timeout-error-output" type="output">
+<q>What does this print?</q>
+<code file="errors.js" browser="no">
+import { AdapterTimeoutError, AdapterNotSupportedError, isAdapterError } from "@zudojs/adapters";
+const timeout = new AdapterTimeoutError("kobopay", "charge", 800);
+const refund = new AdapterNotSupportedError("kobopay", "refund");
+console.log(timeout.message, timeout.timeout, timeout.statusCode);
+console.log(refund.statusCode, refund.expose, isAdapterError(refund), isAdapterError(new Error("x")));
+</code>
+<option correct>Adapter "kobopay" operation "charge" timed out after 800ms. 800 500
+501 true true false</option>
+<option>Adapter "kobopay" operation "charge" timed out after 800ms. 800 504
+501 true true false</option>
+<option>timed out 800 500
+500 false true false</option>
+<option>Adapter "kobopay" operation "charge" timed out after 800ms. undefined 500
+501 true true true</option>
+<explain><p>The timeout error keeps the limit in <code>timeout</code> and, like most adapter errors, has status 500 and <code>expose: false</code>. "Not supported" is a 501 whose message may be shown. <code>isAdapterError</code> recognises every class in the family and nothing else.</p></explain>
+</question>
+
+<question id="ad-error-classes" type="choice">
+<q>KoboPay's DNS name does not resolve, so <code>fetch</code> fails before any response. Which error should the adapter throw from <code>charge</code>?</q>
+<option><code>AdapterTimeoutError</code></option>
+<option correct><code>AdapterConnectionError</code>, with the network error as its <code>cause</code></option>
+<option><code>AdapterNotSupportedError</code></option>
+<option><code>AdapterNotFoundError</code></option>
+<explain><p>The request never reached the provider, so this is a connection problem, and unlike a timeout the charge certainly did not happen. <code>AdapterNotFoundError</code> is the registry's error for an unknown adapter name, not for a missing server.</p></explain>
+</question>
+
+<question id="ad-cause" type="choice">
+<q>Why do the adapter errors keep the original problem in <code>cause</code> instead of in the message?</q>
+<option>Because messages cannot be longer than one line</option>
+<option correct>The message is stable and safe to show or group by; the cause keeps the details (status, network error) for logs and debugging</option>
+<option>Because <code>cause</code> is sent to the customer</option>
+<option>To save memory</option>
+<explain><p><code>Adapter "kobopay" operation "charge" failed.</code> is the same for every such failure, so alerts can group them. The cause, such as "KoboPay answered 503", is what an engineer needs, and stays out of customer-facing responses.</p></explain>
+</question>
+
+<question id="ad-config-startup" type="choice">
+<q><code>setUpPayments</code> receives <code>PAYMENTS_PROVIDER=stripe-ish</code>. Why throw at startup instead of falling back to the fake?</q>
+<option>Because the fake cannot be created twice</option>
+<option correct>A silent fallback would run production against a fake provider that "charges" nothing; a loud startup failure is found in seconds</option>
+<option>Because the registry refuses fakes</option>
+<option>Because unknown values are always numbers</option>
+<explain><p>Defaults that hide configuration mistakes are dangerous, and with payments they lose money. Unknown or missing settings should stop the app with a clear message before it takes any traffic.</p></explain>
+</question>
+
+<question id="ad-swap-where" type="choice">
+<q>ShopFlow moves from KoboPay to a third provider. Which files change?</q>
+<option>Checkout, the order service and every test</option>
+<option correct>A new adapter class, and the composition function that chooses the adapter (<code>setUpPayments</code>); checkout does not change</option>
+<option>Only <code>payments.ts</code>, the contract</option>
+<option>Nothing; the registry detects the provider</option>
+<explain><p>Business logic depends on the contract, so it is untouched. The new adapter must pass the same contract test suite as the others before it goes live.</p></explain>
+</question>
+
+<question id="ad-contract-test" type="choice">
+<q>What makes the lesson's contract test suite valuable when a new adapter is added?</q>
+<option>It tests the provider's own code</option>
+<option correct>The same promises (exact amount, readable decline, one charge per reference, refund or a clear refusal) are checked for every adapter, so any of them can replace another</option>
+<option>It makes the adapters faster</option>
+<option>It replaces the provider's sandbox</option>
+<explain><p>Swappability is a claim, and the contract suite is its proof. A new adapter that charges a reference twice fails the suite before it can charge a customer twice.</p></explain>
+</question>
+
+<question id="ad-mock-registry" type="choice">
+<q>What are <code>createMockAdapter</code> and <code>createMockAdapterRegistry</code> for?</q>
+<option>Replacing the real provider in production</option>
+<option correct>Testing code that works with the registry, such as a readiness endpoint, with adapters whose health and lifecycle you control</option>
+<option>Generating adapters from an OpenAPI file</option>
+<option>Recording real HTTP traffic</option>
+<explain><p>A mock adapter takes the lifecycle hooks and <code>health</code> you give it, so a test can make one adapter degraded or failing on purpose and check how your code reacts.</p></explain>
+</question>
+
+<question id="ad-readiness-policy" type="choice">
+<q>The readiness endpoint answers 200 when payments is <code>degraded</code> and 503 when it is <code>unhealthy</code>. Why not 503 for degraded too?</q>
+<option>Because degraded adapters cannot be detected</option>
+<option correct>A slow provider still works; taking every server out of the load balancer would turn slowness into a full outage</option>
+<option>Because 503 is only for database errors</option>
+<option>Because degraded means the adapter is disposed</option>
+<explain><p>Degraded is a reason to alert, not to stop serving. If all instances report not-ready at once, the load balancer has nowhere to send traffic.</p></explain>
+</question>
+
+<question id="ad-health-no-work" type="choice">
+<q>Which is the best health check for a payment adapter?</q>
+<option>Charge ₦1 to a test card every few seconds</option>
+<option correct>Call a cheap endpoint such as the provider's status or health route, with a short timeout</option>
+<option>Refund the last charge</option>
+<option>Do nothing and always return healthy</option>
+<explain><p>A health check must not do real work: charging, even a small amount, costs money and may trip fraud checks. A cheap, read-only call with a time limit tells you whether the provider is reachable and fast.</p></explain>
+</question>
+
+<question id="ad-graceful" type="choice">
+<q>The app shuts down while a charge is in flight. What does the lesson's KoboPay adapter do?</q>
+<option>Aborts the charge immediately</option>
+<option correct><code>stop</code> refuses new charges and waits for the one in flight (which has its own timeout), then <code>dispose</code> aborts anything left</option>
+<option>Retries the charge after restart</option>
+<option>Leaves the connection open</option>
+<explain><p>Cutting off a payment halfway creates exactly the unknown outcome you want to avoid. Waiting is safe because every call has a timeout, so <code>stop</code> always finishes.</p></explain>
+</question>
+
+<question id="ad-decorator" type="choice">
+<q>A <code>withLogging(inner)</code> wrapper implements <code>PaymentAdapter</code> by forwarding to another adapter and logging each charge. What makes this possible?</q>
+<option>The registry's capabilities</option>
+<option correct>Checkout depends only on the <code>PaymentAdapter</code> interface, so anything that implements it, including a wrapper, can stand in</option>
+<option>JavaScript's <code>Proxy</code> object is required</option>
+<option>The provider's SDK supports logging</option>
+<explain><p>This is the decorator pattern. Timing, metrics, circuit breakers and logging can all be wrappers, and every adapter stays a plain translator.</p></explain>
+</question>
+
+<question id="ad-translate-output" type="output">
+<q>The adapter translates KoboPay's answers. What does this print?</q>
+<code file="translate.js">
+function toResult(kobopay) {
+  return kobopay.status === "succeeded"
+    ? { status: "succeeded", chargeId: kobopay.id, amountKobo: kobopay.amount }
+    : { status: "declined", reason: (kobopay.failure_message ?? "declined").replaceAll("_", " ") };
+}
+console.log(toResult({ id: "ch_1", status: "failed", amount: 5000, failure_message: "card_expired" }));
+console.log(toResult({ id: "ch_2", status: "failed", amount: 5000, failure_message: null }));
+</code>
+<option correct>{ status: 'declined', reason: 'card expired' }
+{ status: 'declined', reason: 'declined' }</option>
+<option>{ status: 'failed', reason: 'card_expired' }
+{ status: 'failed', reason: null }</option>
+<option>{ status: 'declined', reason: 'card_expired' }
+{ status: 'declined', reason: 'null' }</option>
+<option>{ status: 'declined', reason: 'card expired' }
+{ status: 'declined', reason: null }</option>
+<explain><p>The adapter maps the provider's words to the contract's: <code>failed</code> becomes <code>declined</code>, and the reason is made readable. <code>??</code> supplies a default when the provider sends <code>null</code>, so checkout never shows "null" to a customer.</p></explain>
+</question>
+
+<question id="ad-code-registry" type="code" file="registry.js">
+<q><p>Write a tiny registry: <code>register(adapter)</code> stores it under its trimmed, lower-cased name and throws <code>Error("already registered: " + name)</code> for a duplicate; <code>require(name)</code> finds it the same way or throws <code>Error("not registered: " + name)</code>.</p></q>
+<starter>
+function createRegistry() {
+  const adapters = new Map();
+  return {
+    register(adapter) {
+      // your code here
+    },
+    require(name) {
+      // your code here
+    },
+  };
+}
+
+const registry = createRegistry();
+registry.register({ name: "Fake-Payments" });
+console.log(registry.require(" fake-payments ").name);
+for (const attempt of [() => registry.register({ name: "FAKE-PAYMENTS" }), () => registry.require("kobopay")]) {
+  try {
+    attempt();
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</starter>
+<solution>
+function createRegistry() {
+  const adapters = new Map();
+  const key = (name) => name.trim().toLowerCase();
+  return {
+    register(adapter) {
+      const name = key(adapter.name);
+      if (adapters.has(name)) throw new Error("already registered: " + name);
+      adapters.set(name, adapter);
+    },
+    require(name) {
+      const adapter = adapters.get(key(name));
+      if (adapter === undefined) throw new Error("not registered: " + key(name));
+      return adapter;
+    },
+  };
+}
+
+const registry = createRegistry();
+registry.register({ name: "Fake-Payments" });
+console.log(registry.require(" fake-payments ").name);
+for (const attempt of [() => registry.register({ name: "FAKE-PAYMENTS" }), () => registry.require("kobopay")]) {
+  try {
+    attempt();
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</solution>
+<expected>
+Fake-Payments
+already registered: fake-payments
+not registered: kobopay
+</expected>
+<explain><p>Normalizing the key in one helper, used by both methods, is what makes lookups case-insensitive and duplicates impossible. The stored adapter keeps its original name, as in <code>AdapterRegistry</code>.</p></explain>
+</question>
+
+<question id="ad-code-fake" type="code" file="fake.js">
+<q><p>Finish the fake payment adapter's <code>charge</code>: return the stored result for a reference seen before; decline <code>tok_declined</code> with reason <code>insufficient funds</code>; otherwise succeed with <code>chargeId: "fake_ch_" + n</code> (n counts results stored so far, plus one).</p></q>
+<starter>
+class FakePayments {
+  charges = new Map();
+
+  async charge(request) {
+    // your code here
+  }
+}
+
+const payments = new FakePayments();
+const order = { reference: "order-1001", amountKobo: 2_042_500, cardToken: "tok_visa" };
+console.log(await payments.charge(order));
+console.log(await payments.charge(order));
+console.log(await payments.charge({ ...order, reference: "order-1002", cardToken: "tok_declined" }));
+console.log(payments.charges.size);
+</starter>
+<solution>
+class FakePayments {
+  charges = new Map();
+
+  async charge(request) {
+    const previous = this.charges.get(request.reference);
+    if (previous !== undefined) return previous;
+    const result = request.cardToken === "tok_declined"
+      ? { status: "declined", reason: "insufficient funds" }
+      : { status: "succeeded", chargeId: `fake_ch_${this.charges.size + 1}`, amountKobo: request.amountKobo };
+    this.charges.set(request.reference, result);
+    return result;
+  }
+}
+
+const payments = new FakePayments();
+const order = { reference: "order-1001", amountKobo: 2_042_500, cardToken: "tok_visa" };
+console.log(await payments.charge(order));
+console.log(await payments.charge(order));
+console.log(await payments.charge({ ...order, reference: "order-1002", cardToken: "tok_declined" }));
+console.log(payments.charges.size);
+</solution>
+<expected>
+{ status: 'succeeded', chargeId: 'fake_ch_1', amountKobo: 2042500 }
+{ status: 'succeeded', chargeId: 'fake_ch_1', amountKobo: 2042500 }
+{ status: 'declined', reason: 'insufficient funds' }
+2
+</expected>
+<explain><p>A fake must keep the contract's promises too, idempotency included, or tests that use it prove nothing about the real adapters. Storing declines as well means a retried declined payment is not re-evaluated either.</p></explain>
+</question>
+
+<question id="ad-code-health" type="code" file="health.js">
+<q><p>Write <code>combine(reports)</code>: given an object of adapter name to <code>{ status }</code>, return the worst status (<code>unhealthy</code> beats <code>degraded</code> beats <code>healthy</code>), and <code>healthy</code> for an empty object.</p></q>
+<starter>
+function combine(reports) {
+  // your code here
+  return "healthy";
+}
+
+console.log(combine({ payments: { status: "healthy" }, sms: { status: "healthy" } }));
+console.log(combine({ payments: { status: "degraded" }, sms: { status: "healthy" } }));
+console.log(combine({ payments: { status: "degraded" }, sms: { status: "unhealthy" } }));
+console.log(combine({}));
+</starter>
+<solution>
+const RANK = { healthy: 0, degraded: 1, unhealthy: 2 };
+
+function combine(reports) {
+  let worst = "healthy";
+  for (const { status } of Object.values(reports)) {
+    if ((RANK[status] ?? RANK.unhealthy) > RANK[worst]) worst = status in RANK ? status : "unhealthy";
+  }
+  return worst;
+}
+
+console.log(combine({ payments: { status: "healthy" }, sms: { status: "healthy" } }));
+console.log(combine({ payments: { status: "degraded" }, sms: { status: "healthy" } }));
+console.log(combine({ payments: { status: "degraded" }, sms: { status: "unhealthy" } }));
+console.log(combine({}));
+</solution>
+<expected>
+healthy
+degraded
+unhealthy
+healthy
+</expected>
+<explain><p>Ranking the statuses turns "the worst one" into a maximum. Treating an unknown status as unhealthy fails safe, the same choice <code>healthAll</code> makes.</p></explain>
+</question>
+
+<question id="ad-code-with-timeout" type="code" file="with-timeout.js">
+<q><p>Write <code>withTimeout(promise, ms, label)</code>: resolve with the promise's value, or reject with an <code>Error</code> named <code>AdapterTimeoutError</code> and the message <code>&lt;label&gt; timed out after &lt;ms&gt;ms</code> if it takes longer. Clear the timer either way.</p></q>
+<starter>
+function withTimeout(promise, ms, label) {
+  // your code here
+  return promise;
+}
+
+const slow = new Promise((resolve) => setTimeout(() => resolve("charged"), 200));
+const fast = Promise.resolve("healthy");
+console.log(await withTimeout(fast, 50, "health"));
+try {
+  console.log(await withTimeout(slow, 50, "charge"));
+} catch (error) {
+  console.log(error.name, error.message);
+}
+</starter>
+<solution>
+function withTimeout(promise, ms, label) {
+  let timer;
+  const limit = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(`${label} timed out after ${ms}ms`);
+      error.name = "AdapterTimeoutError";
+      reject(error);
+    }, ms);
+  });
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
+}
+
+const slow = new Promise((resolve) => setTimeout(() => resolve("charged"), 200));
+const fast = Promise.resolve("healthy");
+console.log(await withTimeout(fast, 50, "health"));
+try {
+  console.log(await withTimeout(slow, 50, "charge"));
+} catch (error) {
+  console.log(error.name, error.message);
+}
+</solution>
+<expected>
+healthy
+AdapterTimeoutError charge timed out after 50ms
+</expected>
+<explain><p><code>Promise.race</code> settles with whichever finishes first. Note what it cannot do: the slow work keeps running in the background, which is why the real adapter also aborts the request with an <code>AbortSignal</code>. And the "charged" that arrives later is exactly the unknown outcome from the lesson.</p></explain>
+</question>
+
+<question id="ad-code-outcome" type="code" file="outcome.js">
+<q><p>Write <code>outcome(error)</code> for checkout: <code>"unknown"</code> for an error named <code>AdapterTimeoutError</code> (the charge may have happened), <code>"not charged"</code> for <code>AdapterConnectionError</code> (the request never arrived), and <code>"failed"</code> for anything else.</p></q>
+<starter>
+function outcome(error) {
+  // your code here
+  return "failed";
+}
+
+const named = (name) => Object.assign(new Error(name), { name });
+for (const error of [named("AdapterTimeoutError"), named("AdapterConnectionError"), named("AdapterOperationError"), new TypeError("bug")]) {
+  console.log(error.name.padEnd(22), outcome(error));
+}
+</starter>
+<solution>
+function outcome(error) {
+  if (error.name === "AdapterTimeoutError") return "unknown";
+  if (error.name === "AdapterConnectionError") return "not charged";
+  return "failed";
+}
+
+const named = (name) => Object.assign(new Error(name), { name });
+for (const error of [named("AdapterTimeoutError"), named("AdapterConnectionError"), named("AdapterOperationError"), new TypeError("bug")]) {
+  console.log(error.name.padEnd(22), outcome(error));
+}
+</solution>
+<expected>
+AdapterTimeoutError    unknown
+AdapterConnectionError not charged
+AdapterOperationError  failed
+TypeError              failed
+</expected>
+<explain><p>The error class carries a fact the business needs: whether money may have moved. Only a timeout leaves that open. In the real code, use <code>instanceof</code> with the classes from <code>@zudojs/adapters</code>; the names here keep the exercise runnable anywhere.</p></explain>
+</question>
+
+<question id="ad-code-dispose-all" type="code" file="dispose-all.js">
+<q><p>Write <code>disposeAll(adapters)</code>: for each adapter, call <code>stop()</code> then <code>dispose()</code> (both optional, maybe async). Run <code>dispose</code> even when <code>stop</code> throws, keep going with the other adapters, and at the end throw an <code>AggregateError</code> with every failure, if there were any.</p></q>
+<starter>
+async function disposeAll(adapters) {
+  // your code here
+}
+
+const log = [];
+const adapters = [
+  { name: "database", stop: () => log.push("stop database"), dispose: () => log.push("dispose database") },
+  { name: "payments", stop: () => { throw new Error("pool busy"); }, dispose: () => log.push("dispose payments") },
+  { name: "sms", dispose: async () => log.push("dispose sms") },
+];
+try {
+  await disposeAll(adapters);
+} catch (error) {
+  console.log(error.constructor.name, error.errors.map((e) => e.message));
+}
+console.log(log.join(", "));
+</starter>
+<solution>
+async function disposeAll(adapters) {
+  const failures = [];
+  for (const adapter of adapters) {
+    try {
+      await adapter.stop?.();
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      await adapter.dispose?.();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length > 0) throw new AggregateError(failures, "One or more adapters failed to dispose.");
+}
+
+const log = [];
+const adapters = [
+  { name: "database", stop: () => log.push("stop database"), dispose: () => log.push("dispose database") },
+  { name: "payments", stop: () => { throw new Error("pool busy"); }, dispose: () => log.push("dispose payments") },
+  { name: "sms", dispose: async () => log.push("dispose sms") },
+];
+try {
+  await disposeAll(adapters);
+} catch (error) {
+  console.log(error.constructor.name, error.errors.map((e) => e.message));
+}
+console.log(log.join(", "));
+</solution>
+<expected>
+AggregateError [ 'pool busy' ]
+stop database, dispose database, dispose payments, dispose sms
+</expected>
+<explain><p>Each step gets its own <code>try</code>, so one failure cannot skip the cleanup that follows. <code>?.()</code> calls a hook only when the adapter has it. Collecting errors and throwing them together is what <code>AdapterRegistry.disposeAll</code> does.</p></explain>
+</question>
+
+<question id="ad-code-features" type="code" file="features.js">
+<q><p>Write <code>cancelOrder(payments, chargeId)</code>: if <code>payments.features.refunds</code> is true, <code>await payments.refund(chargeId)</code> and return <code>refunded &lt;id&gt;</code>; otherwise return <code>manual refund &lt;id&gt; via &lt;name&gt;</code> without calling <code>refund</code>.</p></q>
+<starter>
+async function cancelOrder(payments, chargeId) {
+  // your code here
+}
+
+const fake = { name: "fake-payments", features: { refunds: true }, refund: async () => {} };
+const kobopay = { name: "kobopay", features: { refunds: false }, refund: async () => { throw new Error("AdapterNotSupportedError"); } };
+console.log(await cancelOrder(fake, "fake_ch_1"));
+console.log(await cancelOrder(kobopay, "ch_7"));
+</starter>
+<solution>
+async function cancelOrder(payments, chargeId) {
+  if (!payments.features.refunds) return `manual refund ${chargeId} via ${payments.name}`;
+  await payments.refund(chargeId);
+  return `refunded ${chargeId}`;
+}
+
+const fake = { name: "fake-payments", features: { refunds: true }, refund: async () => {} };
+const kobopay = { name: "kobopay", features: { refunds: false }, refund: async () => { throw new Error("AdapterNotSupportedError"); } };
+console.log(await cancelOrder(fake, "fake_ch_1"));
+console.log(await cancelOrder(kobopay, "ch_7"));
+</solution>
+<expected>
+refunded fake_ch_1
+manual refund ch_7 via kobopay
+</expected>
+<explain><p>Checking the feature first turns a missing ability into a normal business path, instead of an exception. The adapter's <code>AdapterNotSupportedError</code> remains the safety net for code that forgets to check.</p></explain>
+</question>

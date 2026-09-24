@@ -1,0 +1,746 @@
+---
+title: Structural patterns
+description: Wrap a third-party SMS SDK in an adapter, add retries, logging and caching with decorators, control access with proxies, and hide SQL behind a repository.
+minutes: 60
+youNeed: Creational patterns, SOLID, DRY, KISS and YAGNI, and SQL basics
+youBuild: An SMS layer with two provider adapters, retry and logging decorators, a cache with a fake clock, lazy and protection proxies, and an order repository contract-tested against memory and PostgreSQL
+keywords: structural patterns, adapter pattern, anti-corruption layer, decorator pattern, retry decorator, caching decorator, proxy pattern, lazy loading, protection proxy, javascript Proxy, repository pattern, contract test, typescript design patterns
+objectives: Wrap a third-party SDK in an adapter that translates requests, responses and errors into your own interface | Add retries, logging and caching as decorators, and choose their order and retry rules deliberately | Use a proxy to delay expensive creation safely and to guard access | Hide storage behind a repository and prove two implementations equivalent with a contract test | Name where ZudoJS applies each pattern
+---
+<section>
+<h2 id="problem">The login code that was never sent</h2>
+<p>A shop logs customers in with a one-time code sent by SMS. For two years it used one SMS provider. Then the company moved to a cheaper provider, and a developer replaced the SDK call in the login code. Tests passed. The next morning, support was flooded: nobody could log in.</p>
+<p>The two providers' SDKs are third-party code the shop cannot change. The stand-ins below behave like the real packages in the ways that matter here: each wants phone numbers in its own format, and each reports problems in its own way.</p>
+<file name="vendor-sdks.ts" project="sms">
+// Stand-ins for two vendors' npm packages. You cannot change this code.
+
+export class TermiiClient {
+  readonly sent: string[] = [];
+  failNext = false;
+
+  constructor(private readonly apiKey: string) {}
+
+  async send(payload: { to: string; from: string; sms: string; type: "plain"; channel: "generic" | "dnd" }) {
+    if (this.failNext) {
+      this.failNext = false;
+      throw new Error("socket hang up");
+    }
+    if (!/^234\d{10}$/.test(payload.to)) return { code: "error", message: "Invalid phone number" };
+    this.sent.push(payload.to);
+    return { code: "ok", message_id: `TRM-${this.sent.length}`, message: "Successfully Sent" };
+  }
+}
+
+export class AfricasTalkingSms {
+  readonly delivered: string[] = [];
+  failNext = false;
+
+  constructor(private readonly apiKey: string) {}
+
+  async send(options: { to: string[]; message: string; from?: string }) {
+    if (this.failNext) {
+      this.failNext = false;
+      throw new Error("ECONNRESET");
+    }
+    const recipients = options.to.map((number) => {
+      if (!/^\+234\d{10}$/.test(number)) return { number, status: "InvalidPhoneNumber", messageId: "None" };
+      this.delivered.push(number);
+      return { number, status: "Success", messageId: `ATX-${this.delivered.length}` };
+    });
+    return { SMSMessageData: { Message: `Sent to ${this.delivered.length}/${options.to.length}`, Recipients: recipients } };
+  }
+}
+</file>
+<p>The login code after the switch:</p>
+<example file="login-problem.ts" project="sms">
+import { AfricasTalkingSms } from "./vendor-sdks.js";
+
+const sms = new AfricasTalkingSms("at_live_key");
+
+async function sendLoginCode(phone: string, code: string): Promise<string> {
+  await sms.send({ to: [phone], message: `Your login code is ${code}` });
+  return "code sent";
+}
+
+console.log(await sendLoginCode("08031234567", "482913"));
+console.log("numbers the provider accepted:", sms.delivered);
+</example>
+<output>
+code sent
+numbers the provider accepted: []
+</output>
+<p>The old provider accepted local numbers like <code>08031234567</code>; the new one wants <code>+2348031234567</code>. And the new provider does not throw on a bad number: it answers successfully and puts <code>"InvalidPhoneNumber"</code> inside the response. The login code only watched for exceptions, so it reported "code sent" for every customer. Worse, the same direct SDK calls were in the order confirmation, delivery updates and password reset, 23 places in all, and each had to be found and fixed by hand.</p>
+<p>The <strong>structural patterns</strong> are about how objects are connected and wrapped. This lesson covers four that every backend uses: <strong>adapter</strong> (make someone else's interface fit yours), <strong>decorator</strong> (add behaviour around an object without changing it), <strong>proxy</strong> (control access to an object) and <strong>repository</strong> (put storage behind a collection-like interface). They build on <a href="/learn/design-patterns-creational">Creational patterns</a> and on the payment translators you wrote in <a href="/learn/design-principles#abstraction">Design principles</a>.</p>
+</section>
+
+<section>
+<h2 id="adapter">Adapter: make their interface fit yours</h2>
+<p>First decide what the shop needs from "an SMS provider", in the shop's own words, as <a href="/learn/design-solid#dip">dependency inversion</a> taught. The interface below is the <strong>port</strong>. Note what it promises: a result that says clearly whether the message was accepted, with reasons the business can act on:</p>
+<example file="sms.ts" project="sms">
+export type SmsResult =
+  | { readonly ok: true; readonly messageId: string }
+  | { readonly ok: false; readonly reason: "invalid_number" | "rejected" | "unavailable" };
+
+export interface SmsSender {
+  send(to: string, text: string): Promise<SmsResult>;
+}
+
+/** Accepts 0803..., 234803... or +234803... and returns +234803..., or undefined. */
+export function nigerianE164(input: string): string | undefined {
+  const digits = input.replace(/[\s-]/g, "");
+  if (/^\+234\d{10}$/.test(digits)) return digits;
+  if (/^234\d{10}$/.test(digits)) return `+${digits}`;
+  if (/^0\d{10}$/.test(digits)) return `+234${digits.slice(1)}`;
+  return undefined;
+}
+</example>
+<p>An <strong>adapter</strong> is an object that implements <em>your</em> interface by calling <em>their</em> interface, translating in both directions. Each adapter does four translations: the request shape, data formats (the phone number), the response shape, and errors. The number is normalised once, in <code>nigerianE164</code>, and each adapter converts it to its vendor's format:</p>
+<example file="sms-adapters.ts" project="sms">
+import { nigerianE164, type SmsResult, type SmsSender } from "./sms.js";
+import type { AfricasTalkingSms, TermiiClient } from "./vendor-sdks.js";
+
+export function termiiSender(client: TermiiClient, senderId: string): SmsSender {
+  return {
+    async send(to, text): Promise<SmsResult> {
+      const number = nigerianE164(to);
+      if (number === undefined) return { ok: false, reason: "invalid_number" };
+      try {
+        const response = await client.send({ to: number.slice(1), from: senderId, sms: text, type: "plain", channel: "generic" });
+        if (response.code === "ok" && response.message_id) return { ok: true, messageId: response.message_id };
+        return { ok: false, reason: response.message === "Invalid phone number" ? "invalid_number" : "rejected" };
+      } catch {
+        return { ok: false, reason: "unavailable" };
+      }
+    },
+  };
+}
+
+export function africasTalkingSender(sdk: AfricasTalkingSms, senderId: string): SmsSender {
+  return {
+    async send(to, text): Promise<SmsResult> {
+      const number = nigerianE164(to);
+      if (number === undefined) return { ok: false, reason: "invalid_number" };
+      try {
+        const response = await sdk.send({ to: [number], message: text, from: senderId });
+        const recipient = response.SMSMessageData.Recipients[0];
+        if (recipient?.status === "Success") return { ok: true, messageId: recipient.messageId };
+        return { ok: false, reason: recipient?.status === "InvalidPhoneNumber" ? "invalid_number" : "rejected" };
+      } catch {
+        return { ok: false, reason: "unavailable" };
+      }
+    },
+  };
+}
+</example>
+<p>Because both adapters promise the same thing, one <strong>contract test</strong> (<a href="/learn/design-solid#lsp">Liskov substitution</a>) checks both. It is the test that would have caught the login outage before it shipped:</p>
+<example file="adapters-test.ts" project="sms">
+import { africasTalkingSender, termiiSender } from "./sms-adapters.js";
+import type { SmsSender } from "./sms.js";
+import { AfricasTalkingSms, TermiiClient } from "./vendor-sdks.js";
+
+async function smsContract(name: string, sender: SmsSender, breakNextCall: () => void): Promise<void> {
+  const check = (test: string, ok: boolean) => console.log(`${ok ? "PASS" : "FAIL"} [${name}] ${test}`);
+  const local = await sender.send("0803 123 4567", "Your login code is 482913");
+  check("a local number is delivered", local.ok);
+  const bad = await sender.send("0803", "hello");
+  check("a short number is invalid_number", !bad.ok && bad.reason === "invalid_number");
+  breakNextCall();
+  const down = await sender.send("+2348031234567", "hello");
+  check("a network error is unavailable, not a crash", !down.ok && down.reason === "unavailable");
+}
+
+const termii = new TermiiClient("tk_test");
+const at = new AfricasTalkingSms("at_test");
+await smsContract("termii", termiiSender(termii, "SHOPNG"), () => (termii.failNext = true));
+await smsContract("africastalking", africasTalkingSender(at, "SHOPNG"), () => (at.failNext = true));
+console.log(termii.sent, at.delivered);
+</example>
+<output>
+PASS [termii] a local number is delivered
+PASS [termii] a short number is invalid_number
+PASS [termii] a network error is unavailable, not a crash
+PASS [africastalking] a local number is delivered
+PASS [africastalking] a short number is invalid_number
+PASS [africastalking] a network error is unavailable, not a crash
+[ '2348031234567' ] [ '+2348031234567' ]
+</output>
+<p>Switching providers is now one line in the composition root. The 23 call sites depend on <code>SmsSender</code> and never saw a vendor type. When a whole external system is kept behind a layer of adapters like this, so its vocabulary and its quirks cannot spread into your code, that layer is called an <strong>anti-corruption layer</strong>.</p>
+<note>An adapter changes an interface into the one callers expect. A <strong>facade</strong>, a related pattern, puts one simple interface in front of a complicated subsystem (for example one <code>checkout()</code> in front of pricing, payment and stock). In practice an adapter for a big SDK is often a bit of both.</note>
+<p>ZudoJS builds a whole package around this idea: <a href="/learn/zudo-adapters">Adapters</a> defines the contracts for HTTP servers, queues, storage and messaging, so the framework talks to your chosen platform through adapters and never to the platform directly.</p>
+</section>
+
+<section>
+<h2 id="decorator">Decorator: add behaviour around an object</h2>
+<p>With the adapters in production, three new requests arrive. Operations wants every SMS logged. The provider fails about one call in fifty with a network error that succeeds on a second try, so someone wants retries. And the product page calls a slow exchange-rate service on every view, so someone wants caching. The obvious way is to add a retry loop and log lines inside each adapter. That copies the same code into every adapter and mixes "how to talk to Termii" with "how often to retry".</p>
+<p>A <strong>decorator</strong> is an object that implements the same interface as the object it wraps, forwards calls to it, and adds behaviour before or after. Because it has the same interface, callers cannot tell it apart from the original, and decorators can be stacked. You wrote small ones already: <code>bestEffort</code> in <a href="/learn/design-principles#composition">Design principles</a> and the wrappers in <a href="/learn/js-composition#wrapper">Inheritance and composition</a>.</p>
+<reason title="Which SMS failures should be retried?">
+<p>Before writing a retry decorator, decide:</p>
+<ul>
+<li>The result says <code>invalid_number</code>. Will a second attempt help?</li>
+<li>The result says <code>unavailable</code> because the connection dropped. Did the provider receive the message or not?</li>
+<li>If the provider did receive it, what does a retry do to the customer?</li>
+<li>How many attempts, and how long between them? What happens to the login request while it waits?</li>
+<li>Where should the log line go: once per send, or once per attempt?</li>
+</ul>
+<answer>
+<ul>
+<li>No. Invalid numbers and rejections are <strong>permanent</strong> failures; retrying only wastes time and money. Retry only <strong>transient</strong> failures, here <code>unavailable</code>.</li>
+<li>You cannot know. The request may have arrived and only the response was lost.</li>
+<li>The customer gets the same code twice. For a login code that is harmless; for "your order has shipped" it is annoying; for a payment it would be a disaster. Retrying is only safe for operations that are harmless to repeat (<strong>idempotent</strong>), or when the provider supports an idempotency key (<a href="/learn/api-idempotency#keys">Idempotency</a>).</li>
+<li>A small number (two or three attempts) with a short wait that grows each time (<strong>backoff</strong>). The user is waiting, so the total must stay within the request's time budget.</li>
+<li>Both are useful and they are different: logging outside the retry records one line per send; inside, one line per attempt. The order you stack the decorators decides which you get.</li>
+</ul>
+</answer>
+</reason>
+<example file="sms-decorators.ts" project="sms">
+import type { SmsResult, SmsSender } from "./sms.js";
+
+export function withRetry(sender: SmsSender, attempts: number, wait: (ms: number) => Promise<void>): SmsSender {
+  return {
+    async send(to, text): Promise<SmsResult> {
+      let result = await sender.send(to, text);
+      for (let attempt = 2; attempt <= attempts && !result.ok && result.reason === "unavailable"; attempt++) {
+        await wait(100 * 2 ** (attempt - 2));
+        result = await sender.send(to, text);
+      }
+      return result;
+    },
+  };
+}
+
+export function withLogging(label: string, sender: SmsSender, log: (line: string) => void): SmsSender {
+  return {
+    async send(to, text): Promise<SmsResult> {
+      const result = await sender.send(to, text);
+      const masked = to.length > 7 ? `${to.slice(0, 4)}****${to.slice(-3)}` : "****";
+      log(`${label} ${masked}: ${result.ok ? `ok ${result.messageId}` : result.reason}`);
+      return result;
+    },
+  };
+}
+</example>
+<p>The retry waits 100 ms, then 200 ms, and so on. The wait function is injected, so a test does not really sleep and can see every wait. The log masks the phone number, because full phone numbers in logs are personal data that should not be there. Now a sender that fails twice before succeeding, wrapped in both orders:</p>
+<example file="decorators-test.ts" project="sms">
+import { withLogging, withRetry } from "./sms-decorators.js";
+import type { SmsResult, SmsSender } from "./sms.js";
+
+function flakySender(failures: number): SmsSender {
+  let calls = 0;
+  return {
+    async send(): Promise<SmsResult> {
+      calls++;
+      return calls <= failures ? { ok: false, reason: "unavailable" } : { ok: true, messageId: `MSG-${calls}` };
+    },
+  };
+}
+
+const waits: number[] = [];
+const wait = async (ms: number) => void waits.push(ms);
+
+console.log("--- logging outside retry: one line per send");
+const once = withLogging("sms", withRetry(flakySender(2), 3, wait), console.log);
+await once.send("+2348031234567", "Your code is 482913");
+console.log("waited:", waits);
+
+console.log("--- logging inside retry: one line per attempt");
+const each = withRetry(withLogging("attempt", flakySender(2), console.log), 3, wait);
+await each.send("+2348031234567", "Your code is 482913");
+
+console.log("--- a permanent failure is not retried");
+let tries = 0;
+const invalid: SmsSender = { send: async () => (tries++, { ok: false, reason: "invalid_number" }) };
+console.log(await withRetry(invalid, 3, wait).send("0803", "hi"), "tries:", tries);
+</example>
+<output>
+--- logging outside retry: one line per send
+sms +234****567: ok MSG-3
+waited: [ 100, 200 ]
+--- logging inside retry: one line per attempt
+attempt +234****567: unavailable
+attempt +234****567: unavailable
+attempt +234****567: ok MSG-3
+--- a permanent failure is not retried
+{ ok: false, reason: 'invalid_number' } tries: 1
+</output>
+<p>The same two decorators, stacked in a different order, give different behaviour. Choose the order on purpose: outermost runs first on the way in and last on the way out. The composition root is where this is decided, for example <code>withLogging("sms", withRetry(africasTalkingSender(sdk, "SHOPNG"), 3, sleep), logger)</code>.</p>
+
+<h3>A caching decorator, tested with a fake clock</h3>
+<p>Caching has the same shape. The product page shows prices in dollars using a rate source that takes a second per call. A decorator keeps each answer for a set time, its <strong>time to live</strong> (TTL). Time is injected as a clock, so the test can move time forward instead of waiting:</p>
+<example file="cache-decorator.ts">
+interface RateSource {
+  rate(pair: string): Promise<number>;
+}
+
+interface Clock {
+  now(): number;
+}
+
+function withCache(source: RateSource, ttlMs: number, clock: Clock): RateSource {
+  const entries = new Map<string, { value: number; expires: number }>();
+  return {
+    async rate(pair) {
+      const hit = entries.get(pair);
+      if (hit !== undefined && hit.expires > clock.now()) return hit.value;
+      const value = await source.rate(pair);
+      entries.set(pair, { value, expires: clock.now() + ttlMs });
+      return value;
+    },
+  };
+}
+
+let calls = 0;
+const slowBank: RateSource = { rate: async () => (++calls, 0.00065) };
+let time = 0;
+const clock: Clock = { now: () => time };
+
+const rates = withCache(slowBank, 60_000, clock);
+await rates.rate("NGN/USD");
+await rates.rate("NGN/USD");
+time = 59_999;
+await rates.rate("NGN/USD");
+console.log("calls within a minute:", calls);
+time = 60_000;
+await rates.rate("NGN/USD");
+console.log("calls after expiry:", calls);
+</example>
+<output>
+calls within a minute: 1
+calls after expiry: 2
+</output>
+<p>The rate source itself knows nothing about caching, and the cache knows nothing about banks. The test checks both edges of the TTL in a millisecond. This decorator is deliberately small; a production cache also needs a size limit, and protection against many requests missing at once and all calling the slow source together (a <strong>cache stampede</strong>). <a href="/learn/zudo-cache">Caching in ZudoJS</a> covers those.</p>
+<tip>TypeScript also has a language feature called decorators, written <code>@logged</code> above a class or method (<a href="/learn/ts-decorators">Decorators</a>). It is one way to apply the decorator pattern to class members. The pattern itself needs no special syntax: a function that takes an object and returns a wrapped one with the same interface. ZudoJS middleware is the same pattern applied to request handlers (<a href="/learn/zudo-middleware">Middleware in ZudoJS</a>).</tip>
+</section>
+
+<section>
+<h2 id="proxy">Proxy: control access to an object</h2>
+<p>A <strong>proxy</strong> also has the same interface as the object behind it, and the code often looks like a decorator. The difference is intent: a decorator <em>adds</em> behaviour; a proxy <em>controls access</em>, deciding whether, when and how the real object is reached. The common kinds are:</p>
+<ul>
+<li>a <strong>virtual</strong> (lazy) proxy, which creates an expensive object only when it is first used;</li>
+<li>a <strong>protection</strong> proxy, which checks permissions before letting a call through;</li>
+<li>a <strong>remote</strong> proxy, which looks like a local object but sends each call over the network. An RPC client is one (<a href="/learn/zudo-rpc">RPC in ZudoJS</a>).</li>
+</ul>
+
+<h3>Lazy loading, and the race inside it</h3>
+<p>Generating invoice PDFs needs a renderer that loads fonts and templates, which takes a while and a lot of memory. Most requests never render a PDF, so creating it at startup is waste. A lazy proxy creates it on first use. Here is the obvious version, and what happens when two invoices are requested at the same moment:</p>
+<example file="lazy-proxy.ts">
+interface PdfRenderer {
+  render(invoiceNumber: string): Promise<string>;
+}
+
+let created = 0;
+async function createRenderer(): Promise<PdfRenderer> {
+  created++;
+  await new Promise((resolve) => setTimeout(resolve, 10)); // loading fonts and templates
+  return { render: async (invoiceNumber) => `%PDF ${invoiceNumber}` };
+}
+
+function naiveLazy(): PdfRenderer {
+  let real: PdfRenderer | undefined;
+  return {
+    async render(invoiceNumber) {
+      if (real === undefined) real = await createRenderer();
+      return real.render(invoiceNumber);
+    },
+  };
+}
+
+function lazy(): PdfRenderer {
+  let real: Promise<PdfRenderer> | undefined;
+  return {
+    async render(invoiceNumber) {
+      real ??= createRenderer();
+      return (await real).render(invoiceNumber);
+    },
+  };
+}
+
+const naive = naiveLazy();
+console.log("created before use:", created);
+await Promise.all([naive.render("INV-1"), naive.render("INV-2")]);
+console.log("naive, two requests at once:", created);
+
+created = 0;
+const safe = lazy();
+console.log(await Promise.all([safe.render("INV-3"), safe.render("INV-4")]));
+console.log("promise cached, two requests at once:", created);
+</example>
+<output>
+created before use: 0
+naive, two requests at once: 2
+[ '%PDF INV-3', '%PDF INV-4' ]
+promise cached, two requests at once: 1
+</output>
+<p>The naive proxy checks <code>real === undefined</code>, then <em>awaits</em>. While it waits, the second request checks too, still finds nothing, and starts a second renderer. The fix is to cache the <strong>promise</strong>, which exists immediately, instead of the result, which exists only later. Both callers then wait for the same creation. (A complete version also clears the cached promise if creation fails, so the next call can try again.)</p>
+
+<h3>A protection proxy</h3>
+<p>The reports service can export every customer's data. Support staff may use the other reports, but only admins may export. A protection proxy puts the check in front of the real service, for one user:</p>
+<example file="protection-proxy.ts">
+interface Reports {
+  dailySales(day: string): Promise<string>;
+  exportAllCustomers(): Promise<string>;
+}
+
+interface User {
+  readonly name: string;
+  readonly role: "admin" | "support";
+}
+
+const realReports: Reports = {
+  dailySales: async (day) => `sales for ${day}: NGN 1,204,500.00`,
+  exportAllCustomers: async () => "12,408 customers exported",
+};
+
+function reportsFor(user: User, reports: Reports): Reports {
+  return {
+    dailySales: (day) => reports.dailySales(day),
+    async exportAllCustomers() {
+      if (user.role !== "admin") throw new Error(`${user.name} may not export customer data`);
+      return reports.exportAllCustomers();
+    },
+  };
+}
+
+for (const user of [{ name: "Ngozi", role: "admin" }, { name: "Musa", role: "support" }] as const) {
+  const reports = reportsFor(user, realReports);
+  console.log(await reports.dailySales("2026-03-02"));
+  try {
+    console.log(await reports.exportAllCustomers());
+  } catch (error) {
+    console.log((error as Error).message);
+  }
+}
+</example>
+<output>
+sales for 2026-03-02: NGN 1,204,500.00
+12,408 customers exported
+sales for 2026-03-02: NGN 1,204,500.00
+Musa may not export customer data
+</output>
+<p>A protection proxy is only safe if nothing can reach the real object around it. If other code can still import <code>realReports</code>, the check is decoration. In a real application the rule lives in the use case or a permissions layer and the raw service is never handed out; <a href="/learn/zudo-permissions">Permissions in ZudoJS</a> builds that.</p>
+
+<h3>JavaScript's built-in Proxy</h3>
+<p>JavaScript has a built-in <code>Proxy</code> object that can intercept any property read, write or call on another object, without listing the methods by hand. It is how some libraries build read-only views, change tracking or remote clients. It has a sharp edge with classes that use <code>#private</code> fields:</p>
+<example file="builtin-proxy.ts">
+class Account {
+  #balanceKobo = 500_000;
+
+  balance(): number {
+    return this.#balanceKobo;
+  }
+}
+
+const reads: string[] = [];
+const audited = new Proxy(new Account(), {
+  get(target, property, receiver) {
+    reads.push(String(property));
+    return Reflect.get(target, property, receiver);
+  },
+});
+
+try {
+  console.log(audited.balance());
+} catch (error) {
+  console.log(error instanceof TypeError, (error as Error).message);
+}
+console.log("reads:", reads);
+</example>
+<output>
+true Cannot read private member #balanceKobo from an object whose class did not declare it
+reads: [ 'balance' ]
+</output>
+<p>The method ran with <code>this</code> set to the proxy, and the proxy is not an <code>Account</code>, so it has no <code>#balanceKobo</code>. Built-in proxies are powerful but work at the level of property names, lose type information, and have edge cases like this one. For the patterns in this lesson, a plain object that implements the interface is clearer, typed and easy to test.</p>
+</section>
+
+<section>
+<h2 id="repository">Repository: storage behind a collection</h2>
+<p>The last structural problem is the most common one in backend code. The orders table is queried from the checkout, the admin screen, the reports and the reminder job, each with its own SQL. When the <code>total</code> column became <code>total_kobo</code>, four files broke, one of them in production. And every test of every service needs a database.</p>
+<p>A <strong>repository</strong> gives one kind of domain object a collection-like interface: find, list, save, in the language of the domain. It hides the storage behind it: SQL, the mapping between rows and objects (<code>total_kobo</code> to <code>totalKobo</code>), and the database driver. Services depend on the interface. You met repositories in <a href="/learn/backend-architecture#infrastructure">Backend architecture</a>; here the focus is what makes one correct.</p>
+<example file="order-repository.ts" project="repo">
+export type OrderStatus = "pending" | "paid" | "refunded";
+
+export interface Order {
+  readonly id: string;
+  readonly email: string;
+  readonly status: OrderStatus;
+  readonly totalKobo: number;
+}
+
+export interface OrderRepository {
+  findById(id: string): Promise<Order | undefined>;
+  findByCustomer(email: string): Promise<Order[]>;
+  save(order: Order): Promise<void>;
+}
+
+export class MemoryOrderRepository implements OrderRepository {
+  readonly #rows = new Map<string, Order>();
+
+  async findById(id: string) {
+    return this.#rows.get(id);
+  }
+
+  async findByCustomer(email: string) {
+    return [...this.#rows.values()].filter((order) => order.email === email.toLowerCase()).sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  async save(order: Order) {
+    this.#rows.set(order.id, { ...order, email: order.email.toLowerCase() });
+  }
+}
+</example>
+<p>The PostgreSQL version implements the same interface. All the SQL for orders lives here, and so does the mapping. <code>save</code> is an <strong>upsert</strong> (insert, or update if the id exists), so saving the same order twice is safe:</p>
+<example file="pg-order-repository.ts" project="repo" browser="no">
+import type { PGlite } from "@electric-sql/pglite";
+
+import type { Order, OrderRepository, OrderStatus } from "./order-repository.js";
+
+interface OrderRow {
+  id: string;
+  email: string;
+  status: OrderStatus;
+  total_kobo: number;
+}
+
+const toOrder = (row: OrderRow): Order => ({ id: row.id, email: row.email, status: row.status, totalKobo: row.total_kobo });
+
+export class PgOrderRepository implements OrderRepository {
+  constructor(private readonly db: PGlite) {}
+
+  static async migrate(db: PGlite): Promise<void> {
+    await db.exec(`CREATE TABLE IF NOT EXISTS orders (id text PRIMARY KEY, email text NOT NULL,
+      status text NOT NULL CHECK (status IN ('pending', 'paid', 'refunded')), total_kobo bigint NOT NULL)`);
+  }
+
+  async findById(id: string) {
+    const { rows } = await this.db.query<OrderRow>("SELECT id, email, status, total_kobo::int AS total_kobo FROM orders WHERE id = $1", [id]);
+    return rows[0] === undefined ? undefined : toOrder(rows[0]);
+  }
+
+  async findByCustomer(email: string) {
+    const { rows } = await this.db.query<OrderRow>(
+      "SELECT id, email, status, total_kobo::int AS total_kobo FROM orders WHERE email = $1 ORDER BY id",
+      [email.toLowerCase()],
+    );
+    return rows.map(toOrder);
+  }
+
+  async save(order: Order) {
+    await this.db.query(
+      `INSERT INTO orders (id, email, status, total_kobo) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, status = EXCLUDED.status, total_kobo = EXCLUDED.total_kobo`,
+      [order.id, order.email.toLowerCase(), order.status, order.totalKobo],
+    );
+  }
+}
+</example>
+<p>Two implementations of one interface need a contract test, or the in-memory one used by every service test will drift from the real one. The contract is where you write down the details that are easy to get wrong: e-mail matching ignores case, results are sorted, a second <code>save</code> updates instead of duplicating, and an unknown id gives <code>undefined</code>:</p>
+<example file="repository-contract.ts" project="repo" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+import { MemoryOrderRepository, type OrderRepository } from "./order-repository.js";
+import { PgOrderRepository } from "./pg-order-repository.js";
+
+async function orderRepositoryContract(name: string, repo: OrderRepository): Promise<void> {
+  const check = (test: string, ok: boolean) => console.log(`${ok ? "PASS" : "FAIL"} [${name}] ${test}`);
+  await repo.save({ id: "ORD-2", email: "Ada@Shop.ng", status: "pending", totalKobo: 483_750 });
+  await repo.save({ id: "ORD-1", email: "ada@shop.ng", status: "paid", totalKobo: 1_441_575 });
+  await repo.save({ id: "ORD-2", email: "ada@shop.ng", status: "paid", totalKobo: 483_750 });
+
+  const adas = await repo.findByCustomer("ADA@shop.ng");
+  check("finds by e-mail, ignoring case", adas.length === 2);
+  check("sorted by id", adas.map((o) => o.id).join() === "ORD-1,ORD-2");
+  check("save twice updates, never duplicates", (await repo.findById("ORD-2"))?.status === "paid");
+  check("unknown id is undefined", (await repo.findById("ORD-404")) === undefined);
+  check("amounts come back as numbers", typeof adas[0]?.totalKobo === "number");
+}
+
+await orderRepositoryContract("memory", new MemoryOrderRepository());
+
+const db = new PGlite();
+await PgOrderRepository.migrate(db);
+await orderRepositoryContract("postgres", new PgOrderRepository(db));
+await db.close();
+</example>
+<output>
+PASS [memory] finds by e-mail, ignoring case
+PASS [memory] sorted by id
+PASS [memory] save twice updates, never duplicates
+PASS [memory] unknown id is undefined
+PASS [memory] amounts come back as numbers
+PASS [postgres] finds by e-mail, ignoring case
+PASS [postgres] sorted by id
+PASS [postgres] save twice updates, never duplicates
+PASS [postgres] unknown id is undefined
+PASS [postgres] amounts come back as numbers
+</output>
+<p>The last check is not paranoia. PostgreSQL's <code>bigint</code> can hold numbers larger than JavaScript can represent exactly, so the widely used <code>pg</code> driver returns <code>bigint</code> columns as <em>strings</em>. (PGlite turns them into numbers when they fit, but returns <code>numeric</code> columns as strings.) The <code>::int</code> casts make every driver return a number, which is safe for amounts up to about ₦21 million per order; a larger shop would map to JavaScript's <code>bigint</code> instead. Without the cast, a repository running on <code>pg</code> would hand services strings, and <code>order.totalKobo + fee</code> would join text instead of adding. Only a contract test run against the real database catches that.</p>
+
+<h3>How repositories go wrong</h3>
+<ul>
+<li><strong>The generic repository.</strong> <code>Repository&lt;T&gt;</code> with <code>findWhere(filter: any)</code> leaks the query language to every service, and every storage quirk comes with it. Name methods after the questions the domain asks: <code>findOverdue(now)</code>, not <code>findWhere({ dueAt: { lt: now } })</code>.</li>
+<li><strong>One repository per table.</strong> An order and its lines are saved and loaded together. One repository per <em>aggregate</em> (a group of objects that change together), not per table, keeps them consistent.</li>
+<li><strong>N+1 queries.</strong> A repository method that loads 50 orders and then runs one query per order for its lines makes 51 round trips. Load related data in one query, or with one query per kind.</li>
+<li><strong>Transactions across repositories.</strong> "Save the order and reduce the stock" must succeed or fail together, which needs a transaction shared by both repositories. <a href="/learn/db-transactions">Transactions</a> and <a href="/learn/zudo-transactions">Transactions in ZudoJS</a> show how.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="production">Production concerns</h2>
+<ul>
+<li><strong>Adapters never leak vendor types.</strong> If a vendor's response type appears in a service's signature, the anti-corruption layer has a hole. Translate errors too: a vendor's exception class should never reach a service.</li>
+<li><strong>Retries need limits.</strong> Retry only transient failures, only idempotent operations, a small number of times, with backoff and some randomness (<strong>jitter</strong>) so that thousands of clients do not retry in lockstep. Pair retries with timeouts, or one slow provider holds every request open.</li>
+<li><strong>Logs are data.</strong> A logging decorator sees every argument. Mask phone numbers, e-mails and tokens before they are written.</li>
+<li><strong>Caches serve stale data by design.</strong> Choose the TTL per kind of data. Never cache anything that depends on who is asking under a key that ignores who is asking.</li>
+<li><strong>Know which object you hold.</strong> With several decorators and proxies stacked, a stack trace shows many wrappers. Name them clearly and build the stack in one place, the composition root.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Adapt a third SMS vendor">
+<p>A third vendor's SDK has <code>dispatch(msisdn: string, body: string)</code>, wants numbers as <code>2348031234567</code>, returns <code>{ accepted: boolean; ref?: string; error?: "BAD_MSISDN" | "BLOCKED" }</code>, and throws on network errors. Write <code>thirdVendorSender(sdk)</code> implementing <code>SmsSender</code>, and run the same three contract checks against it.</p>
+<solution>
+<example file="third-vendor.ts" project="sms">
+import { nigerianE164, type SmsResult, type SmsSender } from "./sms.js";
+
+class ThirdVendorSdk {
+  failNext = false;
+  async dispatch(msisdn: string, body: string): Promise<{ accepted: boolean; ref?: string; error?: "BAD_MSISDN" | "BLOCKED" }> {
+    if (this.failNext) {
+      this.failNext = false;
+      throw new Error("ETIMEDOUT");
+    }
+    if (!/^234\d{10}$/.test(msisdn)) return { accepted: false, error: "BAD_MSISDN" };
+    return { accepted: true, ref: `TV-${body.length}` };
+  }
+}
+
+function thirdVendorSender(sdk: ThirdVendorSdk): SmsSender {
+  return {
+    async send(to, text): Promise<SmsResult> {
+      const number = nigerianE164(to);
+      if (number === undefined) return { ok: false, reason: "invalid_number" };
+      try {
+        const response = await sdk.dispatch(number.slice(1), text);
+        if (response.accepted && response.ref) return { ok: true, messageId: response.ref };
+        return { ok: false, reason: response.error === "BAD_MSISDN" ? "invalid_number" : "rejected" };
+      } catch {
+        return { ok: false, reason: "unavailable" };
+      }
+    },
+  };
+}
+
+const sdk = new ThirdVendorSdk();
+const sender = thirdVendorSender(sdk);
+console.log(await sender.send("0803 123 4567", "Your login code is 482913"));
+console.log(await sender.send("0803", "hi"));
+sdk.failNext = true;
+console.log(await sender.send("+2348031234567", "hi"));
+</example>
+<output>
+{ ok: true, messageId: 'TV-25' }
+{ ok: false, reason: 'invalid_number' }
+{ ok: false, reason: 'unavailable' }
+</output>
+<p>The structure is the same as the other two adapters: normalise the number once, convert to the vendor's format, translate the response and the exception. None of the services that send SMS change. In a real project you would reuse <code>smsContract</code> from the test file instead of three <code>console.log</code> lines.</p>
+</solution>
+</exercise>
+
+<exercise title="A timeout decorator">
+<p>Write <code>withTimeout(sender, ms)</code>: if the wrapped <code>send</code> has not finished within <code>ms</code> milliseconds, return <code>{ ok: false, reason: "unavailable" }</code>. Clear the timer when the send finishes first, so it does not keep the process alive. Test it with a sender that never answers and one that answers at once.</p>
+<solution>
+<example file="timeout-decorator.ts" project="sms">
+import type { SmsResult, SmsSender } from "./sms.js";
+
+function withTimeout(sender: SmsSender, ms: number): SmsSender {
+  return {
+    async send(to, text): Promise<SmsResult> {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<SmsResult>((resolve) => {
+        timer = setTimeout(() => resolve({ ok: false, reason: "unavailable" }), ms);
+      });
+      try {
+        return await Promise.race([sender.send(to, text), timeout]);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  };
+}
+
+const hanging: SmsSender = { send: () => new Promise<SmsResult>(() => {}) };
+const fast: SmsSender = { send: async () => ({ ok: true, messageId: "MSG-1" }) };
+
+console.log(await withTimeout(hanging, 20).send("+2348031234567", "hi"));
+console.log(await withTimeout(fast, 20).send("+2348031234567", "hi"));
+</example>
+<output>
+{ ok: false, reason: 'unavailable' }
+{ ok: true, messageId: 'MSG-1' }
+</output>
+<p>Mapping a timeout to <code>unavailable</code> means <code>withRetry</code> can retry it, so the natural stack is <code>withRetry(withTimeout(adapter, 2000), 3, sleep)</code>: each attempt gets its own time limit. Remember that a timed-out request may still have reached the provider, which is why the retry rules from the reasoning above still apply.</p>
+</solution>
+</exercise>
+
+<exercise title="Grow the repository">
+<p>Add <code>findByStatus(status)</code> to the memory repository, returning orders sorted by id, and add a contract check for it. Why must the check go into the shared contract rather than into a test of the memory repository alone?</p>
+<solution>
+<example file="by-status.ts" project="repo">
+import type { Order, OrderRepository, OrderStatus } from "./order-repository.js";
+
+class MemoryOrders implements OrderRepository {
+  readonly #rows = new Map<string, Order>();
+
+  async findById(id: string) {
+    return this.#rows.get(id);
+  }
+
+  async findByCustomer(email: string) {
+    return this.#sorted((order) => order.email === email.toLowerCase());
+  }
+
+  async findByStatus(status: OrderStatus) {
+    return this.#sorted((order) => order.status === status);
+  }
+
+  async save(order: Order) {
+    this.#rows.set(order.id, { ...order, email: order.email.toLowerCase() });
+  }
+
+  #sorted(keep: (order: Order) => boolean): Order[] {
+    return [...this.#rows.values()].filter(keep).sort((a, b) => a.id.localeCompare(b.id));
+  }
+}
+
+const repo = new MemoryOrders();
+await repo.save({ id: "ORD-3", email: "chi@shop.ng", status: "paid", totalKobo: 100 });
+await repo.save({ id: "ORD-1", email: "ada@shop.ng", status: "paid", totalKobo: 200 });
+await repo.save({ id: "ORD-2", email: "bola@shop.ng", status: "pending", totalKobo: 300 });
+await repo.save({ id: "ORD-2", email: "bola@shop.ng", status: "paid", totalKobo: 300 });
+
+const check = (name: string, ok: boolean) => console.log(`${ok ? "PASS" : "FAIL"} ${name}`);
+const paid = await repo.findByStatus("paid");
+console.log(paid.map((o) => o.id));
+check("sorted by id", paid.map((o) => o.id).join() === "ORD-1,ORD-2,ORD-3");
+check("a re-saved order moves to its new status", (await repo.findByStatus("pending")).length === 0);
+</example>
+<output>
+[ 'ORD-1', 'ORD-2', 'ORD-3' ]
+PASS sorted by id
+PASS a re-saved order moves to its new status
+</output>
+<p>The interesting case is the re-saved order: it must move from <code>pending</code> to <code>paid</code>, not appear under both. That rule is part of what <code>findByStatus</code> <em>means</em>, so it belongs in the contract, where the PostgreSQL implementation (a <code>WHERE status = $1 ORDER BY id</code> query) must pass it too. A test of the memory version alone would let the two drift apart.The private <code>#sorted</code> helper also keeps the sorting rule in one place for both finders.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li><strong>Adapter</strong>: implement your interface by calling theirs, translating requests, formats, responses and errors. A layer of adapters is an anti-corruption layer. Test every adapter with one contract.</li>
+<li><strong>Decorator</strong>: same interface, wraps an object, adds behaviour before or after. Retries, logging, caching and timeouts stack in the composition root, and the order matters. Retry only transient failures of idempotent operations.</li>
+<li><strong>Proxy</strong>: same interface, controls access: create lazily (cache the promise, not the result), check permissions, or forward over the network. The built-in <code>Proxy</code> is powerful but untyped and breaks <code>#private</code> methods.</li>
+<li><strong>Repository</strong>: one collection-like interface per aggregate, with the SQL and the row mapping inside. Keep the in-memory and real versions honest with a shared contract test.</li>
+</ul>
+<p>Next: <a href="/learn/design-patterns-behavioral">Behavioural patterns</a>, for how objects divide up the work: strategy, observer, command and chain of responsibility.</p>
+</section>

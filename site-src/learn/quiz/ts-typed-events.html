@@ -1,0 +1,940 @@
+<question id="te-name-decides" type="choice">
+<q>In <code>emit&lt;K extends EventName&lt;E&gt;&gt;(name: K, ...args: PayloadArgs&lt;E[K]&gt;)</code>, what decides which payload type the call accepts?</q>
+<option>The type argument the caller writes, as in <code>emit&lt;OrderPlaced&gt;(…)</code></option>
+<option correct>The event name passed as the first argument, from which <code>K</code> is inferred</option>
+<option>The type of the first listener that was registered for that name</option>
+<option>Nothing: <code>E[K]</code> is always the union of every payload</option>
+<explain><p><code>K</code> is inferred from the string literal you pass, and <code>E[K]</code> looks up that one event's payload in the map. The name decides. If the caller or a listener could pick the type, it would be a claim that nothing checks.</p></explain>
+</question>
+
+<question id="te-node-typo" type="choice">
+<q>With <code>new EventEmitter&lt;ShopEvents&gt;()</code> from <code>node:events</code>, <code>shop.on("order.created", (order) =&gt; …)</code> compiled although the map only has <code>"order.placed"</code>. Why?</q>
+<option>The event map was declared as an interface instead of a type alias</option>
+<option>TypeScript cannot check string arguments at all</option>
+<option correct>Node's types accept any event name so emitters can carry unlisted events, and for an unknown name the listener's arguments are <code>any</code></option>
+<option>Because <code>"order.created"</code> and <code>"order.placed"</code> share the namespace <code>order</code></option>
+<explain><p>Node's typings are deliberately open: an unknown name is allowed, and its listener parameters are <code>any</code>. The map helps with known names but cannot make a typo an error. A bus whose <code>on</code> only accepts <code>keyof E</code> can.</p></explain>
+</question>
+
+<question id="te-void-call" type="choice">
+<q>The map has <code>"cart.cleared": void</code>, and <code>emit</code> takes <code>...args: PayloadArgs&lt;E[K]&gt;</code> with <code>type PayloadArgs&lt;P&gt; = [P] extends [void] ? [] : [payload: P]</code>. Which call compiles?</q>
+<option correct><code>shop.emit("cart.cleared")</code></option>
+<option><code>shop.emit("cart.cleared", undefined)</code></option>
+<option><code>shop.emit("cart.cleared", {})</code></option>
+<option>All three</option>
+<explain><p>For <code>void</code> the rest parameter is the empty tuple <code>[]</code>, so the call takes no payload at all. Any second argument, even <code>undefined</code>, is "expected 1 arguments, but got 2".</p></explain>
+</question>
+
+<question id="te-wrap-void" type="choice">
+<q>Why is <code>PayloadArgs</code> written <code>[P] extends [void]</code> instead of <code>P extends void</code>?</q>
+<option>The bracket form is faster to compile</option>
+<option correct>A naked <code>P</code> would distribute over a union payload and produce a union of argument lists; the brackets ask one question about the whole type</option>
+<option><code>P extends void</code> is a syntax error</option>
+<option>The brackets make the payload optional for every event</option>
+<explain><p>A conditional type on a naked type parameter runs once per union member. For a payload like <code>{ note: string } | void</code> the naked version would give <code>[] | [payload: { note: string }]</code>, silently making the payload optional. Wrapping both sides in a tuple switches distribution off.</p></explain>
+</question>
+
+<question id="te-correlated" type="choice">
+<q>Why does this compile, although it sends a cancellation payload to the <code>"stock.low"</code> listeners?</q>
+<code file="forward.ts">
+function forward(name: "order.cancelled" | "stock.low", payload: ShopEvents["order.cancelled" | "stock.low"]) {
+  shop.emit(name, payload);
+}
+forward("stock.low", { orderId: "ORD-7", reason: "duplicate" });
+</code>
+<option>Because <code>emit</code> has a bug in its implementation</option>
+<option correct><code>K</code> is inferred as the whole union, so <code>E[K]</code> is the union of both payloads, and two separate variables no longer know they belong together</option>
+<option>Because object literals are never checked for extra properties in function calls</option>
+<option>Because <code>ShopEvents</code> is an interface</option>
+<explain><p>This is the correlated-union problem. The pairing between a name and its payload exists only in your head once they are two union-typed variables. Keep them in one <code>EventOf</code> value instead.</p></explain>
+</question>
+
+<question id="te-fix-correlated" type="choice">
+<q>What is the best way to make <code>forward</code> refuse a mismatched name and payload?</q>
+<option>Add <code>as const</code> to the call</option>
+<option>Cast the payload: <code>emit(name, payload as ShopEvents[typeof name])</code></option>
+<option correct>Take one parameter of type <code>EventOf&lt;ShopEvents, "order.cancelled" | "stock.low"&gt;</code>, a union of <code>{ name, payload }</code> objects</option>
+<option>Make <code>forward</code> generic with <code>&lt;K extends keyof ShopEvents&gt;</code> and keep both parameters</option>
+<explain><p>Each member of <code>EventOf</code> ties one name to its payload, so a mismatched pair matches no member and is refused. A generic <code>K</code> helps literal callers, but a caller holding a union name would reopen the hole; the cast only hides it.</p></explain>
+</question>
+
+<question id="te-storage-cast" type="choice">
+<q>The bus stores all listeners in one <code>Map&lt;string, Set&lt;Stored&gt;&gt;</code> and casts each listener on the way in. Why can this cast not be avoided?</q>
+<option>Because <code>Map</code> cannot hold functions</option>
+<option correct>TypeScript has no type for a map whose value type depends on the key, so the per-name listener types cannot be expressed in one collection</option>
+<option>Because private fields cannot have generic types</option>
+<option>It can: <code>Map&lt;keyof E, Listener&lt;E[keyof E]&gt;&gt;</code> is exact</option>
+<explain><p><code>Map&lt;keyof E, Listener&lt;E[keyof E]&gt;&gt;</code> would say "any listener under any name". The honest design is a typed public API over loosely typed storage, with the single cast at the point where precise types enter it, justified because <code>emit</code> checks the arguments per name.</p></explain>
+</question>
+
+<question id="te-copy-loop" type="choice">
+<q>Why does <code>emit</code> loop over <code>[...set]</code> instead of the live collection?</q>
+<option>Copying makes the loop faster</option>
+<option>Sets cannot be iterated with <code>for…of</code></option>
+<option correct>A listener may unsubscribe itself or subscribe another during the loop; a copy makes each emit call exactly the listeners that existed when it started</option>
+<option>To prevent the listeners from changing the payload</option>
+<explain><p><code>once</code> listeners remove themselves while <code>emit</code> is running. With an array that would skip the next listener; with a live <code>Set</code>, a listener added during the loop would also run. Iterating over a snapshot avoids both.</p></explain>
+</question>
+
+<question id="te-wildcard-receives" type="choice">
+<q>With the lesson's <code>onPattern</code>, what does a listener for <code>"order.*"</code> receive?</q>
+<option>The payload of the first order event in the map</option>
+<option>A value of type <code>unknown</code></option>
+<option correct>A union of <code>{ name, payload }</code> objects, one for each event whose name starts with <code>order.</code>, which it narrows by checking <code>name</code></option>
+<option>An intersection of all order payloads</option>
+<explain><p>A wildcard listener receives several kinds of event, so it gets <code>EventOf&lt;E, Matching&lt;E, "order.*"&gt;&gt;</code>. Checking <code>event.name</code> narrows <code>event.payload</code> to that event's type.</p></explain>
+</question>
+
+<question id="te-runtime-pattern" type="choice">
+<q>A plugin subscribes with <code>bus.onPattern(`${moduleName}.*`, …)</code> where <code>moduleName: string</code>. What happens?</q>
+<option>It compiles and matches every event</option>
+<option correct>It does not compile: the pattern's type is <code>`${string}.*`</code>, which is not one of the known <code>Pattern&lt;E&gt;</code> literals</option>
+<option>It compiles, and the listener receives <code>never</code></option>
+<option>TypeScript evaluates <code>moduleName</code> at compile time</option>
+<explain><p>Types only know values known at compile time. A pattern built from a plain <code>string</code> could be anything, so the typed method refuses it. You must check the value at runtime and cast, or use an untyped method. This is one of the real limits of typed wildcards.</p></explain>
+</question>
+
+<question id="te-star-placed" type="choice">
+<q>Why does the lesson's bus refuse <code>onPattern("*.placed", …)</code>?</q>
+<option>Because <code>*</code> is not allowed inside string literal types</option>
+<option>Because no event ends in <code>.placed</code></option>
+<option correct>Because the <code>Pattern</code> type only describes <code>"*"</code> and <code>"namespace.*"</code>; a new pattern form needs new type machinery and matching runtime code</option>
+<option>Because wildcards must always come last in JavaScript strings</option>
+<explain><p>The type-level pattern language and the runtime matcher must agree. Every extra form ("any namespace", "one level only") has to be added to both, which is why a small pattern language is the practical choice.</p></explain>
+</question>
+
+<question id="te-allsettled" type="choice">
+<q>Why does the bus use <code>Promise.allSettled</code> rather than <code>Promise.all</code> to run async listeners?</q>
+<option><code>Promise.all</code> runs listeners one after another</option>
+<option correct><code>Promise.all</code> rejects as soon as one listener fails, so the publisher learns about one failure and loses the results of the others; <code>allSettled</code> waits for all and never rejects</option>
+<option><code>Promise.allSettled</code> cancels failing listeners</option>
+<option>Only <code>allSettled</code> accepts async functions</option>
+<explain><p>For error isolation the publisher needs every outcome: which listeners succeeded, which failed and why. <code>allSettled</code> reports each result as <code>fulfilled</code> or <code>rejected</code>.</p></explain>
+</question>
+
+<question id="te-async-wrapper" type="choice">
+<q>The bus runs <code>calls.map(async (call) =&gt; call())</code>. What would go wrong with <code>calls.map((call) =&gt; call())</code>?</q>
+<option>Nothing; the <code>async</code> is only for readability</option>
+<option>Async listeners would never finish</option>
+<option correct>A listener that throws synchronously would throw out of <code>map</code>, so the listeners after it would never be called and <code>allSettled</code> would never see the failure</option>
+<option>The results would come back in the wrong order</option>
+<explain><p>An <code>async</code> function never throws; it returns a rejected promise. The wrapper converts a synchronous <code>throw</code> into a rejection, so it is isolated and reported like any async failure.</p></explain>
+</question>
+
+<question id="te-queue-data" type="choice">
+<q>A worker reads events from a message queue and publishes them on the typed bus. What does the event map guarantee about those payloads?</q>
+<option>That they match the map, because <code>publish</code> only accepts <code>EventOf&lt;E&gt;</code></option>
+<option correct>Nothing at runtime: <code>JSON.parse</code> returns <code>any</code>, so each payload must be checked by a runtime validator before it is published</option>
+<option>That unknown event names are dropped automatically</option>
+<option>That numbers arrive as numbers</option>
+<explain><p>Types are erased and never inspect data. The map describes what the program <em>expects</em>; a validator per event name checks what actually arrived.</p></explain>
+</question>
+
+<question id="te-validators-mapped" type="choice">
+<q>What does annotating the validators object as <code>{ readonly [K in EventName&lt;E&gt;]: (payload: unknown) =&gt; payload is E[K] }</code> buy you?</q>
+<option>It generates the validators automatically</option>
+<option correct>Adding an event to the map makes the validators object fail to compile until it has a validator for the new name, with the right guard type</option>
+<option>It checks the payloads at compile time instead of runtime</option>
+<option>It makes the validators run faster</option>
+<explain><p>The mapped type turns "every event needs a validator" into a compile-time rule. The validators still do the actual checking at runtime.</p></explain>
+</question>
+
+<question id="te-hasown" type="choice">
+<q>Why does <code>parseEvent</code> check the incoming name with <code>Object.hasOwn(validators, name)</code> rather than <code>name in validators</code>?</q>
+<option><code>in</code> does not work with string keys</option>
+<option>They are identical; it is a style choice</option>
+<option correct><code>in</code> also finds inherited keys such as <code>"toString"</code>, so a message named <code>"toString"</code> would look like a known event</option>
+<option><code>Object.hasOwn</code> also validates the payload</option>
+<explain><p>An object literal inherits from <code>Object.prototype</code>. <code>"toString" in validators</code> is <code>true</code>. Names from outside the program must be checked against the object's own keys only.</p></explain>
+</question>
+
+<question id="te-zudo-claim" type="choice">
+<q>With <code>@zudojs/events</code>, <code>bus.on&lt;Event&lt;OrderPlaced&gt;&gt;("stock.low", handler)</code> compiles. What is the type argument?</q>
+<option>A check: the bus verifies that <code>"stock.low"</code> carries an <code>OrderPlaced</code></option>
+<option correct>A claim: nothing connects it to the event name, so the handler is told it receives an <code>OrderPlaced</code> whatever arrives</option>
+<option>A runtime filter that skips events of other shapes</option>
+<option>A default that is replaced by the real payload type when the event is registered</option>
+<explain><p>A type argument that only describes what a callback will receive works like <code>as</code>. The package's event types are plain strings, so it cannot link names to payloads; a small typed layer that takes your map as a type parameter can.</p></explain>
+</question>
+
+<question id="te-eventunion-interface" type="choice">
+<q><code>EventUnion&lt;ShopEvents&gt;</code> from <code>@zudojs/events</code> fails with "Index signature for type 'string' is missing" when <code>ShopEvents</code> is an interface. Why?</q>
+<option>Interfaces cannot have string literal keys</option>
+<option correct>Its constraint is <code>Record&lt;string, unknown&gt;</code>, and interfaces do not get an implicit index signature, while type aliases of object literal types do</option>
+<option>The package needs the map to be declared with <code>as const</code></option>
+<option>Because the payload <code>void</code> is not allowed</option>
+<explain><p>An interface can be extended later by declaration merging, so TypeScript will not assume it has only string keys with <code>unknown</code> values. A <code>type</code> alias is closed, so it is assignable to <code>Record&lt;string, unknown&gt;</code>.</p></explain>
+</question>
+
+<question id="te-abort-signal" type="choice">
+<q>What is the advantage of accepting <code>{ signal?: AbortSignal }</code> in <code>on</code>?</q>
+<option>It makes the listener run faster</option>
+<option>It lets the listener cancel the event for other listeners</option>
+<option correct>One signal, such as the one for an HTTP request, can remove every listener, timer and fetch that request started when it ends, which prevents listener leaks</option>
+<option>It is required for async listeners</option>
+<explain><p><code>AbortSignal</code> is the platform's shared cancellation token. Tying listeners to it means cleanup happens in one place instead of keeping every unsubscribe function around.</p></explain>
+</question>
+
+<question id="te-when-command" type="choice">
+<q>Checkout needs to know whether charging the card succeeded before it shows the receipt. Is an event the right tool?</q>
+<option>Yes: emit <code>"card.charge"</code> and read the listener's return value</option>
+<option correct>No: events announce something that already happened, may have zero or many listeners and return no answer; a command with exactly one handler and a typed result fits</option>
+<option>Yes, as long as the listener is async</option>
+<option>No, because events cannot carry amounts</option>
+<explain><p>An event says "this happened" and does not care who listens. When you need an answer, or a guarantee that exactly one piece of code ran, you want a command or query, the topic of the next lesson.</p></explain>
+</question>
+
+<question id="te-breaking-change" type="choice">
+<q>You must rename <code>totalKobo</code> to <code>amountKobo</code> in the <code>order.placed</code> payload, and another service reads these events from a queue. What is the safe approach?</q>
+<option>Rename the field; TypeScript will find every listener</option>
+<option>Rename the field and bump the package version</option>
+<option correct>Publish a new event such as <code>order.placed.v2</code> with the new shape alongside the old one until every listener has moved</option>
+<option>Make both fields optional</option>
+<explain><p>The compiler only sees code compiled with yours. Listeners in other services, and messages already sitting in the queue, still have the old shape. A new event name lets old and new consumers coexist during the change.</p></explain>
+</question>
+
+<question id="te-expect-error" type="choice">
+<q>A type test file contains <code>// @ts-expect-error</code> above <code>shop.emit("order.created", payload)</code>. When does <code>tsc</code> fail on that file?</q>
+<option>Always, because the line has an error</option>
+<option correct>When the line stops being an error, for example after someone loosens <code>emit</code> to accept any string</option>
+<option>Only when the event name is misspelled differently</option>
+<option>Never; the directive silences everything</option>
+<explain><p>The directive expects an error on the next line. If there is none, <code>tsc</code> reports an unused directive. So the file proves that the API keeps <em>refusing</em> what it should.</p></explain>
+</question>
+
+<question id="te-interface-map" type="choice">
+<q>Why can it be useful to declare the event map as an <code>interface</code> rather than a <code>type</code> alias?</q>
+<option>Interfaces allow number keys</option>
+<option correct>A plugin package can add events to it with module augmentation (declaration merging)</option>
+<option>Interfaces are checked at runtime</option>
+<option>Type aliases cannot have string literal keys</option>
+<explain><p>Interfaces merge: <code>declare module "./shop-events.js" { interface ShopEvents { "loyalty.earned": … } }</code> adds a name. That only works for code known at compile time, and it is also why an interface does not satisfy a <code>Record&lt;string, unknown&gt;</code> constraint.</p></explain>
+</question>
+
+<question id="te-out-unsubscribe" type="output">
+<q>What does this print?</q>
+<code file="unsubscribe.ts">
+class Emitter<E extends object> {
+  readonly #listeners = new Map<keyof E, Set<(payload: never) => void>>();
+  on<K extends keyof E>(name: K, listener: (payload: E[K]) => void): () => void {
+    const set = this.#listeners.get(name) ?? new Set();
+    this.#listeners.set(name, set);
+    set.add(listener);
+    return () => void set.delete(listener);
+  }
+  emit<K extends keyof E>(name: K, payload: E[K]): number {
+    const set = this.#listeners.get(name) ?? new Set();
+    for (const listener of [...set]) (listener as (payload: E[K]) => void)(payload);
+    return set.size;
+  }
+}
+
+const bank = new Emitter<{ "transfer.sent": { kobo: number } }>();
+const stopSms = bank.on("transfer.sent", (t) => console.log(`sms: -₦${t.kobo / 100}`));
+bank.on("transfer.sent", () => console.log("ledger updated"));
+stopSms();
+console.log(bank.emit("transfer.sent", { kobo: 250_000 }));
+</code>
+<option correct>ledger updated
+1</option>
+<option>sms: -₦2500
+ledger updated
+2</option>
+<option>ledger updated
+2</option>
+<option>sms: -₦2500
+1</option>
+<explain><p><code>stopSms()</code> removed exactly the SMS listener before the emit, so only the ledger listener runs and one listener is left.</p></explain>
+</question>
+
+<question id="te-out-splice" type="output">
+<q>A hand-written <code>once</code> removes itself from an array while the loop is running. What does this print?</q>
+<code file="splice.ts">
+const listeners: Array<(orderId: string) => void> = [];
+
+const first = (orderId: string) => {
+  console.log(`once: ${orderId}`);
+  listeners.splice(listeners.indexOf(first), 1);
+};
+listeners.push(first);
+listeners.push((orderId) => console.log(`email: ${orderId}`));
+listeners.push((orderId) => console.log(`stock: ${orderId}`));
+
+for (const listener of listeners) listener("ORD-1");
+</code>
+<option>once: ORD-1
+email: ORD-1
+stock: ORD-1</option>
+<option correct>once: ORD-1
+stock: ORD-1</option>
+<option>once: ORD-1</option>
+<option>email: ORD-1
+stock: ORD-1</option>
+<explain><p>The array iterator moves by index. After the first listener removes itself, the e-mail listener shifts to index 0, and the loop continues at index 1, which is now the stock listener. The e-mail listener is skipped. Looping over a copy (<code>[...listeners]</code>) fixes it.</p></explain>
+</question>
+
+<question id="te-out-sync-throw" type="output">
+<q>What does this print?</q>
+<code file="sync-throw.ts">
+const listeners = [
+  () => console.log("inventory"),
+  () => {
+    throw new Error("smtp down");
+  },
+  () => console.log("analytics"),
+];
+
+try {
+  await Promise.allSettled(listeners.map((listener) => listener()));
+} catch (error) {
+  console.log("caught:", (error as Error).message);
+}
+</code>
+<option>inventory
+analytics</option>
+<option>inventory
+analytics
+caught: smtp down</option>
+<option correct>inventory
+caught: smtp down</option>
+<option>inventory</option>
+<explain><p>The second listener throws <em>synchronously</em> inside <code>map</code>, before <code>allSettled</code> is even called. The throw escapes, the analytics listener never runs, and the <code>catch</code> gets the error. <code>allSettled</code> only protects against rejected promises.</p></explain>
+</question>
+
+<question id="te-out-async-wrapper" type="output">
+<q>The same listeners, with an <code>async</code> wrapper. What does this print?</q>
+<code file="async-wrapper.ts">
+const listeners = [
+  () => console.log("inventory"),
+  () => {
+    throw new Error("smtp down");
+  },
+  () => console.log("analytics"),
+];
+
+const results = await Promise.allSettled(listeners.map(async (listener) => listener()));
+console.log(results.map((r) => r.status).join(" "));
+</code>
+<option correct>inventory
+analytics
+fulfilled rejected fulfilled</option>
+<option>inventory
+fulfilled rejected</option>
+<option>inventory
+analytics
+fulfilled fulfilled fulfilled</option>
+<option>fulfilled rejected fulfilled
+inventory
+analytics</option>
+<explain><p>An <code>async</code> arrow function turns the synchronous throw into a rejected promise, so every listener is called and <code>allSettled</code> reports each outcome in order.</p></explain>
+</question>
+
+<question id="te-out-prefix" type="output">
+<q>The bus matches <code>"order.*"</code> with <code>name.startsWith(pattern.slice(0, -1))</code>. What does this print?</q>
+<code file="prefix.ts">
+const names = ["order", "order.placed", "orders.synced", "order.item.added", "stock.low"];
+const pattern = "order.*";
+const prefix = pattern.slice(0, -1);
+console.log(names.filter((name) => name.startsWith(prefix)).join(" | "));
+</code>
+<option>order | order.placed | orders.synced | order.item.added</option>
+<option>order.placed</option>
+<option correct>order.placed | order.item.added</option>
+<option>order | order.placed | order.item.added</option>
+<explain><p>The prefix is <code>"order."</code> including the dot, so <code>"orders.synced"</code> and the bare <code>"order"</code> do not match, and the deeper <code>"order.item.added"</code> does. The type-level <code>`order.${string}`</code> matches the same names, because <code>${string}</code> can contain dots.</p></explain>
+</question>
+
+<question id="te-out-correlated" type="output">
+<q>What does this print?</q>
+<code file="correlated.ts">
+interface Events {
+  "order.cancelled": { orderId: string; reason: string };
+  "stock.low": { sku: string; left: number };
+}
+
+const handlers = {
+  "order.cancelled": (e: Events["order.cancelled"]) => console.log(`refund ${e.orderId}`),
+  "stock.low": (e: Events["stock.low"]) => console.log(`reorder ${e.sku}`),
+};
+
+function emit<K extends keyof Events>(name: K, payload: Events[K]): void {
+  (handlers[name] as (payload: Events[K]) => void)(payload);
+}
+
+function forward(name: keyof Events, payload: Events[keyof Events]): void {
+  emit(name, payload);
+}
+
+forward("stock.low", { orderId: "ORD-7", reason: "duplicate" });
+</code>
+<option>refund ORD-7</option>
+<option correct>reorder undefined</option>
+<option>Nothing: it does not compile</option>
+<option>TypeError: Cannot read properties of undefined</option>
+<explain><p>It compiles because inside <code>forward</code>, <code>K</code> is the whole union and the payload may be either shape. At runtime the stock handler reads <code>e.sku</code> from a cancellation payload and gets <code>undefined</code>. Reading a missing property is not an error in JavaScript, so the bug is silent.</p></explain>
+</question>
+
+<question id="te-out-hasown" type="output">
+<q>What does this print?</q>
+<code file="hasown.ts">
+const validators: Record<string, (payload: unknown) => boolean> = {
+  "stock.low": (p) => typeof p === "object" && p !== null,
+};
+
+console.log("toString" in validators, Object.hasOwn(validators, "toString"), Object.hasOwn(validators, "stock.low"));
+</code>
+<option>false false true</option>
+<option correct>true false true</option>
+<option>true true true</option>
+<option>false true true</option>
+<explain><p><code>in</code> walks the prototype chain and finds <code>Object.prototype.toString</code>. <code>Object.hasOwn</code> only looks at the object's own keys, which is what you want for names that come from outside.</p></explain>
+</question>
+
+<question id="te-out-sync-start" type="output">
+<q><code>emit</code> is an <code>async</code> method. What does this print?</q>
+<code file="sync-start.ts">
+class Bus {
+  readonly #listeners: Array<(payload: string) => void> = [];
+  on(listener: (payload: string) => void): void {
+    this.#listeners.push(listener);
+  }
+  async emit(payload: string): Promise<number> {
+    const results = await Promise.allSettled(this.#listeners.map(async (listener) => listener(payload)));
+    return results.length;
+  }
+}
+
+const bus = new Bus();
+bus.on((sku) => console.log(`listener: ${sku}`));
+const pending = bus.emit("RICE-50KG");
+console.log("after emit");
+console.log("report:", await pending);
+</code>
+<option>after emit
+listener: RICE-50KG
+report: 1</option>
+<option correct>listener: RICE-50KG
+after emit
+report: 1</option>
+<option>after emit
+report: 1
+listener: RICE-50KG</option>
+<option>listener: RICE-50KG
+report: 1
+after emit</option>
+<explain><p>An async function runs synchronously until its first <code>await</code>. The <code>map</code> calls every listener before <code>await</code> is reached, so the listener prints first. Only the report waits for the promise.</p></explain>
+</question>
+
+<question id="te-out-abort" type="output">
+<q>What does this print?</q>
+<code file="abort.ts">
+const listeners = new Set<(sku: string) => void>();
+
+function on(listener: (sku: string) => void, signal: AbortSignal): void {
+  listeners.add(listener);
+  signal.addEventListener("abort", () => listeners.delete(listener), { once: true });
+}
+
+const request = new AbortController();
+on((sku) => console.log(`request A saw ${sku}`), request.signal);
+on((sku) => console.log(`request A logged ${sku}`), request.signal);
+on((sku) => console.log(`app saw ${sku}`), new AbortController().signal);
+
+request.abort();
+for (const listener of listeners) listener("GARRI-5KG");
+console.log(listeners.size);
+</code>
+<option>request A saw GARRI-5KG
+request A logged GARRI-5KG
+app saw GARRI-5KG
+3</option>
+<option correct>app saw GARRI-5KG
+1</option>
+<option>request A logged GARRI-5KG
+app saw GARRI-5KG
+2</option>
+<option>1</option>
+<explain><p>One <code>abort()</code> removed both listeners tied to the request's signal. The application-wide listener has its own signal and stays.</p></explain>
+</question>
+
+<question id="te-out-zudo-pattern" type="output">
+<q><code>@zudojs/events</code> normalises event types and matches namespace patterns. What does this print?</q>
+<code file="zudo-pattern.ts">
+import { createEventBus } from "@zudojs/events";
+
+const bus = createEventBus();
+bus.on("order.*", (event) => console.log("orders:", event.type));
+
+for (const type of ["order", "orders.synced", "order.item.added", "Order.Placed"]) {
+  await bus.publishEvent({ type, payload: {} });
+}
+</code>
+<option>orders: order.item.added
+orders: Order.Placed</option>
+<option correct>orders: order
+orders: order.item.added
+orders: order.placed</option>
+<option>orders: order
+orders: orders.synced
+orders: order.item.added
+orders: order.placed</option>
+<option>orders: order.item.added</option>
+<explain><p>In <code>@zudojs/events</code> a namespace pattern also matches the bare namespace (<code>"order"</code>) and every depth below it, but not <code>"orders.synced"</code>, because it matches whole segments. Event types are lower-cased when the event is created, so <code>"Order.Placed"</code> arrives as <code>"order.placed"</code>. The lesson's own bus did not match the bare <code>"order"</code>: two implementations of "the same" wildcard can differ.</p></explain>
+</question>
+
+<question id="te-out-resolve-twice" type="output">
+<q><code>waitFor</code> pushes the promise's <code>resolve</code> as a listener and never removes it. What does this print?</q>
+<code file="resolve-twice.ts">
+function waitFor(listeners: Array<(value: string) => void>): Promise<string> {
+  return new Promise((resolve) => listeners.push(resolve));
+}
+
+const listeners: Array<(value: string) => void> = [];
+const next = waitFor(listeners);
+listeners.forEach((listener) => listener("ORD-1"));
+listeners.forEach((listener) => listener("ORD-2"));
+console.log(await next, listeners.length);
+</code>
+<option>ORD-2 0</option>
+<option>ORD-1 0</option>
+<option correct>ORD-1 1</option>
+<option>ORD-2 1</option>
+<explain><p>A promise settles once; later calls to <code>resolve</code> are ignored, so the value is <code>ORD-1</code>. But the listener is still registered: every <code>waitFor</code> call leaves one dead listener behind. That is why the lesson builds <code>waitFor</code> on <code>once</code>, which unsubscribes.</p></explain>
+</question>
+
+<question id="te-code-emit" type="code" file="emit.ts">
+<q><p>Finish <code>emit</code>. It calls every listener registered for <code>name</code> (looping over a copy) with the payload arguments, and returns how many listeners there were. The program should print the four lines shown in the expected output.</p></q>
+<starter>
+type PayloadArgs<P> = [P] extends [void] ? [] : [payload: P];
+
+class TypedEmitter<E extends object> {
+  readonly #listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+
+  on<K extends keyof E & string>(name: K, listener: (...args: PayloadArgs<E[K]>) => void): void {
+    const list = this.#listeners.get(name) ?? [];
+    list.push(listener as (...args: unknown[]) => void);
+    this.#listeners.set(name, list);
+  }
+
+  emit<K extends keyof E & string>(name: K, ...args: PayloadArgs<E[K]>): number {
+    // your code here
+    return 0;
+  }
+}
+
+interface CartEvents {
+  "item.added": { sku: string; qty: number };
+  "cart.cleared": void;
+}
+
+const cart = new TypedEmitter<CartEvents>();
+cart.on("item.added", (item) => console.log(`added ${item.qty} x ${item.sku}`));
+cart.on("cart.cleared", () => console.log("cart is empty"));
+console.log(cart.emit("item.added", { sku: "YAM-TUBER", qty: 2 }));
+console.log(cart.emit("cart.cleared"));
+</starter>
+<solution>
+type PayloadArgs<P> = [P] extends [void] ? [] : [payload: P];
+
+class TypedEmitter<E extends object> {
+  readonly #listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+
+  on<K extends keyof E & string>(name: K, listener: (...args: PayloadArgs<E[K]>) => void): void {
+    const list = this.#listeners.get(name) ?? [];
+    list.push(listener as (...args: unknown[]) => void);
+    this.#listeners.set(name, list);
+  }
+
+  emit<K extends keyof E & string>(name: K, ...args: PayloadArgs<E[K]>): number {
+    const list = this.#listeners.get(name) ?? [];
+    for (const listener of [...list]) listener(...args);
+    return list.length;
+  }
+}
+
+interface CartEvents {
+  "item.added": { sku: string; qty: number };
+  "cart.cleared": void;
+}
+
+const cart = new TypedEmitter<CartEvents>();
+cart.on("item.added", (item) => console.log(`added ${item.qty} x ${item.sku}`));
+cart.on("cart.cleared", () => console.log("cart is empty"));
+console.log(cart.emit("item.added", { sku: "YAM-TUBER", qty: 2 }));
+console.log(cart.emit("cart.cleared"));
+</solution>
+<expected>
+added 2 x YAM-TUBER
+1
+cart is empty
+1
+</expected>
+<explain><p>The public signature does the checking: <code>K</code> comes from the name, and <code>PayloadArgs&lt;E[K]&gt;</code> is empty for <code>"cart.cleared"</code>. Inside, the listeners are stored loosely, so spreading <code>args</code> into them needs no further cast.</p></explain>
+</question>
+
+<question id="te-code-matches" type="code" file="matches.ts">
+<q><p>Write <code>matches(pattern, name)</code>: <code>"*"</code> matches every name, <code>"ns.*"</code> matches names that start with <code>ns.</code> (at any depth, but not <code>ns</code> itself or <code>nss.x</code>), and any other pattern must equal the name. The program should print <code>order.placed,order.item.added</code>, <code>stock.low</code> and <code>5</code>.</p></q>
+<starter>
+function matches(pattern: string, name: string): boolean {
+  // your code here
+  return false;
+}
+
+const names = ["order.placed", "order", "orders.synced", "stock.low", "order.item.added"];
+console.log(names.filter((n) => matches("order.*", n)).join(","));
+console.log(names.filter((n) => matches("stock.low", n)).join(","));
+console.log(names.filter((n) => matches("*", n)).length);
+</starter>
+<solution>
+function matches(pattern: string, name: string): boolean {
+  if (pattern === "*") return true;
+  if (pattern.endsWith(".*")) return name.startsWith(pattern.slice(0, -1));
+  return pattern === name;
+}
+
+const names = ["order.placed", "order", "orders.synced", "stock.low", "order.item.added"];
+console.log(names.filter((n) => matches("order.*", n)).join(","));
+console.log(names.filter((n) => matches("stock.low", n)).join(","));
+console.log(names.filter((n) => matches("*", n)).length);
+</solution>
+<expected>
+order.placed,order.item.added
+stock.low
+5
+</expected>
+<explain><p>Keeping the dot in the prefix (<code>"order."</code>) is what stops <code>"orders.synced"</code> from matching. Whatever rule you choose, the type-level <code>Matching</code> must describe the same set of names.</p></explain>
+</question>
+
+<question id="te-code-emitall" type="code" file="emit-all.ts">
+<q><p>Finish <code>emitAll</code>. It calls every listener with the SKU, waits for all of them, isolates failures (synchronous throws and rejected promises alike) and returns how many were delivered and how many failed. The program should print the three lines shown.</p></q>
+<starter>
+type Listener = (sku: string) => void | Promise<void>;
+
+async function emitAll(listeners: readonly Listener[], sku: string): Promise<{ delivered: number; failed: number }> {
+  // your code here
+  return { delivered: 0, failed: 0 };
+}
+
+const report = await emitAll(
+  [
+    (sku) => console.log(`reserve ${sku}`),
+    () => {
+      throw new Error("warehouse offline");
+    },
+    async () => {
+      throw new Error("sms quota");
+    },
+    async (sku) => console.log(`reorder ${sku}`),
+  ],
+  "OIL-5L",
+);
+console.log(`delivered ${report.delivered}, failed ${report.failed}`);
+</starter>
+<solution>
+type Listener = (sku: string) => void | Promise<void>;
+
+async function emitAll(listeners: readonly Listener[], sku: string): Promise<{ delivered: number; failed: number }> {
+  const results = await Promise.allSettled(listeners.map(async (listener) => listener(sku)));
+  const failed = results.filter((r) => r.status === "rejected").length;
+  return { delivered: results.length - failed, failed };
+}
+
+const report = await emitAll(
+  [
+    (sku) => console.log(`reserve ${sku}`),
+    () => {
+      throw new Error("warehouse offline");
+    },
+    async () => {
+      throw new Error("sms quota");
+    },
+    async (sku) => console.log(`reorder ${sku}`),
+  ],
+  "OIL-5L",
+);
+console.log(`delivered ${report.delivered}, failed ${report.failed}`);
+</solution>
+<expected>
+reserve OIL-5L
+reorder OIL-5L
+delivered 2, failed 2
+</expected>
+<explain><p>The <code>async</code> wrapper converts the synchronous throw into a rejection, and <code>allSettled</code> waits for every listener. Without the wrapper, the second listener's throw would escape <code>map</code> and the last listener would never run.</p></explain>
+</question>
+
+<question id="te-code-validate" type="code" file="validate.ts">
+<q><p>Events arrive as JSON from a queue. Write the type guard <code>isStockLow</code>: the payload must be an object with a string <code>sku</code> and a whole-number <code>left</code> that is 0 or more. The program should print <code>ok RICE-50KG 3</code> and then <code>rejected</code> three times.</p></q>
+<starter>
+interface StockLow {
+  sku: string;
+  left: number;
+}
+
+function isStockLow(payload: unknown): payload is StockLow {
+  // your code here
+  return true;
+}
+
+const messages = ['{"sku":"RICE-50KG","left":3}', '{"sku":"RICE-50KG","left":"3"}', '{"sku":"RICE-50KG","left":-1}', "null"];
+for (const raw of messages) {
+  const payload: unknown = JSON.parse(raw);
+  console.log(isStockLow(payload) ? `ok ${payload.sku} ${payload.left}` : "rejected");
+}
+</starter>
+<solution>
+interface StockLow {
+  sku: string;
+  left: number;
+}
+
+function isStockLow(payload: unknown): payload is StockLow {
+  if (typeof payload !== "object" || payload === null) return false;
+  const p = payload as Record<string, unknown>;
+  return typeof p.sku === "string" && Number.isInteger(p.left) && (p.left as number) >= 0;
+}
+
+const messages = ['{"sku":"RICE-50KG","left":3}', '{"sku":"RICE-50KG","left":"3"}', '{"sku":"RICE-50KG","left":-1}', "null"];
+for (const raw of messages) {
+  const payload: unknown = JSON.parse(raw);
+  console.log(isStockLow(payload) ? `ok ${payload.sku} ${payload.left}` : "rejected");
+}
+</solution>
+<expected>
+ok RICE-50KG 3
+rejected
+rejected
+rejected
+</expected>
+<explain><p>The event map says <code>left</code> is a number, but only a runtime check can refuse <code>"3"</code>, <code>-1</code> or <code>null</code>. <code>Number.isInteger</code> is <code>false</code> for strings, so it checks the type and the value at once.</p></explain>
+</question>
+
+<question id="te-code-waitfor" type="code" file="wait-for.ts">
+<q><p>Add <code>waitFor(name)</code> to the emitter. It returns a promise of that event's payload, resolves on the next event with that name, and unsubscribes itself so only one event is consumed. The program should print <code>1</code>, <code>0</code> and <code>PSK_1042 1500000</code>.</p></q>
+<starter>
+class Emitter<E extends object> {
+  readonly #listeners = new Map<keyof E, Set<(payload: never) => void>>();
+
+  on<K extends keyof E>(name: K, listener: (payload: E[K]) => void): () => void {
+    const set = this.#listeners.get(name) ?? new Set();
+    this.#listeners.set(name, set);
+    set.add(listener);
+    return () => void set.delete(listener);
+  }
+
+  waitFor<K extends keyof E>(name: K): Promise<E[K]> {
+    // your code here
+    return new Promise(() => {});
+  }
+
+  emit<K extends keyof E>(name: K, payload: E[K]): number {
+    const list = [...(this.#listeners.get(name) ?? [])];
+    for (const listener of list) (listener as (payload: E[K]) => void)(payload);
+    return list.length;
+  }
+}
+
+const shop = new Emitter<{ "payment.confirmed": { reference: string; kobo: number } }>();
+const confirmed = shop.waitFor("payment.confirmed");
+console.log(shop.emit("payment.confirmed", { reference: "PSK_1042", kobo: 1_500_000 }));
+console.log(shop.emit("payment.confirmed", { reference: "PSK_1043", kobo: 90_000 }));
+const payment = await Promise.race([confirmed, new Promise<{ reference: string; kobo: number }>((resolve) => setTimeout(() => resolve({ reference: "none", kobo: 0 }), 50))]);
+console.log(payment.reference, payment.kobo);
+</starter>
+<solution>
+class Emitter<E extends object> {
+  readonly #listeners = new Map<keyof E, Set<(payload: never) => void>>();
+
+  on<K extends keyof E>(name: K, listener: (payload: E[K]) => void): () => void {
+    const set = this.#listeners.get(name) ?? new Set();
+    this.#listeners.set(name, set);
+    set.add(listener);
+    return () => void set.delete(listener);
+  }
+
+  waitFor<K extends keyof E>(name: K): Promise<E[K]> {
+    return new Promise((resolve) => {
+      const off = this.on(name, (payload) => {
+        off();
+        resolve(payload);
+      });
+    });
+  }
+
+  emit<K extends keyof E>(name: K, payload: E[K]): number {
+    const list = [...(this.#listeners.get(name) ?? [])];
+    for (const listener of list) (listener as (payload: E[K]) => void)(payload);
+    return list.length;
+  }
+}
+
+const shop = new Emitter<{ "payment.confirmed": { reference: string; kobo: number } }>();
+const confirmed = shop.waitFor("payment.confirmed");
+console.log(shop.emit("payment.confirmed", { reference: "PSK_1042", kobo: 1_500_000 }));
+console.log(shop.emit("payment.confirmed", { reference: "PSK_1043", kobo: 90_000 }));
+const payment = await Promise.race([confirmed, new Promise<{ reference: string; kobo: number }>((resolve) => setTimeout(() => resolve({ reference: "none", kobo: 0 }), 50))]);
+console.log(payment.reference, payment.kobo);
+</solution>
+<expected>
+1
+0
+PSK_1042 1500000
+</expected>
+<explain><p>The listener removes itself before resolving, so the second emit finds no listener (<code>0</code>). <code>K</code> is inferred from the name, so the promise is typed with that event's payload and <code>payment.reference</code> is checked. The <code>Promise.race</code> in the program only stops an unfinished answer from waiting forever.</p></explain>
+</question>
+
+<question id="te-code-formatters" type="code" file="formatters.ts">
+<q><p>Write the mapped type <code>Formatters&lt;E&gt;</code>: one formatter per event name, taking that event's payload and returning a string. Then finish <code>describe</code>. The program should print <code>order.placed: ORD-9 ₦7000</code> and <code>stock.low: OIL-5L x1</code>.</p></q>
+<starter>
+interface ShopEvents {
+  "order.placed": { orderId: string; totalKobo: number };
+  "stock.low": { sku: string; left: number };
+}
+
+type Formatters<E> = Record<string, (payload: never) => string>; // replace with a mapped type
+
+const formatters: Formatters<ShopEvents> = {
+  "order.placed": (o: ShopEvents["order.placed"]) => `${o.orderId} ₦${o.totalKobo / 100}`,
+  "stock.low": (s: ShopEvents["stock.low"]) => `${s.sku} x${s.left}`,
+};
+
+function describe<K extends keyof ShopEvents>(name: K, payload: ShopEvents[K]): string {
+  // your code here
+  return "";
+}
+
+console.log(describe("order.placed", { orderId: "ORD-9", totalKobo: 700_000 }));
+console.log(describe("stock.low", { sku: "OIL-5L", left: 1 }));
+</starter>
+<solution>
+interface ShopEvents {
+  "order.placed": { orderId: string; totalKobo: number };
+  "stock.low": { sku: string; left: number };
+}
+
+type Formatters<E> = { readonly [K in keyof E]: (payload: E[K]) => string };
+
+const formatters: Formatters<ShopEvents> = {
+  "order.placed": (o) => `${o.orderId} ₦${o.totalKobo / 100}`,
+  "stock.low": (s) => `${s.sku} x${s.left}`,
+};
+
+function describe<K extends keyof ShopEvents>(name: K, payload: ShopEvents[K]): string {
+  const format = formatters[name] as (payload: ShopEvents[K]) => string;
+  return `${String(name)}: ${format(payload)}`;
+}
+
+console.log(describe("order.placed", { orderId: "ORD-9", totalKobo: 700_000 }));
+console.log(describe("stock.low", { sku: "OIL-5L", left: 1 }));
+</solution>
+<expected>
+order.placed: ORD-9 ₦7000
+stock.low: OIL-5L x1
+</expected>
+<explain><p>With the mapped type, a missing formatter or a formatter that reads the wrong payload is a compile error, and the parameters no longer need annotations: each is typed from its key. Inside the generic <code>describe</code>, TypeScript cannot prove that <code>formatters[name]</code> takes <code>ShopEvents[K]</code>, so one cast connects them.</p></explain>
+</question>
+
+<question id="te-code-zudo" type="code" file="zudo-typed.ts">
+<q><p>Put a typed layer over <code>@zudojs/events</code>: <code>on(type, handler)</code> and <code>publish(type, payload)</code> take the name from <code>ShopEvents</code> and derive the payload from it. <code>publish</code> returns how many handlers ran. The program should print the four lines shown.</p></q>
+<starter>
+import { createEventBus } from "@zudojs/events";
+import type { Event } from "@zudojs/events";
+
+interface ShopEvents {
+  "stock.low": { sku: string; left: number };
+  "order.placed": { orderId: string; totalKobo: number };
+}
+
+const bus = createEventBus();
+
+function on<K extends keyof ShopEvents & string>(type: K, handler: (event: Event<ShopEvents[K]>) => void): void {
+  // your code here
+}
+
+async function publish<K extends keyof ShopEvents & string>(type: K, payload: ShopEvents[K]): Promise<number> {
+  // your code here
+  return 0;
+}
+
+on("stock.low", (event) => console.log(`reorder ${event.payload.sku}`));
+on("order.placed", (event) => console.log(`thank you for ${event.payload.orderId}`));
+console.log(await publish("stock.low", { sku: "RICE-50KG", left: 3 }));
+console.log(await publish("order.placed", { orderId: "ORD-1", totalKobo: 500_000 }));
+</starter>
+<solution>
+import { createEventBus } from "@zudojs/events";
+import type { Event } from "@zudojs/events";
+
+interface ShopEvents {
+  "stock.low": { sku: string; left: number };
+  "order.placed": { orderId: string; totalKobo: number };
+}
+
+const bus = createEventBus();
+
+function on<K extends keyof ShopEvents & string>(type: K, handler: (event: Event<ShopEvents[K]>) => void): void {
+  bus.on<Event<ShopEvents[K]>>(type, handler);
+}
+
+async function publish<K extends keyof ShopEvents & string>(type: K, payload: ShopEvents[K]): Promise<number> {
+  const result = await bus.publishEvent({ type, payload });
+  return result.handlerCount;
+}
+
+on("stock.low", (event) => console.log(`reorder ${event.payload.sku}`));
+on("order.placed", (event) => console.log(`thank you for ${event.payload.orderId}`));
+console.log(await publish("stock.low", { sku: "RICE-50KG", left: 3 }));
+console.log(await publish("order.placed", { orderId: "ORD-1", totalKobo: 500_000 }));
+</solution>
+<expected>
+reorder RICE-50KG
+1
+thank you for ORD-1
+1
+</expected>
+<explain><p>The package's <code>on&lt;Event&lt;P&gt;&gt;</code> is a claim, but inside <code>on</code> the claim is derived from the same <code>K</code> as the name, so callers can no longer make a wrong one. <code>publishEvent</code> builds the event and returns a report with <code>handlerCount</code>.</p></explain>
+</question>
+
+<question id="te-code-leak" type="code" file="leak.ts">
+<q><p>Finish <code>on</code> so that it stores the listener and records one warning the moment a name gets more than <code>max</code> listeners, like Node's leak warning. The program should print <code>possible leak: 4 listeners for order.placed</code>.</p></q>
+<starter>
+class LeakAwareEmitter {
+  readonly #listeners = new Map<string, Array<() => void>>();
+  readonly warnings: string[] = [];
+
+  constructor(private readonly max: number) {}
+
+  on(name: string, listener: () => void): void {
+    // your code here
+  }
+}
+
+const emitter = new LeakAwareEmitter(3);
+for (let request = 1; request <= 5; request++) emitter.on("order.placed", () => {});
+emitter.on("stock.low", () => {});
+console.log(emitter.warnings.join("\n") || "no warnings");
+</starter>
+<solution>
+class LeakAwareEmitter {
+  readonly #listeners = new Map<string, Array<() => void>>();
+  readonly warnings: string[] = [];
+
+  constructor(private readonly max: number) {}
+
+  on(name: string, listener: () => void): void {
+    const list = this.#listeners.get(name) ?? [];
+    list.push(listener);
+    this.#listeners.set(name, list);
+    if (list.length === this.max + 1) this.warnings.push(`possible leak: ${list.length} listeners for ${name}`);
+  }
+}
+
+const emitter = new LeakAwareEmitter(3);
+for (let request = 1; request <= 5; request++) emitter.on("order.placed", () => {});
+emitter.on("stock.low", () => {});
+console.log(emitter.warnings.join("\n") || "no warnings");
+</solution>
+<expected>
+possible leak: 4 listeners for order.placed
+</expected>
+<explain><p>Subscribing once per request (the loop) is the classic leak. Warning exactly when the count first passes the limit, and not again for every further listener, keeps the log readable. No type can catch a leak; it is a runtime property.</p></explain>
+</question>

@@ -1,0 +1,815 @@
+<question id="ura-page-repeat" type="choice">
+<q>The old Oja API paged products with <code>?page=2&amp;limit=20</code> (SQL <code>OFFSET 20</code>). A partner saw a product on page 1 again on page 2. What is the most likely cause?</q>
+<option>The database returned rows in random order</option>
+<option correct>A product was added before the rows the client had already seen, so every row moved one place and page 2 started one row earlier</option>
+<option>The limit was too small</option>
+<option>The client sent the request twice</option>
+<explain><p>An offset counts rows from the start. When a new row sorts in before the ones already shown, everything shifts by one, and the last row of page 1 becomes the first row of page 2. Keyset pagination ("after id 57") is anchored to a row, not a position, so it cannot repeat.</p></explain>
+</question>
+
+<question id="ura-login-post" type="choice">
+<q>Why does the Oja API model logging in as <code>POST /v1/tokens</code>?</q>
+<option>Because GET requests cannot carry JSON</option>
+<option correct>Logging in creates something new, an access token, and POST creates resources</option>
+<option>Because tokens are secret and POST is encrypted</option>
+<option>Because every route must be a POST</option>
+<explain><p>Thinking in resources turns the verb "log in" into a noun: a token is created. POST is not more secret than GET over HTTPS, but a password must never go into a URL, where it ends up in logs; that is a second reason to use a body.</p></explain>
+</question>
+
+<question id="ura-cancel-action" type="choice">
+<q>Why is cancelling <code>POST /v1/orders/{id}/cancel</code> rather than <code>PATCH /v1/orders/{id}</code> with <code>{"status": "cancelled"}</code>?</q>
+<option>PATCH is not allowed to change a status</option>
+<option>PATCH cannot have a side effect</option>
+<option correct>With a generic PATCH the client could also send other statuses, so the server would have to forbid every transition but one; the action names the one allowed transition and its side effect</option>
+<option>The OpenAPI document cannot describe PATCH</option>
+<explain><p>Cancelling is a state transition with a side effect (stock goes back). A small action resource exposes exactly that transition. A status PATCH invites <code>{"status": "placed"}</code> or <code>"shipped"</code>, and every one needs a rule.</p></explain>
+</question>
+
+<question id="ura-404-not-403" type="choice">
+<q>Bola asks for <code>GET /v1/orders/1</code>, which is Ada's order. Why does the API answer 404 instead of 403?</q>
+<option>Because 403 is only for admins</option>
+<option correct>A 403 would confirm that order 1 exists; 404 gives the same answer as for an order that does not exist</option>
+<option>Because the order really is deleted for Bola</option>
+<option>Because 404 is cached by browsers</option>
+<explain><p>An attacker who changes the id in the URL learns nothing: existing and missing orders look the same. The SQL <code>WHERE id = $1 AND user_id = $2</code> finds no row in both cases, so the code does not even need a separate check.</p></explain>
+</question>
+
+<question id="ura-409-422" type="choice">
+<q>In <code>POST /v1/orders</code>, "not enough stock" is 409 and "product 99 does not exist" is 422. What is the idea behind the split?</q>
+<option>409 is for users, 422 for admins</option>
+<option>422 means the JSON could not be parsed</option>
+<option correct>Out of stock conflicts with the current state and may succeed later; an unknown product id is a request that will never succeed as it is</option>
+<option>There is no difference; both could be 400</option>
+<explain><p>A client can react differently: after a 409 it can show "sold out, try later" or reduce the quantity; after a 422 it has a bug or stale data. Syntax and schema errors are 400, before any business rule runs.</p></explain>
+</question>
+
+<question id="ura-cancel-idempotent" type="choice">
+<q>Ada's phone sends <code>POST /v1/orders/7/cancel</code>, loses the response, and sends it again. The order is already cancelled. What should the second request return, and why?</q>
+<option>409, because the order is already cancelled</option>
+<option>404, because the order is gone</option>
+<option correct>200 with the cancelled order, and no stock goes back a second time: the action is idempotent, so the retry is harmless</option>
+<option>500, because the state machine was violated</option>
+<explain><p>The client wanted the order cancelled, and it is. Returning the current state makes retries safe. The conditional <code>UPDATE … WHERE status = 'placed'</code> guarantees the stock is only returned by the request that actually changed the status.</p></explain>
+</question>
+
+<question id="ura-version" type="choice">
+<q>Which change can Oja ship in <code>/v1</code> without breaking an old mobile app that nobody updated?</q>
+<option>Renaming <code>priceKobo</code> to <code>price</code></option>
+<option>Changing <code>priceKobo</code> from integer kobo to a naira string</option>
+<option correct>Adding a new optional field <code>imageUrl</code> to products</option>
+<option>Removing <code>GET /v1/orders</code></option>
+<explain><p>Additive changes keep old clients working, because they ignore fields they do not know. Renames, type changes and removals break them and need <code>/v2</code>. This is also why responses allow additional properties in the OpenAPI document.</p></explain>
+</question>
+
+<question id="ura-price-copy" type="choice">
+<q>Why does <code>order_lines</code> store its own <code>price_kobo</code> instead of joining to <code>products.price_kobo</code> when showing an order?</q>
+<option>To save disk space</option>
+<option>Because foreign keys cannot point at prices</option>
+<option correct>An order must keep the price it was sold at; tomorrow's price change must not rewrite yesterday's receipt</option>
+<option>Because the join would be slow</option>
+<explain><p>The product's price is current data; the order line's price is a historical fact. Copying it at the moment of sale is the correct model, not a denormalisation shortcut.</p></explain>
+</question>
+
+<question id="ura-unique-race" type="choice">
+<q>A teammate replaces the <code>UNIQUE</code> constraint on <code>users.email</code> with code: "SELECT the e-mail; if no row, INSERT". Tests still pass. What breaks?</q>
+<option>Nothing; the code does the same check</option>
+<option correct>Two registrations at the same moment can both see "no row" and both insert, creating two accounts with one e-mail</option>
+<option>Registration becomes slower but stays correct</option>
+<option>Logins stop working</option>
+<explain><p>There is a gap between the read and the write. Only the database can close it: a <code>UNIQUE</code> constraint, used with <code>ON CONFLICT DO NOTHING</code>, makes one insert win and turns the other into a clean 409.</p></explain>
+</question>
+
+<question id="ura-role-db" type="choice">
+<q>Oja's <code>requireUser</code> reads the user's role from the database on every request instead of trusting a <code>roles</code> claim in the JWT. What does that buy?</q>
+<option>Tokens become shorter and faster to verify</option>
+<option correct>A demoted admin loses admin rights on the next request, and tokens of deleted accounts stop working, at the cost of one primary-key lookup</option>
+<option>The token no longer needs a signature</option>
+<option>Nothing; the token's claims are already checked</option>
+<explain><p>A claim in a token is fixed until the token expires. Reading the role fresh makes changes take effect at once. Revoking the token itself before it expires needs sessions, which the next lesson adds.</p></explain>
+</question>
+
+<question id="ura-decoy" type="choice">
+<q>Why does <code>login</code> run <code>verifyPassword</code> against a decoy hash when the e-mail is unknown?</q>
+<option>To create the account automatically</option>
+<option>To warm up the password hasher</option>
+<option correct>So "unknown e-mail" takes as long as "wrong password"; otherwise the response time tells an attacker which e-mails have accounts</option>
+<option>Because verifyPassword throws without a hash</option>
+<explain><p>Password hashing is deliberately slow. Skipping it for unknown e-mails makes those answers measurably faster, which leaks exactly what the identical error message was meant to hide.</p></explain>
+</question>
+
+<question id="ura-public-error" type="choice">
+<q>Why does Oja's error handler build the body from <code>error.code</code> and <code>error.message</code> instead of sending <code>serializePublicError(error)</code>?</q>
+<option>serializePublicError does not exist in @zudojs/errors</option>
+<option>serializePublicError includes the stack trace</option>
+<option correct>For an error that may be shown to clients, serializePublicError includes the whole metadata, and metadata is written for logs, not for clients</option>
+<option>serializePublicError changes the status code</option>
+<explain><p>The lesson's example put a warehouse name and a supplier cost into a <code>DomainError</code>'s metadata; <code>serializePublicError</code> passed them on. Building the body from named fields is an allow-list for errors, just like output schemas are for data.</p></explain>
+</question>
+
+<question id="ura-limit-plus-one" type="choice">
+<q>Why does <code>products.list</code> ask the database for <code>limit + 1</code> rows?</q>
+<option>Because SQL LIMIT is off by one</option>
+<option correct>If the extra row exists, there is a next page; this avoids counting the whole table</option>
+<option>To return one bonus product</option>
+<option>To make the cursor signature longer</option>
+<explain><p>The extra row is only looked at, never returned. <code>count(*)</code> on every page request gets slower as the table grows; one extra row costs nothing.</p></explain>
+</question>
+
+<question id="ura-signed-cursor" type="choice">
+<q>What does signing the cursor with <code>cursorSecret</code> protect against?</q>
+<option>Someone reading the cursor's contents</option>
+<option correct>A client editing the cursor, for example to jump to arbitrary positions or smuggle other fields into the query</option>
+<option>The cursor expiring</option>
+<option>SQL injection through the category filter</option>
+<explain><p>A signature proves integrity, not secrecy: the payload is plain base64url JSON anyone can read. A changed payload with an old signature is rejected with 400, and <code>allowedFields</code> rejects unexpected keys.</p></explain>
+</question>
+
+<question id="ura-contract-gap" type="choice">
+<q>The contract test did not report an extra <code>cost_kobo</code> field in a product response. Why, and what protects against that leak instead?</q>
+<option>Ajv ignores numbers</option>
+<option>The contract test only checks status codes</option>
+<option correct>The document allows additional properties so fields can be added without breaking clients; the protection is SQL that names its columns and output schemas like <code>UserOut</code></option>
+<option>cost_kobo is part of the Product schema</option>
+<explain><p>Response schemas are deliberately open to additions. A contract test catches wrong types, missing fields and undocumented statuses. Leaks are stopped where data leaves the database: named columns, never <code>SELECT *</code>, and allow-list parsing.</p></explain>
+</question>
+
+<question id="ura-not-found-handler" type="choice">
+<q>Why does <code>createRouter</code> get a <code>notFoundHandler</code> and a <code>methodNotAllowedHandler</code>?</q>
+<option>Without them the router crashes on unknown paths</option>
+<option correct>The router's default 404 and 405 bodies have a different shape, so a mistyped URL would be the one error clients cannot parse like the others</option>
+<option>They add authentication to unknown routes</option>
+<option>They are required by mountOpenAPI</option>
+<explain><p>One error envelope means one error-handling path in every client. The router's own answers must be brought into line too. The 405 also sets the <code>Allow</code> header.</p></explain>
+</question>
+
+<question id="ura-500-body" type="choice">
+<q>A request fails because the database is down. What should the client receive?</q>
+<option>The database error message, so the developer can fix it</option>
+<option>The stack trace, but only in production</option>
+<option correct>A generic message and a request id; the real cause goes to the log with the same id</option>
+<option>An empty 200 response</option>
+<option>A 404, because the data was not found</option>
+<explain><p>Internal details help attackers and confuse users. The request id connects the customer's report to the log line that holds the real cause.</p></explain>
+</question>
+
+<question id="ura-pglite-race" type="choice">
+<q>The test suite runs on PGlite. Which kind of bug can it miss that a real PostgreSQL server with a connection pool would expose?</q>
+<option>Wrong SQL syntax</option>
+<option>A missing CHECK constraint</option>
+<option correct>Races between concurrent transactions, because PGlite runs one transaction at a time</option>
+<option>Wrong status codes</option>
+<explain><p>PGlite is real PostgreSQL, so SQL and constraints behave the same. But with a single connection, two "simultaneous" orders run one after the other, which hides races. Run the concurrency tests against a real server in CI.</p></explain>
+</question>
+
+<question id="ura-double-order" type="choice">
+<q>A phone sends <code>POST /v1/orders</code>, the connection drops before the response, and the app retries. What happens with this lesson's API, and what fixes it?</q>
+<option>Nothing bad: the transaction prevents duplicates</option>
+<option>The second request gets 409 automatically</option>
+<option correct>Two orders are placed; the fix is an Idempotency-Key header whose stored response is replayed for the retry</option>
+<option>The second request gets 404</option>
+<explain><p>A transaction makes one order all-or-nothing; it cannot know that two requests are the same intent. Only a key chosen by the client, once per intent, can. The payments use case builds this.</p></explain>
+</question>
+
+<question id="ura-n-plus-one" type="choice">
+<q><code>listMine</code> loads 50 order ids, then calls <code>load</code> for each (two queries each). How many queries is that, and what is the pattern called?</q>
+<option>3 queries; eager loading</option>
+<option>50 queries; batching</option>
+<option correct>101 queries; the N+1 query problem</option>
+<option>1 query; a join</option>
+<explain><p>One query for the ids plus two per order. The fix is to fetch all orders and then all their lines with <code>WHERE order_id = ANY($1)</code> in two queries, and group them in code.</p></explain>
+</question>
+
+<question id="ura-limit-cap" type="choice">
+<q>Why does <code>ProductQuery</code> cap <code>limit</code> at 50?</q>
+<option>JSON cannot hold more than 50 items</option>
+<option correct>Without a cap, one request with limit=1000000 makes the server read and serialize the whole table</option>
+<option>OpenAPI requires a maximum</option>
+<option>PostgreSQL limits LIMIT to 50</option>
+<explain><p>Every input that controls work needs an upper bound. The cap also appears in the OpenAPI document, so clients know it before they hit the 400.</p></explain>
+</question>
+
+<question id="ura-strict-patch" type="choice">
+<q><code>ProductPatch</code> is <code>NewProduct.omit(["sku"]).partial().strict()</code>. An admin sends <code>{"sku": "new-sku", "stock": 5}</code>. What happens?</q>
+<option>The stock changes and the sku is silently ignored</option>
+<option>Both fields change</option>
+<option correct>400: <code>.strict()</code> reports the unknown key sku, and nothing changes</option>
+<option>500, because sku is unique</option>
+<explain><p>Stripping would hide the admin's mistake: they would believe the SKU changed. <code>.strict()</code> turns an unknown field into a clear error. For responses, stripping is right; for update requests, strictness is kinder.</p></explain>
+</question>
+
+<question id="ura-current-user" type="choice">
+<q><code>currentUser(ctx)</code> throws "requireUser is missing on this route" when no user is in the state. Why not return <code>undefined</code> and let the route decide?</q>
+<option>Because TypeScript does not allow undefined</option>
+<option correct>A forgotten <code>requireUser</code> then fails loudly (a 500 and a log line in tests) instead of quietly treating the caller as allowed</option>
+<option>Because the route would get a 401</option>
+<option>For performance</option>
+<explain><p>Security code should fail closed. A missing check that silently passes is the classic way an admin route becomes public.</p></explain>
+</question>
+
+<question id="ura-rollback" type="choice">
+<q>An order has three lines. Lines 1 and 2 take their stock, line 3 finds too little. With <code>withTransaction</code>, what is the final state?</q>
+<option>Lines 1 and 2 keep their stock change; the order is saved with two lines</option>
+<option>Lines 1 and 2 keep their stock change; no order is saved</option>
+<option correct>Nothing changed: the ConflictError rolls back lines 1 and 2, and no order exists</option>
+<option>The order is saved as "failed"</option>
+<explain><p>The error leaves the callback, so <code>withTransaction</code> rolls back everything done inside it. The client gets 409 and the stock is exactly as before, which the "rolls back every line" test checks.</p></explain>
+</question>
+
+<question id="ura-out-query-strings" type="output">
+<q>What does this print?</q>
+<code file="query.ts">
+import { schema } from "@zudojs/schema";
+
+const ProductQuery = schema.object({
+  limit: schema.default(schema.coerce.number().int().min(1).max(50), 20),
+  category: schema.optional(schema.enum(["grains", "drinks"] as const)),
+});
+
+console.log(ProductQuery.parse({ limit: "5" }));
+console.log(ProductQuery.parse({ category: "drinks", page: "3" }));
+</code>
+<option correct>{ limit: 5 }
+{ limit: 20, category: 'drinks' }</option>
+<option>{ limit: '5' }
+{ limit: 20, category: 'drinks', page: '3' }</option>
+<option>{ limit: 5 }
+{ category: 'drinks', page: '3' }</option>
+<option>{ limit: 5, category: undefined }
+{ limit: 20, category: 'drinks', page: undefined }</option>
+<explain><p><code>schema.coerce.number()</code> turns the query string <code>"5"</code> into the number 5. The unknown key <code>page</code> is stripped, and the missing <code>limit</code> gets its default of 20. Missing optional keys are simply absent, and the result follows the order of the schema's keys, not the input's.</p></explain>
+</question>
+
+<question id="ura-out-register" type="output">
+<q>What does this print?</q>
+<code file="register.ts">
+import { schema } from "@zudojs/schema";
+
+const Register = schema.object({
+  email: schema.string().trim().toLowerCase().email(),
+  name: schema.string().trim().min(1),
+});
+
+console.log(Register.parse({ email: "  Bola@Example.COM ", name: " Bola ", role: "admin" }));
+</code>
+<option correct>{ email: 'bola@example.com', name: 'Bola' }</option>
+<option>{ email: 'bola@example.com', name: 'Bola', role: 'admin' }</option>
+<option>{ email: '  Bola@Example.COM ', name: ' Bola ' }</option>
+<option>{ email: 'Bola@Example.COM', name: 'Bola' }</option>
+<explain><p>The e-mail is trimmed and lower-cased before the format check, the name is trimmed, and <code>role</code> is not in the schema, so it is dropped. The server alone decides roles.</p></explain>
+</question>
+
+<question id="ura-out-patch" type="output">
+<q>What does this print?</q>
+<code file="patch.ts">
+import { schema } from "@zudojs/schema";
+
+const NewProduct = schema.object({
+  sku: schema.string(),
+  priceKobo: schema.number().int().min(1),
+  stock: schema.number().int().min(0),
+});
+const ProductPatch = NewProduct.omit(["sku"]).partial().strict();
+
+const result = ProductPatch.safeParse({ stock: 4, sku: "rice-5kg" });
+console.log(result.success);
+if (!result.success) console.log(result.issues.map((issue) => issue.message));
+console.log(ProductPatch.parse({ stock: 4 }));
+</code>
+<option correct>false
+[ 'Unknown key: sku' ]
+{ stock: 4 }</option>
+<option>true
+{ stock: 4 }</option>
+<option>false
+[ 'Required field missing: priceKobo' ]
+{ stock: 4 }</option>
+<option>true
+{ stock: 4, sku: 'rice-5kg' }</option>
+<explain><p><code>omit</code> removed <code>sku</code> from the shape, <code>partial</code> made the rest optional (so a missing <code>priceKobo</code> is fine), and <code>strict</code> turns the unknown <code>sku</code> into an issue instead of stripping it.</p></explain>
+</question>
+
+<question id="ura-out-keyset" type="output">
+<q>Keyset pagination over an array. What does this print?</q>
+<code file="keyset.js">
+const products = [{ id: 1 }, { id: 2 }, { id: 4 }, { id: 7 }, { id: 9 }];
+
+function page(afterId, limit) {
+  const rows = products.filter((p) => p.id > afterId).slice(0, limit + 1);
+  const data = rows.slice(0, limit);
+  return { ids: data.map((p) => p.id), next: rows.length > limit ? data.at(-1).id : null };
+}
+
+const first = page(0, 2);
+products.unshift({ id: 0 });
+const second = page(first.next, 2);
+const third = page(second.next, 2);
+console.log(first, second, third);
+</code>
+<option correct>{ ids: [ 1, 2 ], next: 2 } { ids: [ 4, 7 ], next: 7 } { ids: [ 9 ], next: null }</option>
+<option>{ ids: [ 1, 2 ], next: 2 } { ids: [ 2, 4 ], next: 4 } { ids: [ 7, 9 ], next: null }</option>
+<option>{ ids: [ 1, 2 ], next: 2 } { ids: [ 0, 4 ], next: 4 } { ids: [ 7, 9 ], next: null }</option>
+<option>{ ids: [ 1, 2 ], next: 2 } { ids: [ 4, 7 ], next: 7 } { ids: [ 9 ], next: 9 }</option>
+<explain><p>Each page starts after the last id seen, so the new row with id 0 (which sorts first) cannot shift anything. The last page has no extra row, so <code>next</code> is <code>null</code>.</p></explain>
+</question>
+
+<question id="ura-out-offset" type="output">
+<q>The same catalogue with offset pagination. What does this print?</q>
+<code file="offset.js">
+const products = ["beans", "garri", "rice", "yam"];
+const page = (n, limit) => products.slice((n - 1) * limit, n * limit);
+
+const first = page(1, 2);
+products.unshift("acha");
+const second = page(2, 2);
+console.log(first, second);
+</code>
+<option correct>[ 'beans', 'garri' ] [ 'garri', 'rice' ]</option>
+<option>[ 'beans', 'garri' ] [ 'rice', 'yam' ]</option>
+<option>[ 'acha', 'beans' ] [ 'garri', 'rice' ]</option>
+<option>[ 'beans', 'garri' ] [ 'acha', 'rice' ]</option>
+<explain><p>Page 2 means "skip 2". After <code>acha</code> was inserted at the front, skipping 2 lands on <code>garri</code> again: the client sees it twice and never sees <code>yam</code> on this page. This is partner complaint 1.</p></explain>
+</question>
+
+<question id="ura-out-envelope" type="output">
+<q>What does this error handler print for the three errors?</q>
+<code file="envelope.ts">
+import { ConflictError, DomainError, normalizeToBaseError } from "@zudojs/errors";
+
+function toBody(thrown: unknown) {
+  const error = normalizeToBaseError(thrown);
+  if (error.expose && error.statusCode < 500) {
+    return [error.statusCode, { error: { code: error.code, message: error.message } }];
+  }
+  return [500, { error: { code: "INTERNAL", message: "Something went wrong on our side" } }];
+}
+
+console.log(JSON.stringify(toBody(new ConflictError("Not enough stock for product 1"))));
+console.log(JSON.stringify(toBody(new DomainError("Product 99 does not exist", { code: "UNKNOWN_PRODUCT" }))));
+console.log(JSON.stringify(toBody(new TypeError("Cannot read properties of undefined (reading 'id')"))));
+</code>
+<option correct>[409,{"error":{"code":"ERR_CONFLICT","message":"Not enough stock for product 1"}}]
+[422,{"error":{"code":"UNKNOWN_PRODUCT","message":"Product 99 does not exist"}}]
+[500,{"error":{"code":"INTERNAL","message":"Something went wrong on our side"}}]</option>
+<option>[409,{"error":{"code":"ERR_CONFLICT","message":"Not enough stock for product 1"}}]
+[422,{"error":{"code":"UNKNOWN_PRODUCT","message":"Product 99 does not exist"}}]
+[500,{"error":{"code":"ERR_INTERNAL_ERROR","message":"Cannot read properties of undefined (reading 'id')"}}]</option>
+<option>[409,{"error":{"code":"ERR_CONFLICT","message":"Not enough stock for product 1"}}]
+[400,{"error":{"code":"UNKNOWN_PRODUCT","message":"Product 99 does not exist"}}]
+[500,{"error":{"code":"INTERNAL","message":"Something went wrong on our side"}}]</option>
+<option>[500,{"error":{"code":"INTERNAL","message":"Something went wrong on our side"}}]
+[500,{"error":{"code":"INTERNAL","message":"Something went wrong on our side"}}]
+[500,{"error":{"code":"INTERNAL","message":"Something went wrong on our side"}}]</option>
+<explain><p><code>ConflictError</code> is 409 and <code>DomainError</code> is 422, both exposed, so their own code and message go out. A <code>TypeError</code> is a bug: it is normalized to a 500 that is not exposed, and the client sees only the generic body.</p></explain>
+</question>
+
+<question id="ura-out-metadata" type="output">
+<q>What does this print?</q>
+<code file="metadata.ts">
+import { NotFoundError, serializePublicError } from "@zudojs/errors";
+
+const error = new NotFoundError("Order 7 not found", { metadata: { orderId: 7, ownerId: 42 } });
+const body = serializePublicError(error);
+console.log(body.statusCode, body.metadata);
+</code>
+<option correct>404 { orderId: 7, ownerId: 42 }</option>
+<option>404 undefined</option>
+<option>404 {}</option>
+<option>500 undefined</option>
+<explain><p>For an exposed error, <code>serializePublicError</code> passes the metadata on. Here that would tell a stranger who owns order 7. That is why Oja's handler builds the body from <code>code</code> and <code>message</code> only.</p></explain>
+</question>
+
+<question id="ura-out-cancel" type="output">
+<q>An idempotent cancel over plain objects. What does this print?</q>
+<code file="cancel.js">
+const stock = new Map([["rice", 1]]);
+const order = { id: 7, status: "placed", lines: [{ sku: "rice", quantity: 2 }] };
+
+function cancel(order) {
+  if (order.status === "placed") {
+    order.status = "cancelled";
+    for (const line of order.lines) stock.set(line.sku, stock.get(line.sku) + line.quantity);
+  }
+  return order.status;
+}
+
+console.log(cancel(order), cancel(order), cancel(order), stock.get("rice"));
+</code>
+<option correct>cancelled cancelled cancelled 3</option>
+<option>cancelled cancelled cancelled 7</option>
+<option>cancelled placed cancelled 5</option>
+<option>cancelled undefined undefined 3</option>
+<explain><p>Only the call that changes the status from placed returns the stock. Later calls find the order cancelled and just report its state, which is what makes retries safe.</p></explain>
+</question>
+
+<question id="ura-out-id-param" type="output">
+<q>Route parameters are strings. What does this print?</q>
+<code file="id.ts">
+import { schema } from "@zudojs/schema";
+
+const IdParams = schema.object({ id: schema.coerce.number().int().min(1) });
+for (const id of ["12", "0", "abc", "1.5"]) {
+  const result = IdParams.safeParse({ id });
+  console.log(id, result.success ? result.data.id : result.issues[0]?.message);
+}
+</code>
+<option correct>12 12
+0 Expected >= 1, received 0
+abc Cannot coerce string to number
+1.5 Expected integer, received 1.5</option>
+<option>12 12
+0 0
+abc NaN
+1.5 1</option>
+<option>12 '12'
+0 Expected >= 1, received 0
+abc Cannot coerce string to number
+1.5 1.5</option>
+<option>12 12
+0 Expected >= 1, received 0
+abc Expected number, received string
+1.5 1</option>
+<explain><p>Coercion turns <code>"12"</code> into 12; then the number rules run. A non-number, zero or a fraction never reaches the database, so <code>/v1/orders/abc</code> is a 400 instead of a 500 from PostgreSQL.</p></explain>
+</question>
+
+<question id="ura-out-total" type="output">
+<q>Totals in integer kobo. What does this print?</q>
+<code file="total.js">
+const lines = [
+  { quantity: 2, priceKobo: 1_250_000 },
+  { quantity: 4, priceKobo: 50_000 },
+  { quantity: 3, priceKobo: 1_999 },
+];
+const totalKobo = lines.reduce((sum, line) => sum + line.quantity * line.priceKobo, 0);
+const naira = `₦${Math.floor(totalKobo / 100).toLocaleString("en-US")}.${String(totalKobo % 100).padStart(2, "0")}`;
+console.log(totalKobo, naira);
+</code>
+<option correct>2705997 ₦27,059.97</option>
+<option>2705997 ₦27,059.9699999</option>
+<option>27059.97 ₦27,059.97</option>
+<option>2705997 ₦2,705,997.00</option>
+<explain><p>Integer kobo add up exactly: 2 500 000 + 200 000 + 5 997 = 2 705 997. Only when displaying do you split into naira and kobo. Floating-point naira could produce long fractions.</p></explain>
+</question>
+
+<question id="ura-out-location" type="output" >
+<q>What does this print? (It needs Node.js: it starts a real server.)</q>
+<code file="location.ts" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+
+const router = createRouter({
+  notFoundHandler: () => createResponseContext({ status: 404 }).json({ error: { code: "NO_SUCH_ROUTE", message: "No such route" } }),
+});
+router.post("/v1/products", () => createResponseContext({ status: 201 }).setHeader("location", "/v1/products/8").json({ id: 8 }));
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+const base = `http://127.0.0.1:${server.address?.port}`;
+const created = await fetch(`${base}/v1/products`, { method: "POST" });
+const typo = await fetch(`${base}/v1/prodcts`);
+console.log(created.status, created.headers.get("location"), typo.status, await typo.text());
+await server.stop();
+</code>
+<option correct>201 /v1/products/8 404 {"error":{"code":"NO_SUCH_ROUTE","message":"No such route"}}</option>
+<option>201 null 404 {"error":"Not Found","method":"GET","path":"/v1/prodcts"}</option>
+<option>200 /v1/products/8 404 {"error":{"code":"NO_SUCH_ROUTE","message":"No such route"}}</option>
+<option>201 /v1/products/8 404 {"error":"Not Found","method":"GET","path":"/v1/prodcts"}</option>
+<explain><p>The route set status 201 and a <code>Location</code> header for the new resource. The unknown path went to <code>notFoundHandler</code>, so it has the same envelope as every other error instead of the router's default body.</p></explain>
+</question>
+
+<question id="ura-out-cursor" type="output">
+<q>What does this print? (It needs Node.js.)</q>
+<code file="cursor.ts" browser="no">
+import { decodeCursor, encodeCursor } from "@zudojs/database";
+
+const secret = "a-demo-secret-that-is-long-enough-1234";
+const cursor = encodeCursor({ id: 57 }, { secret });
+console.log(decodeCursor(cursor, { secret, allowedFields: ["id"] }));
+
+const [, signature] = cursor.split(".");
+const edited = `${Buffer.from('{"id":1}').toString("base64url")}.${signature}`;
+try {
+  decodeCursor(edited, { secret, allowedFields: ["id"] });
+} catch (error) {
+  console.log((error as Error).name, (error as { statusCode?: number }).statusCode);
+}
+</code>
+<option correct>{ id: 57 }
+ValidationError 400</option>
+<option>{ id: 57 }
+{ id: 1 }</option>
+<option>eyJpZCI6NTd9
+ValidationError 400</option>
+<option>{ id: 57 }
+TypeError 500</option>
+<explain><p>The cursor round-trips. The edited payload no longer matches its signature, so <code>decodeCursor</code> throws a <code>ValidationError</code> with status 400: a bad cursor is the client's mistake, not a server error.</p></explain>
+</question>
+
+<question id="ura-out-conflict-code" type="output">
+<q>What does this print?</q>
+<code file="statuses.ts">
+import { AuthenticationError, AuthorizationError, ConflictError, NotFoundError } from "@zudojs/errors";
+
+for (const error of [new AuthenticationError("x"), new AuthorizationError("x"), new NotFoundError("x"), new ConflictError("x")]) {
+  console.log(error.name, error.statusCode);
+}
+</code>
+<option correct>AuthenticationError 401
+AuthorizationError 403
+NotFoundError 404
+ConflictError 409</option>
+<option>AuthenticationError 403
+AuthorizationError 401
+NotFoundError 404
+ConflictError 409</option>
+<option>AuthenticationError 401
+AuthorizationError 401
+NotFoundError 404
+ConflictError 400</option>
+<option>AuthenticationError 401
+AuthorizationError 403
+NotFoundError 404
+ConflictError 422</option>
+<explain><p>Authentication ("who are you?") fails with 401, authorization ("you may not") with 403. Throwing the right class is all a route has to do; the error handler reads <code>statusCode</code>.</p></explain>
+</question>
+
+<question id="ura-code-keyset" type="code" file="next-page.js">
+<q>Write <code>nextPage(products, afterId, limit)</code> for products sorted by <code>id</code>. It returns <code>{ data, nextAfter }</code>: at most <code>limit</code> products with an id greater than <code>afterId</code>, and the id to continue after, or <code>null</code> when there is no further product. Page through the list with <code>limit</code> 2 and print each page's ids.</q>
+<starter>
+const products = [{ id: 3 }, { id: 5 }, { id: 8 }, { id: 13 }, { id: 21 }];
+
+function nextPage(products, afterId, limit) {
+  // your code
+}
+</starter>
+<solution>
+const products = [{ id: 3 }, { id: 5 }, { id: 8 }, { id: 13 }, { id: 21 }];
+
+function nextPage(products, afterId, limit) {
+  const rows = products.filter((p) => p.id > afterId).slice(0, limit + 1);
+  const data = rows.slice(0, limit);
+  return { data, nextAfter: rows.length > limit ? data[data.length - 1].id : null };
+}
+
+let after = 0;
+while (after !== null) {
+  const page = nextPage(products, after, 2);
+  console.log(page.data.map((p) => p.id), page.nextAfter);
+  after = page.nextAfter;
+}
+</solution>
+<expected>
+[ 3, 5 ] 5
+[ 8, 13 ] 13
+[ 21 ] null
+</expected>
+<explain><p>Fetching one extra row tells you whether another page exists without counting. The last page has no extra row, so <code>nextAfter</code> is <code>null</code> and the loop stops.</p></explain>
+</question>
+
+<question id="ura-code-envelope" type="code" file="envelope.js">
+<q>Write <code>errorBody(problem)</code> that turns an internal problem into Oja's envelope. <code>problem</code> is <code>{ status, code, message, issues? }</code>. For status 500 and above, the body is <code>{ error: { code: "INTERNAL", message: "Something went wrong on our side", requestId } }</code> with the given <code>requestId</code>; otherwise <code>{ error: { code, message } }</code>, plus <code>issues</code> only when there are any. Print the three examples as JSON.</q>
+<starter>
+function errorBody(problem, requestId) {
+  // your code
+}
+
+const examples = [
+  { status: 400, code: "VALIDATION_FAILED", message: "The request is not valid", issues: [{ path: "limit", message: "Expected <= 50" }] },
+  { status: 404, code: "ERR_RESOURCE_NOT_FOUND", message: "Order 7 not found", issues: [] },
+  { status: 500, code: "ERR_DATABASE", message: 'relation "products" does not exist' },
+];
+</starter>
+<solution>
+function errorBody(problem, requestId) {
+  if (problem.status >= 500) {
+    return { error: { code: "INTERNAL", message: "Something went wrong on our side", requestId } };
+  }
+  const error = { code: problem.code, message: problem.message };
+  if (problem.issues && problem.issues.length > 0) error.issues = problem.issues;
+  return { error };
+}
+
+const examples = [
+  { status: 400, code: "VALIDATION_FAILED", message: "The request is not valid", issues: [{ path: "limit", message: "Expected <= 50" }] },
+  { status: 404, code: "ERR_RESOURCE_NOT_FOUND", message: "Order 7 not found", issues: [] },
+  { status: 500, code: "ERR_DATABASE", message: 'relation "products" does not exist' },
+];
+for (const problem of examples) console.log(JSON.stringify(errorBody(problem, "req-1")));
+</solution>
+<expected>
+{"error":{"code":"VALIDATION_FAILED","message":"The request is not valid","issues":[{"path":"limit","message":"Expected <= 50"}]}}
+{"error":{"code":"ERR_RESOURCE_NOT_FOUND","message":"Order 7 not found"}}
+{"error":{"code":"INTERNAL","message":"Something went wrong on our side","requestId":"req-1"}}
+</expected>
+<explain><p>One function decides every error body, so clients need one parser. The 500 body never repeats the internal message; the request id links it to the log.</p></explain>
+</question>
+
+<question id="ura-code-place" type="code" file="place-order.js">
+<q>Write <code>placeOrder(stock, items)</code> over a <code>Map</code> of SKU to quantity. Either every line is taken, or nothing changes and it throws <code>new Error("Not enough stock for &lt;sku&gt;")</code>. Also reject an order that lists the same SKU twice with <code>"List each product once"</code>. Print the results of the three orders and the final stock.</q>
+<starter>
+const stock = new Map([["rice", 3], ["zobo", 10]]);
+
+function placeOrder(stock, items) {
+  // your code
+}
+
+for (const items of [
+  [{ sku: "zobo", quantity: 4 }, { sku: "rice", quantity: 5 }],
+  [{ sku: "rice", quantity: 1 }, { sku: "rice", quantity: 1 }],
+  [{ sku: "rice", quantity: 2 }, { sku: "zobo", quantity: 4 }],
+]) {
+  try {
+    placeOrder(stock, items);
+    console.log("placed");
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+console.log([...stock]);
+</starter>
+<solution>
+const stock = new Map([["rice", 3], ["zobo", 10]]);
+
+function placeOrder(stock, items) {
+  const skus = items.map((item) => item.sku);
+  if (new Set(skus).size !== skus.length) throw new Error("List each product once");
+  for (const { sku, quantity } of items) {
+    if ((stock.get(sku) ?? 0) < quantity) throw new Error(`Not enough stock for ${sku}`);
+  }
+  for (const { sku, quantity } of items) stock.set(sku, stock.get(sku) - quantity);
+}
+
+for (const items of [
+  [{ sku: "zobo", quantity: 4 }, { sku: "rice", quantity: 5 }],
+  [{ sku: "rice", quantity: 1 }, { sku: "rice", quantity: 1 }],
+  [{ sku: "rice", quantity: 2 }, { sku: "zobo", quantity: 4 }],
+]) {
+  try {
+    placeOrder(stock, items);
+    console.log("placed");
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+console.log([...stock]);
+</solution>
+<expected>
+Not enough stock for rice
+List each product once
+placed
+[ [ 'rice', 1 ], [ 'zobo', 6 ] ]
+</expected>
+<explain><p>Checking every line before changing anything gives all-or-nothing in memory. In the database, a transaction gives the same guarantee even though each line changes stock as it goes. The duplicate check matters there too: two lines for one product would otherwise hit the order_lines primary key.</p></explain>
+</question>
+
+<question id="ura-code-allow-list" type="code" file="user-out.ts">
+<q>With <code>@zudojs/schema</code>, write a <code>UserOut</code> schema with <code>id</code> (integer), <code>email</code>, <code>name</code> and <code>role</code> (<code>"customer"</code> or <code>"admin"</code>), and use it to turn the database row below into a safe response. Print the result.</q>
+<starter>
+import { schema } from "@zudojs/schema";
+
+const row = { id: 4, email: "bola@example.com", name: "Bola", role: "customer", password_hash: "scrypt$16384$...", failed_logins: 2 };
+</starter>
+<solution>
+import { schema } from "@zudojs/schema";
+
+const row = { id: 4, email: "bola@example.com", name: "Bola", role: "customer", password_hash: "scrypt$16384$...", failed_logins: 2 };
+
+const UserOut = schema.object({
+  id: schema.number().int(),
+  email: schema.string(),
+  name: schema.string(),
+  role: schema.enum(["customer", "admin"] as const),
+});
+console.log(UserOut.parse(row));
+</solution>
+<expected>
+{ id: 4, email: 'bola@example.com', name: 'Bola', role: 'customer' }
+</expected>
+<explain><p>An object schema strips keys it does not list, so the hash and the internal counter never leave the server, including columns someone adds next year.</p></explain>
+</question>
+
+<question id="ura-code-status" type="code" file="status-for.js">
+<q>Write <code>statusFor(situation)</code> that returns the status Oja's API uses for each situation name below, following the lesson's design table. Print each situation with its status.</q>
+<starter>
+function statusFor(situation) {
+  // your code
+}
+
+const situations = ["created", "invalid body", "no token", "customer on admin route", "someone else's order", "email taken", "out of stock", "unknown product", "cancel again"];
+</starter>
+<solution>
+function statusFor(situation) {
+  const table = {
+    created: 201,
+    "invalid body": 400,
+    "no token": 401,
+    "customer on admin route": 403,
+    "someone else's order": 404,
+    "email taken": 409,
+    "out of stock": 409,
+    "unknown product": 422,
+    "cancel again": 200,
+  };
+  return table[situation] ?? 500;
+}
+
+const situations = ["created", "invalid body", "no token", "customer on admin route", "someone else's order", "email taken", "out of stock", "unknown product", "cancel again"];
+for (const situation of situations) console.log(`${situation}: ${statusFor(situation)}`);
+</solution>
+<expected>
+created: 201
+invalid body: 400
+no token: 401
+customer on admin route: 403
+someone else's order: 404
+email taken: 409
+out of stock: 409
+unknown product: 422
+cancel again: 200
+</expected>
+<explain><p>Each status tells the client what to do next: fix the request (400, 422), sign in (401), stop (403), treat it as missing (404), retry later or change the request (409). Cancelling again is a success because the action is idempotent.</p></explain>
+</question>
+
+<question id="ura-code-owner" type="code" file="owner.js">
+<q>Orders live in an array. Write <code>findOrder(orders, userId, orderId)</code> that returns the order only if it belongs to <code>userId</code>, and otherwise <code>{ status: 404 }</code>, the same answer whether the order is someone else's or does not exist. Print the three lookups.</q>
+<starter>
+const orders = [{ id: 1, userId: 2, totalKobo: 2700000 }, { id: 2, userId: 3, totalKobo: 50000 }];
+
+function findOrder(orders, userId, orderId) {
+  // your code
+}
+</starter>
+<solution>
+const orders = [{ id: 1, userId: 2, totalKobo: 2700000 }, { id: 2, userId: 3, totalKobo: 50000 }];
+
+function findOrder(orders, userId, orderId) {
+  const order = orders.find((o) => o.id === orderId && o.userId === userId);
+  return order ?? { status: 404 };
+}
+
+console.log(findOrder(orders, 2, 1));
+console.log(findOrder(orders, 3, 1));
+console.log(findOrder(orders, 3, 99));
+</solution>
+<expected>
+{ id: 1, userId: 2, totalKobo: 2700000 }
+{ status: 404 }
+{ status: 404 }
+</expected>
+<explain><p>Put the owner into the lookup itself, like <code>WHERE id = $1 AND user_id = $2</code>. Then there is no second step that could be forgotten, and a stranger cannot tell "not yours" from "does not exist".</p></explain>
+</question>
+
+<question id="ura-code-total" type="code" file="naira.js">
+<q>Write <code>formatNaira(kobo)</code> that formats integer kobo as naira with thousands separators and exactly two decimals, without floating-point division errors, e.g. <code>2705997</code> becomes <code>₦27,059.97</code>. Print it for 2705997, 50000 and 5.</q>
+<starter>
+function formatNaira(kobo) {
+  // your code
+}
+</starter>
+<solution>
+function formatNaira(kobo) {
+  const naira = Math.floor(kobo / 100);
+  const rest = kobo % 100;
+  const grouped = String(naira).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `₦${grouped}.${String(rest).padStart(2, "0")}`;
+}
+
+for (const kobo of [2705997, 50000, 5]) console.log(formatNaira(kobo));
+</solution>
+<expected>
+₦27,059.97
+₦500.00
+₦0.05
+</expected>
+<explain><p>Keep money as integers everywhere and only split into naira and kobo for display. The API itself sends <code>priceKobo</code> as an integer and leaves display to the client, which is what the document promises.</p></explain>
+</question>
+
+<question id="ura-code-query" type="code" file="product-query.ts">
+<q>With <code>@zudojs/schema</code>, write <code>ProductQuery</code>: an optional <code>category</code> from <code>"grains"</code>, <code>"drinks"</code>, <code>"spices"</code>, and a <code>limit</code> that is coerced from a string, is an integer from 1 to 50, and defaults to 20. Print the result of <code>safeParse</code> for the three query objects: <code>success</code> and either the data or the first issue's path.</q>
+<starter>
+import { schema } from "@zudojs/schema";
+
+const queries = [{ limit: "10", category: "spices" }, {}, { limit: "500" }];
+</starter>
+<solution>
+import { schema } from "@zudojs/schema";
+
+const ProductQuery = schema.object({
+  category: schema.optional(schema.enum(["grains", "drinks", "spices"] as const)),
+  limit: schema.default(schema.coerce.number().int().min(1).max(50), 20),
+});
+
+const queries = [{ limit: "10", category: "spices" }, {}, { limit: "500" }];
+for (const query of queries) {
+  const result = ProductQuery.safeParse(query);
+  console.log(result.success, result.success ? result.data : result.issues[0]?.path);
+}
+</solution>
+<expected>
+true { category: 'spices', limit: 10 }
+true { limit: 20 }
+false [ 'limit' ]
+</expected>
+<explain><p>Query strings are always strings, so the schema coerces, checks the range and fills the default. The same schema generates the OpenAPI parameters, so the documented limits are the enforced ones.</p></explain>
+</question>

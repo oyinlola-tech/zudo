@@ -1,0 +1,805 @@
+---
+title: Type operators
+description: Derive types from values and from other types with keyof, typeof and indexed access, learn their edge cases, and build an order workflow from one table.
+minutes: 50
+youNeed: The TypeScript course, especially Generics, Advanced and utility types, and Async TypeScript
+youBuild: An order workflow for a shop whose statuses, labels, fees and allowed transitions are all derived from one runtime table
+keywords: typescript keyof, typeof type query, indexed access types, lookup types, T[K], typeof array number, keyof typeof, as const, satisfies, keyof union, keyof index signature, Object.keys typescript, deriving types from values, type operators
+objectives: Use typeof, keyof and indexed access to derive types instead of repeating them | Predict keyof for unions, intersections, arrays, tuples and index signatures | Turn as const data into unions with (typeof X)[number] and (typeof X)[keyof typeof X] | Explain why obj[key] = value fails for a union key and why Object.keys returns string[] | Build a typed state machine from a runtime table, and test the derived types
+---
+<section>
+<h2 id="problem">One new status, four places to change</h2>
+<p>An online shop's order module keeps its order statuses in several places: a union type for the code, a list for the admin dropdown, and a table of labels for the customer's order page. The warehouse team asks for a new status, <code>"on_hold"</code>. A developer adds it to the dropdown list and ships:</p>
+<example file="statuses.ts" project="problem">
+type OrderStatus = "pending" | "paid" | "shipped" | "delivered";
+
+const DROPDOWN: string[] = ["pending", "paid", "shipped", "delivered", "on_hold"];
+
+const LABELS: Record<OrderStatus, string> = {
+  pending: "Awaiting payment",
+  paid: "Paid",
+  shipped: "On the way",
+  delivered: "Delivered",
+};
+
+for (const status of DROPDOWN) {
+  try {
+    console.log(status, "->", LABELS[status as OrderStatus].toUpperCase());
+  } catch (error) {
+    console.log(status, "->", String(error));
+  }
+}
+</example>
+<output>
+pending -> AWAITING PAYMENT
+paid -> PAID
+shipped -> ON THE WAY
+delivered -> DELIVERED
+on_hold -> TypeError: Cannot read properties of undefined (reading 'toUpperCase')
+</output>
+<p>The compiler checked everything it was shown, and the page still crashed. The dropdown's <code>string[]</code> annotation threw away the literal values, and the <code>as OrderStatus</code> told the compiler to stop asking. The real bug is older than either line: the list of statuses was written down <strong>three times</strong>, and nothing forced the three copies to agree.</p>
+<p>The fix is to write the list once and <em>compute</em> everything else from it. TypeScript's <strong>type operators</strong> do the computing: <code>typeof</code> turns a value into a type, <code>keyof</code> turns an object type into the union of its keys, and <strong>indexed access</strong>, <code>T[K]</code>, looks up the type of a property. You met all three briefly in <a href="/learn/ts-advanced">Advanced and utility types</a>. This lesson goes through their exact rules and edge cases, which you need before the rest of this course builds <a href="/learn/ts-utility-types">utility</a>, <a href="/learn/ts-mapped-types">mapped</a> and <a href="/learn/ts-conditional-types">conditional</a> types on top of them.</p>
+</section>
+
+<section>
+<h2 id="two-spaces">Values and types live in different worlds</h2>
+<p>Every name in a TypeScript file lives in the <strong>value space</strong> (things that exist when the program runs), the <strong>type space</strong> (things the compiler uses and then erases), or both. <code>const</code>, <code>let</code> and functions are values. <code>type</code> and <code>interface</code> are types. A <code>class</code> and an <code>enum</code> are both: a runtime object and a type with the same name. Using a name in the wrong world is an error:</p>
+<example file="spaces.ts" project="spaces" check="tsc-error">
+const SHIPPING_ZONES = ["lagos", "abuja", "port-harcourt"];
+type OrderStatus = "pending" | "paid";
+
+type Zone = SHIPPING_ZONES;
+const defaultStatus = OrderStatus;
+</example>
+<output kind="tsc">
+spaces.ts:4:13 - error TS2749: 'SHIPPING_ZONES' refers to a value, but is being used as a type here. Did you mean 'typeof SHIPPING_ZONES'?
+
+4 type Zone = SHIPPING_ZONES;
+              ~~~~~~~~~~~~~~
+
+spaces.ts:5:23 - error TS2693: 'OrderStatus' only refers to a type, but is being used as a value here.
+
+5 const defaultStatus = OrderStatus;
+                        ~~~~~~~~~~~
+
+
+Found 2 errors in the same file, starting at: spaces.ts:4
+</output>
+<p>The type operators are the bridges and the tools inside the type world:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Operator</th><th>Takes</th><th>Gives</th><th>Example</th></tr></thead>
+<tbody>
+<tr><td><code>typeof x</code> (in a type position)</td><td>a value's name</td><td>its type</td><td><code>typeof SHIPPING_ZONES</code> is <code>string[]</code></td></tr>
+<tr><td><code>keyof T</code></td><td>a type</td><td>the union of its keys</td><td><code>keyof { a: 1; b: 2 }</code> is <code>"a" | "b"</code></td></tr>
+<tr><td><code>T[K]</code></td><td>a type and a key type</td><td>the property's type</td><td><code>{ a: number }["a"]</code> is <code>number</code></td></tr>
+</tbody>
+</table></div>
+<p>All three run only in the compiler. None of them exists in the JavaScript that runs, which is why the runtime data (a list, a table) must still be written as a value, and the types derived from it.</p>
+</section>
+
+<section>
+<h2 id="typeof">typeof: the type of a value</h2>
+<p>In an expression, <code>typeof x</code> is the JavaScript operator that returns a string such as <code>"number"</code>. In a type position (after <code>:</code>, in a <code>type</code> alias, inside <code>&lt;&gt;</code>) it is a <strong>type query</strong>: "the type the compiler has for this name". The type it returns is the <em>declared</em> type, with the same widening rules as <a href="/learn/ts-inference#widening">Inference</a>. To see the results, this course uses the two helpers you met in <a href="/learn/ts-async#promise-type">Async TypeScript</a>: <code>Equal&lt;A, B&gt;</code> is <code>true</code> only when two types are identical, and <code>Expect</code> refuses to compile unless it gets <code>true</code>.</p>
+<file name="type-tests.ts" project="typeof">
+export type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+export type Expect<T extends true> = T;
+</file>
+<example file="typeof.ts" project="typeof">
+import type { Equal, Expect } from "./type-tests.js";
+
+const vatRate = 0.075;
+let currency = "NGN";
+const shop = { name: "Ada Stores", city: "Lagos", openingYear: 2019 };
+const frozenShop = { name: "Ada Stores", city: "Lagos" } as const;
+
+function priceWithVat(kobo: number): number {
+  return Math.round(kobo * (1 + vatRate));
+}
+
+type T1 = Expect<Equal<typeof vatRate, 0.075>>;
+type T2 = Expect<Equal<typeof currency, string>>;
+type T3 = Expect<Equal<typeof shop, { name: string; city: string; openingYear: number }>>;
+type T4 = Expect<Equal<typeof frozenShop, { readonly name: "Ada Stores"; readonly city: "Lagos" }>>;
+type T5 = Expect<Equal<typeof priceWithVat, (kobo: number) => number>>;
+type T6 = Expect<Equal<typeof shop.city, string>>;
+
+console.log(priceWithVat(1_000_000), currency, shop.city);
+</example>
+<output>
+1075000 NGN Lagos
+</output>
+<p>This file compiling is the proof that all six equalities hold:</p>
+<ul>
+<li>A <code>const</code> number keeps its literal type, <code>0.075</code>. A <code>let</code> widens to <code>string</code>, because it may be reassigned.</li>
+<li>Object properties are widened (<code>name: string</code>), because properties of a normal object can change. <code>as const</code> keeps the literals and adds <code>readonly</code>.</li>
+<li>A function's type is its signature. <code>typeof shop.city</code> follows a property path.</li>
+</ul>
+<h3>typeof and classes</h3>
+<p>A class name in a type position means the <em>instance</em> type. <code>typeof</code> the class is the type of the class object itself, the constructor, with its static members. The two are easy to mix up when you store classes in a registry:</p>
+<example file="classes.ts" project="typeof">
+import type { Equal, Expect } from "./type-tests.js";
+
+class Invoice {
+  static prefix = "INV";
+  constructor(readonly number: number, readonly totalKobo: number) {}
+  label(): string {
+    return `${Invoice.prefix}-${String(this.number).padStart(4, "0")}`;
+  }
+}
+
+type Instance = Invoice;
+type Constructor = typeof Invoice;
+
+type C1 = Expect<Equal<Constructor["prefix"], string>>;
+type C2 = Expect<Equal<InstanceType<Constructor>, Invoice>>;
+
+const factories: Record<string, Constructor> = { invoice: Invoice };
+const created: Instance = new factories.invoice(42, 1_500_000);
+console.log(created.label(), created.totalKobo);
+</example>
+<output>
+INV-0042 1500000
+</output>
+<p><code>Record&lt;string, Invoice&gt;</code> would hold invoices; <code>Record&lt;string, typeof Invoice&gt;</code> holds the class, so you can call <code>new</code> on its values. <code>InstanceType</code> goes back from the constructor type to the instance type; <a href="/learn/ts-utility-types">Utility types</a> shows how it is built.</p>
+<h3>What typeof cannot take</h3>
+<p>A type query accepts a name, optionally followed by property accesses. It cannot run code, so a function call is a syntax error:</p>
+<example file="typeof-call.ts" project="typeof" check="tsc-error">
+function loadShop() {
+  return { name: "Ada Stores", rating: 4.8 };
+}
+
+type Shop = typeof loadShop();
+</example>
+<output kind="tsc">
+typeof-call.ts:5:28 - error TS1005: ';' expected.
+
+5 type Shop = typeof loadShop();
+                             ~
+
+typeof-call.ts:5:29 - error TS1109: Expression expected.
+
+5 type Shop = typeof loadShop();
+                              ~
+
+
+Found 2 errors in the same file, starting at: typeof-call.ts:5
+</output>
+<p>To get what a function returns, take its type and ask for the return type: <code>ReturnType&lt;typeof loadShop&gt;</code>. Types never evaluate your code; they only describe it.</p>
+</section>
+
+<section>
+<h2 id="keyof">keyof: the keys of a type</h2>
+<p>For an ordinary object type, <code>keyof</code> gives the union of the property names as string literal types, including optional properties and methods. The interesting cases are the others. Each line below is a checked fact:</p>
+<example file="keyof.ts" project="typeof">
+import type { Equal, Expect } from "./type-tests.js";
+
+interface Product {
+  sku: string;
+  name: string;
+  priceKobo: number;
+  discountKobo?: number;
+  describe(): string;
+}
+
+interface Service {
+  sku: string;
+  name: string;
+  hours: number;
+}
+
+type K1 = Expect<Equal<keyof Product, "sku" | "name" | "priceKobo" | "discountKobo" | "describe">>;
+type K2 = Expect<Equal<keyof (Product | Service), "sku" | "name">>;
+type K3 = Expect<Equal<keyof (Product & Service), keyof Product | "hours">>;
+type K4 = Expect<Equal<keyof { [sku: string]: number }, string | number>>;
+type K5 = Expect<Equal<keyof Record<"lagos" | "abuja", number>, "lagos" | "abuja">>;
+type K6 = Expect<Equal<keyof { 0: "first"; 1: "second" }, 0 | 1>>;
+type K7 = Expect<Equal<keyof {}, never>>;
+
+console.log("all keyof facts hold");
+</example>
+<output>
+all keyof facts hold
+</output>
+<p>Two of these deserve a second look, because they surprise almost everyone.</p>
+<p><strong>A union has fewer keys, not more</strong> (<code>K2</code>). A value of type <code>Product | Service</code> might be either, so the only keys you can safely read are those both have. An intersection, <code>Product &amp; Service</code>, has every property of both, so its keys are the union of both key sets (<code>K3</code>). Keys and values move in opposite directions: that is the set logic from <a href="/learn/ts-unions#sets">Unions</a> seen from the other side.</p>
+<p><strong>A string index signature has <code>string | number</code> keys</strong> (<code>K4</code>). JavaScript turns number keys into strings, so <code>stock[42]</code> is the same as <code>stock["42"]</code>, and TypeScript allows numbers wherever a string index exists. Numeric literal keys stay numbers (<code>K6</code>). So <code>keyof T</code> is not always a set of strings.</p>
+<h3>keyof includes more than strings</h3>
+<p>In a generic function, <code>K extends keyof T</code> may be a <code>string</code>, a <code>number</code> or a <code>symbol</code>. That matters as soon as you build a string from a key:</p>
+<example file="key-label.ts" project="typeof" check="tsc-error">
+function fieldLabel<T>(key: keyof T): string {
+  return `field ${key}`;
+}
+</example>
+<output kind="tsc">
+key-label.ts:2:19 - error TS2731: Implicit conversion of a 'symbol' to a 'string' will fail at runtime. Consider wrapping this expression in 'String(...)'.
+
+2   return `field ${key}`;
+                    ~~~
+
+
+Found 1 error in key-label.ts:2
+</output>
+<p>A template literal would call <code>String()</code> on a symbol, which throws. Say which keys you mean: <code>keyof T &amp; string</code> keeps only the string keys (an intersection of a key union with <code>string</code> drops the numbers and symbols). Or convert explicitly with <code>String(key)</code> when symbols really can occur.</p>
+<h3>keyof on arrays and tuples</h3>
+<p>Arrays are objects too. <code>keyof</code> of an array type includes <code>number</code> (every index), <code>"length"</code>, and every method name (<code>"push"</code>, <code>"map"</code>, …). A tuple type adds its own position keys as strings, <code>"0"</code>, <code>"1"</code>, and so on. You rarely want <code>keyof</code> on an array; you want <code>T[number]</code>, the element type, which comes next.</p>
+</section>
+
+<section>
+<h2 id="indexed-access">Indexed access: looking up a property's type</h2>
+<p><code>T[K]</code> looks up the type of property <code>K</code> in <code>T</code>, exactly as <code>obj[key]</code> looks up a value. <code>K</code> must be a type, and it may be a union:</p>
+<example file="lookup.ts" project="typeof">
+import type { Equal, Expect } from "./type-tests.js";
+
+interface Order {
+  id: string;
+  status: "pending" | "paid" | "shipped";
+  customer: { name: string; address: { city: string; state: string } };
+  lines: { sku: string; quantity: number; priceKobo: number }[];
+  couponCode?: string;
+}
+
+type I1 = Expect<Equal<Order["status"], "pending" | "paid" | "shipped">>;
+type I2 = Expect<Equal<Order["id" | "status"], string>>;
+type I3 = Expect<Equal<Order["customer"]["address"]["city"], string>>;
+type I4 = Expect<Equal<Order["lines"][number], { sku: string; quantity: number; priceKobo: number }>>;
+type I5 = Expect<Equal<Order["lines"][number]["quantity"], number>>;
+type I6 = Expect<Equal<Order["couponCode"], string | undefined>>;
+
+type OrderLine = Order["lines"][number];
+function lineTotal(line: OrderLine): number {
+  return line.quantity * line.priceKobo;
+}
+console.log(lineTotal({ sku: "TOTE-01", quantity: 3, priceKobo: 450_000 }));
+</example>
+<output>
+1350000
+</output>
+<ul>
+<li><code>Order["id" | "status"]</code> is the union of both property types, <code>string | "pending" | …</code>, which simplifies to <code>string</code> because every status is already a string (<code>I2</code>).</li>
+<li>Lookups chain, like <code>obj.a.b</code> (<code>I3</code>).</li>
+<li><code>[number]</code> on an array type gives the element type: "what you get when you index with any number" (<code>I4</code>). That is how <code>OrderLine</code> gets a name without anyone writing it twice.</li>
+<li>An optional property's type includes <code>undefined</code> (<code>I6</code>).</li>
+</ul>
+<h3>Tuples: positions and length</h3>
+<p>On a tuple, a numeric literal picks one position, <code>[number]</code> gives the union of all positions, and <code>["length"]</code> is a literal number:</p>
+<example file="tuples.ts" project="typeof">
+import type { Equal, Expect } from "./type-tests.js";
+
+type StatementRow = [date: string, description: string, amountKobo: number];
+
+type R1 = Expect<Equal<StatementRow[0], string>>;
+type R2 = Expect<Equal<StatementRow[2], number>>;
+type R3 = Expect<Equal<StatementRow[number], string | number>>;
+type R4 = Expect<Equal<StatementRow["length"], 3>>;
+
+const row: StatementRow = ["2026-09-24", "POS purchase", -1_250_000];
+console.log(row[1], row.length);
+</example>
+<output>
+POS purchase 3
+</output>
+<h3>Mistakes indexed access catches</h3>
+<p>Two errors come up constantly. Indexing with a key that does not exist is refused, just like reading a missing property. And the index must be a <em>type</em>, so a variable needs <code>typeof</code>:</p>
+<example file="lookup-errors.ts" project="typeof" check="tsc-error">
+interface Order {
+  id: string;
+  status: "pending" | "paid";
+}
+
+type Total = Order["total"];
+
+const field = "status";
+type FieldType = Order[field];
+</example>
+<output kind="tsc">
+lookup-errors.ts:6:20 - error TS2339: Property 'total' does not exist on type 'Order'.
+
+6 type Total = Order["total"];
+                     ~~~~~~~
+
+lookup-errors.ts:9:24 - error TS2538: Type 'field' cannot be used as an index type.
+
+9 type FieldType = Order[field];
+                         ~~~~~
+
+lookup-errors.ts:9:24 - error TS2749: 'field' refers to a value, but is being used as a type here. Did you mean 'typeof field'?
+
+9 type FieldType = Order[field];
+                         ~~~~~
+
+
+Found 3 errors in the same file, starting at: lookup-errors.ts:6
+</output>
+<p>The last error even suggests the fix: <code>Order[typeof field]</code>. Because <code>field</code> is a <code>const</code>, its type is the literal <code>"status"</code>, so the lookup gives <code>"pending" | "paid"</code>.</p>
+</section>
+
+<section>
+<h2 id="values-to-unions">From data to unions: (typeof X)[number] and friends</h2>
+<p>Now the fix for the opening problem. Write the list of statuses once, as a value, with <code>as const</code> so the literals survive. Then derive the union from it:</p>
+<example file="statuses.ts" project="fixed">
+export const ORDER_STATUSES = ["pending", "paid", "shipped", "delivered", "on_hold"] as const;
+export type OrderStatus = (typeof ORDER_STATUSES)[number];
+
+const LABELS: Record<OrderStatus, string> = {
+  pending: "Awaiting payment",
+  paid: "Paid",
+  shipped: "On the way",
+  delivered: "Delivered",
+  on_hold: "On hold",
+};
+
+for (const status of ORDER_STATUSES) {
+  console.log(status, "->", LABELS[status].toUpperCase());
+}
+</example>
+<output>
+pending -> AWAITING PAYMENT
+paid -> PAID
+shipped -> ON THE WAY
+delivered -> DELIVERED
+on_hold -> ON HOLD
+</output>
+<p>Read the type from the inside out: <code>typeof ORDER_STATUSES</code> is <code>readonly ["pending", "paid", "shipped", "delivered", "on_hold"]</code>, and <code>[number]</code> asks for the type of any element: the union of the five literals. The parentheses are optional (<code>typeof ORDER_STATUSES[number]</code> parses the same way) but make the order obvious. Now the dropdown loops over the same list the type comes from, the <code>as</code> is gone, and <code>LABELS</code> is <code>Record&lt;OrderStatus, string&gt;</code>, which refuses to compile until <code>on_hold</code> has a label. One change, one place.</p>
+<h3>Objects: keys and values</h3>
+<p>When the data is an object, <code>keyof typeof</code> gives its keys, and indexing with those keys gives the union of its values. This is the <code>as const</code> object pattern from <a href="/learn/ts-enums#alternatives">Enums</a>, now with every piece explained. (The type tests use the same helper file as before.)</p>
+<file name="type-tests.ts" project="fixed">
+export type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+export type Expect<T extends true> = T;
+</file>
+<example file="fees.ts" project="fixed">
+import type { Equal, Expect } from "./type-tests.js";
+
+const DELIVERY_FEES = {
+  lagos: 150_000,
+  abuja: 250_000,
+  "port-harcourt": 300_000,
+} as const;
+
+type Zone = keyof typeof DELIVERY_FEES;
+type Fee = (typeof DELIVERY_FEES)[Zone];
+
+type F1 = Expect<Equal<Zone, "lagos" | "abuja" | "port-harcourt">>;
+type F2 = Expect<Equal<Fee, 150_000 | 250_000 | 300_000>>;
+
+function deliveryFee(zone: Zone): number {
+  return DELIVERY_FEES[zone];
+}
+console.log(deliveryFee("abuja"));
+</example>
+<output>
+250000
+</output>
+<h3>Checking the data without losing it: satisfies</h3>
+<p>Annotating the object would check it, but destroy what you want to derive:</p>
+<example file="annotated-fees.ts" project="fixed" check="tsc-error">
+const DELIVERY_FEES: Record<string, number> = {
+  lagos: 150_000,
+  abuja: 250_000,
+};
+
+type Zone = keyof typeof DELIVERY_FEES;
+const zone: Zone = "timbuktu";
+const fee: 150_000 = DELIVERY_FEES.lagos;
+</example>
+<output kind="tsc">
+annotated-fees.ts:8:7 - error TS2322: Type 'number' is not assignable to type '150000'.
+
+8 const fee: 150_000 = DELIVERY_FEES.lagos;
+        ~~~
+
+
+Found 1 error in annotated-fees.ts:8
+</output>
+<p>Only one line fails, and that is the problem. With the annotation, <code>typeof DELIVERY_FEES</code> is just <code>Record&lt;string, number&gt;</code>: <code>Zone</code> became <code>string</code>, so <code>"timbuktu"</code> is a valid zone, and every fee is a plain <code>number</code> (possibly <code>undefined</code> if you turn on <code>noUncheckedIndexedAccess</code>). The annotation wins over the value: the type of a variable is what you declared, not what you assigned. <code>satisfies</code> checks the value against a type and keeps the value's own type, so you get both:</p>
+<example file="checked-fees.ts" project="fixed">
+const DELIVERY_FEES = {
+  lagos: 150_000,
+  abuja: 250_000,
+  "port-harcourt": 300_000,
+} as const satisfies Record<string, number>;
+
+type Zone = keyof typeof DELIVERY_FEES;
+const zones = Object.keys(DELIVERY_FEES);
+const cheapest: Zone = "lagos";
+console.log(zones, DELIVERY_FEES[cheapest]);
+</example>
+<output>
+[ 'lagos', 'abuja', 'port-harcourt' ] 150000
+</output>
+<h3>Why Object.keys returns string[]</h3>
+<p>Notice <code>zones</code> above: <code>Object.keys</code> returns <code>string[]</code>, not <code>Zone[]</code>, even for a literal object. That is deliberate. TypeScript's types say what an object has <em>at least</em>; a value may carry more properties than its type mentions:</p>
+<example file="extra-keys.ts" project="fixed">
+interface Stock {
+  rice: number;
+  beans: number;
+}
+
+function totalBags(stock: Stock): number {
+  let total = 0;
+  for (const key of Object.keys(stock)) {
+    total += stock[key as keyof Stock];
+  }
+  return total;
+}
+
+const warehouse = { rice: 12, beans: 5, lastCountedBy: "Tunde" };
+console.log(totalBags(warehouse));
+</example>
+<output>
+17Tunde
+</output>
+<p>Passing <code>warehouse</code> is legal: it has everything a <code>Stock</code> needs. But <code>Object.keys</code> also returned <code>"lastCountedBy"</code>, and the <code>as keyof Stock</code> promised it could not. Twelve plus five plus a name made a string. If <code>Object.keys</code> were typed <code>(keyof T)[]</code>, every such loop would compile with the same bug. The safe patterns: loop over a known list of keys (the <code>as const</code> array), or read each named property. Use a <code>keyof</code> cast only on objects you created yourself, such as the <code>as const</code> table above.</p>
+</section>
+
+<section>
+<h2 id="generic-lookups">Lookups in generic functions</h2>
+<p><a href="/learn/ts-generics#constraints">Generics</a> introduced the classic pair <code>K extends keyof T</code> and <code>T[K]</code>. Reading works for any key. Writing is where the rules get strict. Here is a product editor that updates one field at a time:</p>
+<example file="update.ts" project="lookups" check="tsc-error">
+interface Product {
+  name: string;
+  priceKobo: number;
+  inStock: boolean;
+}
+
+function updateField(product: Product, key: keyof Product, value: Product[keyof Product]): void {
+  product[key] = value;
+}
+</example>
+<output kind="tsc">
+update.ts:8:3 - error TS2322: Type 'string | number | boolean' is not assignable to type 'never'.
+  Type 'string' is not assignable to type 'never'.
+
+8   product[key] = value;
+    ~~~~~~~~~~~~
+
+
+Found 1 error in update.ts:8
+</output>
+<p>The error says <code>never</code>, and it is right. <code>key</code> is <code>"name" | "priceKobo" | "inStock"</code> and <code>value</code> is <code>string | number | boolean</code>, and the two are not connected: <code>updateField(tote, "priceKobo", "free")</code> would match the signature. When you write through a union of keys, TypeScript requires a value that fits <em>every</em> property it might land in: <code>string &amp; number &amp; boolean</code>, which is <code>never</code>. A type parameter connects the key to its value:</p>
+<example file="update.ts" project="lookups">
+interface Product {
+  name: string;
+  priceKobo: number;
+  inStock: boolean;
+}
+
+function updateField<K extends keyof Product>(product: Product, key: K, value: Product[K]): void {
+  product[key] = value;
+}
+
+const tote: Product = { name: "Ankara tote bag", priceKobo: 450_000, inStock: true };
+updateField(tote, "priceKobo", 399_000);
+updateField(tote, "inStock", false);
+console.log(tote);
+</example>
+<output>
+{ name: 'Ankara tote bag', priceKobo: 399000, inStock: false }
+</output>
+<p>Now each call picks one <code>K</code>, and <code>value</code> must be <code>Product[K]</code> for that <code>K</code>: <code>updateField(tote, "priceKobo", "free")</code> fails, and inside the function the assignment is allowed because both sides are "the property <code>K</code> of <code>Product</code>". Reading follows the same rule in reverse: <code>product[key]</code> with a generic <code>K</code> has type <code>Product[K]</code>, precise at every call site.</p>
+<h3>A union of tuples has unusable methods</h3>
+<p>The same "must fit every member" rule explains an error you will meet with <code>as const</code> tables. Indexing a table with a union key gives a union of tuple types, and calling a method on a union requires arguments that suit every member:</p>
+<example file="includes.ts" project="lookups" check="tsc-error">
+const NEXT = {
+  pending: ["paid", "cancelled"],
+  paid: ["shipped"],
+  cancelled: [],
+} as const;
+
+type Status = keyof typeof NEXT;
+
+function canMove(from: Status, to: Status): boolean {
+  return NEXT[from].includes(to);
+}
+</example>
+<output kind="tsc">
+includes.ts:10:30 - error TS2345: Argument of type '"cancelled" | "paid" | "pending"' is not assignable to parameter of type 'never'.
+  Type '"cancelled"' is not assignable to type 'never'.
+
+10   return NEXT[from].includes(to);
+                                ~~
+
+
+Found 1 error in includes.ts:10
+</output>
+<p><code>NEXT[from]</code> is <code>readonly ["paid", "cancelled"] | readonly ["shipped"] | readonly []</code>. For the empty tuple, <code>includes</code> accepts only <code>never</code>. The fix is a widening assignment, which is safe and needs no <code>as</code>: <code>const next: readonly Status[] = NEXT[from];</code>, then <code>next.includes(to)</code>. The build below uses it.</p>
+</section>
+
+<section>
+<h2 id="build">Build: an order workflow from one table</h2>
+<reason title="Before you design the workflow">
+<p>Orders move through statuses: pending, paid, shipped, delivered, and a few side exits. You want one table from which the code gets every status, every label, the delivery fee per status and every allowed move. Before reading the code, think:</p>
+<ul>
+<li>Which parts are needed at runtime (to show a dropdown, to validate a request), and which only at compile time?</li>
+<li>How do you make sure a "next" status in the table is a real status, and that every status has an entry?</li>
+<li>A request says <code>{ "to": "delivered" }</code> for an order that is still pending. Can the compiler stop that? What stops it when the value comes from JSON?</li>
+<li>Can the table contain a status nobody can ever reach? How would you find out?</li>
+</ul>
+<answer>
+<p>Labels, fees and the allowed moves are needed at runtime, so the table is a value; the types come from it. The status list is written once as an <code>as const</code> array, and the table is checked with <code>satisfies Record&lt;OrderStatus, …&gt;</code>, which demands an entry for every status and a valid status in every <code>next</code> list. For calls written in code, a generic <code>NextStatus&lt;S&gt;</code> type makes illegal moves a compile error. For moves that arrive as JSON, the compiler can do nothing: a type guard checks the string, and a runtime check consults the same table. Unreachable statuses are a property of the whole graph, which no type checks, so a test walks the graph.</p>
+</answer>
+</reason>
+<example file="order-flow.ts" project="workflow">
+export const ORDER_STATUSES = ["pending", "paid", "shipped", "delivered", "cancelled", "refunded"] as const;
+export type OrderStatus = (typeof ORDER_STATUSES)[number];
+
+interface StatusRule {
+  readonly label: string;
+  readonly next: readonly OrderStatus[];
+  readonly feeKobo: number;
+}
+
+export const ORDER_FLOW = {
+  pending: { label: "Awaiting payment", next: ["paid", "cancelled"], feeKobo: 0 },
+  paid: { label: "Paid", next: ["shipped", "refunded"], feeKobo: 0 },
+  shipped: { label: "On the way", next: ["delivered"], feeKobo: 150_000 },
+  delivered: { label: "Delivered", next: [], feeKobo: 0 },
+  cancelled: { label: "Cancelled", next: [], feeKobo: 0 },
+  refunded: { label: "Refunded", next: [], feeKobo: 0 },
+} as const satisfies Record<OrderStatus, StatusRule>;
+
+export type NextStatus<S extends OrderStatus> = (typeof ORDER_FLOW)[S]["next"][number];
+export type StatusLabel = (typeof ORDER_FLOW)[OrderStatus]["label"];
+
+export interface Order<S extends OrderStatus = OrderStatus> {
+  readonly id: string;
+  readonly status: S;
+  readonly totalKobo: number;
+}
+
+export function isOrderStatus(value: string): value is OrderStatus {
+  return Object.hasOwn(ORDER_FLOW, value);
+}
+
+export function canMove(from: OrderStatus, to: OrderStatus): boolean {
+  const next: readonly OrderStatus[] = ORDER_FLOW[from].next;
+  return next.includes(to);
+}
+
+export function advance<S extends OrderStatus, To extends NextStatus<S>>(order: Order<S>, to: To): Order<To> {
+  return { ...order, status: to, totalKobo: order.totalKobo + ORDER_FLOW[to].feeKobo };
+}
+</example>
+<p>Every type in this file is derived:</p>
+<ul>
+<li><code>OrderStatus</code> comes from the array. The table is checked against <code>Record&lt;OrderStatus, StatusRule&gt;</code>: a missing status, an extra one, or a typo in a <code>next</code> list fails to compile, and <code>as const</code> keeps the literal <code>next</code> tuples.</li>
+<li><code>NextStatus&lt;S&gt;</code> chains three lookups: the table's type, the row for <code>S</code>, its <code>next</code> tuple, and <code>[number]</code> for any element. For <code>"pending"</code> it is <code>"paid" | "cancelled"</code>; for <code>"delivered"</code> it is <code>never</code>, so nothing can be passed.</li>
+<li><code>StatusLabel</code> indexes the table with the whole union: every label, as literal types.</li>
+<li><code>advance</code> has two type parameters. <code>S</code> is the order's current status; <code>To</code> is the status you pass, constrained to <code>NextStatus&lt;S&gt;</code>. Returning <code>Order&lt;To&gt;</code> rather than <code>Order&lt;NextStatus&lt;S&gt;&gt;</code> keeps the exact new status: after paying, the order is <code>Order&lt;"paid"&gt;</code>, not "paid or cancelled".</li>
+<li><code>isOrderStatus</code> uses <code>Object.hasOwn</code>, not <code>in</code>, so inherited names like <code>"toString"</code> are not accepted as statuses.</li>
+</ul>
+<p>In code, an illegal move does not compile:</p>
+<example file="moves.ts" project="workflow" check="tsc-error">
+import { advance } from "./order-flow.js";
+import type { Order } from "./order-flow.js";
+
+const order: Order<"pending"> = { id: "ORD-1042", status: "pending", totalKobo: 1_250_000 };
+const paid = advance(order, "paid");
+const skipped = advance(order, "delivered");
+const shipped = advance(paid, "shipped");
+const undone = advance(advance(shipped, "delivered"), "pending");
+</example>
+<output kind="tsc">
+moves.ts:6:32 - error TS2345: Argument of type '"delivered"' is not assignable to parameter of type '"cancelled" | "paid"'.
+
+6 const skipped = advance(order, "delivered");
+                                 ~~~~~~~~~~~
+
+moves.ts:8:55 - error TS2345: Argument of type '"pending"' is not assignable to parameter of type 'never'.
+
+8 const undone = advance(advance(shipped, "delivered"), "pending");
+                                                        ~~~~~~~~~
+
+
+Found 2 errors in the same file, starting at: moves.ts:6
+</output>
+<p>The first move is fine, and <code>paid</code> is an <code>Order&lt;"paid"&gt;</code>, so the next call knows where it stands. Skipping ahead fails, and so does leaving <code>"delivered"</code>, whose <code>NextStatus</code> is <code>never</code>. When moves come from outside, the same table is consulted at runtime:</p>
+<example file="handler.ts" project="workflow">
+import { ORDER_FLOW, ORDER_STATUSES, canMove, isOrderStatus } from "./order-flow.js";
+import type { Order, OrderStatus } from "./order-flow.js";
+
+function handleMove(order: Order, body: { to: string }): string {
+  if (!isOrderStatus(body.to)) return `400 unknown status "${body.to}"`;
+  if (!canMove(order.status, body.to)) {
+    return `409 cannot move ${order.id} from ${order.status} to ${body.to}`;
+  }
+  const to: OrderStatus = body.to;
+  return `200 ${order.id} is now "${ORDER_FLOW[to].label}"`;
+}
+
+const order: Order = { id: "ORD-1042", status: "pending", totalKobo: 1_250_000 };
+console.log(handleMove(order, { to: "paid" }));
+console.log(handleMove(order, { to: "delivered" }));
+console.log(handleMove(order, { to: "toString" }));
+console.log(handleMove(order, { to: "on_hold" }));
+
+const dropdown = ORDER_STATUSES.map((status) => `${status}: ${ORDER_FLOW[status].label}`);
+console.log(dropdown.join(" | "));
+</example>
+<output>
+200 ORD-1042 is now "Paid"
+409 cannot move ORD-1042 from pending to delivered
+400 unknown status "toString"
+400 unknown status "on_hold"
+pending: Awaiting payment | paid: Paid | shipped: On the way | delivered: Delivered | cancelled: Cancelled | refunded: Refunded
+</output>
+<p>The table serves the compiler (types for code), the server (checking JSON) and the admin page (the dropdown), from one definition. Adding <code>"on_hold"</code> now means adding it to the array, and then the compiler lists the one other place it is needed: its row in <code>ORDER_FLOW</code>.</p>
+</section>
+
+<section>
+<h2 id="mistakes">Common mistakes</h2>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Mistake</th><th>What you get</th><th>Fix</th></tr></thead>
+<tbody>
+<tr><td>Forgetting <code>as const</code> on the source array</td><td><code>(typeof X)[number]</code> is <code>string</code></td><td>Add <code>as const</code></td></tr>
+<tr><td>Annotating the source object (<code>: Record&lt;string, …&gt;</code>)</td><td><code>keyof typeof X</code> is <code>string</code>, values widened</td><td>Use <code>satisfies</code> instead of an annotation</td></tr>
+<tr><td><code>typeof</code> on a <code>let</code></td><td>A widened type</td><td>Use <code>const</code>, or derive from the source value</td></tr>
+<tr><td><code>keyof (A | B)</code> expecting all keys</td><td>Only the shared keys</td><td>Use <code>keyof A | keyof B</code> if you really mean either</td></tr>
+<tr><td>Writing <code>obj[key] = value</code> with a union key</td><td>"not assignable to type <code>never</code>"</td><td>Make the key a type parameter <code>K</code> and the value <code>T[K]</code></td></tr>
+<tr><td><code>`${key}`</code> with <code>key: keyof T</code></td><td>Error about symbols</td><td><code>keyof T &amp; string</code></td></tr>
+<tr><td><code>Object.keys(obj) as (keyof T)[]</code> on outside data</td><td>Extra runtime keys the type does not know</td><td>Loop over a known key list</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="testing">Testing derived types</h2>
+<p>Derived types change whenever their source changes, which is the point, and also the risk: a harmless-looking edit to the table can widen a type and silently switch off checks. Pin the important ones with type tests, and test the runtime half of the table with ordinary tests:</p>
+<example file="order-flow.test.ts" project="workflow">
+import { ORDER_FLOW, ORDER_STATUSES, advance } from "./order-flow.js";
+import type { NextStatus, Order, OrderStatus } from "./order-flow.js";
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+type W1 = Expect<Equal<OrderStatus, "pending" | "paid" | "shipped" | "delivered" | "cancelled" | "refunded">>;
+type W2 = Expect<Equal<NextStatus<"pending">, "paid" | "cancelled">>;
+type W3 = Expect<Equal<NextStatus<"delivered">, never>>;
+
+const pending: Order<"pending"> = { id: "ORD-1", status: "pending", totalKobo: 100 };
+// @ts-expect-error: a pending order cannot be delivered directly
+advance(pending, "delivered");
+
+function reachable(from: OrderStatus): Set<OrderStatus> {
+  const seen = new Set<OrderStatus>([from]);
+  const queue: OrderStatus[] = [from];
+  for (let status = queue.shift(); status !== undefined; status = queue.shift()) {
+    for (const next of ORDER_FLOW[status].next) {
+      if (!seen.has(next)) {
+        seen.add(next);
+        queue.push(next);
+      }
+    }
+  }
+  return seen;
+}
+
+const fromPending = reachable("pending");
+const unreachable = ORDER_STATUSES.filter((status) => !fromPending.has(status));
+console.log(unreachable.length === 0 ? "PASS every status is reachable" : `FAIL unreachable: ${unreachable.join(", ")}`);
+const deadEnds = ORDER_STATUSES.filter((status) => ORDER_FLOW[status].next.length === 0);
+console.log("terminal statuses:", deadEnds.join(", "));
+</example>
+<output>
+PASS every status is reachable
+terminal statuses: delivered, cancelled, refunded
+</output>
+<p>The type tests guard the derivations: if someone removes <code>as const</code>, <code>W2</code> stops compiling. The <code>@ts-expect-error</code> line guards a rule: if the table ever allowed <code>pending</code> to go straight to <code>delivered</code>, the directive would be unused and <code>tsc</code> would fail. The breadth-first walk from <a href="/learn/dsa-graphs">Graphs</a> checks what no type can: that every status can actually be reached. (Here the <code>@ts-expect-error</code> call really runs; it is harmless because <code>advance</code> only builds a new object.)</p>
+</section>
+
+<section>
+<h2 id="production">Type operators in production</h2>
+<ul>
+<li><strong>Pick one source of truth, and make it a value when runtime needs the data.</strong> Dropdowns, validation and documentation need values; derive the types from them. When nothing at runtime needs the list, a plain union type is simpler.</li>
+<li><strong>Name derived types.</strong> <code>type OrderLine = Order["lines"][number]</code> once, then use <code>OrderLine</code>. A reader should not have to evaluate a lookup chain in their head at every use.</li>
+<li><strong>Prefer <code>satisfies</code> to annotations</strong> on tables you derive from, and <code>as const</code> on lists.</li>
+<li><strong>Do not derive across boundaries you do not own.</strong> Deriving your API response type from a third-party SDK's internals ties your contract to their refactors. Derive inside your own module; write explicit types at its edges.</li>
+<li><strong>Keep it readable.</strong> If a derived type needs a comment to explain it, a test to pin it, and a teammate to decode it, consider writing the type out.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Currencies from one table">
+<p>A shop sells in three currencies. Write one <code>as const</code> table with each currency's symbol and number of minor units per major unit (NGN 100, USD 100, JPY 1). Derive <code>Currency</code>, and write <code>format(minor: number, currency: Currency): string</code> so that <code>format(150050, "NGN")</code> gives <code>₦1500.50</code> and <code>format(1500, "JPY")</code> gives <code>¥1500</code>.</p>
+<solution>
+<example file="currency.ts" project="ex-currency">
+const CURRENCIES = {
+  NGN: { symbol: "₦", minorUnits: 100 },
+  USD: { symbol: "$", minorUnits: 100 },
+  JPY: { symbol: "¥", minorUnits: 1 },
+} as const satisfies Record<string, { symbol: string; minorUnits: number }>;
+
+type Currency = keyof typeof CURRENCIES;
+
+function format(minor: number, currency: Currency): string {
+  const { symbol, minorUnits } = CURRENCIES[currency];
+  const decimals = minorUnits === 1 ? 0 : 2;
+  return `${symbol}${(minor / minorUnits).toFixed(decimals)}`;
+}
+
+console.log(format(150050, "NGN"), format(1999, "USD"), format(1500, "JPY"));
+</example>
+<output>
+₦1500.50 $19.99 ¥1500
+</output>
+<p><code>satisfies</code> checks every row has a symbol and a number, <code>as const</code> keeps the keys literal, and <code>keyof typeof</code> gives <code>"NGN" | "USD" | "JPY"</code>. <code>format(100, "EUR")</code> does not compile until the table has a EUR row.</p>
+</solution>
+</exercise>
+<exercise title="Predict the keys">
+<p>Before running it, predict each type, then make the file compile by filling in the second argument of every <code>Equal</code>.</p>
+<file name="predict.ts" project="ex-predict">
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+interface Card { kind: "card"; last4: string; amountKobo: number }
+interface Transfer { kind: "transfer"; bankCode: string; amountKobo: number }
+
+type P1 = Expect<Equal<keyof (Card | Transfer), ???>>;
+type P2 = Expect<Equal<(Card | Transfer)["kind"], ???>>;
+type P3 = Expect<Equal<keyof { [reference: string]: Card }, ???>>;
+type P4 = Expect<Equal<[Card, Transfer]["length"], ???>>;
+</file>
+<solution>
+<example file="predict.ts" project="ex-predict">
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+interface Card { kind: "card"; last4: string; amountKobo: number }
+interface Transfer { kind: "transfer"; bankCode: string; amountKobo: number }
+
+type P1 = Expect<Equal<keyof (Card | Transfer), "kind" | "amountKobo">>;
+type P2 = Expect<Equal<(Card | Transfer)["kind"], "card" | "transfer">>;
+type P3 = Expect<Equal<keyof { [reference: string]: Card }, string | number>>;
+type P4 = Expect<Equal<[Card, Transfer]["length"], 2>>;
+
+console.log("predictions compiled");
+</example>
+<output>
+predictions compiled
+</output>
+<p><code>keyof</code> of a union keeps only the shared keys, but indexing a union with a shared key gives the union of that property's types: that is how a discriminant's values are collected. A string index signature has <code>string | number</code> keys, and a tuple's <code>length</code> is a literal.</p>
+</solution>
+</exercise>
+<exercise title="A typed pluckAll">
+<p>Write <code>pluckAll&lt;T, K extends keyof T&gt;(items: readonly T[], keys: readonly K[])</code> that returns, for each item, an object with only those keys. Use <code>Pick&lt;T, K&gt;</code> for the result type. Try it on products with <code>["name", "priceKobo"]</code>.</p>
+<solution>
+<example file="pluck-all.ts" project="ex-pluck">
+function pluckAll<T, K extends keyof T>(items: readonly T[], keys: readonly K[]): Pick<T, K>[] {
+  return items.map((item) => {
+    const picked = {} as Pick<T, K>;
+    for (const key of keys) picked[key] = item[key];
+    return picked;
+  });
+}
+
+const products = [
+  { sku: "TOTE-01", name: "Ankara tote bag", priceKobo: 450_000, supplier: "Kano Textiles" },
+  { sku: "MUG-07", name: "Enamel mug", priceKobo: 180_000, supplier: "Aba Crafts" },
+];
+
+const listing = pluckAll(products, ["name", "priceKobo"]);
+console.log(listing);
+</example>
+<output>
+[
+  { name: 'Ankara tote bag', priceKobo: 450000 },
+  { name: 'Enamel mug', priceKobo: 180000 }
+]
+</output>
+<p><code>K</code> is inferred from the array literal as <code>"name" | "priceKobo"</code>, so <code>listing</code> is <code>Pick&lt;…, "name" | "priceKobo"&gt;[]</code> and <code>listing[0].supplier</code> does not compile. The assignment <code>picked[key] = item[key]</code> is allowed because both sides are the property <code>K</code> of <code>T</code>, the generic write rule from this lesson. The <code>{} as Pick&lt;T, K&gt;</code> is the one assertion: the object is filled in by the loop that follows.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Names live in value space, type space, or both. <code>typeof</code> in a type position turns a value's name into its declared type; it follows property paths but cannot call functions.</li>
+<li><code>keyof T</code> is the union of <code>T</code>'s keys. A union has only its shared keys, an intersection all of them, and a string index signature gives <code>string | number</code>. Keys may be numbers and symbols, so use <code>keyof T &amp; string</code> for strings.</li>
+<li><code>T[K]</code> looks up a property's type; a union key gives a union, lookups chain, <code>[number]</code> gives array elements, and tuples have literal positions and <code>length</code>.</li>
+<li><code>(typeof LIST)[number]</code> and <code>(typeof TABLE)[keyof typeof TABLE]</code> turn <code>as const</code> data into unions. Check tables with <code>satisfies</code>, never with an annotation that widens them.</li>
+<li>Writing through a union key requires <code>never</code>; a type parameter <code>K</code> ties the key to its value. <code>Object.keys</code> returns <code>string[]</code> because values can carry extra keys.</li>
+<li>Derive from one source, name the derived types, and pin the important ones with type tests.</li>
+</ul>
+<p>Next: <a href="/learn/ts-utility-types">Utility types</a>, where you use these operators to rebuild <code>Partial</code>, <code>Pick</code>, <code>Omit</code>, <code>ReturnType</code> and the rest of TypeScript's built-in type toolbox.</p>
+</section>

@@ -1,0 +1,740 @@
+<question id="fu-trust" type="choice">
+<q>Which part of an uploaded file can your server actually verify?</q>
+<option>The file name, because the browser sets it</option>
+<option>The part's <code>Content-Type</code>, because the browser sets it from the extension</option>
+<option correct>The bytes: their length, and their first bytes, which reveal the real format</option>
+<option>Nothing; uploads cannot be checked</option>
+<explain><p>The name, the declared type and any size header are written by the client, and an attacker writes whatever gets past you. The bytes are what you store, so you check those.</p></explain>
+</question>
+
+<question id="fu-traversal" type="choice">
+<q>A handler saves uploads with <code>writeFile(join("uploads", file.filename), bytes)</code>. What can a client do with the file name <code>../../app/config.json</code>?</q>
+<option>Nothing, <code>join</code> removes <code>..</code> parts</option>
+<option correct>Write outside <code>uploads/</code>, possibly overwriting the server's own files (path traversal)</option>
+<option>Only create a folder called <code>..</code></option>
+<option>Make the upload fail with a 400</option>
+<explain><p><code>join</code> <em>resolves</em> <code>..</code>, which is exactly what climbs out of the folder. Never use a client's name as a path; generate the key and keep the cleaned name as a label.</p></explain>
+</question>
+
+<question id="fu-key" type="choice">
+<q>Which object key is the best choice for an attachment of task 12?</q>
+<option><code>tasks/12/${file.filename}</code></option>
+<option><code>${file.filename}</code></option>
+<option correct><code>tasks/12/${randomUUID()}</code>, with the cleaned file name stored in the database</option>
+<option><code>tasks/12/${Date.now()}</code></option>
+<option><code>uploads/${userEmail}/${file.filename}</code></option>
+<explain><p>A generated random key contains nothing the user typed, cannot collide, cannot be guessed, and the <code>tasks/12/</code> prefix still lets you list a task's files. A timestamp can collide and is guessable; an email in a key leaks personal data into logs and URLs.</p></explain>
+</question>
+
+<question id="fu-extract-boundary" type="output">
+<q>What does <code>extractBoundary</code> return for these two headers?</q>
+<code file="boundary.js" browser="no">
+import { extractBoundary } from "@zudojs/http";
+
+console.log(extractBoundary("multipart/form-data; boundary=----zudo42"), extractBoundary("application/json"));
+</code>
+<option correct>----zudo42 undefined</option>
+<option>----zudo42 null</option>
+<option>boundary=----zudo42 undefined</option>
+<option>zudo42 undefined</option>
+<explain><p>The boundary is the string that separates the parts of a multipart body, named in the <code>Content-Type</code>. A JSON request has none, which is why the route answers 415 instead of trying to parse it.</p></explain>
+</question>
+
+<question id="fu-parse-multipart" type="output">
+<q>A browser on Windows sends this form. What does the parser give you?</q>
+<code file="parse.js" browser="no">
+import { parseMultipartBuffer } from "@zudojs/http";
+
+const body = Buffer.from(
+  '--b\r\nContent-Disposition: form-data; name="note"\r\n\r\nreceipt\r\n' +
+  '--b\r\nContent-Disposition: form-data; name="file"; filename="C:\\\\Users\\\\ada\\\\scan.pdf"\r\n' +
+  "Content-Type: application/pdf\r\n\r\n%PDF-1.7\r\n--b--\r\n",
+);
+const form = parseMultipartBuffer(body, "b");
+console.log(form.fields.note, form.files.map((f) => [f.fieldName, f.filename, f.contentType, f.size]));
+</code>
+<option correct>receipt [ [ 'file', 'scan.pdf', 'application/pdf', 8 ] ]</option>
+<option>receipt [ [ 'file', 'C:\\Users\\ada\\scan.pdf', 'application/pdf', 8 ] ]</option>
+<option>undefined [ [ 'file', 'scan.pdf', 'application/pdf', 8 ] ]</option>
+<option>receipt [ [ 'file', 'scan.pdf', 'application/pdf', 10 ] ]</option>
+<explain><p>Text parts become <code>fields</code>, file parts become <code>files</code>. The parser reduces the file name to a safe base name, so the Windows path is gone. The size is the 8 bytes of <code>%PDF-1.7</code>; the line break before the next boundary belongs to the format, not the file.</p></explain>
+</question>
+
+<question id="fu-max-fields" type="output">
+<q>What happens when a form has more fields than allowed?</q>
+<code file="max-fields.js" browser="no">
+import { parseMultipartBuffer } from "@zudojs/http";
+
+const body = Buffer.from('--b\r\nContent-Disposition: form-data; name="note"\r\n\r\nreceipt\r\n--b--\r\n');
+try {
+  parseMultipartBuffer(body, "b", { maxFields: 0 });
+} catch (error) {
+  console.log(error.name, error.statusCode, error.message);
+}
+</code>
+<option correct>MultipartLimitError 413 Maximum number of multipart fields exceeded.</option>
+<option>MultipartParseError 400 Maximum number of multipart fields exceeded.</option>
+<option>HttpError 400 Too many fields</option>
+<option>nothing is printed; extra fields are dropped</option>
+<explain><p>Every parser limit (file size, number of files, fields, field size) throws a <code>MultipartLimitError</code> with status 413. A form with 100,000 tiny fields is also a way to exhaust a server.</p></explain>
+</question>
+
+<question id="fu-limit-levels" type="choice">
+<q>Why must <code>maxBodySize</code> on the node adapter be set for an upload API, even though the multipart parser has <code>maxFileSize</code>?</q>
+<option>The parser ignores <code>maxFileSize</code></option>
+<option correct>The adapter reads the whole body into memory before any route runs; only its limit stops a huge request before the bytes are in memory</option>
+<option><code>maxBodySize</code> sets the per-file limit</option>
+<option>It does not matter; either limit alone is enough</option>
+<explain><p>Limits only help if they act before the work they limit. The parser runs inside your handler, after the body has been read. The adapter's limit is the first gate, and it answers 413 on its own.</p></explain>
+</question>
+
+<question id="fu-body-size-choice" type="choice">
+<q>Your API accepts up to 3 files of 2 MB each in one request, and JSON bodies elsewhere. What is a sensible <code>maxBodySize</code>?</q>
+<option>Unlimited, to be safe for uploads</option>
+<option>2 MB, the size of one file</option>
+<option correct>A little over 6 MB (say 7 MB), the largest legitimate request plus the multipart overhead</option>
+<option>1 GB, in case users upload videos later</option>
+<explain><p><code>maxBodySize</code> applies to every route, so choose the largest real request and no more. Anything much bigger than a few megabytes should go directly to object storage with a presigned URL instead.</p></explain>
+</question>
+
+<question id="fu-status-codes" type="choice">
+<q>Match the failure to its status: the body is 8 MB over the limit; the file is empty; the bytes are HTML but the part says <code>image/png</code>.</q>
+<option>400, 400, 400</option>
+<option correct>413, 400, 415</option>
+<option>500, 404, 403</option>
+<option>413, 415, 400</option>
+<explain><p>413 Payload Too Large for size, 400 Bad Request for a malformed or empty file, and 415 Unsupported Media Type for a type you do not accept. Distinct codes let a client show the right message.</p></explain>
+</question>
+
+<question id="fu-magic" type="choice">
+<q>What is a "magic number" in a file?</q>
+<option>A checksum at the end of the file</option>
+<option correct>A fixed sequence of bytes at the start of a file that identifies its format, like <code>%PDF-</code> for PDF</option>
+<option>The file's size, stored in its header</option>
+<option>A random number the browser adds to each upload</option>
+<explain><p>Most binary formats begin with a fixed signature. Reading it to decide the real type is content sniffing, and it is far harder to fake by accident than an extension or a header.</p></explain>
+</question>
+
+<question id="fu-sniff-output" type="output">
+<q>What does this sniffer print?</q>
+<code file="sniff.js">
+const SIGNATURES = [
+  { type: "image/png", magic: [0x89, 0x50, 0x4e, 0x47] },
+  { type: "application/pdf", magic: [0x25, 0x50, 0x44, 0x46, 0x2d] },
+];
+const sniff = (bytes) => SIGNATURES.find((s) => s.magic.every((b, i) => bytes[i] === b))?.type ?? "unknown";
+
+const enc = (text) => new TextEncoder().encode(text);
+console.log(sniff(enc("%PDF-1.7 quote")));
+console.log(sniff(enc("<svg onload=alert(1)>")));
+console.log(sniff(new Uint8Array([0x89, 0x50, 0x4e])));
+</code>
+<option correct>application/pdf
+unknown
+unknown</option>
+<option>application/pdf
+image/svg+xml
+image/png</option>
+<option>application/pdf
+unknown
+image/png</option>
+<option>unknown
+unknown
+unknown</option>
+<explain><p><code>%PDF-</code> is exactly the PDF signature. The SVG matches nothing on the allow-list. The last file is too short: <code>bytes[3]</code> is <code>undefined</code>, not <code>0x47</code>, so a truncated PNG signature does not count.</p></explain>
+</question>
+
+<question id="fu-svg" type="choice">
+<q>Why should SVG not be on an image allow-list that is served from your main domain?</q>
+<option>SVG files are always very large</option>
+<option>Browsers cannot display SVG</option>
+<option correct>SVG is XML and can contain <code>&lt;script&gt;</code>; opened from your domain it runs like a page (stored XSS)</option>
+<option>SVG has no magic number, so it cannot be uploaded</option>
+<explain><p>Some "images" are documents that can run code. If you must accept SVG, convert it to PNG on upload or serve it from a separate domain.</p></explain>
+</question>
+
+<question id="fu-declared-mismatch" type="choice">
+<q>A part declares <code>image/jpeg</code> and its bytes start with the PNG signature. Both types are allowed. What does the lesson's <code>checkFile</code> do, and why?</q>
+<option>Accept it as a JPEG, because the client said so</option>
+<option>Accept it as a PNG silently</option>
+<option correct>Refuse it with 415: a file whose claim contradicts its content is suspicious, unless the claim is the generic <code>application/octet-stream</code></option>
+<option>Convert it to JPEG</option>
+<explain><p>An honest browser gets this right. A mismatch usually means a renamed file or a probe, and refusing it costs a legitimate user very little. <code>application/octet-stream</code> means "I don't know", so it defers to the sniffed type.</p></explain>
+</question>
+
+<question id="fu-extension" type="output">
+<q>The lesson's policy renames files so the extension matches the sniffed type. What names does this print?</q>
+<code file="rename.js">
+const rename = (name, ext) => (name.replace(/\.[^.]*$/, "").slice(0, 100) || "file") + "." + ext;
+
+console.log(rename("invoice.pdf.exe", "pdf"));
+console.log(rename("holiday", "jpg"));
+console.log(rename(".png", "png"));
+</code>
+<option correct>invoice.pdf.pdf
+holiday.jpg
+file.png</option>
+<option>invoice.pdf
+holiday.jpg
+.png</option>
+<option>invoice.pdf.exe.pdf
+holiday.jpg
+.png.png</option>
+<option>invoice.pdf.pdf
+holiday
+file.png</option>
+<explain><p>Only the last extension is replaced, so the name always ends in the real type and nobody downloads an "exe". A name that is only an extension becomes empty after the replace, and the <code>|| "file"</code> fallback gives it a name.</p></explain>
+</question>
+
+<question id="fu-sanitize" type="output">
+<q>What does <code>sanitizeFilename</code> from <code>@zudojs/http</code> make of these names? (A generated name is shown as <code>upload-…</code>.)</q>
+<code file="sanitize.js" browser="no">
+import { sanitizeFilename } from "@zudojs/http";
+
+const names = ["report.pdf", "../../etc/passwd", "a/b/c.png", "..", "x\u0000y.png"];
+console.log(names.map((n) => (sanitizeFilename(n).startsWith("upload-") ? "upload-…" : sanitizeFilename(n))));
+</code>
+<option correct>[ 'report.pdf', 'passwd', 'c.png', 'upload-…', 'xy.png' ]</option>
+<option>[ 'report.pdf', 'etc/passwd', 'a/b/c.png', '..', 'x y.png' ]</option>
+<option>[ 'report.pdf', '..-..-etc-passwd', 'a-b-c.png', 'upload-…', 'xy.png' ]</option>
+<option>[ 'report.pdf', 'passwd', 'c.png', '', 'x' ]</option>
+<explain><p>It keeps only the base name, drops control characters such as the NUL byte, and replaces a name with nothing usable left (like <code>..</code>) by a generated one. Even so, the lesson uses the result only as a label, never as a storage path.</p></explain>
+</question>
+
+<question id="fu-order" type="choice">
+<q>Saving an attachment writes the bytes to object storage and a row to the database. They cannot share a transaction. Which order does the lesson use, and why?</q>
+<option>Row first, so the user sees the file sooner</option>
+<option correct>Bytes first, then the row, deleting the bytes if the row fails: the worst leftover is an invisible orphan, never a row pointing at a missing file</option>
+<option>Both at the same time with <code>Promise.all</code></option>
+<option>It does not matter</option>
+<explain><p>A row without bytes is a broken link users can click. Bytes without a row are invisible and can be cleaned up by a sweeper. Choose the order whose failure is harmless.</p></explain>
+</question>
+
+<question id="fu-compensation" type="output">
+<q>This service stores, then records, and compensates on failure. What is printed?</q>
+<code file="compensate.js">
+const objects = new Map();
+const rows = [];
+const storage = {
+  async put(key, bytes) { objects.set(key, bytes); },
+  async delete(key) { objects.delete(key); },
+};
+const db = {
+  async insert(row) {
+    if (row.taskId === 9) throw Object.assign(new Error("foreign key"), { code: "23503" });
+    rows.push(row);
+  },
+};
+
+async function store(taskId, key, bytes) {
+  await storage.put(key, bytes);
+  try {
+    await db.insert({ taskId, key });
+  } catch (error) {
+    await storage.delete(key);
+    throw error;
+  }
+}
+
+await store(1, "tasks/1/a", "…");
+await store(9, "tasks/9/b", "…").catch((e) => console.log("failed:", e.code));
+console.log([...objects.keys()], rows.length);
+</code>
+<option correct>failed: 23503
+[ 'tasks/1/a' ] 1</option>
+<option>failed: 23503
+[ 'tasks/1/a', 'tasks/9/b' ] 1</option>
+<option>[ 'tasks/1/a' ] 1</option>
+<option>failed: 23503
+[ 'tasks/1/a', 'tasks/9/b' ] 2</option>
+<explain><p>The second object was stored, the insert failed on the foreign key, and the <code>catch</code> deleted the object before passing the error on. One object, one row. The deletion is called a compensating action.</p></explain>
+</question>
+
+<question id="fu-check-all-first" type="choice">
+<q>A request carries three files, and the third is not an allowed type. Why does <code>uploadAll</code> run <code>checkFile</code> on every file before storing any?</q>
+<option>Checking is faster in a batch</option>
+<option correct>So a bad file is refused before anything is stored, and the request fails as a whole instead of leaving the first two behind</option>
+<option>Because storage can only take one file per request</option>
+<option>So the files are stored in alphabetical order</option>
+<explain><p>Validate everything that can be validated up front. Failures that can only happen while storing (storage down) are then handled by removing the files already saved.</p></explain>
+</question>
+
+<question id="fu-fk-404" type="choice">
+<q>Why does the service rely on the foreign key on <code>attachments.task_id</code> to answer 404 for a missing task, instead of only checking "does the task exist?" first?</q>
+<option>Foreign keys are faster than a <code>SELECT</code></option>
+<option correct>The task can be deleted between the check and the insert; the foreign key is the only check that is still true at the moment of the write</option>
+<option>A <code>SELECT</code> cannot return a 404</option>
+<option>The storage package requires it</option>
+<explain><p>"Check, then act" has a gap. A pre-check can still be useful to avoid storing bytes you will delete, but the constraint is what makes the rule hold.</p></explain>
+</question>
+
+<question id="fu-nosniff" type="choice">
+<q>What does the response header <code>X-Content-Type-Options: nosniff</code> do for a download?</q>
+<option>It stops the file from being cached</option>
+<option correct>It tells the browser to use the <code>Content-Type</code> you sent and not guess another type from the content, for example HTML</option>
+<option>It encrypts the download</option>
+<option>It forces the browser to save the file</option>
+<explain><p>Without it, some browsers "help" by rendering content that looks like HTML as HTML, which turns an uploaded file into a page on your domain. Saving instead of opening is <code>Content-Disposition: attachment</code>'s job.</p></explain>
+</question>
+
+<question id="fu-disposition" type="choice">
+<q>Why build the <code>Content-Disposition</code> header with <code>createAttachmentDisposition(name)</code> instead of <code>`attachment; filename="${name}"`</code>?</q>
+<option>The template string is slower</option>
+<option correct>A name with a quote or a line break could end the header and start a new one (response splitting); the helper escapes quotes, drops control characters and encodes non-ASCII names</option>
+<option>Browsers ignore hand-written headers</option>
+<option>The helper also compresses the file</option>
+<explain><p>File names are user input, and headers have their own syntax. <code>Set-Cookie</code> smuggled through a file name is a real attack. Let the helper do the quoting and the <code>filename*</code> encoding.</p></explain>
+</question>
+
+<question id="fu-cache-private" type="choice">
+<q>Why does the download route send <code>Cache-Control: private</code>?</q>
+<option>So the browser never caches the file</option>
+<option correct>So shared caches such as a company proxy or a CDN do not store one user's private file and serve it to someone else</option>
+<option>It is required for PDF files</option>
+<option>So the download is faster</option>
+<explain><p><code>private</code> allows the user's own browser to cache the response but forbids shared caches. Attachments usually belong to a person or a team.</p></explain>
+</question>
+
+<question id="fu-fence-output" type="output">
+<q>A lock expires while its holder is still busy. What does this print?</q>
+<code file="fence.js" browser="no">
+import { InMemoryLockManager } from "@zudojs/storage";
+
+const locks = new InMemoryLockManager();
+const first = await locks.acquire("task:1:cover", { ttl: 20 });
+await new Promise((resolve) => setTimeout(resolve, 40));
+const second = await locks.acquire("task:1:cover", { ttl: 1000 });
+console.log(first.fence, second.fence, first.isHeld(), second.isHeld());
+await second.release();
+</code>
+<option correct>1 2 false true</option>
+<option>1 1 false true</option>
+<option>1 2 true true</option>
+<option>nothing is printed; the second acquire waits forever</option>
+<explain><p>The first lock expired after 20 ms, so the second was granted with a bigger fence. The first holder may not know it lost the lock: that is why the resource has to check the fence.</p></explain>
+</question>
+
+<question id="fu-fence-where" type="choice">
+<q>Where must the fence check happen for it to stop a stale write?</q>
+<option>In the service, before calling the database: <code>if (lock.isHeld())</code></option>
+<option>In the lock manager, when the lock is released</option>
+<option correct>In the protected resource, in the same step as the write, for example <code>UPDATE … WHERE cover_fence &lt; $fence</code></option>
+<option>In the client, before it sends the request</option>
+<explain><p><code>isHeld()</code> can be true at the check and false a millisecond later, during a pause. Only the resource sees every write in order, so only it can refuse the one carrying an older token.</p></explain>
+</question>
+
+<question id="fu-fence-store" type="output">
+<q>A store that remembers the highest fence receives these writes. What is printed?</q>
+<code file="fence-store.js">
+let highest = 0;
+let cover = "none";
+function save(key, fence) {
+  if (fence <= highest) return `refused ${key} (fence ${fence} <= ${highest})`;
+  highest = fence;
+  cover = key;
+  return `saved ${key}`;
+}
+
+console.log(save("draft.png", 1));
+console.log(save("final.png", 3));
+console.log(save("stale.png", 2));
+console.log(cover);
+</code>
+<option correct>saved draft.png
+saved final.png
+refused stale.png (fence 2 &lt;= 3)
+final.png</option>
+<option>saved draft.png
+saved final.png
+saved stale.png
+stale.png</option>
+<option>saved draft.png
+refused final.png (fence 3 &lt;= 1)
+saved stale.png
+stale.png</option>
+<option>saved draft.png
+saved final.png
+refused stale.png (fence 2 &lt;= 3)
+stale.png</option>
+<explain><p>Fence 2 arrived after fence 3: its holder's lock had already passed to someone else. Refusing it keeps the newer cover. The order of arrival does not matter; the order of the fences does.</p></explain>
+</question>
+
+<question id="fu-in-memory-lock" type="choice">
+<q>You run the Task API on three servers, each with its own <code>InMemoryLockManager</code>. What happens to cover replacements?</q>
+<option>They are still safe, because each server has a lock</option>
+<option correct>Each server hands out its own locks and fences, so two servers can both hold "the" lock with fence 1; you need a shared lock or fence source (PostgreSQL, Redis)</option>
+<option>The servers share memory automatically</option>
+<option>Only the first server can accept uploads</option>
+<explain><p>An in-memory lock only coordinates code in one process. The database's fence check stays the same, but the fence numbers must come from something all servers share.</p></explain>
+</question>
+
+<question id="fu-orphan" type="choice">
+<q>Which situation leaves an orphaned object that compensation cannot clean up?</q>
+<option>The database refuses the row with a foreign key error</option>
+<option>The file is the wrong type</option>
+<option correct>The process is killed after <code>put</code> and before the <code>INSERT</code>, or the compensating delete itself fails</option>
+<option>The client cancels the request before sending the body</option>
+<explain><p>Compensation is code that runs after an error your code sees. A crash or a failing delete leaves bytes nobody references. A sweeper finds and removes them later.</p></explain>
+</question>
+
+<question id="fu-grace" type="choice">
+<q>Why does the orphan sweeper only delete objects older than a grace period?</q>
+<option>Old objects are bigger</option>
+<option correct>An upload that is between its <code>put</code> and its <code>INSERT</code> right now also looks like an orphan; deleting it would break a successful upload</option>
+<option>Object storage cannot delete new objects</option>
+<option>To save money on list requests</option>
+<explain><p>The grace period must be longer than any upload can take between the two writes. Anything younger might still be in progress.</p></explain>
+</question>
+
+<question id="fu-sweep-output" type="output">
+<q>The sweeper compares stored objects with referenced keys, with a 60-minute grace period. What does it delete?</q>
+<code file="sweep.js">
+const now = Date.UTC(2026, 8, 24, 12, 0);
+const minutes = (m) => now - m * 60_000;
+const objects = [
+  { key: "tasks/1/a", lastModified: minutes(300) },
+  { key: "tasks/1/b", lastModified: minutes(300) },
+  { key: "tasks/2/c", lastModified: minutes(5) },
+  { key: "tasks/2/d", lastModified: minutes(90) },
+];
+const referenced = new Set(["tasks/1/a", "tasks/2/d"]);
+const graceMs = 60 * 60_000;
+
+const toDelete = objects
+  .filter((o) => now - o.lastModified > graceMs)
+  .filter((o) => !referenced.has(o.key))
+  .map((o) => o.key);
+console.log(toDelete);
+</code>
+<option correct>[ 'tasks/1/b' ]</option>
+<option>[ 'tasks/1/b', 'tasks/2/c' ]</option>
+<option>[ 'tasks/2/c' ]</option>
+<option>[ 'tasks/1/b', 'tasks/2/d' ]</option>
+<explain><p><code>b</code> is old and unreferenced: an orphan. <code>c</code> is unreferenced but only 5 minutes old, so it may be an upload in progress. <code>a</code> and <code>d</code> are referenced.</p></explain>
+</question>
+
+<question id="fu-remove-order" type="choice">
+<q>When deleting an attachment, the service deletes the database row first and the object second. Why that order?</q>
+<option>Rows are faster to delete</option>
+<option correct>If the second step fails, the leftover is an unreferenced object (swept later), not a row pointing at a deleted file</option>
+<option>Object storage refuses deletes of referenced objects</option>
+<option>The order does not matter for deletes</option>
+<explain><p>It is the same rule as for uploads, mirrored: always choose the order whose half-finished state is invisible to users.</p></explain>
+</question>
+
+<question id="fu-fault-injection" type="choice">
+<q>How does the lesson test that a failure in the <em>second</em> storage write leaves nothing behind?</q>
+<option>By unplugging the disk during the test</option>
+<option>By mocking the whole service</option>
+<option correct>By wrapping the real <code>ObjectStorage</code> in one that throws on the second <code>put</code>, then checking that no objects and no rows remain</option>
+<option>By waiting for a real failure in production</option>
+<explain><p><code>ObjectStorage</code> is an interface, so a test can put a failing implementation in its place. Fault injection makes rare failures happen on demand, which is the only way to test recovery code.</p></explain>
+</question>
+
+<question id="fu-presigned" type="choice">
+<q>Users need to upload 500 MB videos. What is the usual design?</q>
+<option>Raise <code>maxBodySize</code> to 1 GB</option>
+<option>Base64-encode the video into a JSON body</option>
+<option correct>The API signs a short-lived presigned URL; the client uploads straight to object storage, then tells the API, which checks the object before recording it</option>
+<option>Split the video into 2 MB attachments</option>
+<explain><p>Large files should not pass through your API process's memory at all. A presigned URL allows exactly one upload of one key for a short time, and the API still checks size and type before trusting it.</p></explain>
+</question>
+
+<question id="fu-metadata-truth" type="choice">
+<q>Object storage keeps some metadata with each object (content type, <code>{ taskId: "1" }</code>). What is the source of truth for which files a task has?</q>
+<option correct>The <code>attachments</code> table: it is what the API lists, checks permissions against and deletes from; object metadata helps when inspecting storage by hand</option>
+<option>The object metadata, because it travels with the bytes</option>
+<option>The file names in the storage folder</option>
+<option>The browser's cache</option>
+<explain><p>One place must be the truth. The database can be queried, joined and constrained; object metadata is a helpful label, for example when a sweeper or an engineer looks at an unknown object.</p></explain>
+</question>
+
+<question id="fu-code-sniff" type="code" file="sniff-jpeg.js">
+<q><p>Finish <code>sniff(bytes)</code>. Return <code>"image/png"</code> when the bytes start with <code>89 50 4E 47 0D 0A 1A 0A</code>, <code>"image/jpeg"</code> when they start with <code>FF D8 FF</code>, and <code>null</code> otherwise.</p></q>
+<starter>
+function sniff(bytes) {
+  // your code here
+}
+
+console.log(sniff(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00])));
+console.log(sniff(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00])));
+console.log(sniff(new TextEncoder().encode("<html>")));
+console.log(sniff(new Uint8Array([0xff, 0xd8])));
+</starter>
+<solution>
+const SIGNATURES = [
+  ["image/png", [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],
+  ["image/jpeg", [0xff, 0xd8, 0xff]],
+];
+
+function sniff(bytes) {
+  for (const [type, magic] of SIGNATURES) {
+    if (magic.every((byte, i) => bytes[i] === byte)) return type;
+  }
+  return null;
+}
+
+console.log(sniff(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00])));
+console.log(sniff(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00])));
+console.log(sniff(new TextEncoder().encode("<html>")));
+console.log(sniff(new Uint8Array([0xff, 0xd8])));
+</solution>
+<expected>
+image/jpeg
+image/png
+null
+null
+</expected>
+<explain><p>Compare the first bytes with each signature. Reading past the end of a short array gives <code>undefined</code>, which never equals a byte, so a truncated signature is refused without a separate length check.</p></explain>
+</question>
+
+<question id="fu-code-key" type="code" file="object-key.js">
+<q><p>Finish <code>attachmentKey(taskId, id)</code>. Throw a <code>RangeError("taskId must be a positive whole number")</code> unless <code>taskId</code> is a safe integer of at least 1; otherwise return <code>tasks/&lt;taskId&gt;/&lt;id&gt;</code>. The file name must play no part.</p></q>
+<starter>
+function attachmentKey(taskId, id) {
+  // your code here
+}
+
+console.log(attachmentKey(12, "7f3a"));
+for (const bad of [0, 1.5, "12", Number.NaN]) {
+  try {
+    attachmentKey(bad, "7f3a");
+  } catch (error) {
+    console.log(bad, "->", error.message);
+  }
+}
+</starter>
+<solution>
+function attachmentKey(taskId, id) {
+  if (!Number.isSafeInteger(taskId) || taskId < 1) {
+    throw new RangeError("taskId must be a positive whole number");
+  }
+  return `tasks/${taskId}/${id}`;
+}
+
+console.log(attachmentKey(12, "7f3a"));
+for (const bad of [0, 1.5, "12", Number.NaN]) {
+  try {
+    attachmentKey(bad, "7f3a");
+  } catch (error) {
+    console.log(bad, "->", error.message);
+  }
+}
+</solution>
+<expected>
+tasks/12/7f3a
+0 -> taskId must be a positive whole number
+1.5 -> taskId must be a positive whole number
+12 -> taskId must be a positive whole number
+NaN -> taskId must be a positive whole number
+</expected>
+<explain><p><code>Number.isSafeInteger</code> is false for strings, fractions and <code>NaN</code>, so one check covers them all. In the real service the id is <code>randomUUID()</code>, and the key never contains anything the user typed.</p></explain>
+</question>
+
+<question id="fu-code-check" type="code" file="check-file.js">
+<q><p>Finish <code>check(file)</code> for PDFs only. Return <code>"400 empty"</code> for no bytes, <code>"413 too large"</code> for more than 1000 bytes, <code>"415 not a pdf"</code> when the bytes do not start with <code>%PDF-</code>, and <code>"ok"</code> otherwise. Check in that order.</p></q>
+<starter>
+function check(file) {
+  // your code here
+}
+
+const enc = (text) => new TextEncoder().encode(text);
+console.log(check({ data: enc("%PDF-1.7 brief") }));
+console.log(check({ data: new Uint8Array() }));
+console.log(check({ data: new Uint8Array(5000) }));
+console.log(check({ data: enc("<script>") }));
+</starter>
+<solution>
+function check(file) {
+  const bytes = file.data;
+  if (bytes.length === 0) return "400 empty";
+  if (bytes.length > 1000) return "413 too large";
+  const head = new TextDecoder().decode(bytes.slice(0, 5));
+  if (head !== "%PDF-") return "415 not a pdf";
+  return "ok";
+}
+
+const enc = (text) => new TextEncoder().encode(text);
+console.log(check({ data: enc("%PDF-1.7 brief") }));
+console.log(check({ data: new Uint8Array() }));
+console.log(check({ data: new Uint8Array(5000) }));
+console.log(check({ data: enc("<script>") }));
+</solution>
+<expected>
+ok
+400 empty
+413 too large
+415 not a pdf
+</expected>
+<explain><p>Cheap checks first: length costs nothing, and refusing a huge file before looking at it avoids work. Only the first five bytes are decoded, never the whole file.</p></explain>
+</question>
+
+<question id="fu-code-compensate" type="code" file="upload-all.js">
+<q><p>Finish <code>uploadAll(files)</code>. Store each file with <code>save(file)</code>, which returns an id or throws. If one throws, call <code>remove(id)</code> for every file already saved, then rethrow. Return the list of ids on success.</p></q>
+<starter>
+const stored = new Set();
+let nextId = 1;
+async function save(file) {
+  if (file === "broken") throw new Error("storage unavailable");
+  const id = nextId++;
+  stored.add(id);
+  return id;
+}
+async function remove(id) {
+  stored.delete(id);
+}
+
+async function uploadAll(files) {
+  // your code here
+}
+
+console.log(await uploadAll(["a", "b"]), [...stored]);
+await uploadAll(["c", "d", "broken"]).catch((error) => console.log(error.message));
+console.log([...stored]);
+</starter>
+<solution>
+const stored = new Set();
+let nextId = 1;
+async function save(file) {
+  if (file === "broken") throw new Error("storage unavailable");
+  const id = nextId++;
+  stored.add(id);
+  return id;
+}
+async function remove(id) {
+  stored.delete(id);
+}
+
+async function uploadAll(files) {
+  const saved = [];
+  try {
+    for (const file of files) saved.push(await save(file));
+    return saved;
+  } catch (error) {
+    for (const id of saved) await remove(id);
+    throw error;
+  }
+}
+
+console.log(await uploadAll(["a", "b"]), [...stored]);
+await uploadAll(["c", "d", "broken"]).catch((error) => console.log(error.message));
+console.log([...stored]);
+</solution>
+<expected>
+[ 1, 2 ] [ 1, 2 ]
+storage unavailable
+[ 1, 2 ]
+</expected>
+<explain><p>Files 3 and 4 were saved, then the third file failed, and both were removed again: the request succeeded or failed as a whole. The earlier, successful request was not touched.</p></explain>
+</question>
+
+<question id="fu-code-fence" type="code" file="fenced-row.js">
+<q><p>Finish <code>setCover(task, key, fence)</code> for an in-memory task row <code>{ coverKey, coverFence }</code>. If <code>fence</code> is not greater than <code>task.coverFence</code>, return <code>{ ok: false }</code> and change nothing. Otherwise store the key and the fence and return <code>{ ok: true, oldKey }</code> with the key it replaced.</p></q>
+<starter>
+const task = { coverKey: null, coverFence: 0 };
+
+function setCover(task, key, fence) {
+  // your code here
+}
+
+console.log(setCover(task, "cover-a", 1));
+console.log(setCover(task, "cover-c", 3));
+console.log(setCover(task, "cover-b", 2));
+console.log(task);
+</starter>
+<solution>
+const task = { coverKey: null, coverFence: 0 };
+
+function setCover(task, key, fence) {
+  if (fence <= task.coverFence) return { ok: false };
+  const oldKey = task.coverKey;
+  task.coverKey = key;
+  task.coverFence = fence;
+  return { ok: true, oldKey };
+}
+
+console.log(setCover(task, "cover-a", 1));
+console.log(setCover(task, "cover-c", 3));
+console.log(setCover(task, "cover-b", 2));
+console.log(task);
+</solution>
+<expected>
+{ ok: true, oldKey: null }
+{ ok: true, oldKey: 'cover-a' }
+{ ok: false }
+{ coverKey: 'cover-c', coverFence: 3 }
+</expected>
+<explain><p>This is what the lesson's <code>UPDATE … WHERE cover_fence &lt; $2 RETURNING old.old_key</code> does in one statement. The caller deletes <code>oldKey</code> after a success, and deletes its own new object after a refusal.</p></explain>
+</question>
+
+<question id="fu-code-sweep" type="code" file="orphans.js">
+<q><p>Finish <code>findOrphans(objects, referenced, graceMs, now)</code>. Return the keys of objects that are not in the <code>referenced</code> set and are older than <code>graceMs</code> (<code>now - lastModified &gt; graceMs</code>), in the order given.</p></q>
+<starter>
+function findOrphans(objects, referenced, graceMs, now) {
+  // your code here
+}
+
+const now = 1_000_000;
+const objects = [
+  { key: "tasks/1/a", lastModified: now - 500_000 },
+  { key: "tasks/1/b", lastModified: now - 500_000 },
+  { key: "tasks/3/c", lastModified: now - 1_000 },
+];
+console.log(findOrphans(objects, new Set(["tasks/1/a"]), 60_000, now));
+console.log(findOrphans(objects, new Set(), 600_000, now));
+</starter>
+<solution>
+function findOrphans(objects, referenced, graceMs, now) {
+  return objects
+    .filter((o) => !referenced.has(o.key) && now - o.lastModified > graceMs)
+    .map((o) => o.key);
+}
+
+const now = 1_000_000;
+const objects = [
+  { key: "tasks/1/a", lastModified: now - 500_000 },
+  { key: "tasks/1/b", lastModified: now - 500_000 },
+  { key: "tasks/3/c", lastModified: now - 1_000 },
+];
+console.log(findOrphans(objects, new Set(["tasks/1/a"]), 60_000, now));
+console.log(findOrphans(objects, new Set(), 600_000, now));
+</solution>
+<expected>
+[ 'tasks/1/b' ]
+[]
+</expected>
+<explain><p>With a 10-minute grace, nothing is old enough to delete, even though nothing is referenced. Passing <code>now</code> in, instead of calling <code>Date.now()</code> inside, is what makes the function easy to test.</p></explain>
+</question>
+
+<question id="fu-code-download-headers" type="code" file="download-headers.js">
+<q><p>Finish <code>downloadHeaders(row)</code>. Return an object with <code>content-type</code> set to <code>row.contentType</code>, <code>x-content-type-options</code> set to <code>nosniff</code>, <code>cache-control</code> set to <code>private, max-age=0</code>, and <code>content-disposition</code> set to <code>attachment; filename="…"</code> where the name has every character other than letters, digits, dot, dash, underscore and space replaced by <code>_</code>.</p></q>
+<starter>
+function downloadHeaders(row) {
+  // your code here
+}
+
+console.log(downloadHeaders({ contentType: "application/pdf", fileName: 'quote".pdf\r\nSet-Cookie: a=1' }));
+</starter>
+<solution>
+function downloadHeaders(row) {
+  const safe = row.fileName.replace(/[^A-Za-z0-9._\- ]/g, "_");
+  return {
+    "content-type": row.contentType,
+    "x-content-type-options": "nosniff",
+    "cache-control": "private, max-age=0",
+    "content-disposition": `attachment; filename="${safe}"`,
+  };
+}
+
+console.log(downloadHeaders({ contentType: "application/pdf", fileName: 'quote".pdf\r\nSet-Cookie: a=1' }));
+</solution>
+<expected>
+{
+  'content-type': 'application/pdf',
+  'x-content-type-options': 'nosniff',
+  'cache-control': 'private, max-age=0',
+  'content-disposition': 'attachment; filename="quote_.pdf__Set-Cookie_ a_1"'
+}
+</expected>
+<explain><p>An allow-list of characters is the simplest safe rule: the quote and the line break become <code>_</code>, so the header cannot be split. In the real server, <code>createAttachmentDisposition</code> does this and also keeps non-ASCII names readable with <code>filename*</code>.</p></explain>
+</question>

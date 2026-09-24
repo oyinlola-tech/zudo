@@ -1,0 +1,703 @@
+<question id="idem-timeout-unknown" type="choice">
+<q>A phone sends <code>POST /transfers</code> and gets no response within 30 seconds. What does the phone know about the transfer?</q>
+<option>It failed, because no response came back</option>
+<option>It succeeded, because the request was sent</option>
+<option correct>Nothing: the request may not have arrived, may have failed, or may have succeeded with the response lost</option>
+<option>It is still running, so the phone should wait longer</option>
+<explain><p>From the client's side, a lost request, a failed request and a succeeded request with a lost response all look the same. That is why retries are necessary, and why the server must make them harmless.</p></explain>
+</question>
+
+<question id="idem-user-from-where" type="choice">
+<q>Where should a transfer endpoint get the id of the user who is sending money?</q>
+<option>From a <code>userId</code> field in the JSON body</option>
+<option>From the <code>from</code> account, by reading its owner</option>
+<option correct>From the verified session or token on the request</option>
+<option>From the <code>Idempotency-Key</code>, which contains the user id</option>
+<explain><p>Anything in the body is chosen by the caller. The user is whoever the verified credentials say, and then the server checks that this user owns the <code>from</code> account.</p></explain>
+</question>
+
+<question id="idem-not-owner-status" type="choice">
+<q>Ada asks to send money from account 7, which exists but belongs to Bola. Which answer leaks the least?</q>
+<option>403 Forbidden: "account 7 is not yours"</option>
+<option correct>404 Not Found: "account 7 was not found", the same as for an account that does not exist</option>
+<option>422: "account 7 belongs to Bola Ade"</option>
+<option>200 with an empty body</option>
+<explain><p>If "not yours" and "does not exist" give different answers, anyone can discover which account numbers exist. Answer both the same way.</p></explain>
+</question>
+
+<question id="idem-update-missing-row" type="choice">
+<q>What does <code>UPDATE accounts SET balance_kobo = balance_kobo + 1000 WHERE id = 99</code> do when there is no account 99?</q>
+<option>It throws a "row not found" error</option>
+<option>It inserts account 99 with a balance of 1000</option>
+<option correct>It succeeds and changes zero rows</option>
+<option>It rolls back the current transaction</option>
+<explain><p>SQL does not treat "no row matched" as an error. Check the number of changed rows (or use <code>RETURNING</code>), or verify the recipient exists before writing.</p></explain>
+</question>
+
+<question id="idem-balance-race" type="choice">
+<q>Two transfers of ₦10,000 from an account holding ₦15,000 run at the same time. Each reads the balance, sees ₦15,000, and writes <code>balance - 10000</code>. What is the safe fix?</q>
+<option>Read the balance twice before writing</option>
+<option>Check the balance in the mobile app before sending</option>
+<option correct>Do the check and the write in one statement: <code>UPDATE … SET balance = balance - $1 WHERE id = $2 AND balance &gt;= $1</code>, plus a <code>CHECK (balance &gt;= 0)</code> constraint</option>
+<option>Add an idempotency key to both requests</option>
+<explain><p>"Read, decide, write" leaves a gap in which another transfer can act on the same balance. A conditional update closes the gap; the constraint catches any bug that slips through. Idempotency keys solve duplicates, not two different transfers.</p></explain>
+</question>
+
+<question id="idem-transaction-purpose" type="choice">
+<q>A transfer debits the sender, credits the recipient and inserts a record. Why must all three run in one transaction?</q>
+<option>Transactions make each statement run faster</option>
+<option correct>If any statement fails, all of them are undone, so money never leaves one account without arriving in the other</option>
+<option>Transactions stop the same request from arriving twice</option>
+<option>PostgreSQL only allows one UPDATE per transaction otherwise</option>
+<explain><p>Atomicity: all or nothing. Without it, a failure after the debit leaves the bank with less money than before. A transaction does not help with duplicate requests; that is the idempotency key's job.</p></explain>
+</question>
+
+<question id="idem-key-per-intent" type="choice">
+<q>When should a mobile app generate the idempotency key for a transfer?</q>
+<option>Before each HTTP attempt, so every attempt has a fresh key</option>
+<option correct>Once, when the user confirms the transfer, and reuse it for every retry of that transfer</option>
+<option>Once per app install, for all transfers</option>
+<option>Never; the server generates it and returns it in the response</option>
+<explain><p>The key names one user intent. A fresh key per attempt makes every retry look new, and one key for all transfers would make the second transfer a replay of the first.</p></explain>
+</question>
+
+<question id="idem-scope" type="choice">
+<q>Why are keys stored under <code>(user_id, key)</code> instead of just <code>key</code>?</q>
+<option>To make the index smaller</option>
+<option correct>So one user cannot receive another user's stored response by sending the same key, and users cannot block each other's keys</option>
+<option>Because UUIDs are not unique enough on their own</option>
+<option>Because PostgreSQL requires composite primary keys for text</option>
+<explain><p>A stored response may contain balances and account numbers. Scoping keys to the authenticated user means a key only ever replays that user's own responses.</p></explain>
+</question>
+
+<question id="idem-fingerprint" type="choice">
+<q>A client reuses a key from a ₦10,000 transfer for a new ₦50,000 transfer. What should the server do?</q>
+<option>Replay the ₦10,000 response</option>
+<option>Run the ₦50,000 transfer, since it is a different request</option>
+<option correct>Answer 422: the key was already used with a different request</option>
+<option>Answer 409 and ask the client to wait</option>
+<explain><p>Replaying would tell the app a ₦50,000 transfer succeeded when it did not; running it would make keys meaningless. Comparing a stored fingerprint of the request catches the client bug.</p></explain>
+</question>
+
+<question id="idem-canonical" type="choice">
+<q>Why does the request fingerprint sort object keys before hashing?</q>
+<option>Sorted JSON is smaller</option>
+<option correct>So <code>{"from":1,"to":2}</code> and <code>{"to":2,"from":1}</code>, the same request, get the same hash</option>
+<option>SHA-256 only accepts sorted input</option>
+<option>To hide the amount from the database</option>
+<explain><p>A retry may serialize the same object with keys in another order. Without a canonical form, an honest retry would be rejected as a reused key.</p></explain>
+</question>
+
+<question id="idem-same-tx" type="choice">
+<q>Why must the stored response be written in the same transaction as the transfer?</q>
+<option>It is faster than two transactions</option>
+<option correct>If the transfer committed but storing the response did not (a crash in between), the next retry would run the transfer again</option>
+<option>So the response can include the transaction id</option>
+<option>Because jsonb columns can only be written inside a transaction</option>
+<explain><p>The work and the record of the work must agree. In one transaction, either both exist or neither does, so a retry either replays or safely redoes.</p></explain>
+</question>
+
+<question id="idem-409" type="choice">
+<q>A retry arrives while the first request with the same key is still running. What should the server answer?</q>
+<option>Run the transfer a second time in parallel</option>
+<option>Wait forever until the first finishes</option>
+<option correct>409 Conflict (with Retry-After), so the client tries again shortly and then gets the stored result</option>
+<option>422, because the key was reused</option>
+<explain><p>The request is identical, so it is not a misuse (422). It is simply too early. A short 409 lets the first request finish; the next retry replays its result.</p></explain>
+</question>
+
+<question id="idem-lock-expiry" type="choice">
+<q>A server claims a key, marks it in progress, and crashes before committing the transfer. Without a lock expiry, what happens?</q>
+<option>The next retry runs the transfer normally</option>
+<option correct>Every retry gets 409 forever: the user can never complete that transfer with that key</option>
+<option>The database removes the key when the server restarts</option>
+<option>The transfer is committed automatically</option>
+<explain><p>The key row was committed before the crash, and nothing ever marks it complete. An expiry on the lock lets a later retry take the key over.</p></explain>
+</question>
+
+<question id="idem-fencing" type="choice">
+<q>Server A holds a key's lock, becomes very slow, and its lock expires. A retry takes over and completes the transfer. Then server A tries to finish. What stops a second transfer?</q>
+<option>Nothing; this case cannot be handled</option>
+<option>The CHECK constraint on the balance</option>
+<option correct>The fencing token: completing requires the current <code>lock_id</code>, A's is outdated, so A's transaction rolls back with its transfer</option>
+<option>The request fingerprint</option>
+<explain><p>A lock expiry alone means two holders can believe they own the key. Tying completion to a token that changes on takeover lets only the current holder commit.</p></explain>
+</question>
+
+<question id="idem-business-error" type="choice">
+<q>A transfer is refused with 422 "insufficient funds". The client retries with the same key. What should it get?</q>
+<option>The transfer is attempted again, because the balance might have changed</option>
+<option correct>The stored 422 again: it is the final answer to that request; a new attempt after topping up is a new intent with a new key</option>
+<option>500, because replaying errors is not allowed</option>
+<option>409, because the key is still in use</option>
+<explain><p>Business rejections are real answers. Replaying them keeps the key's meaning simple: one intent, one outcome. Only unexpected errors release the key.</p></explain>
+</question>
+
+<question id="idem-500" type="choice">
+<q>The database is briefly unreachable and the handler throws. What should happen to the idempotency key?</q>
+<option>Store the 500 response, so retries replay it</option>
+<option correct>Release it, so a retry can try the transfer again</option>
+<option>Keep it in progress until someone deletes it by hand</option>
+<option>Mark it completed with an empty body</option>
+<explain><p>An unexpected error says nothing about the request, and the transaction rolled back, so nothing happened. Replaying a stored 500 would turn a short outage into a permanent failure for that intent.</p></explain>
+</question>
+
+<question id="idem-memory-map" type="choice">
+<q>A team stores idempotency keys in a JavaScript <code>Map</code> inside the server. They run three copies behind a load balancer. What goes wrong?</q>
+<option>Nothing, as long as keys are UUIDs</option>
+<option correct>A retry that reaches a different copy (or the same copy after a restart) finds no key and transfers again</option>
+<option>The Map becomes too slow after 100 keys</option>
+<option>JavaScript Maps cannot store strings as keys</option>
+<explain><p>Keys must live where every copy sees them and where they survive restarts: the database, ideally in the same transaction as the work.</p></explain>
+</question>
+
+<question id="idem-client-retry" type="choice">
+<q>Which responses should a transfer client retry, using the same idempotency key?</q>
+<option>All of them, until it gets a 201</option>
+<option>Only 201 and 200</option>
+<option correct>Network errors, 409 "in progress", 429 and 5xx; never 400 or 422</option>
+<option>Only network errors; any HTTP response is final</option>
+<explain><p>Retry what might succeed later. A 400 or 422 will fail the same way every time. Thanks to the key, retrying the others can never cause a second transfer.</p></explain>
+</question>
+
+<question id="idem-jitter" type="choice">
+<q>Why add random jitter to retry delays?</q>
+<option>To make the delays harder for attackers to predict</option>
+<option correct>So thousands of clients that failed at the same moment do not all retry at the same moment and overload the server again</option>
+<option>Because <code>setTimeout</code> is not precise</option>
+<option>To make tests non-deterministic</option>
+<explain><p>Without jitter, clients synchronized by one outage stay synchronized, and every retry wave hits at once. Random spreading turns a spike into a gentle slope.</p></explain>
+</question>
+
+<question id="idem-exactly-once" type="choice">
+<q>Which statement about "exactly-once delivery" is accurate?</q>
+<option>HTTP/2 guarantees exactly-once delivery</option>
+<option>A database transaction guarantees a request is received exactly once</option>
+<option correct>Over an unreliable network you get at-least-once delivery; idempotent processing makes the effect happen once</option>
+<option>It is impossible to prevent duplicate effects</option>
+<explain><p>To be sure a message arrived, a sender must be willing to send it again, so duplicates are possible. Idempotent processing makes duplicates harmless: effectively once.</p></explain>
+</question>
+
+<question id="idem-outbox" type="choice">
+<q>A transfer must also send an SMS. Where should the SMS be triggered?</q>
+<option>Inside the transaction, before COMMIT</option>
+<option>After COMMIT, in the same request handler</option>
+<option correct>By inserting an outbox row in the same transaction; a worker sends the SMS later, using the row id as its idempotency key</option>
+<option>In the mobile app, after it receives the 201</option>
+<explain><p>Inside the transaction, a later rollback leaves an SMS for a transfer that never happened. After the commit, a crash loses the SMS. The outbox row exists exactly when the transfer does.</p></explain>
+</question>
+
+<question id="idem-out-post-twice" type="output">
+<q>What does this print?</q>
+<code file="post-twice.js">
+const accounts = { ada: 50000, bola: 5000 };
+
+function transfer(from, to, amount) {
+  accounts[from] -= amount;
+  accounts[to] += amount;
+  return { status: 201 };
+}
+
+transfer("ada", "bola", 10000);
+transfer("ada", "bola", 10000);
+console.log(accounts);
+</code>
+<option correct>{ ada: 30000, bola: 25000 }</option>
+<option>{ ada: 40000, bola: 15000 }</option>
+<option>{ ada: 50000, bola: 5000 }</option>
+<option>{ ada: 30000, bola: 15000 }</option>
+<explain><p>Two identical requests are two transfers. Nothing in the request says "this is the same one again", which is what an idempotency key adds.</p></explain>
+</question>
+
+<question id="idem-out-keyed" type="output">
+<q>The same transfer, now with a key store. What does this print?</q>
+<code file="keyed.js">
+const accounts = { ada: 50000, bola: 5000 };
+const seen = new Map();
+
+function transfer(key, from, to, amount) {
+  if (seen.has(key)) return { ...seen.get(key), replayed: true };
+  accounts[from] -= amount;
+  accounts[to] += amount;
+  const response = { status: 201, transferId: seen.size + 1 };
+  seen.set(key, response);
+  return response;
+}
+
+console.log(transfer("k1", "ada", "bola", 10000));
+console.log(transfer("k1", "ada", "bola", 10000));
+console.log(accounts);
+</code>
+<option correct>{ status: 201, transferId: 1 }
+{ status: 201, transferId: 1, replayed: true }
+{ ada: 40000, bola: 15000 }</option>
+<option>{ status: 201, transferId: 1 }
+{ status: 201, transferId: 2 }
+{ ada: 30000, bola: 25000 }</option>
+<option>{ status: 201, transferId: 1 }
+{ status: 201, transferId: 1, replayed: true }
+{ ada: 30000, bola: 25000 }</option>
+<option>{ status: 201, transferId: 1 }
+undefined
+{ ada: 40000, bola: 15000 }</option>
+<explain><p>The second call finds the key and returns the stored response, marked as a replay, without touching the balances. (A real store lives in the database, not a Map.)</p></explain>
+</question>
+
+<question id="idem-out-new-key-each-time" type="output">
+<q>The client generates a new key for each attempt. What does this print?</q>
+<code file="new-key.js">
+const seen = new Set();
+let transfers = 0;
+
+function handle(key) {
+  if (seen.has(key)) return "replayed";
+  seen.add(key);
+  transfers++;
+  return "created";
+}
+
+let attempt = 0;
+const newKey = () => `key-${++attempt}`;
+console.log(handle(newKey()), handle(newKey()), transfers);
+</code>
+<option correct>created created 2</option>
+<option>created replayed 1</option>
+<option>created replayed 2</option>
+<option>replayed replayed 0</option>
+<explain><p>Each retry carries a different key, so the server cannot connect it to the first attempt. The key must be created once per intent and reused.</p></explain>
+</question>
+
+<question id="idem-out-canonical" type="output">
+<q>What does this print?</q>
+<code file="canonical.js">
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${canonical(value[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+const a = { to: 2, from: 1, amountKobo: 1000000 };
+const b = { amountKobo: 1000000, from: 1, to: 2 };
+console.log(JSON.stringify(a) === JSON.stringify(b), canonical(a) === canonical(b));
+console.log(canonical(a));
+</code>
+<option correct>false true
+{"amountKobo":1000000,"from":1,"to":2}</option>
+<option>true true
+{"amountKobo":1000000,"from":1,"to":2}</option>
+<option>false true
+{"to":2,"from":1,"amountKobo":1000000}</option>
+<option>false false
+{"amountKobo":1000000,"from":1,"to":2}</option>
+<explain><p><code>JSON.stringify</code> keeps insertion order, so the two texts differ even though they describe the same request. The canonical form sorts keys, so the fingerprints match.</p></explain>
+</question>
+
+<question id="idem-out-conditional" type="output">
+<q>This simulates a conditional debit. What does it print?</q>
+<code file="conditional.js">
+const account = { balance: 15000 };
+
+function debit(amount) {
+  if (account.balance < amount) return 0;
+  account.balance -= amount;
+  return 1;
+}
+
+const changed = [debit(10000), debit(10000), debit(5000)];
+console.log(changed, account.balance);
+</code>
+<option correct>[ 1, 0, 1 ] 0</option>
+<option>[ 1, 1, 0 ] -5000</option>
+<option>[ 1, 0, 0 ] 5000</option>
+<option>[ 1, 1, 1 ] -10000</option>
+<explain><p>The check and the change happen together, like <code>UPDATE … WHERE balance &gt;= amount</code>, which returns the number of changed rows. The second debit finds only ₦5,000 and changes nothing; the third fits exactly.</p></explain>
+</question>
+
+<question id="idem-out-rollback" type="output">
+<q>A hand-made "transaction" copies the state and restores it on error. What does this print?</q>
+<code file="rollback.js">
+let state = { ada: 50000, bola: 5000 };
+
+function inTransaction(work) {
+  const saved = structuredClone(state);
+  try {
+    work(state);
+  } catch (error) {
+    state = saved;
+    console.log("rolled back:", error.message);
+  }
+}
+
+inTransaction((s) => {
+  s.ada -= 10000;
+  if (!("chidi" in s)) throw new Error("recipient chidi not found");
+  s.chidi += 10000;
+});
+console.log(state);
+</code>
+<option correct>rolled back: recipient chidi not found
+{ ada: 50000, bola: 5000 }</option>
+<option>rolled back: recipient chidi not found
+{ ada: 40000, bola: 5000 }</option>
+<option>{ ada: 40000, bola: 5000, chidi: NaN }</option>
+<option>rolled back: recipient chidi not found
+{ ada: 40000, bola: 5000, chidi: 10000 }</option>
+<explain><p>The debit happened, then the check failed, and restoring the saved copy undid the debit. A database transaction gives the same all-or-nothing effect, and also protects against crashes.</p></explain>
+</question>
+
+<question id="idem-out-lock" type="output">
+<q>A key was claimed at second 0 with a 30-second lock. What does this print?</q>
+<code file="lock.js">
+const key = { status: "in_progress", lockedUntil: 30 };
+
+function onRetry(now) {
+  if (key.status === "completed") return "replay";
+  if (key.lockedUntil > now) return "409 in progress";
+  key.lockedUntil = now + 30;
+  return "take over";
+}
+
+console.log([10, 29, 31, 45].map(onRetry).join(" | "));
+</code>
+<option correct>409 in progress | 409 in progress | take over | 409 in progress</option>
+<option>409 in progress | 409 in progress | take over | take over</option>
+<option>409 in progress | take over | take over | take over</option>
+<option>take over | take over | take over | take over</option>
+<explain><p>Before second 30 the lock is valid. At 31 the retry takes over and sets a new lock until 61, so the retry at 45 is again told to wait.</p></explain>
+</question>
+
+<question id="idem-out-fencing" type="output">
+<q>What does this print?</q>
+<code file="fencing.js">
+const keyRow = { lockId: "A", status: "in_progress" };
+
+function complete(lockId) {
+  if (keyRow.lockId !== lockId) return `${lockId}: lost the lock, roll back`;
+  keyRow.status = "completed";
+  return `${lockId}: committed`;
+}
+
+keyRow.lockId = "B";
+console.log(complete("B"));
+console.log(complete("A"));
+</code>
+<option correct>B: committed
+A: lost the lock, roll back</option>
+<option>B: committed
+A: committed</option>
+<option>B: lost the lock, roll back
+A: committed</option>
+<option>B: lost the lock, roll back
+A: lost the lock, roll back</option>
+<explain><p>B took the key over, so only B's lock id is current. A finishes late and is refused, so its transaction, and its transfer, roll back.</p></explain>
+</question>
+
+<question id="idem-out-backoff" type="output">
+<q>What delays (without jitter) does this backoff produce?</q>
+<code file="backoff.js">
+const delays = [1, 2, 3, 4, 5].map((attempt) => Math.min(50 * 2 ** (attempt - 1), 500));
+console.log(delays);
+</code>
+<option correct>[ 50, 100, 200, 400, 500 ]</option>
+<option>[ 50, 100, 150, 200, 250 ]</option>
+<option>[ 100, 200, 400, 800, 1600 ]</option>
+<option>[ 50, 100, 200, 400, 800 ]</option>
+<explain><p>Each wait doubles, and a cap stops it from growing without limit: 800 becomes 500. Real clients then add random jitter to each value.</p></explain>
+</question>
+
+<question id="idem-out-should-retry" type="output">
+<q>What does this print?</q>
+<code file="retry.js">
+const shouldRetry = (s) => s === "network" || s === 409 || s === 429 || s >= 500;
+console.log(["network", 201, 422, 409, 503].filter(shouldRetry));
+</code>
+<option correct>[ 'network', 409, 503 ]</option>
+<option>[ 'network', 422, 409, 503 ]</option>
+<option>[ 'network', 503 ]</option>
+<option>[ 201, 409, 503 ]</option>
+<explain><p>201 is success, and 422 is a final business answer. The rest may succeed later. <code>"network" &gt;= 500</code> is false, which is why the string is checked first.</p></explain>
+</question>
+
+<question id="idem-code-store" type="code" file="key-store.js">
+<q>Write <code>createKeyStore()</code> returning <code>handle(userId, key, fingerprint, work)</code>. A new <code>(userId, key)</code> runs <code>work()</code>, stores and returns its result. The same key and fingerprint returns the stored result with <code>replayed: true</code>. The same key with a different fingerprint returns <code>{ status: 422 }</code>. Keys are scoped per user.</q>
+<starter>
+function createKeyStore() {
+  // your code
+}
+
+const store = createKeyStore();
+let transfers = 0;
+const work = () => ({ status: 201, transferId: ++transfers });
+</starter>
+<solution>
+function createKeyStore() {
+  const entries = new Map();
+  return {
+    handle(userId, key, fingerprint, work) {
+      const id = `${userId}:${key}`;
+      const entry = entries.get(id);
+      if (entry && entry.fingerprint !== fingerprint) return { status: 422 };
+      if (entry) return { ...entry.result, replayed: true };
+      const result = work();
+      entries.set(id, { fingerprint, result });
+      return result;
+    },
+  };
+}
+
+const store = createKeyStore();
+let transfers = 0;
+const work = () => ({ status: 201, transferId: ++transfers });
+console.log(store.handle(1, "k1", "ada->bola 10000", work));
+console.log(store.handle(1, "k1", "ada->bola 10000", work));
+console.log(store.handle(1, "k1", "ada->bola 50000", work));
+console.log(store.handle(2, "k1", "bola->ada 1000", work));
+console.log(transfers);
+</solution>
+<expected>
+{ status: 201, transferId: 1 }
+{ status: 201, transferId: 1, replayed: true }
+{ status: 422 }
+{ status: 201, transferId: 2 }
+2
+</expected>
+<explain><p>The fingerprint check comes before the replay, so a reused key never returns another request's result. User 2's <code>k1</code> is a different entry. This in-memory version is fine as a test double; in production the store is a database table, written in the same transaction as the work.</p></explain>
+</question>
+
+<question id="idem-code-canonical" type="code" file="canonical-json.js">
+<q>Write <code>canonical(value)</code> that turns a JSON value into text with object keys sorted at every level (arrays keep their order). Print it for <code>{ to: 2, meta: { note: "rent", channel: "app" }, from: 1 }</code>.</q>
+<starter>
+function canonical(value) {
+  // your code
+}
+</starter>
+<solution>
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const parts = Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`);
+    return `{${parts.join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+console.log(canonical({ to: 2, meta: { note: "rent", channel: "app" }, from: 1 }));
+</solution>
+<expected>
+{"from":1,"meta":{"channel":"app","note":"rent"},"to":2}
+</expected>
+<explain><p>Nested objects must be sorted too, or a retry that serializes <code>meta</code> differently gets a different fingerprint. Array order is meaningful data, so it stays.</p></explain>
+</question>
+
+<question id="idem-code-validate" type="code" file="validate-transfer.js">
+<q>Write <code>checkTransfer({ userId, from, to, amountKobo }, accounts)</code>. <code>accounts</code> maps an account id to <code>{ owner, status, balance }</code>. Return the first problem as a string, in this order: <code>"invalid_amount"</code> (not a positive safe integer), <code>"same_account"</code>, <code>"account_not_found"</code> (missing or not owned by <code>userId</code>), <code>"account_not_active"</code>, <code>"recipient_unavailable"</code> (missing or not active), <code>"insufficient_funds"</code>; else <code>"ok"</code>.</q>
+<starter>
+const accounts = {
+  1: { owner: 1, status: "active", balance: 5000000 },
+  2: { owner: 2, status: "active", balance: 500000 },
+  3: { owner: 3, status: "frozen", balance: 2000000 },
+};
+
+function checkTransfer(request, accounts) {
+  // your code
+}
+</starter>
+<solution>
+const accounts = {
+  1: { owner: 1, status: "active", balance: 5000000 },
+  2: { owner: 2, status: "active", balance: 500000 },
+  3: { owner: 3, status: "frozen", balance: 2000000 },
+};
+
+function checkTransfer({ userId, from, to, amountKobo }, accounts) {
+  if (!Number.isSafeInteger(amountKobo) || amountKobo <= 0) return "invalid_amount";
+  if (from === to) return "same_account";
+  const sender = accounts[from];
+  if (!sender || sender.owner !== userId) return "account_not_found";
+  if (sender.status !== "active") return "account_not_active";
+  const recipient = accounts[to];
+  if (!recipient || recipient.status !== "active") return "recipient_unavailable";
+  if (sender.balance < amountKobo) return "insufficient_funds";
+  return "ok";
+}
+
+const tries = [
+  { userId: 1, from: 1, to: 2, amountKobo: 1000000 },
+  { userId: 1, from: 1, to: 2, amountKobo: 0.5 },
+  { userId: 2, from: 1, to: 2, amountKobo: 100 },
+  { userId: 3, from: 3, to: 1, amountKobo: 100 },
+  { userId: 1, from: 1, to: 99, amountKobo: 100 },
+  { userId: 2, from: 2, to: 1, amountKobo: 900000 },
+];
+console.log(tries.map((t) => checkTransfer(t, accounts)));
+</solution>
+<expected>
+[
+  'ok',
+  'invalid_amount',
+  'account_not_found',
+  'account_not_active',
+  'recipient_unavailable',
+  'insufficient_funds'
+]
+</expected>
+<explain><p>Every question from the reasoning block becomes one check, done before any money moves. In the database version the balance check is part of the debit itself, so it cannot race with another transfer.</p></explain>
+</question>
+
+<question id="idem-code-retry-loop" type="code" file="retry-loop.js">
+<q>Write <code>async function sendWithRetries(send, maxAttempts)</code>. It creates one key (<code>"intent-1"</code>) before the loop and calls <code>await send(key)</code>, which returns a status number or throws for a network error. Retry on a thrown error, 409, 429 or 5xx; return the first other status. Print each attempt as <code>attempt N: …</code>. If all attempts fail, return <code>"unknown"</code>.</q>
+<starter>
+const outcomes = ["network", 503, 201];
+const keysSeen = [];
+async function send(key) {
+  keysSeen.push(key);
+  const outcome = outcomes.shift();
+  if (outcome === "network") throw new Error("socket hang up");
+  return outcome;
+}
+
+async function sendWithRetries(send, maxAttempts) {
+  // your code
+}
+</starter>
+<solution>
+const outcomes = ["network", 503, 201];
+const keysSeen = [];
+async function send(key) {
+  keysSeen.push(key);
+  const outcome = outcomes.shift();
+  if (outcome === "network") throw new Error("socket hang up");
+  return outcome;
+}
+
+async function sendWithRetries(send, maxAttempts) {
+  const key = "intent-1";
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const status = await send(key);
+      console.log(`attempt ${attempt}: ${status}`);
+      if (status !== 409 && status !== 429 && status < 500) return status;
+    } catch (error) {
+      console.log(`attempt ${attempt}: network error`);
+    }
+  }
+  return "unknown";
+}
+
+console.log(await sendWithRetries(send, 5));
+console.log(keysSeen);
+</solution>
+<expected>
+attempt 1: network error
+attempt 2: 503
+attempt 3: 201
+201
+[ 'intent-1', 'intent-1', 'intent-1' ]
+</expected>
+<explain><p>The key is made once, outside the loop, so every attempt carries the same key and the server can recognise the retries. A real client also waits between attempts, with backoff and jitter.</p></explain>
+</question>
+
+<question id="idem-code-lock" type="code" file="lock-takeover.js">
+<q>Write <code>begin(row, now, lockMs)</code> for a key row <code>{ status, lockedUntil, lockId }</code>. If the status is <code>"completed"</code> return <code>"replay"</code>. If the lock is still valid (<code>lockedUntil &gt; now</code>) return <code>"409"</code>. Otherwise take over: set a new <code>lockedUntil</code> and a new <code>lockId</code> (use <code>row.lockId + "'"</code>) and return <code>"proceed " + lockId</code>.</q>
+<starter>
+const row = { status: "in_progress", lockedUntil: 30000, lockId: "A" };
+
+function begin(row, now, lockMs) {
+  // your code
+}
+</starter>
+<solution>
+const row = { status: "in_progress", lockedUntil: 30000, lockId: "A" };
+
+function begin(row, now, lockMs) {
+  if (row.status === "completed") return "replay";
+  if (row.lockedUntil > now) return "409";
+  row.lockedUntil = now + lockMs;
+  row.lockId = row.lockId + "'";
+  return `proceed ${row.lockId}`;
+}
+
+console.log(begin(row, 10000, 30000));
+console.log(begin(row, 31000, 30000));
+console.log(begin(row, 40000, 30000));
+row.status = "completed";
+console.log(begin(row, 99000, 30000));
+</solution>
+<expected>
+409
+proceed A'
+409
+replay
+</expected>
+<explain><p>The takeover changes the lock id, so the original holder can no longer complete: that is the fencing token. In SQL the takeover is one conditional <code>UPDATE … WHERE locked_until &lt; now</code>, so two retries cannot both take over.</p></explain>
+</question>
+
+<question id="idem-code-ship" type="code" file="ship-order.js">
+<q>Make shipping naturally idempotent. Write <code>markShipped(order)</code> for an object <code>{ status }</code>: a <code>"paid"</code> order becomes <code>"shipped"</code> and returns <code>"shipped"</code>; an already shipped order returns <code>"already shipped"</code> without error; any other status returns <code>"error: order is &lt;status&gt;"</code>. Call it twice on a paid order and once on a cancelled one.</q>
+<starter>
+function markShipped(order) {
+  // your code
+}
+
+const paid = { status: "paid" };
+const cancelled = { status: "cancelled" };
+</starter>
+<solution>
+function markShipped(order) {
+  if (order.status === "paid") {
+    order.status = "shipped";
+    return "shipped";
+  }
+  if (order.status === "shipped") return "already shipped";
+  return `error: order is ${order.status}`;
+}
+
+const paid = { status: "paid" };
+const cancelled = { status: "cancelled" };
+console.log(markShipped(paid));
+console.log(markShipped(paid));
+console.log(markShipped(cancelled));
+</solution>
+<expected>
+shipped
+already shipped
+error: order is cancelled
+</expected>
+<explain><p>Setting a target state is idempotent: doing it again changes nothing. Reporting the repeat as success, not as an error, lets clients retry freely. Moving money is not like this, which is why transfers need keys.</p></explain>
+</question>
+
+<question id="idem-code-invariant" type="code" file="invariant.js">
+<q>Write <code>checkInvariant(before, after)</code> that compares two balance objects and prints <code>"ok: total ₦X"</code> when the totals (in kobo) are equal, or <code>"broken: ₦Y went missing"</code> (or <code>"appeared"</code> when positive) when they differ. Amounts are in kobo; print naira with <code>/ 100</code> and <code>toLocaleString("en-NG")</code>.</q>
+<starter>
+const before = { ada: 5000000, bola: 500000, chidi: 2000000 };
+const goodAfter = { ada: 4000000, bola: 1500000, chidi: 2000000 };
+const badAfter = { ada: 4000000, bola: 500000, chidi: 2000000 };
+
+function checkInvariant(before, after) {
+  // your code
+}
+</starter>
+<solution>
+const before = { ada: 5000000, bola: 500000, chidi: 2000000 };
+const goodAfter = { ada: 4000000, bola: 1500000, chidi: 2000000 };
+const badAfter = { ada: 4000000, bola: 500000, chidi: 2000000 };
+
+function checkInvariant(before, after) {
+  const total = (b) => Object.values(b).reduce((sum, kobo) => sum + kobo, 0);
+  const naira = (kobo) => `₦${(kobo / 100).toLocaleString("en-NG")}`;
+  const difference = total(after) - total(before);
+  if (difference === 0) console.log(`ok: total ${naira(total(after))}`);
+  else console.log(`broken: ${naira(Math.abs(difference))} ${difference < 0 ? "went missing" : "appeared"}`);
+}
+
+checkInvariant(before, goodAfter);
+checkInvariant(before, badAfter);
+</solution>
+<expected>
+ok: total ₦75,000
+broken: ₦10,000 went missing
+</expected>
+<explain><p>A transfer moves money but never creates or destroys it. Checking that invariant after every test catches partial failures, double debits and lost credits, whatever caused them.</p></explain>
+</question>

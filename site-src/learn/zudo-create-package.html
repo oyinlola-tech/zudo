@@ -1,0 +1,1082 @@
+---
+title: Creating a ZudoJS package
+description: Build @mycompany/zudo-payments as a real npm package: public and internal API, ZudoJS errors, a provider adapter, Vitest tests, checked docs, changesets and a verified tarball.
+minutes: 60
+youNeed: Reading ZudoJS internals, Publishing TypeScript packages, the ZudoJS error system, Adapters, and Testing a ZudoJS app
+youBuild: The @mycompany/zudo-payments package: a payment service with idempotent charges, four ZudoJS error classes, a Paystack adapter tested without the network, a testing entry point, checked documentation and a release flow with changesets
+keywords: create zudojs package, npm package typescript, exports map, public api, internal api, peerDependencies, zudojs errors extend, adapter pattern, payment provider adapter, vitest, @zudojs/docs, changesets, semantic versioning, npm pack dry-run, idempotency
+objectives: Lay out a package the way the @zudojs packages are laid out, with a barrel per entry point and internal code that cannot be imported | Choose between dependencies and peerDependencies for @zudojs packages and explain what goes wrong with the wrong choice | Define errors that extend @zudojs/errors, with stable codes and safe public output | Write a provider adapter on the @zudojs/adapters contract and test it with an injected fetch | Test, document and check a package, then version it with changesets and verify the tarball before publishing
+---
+<section>
+<h2 id="problem">Three services, three copies of the payment code</h2>
+<p>Your company runs three ZudoJS services that take money: the shop, the bookings app and the invoicing service. Each one charges saved cards through Paystack, and each has its own copy of the charging code, pasted from the first. Last month the shop fixed a serious bug: when a customer double-clicked "Pay", the request arrived twice and the card was charged twice. The fix never reached the other two services, because nobody remembered the copies existed.</p>
+<p>The cure is to write the code once, as a <strong>package</strong> that all three services install: <code>@mycompany/zudo-payments</code>. A fix is then one release and three version bumps. But a package is a stronger promise than a folder of shared code. Other teams will import it, so its public API must be deliberate; it must fit into ZudoJS apps (their errors, their adapters, their copy of <code>@zudojs/errors</code>); and every release must say honestly whether it can break them.</p>
+<p>In <a href="/learn/zudo-internals">Reading ZudoJS internals</a> you took the published <code>@zudojs</code> packages apart. In this lesson you build one of your own with the same structure, then test it, document it, version it and check exactly what would be published. Every file is shown, and every command runs.</p>
+<note>The examples form one project that is built and imported like a real package, so they run in Node.js only. On your computer, create an empty folder, run <code>npm init -y</code>, install the dev dependencies listed in <code>package.json</code> below, and add the files as you read.</note>
+</section>
+
+<section>
+<h2 id="reason">Before you write package.json</h2>
+<reason title="What does a payment package promise, and to whom?">
+<p>Think about these before looking at any file. The package will run inside apps that already have <code>@zudojs/errors</code> installed: should it bring its own copy? Which of its functions may other teams import, and which are yours to change at will? A customer double-clicks "Pay": what must happen on the second request, and what if it arrives while the first is still waiting for Paystack? What can fail during a charge, and which failures may the customer see? How do you test charging without charging anyone? And when you change something next month, how do the three services know whether upgrading is safe?</p>
+<answer>
+<ul>
+<li><strong>No own copy of <code>@zudojs/errors</code>.</strong> A second copy means a second <code>BaseError</code> class, and the app's <code>instanceof</code> checks fail. It must be a <em>peer dependency</em>: "the app provides it".</li>
+<li><strong>Public API:</strong> only what the entry file exports, enforced by the <code>exports</code> map. Everything else lives in files that cannot be imported, so you can change them in any release.</li>
+<li><strong>Double requests:</strong> the order reference is the idempotency key. A second request for a completed reference gets the first payment back; one that arrives during the first charge waits for the same result. The same reference with a different amount is a mistake, and must fail loudly.</li>
+<li><strong>Failures:</strong> invalid input (the client can fix it, 400), a declined card (a normal outcome the customer must see, 402), a reused reference (409), and the provider failing or unreachable (502, whose details are for your logs, not the customer).</li>
+<li><strong>Testing:</strong> the provider sits behind an interface (an adapter), so tests use a fake. The real adapter takes <code>fetch</code> as an option, so even it can be tested with a fake network.</li>
+<li><strong>Upgrades:</strong> semantic versioning, with changesets recording why each version exists. Error codes and exports are part of the promise.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="layout">The layout and the manifest</h2>
+<p>Follow the shape of the <code>@zudojs</code> packages you read: source in <code>src</code>, one folder per concern, dot-notation file names, a barrel file per entry point, compiled output in <code>dist</code>.</p>
+<figure class="lx-diagram">
+<pre>
+zudo-payments/
+  package.json            name, exports map, peer dependencies, scripts
+  tsconfig.json           type checking for everything (no output)
+  tsconfig.build.json     compiles src/ into dist/
+  README.md  LICENSE
+  docs/errors.md          one page per topic, checked in CI
+  src/
+    index.ts              barrel: the public API        -> "@mycompany/zudo-payments"
+    testing/index.ts      barrel: test helpers          -> "@mycompany/zudo-payments/testing"
+    payment/              payment.type.ts  payment.service.ts
+    errors/               payment.error.ts
+    provider/             provider.type.ts  paystack.provider.ts
+    internal/             money.ts          (never exported)
+  tests/                  *.test.ts, run by Vitest, never published
+</pre>
+<figcaption>The package's files. Only src becomes dist, and only dist, README, LICENSE and package.json are published.</figcaption>
+</figure>
+<p>The manifest carries most of the decisions:</p>
+<file name="package.json" project="payments">
+{
+  "name": "@mycompany/zudo-payments",
+  "version": "0.1.0",
+  "description": "Card payments for ZudoJS apps: a payment service, provider adapters and ZudoJS errors.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist"],
+  "sideEffects": false,
+  "engines": { "node": ">=24" },
+  "keywords": ["zudojs", "payments", "adapter"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "peerDependencies": {
+    "@zudojs/adapters": "^1.2.0",
+    "@zudojs/errors": "^1.3.0"
+  },
+  "devDependencies": {
+    "@zudojs/adapters": "^1.2.3",
+    "@zudojs/errors": "^1.3.2",
+    "@types/node": "^24.0.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  }
+}
+</file>
+<ul>
+<li><strong><code>exports</code></strong> opens exactly two doors: the main API and a <code>./testing</code> entry for the fake provider. Test helpers get their own entry so that production code does not import them by accident. Unlike most <code>@zudojs</code> packages, it also exports <code>./package.json</code>, so tools can read the version (you met that gap in the last lesson). Inside each entry, <code>types</code> comes first, as <a href="/learn/ts-publishing#package-json">Publishing TypeScript packages</a> explains.</li>
+<li><strong><code>peerDependencies</code></strong> for both <code>@zudojs</code> packages, with a caret range. The app's copy is used, so there is one <code>BaseError</code> class in the whole process. The same packages are in <code>devDependencies</code>, so you can build and test. A plain <code>dependencies</code> entry would let npm install a private copy whenever the versions disagree, which is exactly the duplicate problem the exact pins of the <code>@zudojs</code> packages can cause.</li>
+<li><strong><code>files</code></strong> is an allow-list: only <code>dist</code> (plus the README, LICENSE and <code>package.json</code>, which npm always adds).</li>
+<li><strong><code>prepublishOnly</code></strong> runs before <code>npm publish</code>: nothing is uploaded unless it type-checks, passes its tests and builds.</li>
+<li><strong><code>sideEffects: false</code></strong> tells bundlers that importing a file does nothing by itself, so unused exports can be removed.</li>
+</ul>
+<p>Two TypeScript configurations: one that checks everything, including tests and scripts, and one that compiles only <code>src</code> into <code>dist</code> with declarations:</p>
+<file name="tsconfig.json" project="payments">
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
+    "types": ["node"]
+  },
+  "exclude": ["dist", "node_modules"]
+}
+</file>
+<file name="tsconfig.build.json" project="payments">
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true
+  },
+  "include": ["src"]
+}
+</file>
+</section>
+
+<section>
+<h2 id="types">Types: the contract</h2>
+<p>Start with the types, because every other file and every user of the package depends on them. Amounts are integers in <strong>kobo</strong> (₦1 = 100 kobo), the unit Paystack uses too, so no floating-point rounding can creep in (see <a href="/learn/logic-math">Mathematical reasoning</a>).</p>
+<file name="src/payment/payment.type.ts" project="payments">
+/** A request to charge a customer's saved card. Amounts are integers in kobo (₦1 = 100 kobo). */
+export interface ChargeRequest {
+  /** Your unique reference for this charge, usually the order number. Also the idempotency key. */
+  readonly reference: string;
+  readonly email: string;
+  readonly amountKobo: number;
+  /** The provider's token for a card the customer saved earlier. */
+  readonly authorizationCode: string;
+}
+
+/** A successful charge. */
+export interface Payment {
+  readonly reference: string;
+  readonly amountKobo: number;
+  readonly provider: string;
+  readonly providerReference: string;
+}
+
+/** What a provider adapter reports back for one charge attempt. */
+export interface ProviderChargeResult {
+  readonly status: "success" | "failed";
+  readonly providerReference: string;
+  readonly reason?: string;
+}
+</file>
+<p>Every property is <code>readonly</code> and every public type has a JSDoc comment: the comments travel into the <code>.d.ts</code> files and show up in your users' editors. Treat the types as API. Renaming <code>amountKobo</code> later is a breaking change even if no function changes.</p>
+</section>
+
+<section>
+<h2 id="errors">Errors that belong to ZudoJS</h2>
+<p>Inside the ZudoJS repository, every error class lives in <code>@zudojs/errors</code>. Your package cannot add classes to someone else's package, so it does what <code>@zudojs/container</code> does for its local errors: it <em>extends</em> the right base class from <code>@zudojs/errors</code>. Then every ZudoJS error handler already knows how to answer them.</p>
+<file name="src/errors/payment.error.ts" project="payments">
+import { ConflictError, DomainError, ExternalServiceError, ValidationError, isBaseError } from "@zudojs/errors";
+import type { BaseError, ValidationIssue } from "@zudojs/errors";
+
+/** Stable codes clients can rely on. Never change one; add a new one instead. */
+export const PaymentErrorCode = {
+  INVALID: "ERR_PAYMENT_INVALID",
+  DECLINED: "ERR_PAYMENT_DECLINED",
+  CONFLICT: "ERR_PAYMENT_CONFLICT",
+  PROVIDER: "ERR_PAYMENT_PROVIDER",
+} as const;
+
+/** The charge request itself is wrong: 400, safe to show. */
+export class InvalidPaymentError extends ValidationError {
+  constructor(issues: readonly ValidationIssue[]) {
+    super("The payment request is invalid.", { code: PaymentErrorCode.INVALID, issues });
+  }
+}
+
+/** The card was declined: a normal business outcome, 402, safe to show. */
+export class PaymentDeclinedError extends DomainError {
+  constructor(reference: string, reason: string) {
+    super(`Payment ${reference} was declined: ${reason}`, {
+      code: PaymentErrorCode.DECLINED,
+      statusCode: 402,
+      metadata: { reference, reason },
+    });
+  }
+}
+
+/** The same reference was reused for a different amount: 409. */
+export class PaymentConflictError extends ConflictError {
+  constructor(reference: string) {
+    super(`Reference ${reference} was already used for a different payment.`, {
+      code: PaymentErrorCode.CONFLICT,
+      metadata: { reference },
+    });
+  }
+}
+
+/** The provider failed or could not be reached: 502, details hidden from clients. */
+export class PaymentProviderError extends ExternalServiceError {
+  constructor(provider: string, reference: string, cause: unknown) {
+    super(`Provider ${provider} failed for payment ${reference}.`, {
+      code: PaymentErrorCode.PROVIDER,
+      service: provider,
+      operation: "charge",
+      statusCode: 502,
+      metadata: { reference },
+      cause,
+    });
+  }
+}
+
+/** True for any error from this package, even one created by another copy of it. */
+export function isPaymentError(value: unknown): value is BaseError {
+  return isBaseError(value) && value.code.startsWith("ERR_PAYMENT_");
+}
+</file>
+<p>Each class picks the base whose meaning fits, and inherits its category, severity and <code>expose</code> default. Only the code and, where the base's default is wrong, the status are set. <code>isPaymentError</code> uses <code>isBaseError</code> and the code prefix rather than <code>instanceof</code>, so it still works if an app somehow ends up with two copies of your package. Here is what a client and a log would see:</p>
+<example file="errors-demo.ts" project="payments" browser="no">
+import { serializePublicError } from "@zudojs/errors";
+import { PaymentDeclinedError, PaymentProviderError, isPaymentError } from "./src/errors/payment.error.js";
+
+const declined = new PaymentDeclinedError("ORD-1001", "Insufficient Funds");
+const down = new PaymentProviderError("paystack", "ORD-1002", new Error("ECONNRESET"));
+
+console.log(serializePublicError(declined));
+console.log(serializePublicError(down));
+console.log(String(down), "| cause for the log:", (down.cause as Error).message);
+console.log(isPaymentError(down), isPaymentError(new Error("other")));
+</example>
+<output>
+{
+  code: 'ERR_PAYMENT_DECLINED',
+  message: 'Payment ORD-1001 was declined: Insufficient Funds',
+  category: 'business',
+  statusCode: 402,
+  metadata: { reference: 'ORD-1001', reason: 'Insufficient Funds' }
+}
+{
+  code: 'ERR_PAYMENT_PROVIDER',
+  message: 'An unexpected error occurred.',
+  category: 'external_service',
+  statusCode: 502
+}
+PaymentProviderError [ERR_PAYMENT_PROVIDER]: Provider paystack failed for payment ORD-1002. | cause for the log: ECONNRESET
+true false
+</output>
+<p>The declined card is exposed with its reason, because the customer needs to know to try another card. The provider failure is reduced to a generic message: "ECONNRESET" and the provider's name mean nothing to a customer and tell an attacker about your infrastructure. The full detail stays on the error for your logs. The <a href="/learn/zudo-errors#serialize">error system lesson</a> explains both views. One gap to know: <code>serializePublicError</code> leaves out a <code>ValidationError</code>'s <code>issues</code>, so an app's error handler adds them to the response itself, as the Task API's handler in that lesson does. Say so in your README, because the issues are the useful part of <code>ERR_PAYMENT_INVALID</code>.</p>
+</section>
+
+<section>
+<h2 id="adapter">The provider adapter</h2>
+<p>The service must not know about Paystack's URLs or JSON. It talks to a <strong>provider adapter</strong>: an object with a fixed interface that translates between your types and one provider's API. The interface extends the <code>Adapter</code> contract from <code>@zudojs/adapters</code> (see <a href="/learn/zudo-adapters">Adapters</a>), so a host can register payment providers in an <code>AdapterRegistry</code> next to its other adapters:</p>
+<file name="src/provider/provider.type.ts" project="payments">
+import type { Adapter } from "@zudojs/adapters";
+import type { ChargeRequest, ProviderChargeResult } from "../payment/payment.type.js";
+
+/** The contract every payment provider adapter implements. */
+export interface PaymentProvider extends Adapter {
+  charge(request: ChargeRequest, options?: { readonly signal?: AbortSignal }): Promise<ProviderChargeResult>;
+}
+</file>
+<p>The Paystack adapter calls the <code>charge_authorization</code> endpoint, which charges a card the customer saved earlier. Two design choices make it testable and safe: <code>fetch</code> is an option (tests pass a fake), and every call has a timeout, so a provider that hangs cannot hold a request open forever.</p>
+<file name="src/provider/paystack.provider.ts" project="payments">
+import type { ChargeRequest, ProviderChargeResult } from "../payment/payment.type.js";
+import type { PaymentProvider } from "./provider.type.js";
+
+export interface PaystackProviderOptions {
+  /** Your secret key. Read it from an environment variable, never from code. */
+  readonly secretKey: string;
+  readonly baseUrl?: string;
+  /** Injected so tests can run without the network. Defaults to the global fetch. */
+  readonly fetch?: typeof fetch;
+  readonly timeoutMs?: number;
+}
+
+interface PaystackChargeResponse {
+  readonly status: boolean;
+  readonly message: string;
+  readonly data?: { readonly status: string; readonly reference: string; readonly gateway_response?: string };
+}
+
+/** Charges saved cards through Paystack's charge_authorization endpoint. */
+export function createPaystackProvider(options: PaystackProviderOptions): PaymentProvider {
+  if (!options.secretKey) throw new TypeError("createPaystackProvider: secretKey is required");
+  const send = options.fetch ?? fetch;
+  const baseUrl = options.baseUrl ?? "https://api.paystack.co";
+  return {
+    name: "paystack",
+    version: "0.1.0",
+    capabilities: { http: true, abortSignal: true },
+    async charge(request: ChargeRequest, call = {}): Promise<ProviderChargeResult> {
+      const timeout = AbortSignal.timeout(options.timeoutMs ?? 15_000);
+      const response = await send(`${baseUrl}/transaction/charge_authorization`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${options.secretKey}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          reference: request.reference,
+          email: request.email,
+          amount: request.amountKobo,
+          authorization_code: request.authorizationCode,
+        }),
+        signal: call.signal ? AbortSignal.any([call.signal, timeout]) : timeout,
+      });
+      if (!response.ok) throw new Error(`Paystack answered HTTP ${response.status}`);
+      const body = (await response.json()) as PaystackChargeResponse;
+      if (!body.status || !body.data) throw new Error(`Paystack refused the request: ${body.message}`);
+      return {
+        status: body.data.status === "success" ? "success" : "failed",
+        providerReference: body.data.reference,
+        ...(body.data.status === "success" ? {} : { reason: body.data.gateway_response ?? body.data.status }),
+      };
+    },
+  };
+}
+</file>
+<p>The adapter throws plain <code>Error</code>s. Deciding what a failure <em>means</em> (a 502 with a hidden cause) is the service's job, in one place, for every provider. The adapter also passes <code>request.reference</code> to Paystack, which refuses a second transaction with the same reference: a second line of defence behind the service's own idempotency.</p>
+<warn title="CHECK THE PROVIDER'S CURRENT API">The adapter maps only the fields it uses, from Paystack's documented response shape. Providers change their APIs; check the current reference before you ship an adapter, and keep the mapping in this one file so a change touches one place.</warn>
+</section>
+
+<section>
+<h2 id="service">The service, and code that stays internal</h2>
+<p>The service validates the request, applies idempotency, calls the adapter and turns every outcome into a <code>Payment</code> or one of the four errors. Its money helpers live in <code>src/internal</code>, a folder that no entry point re-exports:</p>
+<file name="src/internal/money.ts" project="payments">
+/** Internal: not exported from the package entry points. */
+const naira = new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN" });
+
+export function formatKobo(amountKobo: number): string {
+  return naira.format(amountKobo / 100);
+}
+
+export function isWholeKobo(amountKobo: number): boolean {
+  return Number.isSafeInteger(amountKobo) && amountKobo > 0;
+}
+</file>
+<file name="src/payment/payment.service.ts" project="payments">
+import type { ValidationIssue } from "@zudojs/errors";
+import { InvalidPaymentError, PaymentConflictError, PaymentDeclinedError, PaymentProviderError } from "../errors/payment.error.js";
+import { isWholeKobo } from "../internal/money.js";
+import type { PaymentProvider } from "../provider/provider.type.js";
+import type { ChargeRequest, Payment } from "./payment.type.js";
+
+export interface PaymentServiceOptions {
+  readonly provider: PaymentProvider;
+  /** Largest single charge in kobo. Default ₦5,000,000. */
+  readonly maxAmountKobo?: number;
+}
+
+export interface PaymentService {
+  /** Charges once per reference: repeating a reference returns the first payment. */
+  charge(request: ChargeRequest): Promise<Payment>;
+  find(reference: string): Payment | undefined;
+}
+
+export function createPaymentService(options: PaymentServiceOptions): PaymentService {
+  const { provider } = options;
+  const maxAmountKobo = options.maxAmountKobo ?? 500_000_000;
+  const completed = new Map<string, Payment>();
+  const inFlight = new Map<string, { amountKobo: number; promise: Promise<Payment> }>();
+
+  function validate(request: ChargeRequest): void {
+    const issues: ValidationIssue[] = [];
+    if (!request.reference.trim()) issues.push({ field: "reference", message: "is required" });
+    if (!request.email.includes("@")) issues.push({ field: "email", message: "must be an email address" });
+    if (!isWholeKobo(request.amountKobo)) issues.push({ field: "amountKobo", message: "must be a positive whole number of kobo" });
+    else if (request.amountKobo > maxAmountKobo) issues.push({ field: "amountKobo", message: `must be at most ${maxAmountKobo}` });
+    if (issues.length > 0) throw new InvalidPaymentError(issues);
+  }
+
+  async function attempt(request: ChargeRequest): Promise<Payment> {
+    let result;
+    try {
+      result = await provider.charge(request);
+    } catch (error) {
+      throw new PaymentProviderError(provider.name, request.reference, error);
+    }
+    if (result.status === "failed") throw new PaymentDeclinedError(request.reference, result.reason ?? "declined");
+    const payment: Payment = Object.freeze({
+      reference: request.reference,
+      amountKobo: request.amountKobo,
+      provider: provider.name,
+      providerReference: result.providerReference,
+    });
+    completed.set(request.reference, payment);
+    return payment;
+  }
+
+  return {
+    async charge(request) {
+      validate(request);
+      const earlier = completed.get(request.reference) ?? inFlight.get(request.reference);
+      if (earlier) {
+        if (earlier.amountKobo !== request.amountKobo) throw new PaymentConflictError(request.reference);
+        return "promise" in earlier ? earlier.promise : earlier;
+      }
+      const promise = attempt(request).finally(() => inFlight.delete(request.reference));
+      inFlight.set(request.reference, { amountKobo: request.amountKobo, promise });
+      return promise;
+    },
+    find: (reference) => completed.get(reference),
+  };
+}
+</file>
+<p>The idempotency logic is the in-flight pattern you traced in <code>getOrSet</code>, plus a map of completed payments. A declined or failed charge is never stored, so the customer can retry with another card. The maps live in memory, which is enough for one process; with several servers, the completed payments belong in the database, keyed by a unique <code>reference</code> column, as <a href="/learn/api-idempotency">Idempotency</a> shows.</p>
+<warn title="A TIMEOUT IS NOT A FAILED CHARGE">When the provider does not answer in time, the card may or may not have been charged: the outcome is unknown (<a href="/learn/zudo-adapters#timeouts">Adapters</a> walks through it). Version 0.1.0 reports it as <code>ERR_PAYMENT_PROVIDER</code> and stores nothing, and a retry with the same reference is refused by Paystack as a duplicate. The honest fix is to ask the provider what happened to that reference before retrying. That needs a new method on the provider contract, and the versioning section shows why adding it is a bigger change than it looks.</warn>
+</section>
+
+<section>
+<h2 id="public-api">The public API, built and imported by name</h2>
+<p>The barrel decides what is public. It uses named re-exports only, like <code>@zudojs/adapters</code>, never <code>export *</code>, so adding a helper to a file can never publish it by accident. Types are re-exported with <code>export type</code>, which <code>verbatimModuleSyntax</code> requires and which disappears from the JavaScript:</p>
+<file name="src/index.ts" project="payments">
+/**
+ * @mycompany/zudo-payments
+ *
+ * Card payments for ZudoJS applications. Public API only: anything not
+ * exported here is internal and may change in any release.
+ */
+export { createPaymentService } from "./payment/payment.service.js";
+export type { PaymentService, PaymentServiceOptions } from "./payment/payment.service.js";
+export type { ChargeRequest, Payment, ProviderChargeResult } from "./payment/payment.type.js";
+export type { PaymentProvider } from "./provider/provider.type.js";
+export { createPaystackProvider } from "./provider/paystack.provider.js";
+export type { PaystackProviderOptions } from "./provider/paystack.provider.js";
+export {
+  InvalidPaymentError,
+  PaymentConflictError,
+  PaymentDeclinedError,
+  PaymentErrorCode,
+  PaymentProviderError,
+  isPaymentError,
+} from "./errors/payment.error.js";
+</file>
+<p>The second entry point gives apps a fake provider for their own tests:</p>
+<file name="src/testing/index.ts" project="payments">
+/**
+ * @mycompany/zudo-payments/testing
+ *
+ * A fake provider for your tests. Import it from "@mycompany/zudo-payments/testing".
+ */
+import type { ChargeRequest, ProviderChargeResult } from "../payment/payment.type.js";
+import type { PaymentProvider } from "../provider/provider.type.js";
+
+export interface FakeProvider extends PaymentProvider {
+  /** Every charge request received, in order. */
+  readonly requests: readonly ChargeRequest[];
+}
+
+/**
+ * Approves every charge, except card tokens listed in `decline` (declined)
+ * and `fail` (the provider throws, as when it is down).
+ */
+export function createFakeProvider(rules: { readonly decline?: readonly string[]; readonly fail?: readonly string[] } = {}): FakeProvider {
+  const requests: ChargeRequest[] = [];
+  return {
+    name: "fake",
+    capabilities: {},
+    requests,
+    async charge(request): Promise<ProviderChargeResult> {
+      requests.push(request);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (rules.fail?.includes(request.authorizationCode)) throw new Error("connection reset");
+      const providerReference = `fake_${requests.length}`;
+      if (rules.decline?.includes(request.authorizationCode)) return { status: "failed", providerReference, reason: "Insufficient Funds" };
+      return { status: "success", providerReference };
+    },
+  };
+}
+</file>
+<p>Now build it, exactly as <code>npm run build</code> would:</p>
+<example file="build.ts" project="payments" browser="no">
+import { execFileSync } from "node:child_process";
+import { readdirSync, rmSync } from "node:fs";
+
+rmSync("dist", { recursive: true, force: true });
+execFileSync("node_modules/.bin/tsc", ["-p", "tsconfig.build.json"], { stdio: "inherit" });
+
+const files = readdirSync("dist", { recursive: true }).map(String).filter((f) => f.includes("."));
+console.log(files.sort().join("\n"));
+</example>
+<output>
+errors/payment.error.d.ts
+errors/payment.error.js
+index.d.ts
+index.js
+internal/money.d.ts
+internal/money.js
+payment/payment.service.d.ts
+payment/payment.service.js
+payment/payment.type.d.ts
+payment/payment.type.js
+provider/paystack.provider.d.ts
+provider/paystack.provider.js
+provider/provider.type.d.ts
+provider/provider.type.js
+testing/index.d.ts
+testing/index.js
+</output>
+<p><code>dist/internal/money.js</code> exists: the service needs it at run time. It is not reachable from outside, because no entry of the <code>exports</code> map leads to it. The declarations of the main entry are the API your users' editors show:</p>
+<example file="show-types.ts" project="payments" browser="no">
+import { readFileSync } from "node:fs";
+
+console.log(readFileSync("dist/index.d.ts", "utf8"));
+</example>
+<output>
+/**
+ * @mycompany/zudo-payments
+ *
+ * Card payments for ZudoJS applications. Public API only: anything not
+ * exported here is internal and may change in any release.
+ */
+export { createPaymentService } from "./payment/payment.service.js";
+export type { PaymentService, PaymentServiceOptions } from "./payment/payment.service.js";
+export type { ChargeRequest, Payment, ProviderChargeResult } from "./payment/payment.type.js";
+export type { PaymentProvider } from "./provider/provider.type.js";
+export { createPaystackProvider } from "./provider/paystack.provider.js";
+export type { PaystackProviderOptions } from "./provider/paystack.provider.js";
+export { InvalidPaymentError, PaymentConflictError, PaymentDeclinedError, PaymentErrorCode, PaymentProviderError, isPaymentError, } from "./errors/payment.error.js";
+</output>
+<p>Now use the package the way an app does, by its name. Node lets a package import <em>itself</em> by name when it has an <code>exports</code> map, so this script at the root of the package goes through exactly the same door as an app in another folder:</p>
+<example file="use-package.ts" project="payments" browser="no">
+import { createPaymentService, isPaymentError } from "@mycompany/zudo-payments";
+import { createFakeProvider } from "@mycompany/zudo-payments/testing";
+
+const provider = createFakeProvider({ decline: ["AUTH_broke"], fail: ["AUTH_down"] });
+const payments = createPaymentService({ provider });
+
+const order = { reference: "ORD-1001", email: "ada@example.com", amountKobo: 1_250_000, authorizationCode: "AUTH_ok" };
+const [first, doubleClick] = await Promise.all([payments.charge(order), payments.charge(order)]);
+console.log(first.providerReference, "same payment:", first === doubleClick, "provider calls:", provider.requests.length);
+
+const attempts = [
+  { ...order, amountKobo: 999 },
+  { ...order, reference: "ORD-1002", authorizationCode: "AUTH_broke" },
+  { ...order, reference: "ORD-1003", authorizationCode: "AUTH_down" },
+  { ...order, reference: "ORD-1004", amountKobo: 12.5, email: "ada" },
+];
+for (const attempt of attempts) {
+  try {
+    await payments.charge(attempt);
+  } catch (error) {
+    if (!isPaymentError(error)) throw error;
+    console.log(error.code, error.statusCode, error.message);
+  }
+}
+</example>
+<output>
+fake_1 same payment: true provider calls: 1
+ERR_PAYMENT_CONFLICT 409 Reference ORD-1001 was already used for a different payment.
+ERR_PAYMENT_DECLINED 402 Payment ORD-1002 was declined: Insufficient Funds
+ERR_PAYMENT_PROVIDER 502 Provider fake failed for payment ORD-1003.
+ERR_PAYMENT_INVALID 400 The payment request is invalid.
+</output>
+<p>The double click cost one provider call, and every failure arrives as a ZudoJS error with its own code and status. And the internal folder really is internal:</p>
+<example file="internal-blocked.ts" project="payments" browser="no">
+const main = await import("@mycompany/zudo-payments");
+const testing = await import("@mycompany/zudo-payments/testing");
+console.log("main:", Object.keys(main).sort().join(", "));
+console.log("testing:", Object.keys(testing).join(", "));
+
+for (const specifier of ["@mycompany/zudo-payments/internal/money", "@mycompany/zudo-payments/dist/internal/money.js"]) {
+  try {
+    await import(specifier);
+  } catch (error) {
+    console.log(specifier, "->", (error as NodeJS.ErrnoException).code);
+  }
+}
+</example>
+<output>
+main: InvalidPaymentError, PaymentConflictError, PaymentDeclinedError, PaymentErrorCode, PaymentProviderError, createPaymentService, createPaystackProvider, isPaymentError
+testing: createFakeProvider
+@mycompany/zudo-payments/internal/money -> ERR_PACKAGE_PATH_NOT_EXPORTED
+@mycompany/zudo-payments/dist/internal/money.js -> ERR_PACKAGE_PATH_NOT_EXPORTED
+</output>
+<p>The types protect the API too. An app that passes naira as a string is stopped by the compiler, with your field name in the message:</p>
+<example file="wrong-amount.ts" project="payments" browser="no" check="tsc-error">
+import { createPaymentService } from "@mycompany/zudo-payments";
+import { createFakeProvider } from "@mycompany/zudo-payments/testing";
+
+const payments = createPaymentService({ provider: createFakeProvider() });
+await payments.charge({ reference: "ORD-7", email: "ada@example.com", amountKobo: "₦2,500", authorizationCode: "AUTH_ok" });
+</example>
+<output kind="tsc">
+wrong-amount.ts:5:71 - error TS2322: Type 'string' is not assignable to type 'number'.
+
+5 await payments.charge({ reference: "ORD-7", email: "ada@example.com", amountKobo: "₦2,500", authorizationCode: "AUTH_ok" });
+                                                                        ~~~~~~~~~~
+
+  dist/payment/payment.type.d.ts:6:14 - The expected type comes from property 'amountKobo' which is declared here on type 'ChargeRequest'
+    6     readonly amountKobo: number;
+                   ~~~~~~~~~~
+
+
+Found 1 error in wrong-amount.ts:5
+</output>
+</section>
+
+<section>
+<h2 id="host">In a ZudoJS host</h2>
+<p>An app installs the package, reads the secret key from the environment and registers the adapter in its <code>AdapterRegistry</code>. Here the "network" is a fake <code>fetch</code> that answers like Paystack, so you can see the whole path without charging a card:</p>
+<example file="host.ts" project="payments" browser="no">
+import { AdapterRegistry } from "@zudojs/adapters";
+import { createPaymentService, createPaystackProvider } from "@mycompany/zudo-payments";
+import type { PaymentProvider } from "@mycompany/zudo-payments";
+
+const paystackLike: typeof fetch = async (url, init) => {
+  const body = JSON.parse(String(init?.body));
+  console.log("POST", String(url).replace("https://api.paystack.co", ""), "amount", body.amount);
+  const data = { status: "success", reference: `ps_${body.reference}` };
+  return Response.json({ status: true, message: "Charge attempted", data });
+};
+
+const secretKey = process.env["PAYSTACK_SECRET_KEY"] ?? "sk_test_local_only";
+const registry = new AdapterRegistry();
+registry.register(createPaystackProvider({ secretKey, fetch: paystackLike }));
+
+const provider = registry.requireCapability<PaymentProvider>("paystack", "http");
+const payments = createPaymentService({ provider });
+const payment = await payments.charge({
+  reference: "INV-2026-044",
+  email: "accounts@acme.ng",
+  amountKobo: 7_500_000,
+  authorizationCode: "AUTH_8dfhjjdt",
+});
+console.log(payment);
+</example>
+<output>
+POST /transaction/charge_authorization amount 7500000
+{
+  reference: 'INV-2026-044',
+  amountKobo: 7500000,
+  provider: 'paystack',
+  providerReference: 'ps_INV-2026-044'
+}
+</output>
+<p><code>requireCapability</code> refuses an adapter that does not declare <code>http</code>, so a misconfigured registry fails at start-up instead of at the first payment. The secret comes from an environment variable; the fallback is a test key for this demonstration only.</p>
+</section>
+
+<section>
+<h2 id="tests">Tests with Vitest</h2>
+<p>Package tests import from <code>src</code>, run before every publish (<code>prepublishOnly</code>) and are never published. On your computer you run <code>npx vitest run</code>. To show real results here, a small helper runs one file through Vitest's programming interface and prints a line per test, the same helper as in <a href="/learn/zudo-testing-apps">Testing a whole ZudoJS app</a>:</p>
+<file name="vitest-run.ts" project="payments">
+import { startVitest } from "vitest/node";
+
+/** Runs test files with Vitest and prints one line per test. */
+export async function runTests(...files: string[]): Promise<void> {
+  const vitest = await startVitest("test", files, { watch: false, reporters: [] });
+  for (const file of vitest.state.getTestModules()) {
+    for (const error of file.errors()) console.log(`× ${file.relativeModuleId}: ${error.message}`);
+    for (const test of file.children.allTests()) {
+      const { state, errors = [] } = test.result();
+      console.log(`${state === "passed" ? "✓" : "×"} ${test.fullName}`);
+      for (const error of errors) console.log(`    ${error.message}`);
+    }
+  }
+  await vitest.close();
+}
+</file>
+<p>The service tests use the package's own fake provider, and each test pins one promise from the reasoning at the start:</p>
+<file name="tests/payment.service.test.ts" project="payments">
+import { describe, expect, it } from "vitest";
+import { InvalidPaymentError, PaymentDeclinedError, PaymentProviderError, createPaymentService } from "../src/index.js";
+import { createFakeProvider } from "../src/testing/index.js";
+
+const order = { reference: "ORD-1", email: "ada@example.com", amountKobo: 250_000, authorizationCode: "AUTH_ok" };
+
+describe("createPaymentService", () => {
+  it("charges once when the same reference arrives twice at the same time", async () => {
+    const provider = createFakeProvider();
+    const payments = createPaymentService({ provider });
+    const [first, second] = await Promise.all([payments.charge(order), payments.charge(order)]);
+    expect(second).toBe(first);
+    expect(provider.requests).toHaveLength(1);
+  });
+
+  it("lists every invalid field", async () => {
+    const payments = createPaymentService({ provider: createFakeProvider() });
+    const error = await payments.charge({ ...order, amountKobo: 0.5, email: "ada" }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(InvalidPaymentError);
+    expect((error as InvalidPaymentError).issues.map((i) => i.field)).toEqual(["email", "amountKobo"]);
+  });
+
+  it("turns a declined card into a 402 the client may see", async () => {
+    const payments = createPaymentService({ provider: createFakeProvider({ decline: ["AUTH_ok"] }) });
+    await expect(payments.charge(order)).rejects.toMatchObject({ statusCode: 402, expose: true });
+    await expect(payments.charge(order)).rejects.toBeInstanceOf(PaymentDeclinedError);
+  });
+
+  it("hides provider failures but keeps the cause for the logs", async () => {
+    const payments = createPaymentService({ provider: createFakeProvider({ fail: ["AUTH_ok"] }) });
+    const error = (await payments.charge(order).catch((e: unknown) => e)) as PaymentProviderError;
+    expect(error).toBeInstanceOf(PaymentProviderError);
+    expect(error.expose).toBe(false);
+    expect((error.cause as Error).message).toBe("connection reset");
+    expect(payments.find(order.reference)).toBeUndefined();
+  });
+});
+</file>
+<example file="test-service.ts" project="payments" browser="no">
+import { runTests } from "./vitest-run.js";
+
+await runTests("tests/payment.service.test.ts");
+</example>
+<output>
+✓ createPaymentService > charges once when the same reference arrives twice at the same time
+✓ createPaymentService > lists every invalid field
+✓ createPaymentService > turns a declined card into a 402 the client may see
+✓ createPaymentService > hides provider failures but keeps the cause for the logs
+</output>
+<p>The adapter tests never touch the network. A fake <code>fetch</code> records each <code>Request</code> and answers with a canned <code>Response</code>, so the test can check what would have been sent, including the secret key header:</p>
+<file name="tests/paystack.provider.test.ts" project="payments">
+import { describe, expect, it } from "vitest";
+import { createPaystackProvider } from "../src/index.js";
+
+const request = { reference: "ORD-9", email: "ada@example.com", amountKobo: 150_000, authorizationCode: "AUTH_abc" };
+
+function fakeFetch(status: number, body: unknown, seen: Request[] = []): typeof fetch {
+  return async (input, init) => {
+    seen.push(new Request(input, init));
+    return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  };
+}
+
+describe("createPaystackProvider", () => {
+  it("sends the amount in kobo with the secret key", async () => {
+    const seen: Request[] = [];
+    const ok = { status: true, message: "Charge attempted", data: { status: "success", reference: "ps_1" } };
+    const provider = createPaystackProvider({ secretKey: "sk_test_x", fetch: fakeFetch(200, ok, seen) });
+    expect(await provider.charge(request)).toEqual({ status: "success", providerReference: "ps_1" });
+    expect(seen[0]!.headers.get("authorization")).toBe("Bearer sk_test_x");
+    expect(await seen[0]!.json()).toMatchObject({ amount: 150_000, authorization_code: "AUTH_abc" });
+  });
+
+  it("maps a failed charge to a reason", async () => {
+    const failed = { status: true, message: "Charge attempted", data: { status: "failed", reference: "ps_2", gateway_response: "Insufficient Funds" } };
+    const provider = createPaystackProvider({ secretKey: "sk_test_x", fetch: fakeFetch(200, failed) });
+    expect(await provider.charge(request)).toMatchObject({ status: "failed", reason: "Insufficient Funds" });
+  });
+
+  it("throws on a server error", async () => {
+    const provider = createPaystackProvider({ secretKey: "sk_test_x", fetch: fakeFetch(500, {}) });
+    await expect(provider.charge(request)).rejects.toThrow("HTTP 500");
+  });
+});
+</file>
+<example file="test-paystack.ts" project="payments" browser="no">
+import { runTests } from "./vitest-run.js";
+
+await runTests("tests/paystack.provider.test.ts");
+</example>
+<output>
+✓ createPaystackProvider > sends the amount in kobo with the secret key
+✓ createPaystackProvider > maps a failed charge to a reason
+✓ createPaystackProvider > throws on a server error
+</output>
+<p>What is <em>not</em> tested here is Paystack itself. That needs a test key and the real sandbox, in a separate, slower suite that runs before a release (<a href="/learn/testing-strategies">Testing strategies</a> calls this a contract test). The fast suite proves your code; the sandbox suite proves your assumptions about theirs.</p>
+</section>
+
+<section>
+<h2 id="docs">Documentation, checked like code</h2>
+<p>The README is the package's front page on npm and the first thing another team reads. It answers, in this order: what it is, how to install it (including the peer dependencies), a quick start, the errors and their codes, and the versioning policy. Longer topics get their own pages under <code>docs/</code>:</p>
+<file name="README.md" project="payments">
+# @mycompany/zudo-payments
+
+Card payments for ZudoJS applications: idempotent charges, ZudoJS errors and provider adapters.
+
+## Install
+
+    npm install @mycompany/zudo-payments @zudojs/errors @zudojs/adapters
+
+`@zudojs/errors` and `@zudojs/adapters` are peer dependencies: your app provides them,
+so there is one copy of every ZudoJS error class.
+
+## Quick start
+
+    import { createPaymentService, createPaystackProvider } from "@mycompany/zudo-payments";
+
+    const provider = createPaystackProvider({ secretKey: process.env.PAYSTACK_SECRET_KEY });
+    const payments = createPaymentService({ provider });
+    await payments.charge({ reference: "ORD-1001", email, amountKobo: 1_250_000, authorizationCode });
+
+Amounts are integers in kobo. The `reference` is the idempotency key: charging it again
+returns the first payment instead of charging twice.
+
+## Errors
+
+Every error extends a class from `@zudojs/errors`. See [errors](./docs/errors.md) for codes
+and statuses, and [refunds](./docs/refunds.md) for reversing a charge.
+
+## Testing
+
+Import `createFakeProvider` from `@mycompany/zudo-payments/testing`.
+
+## Versioning
+
+Semantic versioning. Error codes and everything exported from the two entry points are public API.
+</file>
+<file name="LICENSE" project="payments">
+MIT License
+
+Copyright (c) 2026 MyCompany Ltd
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software
+and associated documentation files (the "Software"), to deal in the Software without restriction,
+including without limitation the rights to use, copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or
+substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.
+</file>
+<file name="docs/errors.md" project="payments">
+---
+title: Errors
+tags: [payments, errors]
+---
+# Errors
+
+| Code | Class | Status | Shown to clients |
+| --- | --- | --- | --- |
+| ERR_PAYMENT_INVALID | InvalidPaymentError | 400 | yes, with issues |
+| ERR_PAYMENT_DECLINED | PaymentDeclinedError | 402 | yes, with the reason |
+| ERR_PAYMENT_CONFLICT | PaymentConflictError | 409 | yes |
+| ERR_PAYMENT_PROVIDER | PaymentProviderError | 502 | no, generic message |
+
+Back to the [README](../README.md).
+</file>
+<p>Documentation rots quietly: a page is renamed and the links to it break. <code>@zudojs/docs</code> can check a set of markdown pages the way a compiler checks code. Its document ids are dot-separated, so <code>docs/errors.md</code> becomes <code>docs.errors</code>, and relative links are resolved the same way:</p>
+<example file="check-docs.ts" project="payments" browser="no">
+import { readFileSync } from "node:fs";
+import { createMarkdownDocument, documentIdFromPath, parseFrontmatter, validateAll } from "@zudojs/docs";
+
+const pages = ["README.md", "docs/errors.md"].map((path) => {
+  const { metadata, content } = parseFrontmatter(readFileSync(path, "utf8"));
+  const title = typeof metadata["title"] === "string" ? metadata["title"] : path;
+  return createMarkdownDocument(documentIdFromPath(path), title, content);
+});
+console.log("pages:", pages.map((p) => `${p.id} (${p.title})`).join(", "));
+
+const result = validateAll(pages);
+for (const issue of result.issues) console.log(issue.severity, issue.code, "-", issue.message);
+console.log("valid:", result.valid);
+if (result.issues.length > 0) process.exitCode = 1;
+</example>
+<output>
+pages: README (README.md), docs.errors (Errors)
+warning BROKEN_LINK - Document "README" links to "./docs/refunds.md" which is not registered.
+valid: true
+</output>
+<p>The README links to a refunds page that does not exist yet. <code>@zudojs/docs</code> reports that as a <em>warning</em>, and warnings do not make <code>valid</code> false. Only errors do, such as a <code>javascript:</code> link. So the script sets the exit code on any issue: in CI, a broken link should fail the build. Either write <code>docs/refunds.md</code> or remove the link before you publish.</p>
+<warn title="A LINK WITH PARENTHESES ESCAPES THE UNSAFE-LINK CHECK">In the published <code>@zudojs/docs</code>, <code>[x](javascript:void)</code> is reported as <code>UNSAFE_LINK</code>, but <code>[x](javascript:alert(1))</code> is not reported at all: the scanner does not handle parentheses inside a link target, although markdown allows them. Do not rely on <code>validateLinks</code> alone for documentation written by untrusted people; render it with a markdown library that sanitises links.</warn>
+</section>
+
+<section>
+<h2 id="versioning">Versions and changesets</h2>
+<p>Three services install your package. Each upgrade must tell them one thing: can this break me? <strong>Semantic versioning</strong> answers with the version number <code>MAJOR.MINOR.PATCH</code>. For this package, the rules become concrete:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Change</th><th>Bump</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>Fix: amounts like <code>12.5</code> were accepted</td><td>patch</td><td>Behaviour now matches the documentation.</td></tr>
+<tr><td>Add <code>createFlutterwaveProvider</code></td><td>minor</td><td>New export; nothing existing changes.</td></tr>
+<tr><td>Add an optional <code>currency</code> field to <code>ChargeRequest</code></td><td>minor</td><td>Old calls still compile and behave the same.</td></tr>
+<tr><td>Rename <code>ERR_PAYMENT_DECLINED</code></td><td>major</td><td>Clients compare codes; theirs would stop matching.</td></tr>
+<tr><td>Remove an export, or make an optional field required</td><td>major</td><td>Existing code stops compiling.</td></tr>
+<tr><td>Raise the peer range to <code>@zudojs/errors@^2</code>, or <code>engines</code> to Node 26</td><td>major</td><td>Existing installations can no longer satisfy it.</td></tr>
+<tr><td>Add a required <code>verify(reference)</code> method to <code>PaymentProvider</code></td><td>major</td><td>Callers are unaffected, but anyone who <em>implemented</em> the interface (their own provider) no longer compiles. Add it as optional in a minor instead, and make it required in the next major.</td></tr>
+</tbody>
+</table></div>
+<p>Before 1.0.0, npm's caret treats the minor number as major: <code>^0.1.0</code> accepts 0.1.5 but not 0.2.0. So in 0.x, breaking changes bump the minor. Publish 1.0.0 when the three services depend on the API in production; from then on the table applies strictly.</p>
+<h3>Changesets</h3>
+<p>Choosing the bump at release time is guesswork: who remembers what changed three weeks ago, and whether it broke anything? <strong>Changesets</strong>, the tool the ZudoJS packages are released with, moves the decision to the pull request that makes the change. The author adds a small markdown file that names the package, the bump and a sentence for the changelog. At release time, the tool adds them up. Configure it once, with <code>.changeset/config.json</code>:</p>
+<file name=".changeset/config.json" project="payments">
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.1.0/schema.json",
+  "changelog": "@changesets/cli/changelog",
+  "commit": false,
+  "access": "public",
+  "baseBranch": "main"
+}
+</file>
+<p>Then, in each pull request, record the change. <code>--minor</code> and <code>-m</code> skip the interactive questions (these outputs are from a real run with <code>@changesets/cli</code> 3.0.3; the file names are random):</p>
+<shell title="Terminal on your computer (npm install -D @changesets/cli)">
+$ npx changeset add --minor @mycompany/zudo-payments -m "Add createPaystackProvider for charging saved cards through Paystack."
+🦋 changeset v3.0.3
+
+Summary of changesets:
+minor:  @mycompany/zudo-payments
+
+Changeset added - you can now commit it!
+If you want to modify or expand on the changeset summary, you can find it here:
+.changeset/slimy-dragons-start.md
+
+$ cat .changeset/slimy-dragons-start.md
+---
+"@mycompany/zudo-payments": minor
+---
+
+Add createPaystackProvider for charging saved cards through Paystack.
+
+$ npx changeset add --patch @mycompany/zudo-payments -m "Reject amounts that are not whole kobo with ERR_PAYMENT_INVALID."
+…
+$ npx changeset status
+🦋 changeset v3.0.3
+
+Packages to be bumped:
+- minor
+  - @mycompany/zudo-payments
+</shell>
+<p>Two changesets, one minor and one patch: the release is a minor. When you are ready to release, <code>changeset version</code> consumes the files, bumps <code>package.json</code> and writes the changelog:</p>
+<shell title="Terminal on your computer">
+$ npx changeset version
+🦋 changeset v3.0.3
+
+All files have been updated. Review them and commit at your leisure
+
+$ grep '"version"' package.json
+  "version": "0.2.0",
+
+$ cat CHANGELOG.md
+# @mycompany/zudo-payments
+
+## 0.2.0
+
+### Minor Changes
+
+- d6da97e: Add createPaystackProvider for charging saved cards through Paystack.
+
+### Patch Changes
+
+- d6da97e: Reject amounts that are not whole kobo with ERR_PAYMENT_INVALID.
+</shell>
+<p>The <code>d6da97e</code> is the commit that added each changeset. Review the diff, commit it, and publish. In CI, a check that every pull request touching <code>src/</code> contains a changeset (<code>changeset status --since=main</code> fails otherwise) keeps the habit honest.</p>
+</section>
+
+<section>
+<h2 id="publish">Check the tarball, then publish</h2>
+<p>What you publish is the tarball, not your folder. <code>npm pack --dry-run</code> builds the list without writing anything; with <code>--json</code> a script can check it:</p>
+<example file="pack.ts" project="payments" browser="no">
+import { execFileSync } from "node:child_process";
+
+const [pack] = JSON.parse(execFileSync("npm", ["pack", "--dry-run", "--json"], { encoding: "utf8" }));
+console.log(pack.id, "->", pack.filename);
+for (const file of pack.files) console.log(String(file.size).padStart(6), file.path);
+console.log(`${pack.entryCount} files, ${pack.unpackedSize} bytes unpacked`);
+
+const leaked = pack.files.filter((f: { path: string }) => /^(src|tests|docs)\/|\.env|tsconfig/.test(f.path));
+console.log("source, tests, docs or secrets in the tarball:", leaked.length === 0 ? "none" : leaked);
+</example>
+<output>
+@mycompany/zudo-payments@0.1.0 -> mycompany-zudo-payments-0.1.0.tgz
+   693 LICENSE
+  1226 README.md
+  1418 dist/errors/payment.error.d.ts
+  2025 dist/errors/payment.error.js
+   814 dist/index.d.ts
+   480 dist/index.js
+   130 dist/internal/money.d.ts
+   340 dist/internal/money.js
+   640 dist/payment/payment.service.d.ts
+  2484 dist/payment/payment.service.js
+   857 dist/payment/payment.type.d.ts
+    11 dist/payment/payment.type.js
+   582 dist/provider/paystack.provider.d.ts
+  1780 dist/provider/paystack.provider.js
+   377 dist/provider/provider.type.d.ts
+    11 dist/provider/provider.type.js
+   719 dist/testing/index.d.ts
+   856 dist/testing/index.js
+  1058 package.json
+19 files, 16501 bytes unpacked
+source, tests, docs or secrets in the tarball: none
+</output>
+<p>Compiled code, declarations, README, LICENSE and manifest; no sources, tests, <code>.env</code> or configuration. Note that <code>docs/</code> is not published: the README links to it, so link to the pages in your repository (or your documentation site) by full URL before 1.0.0, or add <code>docs</code> to <code>files</code>. Then publish, with the steps from <a href="/learn/ts-publishing#releasing">Publishing TypeScript packages</a>:</p>
+<shell title="Terminal on your computer">
+$ npm publish --access public --provenance
+</shell>
+<p><code>prepublishOnly</code> type-checks, tests and builds first. <code>--access public</code> is needed once for a scoped package, and <code>--provenance</code> (from CI) links the tarball to the commit that built it. For a private company package, publish to your company's registry instead (GitHub Packages or a private npm organisation) and point the <code>@mycompany</code> scope at it in <code>.npmrc</code>.</p>
+<h3>In production</h3>
+<ul>
+<li><strong>Peer range policy:</strong> support the <code>@zudojs</code> major your apps use (<code>^1.3.0</code>), and test against the lowest and the highest version in that range in CI. Raising the lower bound is a minor change only if every app already has it; otherwise treat it as major.</li>
+<li><strong>Never log secrets:</strong> the adapter holds the secret key in a closure and never puts it in an error or metadata. The Vitest test that checks the header uses a fake key.</li>
+<li><strong>Idempotency across servers:</strong> the in-memory maps protect one process. Before you run more than one instance, store completed payments in a table with a unique <code>reference</code>, and let the provider's duplicate-reference check be the last line.</li>
+<li><strong>Deprecate before removing:</strong> mark an export <code>@deprecated</code> in its JSDoc for at least one minor release (editors strike it through), and remove it in the next major.</li>
+<li><strong>Keep the public surface small:</strong> every export is a promise you must keep until the next major. It is easy to add an export later and expensive to take one away.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Test the amount limit">
+<p><code>maxAmountKobo</code> is documented but untested. Add a Vitest test: with <code>maxAmountKobo: 100_000</code>, a charge of 100,001 kobo fails with <code>ERR_PAYMENT_INVALID</code> and an issue on <code>amountKobo</code>, and exactly 100,000 kobo succeeds.</p>
+<solution>
+<file name="tests/limit.test.ts" project="payments">
+import { expect, it } from "vitest";
+import { PaymentErrorCode, createPaymentService } from "../src/index.js";
+import { createFakeProvider } from "../src/testing/index.js";
+
+const base = { email: "ada@example.com", authorizationCode: "AUTH_ok" };
+
+it("enforces maxAmountKobo at the boundary", async () => {
+  const payments = createPaymentService({ provider: createFakeProvider(), maxAmountKobo: 100_000 });
+  await expect(payments.charge({ ...base, reference: "A", amountKobo: 100_001 })).rejects.toMatchObject({
+    code: PaymentErrorCode.INVALID,
+    issues: [{ field: "amountKobo", message: "must be at most 100000" }],
+  });
+  await expect(payments.charge({ ...base, reference: "B", amountKobo: 100_000 })).resolves.toMatchObject({ amountKobo: 100_000 });
+});
+</file>
+<example file="test-limit.ts" project="payments" browser="no">
+import { runTests } from "./vitest-run.js";
+
+await runTests("tests/limit.test.ts");
+</example>
+<output>
+✓ enforces maxAmountKobo at the boundary
+</output>
+<p>Test both sides of a boundary: the largest allowed value and the smallest refused one. An off-by-one (<code>&gt;=</code> instead of <code>&gt;</code>) fails exactly one of the two.</p>
+</solution>
+</exercise>
+<exercise title="Which version?">
+<p>The package is at 1.4.2. Give the next version for each release, on its own: (a) the Paystack adapter now retries once on HTTP 503; (b) <code>PaymentDeclinedError</code> gets a new <code>retryable</code> property; (c) the default <code>maxAmountKobo</code> drops from ₦5,000,000 to ₦1,000,000; (d) <code>createFakeProvider</code> moves from <code>/testing</code> to the main entry, and <code>/testing</code> is removed.</p>
+<solution>
+<ul>
+<li>(a) <strong>1.4.3</strong> or <strong>1.5.0</strong>. Retrying a failed call is a behaviour change callers do not have to adapt to; most teams call it a patch. If you document it as a feature ("adapters now retry"), a minor is fine.</li>
+<li>(b) <strong>1.5.0</strong>: a new property is an addition.</li>
+<li>(c) <strong>2.0.0</strong>: a charge of ₦2,000,000 that worked yesterday now fails. A changed default is a breaking change even though no signature changed.</li>
+<li>(d) <strong>2.0.0</strong>: removing an entry point breaks every import of it. To soften it, first add the export to the main entry in a minor, deprecate <code>/testing</code>, and remove it in the next major.</li>
+</ul>
+</solution>
+</exercise>
+<exercise title="A provider that hangs">
+<p>The adapter aborts a call after <code>timeoutMs</code>. Prove it: give the provider a fake <code>fetch</code> that never answers until its signal aborts, set <code>timeoutMs: 50</code>, and show that the service turns the timeout into <code>ERR_PAYMENT_PROVIDER</code> with the <code>TimeoutError</code> as its cause.</p>
+<solution>
+<example file="timeout.ts" project="payments" browser="no">
+import { createPaymentService, createPaystackProvider, isPaymentError } from "@mycompany/zudo-payments";
+
+const hangs: typeof fetch = (_url, init) =>
+  new Promise((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(init.signal!.reason));
+  });
+
+const provider = createPaystackProvider({ secretKey: "sk_test_x", fetch: hangs, timeoutMs: 50 });
+const payments = createPaymentService({ provider });
+try {
+  await payments.charge({ reference: "ORD-5", email: "ada@example.com", amountKobo: 50_000, authorizationCode: "AUTH_ok" });
+} catch (error) {
+  if (isPaymentError(error)) console.log(error.code, error.statusCode, "cause:", (error.cause as Error).name);
+}
+</example>
+<output>
+ERR_PAYMENT_PROVIDER 502 cause: TimeoutError
+</output>
+<p>A real <code>fetch</code> behaves like this fake: it rejects with the signal's reason when the signal aborts. Without the timeout, this charge would wait forever and hold the customer's request open. Print <code>error.name</code>, not the message, when you compare timeouts: the message text differs between runtimes.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A package is a promise: its <code>exports</code> map, its barrel files and its types are the public API. Internal code lives where no entry point leads.</li>
+<li><code>@zudojs</code> packages your package builds on are <code>peerDependencies</code> (plus <code>devDependencies</code>), so the app keeps one copy of every error class.</li>
+<li>Errors extend the fitting class from <code>@zudojs/errors</code> with stable codes; recognise them with <code>isBaseError</code> and the code prefix.</li>
+<li>External services sit behind an adapter on the <code>@zudojs/adapters</code> contract, with injected <code>fetch</code> and a timeout, so everything is testable without the network.</li>
+<li>Vitest tests pin each promise; <code>@zudojs/docs</code> checks the documentation; changesets record the version bump in the pull request that causes it.</li>
+<li>Check the tarball with <code>npm pack --dry-run</code> before every publish.</li>
+</ul>
+<p>Next: <a href="/learn/zudo-create-plugin">Building a complete ZudoJS plugin</a>, which packages a feature for other apps to switch on, with lifecycle, dependencies and rollback.</p>
+</section>

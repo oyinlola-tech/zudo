@@ -1,0 +1,854 @@
+---
+title: Advanced functions
+description: Type overloads, call and construct signatures, this parameters, callable objects and variadic tuples, learn which callbacks are compatible and why, and build a type-safe command router.
+minutes: 55
+youNeed: Typing functions, Conditional types and Advanced inference, plus this in JavaScript
+youBuild: A type-safe command router for a shop's admin chat, where every command's arguments are checked when called from code and parsed and validated when typed as text
+keywords: typescript function overloads, overload resolution, call signature, construct signature, abstract new, this parameter, TS2684, callable object, variadic tuple types, generic rest parameters, partial application types, callback compatibility, strictFunctionTypes, parameter bivariance, method bivariance, command router
+objectives: Write overloads that resolve the way you intend, and know when a union or conditional type is better | Describe functions with properties, and classes as values, with call and construct signatures | Protect methods from losing this with this parameters | Type wrappers and partial application with variadic tuple types | Predict which callbacks are assignable, and explain parameter contravariance and method bivariance | Build a command router whose arguments are typed from one table
+---
+<section>
+<h2 id="problem">A refund of ₦NaN</h2>
+<p>A shop's operations team runs admin commands from a chat: refund an order, restock a product. In code, each command is a function in a table, and a router looks up the function by name and passes the arguments along. To make the table accept every kind of command, its type says "any arguments":</p>
+<example file="router.ts" project="problem">
+type Handler = (...args: any[]) => string;
+
+const naira = (kobo: number) => `₦${(kobo / 100).toFixed(2)}`;
+
+const commands: Record<string, Handler> = {
+  refund: (orderId: string, amountKobo: number) => `refunding ${naira(amountKobo)} on ${orderId}`,
+  restock: (sku: string, quantity: number) => `${sku}: +${quantity} units`,
+};
+
+function run(name: string, ...args: unknown[]): string {
+  const handler = commands[name];
+  return handler ? handler(...args) : `unknown command ${name}`;
+}
+
+console.log(run("refund", "ORD-1042", 500_000));
+console.log(run("refund", 500_000, "ORD-1042"));
+console.log(run("restock", "TOTE-01"));
+console.log(run("refnud", "ORD-1043", 100_000));
+</example>
+<output>
+refunding ₦5000.00 on ORD-1042
+refunding ₦NaN on 500000
+TOTE-01: +undefined units
+unknown command refnud
+</output>
+<p>Swapped arguments, a missing quantity, a misspelt command: the compiler accepted all of them, and the router answered each with a confident, wrong sentence. Every handler has precise parameter types, but <code>any[]</code> in the table threw them away.</p>
+<p>Functions are values in JavaScript, so TypeScript has a whole vocabulary for their types: several signatures for one function, functions that also carry properties, classes passed around as values, the hidden <code>this</code> parameter, argument lists that are computed from other types, and rules for when one function can stand in for another. <a href="/learn/ts-functions">Typing functions</a> covered the everyday part. This lesson covers the rest, and ends with a router in which each of the four calls above is a compile error or a clear usage message.</p>
+</section>
+
+<section>
+<h2 id="overloads">Overloads in depth</h2>
+<p><a href="/learn/ts-functions#overloads">Typing functions</a> introduced <strong>overloads</strong>: several signatures listed before one implementation, so the return type can depend on the arguments. Here is a more realistic case, where the <em>second parameter</em> depends on the first. A payment is created from card details or from a bank account, never a mix:</p>
+<example file="charge.ts" project="overloads">
+interface Card {
+  number: string;
+  expiry: string;
+}
+interface BankAccount {
+  bankCode: string;
+  accountNumber: string;
+}
+
+function charge(method: "card", card: Card, amountKobo: number): string;
+function charge(method: "transfer", account: BankAccount, amountKobo: number): string;
+function charge(method: "card" | "transfer", source: Card | BankAccount, amountKobo: number): string {
+  const from = "number" in source ? `card ending ${source.number.slice(-4)}` : `account ${source.accountNumber}`;
+  return `${method}: ${amountKobo} kobo from ${from}`;
+}
+
+console.log(charge("card", { number: "4084084084084081", expiry: "09/28" }, 1_500_000));
+console.log(charge("transfer", { bankCode: "058", accountNumber: "0123456789" }, 750_000));
+</example>
+<output>
+card: 1500000 kobo from card ending 4081
+transfer: 750000 kobo from account 0123456789
+</output>
+<p>Callers see only the two overload signatures; the third one, with the body, is the <strong>implementation signature</strong>. That has consequences:</p>
+<example file="charge-errors.ts" project="overloads" check="tsc-error">
+interface Card {
+  number: string;
+  expiry: string;
+}
+interface BankAccount {
+  bankCode: string;
+  accountNumber: string;
+}
+
+function charge(method: "card", card: Card, amountKobo: number): string;
+function charge(method: "transfer", account: BankAccount, amountKobo: number): string;
+function charge(method: "card" | "transfer", source: Card | BankAccount, amountKobo: number): string {
+  return `${method} ${amountKobo}`;
+}
+
+charge("card", { bankCode: "058", accountNumber: "0123456789" }, 1_500_000);
+
+declare const method: "card" | "transfer";
+declare const source: Card | BankAccount;
+charge(method, source, 1_500_000);
+</example>
+<output kind="tsc">
+charge-errors.ts:16:8 - error TS2769: No overload matches this call.
+  The last overload gave the following error.
+    Argument of type '"card"' is not assignable to parameter of type '"transfer"'.
+
+16 charge("card", { bankCode: "058", accountNumber: "0123456789" }, 1_500_000);
+          ~~~~~~
+
+  charge-errors.ts:11:10 - The last overload is declared here.
+    11 function charge(method: "transfer", account: BankAccount, amountKobo: number): string;
+                ~~~~~~
+
+  charge-errors.ts:12:10 - The call would have succeeded against this implementation, but implementation signatures of overloads are not externally visible.
+    12 function charge(method: "card" | "transfer", source: Card | BankAccount, amountKobo: number): string {
+                ~~~~~~
+
+charge-errors.ts:20:8 - error TS2769: No overload matches this call.
+  The last overload gave the following error.
+    Argument of type '"card" | "transfer"' is not assignable to parameter of type '"transfer"'.
+      Type '"card"' is not assignable to type '"transfer"'.
+
+20 charge(method, source, 1_500_000);
+          ~~~~~~
+
+  charge-errors.ts:11:10 - The last overload is declared here.
+    11 function charge(method: "transfer", account: BankAccount, amountKobo: number): string;
+                ~~~~~~
+
+  charge-errors.ts:12:10 - The call would have succeeded against this implementation, but implementation signatures of overloads are not externally visible.
+    12 function charge(method: "card" | "transfer", source: Card | BankAccount, amountKobo: number): string {
+                ~~~~~~
+
+
+Found 2 errors in the same file, starting at: charge-errors.ts:16
+</output>
+<ul>
+<li>A card charge with bank details is refused: no overload accepts that combination. The implementation signature would, and the compiler even says so, but it is not visible to callers.</li>
+<li>A call with a <em>union</em> argument matches no single overload either. TypeScript tries each overload on its own; it never splits a union across them. When callers will naturally hold unions, overloads are the wrong tool: use a union parameter, a discriminated union argument (<code>charge({ method: "card", card, amountKobo })</code>), or the conditional return types from <a href="/learn/ts-conditional-types#generic-functions">Conditional types</a>.</li>
+</ul>
+<h3>Resolution order</h3>
+<p>TypeScript checks overloads from top to bottom and picks the <strong>first</strong> one that fits. A general signature above a specific one hides it:</p>
+<example file="order.ts" project="overloads" check="tsc-error">
+interface Customer {
+  id: number;
+  name: string;
+}
+const customers: Customer[] = [{ id: 7, name: "Ngozi Okafor" }];
+
+function lookup(id: number | string): Customer | undefined;
+function lookup(id: number): Customer;
+function lookup(id: number | string): Customer | undefined {
+  return customers.find((customer) => String(customer.id) === String(id));
+}
+
+const customer = lookup(7);
+console.log(customer.name);
+</example>
+<output kind="tsc">
+order.ts:14:13 - error TS18048: 'customer' is possibly 'undefined'.
+
+14 console.log(customer.name);
+               ~~~~~~~~
+
+
+Found 1 error in order.ts:14
+</output>
+<p><code>lookup(7)</code> matched the first overload, so the result may be <code>undefined</code>, and the second overload can never be chosen. Put the most specific overloads first, as with the branches of a conditional type. (Promising that a number lookup always finds a customer is a questionable overload anyway; the implementation still returns <code>undefined</code> for an unknown id.)</p>
+<tip>Before writing overloads, try one signature. Overloads are right when the return type or later parameters depend on an earlier argument in a few fixed ways, and callers pass literals, as with <code>charge</code>. <a href="/learn/ts-utility-types#functions-classes">Utility types</a> shows one more cost: <code>ReturnType</code> and <code>Parameters</code> only see the last overload.</tip>
+</section>
+
+<section>
+<h2 id="call-signatures">Call signatures and callable objects</h2>
+<p>A function type written as <code>(kobo: number) =&gt; string</code> is a <strong>function type expression</strong>. The same type can be written as an object type with a <strong>call signature</strong>: <code>{ (kobo: number): string }</code>. The longer form exists because JavaScript functions are objects and can carry properties. A currency formatter that also knows its currency is a <strong>callable object</strong>:</p>
+<example file="formatter.ts" project="callable">
+interface MoneyFormatter {
+  (kobo: number): string;
+  readonly currency: string;
+  readonly symbol: string;
+}
+
+function makeFormatter(currency: string, symbol: string): MoneyFormatter {
+  const format = (kobo: number) => `${symbol}${(kobo / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 })}`;
+  return Object.assign(format, { currency, symbol });
+}
+
+const naira = makeFormatter("NGN", "₦");
+console.log(naira(125_050_000), naira.currency, typeof naira);
+
+function vat(kobo: number): number {
+  return Math.round(kobo * vat.rate);
+}
+vat.rate = 0.075;
+console.log(vat(1_000_000), vat.rate);
+</example>
+<output>
+₦1,250,500.00 NGN function
+75000 0.075
+</output>
+<ul>
+<li><code>Object.assign(format, { … })</code> returns the same function with the properties added, typed as the intersection of both, which fits <code>MoneyFormatter</code>.</li>
+<li>For a function <em>declaration</em>, TypeScript also understands properties assigned right after it (<code>vat.rate = 0.075</code>) and adds them to the function's type. That is how older JavaScript libraries (jQuery's <code>$</code> and <code>$.ajax</code>) are typed.</li>
+</ul>
+<p>An object type may list several call signatures. That is how overloads are written as a type, for example for a function you receive as a parameter:</p>
+<example file="find-type.ts" project="callable">
+interface Order {
+  id: string;
+  totalKobo: number;
+}
+
+interface FindOrders {
+  (id: string): Order | undefined;
+  (ids: readonly string[]): Order[];
+}
+
+const orders: Order[] = [{ id: "ORD-1", totalKobo: 500_000 }, { id: "ORD-2", totalKobo: 900_000 }];
+
+function find(id: string): Order | undefined;
+function find(ids: readonly string[]): Order[];
+function find(idOrIds: string | readonly string[]): Order | Order[] | undefined {
+  return typeof idOrIds === "string" ? orders.find((o) => o.id === idOrIds) : orders.filter((o) => idOrIds.includes(o.id));
+}
+
+function report(lookup: FindOrders): string {
+  const one = lookup("ORD-2");
+  const many = lookup(["ORD-1", "ORD-2", "ORD-9"]);
+  return `${one?.totalKobo} kobo; ${many.length} of 3 found`;
+}
+
+console.log(report(find));
+</example>
+<output>
+900000 kobo; 2 of 3 found
+</output>
+</section>
+
+<section>
+<h2 id="construct-signatures">Construct signatures: classes as values</h2>
+<p>A class is two things: a type for its instances, and a value, the constructor, that you call with <code>new</code>. When you pass a class around as a value, for example to a registry that creates payment gateways by name, you need the type of the constructor. That is a <strong>construct signature</strong>: <code>new (…) =&gt; Instance</code>, or in an object type, <code>{ new (…): Instance }</code>, which may also list the class's static members:</p>
+<example file="gateways.ts" project="construct">
+interface PaymentGateway {
+  charge(amountKobo: number): string;
+}
+
+interface GatewayClass {
+  new (secretKey: string): PaymentGateway;
+  readonly provider: string;
+}
+
+class PaystackGateway implements PaymentGateway {
+  static readonly provider = "paystack";
+  constructor(private readonly secretKey: string) {}
+  charge(amountKobo: number): string {
+    return `paystack charged ${amountKobo} kobo with key ${this.secretKey.slice(0, 7)}...`;
+  }
+}
+
+class FlutterwaveGateway implements PaymentGateway {
+  static readonly provider = "flutterwave";
+  constructor(private readonly secretKey: string) {}
+  charge(amountKobo: number): string {
+    return `flutterwave charged ${amountKobo} kobo with key ${this.secretKey.slice(0, 8)}...`;
+  }
+}
+
+const registry: readonly GatewayClass[] = [PaystackGateway, FlutterwaveGateway];
+
+function createGateway(provider: string, secretKey: string): PaymentGateway {
+  const Gateway = registry.find((candidate) => candidate.provider === provider);
+  if (!Gateway) throw new Error(`no gateway called ${provider}`);
+  return new Gateway(secretKey);
+}
+
+console.log(createGateway("paystack", "sk_test_abc123").charge(1_500_000));
+console.log(createGateway("flutterwave", "FLWSECK_TEST-xyz").charge(750_000));
+</example>
+<output>
+paystack charged 1500000 kobo with key sk_test...
+flutterwave charged 750000 kobo with key FLWSECK_...
+</output>
+<p>Both classes fit <code>GatewayClass</code> by shape: a constructor taking a string, instances with <code>charge</code>, and a static <code>provider</code>. <code>new Gateway(secretKey)</code> is typed <code>PaymentGateway</code>. The <code>typeof</code> and <code>InstanceType</code> tools from <a href="/learn/ts-type-operators#typeof">Type operators</a> convert between the two sides of a class.</p>
+<h3>Abstract classes</h3>
+<p>An abstract class cannot be instantiated, so it does not fit a normal construct signature. When a function only needs to <em>inspect</em> classes (for example to check <code>instanceof</code>), accept <code>abstract new (…) =&gt; T</code>, which both abstract and concrete classes fit:</p>
+<example file="abstract.ts" project="construct" check="tsc-error">
+abstract class Gateway {
+  abstract charge(amountKobo: number): string;
+}
+
+type Creatable = new () => Gateway;
+type AnyGatewayClass = abstract new () => Gateway;
+
+const inspectable: AnyGatewayClass = Gateway;
+const creatable: Creatable = Gateway;
+</example>
+<output kind="tsc">
+abstract.ts:9:7 - error TS2322: Type 'typeof Gateway' is not assignable to type 'Creatable'.
+  Cannot assign an abstract constructor type to a non-abstract constructor type.
+
+9 const creatable: Creatable = Gateway;
+        ~~~~~~~~~
+
+
+Found 1 error in abstract.ts:9
+</output>
+</section>
+
+<section>
+<h2 id="this-parameters">this parameters</h2>
+<p>In JavaScript, <code>this</code> is decided by how a function is called, and a method taken off its object loses it, as <a href="/learn/js-this#losing">this in JavaScript</a> showed. TypeScript lets you declare what <code>this</code> must be, with a <strong>this parameter</strong>: a fake first parameter named <code>this</code>. It is checked at every call and erased from the output:</p>
+<example file="cart.ts" project="this" check="tsc-error">
+interface Cart {
+  items: string[];
+  add(this: Cart, sku: string): number;
+}
+
+const cart: Cart = {
+  items: [],
+  add(sku) {
+    return this.items.push(sku);
+  },
+};
+
+cart.add("TOTE-01");
+const add = cart.add;
+add("MUG-07");
+setTimeout(cart.add, 0, "MUG-07");
+</example>
+<output kind="tsc">
+cart.ts:15:1 - error TS2684: The 'this' context of type 'void' is not assignable to method's 'this' of type 'Cart'.
+
+15 add("MUG-07");
+   ~~~~~~~~~~~~~
+
+
+Found 1 error in cart.ts:15
+</output>
+<p>The direct call is fine. The detached call has no object before the dot, so <code>this</code> is <code>void</code>, and TypeScript refuses it before it can crash. The <code>setTimeout</code> line is <em>not</em> reported, because <code>setTimeout</code>'s callback type does not mention <code>this</code>; the check only works where both sides declare it. Bind the method (<code>cart.add.bind(cart)</code>) or wrap it in an arrow function when you pass it on.</p>
+<p>The parameter really disappears in the JavaScript that runs:</p>
+<example file="total.ts" project="this-emit">
+export function orderTotal(this: { lines: number[] }, vatPercent: number): number {
+  const net = this.lines.reduce((sum, kobo) => sum + kobo, 0);
+  return Math.round(net * (1 + vatPercent / 100));
+}
+
+console.log(orderTotal.call({ lines: [500_000, 250_000] }, 7.5));
+</example>
+<output>
+806250
+</output>
+<file name="dist/total.js" project="this-emit" check="emit">
+export function orderTotal(vatPercent) {
+    const net = this.lines.reduce((sum, kobo) => sum + kobo, 0);
+    return Math.round(net * (1 + vatPercent / 100));
+}
+console.log(orderTotal.call({ lines: [500_000, 250_000] }, 7.5));
+</file>
+<p>The compiled function has one parameter, <code>vatPercent</code>. The <code>this</code> declaration was only there for the checker, which used it to reject calls such as <code>orderTotal(7.5)</code>.</p>
+<h3>this: void, and the helper types</h3>
+<p>The opposite promise is also useful. A callback declared with <code>this: void</code> tells implementers "do not use <code>this</code> here", and a function that does use it is refused at the point where it is passed in. <code>ThisParameterType&lt;F&gt;</code> reads a function's this type, and <code>OmitThisParameter&lt;F&gt;</code> removes it, which is exactly the type of the result of <code>bind</code>:</p>
+<example file="this-helpers.ts" project="this">
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+function describe(this: { name: string; stock: number }, prefix: string): string {
+  return `${prefix} ${this.name}: ${this.stock} left`;
+}
+
+type H1 = Expect<Equal<ThisParameterType<typeof describe>, { name: string; stock: number }>>;
+type H2 = Expect<Equal<OmitThisParameter<typeof describe>, (prefix: string) => string>>;
+
+const tote = describe.bind({ name: "Ankara tote", stock: 3 });
+type H3 = Expect<Equal<typeof tote, (prefix: string) => string>>;
+
+function onStockChange(listener: (this: void, sku: string) => void): void {
+  listener("TOTE-01");
+}
+onStockChange((sku) => console.log("stock changed:", sku));
+console.log(tote("Low stock:"));
+</example>
+<output>
+stock changed: TOTE-01
+Low stock: Ankara tote: 3 left
+</output>
+<p>Classes get <code>this</code> typing automatically: inside a method, <code>this</code> is the instance. The detached-method problem still exists for classes at runtime, and the usual fix there is an arrow-function property, which <a href="/learn/js-this#classes">this in JavaScript</a> compares with <code>bind</code>.</p>
+</section>
+
+<section>
+<h2 id="variadic">Variadic tuple types</h2>
+<p>A wrapper function takes a function and returns a new one: with logging, with retries, with some arguments filled in. To type it, you need the wrapped function's parameter list as a type. A generic rest parameter, <code>...args: A</code> with <code>A extends unknown[]</code>, captures the whole list as a tuple, and a tuple type may <strong>spread</strong> other tuple types: <code>[...A, ...B]</code>. These are called <strong>variadic tuple types</strong>:</p>
+<example file="variadic.ts" project="variadic">
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+function refund(orderId: string, amountKobo: number, reason: string): string {
+  return `refund ${amountKobo} kobo on ${orderId}: ${reason}`;
+}
+
+function bindFirst<F, A extends unknown[], R>(fn: (first: F, ...rest: A) => R, first: F): (...rest: A) => R {
+  return (...rest) => fn(first, ...rest);
+}
+
+function withActor<A extends unknown[], R>(fn: (...args: A) => R): (actor: string, ...args: A) => R {
+  return (actor, ...args) => {
+    console.log(`audit: ${actor} called ${fn.name}`);
+    return fn(...args);
+  };
+}
+
+function concat<A extends readonly unknown[], B extends readonly unknown[]>(a: A, b: B): [...A, ...B] {
+  return [...a, ...b];
+}
+
+const refundOrder1042 = bindFirst(refund, "ORD-1042");
+const audited = withActor(refund);
+
+type V1 = Expect<Equal<Parameters<typeof refundOrder1042>, [amountKobo: number, reason: string]>>;
+type V2 = Expect<Equal<Parameters<typeof audited>, [actor: string, orderId: string, amountKobo: number, reason: string]>>;
+const row = concat(["ORD-1042", 500_000] as const, [true] as const);
+type V3 = Expect<Equal<typeof row, ["ORD-1042", 500000, true]>>;
+
+console.log(refundOrder1042(500_000, "damaged"));
+console.log(audited("ada@shop.ng", "ORD-1043", 100_000, "late delivery"));
+console.log(row);
+</example>
+<output>
+refund 500000 kobo on ORD-1042: damaged
+audit: ada@shop.ng called refund
+refund 100000 kobo on ORD-1043: late delivery
+[ 'ORD-1042', 500000, true ]
+</output>
+<ul>
+<li><code>bindFirst</code> matches the function against <code>(first: F, ...rest: A) =&gt; R</code>, the same pattern matching <code>infer</code> does, so <code>A</code> becomes the remaining parameters. The labels (<code>amountKobo</code>, <code>reason</code>) travel with the tuple, so editors still show the real parameter names (<code>V1</code>).</li>
+<li><code>withActor</code> adds a parameter in front of any list (<code>V2</code>), and <code>concat</code> joins two tuples, keeping every position (<code>V3</code>).</li>
+</ul>
+<p>A parameter list can also be <em>computed</em>. <a href="/learn/ts-inference-deep#build">Advanced inference</a> typed <code>link(name, ...args: LinkArgs&lt;N&gt;)</code> with a conditional type that produced either <code>[]</code> or <code>[params]</code>, so the second argument exists only for routes with parameters. The router below does the same for commands.</p>
+</section>
+
+<section>
+<h2 id="compatibility">Callback compatibility</h2>
+<p>When is one function type assignable to another? This decides which callbacks you may pass, which handlers fit a registry, and why the conditional types lesson used <code>never[]</code> for "any function". Start with two rules that make everyday JavaScript work:</p>
+<example file="fewer.ts" project="compat">
+const skus = ["TOTE-01", "MUG-07", "MAT-03"];
+
+const labels: string[] = [];
+skus.forEach((sku) => labels.push(sku.toLowerCase()));
+
+const numbered = skus.map((sku, index) => `${index + 1}. ${sku}`);
+const plain = skus.map((sku) => sku.slice(0, 3));
+
+console.log(labels, numbered, plain);
+</example>
+<output>
+[ 'tote-01', 'mug-07', 'mat-03' ] [ '1. TOTE-01', '2. MUG-07', '3. MAT-03' ] [ 'TOT', 'MUG', 'MAT' ]
+</output>
+<ul>
+<li><strong>Fewer parameters are fine.</strong> <code>map</code> calls its callback with three arguments (element, index, array). A callback that uses one ignores the rest, which is always safe.</li>
+<li><strong>A <code>void</code> result accepts anything.</strong> <code>forEach</code> expects a callback returning <code>void</code>, and <code>labels.push(…)</code> returns a number. A <code>void</code> return type means "the caller will not use the result", so any result is allowed.</li>
+</ul>
+<h3>Results can be narrower, parameters must be wider</h3>
+<p>A function that returns a <code>CardPayment</code> can stand in where a function returning <code>Payment</code> is expected: callers expecting a payment get a more specific one. Results are <strong>covariant</strong>: they may vary in the same direction as the types. Parameters go the other way. A handler that only understands card events cannot stand in for a handler of <em>all</em> payment events, because it would be handed bank transfers too. Parameters are <strong>contravariant</strong>: the replacement must accept at least as much. Under <code>strict</code> (the <code>strictFunctionTypes</code> flag), TypeScript enforces this, but only for function-typed <em>properties</em>, not for <em>methods</em>:</p>
+<example file="variance.ts" project="compat" check="tsc-error">
+interface PaymentEvent {
+  reference: string;
+  amountKobo: number;
+}
+interface CardEvent extends PaymentEvent {
+  last4: string;
+}
+
+interface PropertyStyle {
+  handle: (event: PaymentEvent) => void;
+}
+interface MethodStyle {
+  handle(event: PaymentEvent): void;
+}
+
+const cardOnly = (event: CardEvent) => console.log(`card ****${event.last4}`);
+
+const safe: PropertyStyle = { handle: cardOnly };
+const unsafe: MethodStyle = { handle: cardOnly };
+</example>
+<output kind="tsc">
+variance.ts:18:31 - error TS2322: Type '(event: CardEvent) => void' is not assignable to type '(event: PaymentEvent) => void'.
+  Types of parameters 'event' and 'event' are incompatible.
+    Property 'last4' is missing in type 'PaymentEvent' but required in type 'CardEvent'.
+
+18 const safe: PropertyStyle = { handle: cardOnly };
+                                 ~~~~~~
+
+  variance.ts:6:3 - 'last4' is declared here.
+    6   last4: string;
+        ~~~~~
+
+  variance.ts:10:3 - The expected type comes from property 'handle' which is declared here on type 'PropertyStyle'
+    10   handle: (event: PaymentEvent) => void;
+         ~~~~~~
+
+
+Found 1 error in variance.ts:18
+</output>
+<p>Only the property-style interface refused the card-only handler. Method signatures are checked <strong>bivariantly</strong>: the parameter may be wider <em>or narrower</em>. That compiles, and it is unsound:</p>
+<example file="bivariance.ts" project="compat">
+interface PaymentEvent {
+  reference: string;
+  amountKobo: number;
+}
+interface CardEvent extends PaymentEvent {
+  last4: string;
+}
+interface MethodStyle {
+  handle(event: PaymentEvent): void;
+}
+
+const handler: MethodStyle = {
+  handle: (event: CardEvent) => console.log(`card ****${event.last4.slice(-4)}`),
+};
+
+try {
+  handler.handle({ reference: "TRF_20", amountKobo: 750_000 });
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+TypeError: Cannot read properties of undefined (reading 'slice')
+</output>
+<p>TypeScript keeps method bivariance on purpose: without it, many built-in types would be incompatible in ways that are technically correct and practically useless (a <code>Dog[]</code> could not be passed where an <code>Animal[]</code> is expected, because of <code>push(animal: Animal)</code>). The practical rule: <strong>write callbacks in your own interfaces as properties</strong> (<code>handle: (event: PaymentEvent) =&gt; void</code>), and you get the strict check. <a href="/learn/ts-type-system">The type system in depth</a> returns to variance, including the <code>in</code> and <code>out</code> annotations.</p>
+<h3>The type of "any function"</h3>
+<p>Contravariance also explains how to write "a function with any parameters". <code>(...args: unknown[]) =&gt; unknown</code> looks right, but a function that needs a <code>string</code> is not assignable to it, because <code>unknown</code> arguments might be passed. The parameter type that every function accepts is <code>never</code>: nobody can produce a value of it, so no function can be handed something it does not expect. <code>(...args: never) =&gt; unknown</code> is the safe top type for functions, and it is what the router below uses.</p>
+</section>
+
+<section>
+<h2 id="build">Build: a type-safe command router</h2>
+<reason title="Before you design the router">
+<p>Commands arrive two ways: from code (<code>router.run("refund", "ORD-1042", 500_000)</code>) and from the admin chat as text (<code>/refund ORD-1042 500000</code>). Before reading the code, think:</p>
+<ul>
+<li>Where should a command's argument types be written, so they are written once?</li>
+<li>From code, the compiler can check arguments. From the chat, everything is a string. What must happen between the text and the handler?</li>
+<li>The router keeps all commands in one table, but each has different parameters. What type can that table have without losing each command's parameters, and without <code>any</code>?</li>
+<li>A chat user types <code>/refund 500000 ORD-1042</code>. What should they see?</li>
+</ul>
+<answer>
+<p>Each command is one object: a usage string, a <code>parse</code> function that turns tokens into a typed argument tuple or an error message, and a <code>run</code> function whose parameters are that tuple. The tuple type is written once, as <code>parse</code>'s return type, and <code>run</code>'s parameters are inferred from it. Text must go through <code>parse</code>, which validates at runtime; code calls go straight to <code>run</code> and are checked at compile time. The router's table is generic over the whole object of commands, so each entry keeps its own type; its constraint only needs "some command", whose <code>run</code> takes <code>never</code> parameters, the top type for functions. Swapped arguments from the chat get the usage line and the reason, never a refund.</p>
+</answer>
+</reason>
+<example file="router.ts" project="router">
+export interface Command<A extends unknown[]> {
+  readonly usage: string;
+  readonly parse: (tokens: readonly string[]) => A | string;
+  readonly run: (...args: A) => string;
+}
+
+export function command<A extends unknown[]>(definition: Command<A>): Command<A> {
+  return definition;
+}
+
+interface AnyCommand {
+  readonly usage: string;
+  readonly parse: (tokens: readonly string[]) => unknown[] | string;
+  readonly run: (...args: never) => string;
+}
+
+function invoke(cmd: AnyCommand, args: readonly unknown[]): string {
+  return (cmd.run as (...args: readonly unknown[]) => string)(...args);
+}
+
+export function createRouter<C extends Record<string, AnyCommand>>(commands: C) {
+  type Name = keyof C & string;
+
+  function help(): string[];
+  function help(name: Name): string;
+  function help(name?: Name): string | string[] {
+    if (name === undefined) return Object.keys(commands).map((key) => `/${key} ${commands[key].usage}`);
+    return `/${name} ${commands[name].usage}`;
+  }
+
+  return {
+    help,
+    run<N extends Name>(name: N, ...args: Parameters<C[N]["run"]>): string {
+      return invoke(commands[name], args);
+    },
+    exec(line: string): string {
+      const [head = "", ...tokens] = line.trim().split(/\s+/);
+      const name = head.slice(1);
+      if (!head.startsWith("/") || !Object.hasOwn(commands, name)) return `unknown command ${head}`;
+      const parsed = commands[name].parse(tokens);
+      if (typeof parsed === "string") return `usage: /${name} ${commands[name].usage} (${parsed})`;
+      return invoke(commands[name], parsed);
+    },
+  };
+}
+</example>
+<p>Every idea from this lesson appears here:</p>
+<ul>
+<li><code>command</code> is a generic identity function whose only job is inference: <code>A</code> is inferred from <code>parse</code>'s return type, and <code>run</code>'s parameters are then checked against it. <code>parse</code> comes first in each definition, producer before consumer, as <a href="/learn/ts-inference-deep#contextual">Advanced inference</a> recommended.</li>
+<li><code>AnyCommand</code> uses <code>(...args: never) =&gt; string</code>, so a command with any parameter list fits the router's constraint. With <code>unknown[]</code>, no real command would fit.</li>
+<li><code>run</code> takes a variadic <code>...args: Parameters&lt;C[N]["run"]&gt;</code>: after the name, exactly that command's parameters, labels included.</li>
+<li><code>help</code> has two overloads: all usage lines, or one.</li>
+<li><code>invoke</code> holds the one cast. At that point the compiler only knows "some command" and "some arguments"; <code>run</code> guarantees the arguments at compile time and <code>exec</code> guarantees them by parsing. <code>Object.hasOwn</code> keeps chat users from calling inherited names such as <code>/toString</code>.</li>
+</ul>
+<p>Now the shop's commands:</p>
+<example file="commands.ts" project="router">
+import { command, createRouter } from "./router.js";
+
+function kobo(text: string | undefined): number | string {
+  if (text === undefined || !/^\d+$/.test(text)) return `"${text ?? ""}" is not an amount in kobo`;
+  return Number(text);
+}
+
+export const router = createRouter({
+  refund: command({
+    usage: "<orderId> <amountKobo>",
+    parse: (tokens): [orderId: string, amountKobo: number] | string => {
+      const [orderId, raw] = tokens;
+      if (!orderId?.startsWith("ORD-")) return "order id must start with ORD-";
+      const amount = kobo(raw);
+      return typeof amount === "string" ? amount : [orderId, amount];
+    },
+    run: (orderId, amountKobo) => `refunding ₦${(amountKobo / 100).toFixed(2)} on ${orderId}`,
+  }),
+  restock: command({
+    usage: "<sku> <quantity>",
+    parse: (tokens): [sku: string, quantity: number] | string => {
+      const [sku, raw] = tokens;
+      const quantity = Number(raw);
+      if (!sku || !Number.isInteger(quantity) || quantity <= 0) return "need a sku and a positive whole quantity";
+      return [sku, quantity];
+    },
+    run: (sku, quantity) => `${sku}: +${quantity} units`,
+  }),
+});
+</example>
+<p>The two argument tuples are the only types written by hand, and they are labelled, so <code>run</code>'s parameters get names as well as types. The same four calls from the start of the lesson, from code and from the chat:</p>
+<example file="app.ts" project="router">
+import { router } from "./commands.js";
+
+console.log(router.run("refund", "ORD-1042", 500_000));
+console.log(router.exec("/refund ORD-1042 500000"));
+console.log(router.exec("/refund 500000 ORD-1042"));
+console.log(router.exec("/restock TOTE-01"));
+console.log(router.exec("/refnud ORD-1043 100000"));
+console.log(router.exec("/toString"));
+console.log(router.help());
+console.log(router.help("restock"));
+</example>
+<output>
+refunding ₦5000.00 on ORD-1042
+refunding ₦5000.00 on ORD-1042
+usage: /refund <orderId> <amountKobo> (order id must start with ORD-)
+usage: /restock <sku> <quantity> (need a sku and a positive whole quantity)
+unknown command /refnud
+unknown command /toString
+[ '/refund <orderId> <amountKobo>', '/restock <sku> <quantity>' ]
+/restock <sku> <quantity>
+</output>
+<example file="app-mistakes.ts" project="router" check="tsc-error">
+import { router } from "./commands.js";
+
+router.run("refund", 500_000, "ORD-1042");
+router.run("restock", "TOTE-01");
+router.run("refnud", "ORD-1043", 100_000);
+router.help("delete");
+</example>
+<output kind="tsc">
+app-mistakes.ts:3:22 - error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+
+3 router.run("refund", 500_000, "ORD-1042");
+                       ~~~~~~~
+
+app-mistakes.ts:4:8 - error TS2554: Expected 3 arguments, but got 2.
+
+4 router.run("restock", "TOTE-01");
+         ~~~
+
+app-mistakes.ts:5:12 - error TS2345: Argument of type '"refnud"' is not assignable to parameter of type 'Name'.
+
+5 router.run("refnud", "ORD-1043", 100_000);
+             ~~~~~~~~
+
+app-mistakes.ts:6:13 - error TS2345: Argument of type '"delete"' is not assignable to parameter of type 'Name'.
+
+6 router.help("delete");
+              ~~~~~~~~
+
+  router.ts:26:12 - The call would have succeeded against this implementation, but implementation signatures of overloads are not externally visible.
+    26   function help(name?: Name): string | string[] {
+                  ~~~~
+
+
+Found 4 errors in the same file, starting at: app-mistakes.ts:3
+</output>
+<p>From code, all four mistakes are compile errors; from the chat, each gets a usage line with the reason. Adding a command is one <code>command({ … })</code> entry, and both paths pick it up.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing function types</h2>
+<p>A router like this has three things worth testing: the types callers see, the rejections, and the runtime paths, especially the parsing, which is the only protection for text input.</p>
+<example file="router.test.ts" project="router">
+import { router } from "./commands.js";
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+type RunArgs = Parameters<typeof router.run<"refund">>;
+type T1 = Expect<Equal<RunArgs, [name: "refund", orderId: string, amountKobo: number]>>;
+type T2 = Expect<Equal<ReturnType<typeof router.help>, string>>;
+
+// @ts-expect-error: arguments in the wrong order
+router.run("restock", 12, "TOTE-01");
+
+const cases: [string, string][] = [
+  ["/refund ORD-7 100", "refunding ₦1.00 on ORD-7"],
+  ["/refund ORD-7 1.5", 'usage: /refund <orderId> <amountKobo> ("1.5" is not an amount in kobo)'],
+  ["/refund ORD-7", 'usage: /refund <orderId> <amountKobo> ("" is not an amount in kobo)'],
+  ["/restock MUG-07 -3", "usage: /restock <sku> <quantity> (need a sku and a positive whole quantity)"],
+  ["   /restock   MUG-07   4  ", "MUG-07: +4 units"],
+  ["refund ORD-7 100", "unknown command refund"],
+];
+for (const [line, want] of cases) {
+  const got = router.exec(line);
+  console.log(got === want ? "PASS" : "FAIL", JSON.stringify(line), got === want ? "" : `-> ${got}`);
+}
+</example>
+<output>
+PASS "/refund ORD-7 100"
+PASS "/refund ORD-7 1.5"
+PASS "/refund ORD-7"
+PASS "/restock MUG-07 -3"
+PASS "   /restock   MUG-07   4  "
+PASS "refund ORD-7 100"
+</output>
+<p><code>T2</code> documents a trap from the overloads section: <code>ReturnType</code> sees only the <em>last</em> overload of <code>help</code>, <code>help(name)</code>, which returns <code>string</code>; the <code>string[]</code> of <code>help()</code> is invisible to it. If you need that form's type, name it directly. The <code>@ts-expect-error</code> line would fail the build if a refactor loosened <code>run</code>'s parameters back to <code>unknown[]</code>. The runtime table tries the inputs a hurried operator actually types: decimals, missing values, negative quantities, extra spaces, a forgotten slash.</p>
+</section>
+
+<section>
+<h2 id="production">Advanced function types in production</h2>
+<ul>
+<li><strong>Prefer one signature.</strong> Overloads, callable objects and computed parameter lists are for library-style code that many callers use. In application code, a single signature with a discriminated-union argument is easier to read and to change.</li>
+<li><strong>Write callback members as properties</strong>, not methods, so <code>strictFunctionTypes</code> checks them.</li>
+<li><strong>Use <code>(...args: never) =&gt; unknown</code> for "any function"</strong>, never <code>Function</code> (which accepts calls with any arguments and returns <code>any</code>) and never <code>(...args: any[]) =&gt; any</code>, which turns off checking on both sides.</li>
+<li><strong>Declare <code>this</code> where it matters.</strong> Methods meant to be passed around should be arrow-function properties or bound; functions that rely on <code>this</code> should say so with a <code>this</code> parameter.</li>
+<li><strong>Keep the runtime check at the text boundary.</strong> The compiler checked <code>router.run</code>; only <code>parse</code> protects <code>router.exec</code>. Commands that move money should also log who ran them, as <code>withActor</code> did.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="once">
+<p>Write <code>once(fn)</code>: it returns a function with exactly the same parameters and result as <code>fn</code>, which runs <code>fn</code> the first time and returns the first result on every later call. Use it for a "send receipt" function that must never send twice.</p>
+<solution>
+<example file="once.ts" project="ex-once">
+function once<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  let done = false;
+  let result: R;
+  return (...args) => {
+    if (!done) {
+      result = fn(...args);
+      done = true;
+    }
+    return result;
+  };
+}
+
+let sent = 0;
+const sendReceipt = once((orderId: string, email: string) => {
+  sent++;
+  return `receipt for ${orderId} sent to ${email}`;
+});
+
+console.log(sendReceipt("ORD-1042", "ada@shop.ng"));
+console.log(sendReceipt("ORD-1042", "ada@shop.ng"));
+console.log("emails sent:", sent);
+</example>
+<output>
+receipt for ORD-1042 sent to ada@shop.ng
+receipt for ORD-1042 sent to ada@shop.ng
+emails sent: 1
+</output>
+<p><code>A</code> captures the parameter list, labels included, so <code>sendReceipt</code> is <code>(orderId: string, email: string) =&gt; string</code>. The flag is separate from <code>result</code> because a function may legitimately return <code>undefined</code>.</p>
+</solution>
+</exercise>
+<exercise title="A cancel command without arguments">
+<p>Add a <code>/cancel</code> command to the router that takes no arguments and returns <code>"pending operation cancelled"</code>. What is its argument tuple? What does <code>router.run("cancel")</code> accept, and what happens with <code>/cancel now</code>?</p>
+<solution>
+<example file="cancel.ts" project="router">
+import { command, createRouter } from "./router.js";
+
+const router = createRouter({
+  cancel: command({
+    usage: "(no arguments)",
+    parse: (tokens): [] | string => (tokens.length === 0 ? [] : `unexpected "${tokens.join(" ")}"`),
+    run: () => "pending operation cancelled",
+  }),
+});
+
+console.log(router.run("cancel"));
+console.log(router.exec("/cancel"));
+console.log(router.exec("/cancel now"));
+</example>
+<output>
+pending operation cancelled
+pending operation cancelled
+usage: /cancel (no arguments) (unexpected "now")
+</output>
+<p>The tuple is the empty tuple <code>[]</code>, so <code>router.run("cancel")</code> takes no further arguments, and <code>router.run("cancel", "now")</code> is a compile error. From the chat, extra words produce the usage message instead of being silently ignored.</p>
+</solution>
+</exercise>
+<exercise title="Make the handler interface strict">
+<p>A notification module declares <code>interface Notifier { notify(event: OrderEvent): void }</code>, and someone registered an SMS notifier that only accepts <code>ShippedEvent</code>. Change the interface so the compiler refuses that registration, and show the error.</p>
+<solution>
+<example file="notifier.ts" project="ex-notifier" check="tsc-error">
+interface OrderEvent {
+  orderId: string;
+}
+interface ShippedEvent extends OrderEvent {
+  courier: string;
+}
+
+interface Notifier {
+  notify: (event: OrderEvent) => void;
+}
+
+const sms: Notifier = {
+  notify: (event: ShippedEvent) => console.log(`${event.orderId} is with ${event.courier}`),
+};
+</example>
+<output kind="tsc">
+notifier.ts:13:3 - error TS2322: Type '(event: ShippedEvent) => void' is not assignable to type '(event: OrderEvent) => void'.
+  Types of parameters 'event' and 'event' are incompatible.
+    Property 'courier' is missing in type 'OrderEvent' but required in type 'ShippedEvent'.
+
+13   notify: (event: ShippedEvent) => console.log(`${event.orderId} is with ${event.courier}`),
+     ~~~~~~
+
+  notifier.ts:5:3 - 'courier' is declared here.
+    5   courier: string;
+        ~~~~~~~
+
+  notifier.ts:9:3 - The expected type comes from property 'notify' which is declared here on type 'Notifier'
+    9   notify: (event: OrderEvent) => void;
+        ~~~~~~
+
+
+Found 1 error in notifier.ts:13
+</output>
+<p>Writing <code>notify</code> as a property instead of a method turns on the contravariant check. The honest fixes are then to accept every <code>OrderEvent</code> and narrow inside, or to register the SMS notifier only for shipped events, as the typed event bus in <a href="/learn/ts-template-literals#build">Template literal types</a> does.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Overloads are tried top to bottom; the first match wins, the implementation signature is invisible, and a union argument matches none. Put specific overloads first, and prefer one signature when callers hold unions.</li>
+<li>Call signatures describe functions with properties (<code>Object.assign</code> or property assignments on a declaration); several call signatures are overloads as a type.</li>
+<li>Construct signatures type classes as values, including static members; <code>abstract new</code> also accepts abstract classes.</li>
+<li>A <code>this</code> parameter is checked at calls and erased from the output. <code>this: void</code> forbids <code>this</code> in callbacks; <code>ThisParameterType</code> and <code>OmitThisParameter</code> read and remove it.</li>
+<li>Generic rest parameters capture parameter lists as tuples, with labels; tuples spread into tuples, so wrappers can add, remove or compute parameters.</li>
+<li>Callbacks may take fewer parameters and may return anything to a <code>void</code> callback. Results are covariant, parameters contravariant for function properties, and bivariant for methods. <code>(...args: never) =&gt; unknown</code> is "any function".</li>
+<li>The command router writes each command's argument tuple once, checks code calls at compile time and chat text at runtime.</li>
+</ul>
+<p>Next: <a href="/learn/ts-oop">Object-oriented TypeScript</a>, where these function and class types meet encapsulation, interfaces and dependency inversion, and you compare object-oriented and functional designs for the same payment system.</p>
+</section>

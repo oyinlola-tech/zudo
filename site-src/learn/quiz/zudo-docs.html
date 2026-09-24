@@ -1,0 +1,749 @@
+<question id="docs-why" type="choice">
+<q>The old docs script "finished without errors" while publishing a broken link and an internal runbook. What was missing?</q>
+<option>A faster Markdown parser</option>
+<option correct>A structure for the pages and an automatic check of that structure, as code has a type checker and tests</option>
+<option>A bigger server for the website</option>
+<option>More pages</option>
+<explain><p>To a script that copies files, docs are only text, so nothing can be wrong. Once each page is a document with an id, metadata and links that can be resolved, a check can fail the build, the same way a failing test does.</p></explain>
+</question>
+
+<question id="docs-id-stable" type="choice">
+<q>Why should a document's <code>id</code> stay the same when its title changes?</q>
+<option>Because ids must be unique and titles need not be</option>
+<option correct>Links, navigation entries, URLs and bookmarks all point at the id; changing it breaks every one of them</option>
+<option>Because the title is not stored</option>
+<option>Because ids are sorted alphabetically</option>
+<explain><p>The title is what readers see and may be reworded freely. The id is the page's address. When you must change it, keep a redirect from the old id.</p></explain>
+</question>
+
+<question id="docs-id-valid" type="output">
+<q>What does this print?</q>
+<code file="ids.js" browser="no">
+import { documentIdFromPath, isValidDocumentId } from "@zudojs/docs";
+console.log(documentIdFromPath("guides/v1.2/routing.md"));
+console.log(isValidDocumentId("guides.http-routing"), isValidDocumentId("guides/http"));
+</code>
+<option correct>guides.v1.2.routing
+true false</option>
+<option>guides.v1_2.routing
+true false</option>
+<option>guides.v1.2.routing.md
+true true</option>
+<option>guides/v1.2/routing
+false false</option>
+<explain><p><code>documentIdFromPath</code> turns separators into dots and removes only the final extension, so the folder <code>v1.2</code> becomes two segments. Ids are dot-separated segments of letters, digits, <code>_</code> and <code>-</code>, so a hyphen is fine and a slash is not.</p></explain>
+</question>
+
+<question id="docs-id-collision" type="choice">
+<q>Given the previous answer, which two files would end up with the same id?</q>
+<option><code>guides/start.md</code> and <code>guides/start.mdx</code> only</option>
+<option correct><code>guides/v1.2/routing.md</code> and <code>guides/v1/2/routing.md</code></option>
+<option><code>guides/a.md</code> and <code>guides/A.md</code></option>
+<option>No two paths can ever give the same id</option>
+<explain><p>Both become <code>guides.v1.2.routing</code>. <code>start.md</code> and <code>start.mdx</code> would also collide, as the extension is dropped. The registry refuses the second one with <code>DuplicateDocumentError</code>, which is exactly how such a collision is found.</p></explain>
+</question>
+
+<question id="docs-frozen" type="choice">
+<q>Documents from <code>createDocument</code> are deep-frozen. What does that protect against?</q>
+<option>Pages being deleted from the registry</option>
+<option correct>Code in one part of the build changing a page (its tags, its content) that other parts are also reading</option>
+<option>Pages being read by users</option>
+<option>Slow validation</option>
+<explain><p>A docs build passes the same page objects to validators, generators and indexes. If one step could change a page, the others would see different data depending on the order they run in. Frozen documents are values, and a step that wants a change builds a new document.</p></explain>
+</question>
+
+<question id="docs-frontmatter-output" type="output">
+<q>What does <code>parseFrontmatter</code> return as metadata here?</q>
+<code file="frontmatter.js" browser="no">
+import { parseFrontmatter } from "@zudojs/docs";
+const { metadata } = parseFrontmatter("---\ntags: payments\nversion: 2.10\nretries: 3\nzip: 007\n---\n# Refunds\n");
+console.log(metadata);
+</code>
+<option correct>{ tags: [ 'payments' ], version: '2.10', retries: 3, zip: '007' }</option>
+<option>{ tags: 'payments', version: 2.1, retries: 3, zip: 7 }</option>
+<option>{ tags: [ 'payments' ], version: 2.1, retries: 3, zip: 7 }</option>
+<option>{ tags: [ 'p', 'a', 'y', 'm', 'e', 'n', 't', 's' ], version: '2.10', retries: 3, zip: '007' }</option>
+<explain><p><code>tags</code> is always a list. <code>version</code> is always a string. Other values become numbers only when nothing is lost: <code>3</code> is safe, but <code>2.10</code> would become <code>2.1</code> and <code>007</code> would become <code>7</code>, so those stay strings.</p></explain>
+</question>
+
+<question id="docs-frontmatter-proto" type="choice">
+<q>A Markdown file from a contributor has <code>__proto__: admin</code> in its frontmatter. What does <code>parseFrontmatter</code> do with it?</q>
+<option>Sets the prototype of the metadata object</option>
+<option>Throws <code>InvalidFrontmatterError</code></option>
+<option correct>Leaves the key out of the result, so no object's prototype can be changed</option>
+<option>Stores it as a normal property named <code>__proto__</code></option>
+<explain><p>Keys that could alter an object's prototype (<code>__proto__</code>, <code>constructor</code>, <code>prototype</code>) are refused. Frontmatter is input, and input must never be able to change how your objects behave. This is prototype pollution, defended by the parser.</p></explain>
+</question>
+
+<question id="docs-frontmatter-missing" type="choice">
+<q>A file starts with <code>---</code> and a title, but the closing <code>---</code> is missing. What does <code>parseFrontmatter</code> return?</q>
+<option>It throws an error</option>
+<option correct>Empty metadata and the whole text unchanged as content; the missing title shows up later in validation</option>
+<option>The title, and the rest as content</option>
+<option>An empty content string</option>
+<explain><p>Only a well-formed block is read. A broken one is not guessed at. The page then has no title from frontmatter, and the loader falls back to the first heading or the file name, or validation reports it.</p></explain>
+</question>
+
+<question id="docs-serialize-output" type="output">
+<q>What does this print?</q>
+<code file="serialize.js" browser="no">
+import { serializeFrontmatter } from "@zudojs/docs";
+console.log(serializeFrontmatter({ title: "Refunds", price: "5000", public: "yes" }, "# Refunds\n"));
+</code>
+<option correct>---
+title: Refunds
+price: "5000"
+public: yes
+---
+
+# Refunds</option>
+<option>---
+title: Refunds
+price: 5000
+public: yes
+---
+
+# Refunds</option>
+<option>---
+title: "Refunds"
+price: "5000"
+public: "yes"
+---
+
+# Refunds</option>
+<option>---
+title: Refunds
+price: 5000
+public: true
+---
+
+# Refunds</option>
+<explain><p>The serializer quotes a value only when its own parser would read it back differently. <code>"5000"</code> would come back as a number, so it is quoted. <code>yes</code> is not a boolean for this parser, so it is written plainly.</p></explain>
+</question>
+
+<question id="docs-cast-then-validate" type="output">
+<q>Frontmatter said <code>category: payments</code>. What does this print?</q>
+<code file="category.js" browser="no">
+import { createDocument, validateDocument } from "@zudojs/docs";
+const doc = createDocument({ id: "guides.billing", title: "Billing", content: { type: "markdown", value: "# Billing" }, category: "payments" });
+console.log(doc.category);
+console.log(validateDocument(doc).issues.map((issue) => issue.code));
+</code>
+<option correct>payments
+[ 'INVALID_CATEGORY' ]</option>
+<option>undefined
+[]</option>
+<option>payments
+[]</option>
+<option>DocumentValidationError</option>
+<explain><p><code>createDocument</code> checks the id, title and content, not the category. The document is built, and <code>validateDocument</code> reports the unknown category. That is why the loader can cast frontmatter strings, as long as validation runs afterwards.</p></explain>
+</question>
+
+<question id="docs-generated-ref" type="choice">
+<q>Why does the lesson generate the error reference from the <code>@zudojs/errors</code> classes instead of writing it in Markdown?</q>
+<option>Because Markdown cannot contain tables</option>
+<option correct>The status codes and error codes live in the code; a page built from them changes when they change, so it cannot drift</option>
+<option>Because generated pages load faster</option>
+<option>Because the registry only accepts structured documents</option>
+<explain><p>A hand-written copy of facts that live in code goes stale the first time someone changes the code and forgets the docs. Generating the page removes the copy. The same works for config keys, routes, events and CLI commands.</p></explain>
+</question>
+
+<question id="docs-escape-output" type="output">
+<q>Structured content comes from a JSON file that partners can edit. What does this print?</q>
+<code file="escape.js" browser="no">
+import { nodesToMarkdown } from "@zudojs/docs";
+console.log(nodesToMarkdown([
+  { type: "table", headers: ["Plan", "Price"], rows: [["Basic | Monthly", "₦5,000"]] },
+  { type: "link", href: "javascript:alert(1)", value: "Pay now" },
+]));
+</code>
+<option correct>| Plan | Price |
+| --- | --- |
+| Basic \| Monthly | ₦5,000 |
+
+Pay now</option>
+<option>| Plan | Price |
+| --- | --- |
+| Basic | Monthly | ₦5,000 |
+
+[Pay now](javascript:alert(1))</option>
+<option>| Plan | Price |
+| --- | --- |
+| Basic \| Monthly | ₦5,000 |
+
+[Pay now](javascript:alert(1))</option>
+<option>TypeError: unsafe link</option>
+<explain><p>Every value is escaped for its position: the <code>|</code> is escaped so the cell stays one cell, and a link whose scheme is not on the allow-list is written as plain text. Untrusted structured content cannot break the table or become a live <code>javascript:</code> link.</p></explain>
+</question>
+
+<question id="docs-duplicate-output" type="output">
+<q>What does this print?</q>
+<code file="duplicate.js" browser="no">
+import { createDocumentRegistry, createMarkdownDocument } from "@zudojs/docs";
+const registry = createDocumentRegistry();
+registry.register(createMarkdownDocument("guides.start", "Start", "# Start"));
+try {
+  registry.register(createMarkdownDocument("guides.start", "Getting started", "# Getting started"));
+} catch (error) {
+  console.log(error.name);
+}
+console.log(registry.size, registry.get("guides.start").title);
+</code>
+<option correct>DuplicateDocumentError
+1 Start</option>
+<option>2 Getting started</option>
+<option>1 Getting started</option>
+<option>DuplicateDocumentError
+2 Start</option>
+<explain><p>The registry refuses a second page with the same id and keeps the first one. It never silently replaces a page, which is how two files that map to the same URL are found.</p></explain>
+</question>
+
+<question id="docs-visibility-output" type="output">
+<q>One page says <code>visibility: "server"</code> in lower case. What does this print?</q>
+<code file="visibility.js" browser="no">
+import { createDocumentRegistry, createMarkdownDocument } from "@zudojs/docs";
+const registry = createDocumentRegistry();
+registry.registerAll([
+  createMarkdownDocument("guides.start", "Start", "# Start"),
+  createMarkdownDocument("internal.oncall", "On call", "# On call", { visibility: "SERVER" }),
+  createMarkdownDocument("internal.keys", "Keys", "# Keys", { visibility: "server" }),
+]);
+console.log(registry.getAll({ visibility: "CLIENT" }).map((doc) => doc.id));
+</code>
+<option correct>[ 'guides.start' ]</option>
+<option>[ 'guides.start', 'internal.keys' ]</option>
+<option>[ 'guides.start', 'internal.oncall', 'internal.keys' ]</option>
+<option>[]</option>
+<explain><p>The filter fails closed: only an unset visibility or exactly <code>"CLIENT"</code> is public. The typo <code>"server"</code> is treated as internal. A mistake hides a page; it never publishes one.</p></explain>
+</question>
+
+<question id="docs-fail-closed" type="choice">
+<q>Why is "fail closed" the right default for visibility?</q>
+<option>Because most pages are internal</option>
+<option correct>A wrongly hidden public page is a small, visible problem; a wrongly published internal page cannot be taken back once it is indexed</option>
+<option>Because it makes the filter faster</option>
+<option>Because <code>"CLIENT"</code> is the only valid value</option>
+<explain><p>Compare the costs of the two mistakes. Someone notices a missing page and fixes it. A leaked runbook may already be in search engines and caches. When one direction of error is much worse, the default should avoid it.</p></explain>
+</question>
+
+<question id="docs-resolve-output" type="output">
+<q>How are these relative links resolved?</q>
+<code file="resolve.js" browser="no">
+import { resolveDocumentLink } from "@zudojs/docs";
+console.log(resolveDocumentLink("guides.auth.login", "./sessions"));
+console.log(resolveDocumentLink("guides.auth.login", "../tasks"));
+console.log(resolveDocumentLink("guides.start", "../reference/errors#404"));
+</code>
+<option correct>guides.auth.sessions
+guides.tasks
+reference.errors</option>
+<option>guides.auth.login.sessions
+guides.auth.tasks
+guides.reference.errors</option>
+<option>guides.auth.sessions
+guides.auth.tasks
+reference.errors#404</option>
+<option>sessions
+tasks
+reference/errors</option>
+<explain><p>An id works like a file path: <code>guides.auth.login</code> is the file <code>login</code> in the folder <code>guides/auth</code>. <code>./</code> stays in that folder, <code>../</code> goes up one, slashes become dots, and the <code>#fragment</code> is removed.</p></explain>
+</question>
+
+<question id="docs-broken-warning-output" type="output">
+<q>What does this print?</q>
+<code file="links.js" browser="no">
+import { createMarkdownDocument, validateLinks } from "@zudojs/docs";
+const doc = createMarkdownDocument("guides.start", "Start", "See [login](./login) and [the site](https://example.com).");
+const result = validateLinks(doc, new Set(["guides.start"]));
+console.log(result.valid, result.issues.map((issue) => `${issue.severity} ${issue.code}`));
+</code>
+<option correct>true [ 'warning BROKEN_LINK' ]</option>
+<option>false [ 'error BROKEN_LINK' ]</option>
+<option>false [ 'error BROKEN_LINK', 'warning EXTERNAL_LINK' ]</option>
+<option>true []</option>
+<explain><p><code>./login</code> resolves to <code>guides.login</code>, which does not exist, but a broken link is only a warning, so <code>valid</code> stays <code>true</code>. The external link is skipped entirely. A CI check that looks at <code>valid</code> alone would let this through.</p></explain>
+</question>
+
+<question id="docs-strict-policy" type="choice">
+<q>Given that broken links are warnings, what does the lesson's <code>checkDocs</code> do?</q>
+<option>Ignores warnings, because <code>valid</code> is true</option>
+<option>Turns off link checking</option>
+<option correct>Counts every issue, warnings included, and fails when there is any</option>
+<option>Retries the check until the warnings go away</option>
+<explain><p>The package reports; your project decides the policy. For a public docs site, a dead link is a real defect, so the check fails on every issue. You can also fail only on chosen codes, such as <code>BROKEN_LINK</code> and <code>NAVIGATION_ORPHAN_DOCUMENT</code>.</p></explain>
+</question>
+
+<question id="docs-public-internal-link" type="choice">
+<q>A public page links to <code>../../internal/runbook</code>, which exists. Why does the lesson's check still report it as a broken link?</q>
+<option>Because the runbook has no title</option>
+<option correct>Public pages are validated against the public ids only; for the public site the runbook does not exist, and the link would also reveal it</option>
+<option>Because relative links are not allowed</option>
+<option>Because the runbook is in a different folder</option>
+<explain><p>Validating the <code>"CLIENT"</code> pages as their own set turns "links to an internal page" into "links to a missing page". That is exactly what a reader of the public site would see: a 404.</p></explain>
+</question>
+
+<question id="docs-unsafe-link" type="choice">
+<q>What is <code>validateLinks</code>'s <code>UNSAFE_LINK</code> check good for, and what is it not?</q>
+<option>It makes any rendered page safe from script injection</option>
+<option correct>It is a useful lint that flags Markdown links with schemes like <code>javascript:</code>; it does not replace sanitizing the rendered HTML</option>
+<option>It checks that external websites are online</option>
+<option>It removes unsafe links from the document</option>
+<explain><p>It reads Markdown link syntax, not every way HTML can end up in a page, and it only reports. Pages written by people outside your team need a real HTML sanitizer at render time; the lint helps your own authors catch mistakes early.</p></explain>
+</question>
+
+<question id="docs-skipped-links" type="choice">
+<q>Which of these links does <code>validateLinks</code> <strong>not</strong> check against the registry?</q>
+<option><code>[login](./login)</code></option>
+<option><code>[errors](../reference/errors)</code></option>
+<option correct><code>[the site](https://example.com)</code> and a link inside a fenced code block</option>
+<option><code>[start](guides.start)</code></option>
+<explain><p>Links with a safe scheme such as <code>https:</code> point outside your docs and cannot be checked without the network; links inside code blocks are examples, not links. Relative and bare targets are resolved and looked up.</p></explain>
+</question>
+
+<question id="docs-nav-output" type="output">
+<q>What does this print?</q>
+<code file="nav.js" browser="no">
+import { getAdjacent, getBreadcrumbs, flattenNavigation } from "@zudojs/docs";
+const nav = [
+  { title: "Guides", children: [
+    { title: "Start", documentId: "guides.start" },
+    { title: "Tasks", documentId: "guides.tasks" },
+  ] },
+  { title: "Reference", documentId: "reference", children: [{ title: "Errors", documentId: "reference.errors" }] },
+];
+console.log(getBreadcrumbs("reference.errors", nav).map((crumb) => crumb.title).join(" > "));
+console.log(flattenNavigation(nav).join(", "));
+console.log(getAdjacent("guides.tasks", nav));
+</code>
+<option correct>Reference > Errors
+guides.start, guides.tasks, reference, reference.errors
+{ previous: 'guides.start' }</option>
+<option>Reference > Errors
+guides.start, guides.tasks, reference.errors
+{ previous: 'guides.start', next: 'reference' }</option>
+<option>Errors
+guides.start, guides.tasks, reference, reference.errors
+{ previous: 'guides.start', next: 'reference.errors' }</option>
+<option>Guides > Reference > Errors
+reference, reference.errors, guides.start, guides.tasks
+{ previous: 'guides.start' }</option>
+<explain><p>Breadcrumbs walk from the top to the page. The flattened list contains every page in reading order, including the "Reference" section page. <code>getAdjacent</code> only looks at the same level, and "Tasks" is the last page inside Guides, so it has no next page there.</p></explain>
+</question>
+
+<question id="docs-nav-separate" type="choice">
+<q>Why is the navigation tree kept separate from the documents instead of each page saying where it belongs?</q>
+<option>Because documents cannot have metadata</option>
+<option correct>So the sidebar can be reordered and regrouped in one place, and checked as a whole (unknown pages, cycles, orphans)</option>
+<option>Because the navigation is only used on mobile</option>
+<option>Because pages without a section cannot be registered</option>
+<explain><p>One tree is easy to review and to validate. If order and grouping were spread over dozens of files, a reorder would touch all of them, and nothing would notice two pages claiming the same position.</p></explain>
+</question>
+
+<question id="docs-orphan" type="choice">
+<q><code>validateAll(pages, navigation)</code> reports <code>NAVIGATION_ORPHAN_DOCUMENT</code>. What happened?</q>
+<option>A page links to itself</option>
+<option correct>A page exists but no navigation item points to it, so readers can only reach it by a direct link</option>
+<option>A navigation item has no title</option>
+<option>A page has no parent folder</option>
+<explain><p>Orphans are usually new pages someone forgot to add to the sidebar, as with the "Logging out" page in the lesson. Validate internal pages without a navigation, because they are not meant to be in the public sidebar.</p></explain>
+</question>
+
+<question id="docs-example-shape" type="choice">
+<q>What does <code>validateExample</code> tell you about a code example?</q>
+<option>That the code runs without errors</option>
+<option correct>That it has an id, a language and some code; whether it works is for your tests to check</option>
+<option>That its output matches the documentation</option>
+<option>That the language is installed</option>
+<explain><p>It checks the shape of the example object. Running examples is a separate job, done by a test suite, which is how every example in this academy is kept correct.</p></explain>
+</question>
+
+<question id="docs-fence" type="choice">
+<q>An example's code contains <code>```</code>. How does <code>renderExampleMarkdown</code> keep it from closing its own code block?</q>
+<option>It deletes the backticks</option>
+<option>It escapes every backtick with a backslash</option>
+<option correct>It uses a fence longer than any run of backticks inside the code, such as four backticks</option>
+<option>It refuses such examples</option>
+<explain><p>Markdown closes a fence only with a fence at least as long as the opening one. Choosing a longer fence keeps the example intact without changing a single character of the code.</p></explain>
+</question>
+
+<question id="docs-index-output" type="output">
+<q>What does this print?</q>
+<code file="index.js" browser="no">
+import { generateIndex, createMarkdownDocument } from "@zudojs/docs";
+const docs = [
+  createMarkdownDocument("guides.start", "Start", "# Start"),
+  createMarkdownDocument("internal.oncall", "On call", "# On call", { visibility: "SERVER" }),
+];
+console.log(generateIndex(docs).map((entry) => entry.id));
+console.log(generateIndex(docs, { visibility: "ALL" }).map((entry) => entry.id));
+</code>
+<option correct>[ 'guides.start' ]
+[ 'guides.start', 'internal.oncall' ]</option>
+<option>[ 'guides.start', 'internal.oncall' ]
+[ 'guides.start', 'internal.oncall' ]</option>
+<option>[ 'guides.start' ]
+[ 'guides.start' ]</option>
+<option>[]
+[ 'guides.start', 'internal.oncall' ]</option>
+<explain><p><code>generateIndex</code> includes only client-visible pages unless you ask for more. Even when a build passes it every page, the default index cannot leak an internal one.</p></explain>
+</question>
+
+<question id="docs-strip-output" type="output">
+<q>What does <code>stripMarkdown</code> produce for a search entry?</q>
+<code file="strip.js" browser="no">
+import { stripMarkdown } from "@zudojs/docs";
+console.log(JSON.stringify(stripMarkdown("## Refunds\n\nSend **POST** `/refunds` — see [the guide](./refunds).")));
+</code>
+<option correct>"Refunds\n\nSend POST /refunds — see the guide."</option>
+<option>"## Refunds\n\nSend POST /refunds — see the guide."</option>
+<option>"Refunds Send POST /refunds see the guide"</option>
+<option>"Refunds\n\nSend **POST** `/refunds` — see [the guide](./refunds)."</option>
+<explain><p>Headings, emphasis, code marks and link syntax are removed, and the visible text stays, line breaks included. That plain text is what a search index should match against.</p></explain>
+</question>
+
+<question id="docs-three-layers" type="choice">
+<q>The build keeps the runbook out of the public output in three ways. Which one is <strong>not</strong> among them?</q>
+<option>The build only takes <code>"CLIENT"</code> pages from the registry</option>
+<option><code>generateIndex</code> leaves out <code>"SERVER"</code> pages by default</option>
+<option>The check refuses public links to internal pages</option>
+<option correct>The runbook file is encrypted on disk</option>
+<explain><p>Several independent guards mean one mistake (a missing filter, a wrong option) is not enough to leak a page. Encryption plays no part; internal pages are protected by never being published.</p></explain>
+</question>
+
+<question id="docs-test-reference" type="choice">
+<q>The docs test "document every status the API sends" compares the generated table with <code>["400", "401", "403", "404", "409"]</code>. When does it fail?</q>
+<option>Every time the docs are built</option>
+<option correct>When the API starts using another error, or stops using one, and the list of error classes in the reference is not updated</option>
+<option>When a Markdown file changes</option>
+<option>Never, because the page is generated</option>
+<explain><p>The page is generated from a list of classes, and that list is still written by a person. The test pins the list to what the API really sends, so adding a <code>TooManyRequestsError</code> without documenting it fails the build.</p></explain>
+</question>
+
+<question id="docs-external-links" type="choice">
+<q>Why should links to other websites be checked in a separate, scheduled job rather than in the docs check on every commit?</q>
+<option>Because external links are always correct</option>
+<option correct>Checking them needs the network, which is slow and flaky; a commit should not fail because someone else's site was down for a minute</option>
+<option>Because the package forbids external links</option>
+<option>Because external links cannot break</option>
+<explain><p>The per-commit check must be deterministic: same input, same result. External links depend on the outside world, so check them on a schedule, with retries, and open an issue when one stays broken.</p></explain>
+</question>
+
+<question id="docs-code-strict" type="code" file="strict.js">
+<q><p>Write <code>failsBuild(result)</code>: return <code>true</code> when the result has any <code>error</code>, or any <code>warning</code> whose code is in <code>FAIL_ON</code>. Other warnings are allowed.</p></q>
+<starter>
+const FAIL_ON = new Set(["BROKEN_LINK", "NAVIGATION_ORPHAN_DOCUMENT"]);
+
+function failsBuild(result) {
+  // your code here
+  return false;
+}
+
+const results = [
+  { valid: true, issues: [] },
+  { valid: true, issues: [{ severity: "warning", code: "BROKEN_LINK", message: "…" }] },
+  { valid: true, issues: [{ severity: "warning", code: "LINK_VALIDATION_SKIPPED", message: "…" }] },
+  { valid: false, issues: [{ severity: "error", code: "INVALID_CATEGORY", message: "…" }] },
+];
+console.log(results.map((result) => (failsBuild(result) ? "fail" : "pass")).join(" "));
+</starter>
+<solution>
+const FAIL_ON = new Set(["BROKEN_LINK", "NAVIGATION_ORPHAN_DOCUMENT"]);
+
+function failsBuild(result) {
+  return result.issues.some((issue) => issue.severity === "error" || FAIL_ON.has(issue.code));
+}
+
+const results = [
+  { valid: true, issues: [] },
+  { valid: true, issues: [{ severity: "warning", code: "BROKEN_LINK", message: "…" }] },
+  { valid: true, issues: [{ severity: "warning", code: "LINK_VALIDATION_SKIPPED", message: "…" }] },
+  { valid: false, issues: [{ severity: "error", code: "INVALID_CATEGORY", message: "…" }] },
+];
+console.log(results.map((result) => (failsBuild(result) ? "fail" : "pass")).join(" "));
+</solution>
+<expected>
+pass fail pass fail
+</expected>
+<explain><p>The second result is <code>valid: true</code>, but its broken link is on your list, so the build fails. Looking at <code>valid</code> alone would pass it. A policy based on codes lets you choose which warnings matter to your site.</p></explain>
+</question>
+
+<question id="docs-code-id" type="code" file="id-from-path.js">
+<q><p>Write <code>idFromPath(path)</code>: turn <code>/</code> and <code>\</code> into dots and remove the <code>.md</code> or <code>.mdx</code> extension of the last segment only.</p></q>
+<starter>
+function idFromPath(path) {
+  // your code here
+  return path;
+}
+
+for (const path of ["guides/auth/login.md", "guides\\auth\\logout.md", "reference/errors.mdx", "guides/v1.2/routing.md"]) {
+  console.log(idFromPath(path));
+}
+</starter>
+<solution>
+function idFromPath(path) {
+  return path.replace(/\.mdx?$/, "").split(/[\\/]/).join(".");
+}
+
+for (const path of ["guides/auth/login.md", "guides\\auth\\logout.md", "reference/errors.mdx", "guides/v1.2/routing.md"]) {
+  console.log(idFromPath(path));
+}
+</solution>
+<expected>
+guides.auth.login
+guides.auth.logout
+reference.errors
+guides.v1.2.routing
+</expected>
+<explain><p>Removing the extension first, anchored with <code>$</code>, touches only the end of the path, so the folder <code>v1.2</code> keeps its dot. Handling both separators makes the build give the same ids on Windows and on Linux.</p></explain>
+</question>
+
+<question id="docs-code-resolve" type="code" file="resolve-link.js">
+<q><p>Write <code>resolveLink(baseId, link)</code> like the package's resolver: the base id's folder is everything but its last segment; <code>./</code> stays there, each <code>../</code> goes up one level; slashes in the rest become dots; a <code>#fragment</code> is removed.</p></q>
+<starter>
+function resolveLink(baseId, link) {
+  // your code here
+  return link;
+}
+
+console.log(resolveLink("guides.auth.login", "./sessions"));
+console.log(resolveLink("guides.auth.login", "../tasks"));
+console.log(resolveLink("guides.start", "../reference/errors#404"));
+</starter>
+<solution>
+function resolveLink(baseId, link) {
+  const folder = baseId.split(".").slice(0, -1);
+  for (const part of link.replace(/#.*$/, "").split("/")) {
+    if (part === "." || part === "") continue;
+    if (part === "..") folder.pop();
+    else folder.push(part);
+  }
+  return folder.join(".");
+}
+
+console.log(resolveLink("guides.auth.login", "./sessions"));
+console.log(resolveLink("guides.auth.login", "../tasks"));
+console.log(resolveLink("guides.start", "../reference/errors#404"));
+</solution>
+<expected>
+guides.auth.sessions
+guides.tasks
+reference.errors
+</expected>
+<explain><p>Treating ids as paths is what lets authors write the same relative links they would use between files. Each <code>..</code> removes one folder, each name adds one, and the fragment only matters to the browser, not to which page is meant.</p></explain>
+</question>
+
+<question id="docs-code-tags" type="code" file="tags.js">
+<q><p>Frontmatter tags arrive in three shapes: a list, a single string, or nothing. Write <code>toTags(value)</code> that always returns an array of trimmed, non-empty strings, so a single tag never becomes a list of letters.</p></q>
+<starter>
+function toTags(value) {
+  // your code here
+  return [...(value ?? [])];
+}
+
+console.log(toTags(["auth", " basics "]));
+console.log(toTags("payments"));
+console.log(toTags(undefined));
+console.log(toTags(["", "tasks"]));
+</starter>
+<solution>
+function toTags(value) {
+  const list = value === undefined ? [] : Array.isArray(value) ? value : [value];
+  return list.map((tag) => String(tag).trim()).filter((tag) => tag.length > 0);
+}
+
+console.log(toTags(["auth", " basics "]));
+console.log(toTags("payments"));
+console.log(toTags(undefined));
+console.log(toTags(["", "tasks"]));
+</solution>
+<expected>
+[ 'auth', 'basics' ]
+[ 'payments' ]
+[]
+[ 'tasks' ]
+</expected>
+<explain><p>Spreading a string gives its characters, which is the bug the starter shows: <code>"payments"</code> would become eight one-letter tags. <code>@zudojs/docs</code> fixed exactly this in its parser and builder; any code that reads frontmatter itself must do the same.</p></explain>
+</question>
+
+<question id="docs-code-flatten" type="code" file="flatten.js">
+<q><p>Write <code>flatten(items)</code>: return every <code>documentId</code> in the navigation tree in reading order (a section's own page before its children), each id only once.</p></q>
+<starter>
+function flatten(items) {
+  // your code here
+  return [];
+}
+
+const nav = [
+  { title: "Guides", documentId: "guides.start", children: [
+    { title: "Tasks", documentId: "guides.tasks" },
+    { title: "Auth", children: [{ title: "Login", documentId: "guides.auth.login" }] },
+  ] },
+  { title: "Reference", children: [
+    { title: "Errors", documentId: "reference.errors" },
+    { title: "Tasks again", documentId: "guides.tasks" },
+  ] },
+];
+console.log(flatten(nav).join(", "));
+</starter>
+<solution>
+function flatten(items) {
+  const seen = new Set();
+  const walk = (list) => {
+    for (const item of list) {
+      if (item.documentId !== undefined) seen.add(item.documentId);
+      if (item.children) walk(item.children);
+    }
+  };
+  walk(items);
+  return [...seen];
+}
+
+const nav = [
+  { title: "Guides", documentId: "guides.start", children: [
+    { title: "Tasks", documentId: "guides.tasks" },
+    { title: "Auth", children: [{ title: "Login", documentId: "guides.auth.login" }] },
+  ] },
+  { title: "Reference", children: [
+    { title: "Errors", documentId: "reference.errors" },
+    { title: "Tasks again", documentId: "guides.tasks" },
+  ] },
+];
+console.log(flatten(nav).join(", "));
+</solution>
+<expected>
+guides.start, guides.tasks, guides.auth.login, reference.errors
+</expected>
+<explain><p>A depth-first walk that visits the item before its children gives reading order. A <code>Set</code> keeps each page once, at its first position; <code>add</code> on an existing value does not move it. <code>flattenNavigation</code> also guards against cycles and very deep trees.</p></explain>
+</question>
+
+<question id="docs-code-breadcrumbs" type="code" file="breadcrumbs.js">
+<q><p>Write <code>breadcrumbs(id, items)</code>: return the titles from the top of the tree down to the item with that <code>documentId</code>, or an empty array when it is not in the tree.</p></q>
+<starter>
+function breadcrumbs(id, items) {
+  // your code here
+  return [];
+}
+
+const nav = [
+  { title: "Guides", documentId: "guides.start", children: [
+    { title: "Authentication", children: [
+      { title: "Logging in", documentId: "guides.auth.login" },
+      { title: "Sessions and tokens", documentId: "guides.auth.sessions" },
+    ] },
+  ] },
+  { title: "Reference", children: [{ title: "Error codes", documentId: "reference.errors" }] },
+];
+console.log(breadcrumbs("guides.auth.sessions", nav).join(" › "));
+console.log(breadcrumbs("reference.errors", nav).join(" › "));
+console.log(breadcrumbs("guides.billing", nav));
+</starter>
+<solution>
+function breadcrumbs(id, items) {
+  for (const item of items) {
+    if (item.documentId === id) return [item.title];
+    const below = breadcrumbs(id, item.children ?? []);
+    if (below.length > 0) return [item.title, ...below];
+  }
+  return [];
+}
+
+const nav = [
+  { title: "Guides", documentId: "guides.start", children: [
+    { title: "Authentication", children: [
+      { title: "Logging in", documentId: "guides.auth.login" },
+      { title: "Sessions and tokens", documentId: "guides.auth.sessions" },
+    ] },
+  ] },
+  { title: "Reference", children: [{ title: "Error codes", documentId: "reference.errors" }] },
+];
+console.log(breadcrumbs("guides.auth.sessions", nav).join(" › "));
+console.log(breadcrumbs("reference.errors", nav).join(" › "));
+console.log(breadcrumbs("guides.billing", nav));
+</solution>
+<expected>
+Guides › Authentication › Sessions and tokens
+Reference › Error codes
+[]
+</expected>
+<explain><p>The recursion returns the path found below an item, and each level puts its own title in front. An empty result means "not under here", so the search moves on to the next item. The package's <code>getBreadcrumbs</code> also returns the <code>documentId</code> of each level, so section pages stay linkable.</p></explain>
+</question>
+
+<question id="docs-code-fence" type="code" file="fence.js">
+<q><p>Write <code>fenceFor(code)</code>: return a run of backticks one longer than the longest run of backticks in <code>code</code>, and at least three.</p></q>
+<starter>
+function fenceFor(code) {
+  // your code here
+  return "```";
+}
+
+for (const code of ["const x = 1;", "Use ``` to start a block", "````md\nnested\n````"]) {
+  const fence = fenceFor(code);
+  console.log(fence.length, `${fence}md`);
+}
+</starter>
+<solution>
+function fenceFor(code) {
+  const longest = Math.max(0, ...(code.match(/`+/g) ?? []).map((run) => run.length));
+  return "`".repeat(Math.max(3, longest + 1));
+}
+
+for (const code of ["const x = 1;", "Use ``` to start a block", "````md\nnested\n````"]) {
+  const fence = fenceFor(code);
+  console.log(fence.length, `${fence}md`);
+}
+</solution>
+<expected>
+3 ```md
+4 ````md
+5 `````md
+</expected>
+<explain><p>A code block ends at the first fence at least as long as the opening one. If the opening fence is longer than anything inside, the content can never close it. <code>Math.max(0, …)</code> covers code with no backticks at all.</p></explain>
+</question>
+
+<question id="docs-code-search" type="code" file="search.js">
+<q><p>Write <code>search(entries, query)</code>: 3 points per query word found in the title, 1 point per word found in the content (both lower-cased), keep pages with points, and sort by score (highest first), then by id. Print the ids.</p></q>
+<starter>
+const entries = [
+  { id: "guides.auth.login", title: "Logging in", content: "Send your email and password. Read about sessions." },
+  { id: "guides.auth.sessions", title: "Sessions and tokens", content: "A session ends after 30 idle minutes." },
+  { id: "guides.tasks", title: "Working with tasks", content: "Create, assign and complete tasks." },
+];
+
+function search(entries, query) {
+  // your code here
+  return [];
+}
+
+console.log(search(entries, "session").map((entry) => entry.id));
+console.log(search(entries, "assign tasks").map((entry) => `${entry.id}:${entry.score}`));
+</starter>
+<solution>
+const entries = [
+  { id: "guides.auth.login", title: "Logging in", content: "Send your email and password. Read about sessions." },
+  { id: "guides.auth.sessions", title: "Sessions and tokens", content: "A session ends after 30 idle minutes." },
+  { id: "guides.tasks", title: "Working with tasks", content: "Create, assign and complete tasks." },
+];
+
+function search(entries, query) {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  return entries
+    .map((entry) => {
+      const title = entry.title.toLowerCase();
+      const content = entry.content.toLowerCase();
+      let score = 0;
+      for (const word of words) score += (title.includes(word) ? 3 : 0) + (content.includes(word) ? 1 : 0);
+      return { id: entry.id, title: entry.title, score };
+    })
+    .filter((result) => result.score > 0)
+    .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+}
+
+console.log(search(entries, "session").map((entry) => entry.id));
+console.log(search(entries, "assign tasks").map((entry) => `${entry.id}:${entry.score}`));
+</solution>
+<expected>
+[ 'guides.auth.sessions', 'guides.auth.login' ]
+[ 'guides.tasks:5' ]
+</expected>
+<explain><p>"session" is in the sessions page's title and text (4 points) and only in the login page's text (1 point). For "assign tasks", the tasks page gets 1 for "assign" in its text and 3 + 1 for "tasks". The id tie-breaker keeps equal scores in a stable order.</p></explain>
+</question>

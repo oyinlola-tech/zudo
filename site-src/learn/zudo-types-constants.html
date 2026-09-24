@@ -1,0 +1,663 @@
+---
+title: Types and constants: guards, ids and time
+description: Check untrusted values with @zudojs/types, keep ids apart with branded types, use the shared HTTP and time constants, and make clocks and randomness testable.
+minutes: 50
+youNeed: "Components with @zudojs/lifecycle", and "Generics" and "Advanced types" from the TypeScript course
+youBuild: A type-safe id and time system for shop orders: branded order ids, validated timestamps, an injectable clock and id source, and deterministic tests
+keywords: zudojs types, zudojs constants, type guards, isPlainObject, isEmail, toNumber, toBoolean, safeJsonParse, branded types, Brand, UserId, createTimestamp, createTenantId, HttpStatus, HttpHeader, resolveEnvironment, TimeMs, Clock, FixedClock, SeededRandom, systemRandom, deterministic tests
+objectives: Check untrusted JSON with type guards and explain which edge cases each one rejects | Convert query-string and configuration text safely with the converters | Prevent mixed-up ids with branded types and create them only after validation | Use the shared HTTP, environment and time constants instead of typing literals | Inject a clock and a random source so time and ids are deterministic in tests
+---
+<section>
+<h2 id="why">Three bugs the compiler does not catch</h2>
+<p>All three of these compile without a single warning:</p>
+<example file="bugs.ts">
+// Three bugs that type-check.
+function cancelOrder(orderId: string, requestedBy: string) {
+  return `order ${orderId} cancelled by ${requestedBy}`;
+}
+const userId = "user_42";
+const orderId = "ord_19";
+console.log(cancelOrder(userId, orderId)); // arguments swapped
+
+const pageSize = Number(""); // ?pageSize= was sent empty
+console.log("page size:", pageSize);
+
+const expiresAt = Date.now() + 15 * 60 * 1000;
+console.log("token valid:", Date.now() < expiresAt); // true today, but how do you test "15 minutes later"?
+</example>
+<output>
+order user_42 cancelled by ord_19
+page size: 0
+token valid: true
+</output>
+<ul>
+<li>Both ids are plain <code>string</code>s, so swapping them is invisible to TypeScript. A customer's order is cancelled "by" an order.</li>
+<li><code>?pageSize=</code> arrives as an empty string, <code>Number("")</code> is <code>0</code>, and your list endpoint returns nothing, or divides by zero while computing page counts.</li>
+<li>The expiry works today, but a test for "15 minutes later" would have to wait 15 minutes, because the code reads the real clock.</li>
+</ul>
+<p>Every ZudoJS package meets these problems, so the answers live in two small packages at the bottom of the stack. <code>@zudojs/types</code> has <strong>type guards</strong>, <strong>converters</strong>, utility types, and injectable <code>Clock</code> and <code>Random</code> interfaces; it depends on nothing. <code>@zudojs/constants</code> has <strong>branded</strong> id types and their factories, and the shared constants for HTTP, environments, time, retries and lifecycles. Both also run in the browser, so every example on this page runs in your browser terminal too.</p>
+</section>
+
+<section>
+<h2 id="guards">Type guards for untrusted data</h2>
+<p>A <strong>type guard</strong> is a function that checks a value at runtime and tells TypeScript the result: its return type is written <code>value is string</code>, so after <code>if (isNonEmptyString(x))</code> the compiler treats <code>x</code> as a string. You wrote your own in <a href="/learn/ts-runtime">TypeScript and JavaScript together</a>. The guards in <code>@zudojs/types</code> are the shared, carefully tested versions.</p>
+<reason title="What must a guard reject?">
+<p>A payment provider sends your shop a webhook: a JSON body with a <code>reference</code>, an <code>amountKobo</code>, an <code>email</code>, a <code>paidAt</code> date and a list of <code>items</code>. Before writing any check, list what could arrive in each field that a naive check would accept. For example: is <code>typeof x === "number"</code> enough for an amount? Is <code>typeof x === "object"</code> enough for the body? Is a string that matches <code>\d{4}-\d{2}-\d{2}</code> a date?</p>
+<answer>
+<ul>
+<li><strong>The body</strong>: <code>typeof x === "object"</code> is also true for <code>null</code>, arrays and class instances. You want a <em>plain</em> object: <code>isPlainObject</code>.</li>
+<li><strong>The amount</strong>: <code>typeof x === "number"</code> accepts <code>NaN</code>, <code>Infinity</code>, <code>-100</code> and <code>2.5</code>. An amount in kobo must be a positive integer: <code>isInteger</code> and <code>isPositiveNumber</code> (which also refuses <code>Infinity</code>). The string <code>"250000"</code> must be refused too; it is a sign the sender changed its format.</li>
+<li><strong>The email</strong>: "contains an @" accepts <code>ada@</code>. <code>isEmail</code> requires a domain with a dot and caps the length at 254 characters, so a huge input cannot make the check slow.</li>
+<li><strong>The date</strong>: a pattern accepts <code>2026-02-30</code> and <code>2026-13-45</code>. <code>isIsoDateTimeString</code> checks the calendar too.</li>
+<li><strong>The list</strong>: <code>every</code> skips holes in sparse arrays, so <code>new Array(3)</code> passes an <code>every</code>-based check. <code>isArrayOfType</code> reads every index.</li>
+</ul>
+</answer>
+</reason>
+<example file="webhook.ts">
+import { isArrayOfType, isEmail, isInteger, isIsoDateTimeString, isNonEmptyString, isPlainObject, isPositiveNumber } from "@zudojs/types";
+
+interface PaymentEvent {
+  readonly reference: string;
+  readonly amountKobo: number;
+  readonly email: string;
+  readonly paidAt: string;
+  readonly items: string[];
+}
+
+const checks: Array<[string, (event: Record<string, unknown>) => boolean]> = [
+  ["reference", (e) => isNonEmptyString(e.reference)],
+  ["amountKobo", (e) => isInteger(e.amountKobo) && isPositiveNumber(e.amountKobo)],
+  ["email", (e) => isEmail(e.email)],
+  ["paidAt", (e) => isIsoDateTimeString(e.paidAt)],
+  ["items", (e) => isArrayOfType(e.items, isNonEmptyString)],
+];
+
+function problems(value: unknown): string[] {
+  if (!isPlainObject(value)) return ["(not an object)"];
+  return checks.filter(([, ok]) => !ok(value)).map(([field]) => field);
+}
+
+function isPaymentEvent(value: unknown): value is PaymentEvent {
+  return problems(value).length === 0;
+}
+
+const bodies = [
+  '{"reference":"PSK_1","amountKobo":250000,"email":"ada@shop.ng","paidAt":"2026-09-24T09:00:00Z","items":["Rice 5kg"]}',
+  '{"reference":"PSK_2","amountKobo":"250000","email":"ada@shop.ng","paidAt":"2026-09-24T09:00:00Z","items":["Rice 5kg"]}',
+  '{"reference":"PSK_3","amountKobo":-100.5,"email":"ada@shop","paidAt":"2026-02-30T09:00:00Z","items":[""]}',
+  '["not", "an", "object"]',
+];
+for (const body of bodies) {
+  const value: unknown = JSON.parse(body);
+  if (isPaymentEvent(value)) console.log("accepted", value.reference, `₦${value.amountKobo / 100}`);
+  else console.log("rejected:", problems(value).join(", "));
+}
+</example>
+<output>
+accepted PSK_1 ₦2500
+rejected: amountKobo
+rejected: amountKobo, email, paidAt, items
+rejected: (not an object)
+</output>
+<p>The checks are data (a list of field names and predicates), so the function can say <em>which</em> fields failed instead of only "invalid". <code>isPaymentEvent</code> is a real type guard: inside the <code>if</code>, <code>value.amountKobo</code> is a <code>number</code> with no cast.</p>
+<p>Guards are the right tool for small, hand-written checks and for writing other validators. For full request bodies, a schema from <code>@zudojs/schema</code> (<a href="/learn/zudo-validation">the validation lesson</a>) gives you the same checks plus error messages and a TypeScript type in one declaration. <code>@zudojs/schema</code>'s <code>email</code> format and <code>isEmail</code> accept exactly the same addresses.</p>
+<p>The full list: <code>isPlainObject</code>, <code>isNonNullObject</code>, <code>isNonEmptyString</code>, <code>isFiniteNumber</code>, <code>isPositiveNumber</code>, <code>isInteger</code>, <code>isDate</code> (a <code>Date</code> that is not "Invalid Date"), <code>isUrl</code>, <code>isEmail</code>, <code>isUuid</code> and <code>isUuidV4</code>, <code>isIsoDateString</code> and <code>isIsoDateTimeString</code>, <code>isArrayOfType</code>, <code>isDefined</code>, <code>isFunction</code>, <code>isPromise</code> and <code>isThenable</code>.</p>
+</section>
+
+<section>
+<h2 id="converters">Converters: text in, values out</h2>
+<p>Query strings, environment variables and form fields are always text. The converters turn text into values with a <strong>fallback</strong> for anything that does not convert cleanly:</p>
+<example file="converters.ts">
+import { camelToSnake, formatCount, safeJsonParse, snakeToCamel, toArray, toBoolean, toNumber } from "@zudojs/types";
+
+// ?page=2&pageSize=&inStock=yes&tag=rice   (pageSize was sent empty)
+const query = new URLSearchParams("page=2&pageSize=&inStock=yes&tag=rice");
+console.log("Number():", Number(query.get("pageSize")), "| toNumber():", toNumber(query.get("pageSize"), 20));
+console.log(toNumber("2"), toNumber(" 42 "), toNumber("0x10", -1), toNumber("12abc", -1), toNumber(Infinity, 0), toNumber(""));
+console.log(toBoolean(query.get("inStock")), toBoolean("off"), toBoolean("maybe"), toBoolean("maybe", true));
+console.log(toArray(query.get("tag")), toArray(["rice", "beans"]));
+
+const text = '{"theme":"dark","__proto__":{"isAdmin":true}}';
+console.log(Object.keys(JSON.parse(text)), Object.keys(safeJsonParse(text, {})));
+console.log(safeJsonParse("{not json", { theme: "light" }));
+
+console.log(camelToSnake("createdAt"), camelToSnake("HTTPStatusCode"), snakeToCamel("total_kobo"));
+console.log(formatCount(1, "item"), formatCount(0, "item"), formatCount(3, "category", "categories"));
+</example>
+<output>
+Number(): 0 | toNumber(): 20
+2 42 -1 -1 0 NaN
+true false false true
+[ 'rice' ] [ 'rice', 'beans' ]
+[ 'theme', '__proto__' ] [ 'theme' ]
+{ theme: 'light' }
+created_at http_status_code totalKobo
+1 item 0 items 3 categories
+</output>
+<ul>
+<li><code>toNumber</code> refuses blank strings, hexadecimal, trailing junk and infinities, returning the fallback (or <code>NaN</code> without one). That fixes the empty <code>pageSize</code>: 20 instead of 0.</li>
+<li><code>toBoolean</code> knows <code>true/false</code>, <code>yes/no</code>, <code>on/off</code>, <code>1/0</code>; anything else is the fallback, <code>false</code> by default. A feature flag set to <code>"maybe"</code> stays off.</li>
+<li><code>toArray</code> wraps a single value, handy for query parameters that may appear once or several times.</li>
+<li><code>safeJsonParse</code> returns the fallback for broken JSON and drops <code>__proto__</code>, <code>constructor</code> and <code>prototype</code> keys at every depth. <code>JSON.parse</code> keeps <code>__proto__</code> as an ordinary key, and a later "deep merge" of that object into your settings could then change <code>Object.prototype</code> for the whole process, an attack called <strong>prototype pollution</strong>. Note that the result is <em>not</em> validated: <code>safeJsonParse&lt;T&gt;</code> only casts to <code>T</code>.</li>
+<li><code>camelToSnake</code> and <code>snakeToCamel</code> map between TypeScript property names and database columns; acronyms stay one word (<code>http_status_code</code>). <code>formatCount</code> gets "1 item" and "0 items" right.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="utility">Utility types</h2>
+<p><code>@zudojs/types</code> also exports types that exist only for the compiler, such as <code>DeepReadonly</code>, <code>DeepPartial</code>, <code>Maybe&lt;T&gt;</code> (<code>T | null | undefined</code>), <code>Prettify</code>, <code>PartialKeys</code> and <code>RequireKeys</code>, <code>AsyncReturnType</code>, <code>NestedKeyOf</code> and <code>NestedValueOf</code>. <code>DeepReadonly</code> is the one you will reach for most: <code>readonly</code> on an interface protects only the top level, while settings shared by the whole app should be read-only all the way down:</p>
+<example file="utility.ts" check="tsc-error">
+import type { DeepReadonly, Maybe, PartialKeys } from "@zudojs/types";
+
+interface ShopSettings {
+  currency: string;
+  delivery: { freeAboveKobo: number; zones: string[] };
+}
+
+const settings: DeepReadonly<ShopSettings> = { currency: "NGN", delivery: { freeAboveKobo: 5_000_000, zones: ["Lagos", "Abuja"] } };
+settings.delivery.zones.push("Kano");
+
+type NewProduct = PartialKeys<{ sku: string; name: string; stock: number }, "stock">;
+const rice: NewProduct = { sku: "RICE-5KG", name: "Rice 5kg" };
+const discount: Maybe<number> = null;
+console.log(rice, discount);
+</example>
+<output kind="tsc">
+utility.ts:9:25 - error TS2339: Property 'push' does not exist on type 'readonly string[]'.
+
+9 settings.delivery.zones.push("Kano");
+                          ~~~~
+
+
+Found 1 error in utility.ts:9
+</output>
+<p>The array inside the nested object became a <code>readonly string[]</code>, which has no <code>push</code>. <code>PartialKeys&lt;T, "stock"&gt;</code> made only <code>stock</code> optional, so a new product may leave it out. These types change nothing at runtime; pair <code>DeepReadonly</code> with <code>Object.freeze</code> when the object really must not change.</p>
+</section>
+
+<section>
+<h2 id="brands">Branded ids</h2>
+<p>Back to the first bug: two ids that are both <code>string</code>. TypeScript compares types by their <strong>structure</strong>, so every string fits every string parameter. A <strong>branded type</strong> adds a fake property that exists only for the compiler, so two strings with different brands stop fitting each other:</p>
+<pre>type Brand&lt;T, B extends string&gt; = T &amp; { readonly __brand: B };</pre>
+<p><code>@zudojs/constants</code> defines <code>Brand</code> and the ids the framework uses: <code>UserId</code>, <code>EventId</code>, <code>RequestId</code>, <code>CorrelationId</code>, <code>SessionId</code>, <code>TenantId</code>, <code>MessageId</code>, <code>TokenId</code>, plus string brands such as <code>Timestamp</code>, <code>Url</code> and <code>EmailAddress</code>. Your own ids use the same <code>Brand</code>:</p>
+<example file="ids.ts" check="tsc-error">
+import type { Brand, UserId } from "@zudojs/constants";
+import { createUserId } from "@zudojs/constants";
+
+type OrderId = Brand<string, "OrderId">;
+
+function cancelOrder(orderId: OrderId, requestedBy: UserId): string {
+  return `order ${orderId} cancelled by ${requestedBy}`;
+}
+
+const user = createUserId("user_42");
+const order = "ord_19" as OrderId;
+console.log(cancelOrder(user, order));
+</example>
+<output kind="tsc">
+ids.ts:12:25 - error TS2345: Argument of type 'UserId' is not assignable to parameter of type 'OrderId'.
+  Type 'UserId' is not assignable to type '{ readonly __brand: "OrderId"; }'.
+    Types of property '__brand' are incompatible.
+      Type '"UserId"' is not assignable to type '"OrderId"'.
+
+12 console.log(cancelOrder(user, order));
+                           ~~~~
+
+
+Found 1 error in ids.ts:12
+</output>
+<p>The swapped arguments are now a compile error that names both brands. At runtime nothing changed: a branded id is still a plain string, with no extra property and no cost.</p>
+<h3>Brand only after checking</h3>
+<p>A brand is a promise: "this string is a real order id". Anything can make the promise with <code>as OrderId</code>, and so can the id factories in <code>@zudojs/constants</code>, which only brand:</p>
+<example file="factories.ts">
+import { createEmailAddress, createTenantId, createTimestamp, createUrl, createUserId, InvalidConstantError } from "@zudojs/constants";
+
+// The id factories only brand: they accept anything.
+console.log(JSON.stringify(createUserId("")), JSON.stringify(createUserId("  user 42 ")));
+
+// These validate, and throw InvalidConstantError.
+const attempts: Array<[string, () => string]> = [
+  ["tenant", () => createTenantId("  Shop-NG ")],
+  ["tenant", () => createTenantId("shop/ng")],
+  ["timestamp", () => createTimestamp("2026-09-24T09:00:00.000Z")],
+  ["timestamp", () => createTimestamp("2026-02-30T09:00:00Z")],
+  ["timestamp", () => createTimestamp("24/09/2026")],
+  ["email", () => createEmailAddress("ada@shop.ng")],
+  ["email", () => createEmailAddress("ada@")],
+  ["url", () => createUrl("https://shop.ng/orders?id=19")],
+  ["url", () => createUrl("shop.ng/orders")],
+];
+for (const [kind, attempt] of attempts) {
+  try {
+    console.log(kind.padEnd(9), "ok     ", attempt());
+  } catch (error) {
+    console.log(kind.padEnd(9), "refused", error instanceof InvalidConstantError ? (error as Error).message : error);
+  }
+}
+</example>
+<output>
+"" "  user 42 "
+tenant    ok      shop-ng
+tenant    refused Invalid tenant id: "shop/ng"
+timestamp ok      2026-09-24T09:00:00.000Z
+timestamp refused Invalid ISO 8601 timestamp: "2026-02-30T09:00:00Z"
+timestamp refused Invalid ISO 8601 timestamp: "24/09/2026"
+email     ok      ada@shop.ng
+email     refused Invalid email address: "ada@"
+url       ok      https://shop.ng/orders?id=19
+url       refused Invalid URL: "shop.ng/orders"
+</output>
+<p><code>createUserId</code> branded an empty string and one with spaces. The other factories validate and throw <code>InvalidConstantError</code>: <code>createTenantId</code> also normalises (trimmed, lowercased, Unicode-normalised) so <code>Shop-NG</code> and <code>shop-ng</code> cannot become two tenants, and <code>createTimestamp</code> refuses a 30 February. So for ids that come from outside, write a <strong>parse</strong> function that checks first and brands second, and make it the only place where <code>as OrderId</code> appears:</p>
+<example file="order-id.ts">
+import type { Brand } from "@zudojs/constants";
+import { isUuid } from "@zudojs/types";
+
+export type OrderId = Brand<string, "OrderId">;
+
+/** The only way to make an OrderId: check first, brand second. */
+export function parseOrderId(value: unknown): OrderId {
+  if (typeof value !== "string" || !value.startsWith("ord_") || !isUuid(value.slice(4))) {
+    throw new Error(`Not an order id: ${JSON.stringify(value)}`);
+  }
+  return value as OrderId;
+}
+
+for (const raw of ["ord_7a1c7a0e-5d7e-4f5b-9c1d-2b3e4f5a6b7c", "ord_19", "user_7a1c7a0e-5d7e-4f5b-9c1d-2b3e4f5a6b7c", 42]) {
+  try {
+    console.log("ok", parseOrderId(raw).slice(0, 12));
+  } catch (error) {
+    console.log((error as Error).message);
+  }
+}
+</example>
+<output>
+ok ord_7a1c7a0e
+Not an order id: "ord_19"
+Not an order id: "user_7a1c7a0e-5d7e-4f5b-9c1d-2b3e4f5a6b7c"
+Not an order id: 42
+</output>
+<p>Now an <code>OrderId</code> in any function signature means "checked at the boundary", and the rest of the code never re-checks it.</p>
+</section>
+
+<section>
+<h2 id="constants">HTTP, environment and time constants</h2>
+<p>Typing <code>"Content-Type"</code>, <code>429</code> or <code>86400000</code> by hand works until someone types <code>"Content-type"</code> in one place, or <code>8640000</code>. The constants are frozen objects with literal types, so a typo in a name is a compile error:</p>
+<example file="http.ts">
+import { ContentTypes, HttpHeader, HttpMethods, HttpStatus, IDEMPOTENT_HTTP_METHODS, SAFE_HTTP_METHODS, isClientError, isServerError, isSuccessStatus } from "@zudojs/constants";
+
+console.log(HttpStatus.CREATED, HttpStatus.NO_CONTENT, HttpStatus.NOT_FOUND, HttpStatus.CONFLICT, HttpStatus.UNPROCESSABLE_ENTITY, HttpStatus.TOO_MANY_REQUESTS);
+console.log(HttpHeader.CONTENT_TYPE, HttpHeader.X_CORRELATION_ID, ContentTypes.JSON);
+console.log(Object.keys(HttpMethods).length, Object.isFrozen(HttpStatus));
+
+// Can a failed request be sent again safely?
+for (const method of [HttpMethods.GET, HttpMethods.PUT, HttpMethods.POST, HttpMethods.PATCH]) {
+  console.log(method.padEnd(6), "safe:", SAFE_HTTP_METHODS.has(method), "| retry-safe:", IDEMPOTENT_HTTP_METHODS.has(method));
+}
+for (const status of [204, 404, 503]) {
+  console.log(status, isSuccessStatus(status) ? "success" : isClientError(status) ? "client error" : isServerError(status) ? "server error" : "other");
+}
+</example>
+<output>
+201 204 404 409 422 429
+Content-Type X-Correlation-Id application/json
+9 true
+GET    safe: true | retry-safe: true
+PUT    safe: false | retry-safe: true
+POST   safe: false | retry-safe: false
+PATCH  safe: false | retry-safe: false
+204 success
+404 client error
+503 server error
+</output>
+<p><code>SAFE_HTTP_METHODS</code> are the methods that change nothing on the server; <code>IDEMPOTENT_HTTP_METHODS</code> are the ones that may be repeated with the same result, so a client or a proxy may retry them after a timeout. <code>POST</code> is neither: retrying a payment <code>POST</code> can charge a customer twice, which is why payment APIs use idempotency keys (<a href="/learn/rest-design">REST API design</a>).</p>
+<p>Environments and time:</p>
+<example file="env-time.ts">
+import { DefaultRetry, DefaultTimeout, TimeMs, formatDuration, isProduction, resolveEnvironment, toMilliseconds } from "@zudojs/constants";
+
+console.log(resolveEnvironment({ NODE_ENV: "prod" }), resolveEnvironment({ NODE_ENV: "Production" }), resolveEnvironment({}));
+console.log(resolveEnvironment({ NODE_ENV: "staging" }), isProduction({ NODE_ENV: "staging" }));
+console.log(resolveEnvironment({ NODE_ENV: "live" }, { silent: true }));
+try {
+  resolveEnvironment({ NODE_ENV: "live" }, { strict: true });
+} catch (error) {
+  console.log(`${(error as Error).name}: ${(error as Error).message}`);
+}
+
+console.log(TimeMs.MINUTE, TimeMs.DAY, toMilliseconds(15, "minutes"), toMilliseconds(2, "hours"));
+console.log(formatDuration(250), formatDuration(1500), formatDuration(150_000), formatDuration(90_061_000));
+console.log(DefaultTimeout.DATABASE, DefaultTimeout.HTTP_REQUEST, DefaultRetry.MAX_ATTEMPTS, DefaultRetry.BASE_DELAY_MS);
+</example>
+<output>
+production production development
+staging false
+development
+InvalidConstantError: Unrecognized NODE_ENV value: "live"
+60000 86400000 900000 7200000
+250ms 1s 2m 30s 1d 1h
+15000 10000 3 1000
+</output>
+<ul>
+<li><code>resolveEnvironment</code> is how the whole framework reads <code>NODE_ENV</code> (the generated <code>src/app.ts</code> uses it). It accepts <code>prod</code>, <code>dev</code> and any capitalisation, and maps unset to <code>development</code>. An unknown value like <code>live</code> falls back to <code>development</code> with a one-time warning (hidden here with <code>silent</code>); <code>strict: true</code> throws instead, which is what you want in a deployment check.</li>
+<li><code>staging</code> is its own environment, and <code>isProduction</code> is <code>false</code> for it.</li>
+<li><code>TimeMs</code> and <code>toMilliseconds</code> replace hand-multiplied numbers. <code>formatDuration</code> shows at most two units and rounds down (1.5 s is "1s"), fine for logs, not for invoices.</li>
+<li><code>DefaultTimeout</code>, <code>DefaultRetry</code> and <code>Limits</code> hold the defaults the framework itself uses, such as 15 seconds for database calls and 3 retries.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="clock">Injectable time and randomness</h2>
+<p>Code that calls <code>Date.now()</code> or <code>Math.random()</code> directly cannot be tested precisely. The fix is the same as for any dependency (<a href="/learn/zudo-container">dependency injection</a> is two lessons away): receive it as a parameter. <code>@zudojs/types</code> defines the two interfaces and their implementations:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Interface</th><th>For production</th><th>For tests</th></tr></thead>
+<tbody>
+<tr><td><code>Clock</code>: <code>now(): number</code> (milliseconds since 1970)</td><td><code>systemClock</code></td><td><code>new FixedClock(ms)</code> with <code>set</code> and <code>advance</code></td></tr>
+<tr><td><code>Random</code>: <code>uuid()</code>, <code>int(max)</code>, <code>string(length)</code>, <code>custom(length, alphabet)</code></td><td><code>systemRandom</code> (backed by <code>node:crypto</code>)</td><td><code>new SeededRandom(seed)</code>, which is a <code>PseudoRandom</code>, not a <code>Random</code></td></tr>
+</tbody>
+</table></div>
+<example file="clock-random.ts">
+import { FixedClock, SeededRandom, isUuidV4, systemClock, systemRandom } from "@zudojs/types";
+
+const clock = new FixedClock(Date.UTC(2026, 8, 24, 9, 0, 0));
+console.log(new Date(clock.now()).toISOString());
+clock.advance(15 * 60 * 1000);
+console.log(new Date(clock.now()).toISOString());
+clock.set(Date.UTC(2026, 11, 31, 23, 59, 59));
+console.log(new Date(clock.now()).toISOString());
+
+const a = new SeededRandom(2026);
+const b = new SeededRandom(2026);
+console.log(a.uuid() === b.uuid(), a.int(100) === b.int(100), a.string(8), a.custom(6, "0123456789"), a.deterministic);
+
+console.log(typeof systemClock.now(), isUuidV4(systemRandom.uuid()), systemRandom.string(24).length, systemRandom.int(6) < 6);
+try {
+  systemRandom.int(0);
+} catch (error) {
+  console.log(`${(error as Error).name}: ${(error as Error).message}`);
+}
+</example>
+<output>
+2026-09-24T09:00:00.000Z
+2026-09-24T09:15:00.000Z
+2026-12-31T23:59:59.000Z
+true true elkoxFzl 426863 true
+number true 24 true
+RangeError: Random.int(max) requires a positive integer max no larger than 9007199254740991
+</output>
+<p>A <code>FixedClock</code> stands still until you move it. Two <code>SeededRandom</code> generators with the same <strong>seed</strong> (starting number) produce exactly the same sequence, so a test that uses one always sees the same ids. <code>systemRandom</code> is unpredictable; its values are printed here only as properties (a valid UUID, a length), never as values.</p>
+<h3>Secure where it matters</h3>
+<p>A seeded generator is fine for order ids in a test and a disaster for password-reset tokens: anyone who knows the seed knows every token. <code>Random</code> carries a hidden <strong>brand</strong> that only <code>systemRandom</code> and implementations passed through <code>defineSecureRandom</code> have. A function that needs secure randomness asks for <code>Random</code>, and the compiler refuses a seeded generator:</p>
+<example file="token.ts" check="tsc-error">
+import type { Random } from "@zudojs/types";
+import { SeededRandom } from "@zudojs/types";
+
+function createResetToken(random: Random): string {
+  return random.string(32);
+}
+
+console.log(createResetToken(new SeededRandom(1)));
+</example>
+<output kind="tsc">
+token.ts:8:30 - error TS2741: Property '[SecureRandomBrand]' is missing in type 'SeededRandom' but required in type 'Random'.
+
+8 console.log(createResetToken(new SeededRandom(1)));
+                               ~~~~~~~~~~~~~~~~~~~
+
+  node_modules/@zudojs/types/dist/runtime/runtime.core.d.ts:34:14 - '[SecureRandomBrand]' is declared here.
+    34     readonly [SecureRandomBrand]: true;
+                    ~~~~~~~~~~~~~~~~~~~
+
+
+Found 1 error in token.ts:8
+</output>
+<p>A function that does not need secrecy accepts <code>Random | PseudoRandom</code>, as the project below does for order ids.</p>
+<warn title="TWO CLOCKS, TWO RANDOMS">
+<code>@zudojs/constants</code> also exports a <code>Clock</code> (with <code>now()</code> and <code>Date()</code>), a <code>Random</code> (with <code>random()</code>, <code>randomInt(min, max)</code>, <code>randomString</code>, <code>randomBytes</code>), <code>createMockClock</code>, <code>createMockRandom</code>, and a <code>systemClock</code> and <code>systemRandom</code> of the same names but different shapes. Its own documentation names the <code>@zudojs/types</code> <code>Random</code> as the long-term owner. Use the <code>@zudojs/types</code> ones, and watch your imports.</warn>
+</section>
+
+<section>
+<h2 id="project">Project: a type-safe id and time system</h2>
+<p>Now the shop's orders, built from these pieces. An order gets a branded id and two timestamps: when it was placed, and the time by which it must be paid (30 minutes later). First the ids and time helpers:</p>
+<example file="ids.ts" project="orders">
+import type { Brand, Timestamp } from "@zudojs/constants";
+import { createTimestamp } from "@zudojs/constants";
+import type { PseudoRandom, Random } from "@zudojs/types";
+
+export type OrderId = Brand<string, "OrderId">;
+
+/** Order ids are not secrets, so a seeded generator is fine in tests. */
+export function createOrderIds(source: Random | PseudoRandom): () => OrderId {
+  return () => `ord_${source.uuid()}` as OrderId;
+}
+
+/** Reset tokens are secrets: only a secure generator is accepted. */
+export function createResetTokens(random: Random): () => string {
+  return () => random.string(32);
+}
+
+/** Milliseconds since 1970 as a validated ISO 8601 Timestamp. */
+export function toTimestamp(ms: number): Timestamp {
+  return createTimestamp(new Date(ms).toISOString());
+}
+</example>
+<p>Then the service. It receives its clock and its id source through the constructor and never touches <code>Date.now()</code> or <code>crypto</code> itself:</p>
+<example file="orders.ts" project="orders">
+import type { Timestamp } from "@zudojs/constants";
+import { TimeMs } from "@zudojs/constants";
+import type { Clock } from "@zudojs/types";
+
+import type { OrderId } from "./ids.js";
+import { toTimestamp } from "./ids.js";
+
+export interface Order {
+  readonly id: OrderId;
+  readonly totalKobo: number;
+  readonly createdAt: Timestamp;
+  readonly payBy: Timestamp;
+}
+
+export class OrderService {
+  public constructor(
+    private readonly clock: Clock,
+    private readonly nextId: () => OrderId,
+  ) {}
+
+  public place(totalKobo: number): Order {
+    const now = this.clock.now(); // read the clock once per operation
+    return {
+      id: this.nextId(),
+      totalKobo,
+      createdAt: toTimestamp(now),
+      payBy: toTimestamp(now + 30 * TimeMs.MINUTE),
+    };
+  }
+
+  public isUnpaidTooLong(order: Order): boolean {
+    return this.clock.now() > Date.parse(order.payBy);
+  }
+}
+</example>
+<p>The line with the comment matters. The first version of this service called the clock twice, once for <code>createdAt</code> and once for <code>payBy</code>. With the real clock the two readings were a millisecond or two apart, and "30 minutes to pay" came out as 1,800,002 ms. The tests below did not catch it, because a <code>FixedClock</code> returns the same time on every call. Read the clock once per operation.</p>
+<p>Now the tests, with a fixed clock and a seeded id source. Every value is known in advance, and "31 minutes later" takes no time at all:</p>
+<example file="orders.test.ts" project="orders">
+import { FixedClock, SeededRandom } from "@zudojs/types";
+
+import { createOrderIds } from "./ids.js";
+import { OrderService } from "./orders.js";
+
+function check(name: string, actual: unknown, expected: unknown) {
+  console.log(`${actual === expected ? "PASS" : "FAIL"} ${name}: ${String(actual)}`);
+}
+
+const clock = new FixedClock(Date.UTC(2026, 8, 24, 9, 0, 0));
+const service = new OrderService(clock, createOrderIds(new SeededRandom(42)));
+const order = service.place(1_250_000);
+
+check("created at", order.createdAt, "2026-09-24T09:00:00.000Z");
+check("pay by", order.payBy, "2026-09-24T09:30:00.000Z");
+check("same seed, same id", order.id, new OrderService(clock, createOrderIds(new SeededRandom(42))).place(0).id);
+check("fresh order is fine", service.isUnpaidTooLong(order), false);
+clock.advance(29 * 60 * 1000);
+check("29 minutes later", service.isUnpaidTooLong(order), false);
+clock.advance(2 * 60 * 1000);
+check("31 minutes later", service.isUnpaidTooLong(order), true);
+</example>
+<output>
+PASS created at: 2026-09-24T09:00:00.000Z
+PASS pay by: 2026-09-24T09:30:00.000Z
+PASS same seed, same id: ord_99e1ef7c-72c3-4b8a-aa3b-32c0ab73b0ad
+PASS fresh order is fine: false
+PASS 29 minutes later: false
+PASS 31 minutes later: true
+</output>
+<p>And the same service wired for production, with the system clock and secure randomness. Values change on every run, so the example prints properties of them:</p>
+<example file="production.ts" project="orders">
+import { isUuidV4, systemClock, systemRandom } from "@zudojs/types";
+
+import { createOrderIds, createResetTokens } from "./ids.js";
+import { OrderService } from "./orders.js";
+
+const service = new OrderService(systemClock, createOrderIds(systemRandom));
+const order = service.place(1_250_000);
+console.log(isUuidV4(order.id.slice(4)), /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(order.createdAt));
+console.log(Date.parse(order.payBy) - Date.parse(order.createdAt), "ms to pay");
+console.log(createResetTokens(systemRandom)().length, "character reset token");
+</example>
+<output>
+true true
+1800000 ms to pay
+32 character reset token
+</output>
+<p>This is the whole pattern: branded types stop mix-ups at compile time, validating factories guard the boundary, and injected clocks and random sources make time and ids a test's decision rather than the machine's.</p>
+</section>
+
+<section>
+<h2 id="testing">Deterministic tests</h2>
+<p>A test is <strong>deterministic</strong> when it gives the same result on every run, on every machine. Time and randomness are the two most common reasons a test is not: it passes at 10:00 and fails at 23:59 because a date rolled over, or it fails once in a hundred runs because a random id happened to sort differently. Such a test is called <strong>flaky</strong>, and a team soon learns to ignore it, which is worse than having no test.</p>
+<p>The rules that follow from this lesson:</p>
+<ul>
+<li><strong>Inject, do not patch.</strong> Some test runners can replace <code>Date</code> and timers globally ("fake timers"). That works, but it also changes time for every library in the process. A <code>Clock</code> parameter changes time only for the code under test, and makes the dependency visible in the constructor.</li>
+<li><strong>Test the boundary.</strong> The expiry exercise below checks 14 and 16 minutes, and the text says what happens at exactly 15. Off-by-one bugs in time live at the boundary, and only a controllable clock can put a test exactly there.</li>
+<li><strong>Seed, then compare.</strong> With <code>new SeededRandom(42)</code>, the ids in a test are the same every run, so you can compare them, log them and use them in snapshots. The seed is part of the test; change it and the expected values change with it.</li>
+<li><strong>Assert properties of real randomness.</strong> When code uses <code>systemRandom</code>, test the shape (a valid UUID, a length, a range), as <code>production.ts</code> did, never the value.</li>
+<li><strong>Keep one real-clock test.</strong> The project's clock bug only showed up with <code>systemClock</code>. A single smoke test with the real implementations catches what the controlled ones hide.</li>
+</ul>
+<p>The lifecycle lesson used another part of <code>@zudojs/constants</code>: <code>LifecycleState</code>, <code>LifecyclePhase</code>, <code>LIFECYCLE_VALID_TRANSITIONS</code> and the <code>LIFECYCLE_DEFAULT_*</code> timeouts and retry settings. They live here, rather than in <code>@zudojs/lifecycle</code>, so that any package can talk about lifecycle states without depending on the lifecycle manager. That is the general rule of these two packages: they hold what many packages share, and depend on (almost) nothing themselves.</p>
+</section>
+
+<section>
+<h2 id="production">Production concerns</h2>
+<ul>
+<li><strong>Never trust a brand from outside.</strong> A value in a request body is <code>unknown</code> until a guard or a parse function says otherwise. Brand after validating, in one place.</li>
+<li><strong>Store time as UTC.</strong> <code>Timestamp</code> strings from <code>toISOString()</code> end in <code>Z</code>; convert to a local time zone only for display.</li>
+<li><strong>Secrets need <code>Random</code>.</strong> Tokens, session ids and reset codes take a <code>Random</code> parameter, so a test generator can never reach production code paths.</li>
+<li><strong>Check <code>NODE_ENV</code> strictly at deploy time.</strong> <code>resolveEnvironment(process.env, { strict: true })</code> turns <code>NODE_ENV=prodution</code> into an error instead of a development server in production.</li>
+<li><strong>Use the constants</strong> for statuses, headers and durations, so a search for <code>HttpStatus.TOO_MANY_REQUESTS</code> finds every place that sends a 429.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A guard for a cart line">
+<p>Write <code>isCartLine(value)</code> for objects like <code>{ sku: "RICE-5KG", qty: 2, unitKobo: 650000 }</code>: a non-empty <code>sku</code>, an integer <code>qty</code> from 1 to 99, and a positive integer <code>unitKobo</code>. Test it on a good line, a line with <code>qty: 0</code>, one with <code>unitKobo: 6500.5</code> and an array.</p>
+<solution>
+<example file="cart-line.ts">
+import { isInteger, isNonEmptyString, isPlainObject, isPositiveNumber } from "@zudojs/types";
+
+interface CartLine {
+  readonly sku: string;
+  readonly qty: number;
+  readonly unitKobo: number;
+}
+
+function isCartLine(value: unknown): value is CartLine {
+  return (
+    isPlainObject(value) &&
+    isNonEmptyString(value.sku) &&
+    isInteger(value.qty) && value.qty >= 1 && value.qty <= 99 &&
+    isInteger(value.unitKobo) && isPositiveNumber(value.unitKobo)
+  );
+}
+
+console.log(
+  isCartLine({ sku: "RICE-5KG", qty: 2, unitKobo: 650000 }),
+  isCartLine({ sku: "RICE-5KG", qty: 0, unitKobo: 650000 }),
+  isCartLine({ sku: "RICE-5KG", qty: 2, unitKobo: 6500.5 }),
+  isCartLine([{ sku: "RICE-5KG", qty: 2, unitKobo: 650000 }]),
+);
+</example>
+<output>
+true false false false
+</output>
+<p><code>isInteger(value.qty)</code> narrows <code>qty</code> to <code>number</code>, so the range checks after it compile. Amounts in whole kobo are integers by design; a fraction means the sender made a mistake.</p>
+</solution>
+</exercise>
+<exercise title="Parse a user id">
+<p>Write <code>parseUserId(value: unknown): UserId</code> that accepts only strings matching <code>user_</code> followed by 1 to 12 digits, and brands them with <code>createUserId</code>. Why is the check your job and not <code>createUserId</code>'s?</p>
+<solution>
+<example file="user-id.ts">
+import type { UserId } from "@zudojs/constants";
+import { createUserId } from "@zudojs/constants";
+
+function parseUserId(value: unknown): UserId {
+  if (typeof value !== "string" || !/^user_\d{1,12}$/.test(value)) {
+    throw new Error(`Not a user id: ${JSON.stringify(value)}`);
+  }
+  return createUserId(value);
+}
+
+for (const raw of ["user_42", "user_", "admin", 42]) {
+  try {
+    console.log("ok", parseUserId(raw));
+  } catch (error) {
+    console.log((error as Error).message);
+  }
+}
+</example>
+<output>
+ok user_42
+Not a user id: "user_"
+Not a user id: "admin"
+Not a user id: 42
+</output>
+<p><code>createUserId</code> cannot know what your user ids look like: another system might use UUIDs. So the shared factory only brands, and the format check belongs to your application's boundary.</p>
+</solution>
+</exercise>
+<exercise title="Test an expiry without waiting">
+<p>A reset link is valid for 15 minutes. Write <code>isLinkValid(clock, issuedAt)</code> using <code>TimeMs</code>, and test it with a <code>FixedClock</code> at 0, 14 and 16 minutes after issuing, without waiting.</p>
+<solution>
+<example file="expiry.ts">
+import { TimeMs } from "@zudojs/constants";
+import { FixedClock } from "@zudojs/types";
+import type { Clock } from "@zudojs/types";
+
+function isLinkValid(clock: Clock, issuedAt: number): boolean {
+  return clock.now() - issuedAt < 15 * TimeMs.MINUTE;
+}
+
+const clock = new FixedClock(Date.UTC(2026, 8, 24, 9, 0, 0));
+const issuedAt = clock.now();
+for (const minutes of [0, 14, 2]) {
+  clock.advance(minutes * TimeMs.MINUTE);
+  console.log(`${Math.round((clock.now() - issuedAt) / TimeMs.MINUTE)} min:`, isLinkValid(clock, issuedAt));
+}
+</example>
+<output>
+0 min: true
+14 min: true
+16 min: false
+</output>
+<p><code>advance</code> moves the clock forward from where it is, so the three steps land at 0, 14 and 16 minutes. The boundary uses <code>&lt;</code>: at exactly 15 minutes the link is already invalid, which is the safe side for a security token.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Type guards from <code>@zudojs/types</code> check untrusted values and narrow their types; they reject the edge cases naive checks miss (<code>null</code>, arrays, <code>NaN</code>, <code>Infinity</code>, impossible dates, sparse arrays).</li>
+<li>Converters turn text into values with fallbacks: an empty query parameter becomes your default, not 0. <code>safeJsonParse</code> drops prototype-polluting keys but does not validate.</li>
+<li><code>Brand</code> makes ids with the same structure incompatible. The id factories in <code>@zudojs/constants</code> only brand; <code>createTenantId</code>, <code>createTimestamp</code>, <code>createEmailAddress</code> and <code>createUrl</code> validate. Brand after checking, in one parse function.</li>
+<li>Use <code>HttpStatus</code>, <code>HttpHeader</code>, <code>TimeMs</code>, <code>resolveEnvironment</code> and friends instead of literals.</li>
+<li>Inject a <code>Clock</code> and a <code>Random</code>. Tests use <code>FixedClock</code> and <code>SeededRandom</code>; secrets require the branded, secure <code>Random</code>. Read the clock once per operation.</li>
+</ul>
+<p>Next, <a href="/learn/zudo-container">Dependency injection with @zudojs/container</a> takes the constructor injection from this project and lets a container build the service, its clock and its store for you.</p>
+</section>

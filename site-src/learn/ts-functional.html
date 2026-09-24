@@ -1,0 +1,1099 @@
+---
+title: Functional TypeScript
+description: Make signatures tell the truth with readonly data, typed composition, Option, Result and algebraic data types, then build a typed pricing and checkout core.
+minutes: 55
+youNeed: Functional JavaScript, Union types in depth, Designing generic APIs and Mapped types
+youBuild: A typed pricing and checkout core: readonly data, a parse step that returns a Result, promotions as an algebraic data type, and a pipeline whose stage types enforce the order of the steps
+keywords: functional typescript, pure functions typescript, readonly, ReadonlyArray, Readonly utility type, DeepReadonly, immutability, typed pipe, function composition, Option type, Maybe, Result type, algebraic data types, sum types, product types, pattern matching, referential transparency, parse don't validate
+objectives: Explain what a TypeScript signature can and cannot promise about purity, and move hidden inputs into parameters | Use readonly, ReadonlyArray, ReadonlyMap and as const, and recognise the shallow, aliasing and runtime limits of readonly | Type a pipe function with overloads and read the error when two steps do not fit | Choose between T or undefined, an Option type and a Result type for a missing or failed value | Model data as algebraic data types, count their states, and handle them with exhaustive matching | Build a pricing pipeline whose stage types make the order of the steps checkable
+---
+<section>
+<h2 id="problem">An invoice that changed after it was printed</h2>
+<p>A shop's TypeScript pricing module has three small functions. Every one of them has a correct, strict type, and <code>tsc</code> reports no errors:</p>
+<example file="problem.ts">
+interface CartLine {
+  sku: string;
+  qty: number;
+  priceKobo: number;
+}
+
+interface Cart {
+  id: string;
+  lines: CartLine[];
+}
+
+function cheapestFirst(lines: CartLine[]): CartLine[] {
+  return lines.sort((a, b) => a.priceKobo - b.priceKobo);
+}
+
+function staffPrices(cart: Cart): Cart {
+  for (const line of cart.lines) line.priceKobo = Math.round(line.priceKobo * 0.8);
+  return cart;
+}
+
+function subtotalKobo(cart: Cart): number {
+  return cart.lines.reduce((sum, line) => sum + line.qty * line.priceKobo, 0);
+}
+
+const cart: Cart = {
+  id: "CART-7",
+  lines: [
+    { sku: "TV-32", qty: 1, priceKobo: 4000000 },
+    { sku: "RICE-5", qty: 2, priceKobo: 850000 },
+  ],
+};
+
+const invoiceTotal = subtotalKobo(cart);
+const receiptOrder = cheapestFirst(cart.lines);
+const staffCart = staffPrices(cart);
+
+console.log("invoice said:", invoiceTotal);
+console.log("cart now says:", subtotalKobo(cart));
+console.log("first line of the cart:", cart.lines[0].sku);
+console.log("staff cart is the same object:", staffCart === cart, receiptOrder === cart.lines);
+</example>
+<output>
+invoice said: 5700000
+cart now says: 4560000
+first line of the cart: RICE-5
+staff cart is the same object: true true
+</output>
+<p>The printed invoice said ₦57,000. The customer's cart now says ₦45,600, and its lines are in a different order. Nobody asked for either change. <code>cheapestFirst</code> sorted the array in place, because <code>sort</code> mutates, and <code>staffPrices</code> rewrote the prices it was given.</p>
+<p>Now read the signatures again. <code>(lines: CartLine[]) =&gt; CartLine[]</code> fits a function that returns a sorted copy <em>and</em> one that reorders your array. <code>(cart: Cart) =&gt; Cart</code> fits a function that builds a discounted cart <em>and</em> one that edits yours. The types are correct and say nothing about what matters here.</p>
+<p><a href="/learn/js-functional">Functional JavaScript</a> fixed this kind of code with a style: pure functions, immutable updates, small steps joined into pipelines. This lesson makes that style <em>checkable</em>. You will make signatures say "I will not change your data" (<code>readonly</code>), "the value may be missing" (Option), "this can fail, in these ways" (Result) and "these are all the kinds there are" (algebraic data types), and then build a pricing core where the compiler checks the order of the steps.</p>
+</section>
+
+<section>
+<h2 id="signatures">What a signature can promise</h2>
+<p>A <strong>pure function</strong>, as you know, has no hidden inputs and no side effects: its only input is its parameters and its only output is its return value. Some languages (Haskell, for example) put effects into the types, so the compiler knows which functions print or write files. TypeScript does not. Here is what a TypeScript signature can and cannot express:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Fact about a function</th><th>Can the type say it?</th><th>How</th></tr></thead>
+<tbody>
+<tr><td>It does not change its arguments</td><td>Yes</td><td><code>readonly</code> properties, <code>readonly T[]</code>, <code>ReadonlyMap</code></td></tr>
+<tr><td>The result may be missing</td><td>Yes</td><td><code>T | undefined</code>, or an Option type</td></tr>
+<tr><td>It can fail, and how</td><td>Yes</td><td>A Result type with a union of error codes</td></tr>
+<tr><td>The input is one of a fixed set of kinds</td><td>Yes</td><td>A discriminated union (a sum type)</td></tr>
+<tr><td>It does not read the clock, randomness or globals</td><td>No</td><td>Convention: pass them in as parameters</td></tr>
+<tr><td>It does not log, write or send</td><td>No</td><td>Convention: keep effects in a thin shell</td></tr>
+</tbody>
+</table></div>
+<p>The last two rows matter. To the compiler, these two functions have the same type, and it will let you use either one anywhere:</p>
+<example file="transparency.ts">
+const audit: string[] = [];
+
+const vatKobo = (kobo: number): number => Math.round(kobo * 0.075);
+
+const vatKoboAudited = (kobo: number): number => {
+  audit.push(`VAT computed on ${kobo}`);
+  return Math.round(kobo * 0.075);
+};
+
+const twice = vatKoboAudited(1000000) + vatKoboAudited(1000000);
+console.log(twice, "audit entries:", audit.length);
+
+audit.length = 0;
+const once = vatKoboAudited(1000000);
+console.log(once + once, "audit entries:", audit.length);
+
+const pureVersions: Array<(kobo: number) => number> = [vatKobo, vatKoboAudited];
+console.log(pureVersions.length);
+</example>
+<output>
+150000 audit entries: 2
+150000 audit entries: 1
+2
+</output>
+<p>Both versions of the sum are ₦1,500, but the audit log differs. That is the test for <strong>referential transparency</strong>: a call is referentially transparent when you can replace it with its result (or compute it once and reuse it) without changing anything the program does. <code>vatKobo(1000000)</code> can be replaced by <code>75000</code> everywhere. <code>vatKoboAudited(1000000)</code> cannot, because the log is part of what it does.</p>
+<p>Referential transparency is what makes refactoring, caching and testing safe. Caching a result (memoising) <em>is</em> replacing later calls by an earlier result, so you may only cache functions that are referentially transparent. The types will not tell you which ones are, so the rest of this lesson uses every tool that TypeScript <em>does</em> give you, and keeps the effects it cannot see in one visible place.</p>
+</section>
+
+<section>
+<h2 id="readonly">readonly: immutability the compiler checks</h2>
+<p><a href="/learn/ts-objects#optional-readonly">Interfaces, unions and literal types</a> introduced <code>readonly</code> properties. Put them on the problem's types, add <code>readonly</code> to the array, and the compiler finds both bugs:</p>
+<example file="checked.ts" project="readonly" check="tsc-error">
+interface CartLine {
+  readonly sku: string;
+  readonly qty: number;
+  readonly priceKobo: number;
+}
+
+interface Cart {
+  readonly id: string;
+  readonly lines: readonly CartLine[];
+}
+
+function cheapestFirst(lines: readonly CartLine[]): readonly CartLine[] {
+  return lines.sort((a, b) => a.priceKobo - b.priceKobo);
+}
+
+function staffPrices(cart: Cart): Cart {
+  for (const line of cart.lines) line.priceKobo = Math.round(line.priceKobo * 0.8);
+  return cart;
+}
+</example>
+<output kind="tsc">
+checked.ts:13:16 - error TS2339: Property 'sort' does not exist on type 'readonly CartLine[]'.
+
+13   return lines.sort((a, b) => a.priceKobo - b.priceKobo);
+                  ~~~~
+
+checked.ts:13:22 - error TS7006: Parameter 'a' implicitly has an 'any' type.
+
+13   return lines.sort((a, b) => a.priceKobo - b.priceKobo);
+                        ~
+
+checked.ts:13:25 - error TS7006: Parameter 'b' implicitly has an 'any' type.
+
+13   return lines.sort((a, b) => a.priceKobo - b.priceKobo);
+                           ~
+
+checked.ts:17:39 - error TS2540: Cannot assign to 'priceKobo' because it is a read-only property.
+
+17   for (const line of cart.lines) line.priceKobo = Math.round(line.priceKobo * 0.8);
+                                         ~~~~~~~~~
+
+
+Found 4 errors in the same file, starting at: checked.ts:13
+</output>
+<p>The two TS7006 errors are follow-on errors: <code>sort</code> does not exist on the type, so its callback has no parameter types to borrow. Fix the first error and they disappear. <code>readonly CartLine[]</code> is an array type without the methods that change an array: no <code>push</code>, <code>pop</code>, <code>sort</code>, <code>reverse</code>, <code>splice</code>, and no assignment to an index. The methods that return something new (<code>map</code>, <code>filter</code>, <code>slice</code>, <code>toSorted</code>, <code>with</code>) are all still there. So the fixed code is also the natural code:</p>
+<example file="fixed.ts" project="readonly">
+interface CartLine {
+  readonly sku: string;
+  readonly qty: number;
+  readonly priceKobo: number;
+}
+
+interface Cart {
+  readonly id: string;
+  readonly lines: readonly CartLine[];
+}
+
+function cheapestFirst(lines: readonly CartLine[]): readonly CartLine[] {
+  return lines.toSorted((a, b) => a.priceKobo - b.priceKobo);
+}
+
+function staffPrices(cart: Cart): Cart {
+  return { ...cart, lines: cart.lines.map((line) => ({ ...line, priceKobo: Math.round(line.priceKobo * 0.8) })) };
+}
+
+const subtotalKobo = (cart: Cart): number => cart.lines.reduce((sum, line) => sum + line.qty * line.priceKobo, 0);
+
+const cart: Cart = {
+  id: "CART-7",
+  lines: [
+    { sku: "TV-32", qty: 1, priceKobo: 4000000 },
+    { sku: "RICE-5", qty: 2, priceKobo: 850000 },
+  ],
+};
+
+console.log(cheapestFirst(cart.lines).map((line) => line.sku), cart.lines[0].sku);
+console.log(subtotalKobo(staffPrices(cart)), subtotalKobo(cart));
+</example>
+<output>
+[ 'RICE-5', 'TV-32' ] TV-32
+4560000 5700000
+</output>
+<h3>The readonly family</h3>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Mutable</th><th>Read-only view</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>T[]</code>, <code>Array&lt;T&gt;</code></td><td><code>readonly T[]</code>, <code>ReadonlyArray&lt;T&gt;</code></td><td>Two spellings of the same type</td></tr>
+<tr><td><code>[string, number]</code></td><td><code>readonly [string, number]</code></td><td>Readonly tuple (<a href="/learn/ts-tuples#readonly">Tuples</a>)</td></tr>
+<tr><td><code>Map&lt;K, V&gt;</code></td><td><code>ReadonlyMap&lt;K, V&gt;</code></td><td>No <code>set</code>, <code>delete</code>, <code>clear</code></td></tr>
+<tr><td><code>Set&lt;T&gt;</code></td><td><code>ReadonlySet&lt;T&gt;</code></td><td>No <code>add</code>, <code>delete</code>, <code>clear</code></td></tr>
+<tr><td><code>{ price: number }</code></td><td><code>Readonly&lt;{ price: number }&gt;</code></td><td>Every property readonly, one level deep</td></tr>
+<tr><td>a literal value</td><td><code>as const</code></td><td>Readonly all the way down, and literal types</td></tr>
+</tbody>
+</table></div>
+<h3>Readonly is one-way, and that is the point</h3>
+<p>A mutable array can go where a readonly one is expected: the function just promises not to use the methods it could have used. The other direction is refused, because the receiver could then change something its owner was promised would stay the same:</p>
+<example file="one-way.ts" project="readonly" check="tsc-error">
+function totalQty(lines: readonly { readonly qty: number }[]): number {
+  return lines.reduce((sum, line) => sum + line.qty, 0);
+}
+
+function addFreeGift(lines: { sku: string; qty: number }[]): void {
+  lines.push({ sku: "GIFT-BAG", qty: 1 });
+}
+
+const draft = [{ sku: "RICE-5", qty: 2 }];
+const confirmed: readonly { sku: string; qty: number }[] = [{ sku: "OIL-1", qty: 1 }];
+
+console.log(totalQty(draft), totalQty(confirmed));
+addFreeGift(draft);
+addFreeGift(confirmed);
+</example>
+<output kind="tsc">
+one-way.ts:14:13 - error TS4104: The type 'readonly { sku: string; qty: number; }[]' is 'readonly' and cannot be assigned to the mutable type '{ sku: string; qty: number; }[]'.
+
+14 addFreeGift(confirmed);
+               ~~~~~~~~~
+
+
+Found 1 error in one-way.ts:14
+</output>
+<p>This gives a simple rule for your own functions. <strong>Accept readonly parameters</strong> whenever the function does not need to change them: callers with mutable or readonly data can both call it, and the signature documents that their data is safe. <strong>Return readonly data</strong> when the caller must not change what you hand back, such as a cached list shared by everyone.</p>
+<h3>The three limits of readonly</h3>
+<p><strong>1. It is shallow.</strong> <code>readonly</code> on a property stops you replacing the property; <code>readonly T[]</code> stops you changing the array. Neither says anything about the objects <em>inside</em>, just as <a href="/learn/ts-utility-types#modifiers">Utility types</a> showed for <code>Readonly&lt;T&gt;</code>:</p>
+<example file="shallow.ts" project="limits">
+interface CartLine {
+  sku: string;
+  qty: number;
+}
+
+function sneakyTotal(lines: readonly CartLine[]): number {
+  lines[0].qty = 100;
+  return lines.reduce((sum, line) => sum + line.qty, 0);
+}
+
+const lines: CartLine[] = [{ sku: "RICE-5", qty: 2 }];
+console.log(sneakyTotal(lines), lines[0].qty);
+</example>
+<output>
+100 100
+</output>
+<p>Declaring the element type with <code>readonly</code> properties (as the fixed <code>CartLine</code> above does) closes that gap for one level. For data several levels deep, a recursive mapped type does it everywhere. <a href="/learn/ts-mapped-types">Mapped types</a> explains how it works; <code>@zudojs/types</code> ships a tested version as <code>DeepReadonly</code> (<a href="/learn/zudo-types-constants">Types and constants</a>):</p>
+<example file="deep.ts" project="limits" check="tsc-error">
+type DeepReadonly<T> = T extends (...args: never[]) => unknown
+  ? T
+  : T extends object
+    ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
+    : T;
+
+interface Order {
+  id: string;
+  customer: { name: string; city: string };
+  lines: { sku: string; qty: number }[];
+}
+
+function ship(order: DeepReadonly<Order>): string {
+  order.customer.city = "Abuja";
+  order.lines[0].qty = 0;
+  order.lines.push({ sku: "GIFT-BAG", qty: 1 });
+  return order.id;
+}
+</example>
+<output kind="tsc">
+deep.ts:14:18 - error TS2540: Cannot assign to 'city' because it is a read-only property.
+
+14   order.customer.city = "Abuja";
+                    ~~~~
+
+deep.ts:15:18 - error TS2540: Cannot assign to 'qty' because it is a read-only property.
+
+15   order.lines[0].qty = 0;
+                    ~~~
+
+deep.ts:16:15 - error TS2339: Property 'push' does not exist on type 'readonly { readonly sku: string; readonly qty: number; }[]'.
+
+16   order.lines.push({ sku: "GIFT-BAG", qty: 1 });
+                 ~~~~
+
+
+Found 3 errors in the same file, starting at: deep.ts:14
+</output>
+<p><strong>2. It is a view, not a lock.</strong> A readonly type describes what <em>your reference</em> may do. If someone else holds a mutable reference to the same array, they can change it, and your readonly view sees the change:</p>
+<example file="alias.ts" project="limits">
+const basket: string[] = ["RICE-5"];
+const view: readonly string[] = basket;
+
+basket.push("OIL-1");
+console.log(view);
+</example>
+<output>
+[ 'RICE-5', 'OIL-1' ]
+</output>
+<p><strong>3. It disappears at runtime.</strong> Like every type, <code>readonly</code> is erased (<a href="/learn/ts-compiler#erasure">What the TypeScript compiler does</a>), so plain JavaScript callers, an <code>as</code> cast or data from <code>JSON.parse</code> can ignore it. When you need the runtime to refuse, use <code>Object.freeze</code>, whose type is already a readonly view of its argument:</p>
+<example file="freeze.ts" project="limits">
+const vatRates = Object.freeze({ NG: 0.075, GH: 0.15 });
+const zones = Object.freeze(["Lagos", "Abuja", "Kano"]);
+
+type Rates = typeof vatRates;
+type Zones = typeof zones;
+const check: [Rates, Zones] = [{ NG: 0.075, GH: 0.15 }, ["Lagos"]];
+
+try {
+  (zones as string[]).push("Ibadan");
+} catch (error) {
+  console.log(String(error));
+}
+console.log(check.length, zones.length);
+</example>
+<output>
+TypeError: Cannot add property 3, object is not extensible
+2 3
+</output>
+<p>Hover over <code>Rates</code> in an editor and you see <code>Readonly&lt;{ NG: 0.075; GH: 0.15; }&gt;</code> (<code>Object.freeze</code> keeps literal types for objects of primitives); <code>Zones</code> is <code>readonly string[]</code>. The cast told the compiler to allow <code>push</code>, and the runtime refused anyway. <code>Object.freeze</code> is shallow too, so freeze each level, or freeze configuration once at start-up and rely on readonly types for the rest.</p>
+</section>
+
+<section>
+<h2 id="composition">Typed composition</h2>
+<p>In <a href="/learn/js-functional#composition">Functional JavaScript</a>, <code>pipe(...fns)</code> was one line of <code>reduce</code>. Typing it is harder than it looks, because each function's input must match the previous function's output, and every step can have a different type. A rest parameter typed <code>Array&lt;(x: any) =&gt; any&gt;</code> compiles, and switches the checking off.</p>
+<p>The standard answer, used by libraries such as fp-ts and Effect, is a list of <strong>overloads</strong> (<a href="/learn/ts-advanced-functions">Advanced functions</a>): one signature per number of steps, each linking the types together, and one implementation that is typed loosely inside:</p>
+<example file="pipe.ts" project="compose">
+export function pipe<A, B>(ab: (a: A) => B): (a: A) => B;
+export function pipe<A, B, C>(ab: (a: A) => B, bc: (b: B) => C): (a: A) => C;
+export function pipe<A, B, C, D>(ab: (a: A) => B, bc: (b: B) => C, cd: (c: C) => D): (a: A) => D;
+export function pipe<A, B, C, D, E>(ab: (a: A) => B, bc: (b: B) => C, cd: (c: C) => D, de: (d: D) => E): (a: A) => E;
+export function pipe(...fns: ReadonlyArray<(value: unknown) => unknown>): (input: unknown) => unknown {
+  return (input) => fns.reduce((value, fn) => fn(value), input);
+}
+</example>
+<p>The implementation signature is not visible to callers; only the four overloads are. Each overload is a chain: <code>A</code> goes in, the first step makes a <code>B</code>, the second step must take a <code>B</code>, and so on. Using it with curried steps, written configuration first and data last as in the JavaScript lesson:</p>
+<example file="labels.ts" project="compose">
+import { pipe } from "./pipe.js";
+
+const minusVoucher = (voucherKobo: number) => (kobo: number): number => Math.max(kobo - voucherKobo, 0);
+const addVat = (rate: number) => (kobo: number): number => Math.round(kobo * (1 + rate));
+const toNaira = (kobo: number): string => `₦${(kobo / 100).toFixed(2)}`;
+
+const shelfLabel = pipe(minusVoucher(200000), addVat(0.075), toNaira);
+const labelLength = pipe(shelfLabel, (label) => label.length);
+
+console.log(shelfLabel(1700000), labelLength(1700000));
+</example>
+<output>
+₦16125.00 9
+</output>
+<p>Notice <code>(label) =&gt; label.length</code>: no annotation, yet <code>label</code> is a <code>string</code>. The overload inferred <code>B = string</code> from <code>shelfLabel</code> and gave that type to the next step (contextual typing, from <a href="/learn/ts-inference#contextual">Type inference in depth</a>). Swap two steps, and the compiler reports the join where the types stop matching:</p>
+<example file="wrong-order.ts" project="compose" check="tsc-error">
+import { pipe } from "./pipe.js";
+
+const addVat = (rate: number) => (kobo: number): number => Math.round(kobo * (1 + rate));
+const toNaira = (kobo: number): string => `₦${(kobo / 100).toFixed(2)}`;
+
+const broken = pipe(toNaira, addVat(0.075));
+</example>
+<output kind="tsc">
+wrong-order.ts:6:21 - error TS2345: Argument of type '(kobo: number) => string' is not assignable to parameter of type '(a: number) => number'.
+  Type 'string' is not assignable to type 'number'.
+
+6 const broken = pipe(toNaira, addVat(0.075));
+                      ~~~~~~~
+
+
+Found 1 error in wrong-order.ts:6
+</output>
+<p>The compiler read the second step first: <code>addVat(0.075)</code> takes a <code>number</code>, so <code>B</code> must be <code>number</code>, and then <code>toNaira</code>, which returns a <code>string</code>, is the step that does not fit. When a pipe error seems to blame the wrong function, look at both sides of the join it names.</p>
+<p>Overloads have a ceiling: this <code>pipe</code> takes at most four steps, and a fifth is an error. Libraries write twenty overloads, or nest pipes: <code>pipe(pipe(a, b, c), d, e)</code> is still fully typed. A single variadic signature that checks any number of steps can be written with recursive conditional types, and it produces far worse error messages; the <a href="/learn/ts-type-system">next lesson</a> shows why that trade is rarely worth it.</p>
+<tip>Many libraries also offer a value-first form, <code>pipe(value, f, g)</code>, which runs immediately. It infers even better, because the first type comes from a real value rather than from the first function's annotation.</tip>
+</section>
+
+<section>
+<h2 id="option">Option: a value that may be missing</h2>
+<p>With <code>strictNullChecks</code> on (part of <code>strict</code>), TypeScript already has a good type for "maybe": <code>T | undefined</code>. <code>Array.prototype.find</code> and <code>Map.prototype.get</code> return it, <code>?.</code> and <code>??</code> handle it, and narrowing forces you to check before use. In most TypeScript code that is all you need, and wrapping every missing value in a special object would just add noise.</p>
+<p>There is one situation where <code>T | undefined</code> fails, and it causes real bugs: when "missing" can happen at two levels. A shop caches the result of a slow discount lookup. Most products have no discount, so the lookup returns <code>undefined</code> for them:</p>
+<example file="cache.ts" project="option">
+const discountPercent: Record<string, number> = { "RICE-5": 10 };
+let slowLookups = 0;
+
+function lookupDiscount(sku: string): number | undefined {
+  slowLookups++;
+  return discountPercent[sku];
+}
+
+const cache = new Map<string, number | undefined>();
+
+function cachedDiscount(sku: string): number | undefined {
+  const hit = cache.get(sku);
+  if (hit !== undefined) return hit;
+  const found = lookupDiscount(sku);
+  cache.set(sku, found);
+  return found;
+}
+
+for (const sku of ["RICE-5", "RICE-5", "OIL-1", "OIL-1", "OIL-1"]) cachedDiscount(sku);
+console.log("slow lookups:", slowLookups);
+</example>
+<output>
+slow lookups: 4
+</output>
+<p>Five calls, four slow lookups. The rice discount was cached, but "oil has no discount" was cached as <code>undefined</code>, and <code>cache.get</code> also returns <code>undefined</code> for "not in the cache". The two meanings collapsed into one value, so the cache never hits for products without a discount, which is most of the catalogue. At the type level, the collapse is visible:</p>
+<example file="collapse.ts" project="option">
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+type Maybe<T> = T | undefined;
+type CacheRead = Maybe<Maybe<number>>;
+
+type C1 = Expect<Equal<CacheRead, number | undefined>>;
+console.log("Maybe<Maybe<number>> is just number | undefined");
+</example>
+<output>
+Maybe<Maybe<number>> is just number | undefined
+</output>
+<p>A union of a union is flat. <code>Equal</code> and <code>Expect</code> are the type tests from <a href="/learn/ts-conditional-types#testing">Conditional types</a>: the file only compiles if the two types are identical. An <strong>Option</strong> type (also called <strong>Maybe</strong>) does not collapse, because it is an object with its own discriminant:</p>
+<example file="option.ts" project="option">
+export type Option<T> = { readonly kind: "some"; readonly value: T } | { readonly kind: "none" };
+
+export const some = <T>(value: T): Option<T> => ({ kind: "some", value });
+export const none: Option<never> = { kind: "none" };
+
+export const fromNullable = <T>(value: T | null | undefined): Option<T> =>
+  value === null || value === undefined ? none : some(value);
+
+export const mapOption = <T, U>(fn: (value: T) => U) => (option: Option<T>): Option<U> =>
+  option.kind === "some" ? some(fn(option.value)) : none;
+
+export const getOrElse = <T>(fallback: T) => (option: Option<T>): T =>
+  option.kind === "some" ? option.value : fallback;
+</example>
+<example file="cache-fixed.ts" project="option">
+import { fromNullable, getOrElse } from "./option.js";
+import type { Option } from "./option.js";
+
+const discountPercent: Record<string, number> = { "RICE-5": 10 };
+let slowLookups = 0;
+
+function lookupDiscount(sku: string): Option<number> {
+  slowLookups++;
+  return fromNullable(discountPercent[sku]);
+}
+
+const cache = new Map<string, Option<number>>();
+
+function cachedDiscount(sku: string): Option<number> {
+  const hit = cache.get(sku);
+  if (hit !== undefined) return hit;
+  const found = lookupDiscount(sku);
+  cache.set(sku, found);
+  return found;
+}
+
+const orZero = getOrElse(0);
+for (const sku of ["RICE-5", "RICE-5", "OIL-1", "OIL-1", "OIL-1"]) cachedDiscount(sku);
+console.log("slow lookups:", slowLookups);
+console.log(orZero(cachedDiscount("RICE-5")), orZero(cachedDiscount("OIL-1")));
+</example>
+<output>
+slow lookups: 2
+10 0
+</output>
+<p>Now <code>cache.get</code> returns <code>Option&lt;number&gt; | undefined</code>: the outer <code>undefined</code> means "not cached", and a cached <code>{ kind: "none" }</code> means "looked up, no discount". Two lookups for two products. (<code>cache.has(sku)</code> would also have fixed this particular bug; the Option version makes the difference part of the type, so the next person cannot reintroduce it.)</p>
+<p>A practical rule: use <code>T | undefined</code> by default. Reach for an Option type when absence can nest (caches, lookups of optional values, "not loaded yet" versus "loaded, empty"), or when the value must be stored or sent somewhere that cannot hold <code>undefined</code>. JSON, for instance, drops properties whose value is <code>undefined</code>.</p>
+</section>
+
+<section>
+<h2 id="result">Result: failure in the signature</h2>
+<p><a href="/learn/ts-generic-design#result">Designing generic APIs</a> built <code>Result&lt;T, E&gt;</code> with <code>ok</code>, <code>err</code>, <code>map</code> and <code>andThen</code>, and showed error codes adding up in the type. Two things matter when you use Result in functional code: helpers that fit into <code>pipe</code>, and a boundary with code that throws.</p>
+<h3>Data-last helpers fit pipelines</h3>
+<p>The Designing generic APIs versions take the result first: <code>map(result, fn)</code>. For <code>pipe</code>, the result is the data flowing through, so it must come last: <code>mapResult(fn)</code> returns a function that waits for the result. It is the same "configuration first, data last" rule as currying:</p>
+<example file="result.ts" project="compose">
+export type Result<T, E> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
+
+export const ok = <T>(value: T): Result<T, never> => ({ ok: true, value });
+export const err = <E>(error: E): Result<never, E> => ({ ok: false, error });
+
+export const mapResult = <T, U>(fn: (value: T) => U) => <E>(result: Result<T, E>): Result<U, E> =>
+  result.ok ? ok(fn(result.value)) : result;
+
+export const andThen = <T, U, F>(fn: (value: T) => Result<U, F>) => <E>(result: Result<T, E>): Result<U, E | F> =>
+  result.ok ? fn(result.value) : result;
+
+export const tryCatch = <T, E>(run: () => T, onError: (error: unknown) => E): Result<T, E> => {
+  try {
+    return ok(run());
+  } catch (error) {
+    return err(onError(error));
+  }
+};
+</example>
+<p><code>tryCatch</code> is the boundary: code you do not control throws, and <code>tryCatch</code> turns the throw into a value with a typed error. Promotions arrive as JSON from an admin screen. Parsing can throw, and even valid JSON may not be a valid rate:</p>
+<example file="config.ts" project="compose">
+import { pipe } from "./pipe.js";
+import { andThen, err, ok, tryCatch } from "./result.js";
+import type { Result } from "./result.js";
+
+type ConfigError = { readonly code: "bad-json"; readonly detail: string } | { readonly code: "bad-rate"; readonly rate: unknown };
+
+const parseJson = (text: string): Result<unknown, ConfigError> =>
+  tryCatch(() => JSON.parse(text) as unknown, (error) => ({ code: "bad-json", detail: error instanceof Error ? error.name : "unknown" }));
+
+const readVatRate = (data: unknown): Result<number, ConfigError> => {
+  const rate = typeof data === "object" && data !== null && "vatRate" in data ? data.vatRate : undefined;
+  return typeof rate === "number" && rate >= 0 && rate < 1 ? ok(rate) : err({ code: "bad-rate", rate });
+};
+
+const loadVatRate = pipe(parseJson, andThen(readVatRate));
+
+for (const text of ['{"vatRate":0.075}', '{"vatRate":7.5}', "{vatRate:0.075}"]) {
+  const result = loadVatRate(text);
+  console.log(result.ok ? `rate ${result.value}` : JSON.stringify(result.error));
+}
+</example>
+<output>
+rate 0.075
+{"code":"bad-rate","rate":7.5}
+{"code":"bad-json","detail":"SyntaxError"}
+</output>
+<h3>Fail fast or collect every problem</h3>
+<p><code>andThen</code> stops at the first failure. That is right when each step needs the previous one's value: there is no rate to check if the JSON did not parse. It is wrong when the checks are independent and the user wants to fix everything at once, like the lines of a cart. Then run every check and collect the failures into an array:</p>
+<example file="collect.ts" project="compose">
+import { err, ok } from "./result.js";
+import type { Result } from "./result.js";
+
+type LineError = { readonly sku: string; readonly problem: "unknown-product" | "bad-quantity" };
+
+const catalog: ReadonlyMap<string, number> = new Map([["RICE-5", 850000], ["OIL-1", 320000]]);
+
+function checkLine(line: { readonly sku: string; readonly qty: number }): LineError | undefined {
+  if (!catalog.has(line.sku)) return { sku: line.sku, problem: "unknown-product" };
+  if (!Number.isInteger(line.qty) || line.qty < 1) return { sku: line.sku, problem: "bad-quantity" };
+  return undefined;
+}
+
+function checkLines(lines: readonly { readonly sku: string; readonly qty: number }[]): Result<number, readonly LineError[]> {
+  const problems = lines.map(checkLine).filter((problem) => problem !== undefined);
+  return problems.length > 0 ? err(problems) : ok(lines.length);
+}
+
+console.log(checkLines([{ sku: "RICE-5", qty: 2 }, { sku: "OIL-1", qty: 1 }]));
+console.log(checkLines([{ sku: "TV-99", qty: 1 }, { sku: "OIL-1", qty: 0 }, { sku: "RICE-5", qty: 1 }]));
+</example>
+<output>
+{ ok: true, value: 2 }
+{
+  ok: false,
+  error: [
+    { sku: 'TV-99', problem: 'unknown-product' },
+    { sku: 'OIL-1', problem: 'bad-quantity' }
+  ]
+}
+</output>
+<p><code>filter((problem) =&gt; problem !== undefined)</code> narrows the array to <code>LineError[]</code> by itself: since TypeScript 5.5 the compiler infers a type predicate from a simple arrow like this (<a href="/learn/ts-narrowing#type-guards">Narrowing</a>). The error type is <code>readonly LineError[]</code>, a list, and the caller shows every problem in one response.</p>
+</section>
+
+<section>
+<h2 id="adt">Algebraic data types</h2>
+<p>The Option and Result types above are built from two ways of combining types, and those two ways have names:</p>
+<ul>
+<li>A <strong>product type</strong> holds several values at once: an object type or a tuple. A value of <code>{ paid: boolean; shipped: boolean }</code> has a <code>paid</code> <em>and</em> a <code>shipped</code>.</li>
+<li>A <strong>sum type</strong> holds one of several alternatives: a union, usually a discriminated union (<a href="/learn/ts-unions#states">Union types in depth</a>). A value of <code>Option&lt;T&gt;</code> is a <code>some</code> <em>or</em> a <code>none</code>.</li>
+</ul>
+<p>Types built from these two are <strong>algebraic data types</strong> (ADTs), and the name is literal: count the possible values of a type, and products multiply while sums add. <code>boolean</code> has 2 values, so <code>{ paid: boolean; shipped: boolean }</code> has 2 × 2 = 4. A union of three states with no data has 1 + 1 + 1 = 3. <code>Option&lt;T&gt;</code> has "the values of <code>T</code>, plus 1"; <code>Result&lt;T, E&gt;</code> has "the values of <code>T</code> plus the values of <code>E</code>". <code>never</code> has 0.</p>
+<p>This arithmetic is a design tool. The loan in <a href="/learn/ts-unions#problem">Union types in depth</a> had sixteen possible shapes for three real states, because it was a product of flags. When the count your type allows is bigger than the count your business has, the difference is bugs you can write. Replace products of flags with sums of states until the numbers match. <a href="/learn/ts-domain-modeling">Type-safe domain modelling</a> applies this to a whole shop.</p>
+<h3>Promotions as data</h3>
+<p>Functional JavaScript represented each promotion as a function. That was flexible, but a function cannot be stored in a database, shown to a customer or checked by an admin screen. An ADT can. Each kind of promotion is one member of a sum type, and one <strong>interpreter</strong> function gives it meaning:</p>
+<example file="promotion.ts" project="adt">
+export type Promotion =
+  | { readonly kind: "percent-off"; readonly sku: string; readonly percent: number }
+  | { readonly kind: "spend-and-save"; readonly minKobo: number; readonly offKobo: number }
+  | { readonly kind: "buy-x-get-one"; readonly sku: string; readonly buy: number }
+  | { readonly kind: "best-of"; readonly options: readonly Promotion[] };
+
+export interface Line {
+  readonly sku: string;
+  readonly qty: number;
+  readonly unitKobo: number;
+}
+
+export function discountKobo(promo: Promotion, lines: readonly Line[]): number {
+  switch (promo.kind) {
+    case "percent-off":
+      return lines
+        .filter((line) => line.sku === promo.sku)
+        .reduce((sum, line) => sum + Math.round((line.unitKobo * line.qty * promo.percent) / 100), 0);
+    case "spend-and-save": {
+      const subtotal = lines.reduce((sum, line) => sum + line.unitKobo * line.qty, 0);
+      return subtotal >= promo.minKobo ? promo.offKobo : 0;
+    }
+    case "buy-x-get-one":
+      return lines
+        .filter((line) => line.sku === promo.sku)
+        .reduce((sum, line) => sum + Math.floor(line.qty / (promo.buy + 1)) * line.unitKobo, 0);
+    case "best-of":
+      return Math.max(0, ...promo.options.map((option) => discountKobo(option, lines)));
+  }
+}
+</example>
+<p><code>best-of</code> contains other promotions, so the type is <strong>recursive</strong>, and so is its interpreter: the same shape as the chart of accounts in <a href="/learn/ts-aliases-interfaces#recursive">Type aliases and interfaces</a>. The switch has no <code>default</code> and the return type is <code>number</code>, so adding a fifth kind without handling it is a compile error (exhaustiveness technique 1 from Union types in depth).</p>
+<example file="promotion-demo.ts" project="adt">
+import { discountKobo } from "./promotion.js";
+import type { Line, Promotion } from "./promotion.js";
+
+const septemberDeals: Promotion = {
+  kind: "best-of",
+  options: [
+    { kind: "percent-off", sku: "RICE-5", percent: 10 },
+    { kind: "buy-x-get-one", sku: "OIL-1", buy: 3 },
+    { kind: "spend-and-save", minKobo: 5000000, offKobo: 250000 },
+  ],
+};
+
+const lines: readonly Line[] = [
+  { sku: "RICE-5", qty: 2, unitKobo: 850000 },
+  { sku: "OIL-1", qty: 4, unitKobo: 320000 },
+];
+
+console.log(discountKobo(septemberDeals, lines));
+console.log(JSON.stringify(septemberDeals).length, "characters, ready to store");
+</example>
+<output>
+320000
+189 characters, ready to store
+</output>
+<p>Rice gives ₦1,700 off, "buy 3 oil, get 1 free" gives ₦3,200 off, and the spend threshold is not reached: the best is 320000 kobo. And the whole promotion is plain data that survives a trip through JSON.</p>
+<h3>Functions or data</h3>
+<p>Rules as functions (the JavaScript version) and rules as an ADT (this version) make opposite things easy. With functions, a new <em>kind</em> of rule is one new function, but you cannot store, show or inspect a rule. With an ADT, a new <em>operation</em> over all rules (describe, validate, preview) is one new function with a switch, while a new kind means touching every interpreter, which the compiler lists for you. <a href="/learn/ts-oop#oop-vs-fp">Object-oriented TypeScript</a> sets this trade-off, the expression problem, out in full. For business rules that admins configure and customers see, the data side usually wins.</p>
+<h3>Pattern matching as a function</h3>
+<p>Functional languages have <strong>pattern matching</strong>: an expression that picks a branch by the shape of a value, and fails to compile when a shape is missing. A <code>switch</code> does this as a statement. A small generic <code>match</code> does it as an expression, with one handler per <code>kind</code>:</p>
+<example file="match.ts" project="adt">
+import type { Promotion } from "./promotion.js";
+
+type Handlers<U extends { readonly kind: string }, R> = {
+  readonly [K in U["kind"]]: (value: Extract<U, { readonly kind: K }>) => R;
+};
+
+export function match<U extends { readonly kind: string }, R>(value: U, handlers: Handlers<U, R>): R {
+  const handler = handlers[value.kind as U["kind"]] as (value: U) => R;
+  return handler(value);
+}
+
+const describe = (promo: Promotion): string =>
+  match(promo, {
+    "percent-off": (p) => `${p.percent}% off ${p.sku}`,
+    "spend-and-save": (p) => `₦${p.offKobo / 100} off when you spend ₦${p.minKobo / 100}`,
+    "buy-x-get-one": (p) => `buy ${p.buy} ${p.sku}, get 1 free`,
+    "best-of": (p) => `the best of: ${p.options.map(describe).join("; ")}`,
+  });
+
+console.log(describe({ kind: "best-of", options: [{ kind: "percent-off", sku: "RICE-5", percent: 10 }, { kind: "buy-x-get-one", sku: "OIL-1", buy: 3 }] }));
+</example>
+<output>
+the best of: 10% off RICE-5; buy 3 OIL-1, get 1 free
+</output>
+<p><code>Handlers</code> is a mapped type (<a href="/learn/ts-mapped-types">Mapped types</a>) over the union's <code>kind</code> values, and <code>Extract</code> hands each handler exactly its member, so <code>p.percent</code> is only available in the <code>percent-off</code> handler. Leave out a handler and the object literal is missing a required property. Inside <code>match</code> there are two casts: the compiler cannot connect "the handler for this value's kind" with "this value", a limit of how TypeScript relates a union to a mapped type over it. That is acceptable in a five-line helper with tests, and not acceptable spread across application code.</p>
+</section>
+
+<section>
+<h2 id="reason">Before you build: a typed pricing core</h2>
+<reason title="Design the types before the steps">
+<p>You will rebuild the checkout pipeline from Functional JavaScript in TypeScript. Before reading the code, decide:</p>
+<ul>
+<li>The cart arrives from a client with SKUs and quantities. What should the first step return, so that later steps never look a product up again and never handle "not found"?</li>
+<li>Which failures are expected (part of the return type) and which are bugs (thrown)?</li>
+<li>Each step adds fields: prices, discount, VAT, delivery, total. Should every step take and return one big <code>Quote</code> type with optional fields, or should each stage have its own type?</li>
+<li>VAT must be charged on the discounted amount. Can the types stop someone adding VAT before the discount?</li>
+<li>Which inputs would make the core impure if it read them itself?</li>
+</ul>
+<answer>
+<ul>
+<li><strong>Parse, don't just validate.</strong> A check that returns <code>true</code> leaves every later step holding a plain SKU and doing <code>catalog.get(sku)</code>, which is typed <code>Product | undefined</code> forever. Instead, the first step returns a <em>new</em> type, <code>ValidCart</code>, whose lines hold the <code>Product</code> itself. The proof that each product exists is carried in the data. This idea has a name, "parse, don't validate", and the next two lessons build on it.</li>
+<li>Expected failures are the customer's cart being wrong: empty, an unknown product, a bad quantity. They go in a <code>Result</code>, all of them at once. A negative price in our own catalogue is a bug in our data; that can throw.</li>
+<li><strong>One type per stage.</strong> A single <code>Quote</code> with optional <code>vatKobo?</code> and <code>deliveryKobo?</code> fields means every step must check fields that the previous steps definitely set. With a type per stage (<code>PricedQuote</code>, <code>DiscountedQuote</code>, <code>TaxedQuote</code>, …) each step says exactly what it needs and what it adds.</li>
+<li>Yes, partly. If <code>addVat</code> takes a <code>DiscountedQuote</code>, a <code>PricedQuote</code> that has not been discounted does not fit, and <code>pipe</code> reports the wrong order. It is only partly, because TypeScript compares shapes: any object with the right fields fits, whether or not it came from the discount step. The <a href="/learn/ts-type-system">next lesson</a> is about exactly that.</li>
+<li>The catalogue, the promotions, the VAT rate, the delivery rule and the order time. The core receives all of them. Reading the clock, loading the catalogue and saving the order happen in the shell.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="build">Build: a typed pricing and checkout core</h2>
+<p>The project collects the helpers from this lesson into one file:</p>
+<example file="fp.ts" project="checkout">
+export function pipe<A, B>(ab: (a: A) => B): (a: A) => B;
+export function pipe<A, B, C>(ab: (a: A) => B, bc: (b: B) => C): (a: A) => C;
+export function pipe<A, B, C, D>(ab: (a: A) => B, bc: (b: B) => C, cd: (c: C) => D): (a: A) => D;
+export function pipe<A, B, C, D, E>(ab: (a: A) => B, bc: (b: B) => C, cd: (c: C) => D, de: (d: D) => E): (a: A) => E;
+export function pipe(...fns: ReadonlyArray<(value: unknown) => unknown>): (input: unknown) => unknown {
+  return (input) => fns.reduce((value, fn) => fn(value), input);
+}
+
+export type Result<T, E> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
+export const ok = <T>(value: T): Result<T, never> => ({ ok: true, value });
+export const err = <E>(error: E): Result<never, E> => ({ ok: false, error });
+export const mapResult = <T, U>(fn: (value: T) => U) => <E>(result: Result<T, E>): Result<U, E> =>
+  result.ok ? ok(fn(result.value)) : result;
+</example>
+<p>The promotion ADT comes next, in a smaller version (three kinds) that works on parsed lines, which hold the product itself. After it, the types. Every stage has its own type, each <code>extends</code> the previous one, and everything is readonly. <code>Kobo</code> is a plain alias for <code>number</code> here; <a href="/learn/ts-branded-types">Branded types</a> turns it into a type that a plain number cannot pass for.</p>
+<example file="promotion.ts" project="checkout">
+export type Promotion =
+  | { readonly kind: "percent-off"; readonly sku: string; readonly percent: number }
+  | { readonly kind: "spend-and-save"; readonly minKobo: number; readonly offKobo: number }
+  | { readonly kind: "buy-x-get-one"; readonly sku: string; readonly buy: number };
+
+export interface PromoLine {
+  readonly product: { readonly sku: string; readonly priceKobo: number };
+  readonly qty: number;
+}
+
+export function discountKobo(promo: Promotion, lines: readonly PromoLine[], subtotalKobo: number): number {
+  const linesFor = (sku: string) => lines.filter((line) => line.product.sku === sku);
+  switch (promo.kind) {
+    case "percent-off":
+      return linesFor(promo.sku).reduce((sum, l) => sum + Math.round((l.product.priceKobo * l.qty * promo.percent) / 100), 0);
+    case "spend-and-save":
+      return subtotalKobo >= promo.minKobo ? promo.offKobo : 0;
+    case "buy-x-get-one":
+      return linesFor(promo.sku).reduce((sum, l) => sum + Math.floor(l.qty / (promo.buy + 1)) * l.product.priceKobo, 0);
+  }
+}
+</example>
+<example file="checkout.types.ts" project="checkout">
+import type { Promotion } from "./promotion.js";
+
+export type Kobo = number;
+
+export interface Product {
+  readonly sku: string;
+  readonly name: string;
+  readonly priceKobo: Kobo;
+}
+
+export interface CartInput {
+  readonly cartId: string;
+  readonly orderedAt: string;
+  readonly lines: readonly { readonly sku: string; readonly qty: number }[];
+}
+
+export interface ValidCart {
+  readonly cartId: string;
+  readonly orderedAt: string;
+  readonly lines: readonly { readonly product: Product; readonly qty: number }[];
+}
+
+export interface PricedQuote extends ValidCart {
+  readonly subtotalKobo: Kobo;
+}
+export interface DiscountedQuote extends PricedQuote {
+  readonly discountKobo: Kobo;
+}
+export interface TaxedQuote extends DiscountedQuote {
+  readonly vatKobo: Kobo;
+}
+export interface DeliveredQuote extends TaxedQuote {
+  readonly deliveryKobo: Kobo;
+}
+export interface Receipt extends DeliveredQuote {
+  readonly totalKobo: Kobo;
+}
+
+export type CheckoutError =
+  | { readonly code: "empty-cart" }
+  | { readonly code: "unknown-product"; readonly sku: string }
+  | { readonly code: "bad-quantity"; readonly sku: string; readonly qty: number };
+
+export interface PricingRules {
+  readonly catalog: ReadonlyMap<string, Product>;
+  readonly promotions: readonly Promotion[];
+  readonly vatRate: number;
+  readonly deliveryFee: (quote: TaxedQuote) => Kobo;
+}
+</example>
+<p>Now the pure core. The first step parses; the other steps each take one stage and return the next:</p>
+<example file="pricing.ts" project="checkout">
+import { err, mapResult, ok, pipe } from "./fp.js";
+import type { Result } from "./fp.js";
+import { discountKobo } from "./promotion.js";
+import type { Promotion } from "./promotion.js";
+import type { CartInput, CheckoutError, DeliveredQuote, DiscountedQuote, Kobo, PricedQuote, PricingRules, Product, Receipt, TaxedQuote, ValidCart } from "./checkout.types.js";
+
+export const parseCart = (catalog: ReadonlyMap<string, Product>) => (cart: CartInput): Result<ValidCart, readonly CheckoutError[]> => {
+  if (cart.lines.length === 0) return err([{ code: "empty-cart" }]);
+  const problems: CheckoutError[] = [];
+  const lines: { readonly product: Product; readonly qty: number }[] = [];
+  for (const { sku, qty } of cart.lines) {
+    const product = catalog.get(sku);
+    if (product === undefined) problems.push({ code: "unknown-product", sku });
+    else if (!Number.isInteger(qty) || qty < 1) problems.push({ code: "bad-quantity", sku, qty });
+    else lines.push({ product, qty });
+  }
+  return problems.length > 0 ? err(problems) : ok({ cartId: cart.cartId, orderedAt: cart.orderedAt, lines });
+};
+
+export const priceLines = (cart: ValidCart): PricedQuote => ({
+  ...cart,
+  subtotalKobo: cart.lines.reduce((sum, line) => sum + line.product.priceKobo * line.qty, 0),
+});
+
+export const applyBestPromotion = (promotions: readonly Promotion[]) => (quote: PricedQuote): DiscountedQuote => {
+  const best = Math.max(0, ...promotions.map((promo) => discountKobo(promo, quote.lines, quote.subtotalKobo)));
+  return { ...quote, discountKobo: Math.min(best, quote.subtotalKobo) };
+};
+
+export const addVat = (rate: number) => (quote: DiscountedQuote): TaxedQuote => ({
+  ...quote,
+  vatKobo: Math.round((quote.subtotalKobo - quote.discountKobo) * rate),
+});
+
+export const addDelivery = (feeFor: (quote: TaxedQuote) => Kobo) => (quote: TaxedQuote): DeliveredQuote => ({
+  ...quote,
+  deliveryKobo: feeFor(quote),
+});
+
+export const summarise = (quote: DeliveredQuote): Receipt => ({
+  ...quote,
+  totalKobo: quote.subtotalKobo - quote.discountKobo + quote.vatKobo + quote.deliveryKobo,
+});
+
+export const createPricing = (rules: PricingRules) =>
+  pipe(
+    parseCart(rules.catalog),
+    mapResult(pipe(priceLines, applyBestPromotion(rules.promotions), addVat(rules.vatRate), pipe(addDelivery(rules.deliveryFee), summarise))),
+  );
+</example>
+<p>Read <code>createPricing</code> from the outside in. The outer <code>pipe</code> has two steps: parse (which can fail), then <code>mapResult</code> of the inner pipeline (which cannot). If parsing fails, <code>mapResult</code> passes the errors through untouched; if it succeeds, the inner pipeline runs on the <code>ValidCart</code>. The inner pipeline has five steps, one more than <code>pipe</code> accepts, so the last two are grouped into a nested <code>pipe</code>, as the composition section suggested.</p>
+<p>Hover over <code>createPricing</code> in an editor and its type is <code>(rules: PricingRules) =&gt; (a: CartInput) =&gt; Result&lt;Receipt, readonly CheckoutError[]&gt;</code>. Nobody wrote that type: it was assembled from the steps. Now try to add VAT before the discount:</p>
+<example file="wrong-order.ts" project="checkout" check="tsc-error">
+import { pipe } from "./fp.js";
+import { addVat, applyBestPromotion, priceLines } from "./pricing.js";
+
+const vatFirst = pipe(priceLines, addVat(0.075), applyBestPromotion([]));
+</example>
+<output kind="tsc">
+wrong-order.ts:4:23 - error TS2345: Argument of type '(cart: ValidCart) => PricedQuote' is not assignable to parameter of type '(a: ValidCart) => DiscountedQuote'.
+  Property 'discountKobo' is missing in type 'PricedQuote' but required in type 'DiscountedQuote'.
+
+4 const vatFirst = pipe(priceLines, addVat(0.075), applyBestPromotion([]));
+                        ~~~~~~~~~~
+
+  checkout.types.ts:27:12 - 'discountKobo' is declared here.
+    27   readonly discountKobo: Kobo;
+                  ~~~~~~~~~~~~
+
+
+Found 1 error in wrong-order.ts:4
+</output>
+<p>A <code>PricedQuote</code> has no <code>discountKobo</code>, so it cannot go into <code>addVat</code>. The finance rule "VAT on the discounted amount" is now checked by the compiler, not by a comment. The shell gathers inputs and performs effects:</p>
+<example file="checkout-service.ts" project="checkout">
+import { createPricing } from "./pricing.js";
+import type { CartInput, CheckoutError, PricingRules, Receipt } from "./checkout.types.js";
+import type { Result } from "./fp.js";
+
+export interface CheckoutDeps {
+  readonly loadRules: () => PricingRules;
+  readonly saveReceipt: (receipt: Receipt) => void;
+  readonly log: (message: string) => void;
+}
+
+export function createCheckoutService(deps: CheckoutDeps) {
+  return function checkout(cart: CartInput): Result<Receipt, readonly CheckoutError[]> {
+    const result = createPricing(deps.loadRules())(cart);
+    if (result.ok) {
+      deps.saveReceipt(result.value);
+      deps.log(`${cart.cartId}: charged ${result.value.totalKobo} kobo`);
+    } else {
+      deps.log(`${cart.cartId}: refused, ${result.error.map((e) => e.code).join(", ")}`);
+    }
+    return result;
+  };
+}
+</example>
+<example file="main.ts" project="checkout">
+import { createCheckoutService } from "./checkout-service.js";
+import type { PricingRules, Product, Receipt } from "./checkout.types.js";
+
+const products: readonly Product[] = [
+  { sku: "RICE-5", name: "Rice 5kg", priceKobo: 850000 },
+  { sku: "OIL-1", name: "Palm oil 1L", priceKobo: 320000 },
+  { sku: "TV-32", name: "32-inch TV", priceKobo: 4000000 },
+];
+
+const rules: PricingRules = {
+  catalog: new Map(products.map((product) => [product.sku, product])),
+  promotions: [
+    { kind: "percent-off", sku: "RICE-5", percent: 10 },
+    { kind: "spend-and-save", minKobo: 5000000, offKobo: 250000 },
+  ],
+  vatRate: 0.075,
+  deliveryFee: (quote) => (new Date(quote.orderedAt).getUTCHours() >= 18 ? 150000 : 100000),
+};
+
+const saved: Receipt[] = [];
+const checkout = createCheckoutService({ loadRules: () => rules, saveReceipt: (receipt) => saved.push(receipt), log: console.log });
+
+const cart = { cartId: "CART-7", orderedAt: "2026-09-24T19:05:00Z", lines: [{ sku: "RICE-5", qty: 2 }, { sku: "OIL-1", qty: 1 }] };
+const first = checkout(cart);
+const second = checkout(cart);
+checkout({ cartId: "CART-8", orderedAt: "2026-09-24T09:00:00Z", lines: [{ sku: "TV-99", qty: 1 }, { sku: "OIL-1", qty: 0 }] });
+
+if (first.ok && second.ok) {
+  const { subtotalKobo, discountKobo, vatKobo, deliveryKobo, totalKobo } = first.value;
+  console.log({ subtotalKobo, discountKobo, vatKobo, deliveryKobo, totalKobo });
+  console.log("same receipt twice:", JSON.stringify(first.value) === JSON.stringify(second.value), "saved:", saved.length);
+}
+</example>
+<output>
+CART-7: charged 2138750 kobo
+CART-7: charged 2138750 kobo
+CART-8: refused, unknown-product, bad-quantity
+{
+  subtotalKobo: 2020000,
+  discountKobo: 170000,
+  vatKobo: 138750,
+  deliveryKobo: 150000,
+  totalKobo: 2138750
+}
+same receipt twice: true saved: 2
+</output>
+<p>The numbers match the JavaScript version of this checkout, which is the point: the behaviour did not change, only what the compiler knows about it. The refused cart lists both of its problems at once, and <code>first.value</code> is only reachable after <code>first.ok</code> has been checked.</p>
+<h3>Testing the core</h3>
+<p>Pure steps need no fakes: tests are calls with data. Two kinds of test belong here. Runtime tests check the numbers and the failures. Type tests check the promises the signatures make, with <code>@ts-expect-error</code>: the line below it must fail to compile, and if a refactor ever makes it compile (say, someone drops a <code>readonly</code>), <code>tsc</code> reports the unused directive and the test fails.</p>
+<example file="pricing.test.ts" project="checkout">
+import { addVat, applyBestPromotion, parseCart, priceLines } from "./pricing.js";
+import type { PricedQuote, Product, ValidCart } from "./checkout.types.js";
+
+function check(label: string, actual: unknown, expected: unknown): void {
+  const same = JSON.stringify(actual) === JSON.stringify(expected);
+  console.log(`${same ? "PASS" : "FAIL"} ${label} -> ${JSON.stringify(actual)}`);
+}
+
+const rice: Product = { sku: "RICE-5", name: "Rice 5kg", priceKobo: 850000 };
+const catalog = new Map([[rice.sku, rice]]);
+const parse = parseCart(catalog);
+const cart: ValidCart = { cartId: "C1", orderedAt: "2026-09-24T09:00:00Z", lines: [{ product: rice, qty: 2 }] };
+
+check("subtotal", priceLines(cart).subtotalKobo, 1700000);
+check("empty cart", parse({ cartId: "C2", orderedAt: "", lines: [] }), { ok: false, error: [{ code: "empty-cart" }] });
+check("all problems at once", parse({ cartId: "C3", orderedAt: "", lines: [{ sku: "X", qty: 1 }, { sku: "RICE-5", qty: 1.5 }] }).ok, false);
+check("inherited key is not a product", parse({ cartId: "C4", orderedAt: "", lines: [{ sku: "toString", qty: 1 }] }).ok, false);
+check("discount capped at subtotal", applyBestPromotion([{ kind: "spend-and-save", minKobo: 0, offKobo: 99999999 }])(priceLines(cart)).discountKobo, 1700000);
+check("VAT after discount", addVat(0.075)({ ...priceLines(cart), discountKobo: 700000 }).vatKobo, 75000);
+
+const frozen = Object.freeze({ ...cart, lines: Object.freeze(cart.lines.map((line) => Object.freeze(line))) });
+check("pure: same input, same output", JSON.stringify(priceLines(frozen)) === JSON.stringify(priceLines(frozen)), true);
+
+const quote: PricedQuote = priceLines(cart);
+// @ts-expect-error: stages are readonly
+quote.subtotalKobo = 0;
+// @ts-expect-error: VAT needs a discounted quote
+addVat(0.075)(quote);
+</example>
+<output>
+PASS subtotal -> 1700000
+PASS empty cart -> {"ok":false,"error":[{"code":"empty-cart"}]}
+PASS all problems at once -> false
+PASS inherited key is not a product -> false
+PASS discount capped at subtotal -> 1700000
+PASS VAT after discount -> 75000
+PASS pure: same input, same output -> true
+</output>
+<p>The two lines under <code>@ts-expect-error</code> still <em>run</em> (types are erased), which is why the assignment is aimed at a throwaway <code>quote</code> at the very end. The type checker is what tests them. <a href="/learn/ts-testing">Testing TypeScript</a> covers type tests in depth.</p>
+<h3>In production</h3>
+<ul>
+<li><strong>Readonly types plus one runtime freeze.</strong> Types stop your own code. Freezing configuration and catalogue data once at start-up (in development, or everywhere if you can afford it) catches the JavaScript and <code>as</code> casts that types cannot.</li>
+<li><strong>Copying is cheap until it is in a loop.</strong> Each stage above copies one object with spread; the lines are shared, not copied (structural sharing). Building an array by spreading it on every step of a loop is still O(n²), as <a href="/learn/js-functional#immutability">Functional JavaScript</a> measured.</li>
+<li><strong>Throw at the edges, return inside.</strong> Libraries, <code>JSON.parse</code> and database drivers throw. Convert with <code>tryCatch</code> where they are called, and keep <code>Result</code> for failures the caller is expected to handle. Programming errors (an impossible state, a broken invariant) should still throw.</li>
+<li><strong>Libraries.</strong> <code>neverthrow</code> provides a Result type with methods; Effect is a complete functional runtime with typed errors, dependency injection and concurrency. Both are good; both are a team-wide commitment. The dozen lines in <code>fp.ts</code> are often enough.</li>
+<li><strong>Readability wins.</strong> A plain loop inside a pure function is still pure. Use <code>pipe</code>, Option and <code>match</code> where they make the code clearer to the next reader, not everywhere they fit.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Make a function honest">
+<p>This helper returns the three best-selling products. It compiles, and it has a bug your caller will not expect. Find it, then change the <em>signature</em> so the compiler would have caught it, and fix the body.</p>
+<example file="top-sellers.ts" check="skip">
+function topSellers(sales: { sku: string; units: number }[]): string[] {
+  return sales.sort((a, b) => b.units - a.units).slice(0, 3).map((s) => s.sku);
+}
+</example>
+<solution>
+<example file="top-sellers-fixed.ts">
+interface Sale {
+  readonly sku: string;
+  readonly units: number;
+}
+
+function topSellers(sales: readonly Sale[]): readonly string[] {
+  return sales.toSorted((a, b) => b.units - a.units).slice(0, 3).map((s) => s.sku);
+}
+
+const sales: readonly Sale[] = [
+  { sku: "OIL-1", units: 40 },
+  { sku: "RICE-5", units: 95 },
+  { sku: "SALT", units: 12 },
+  { sku: "SUGAR-1", units: 60 },
+];
+
+console.log(topSellers(sales), sales[0].sku);
+</example>
+<output>
+[ 'RICE-5', 'SUGAR-1', 'OIL-1' ] OIL-1
+</output>
+<p><code>sort</code> reordered the caller's array. With <code>readonly Sale[]</code> as the parameter type, <code>sort</code> does not exist on the type, the compiler rejects the original body, and <code>toSorted</code> is the natural fix. The <code>readonly</code> properties on <code>Sale</code> stop the next person from "fixing" a unit count inside the helper.</p>
+</solution>
+</exercise>
+<exercise title="Traverse a list of results">
+<p>Write <code>all&lt;T, E&gt;(results: readonly Result&lt;T, E&gt;[]): Result&lt;readonly T[], E&gt;</code>. It returns every value when all results are <code>ok</code>, and the first error otherwise. Use it to parse three quantities typed by a customer. (Functional libraries call this <code>sequence</code> or <code>all</code>.)</p>
+<solution>
+<example file="all.ts">
+type Result<T, E> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: E };
+const ok = <T>(value: T): Result<T, never> => ({ ok: true, value });
+const err = <E>(error: E): Result<never, E> => ({ ok: false, error });
+
+function all<T, E>(results: readonly Result<T, E>[]): Result<readonly T[], E> {
+  const values: T[] = [];
+  for (const result of results) {
+    if (!result.ok) return result;
+    values.push(result.value);
+  }
+  return ok(values);
+}
+
+const parseQty = (text: string): Result<number, string> => {
+  const qty = Number(text);
+  return Number.isInteger(qty) && qty > 0 ? ok(qty) : err(`not a quantity: "${text}"`);
+};
+
+console.log(all(["2", "1", "5"].map(parseQty)));
+console.log(all(["2", "two", "-1"].map(parseQty)));
+</example>
+<output>
+{ ok: true, value: [ 2, 1, 5 ] }
+{ ok: false, error: 'not a quantity: "two"' }
+</output>
+<p><code>values</code> is a mutable local array: the function created it, nothing outside sees it until it returns, and it is returned as <code>readonly T[]</code>. That is still a pure function. <code>return result</code> works in the failure branch because a failed <code>Result&lt;T, E&gt;</code> has no value, so it is also a failed <code>Result&lt;readonly T[], E&gt;</code>.</p>
+</solution>
+</exercise>
+<exercise title="A new kind of promotion">
+<p>Add a <code>{ kind: "fixed-off"; sku: string; offKobo: number }</code> promotion (a fixed amount off each unit of one product, never below zero) to the <code>Promotion</code> type of the <code>adt</code> project. What does the compiler do before you change <code>discountKobo</code> and <code>describe</code>? Then implement it.</p>
+<solution>
+<p>With only the type changed, <code>tsc</code> reports <code>discountKobo</code> (the switch no longer returns on every path, TS2366) and <code>describe</code> (the handlers object is missing <code>"fixed-off"</code>, TS2741). Every interpreter is listed for you; nothing is silently skipped. The finished version:</p>
+<example file="fixed-off.ts">
+type Promotion =
+  | { readonly kind: "percent-off"; readonly sku: string; readonly percent: number }
+  | { readonly kind: "fixed-off"; readonly sku: string; readonly offKobo: number };
+
+interface Line {
+  readonly sku: string;
+  readonly qty: number;
+  readonly unitKobo: number;
+}
+
+function discountKobo(promo: Promotion, lines: readonly Line[]): number {
+  const matching = lines.filter((line) => line.sku === promo.sku);
+  switch (promo.kind) {
+    case "percent-off":
+      return matching.reduce((sum, l) => sum + Math.round((l.unitKobo * l.qty * promo.percent) / 100), 0);
+    case "fixed-off":
+      return matching.reduce((sum, l) => sum + Math.min(promo.offKobo, l.unitKobo) * l.qty, 0);
+  }
+}
+
+const lines: readonly Line[] = [{ sku: "SALT", qty: 3, unitKobo: 20000 }];
+console.log(discountKobo({ kind: "fixed-off", sku: "SALT", offKobo: 5000 }, lines));
+console.log(discountKobo({ kind: "fixed-off", sku: "SALT", offKobo: 50000 }, lines));
+</example>
+<output>
+15000
+60000
+</output>
+<p><code>Math.min(promo.offKobo, l.unitKobo)</code> keeps a large voucher from making a unit's price negative: ₦500 off three ₦200 bags of salt is ₦600, not ₦1,500.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>TypeScript types cannot see effects: two functions with the same signature can differ in whether they log, read the clock or change their input. A call is referentially transparent when it can be replaced by its result; only such calls are safe to cache.</li>
+<li><code>readonly</code> properties, <code>readonly T[]</code>/<code>ReadonlyArray</code>, <code>ReadonlyMap</code>, <code>ReadonlySet</code> and <code>as const</code> let signatures promise "I will not change this". Mutable fits readonly, not the reverse: accept readonly parameters. Readonly is shallow, is only a view, and is erased at runtime; use a deep type or <code>Object.freeze</code> where that matters.</li>
+<li>A typed <code>pipe</code> is a list of overloads that link each step's output to the next step's input; swapped steps become compile errors, and results assemble their own types.</li>
+<li>Use <code>T | undefined</code> for most missing values. Use an Option type when absence can nest, because <code>T | undefined | undefined</code> collapses. Use Result with data-last helpers for expected failures, <code>tryCatch</code> at the boundary with throwing code, and collect errors when checks are independent.</li>
+<li>Algebraic data types are products (objects, tuples: values multiply) and sums (unions: values add). Count the states a type allows and make it match the business. ADTs are data: storable, showable, and exhaustively matched.</li>
+<li>Parse, don't validate: return a new type that carries the proof. Give each pipeline stage its own type and the compiler checks the order of the steps.</li>
+</ul>
+<p>Next: <a href="/learn/ts-type-system">The type system in depth</a>, where you learn exactly when one type fits another, and why the stage types above are only "partly" safe.</p>
+</section>

@@ -1,0 +1,814 @@
+---
+title: Real-time and background work
+description: Push live updates to a page with Server-Sent Events and WebSockets, each with a Node.js server, and move heavy work off the page with Web Workers and message passing.
+minutes: 60
+youNeed: Networking from JavaScript, Browser APIs and Node.js streams
+youBuild: A live order-status feed with Server-Sent Events that survives disconnects, a courier chat over WebSockets with origin checks, and a Web Worker that reports progress
+keywords: real-time web, server-sent events, eventsource, text/event-stream, last-event-id, websocket, ws package, websocket handshake, websocket origin check, web workers, postMessage, structured clone, transferable, polling vs push, reconnect backoff
+objectives: Explain why polling scales badly and when pushing updates is worth it | Stream events from node:http with Server-Sent Events, and resume after a disconnect with Last-Event-ID | Build a WebSocket server with the ws package that checks the Origin, validates every message and routes by room | Use a Web Worker with message passing, including copies, transfers, errors and progress | Choose between polling, Server-Sent Events, WebSockets and workers for a given feature
+---
+<section>
+<h2 id="problem">The order page that keeps asking</h2>
+<p>Oja Groceries shows each customer a page for their order: <em>paid</em>, <em>packed</em>, <em>out for delivery</em>, <em>delivered</em>. The first version uses what you already know: every five seconds, the page calls <code>fetch("/orders/ORD-1042")</code> and redraws. This is <strong>polling</strong>, and on a busy evening it hurts:</p>
+<ul>
+<li>With 10,000 customers watching their orders, the server answers 2,000 requests every second. An order changes status four times in about an hour, so almost every answer says "nothing new".</li>
+<li>The customer still waits up to five seconds to see a change. Poll every second to fix that, and the server gets five times the load.</li>
+<li>Each request carries full HTTP headers and cookies, and each answer is a full JSON document, again and again.</li>
+</ul>
+<p>What the page really wants is for the server to <strong>push</strong>: "tell me when something changes". HTTP as you have used it cannot do that: the client asks, the server answers, and the exchange is over. This lesson covers the two browser tools for pushing, <strong>Server-Sent Events</strong> and <strong>WebSockets</strong>, each with a Node.js server. It also covers a third tool that is not about the network at all but is often grouped with them, <strong>Web Workers</strong>, which keep a page responsive while it does heavy work in the background.</p>
+</section>
+
+<section>
+<h2 id="options">Four ways to get updates</h2>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Technique</th><th>Direction</th><th>How</th><th>Good for</th></tr></thead>
+<tbody>
+<tr><td>Polling</td><td>client asks repeatedly</td><td>ordinary <code>fetch</code> on a timer</td><td>rare checks, simple dashboards, "has my export finished?"</td></tr>
+<tr><td>Long polling</td><td>client asks, server waits to answer</td><td>the server holds each request open until there is news (or a timeout), then the client asks again</td><td>old browsers and networks that block everything else</td></tr>
+<tr><td>Server-Sent Events (SSE)</td><td>server → client</td><td>one long HTTP response that the server keeps writing events into; <code>EventSource</code> in the browser</td><td>notifications, order status, live scores, progress of a server job</td></tr>
+<tr><td>WebSocket</td><td>both ways</td><td>an HTTP request that is upgraded into a two-way connection for messages</td><td>chat, multiplayer games, collaborative editing, live location</td></tr>
+</tbody>
+</table></div>
+<p>Web Workers are not in the table because they do not talk to a server. They run code on another thread inside the page, and the page talks to them with messages, a pattern you will recognise from WebSockets.</p>
+</section>
+
+<section>
+<h2 id="sse">Server-Sent Events</h2>
+<p>With Server-Sent Events, the page makes one ordinary HTTP request, and the server never finishes its response. It sends the header <code>Content-Type: text/event-stream</code>, and then writes <strong>events</strong> whenever it has news, as plain text:</p>
+<pre class="lx-json">retry: 2000
+
+id: 1
+event: status
+data: {"status":"paid"}
+
+: keep-alive
+
+id: 2
+event: status
+data: {"status":"packed"}
+</pre>
+<ul>
+<li>An event is a group of <code>field: value</code> lines, ended by a blank line.</li>
+<li><code>data:</code> is the payload (several <code>data:</code> lines are joined with line breaks). <code>event:</code> names the event type; without it the type is <code>message</code>.</li>
+<li><code>id:</code> labels the event. If the connection drops, the browser reconnects by itself and sends the last id it saw in a <code>Last-Event-ID</code> request header, so the server can continue from there.</li>
+<li><code>retry:</code> tells the browser how many milliseconds to wait before reconnecting. A line starting with <code>:</code> is a comment, used as a heartbeat so that proxies do not close a quiet connection.</li>
+</ul>
+<p>In the browser, <code>EventSource</code> reads the stream and turns each event into a DOM event. The preview has no server to connect to, so the example serves a recorded stream from a <code>blob:</code> URL; the browser parses it exactly as it would a live one, and even reconnects when it ends:</p>
+<file name="index.html" project="live">
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Order ORD-1042</title></head>
+<body>
+  <h1>Order ORD-1042</h1>
+  <p id="status">Waiting for updates…</p>
+  <ol id="timeline"></ol>
+  <p id="progress"></p>
+</body>
+</html>
+</file>
+<example file="event-source.js" project="live" runtime="dom">
+const recording = [
+  "retry: 50", "",
+  "id: 1", "event: status", 'data: {"status":"paid"}', "",
+  ": keep-alive", "",
+  "id: 2", "event: status", 'data: {"status":"packed"}', "",
+  "id: 3", "data: Your rider is Musa.", "data: He will call on arrival.", "",
+].join("\n") + "\n";
+const url = URL.createObjectURL(new Blob([recording], { type: "text/event-stream" }));
+
+const source = new EventSource(url);
+await new Promise((resolve) => {
+  let errors = 0;
+  source.onopen = () => console.log("open, readyState", source.readyState);
+  source.addEventListener("status", (event) => {
+    console.log(`status event #${event.lastEventId}:`, JSON.parse(event.data).status);
+  });
+  source.onmessage = (event) => console.log(`message #${event.lastEventId}:`, JSON.stringify(event.data));
+  source.onerror = () => {
+    errors++;
+    console.log("stream ended, readyState", source.readyState, "(reconnecting)");
+    if (errors === 2) {
+      source.close();
+      resolve();
+    }
+  };
+});
+console.log("closed, readyState", source.readyState);
+URL.revokeObjectURL(url);
+</example>
+<output>
+open, readyState 1
+status event #1: paid
+status event #2: packed
+message #3: "Your rider is Musa.\nHe will call on arrival."
+stream ended, readyState 0 (reconnecting)
+open, readyState 1
+status event #1: paid
+status event #2: packed
+message #3: "Your rider is Musa.\nHe will call on arrival."
+stream ended, readyState 0 (reconnecting)
+closed, readyState 2
+</output>
+<p>Look at what the browser did on its own. It parsed named <code>status</code> events and plain messages, joined the two <code>data:</code> lines, skipped the comment, and exposed each id as <code>lastEventId</code>. When the stream ended, it fired <code>error</code>, set <code>readyState</code> to 0 (<code>CONNECTING</code>), waited the 50 ms from <code>retry:</code>, and connected again. A recording cannot resume from <code>Last-Event-ID</code>, so the second connection replayed all three events: exactly the duplicates a real server must avoid by honouring that header. <code>source.close()</code> (state 2, <code>CLOSED</code>) is the only way to stop reconnecting.</p>
+
+<h3>An SSE server in Node.js</h3>
+<p>The server side needs nothing but <code>node:http</code>. A <strong>feed</strong> keeps the history of one order's events and the list of open responses. Publishing writes the event into every open response; a new connection first receives everything after its <code>Last-Event-ID</code>:</p>
+<example file="src/feed.js" project="orders" browser="no">
+export function createFeed() {
+  const history = [];
+  const listeners = new Set();
+
+  const format = ({ id, event, data }) => `id: ${id}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+
+  return {
+    publish(event, data) {
+      const entry = { id: history.length + 1, event, data };
+      history.push(entry);
+      for (const res of listeners) res.write(format(entry));
+    },
+    subscribe(req, res) {
+      res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive" });
+      res.write("retry: 100\n\n");
+      const lastId = Number(req.headers["last-event-id"] ?? 0);
+      for (const entry of history) if (entry.id > lastId) res.write(format(entry));
+      listeners.add(res);
+      const heartbeat = setInterval(() => res.write(": keep-alive\n\n"), 15_000);
+      req.on("close", () => {
+        clearInterval(heartbeat);
+        listeners.delete(res);
+      });
+    },
+    dropAll() {
+      for (const res of listeners) res.end();
+      listeners.clear();
+    },
+  };
+}
+</example>
+<p>Node.js has no built-in <code>EventSource</code>, so the Node.js client reads the stream with <code>fetch</code>: the response body arrives in chunks, <code>TextDecoderStream</code> turns bytes into text, and a small parser splits it into events at blank lines. (A chunk can end in the middle of an event, which is why the parser keeps a buffer.) This is what <code>EventSource</code> does inside the browser:</p>
+<example file="src/read-events.js" project="orders" browser="no">
+export async function* readEvents(response) {
+  let buffer = "";
+  for await (const chunk of response.body.pipeThrough(new TextDecoderStream())) {
+    buffer += chunk;
+    let end;
+    while ((end = buffer.indexOf("\n\n")) !== -1) {
+      const block = buffer.slice(0, end);
+      buffer = buffer.slice(end + 2);
+      const event = { id: undefined, event: "message", data: [] };
+      for (const line of block.split("\n")) {
+        if (line === "" || line.startsWith(":")) continue;
+        const colon = line.indexOf(":");
+        const field = colon === -1 ? line : line.slice(0, colon);
+        const value = colon === -1 ? "" : line.slice(colon + 1).replace(/^ /, "");
+        if (field === "data") event.data.push(value);
+        if (field === "event") event.event = value;
+        if (field === "id") event.id = value;
+      }
+      if (event.data.length > 0) yield { ...event, data: event.data.join("\n") };
+    }
+  }
+}
+</example>
+<p>Now a server with one route, <code>/orders/ORD-1042/events</code>, and a client that watches it:</p>
+<example file="sse.js" project="orders" browser="no">
+import { once } from "node:events";
+import { createServer } from "node:http";
+import { createFeed } from "./src/feed.js";
+import { readEvents } from "./src/read-events.js";
+
+const feed = createFeed();
+const server = createServer((req, res) => {
+  if (req.url === "/orders/ORD-1042/events") return feed.subscribe(req, res);
+  res.writeHead(404).end();
+});
+server.listen(0);
+await once(server, "listening");
+
+feed.publish("status", { status: "paid" });
+
+const response = await fetch(`http://localhost:${server.address().port}/orders/ORD-1042/events`);
+console.log(response.status, response.headers.get("content-type"));
+
+const events = readEvents(response);
+console.log((await events.next()).value);
+feed.publish("status", { status: "packed" });
+console.log((await events.next()).value);
+
+await events.return();
+server.close();
+</example>
+<output>
+200 text/event-stream
+{ id: '1', event: 'status', data: '{"status":"paid"}' }
+{ id: '2', event: 'status', data: '{"status":"packed"}' }
+</output>
+<p>The event published before the client connected arrived first, replayed from the history; the second arrived the moment it was published, over the same response. One request, as many events as the server likes.</p>
+</section>
+
+<section>
+<h2 id="websockets">WebSockets</h2>
+<p>Server-Sent Events only go one way. The courier delivering ORD-1042 shares their location, and the customer wants to reply "the gate is on the left". For messages in both directions, the browser offers <strong>WebSockets</strong>.</p>
+<p>A WebSocket starts as an HTTP request with the headers <code>Connection: Upgrade</code> and <code>Upgrade: websocket</code>. If the server agrees, it answers <code>101 Switching Protocols</code>, and from then on the same TCP connection carries <strong>messages</strong> (text or binary, in small frames) in both directions at any time, until either side closes it. The addresses use <code>ws://</code>, or <code>wss://</code> over TLS, which is what production uses.</p>
+<p>In the browser the API is small:</p>
+<pre class="lx-json">const socket = new WebSocket("wss://live.oja.example/orders/ORD-1042/live");
+socket.addEventListener("open", () => socket.send(JSON.stringify({ type: "chat", text: "Gate is on the left" })));
+socket.addEventListener("message", (event) => console.log(JSON.parse(event.data)));
+socket.addEventListener("close", (event) => console.log("closed", event.code, event.wasClean));</pre>
+<p>Node.js 24 has the same <code>WebSocket</code> class built in, so the clients below use it unchanged. For the server, the de-facto standard package is <code>ws</code> (install it with <code>npm install ws</code>).</p>
+<warn>WebSockets are not covered by CORS. Any web page can open a WebSocket to your server, and the browser will attach the user's cookies to the handshake. The browser does send an honest <code>Origin</code> header, so the server <strong>must check it</strong> during the upgrade, or a malicious site can talk to your server as the logged-in user. This attack is called cross-site WebSocket hijacking.</warn>
+<p>The server accepts connections to <code>/orders/&lt;id&gt;/live</code>, checks the origin before upgrading, and puts every socket for the same order in a <strong>room</strong>. Every message is untrusted input: it is parsed inside <code>try</code>, checked for its type and fields, and only then sent on to the others in the room:</p>
+<example file="src/live.js" project="orders" browser="no">
+import { createServer } from "node:http";
+import { WebSocketServer } from "ws";
+
+const isNumberIn = (value, min, max) => typeof value === "number" && value >= min && value <= max;
+
+export function createLiveServer({ allowedOrigins }) {
+  const server = createServer((req, res) => res.writeHead(404).end());
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 4096 });
+  const rooms = new Map();
+
+  server.on("upgrade", (req, socket, head) => {
+    const url = new URL(req.url, "http://localhost");
+    const match = url.pathname.match(/^\/orders\/(ORD-[0-9]+)\/live$/);
+    const role = url.searchParams.get("role");
+    if (!match || !allowedOrigins.includes(req.headers.origin) || !["customer", "courier"].includes(role)) {
+      socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => join(ws, match[1], role));
+  });
+
+  function join(ws, orderId, role) {
+    if (!rooms.has(orderId)) rooms.set(orderId, new Set());
+    const room = rooms.get(orderId);
+    room.add(ws);
+    const reply = (message) => ws.send(JSON.stringify(message));
+
+    ws.on("message", (data) => {
+      let message;
+      try {
+        message = JSON.parse(String(data));
+      } catch {
+        return reply({ type: "error", error: "Messages must be JSON" });
+      }
+      if (message?.type === "chat" && typeof message.text === "string" && message.text.trim() !== "" && message.text.length <= 500) {
+        return broadcast(room, ws, { type: "chat", from: role, text: message.text.trim() });
+      }
+      if (message?.type === "location" && role === "courier" && isNumberIn(message.lat, -90, 90) && isNumberIn(message.lng, -180, 180)) {
+        return broadcast(room, ws, { type: "location", lat: message.lat, lng: message.lng });
+      }
+      reply({ type: "error", error: `Not allowed: ${String(message?.type)} from ${role}` });
+    });
+
+    ws.on("close", () => {
+      room.delete(ws);
+      if (room.size === 0) rooms.delete(orderId);
+    });
+  }
+
+  function broadcast(room, sender, message) {
+    const text = JSON.stringify(message);
+    for (const peer of room) {
+      if (peer !== sender && peer.readyState === peer.OPEN) peer.send(text);
+    }
+  }
+
+  return server;
+}
+</example>
+<p>A customer and a courier join the room for ORD-1042 and exchange messages. Node.js's <code>WebSocket</code> accepts a <code>headers</code> option (browsers do not have it) that the example uses to send the <code>Origin</code> a browser would send by itself:</p>
+<example file="ws-demo.js" project="orders" browser="no">
+import { once } from "node:events";
+import { createLiveServer } from "./src/live.js";
+
+const server = createLiveServer({ allowedOrigins: ["https://oja.example"] });
+server.listen(0);
+await once(server, "listening");
+const base = `ws://localhost:${server.address().port}/orders/ORD-1042/live`;
+
+function connect(role, origin = "https://oja.example") {
+  const socket = new WebSocket(`${base}?role=${role}`, { headers: { Origin: origin } });
+  return new Promise((resolve, reject) => {
+    socket.addEventListener("open", () => resolve(socket), { once: true });
+    socket.addEventListener("close", (event) => reject(new Error(`closed with code ${event.code}`)), { once: true });
+  });
+}
+
+function nextMessage(socket) {
+  return new Promise((resolve) => {
+    socket.addEventListener("message", (event) => resolve(JSON.parse(event.data)), { once: true });
+  });
+}
+
+const customer = await connect("customer");
+const courier = await connect("courier");
+console.log("both connected, readyState", customer.readyState);
+
+customer.send(JSON.stringify({ type: "chat", text: "Gate is on the left" }));
+console.log("courier got:", await nextMessage(courier));
+
+courier.send(JSON.stringify({ type: "location", lat: 6.5244, lng: 3.3792 }));
+console.log("customer got:", await nextMessage(customer));
+
+customer.send(JSON.stringify({ type: "location", lat: 0, lng: 0 }));
+console.log("customer got:", await nextMessage(customer));
+
+customer.send("hello?");
+console.log("customer got:", await nextMessage(customer));
+
+try {
+  await connect("customer", "https://evil.example");
+} catch (error) {
+  console.log("page on evil.example:", error.message);
+}
+
+const closed = [customer, courier].map((socket) => new Promise((resolve) => {
+  socket.addEventListener("close", (event) => resolve(`${event.code} ${event.reason}`), { once: true });
+}));
+customer.close(1000, "order delivered");
+courier.close(1000, "order delivered");
+console.log("closed:", await Promise.all(closed));
+server.close();
+</example>
+<output>
+both connected, readyState 1
+courier got: { type: 'chat', from: 'customer', text: 'Gate is on the left' }
+customer got: { type: 'location', lat: 6.5244, lng: 3.3792 }
+customer got: { type: 'error', error: 'Not allowed: location from customer' }
+customer got: { type: 'error', error: 'Messages must be JSON' }
+page on evil.example: closed with code 1006
+closed: [ '1000 order delivered', '1000 order delivered' ]
+</output>
+<p>Each rule showed up: the chat reached only the other member of the room, the courier's location was relayed, the customer was not allowed to send a location, text that is not JSON was refused with a message instead of crashing the server, and a page on another site was turned away before the upgrade, with close code 1006 ("closed abnormally", the code a browser also reports when a handshake is refused). A normal close uses code 1000.</p>
+<h3>Keeping a WebSocket healthy</h3>
+<ul>
+<li><strong>Dead connections.</strong> A phone that loses signal does not say goodbye; the server may think it is connected for minutes. Servers send a <strong>ping</strong> every 30 seconds or so (<code>ws</code> has <code>socket.ping()</code>, and the other side answers with a pong automatically) and close sockets that stop answering.</li>
+<li><strong>Reconnecting.</strong> Unlike <code>EventSource</code>, a browser <code>WebSocket</code> never reconnects by itself. Your code listens for <code>close</code> and reconnects with increasing delays (exercise 2), and then asks the server for anything it missed, because messages sent while it was away are gone.</li>
+<li><strong>Backpressure.</strong> <code>send</code> never blocks. If you send faster than the network carries, messages pile up in memory; <code>socket.bufferedAmount</code> tells you how many bytes are waiting. Slow down or drop old updates (a location that is 10 seconds old is worthless anyway).</li>
+<li><strong>Size limits.</strong> <code>maxPayload: 4096</code> makes <code>ws</code> close any connection that sends a larger message, so nobody can fill the server's memory with one giant message.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="workers">Web Workers and message passing</h2>
+<p><a href="/learn/browser-apis#workers">Browser APIs</a> introduced workers: a script on its own thread, with no DOM, talking to the page through <code>postMessage</code>. The details of that message passing decide whether worker code is correct.</p>
+<h3>Messages are copies, unless you transfer</h3>
+<p><code>postMessage</code> copies its data with the <strong>structured clone</strong> algorithm: objects, arrays, <code>Map</code>, <code>Set</code>, <code>Date</code>, typed arrays and more, but not functions or DOM nodes. The worker gets its own copy; changing it does not change the page's object. Copying a large buffer takes time, so some objects, such as an <code>ArrayBuffer</code>, can be <strong>transferred</strong> instead: ownership moves to the worker, instantly, and the sender's buffer becomes empty:</p>
+<example file="worker-copy.js" project="live" runtime="dom">
+function startWorker(source) {
+  const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+  const worker = new Worker(url);
+  URL.revokeObjectURL(url);
+  return worker;
+}
+const reply = (worker) => new Promise((resolve) => worker.addEventListener("message", (e) => resolve(e.data), { once: true }));
+
+const worker = startWorker(`
+  self.onmessage = (event) => {
+    const order = event.data;
+    if (order.items) order.items.push("changed by the worker");
+    self.postMessage({ items: order.items, bytes: order.photo?.byteLength });
+  };
+`);
+
+const order = { id: "ORD-1042", items: ["Rice 5kg"] };
+worker.postMessage(order);
+console.log("worker saw:", (await reply(worker)).items);
+console.log("page still has:", order.items);
+
+const photo = new ArrayBuffer(2_000_000);
+worker.postMessage({ photo }, [photo]);
+console.log("worker received bytes:", (await reply(worker)).bytes);
+console.log("page's buffer after transfer:", photo.byteLength);
+
+try {
+  worker.postMessage({ onDone: () => console.log("done") });
+} catch (error) {
+  console.log("sending a function:", error.name);
+}
+worker.terminate();
+</example>
+<output>
+worker saw: [ 'Rice 5kg', 'changed by the worker' ]
+page still has: [ 'Rice 5kg' ]
+worker received bytes: 2000000
+page's buffer after transfer: 0
+sending a function: DataCloneError
+</output>
+<h3>Requests, replies and errors</h3>
+<p>A worker is like a tiny server inside the page: the page sends requests, the worker answers. With several requests in flight, the page needs to know which answer belongs to which request, so each request carries an <strong>id</strong>, the same idea as the <code>id:</code> of an SSE event. A small wrapper turns that into promises, and turns errors inside the worker into rejections, because an exception on the worker's thread cannot reach a <code>try</code> on the page's thread by itself:</p>
+<example file="worker-rpc.js" project="live" runtime="dom">
+const source = `
+  const handlers = {
+    totalKobo: (lines) => lines.reduce((sum, line) => sum + line.priceKobo * line.qty, 0),
+    slowest: (orders) => orders.reduce((a, b) => (b.minutes > a.minutes ? b : a)).id,
+  };
+  self.onmessage = ({ data: { id, method, args } }) => {
+    try {
+      if (!handlers[method]) throw new Error("unknown method " + method);
+      self.postMessage({ id, result: handlers[method](args) });
+    } catch (error) {
+      self.postMessage({ id, error: error.message });
+    }
+  };
+`;
+const worker = new Worker(URL.createObjectURL(new Blob([source], { type: "text/javascript" })));
+
+let nextId = 1;
+const pending = new Map();
+worker.onmessage = ({ data }) => {
+  const call = pending.get(data.id);
+  pending.delete(data.id);
+  if ("error" in data) call.reject(new Error(data.error));
+  else call.resolve(data.result);
+};
+function callWorker(method, args) {
+  return new Promise((resolve, reject) => {
+    const id = nextId++;
+    pending.set(id, { resolve, reject });
+    worker.postMessage({ id, method, args });
+  });
+}
+
+const [total, slowest] = await Promise.all([
+  callWorker("totalKobo", [{ priceKobo: 850_000, qty: 2 }, { priceKobo: 230_000, qty: 1 }]),
+  callWorker("slowest", [{ id: "ORD-1040", minutes: 35 }, { id: "ORD-1042", minutes: 52 }]),
+]);
+console.log(`total: ₦${total / 100}, slowest delivery: ${slowest}`);
+
+for (const [method, args] of [["slowest", []], ["refund", {}]]) {
+  try {
+    await callWorker(method, args);
+  } catch (error) {
+    console.log(`${method} failed:`, error.message);
+  }
+}
+worker.terminate();
+</example>
+<output>
+total: ₦19300, slowest delivery: ORD-1042
+slowest failed: Reduce of empty array with no initial value
+refund failed: unknown method refund
+</output>
+<p>The empty list made <code>reduce</code> throw inside the worker; the wrapper caught it there and sent it back as an error message, so the page's <code>await</code> rejected normally. An error the worker does not catch fires an <code>error</code> event on the <code>Worker</code> object instead, and any promises waiting for it would hang; so catch inside the worker, and give calls a timeout. Libraries such as Comlink build this wrapper for you.</p>
+<h3>Progress from long work</h3>
+<p>A worker can post as many messages as it likes while it works, which is how a page shows a progress bar for a long job. The worker adds up a year of invoices in chunks and reports after each quarter:</p>
+<example file="worker-progress.js" project="live" runtime="dom">
+const source = `
+  self.onmessage = ({ data: count }) => {
+    let totalKobo = 0;
+    for (let i = 1; i <= count; i++) {
+      totalKobo += 100_000 + (i % 13) * 5_000;
+      if (i % (count / 4) === 0) self.postMessage({ type: "progress", percent: (i / count) * 100 });
+    }
+    self.postMessage({ type: "done", totalKobo });
+  };
+`;
+const worker = new Worker(URL.createObjectURL(new Blob([source], { type: "text/javascript" })));
+const bar = document.querySelector("#progress");
+
+const result = await new Promise((resolve) => {
+  worker.onmessage = ({ data }) => {
+    if (data.type === "progress") {
+      bar.textContent = `Adding up invoices… ${data.percent}%`;
+      console.log(bar.textContent);
+    } else {
+      resolve(data);
+    }
+  };
+  worker.postMessage(400_000);
+});
+bar.textContent = `Year total: ₦${(result.totalKobo / 100).toLocaleString("en-NG")}`;
+console.log(bar.textContent);
+worker.terminate();
+</example>
+<output>
+Adding up invoices… 25%
+Adding up invoices… 50%
+Adding up invoices… 75%
+Adding up invoices… 100%
+Year total: ₦519,999,400
+</output>
+<p>While the worker counted, the page's thread was free to update the bar and answer clicks. Two relatives are worth knowing by name: a <strong>SharedWorker</strong> is one worker shared by all tabs of an origin (one WebSocket for all open tabs, for example), and a <strong>service worker</strong> sits between the page and the network for offline support and push notifications. On the server, Node.js has worker threads with the same message-passing design (<a href="/learn/node-events-processes">Events, processes and workers</a>).</p>
+</section>
+
+<section>
+<h2 id="choosing">Choosing the right tool</h2>
+<ul>
+<li>Updates only flow from server to client, a few per minute or second: <strong>Server-Sent Events</strong>. It is plain HTTP, so cookies, proxies, HTTP/2 and your existing authentication all just work, and reconnecting with resume is built in.</li>
+<li>Both sides send often, or you need low latency both ways (chat, games, collaborative editing, live location): <strong>WebSockets</strong>, with your own reconnection, heartbeats and message format.</li>
+<li>Updates are rare, or a few seconds late does not matter: plain <strong>polling</strong>, which needs no extra infrastructure. Add an <code>ETag</code> so unchanged answers are tiny <code>304</code>s.</li>
+<li>The page freezes because of its own work (parsing, image processing, big calculations): a <strong>Web Worker</strong>. Pushing updates will not help with that.</li>
+</ul>
+<p>Other tools exist for special cases: <strong>WebRTC</strong> for audio, video and peer-to-peer data between browsers, and <strong>WebTransport</strong>, a newer two-way transport over HTTP/3.</p>
+</section>
+
+<section>
+<h2 id="plan">Before you build: a feed that survives the real world</h2>
+<p>The order page will use Server-Sent Events: only the server has news, and the news is a handful of status changes. The happy path is easy. The real work is everything around it.</p>
+<reason title="What can go wrong with a live feed?">
+<ul>
+<li>The customer's phone switches from Wi-Fi to mobile data for three seconds, and the order goes "out for delivery" during those seconds. What does the page show afterwards?</li>
+<li>The browser reconnects and the server replays the history. Can the page end up showing an event twice, or a status going backwards?</li>
+<li>The page is opened long after the order was paid. What does it show first?</li>
+<li>The server restarts. What happens to the open connections and the history?</li>
+<li>Who may subscribe to <code>/orders/ORD-1042/events</code>?</li>
+</ul>
+<answer>
+<ul>
+<li>With <code>id:</code> on every event, the browser reconnects with <code>Last-Event-ID</code>, and the server sends what was missed. Without ids, the event is simply lost, and the page shows a stale status until the next change.</li>
+<li>Only if the client is careless. Remember the last id handled and ignore anything not newer. Each status event carries the whole new status (not "move one step forward"), so applying one twice does no harm; such events are <strong>idempotent</strong>.</li>
+<li>The history replay (everything after id 0) brings a new page up to date. For long histories, a server sends a <strong>snapshot</strong> (the current state) first, then only new events.</li>
+<li>Connections drop and the browser reconnects to the new process. If the history lived only in memory, it is gone: real servers keep events in a database or a message broker, and use ids that survive restarts.</li>
+<li>Only the customer who placed the order (and staff). The SSE request is an ordinary HTTP request, so it carries the session cookie; the server checks that the session's user owns the order, exactly like the Task API checked task owners.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="build">Build: a live order-status feed</h2>
+<p>The client side of the feed does what <code>EventSource</code> does, written out so you can see every step: connect, handle events, remember the last id, and when the stream breaks, wait and reconnect with <code>Last-Event-ID</code>. It ignores events it has already applied, and stops for good when the order is delivered:</p>
+<example file="src/watch.js" project="orders" browser="no">
+import { readEvents } from "./read-events.js";
+
+export async function watchOrder(url, { onStatus, onReconnect, retryMs = 100, signal }) {
+  let lastId = 0;
+  for (;;) {
+    try {
+      const response = await fetch(url, { headers: lastId ? { "Last-Event-ID": String(lastId) } : {}, signal });
+      if (!response.ok) throw new Error(`feed answered ${response.status}`);
+      for await (const event of readEvents(response)) {
+        const id = Number(event.id);
+        if (id <= lastId) continue;
+        lastId = id;
+        const { status } = JSON.parse(event.data);
+        onStatus(status, id);
+        if (status === "delivered") return;
+      }
+    } catch (error) {
+      if (error.name === "AbortError") return;
+      throw error;
+    }
+    onReconnect(lastId);
+    await new Promise((resolve) => setTimeout(resolve, retryMs));
+  }
+}
+</example>
+<p>Now the whole evening of order ORD-1042, including a dropped connection with an update in the middle of it:</p>
+<example file="order-feed.js" project="orders" browser="no">
+import { once } from "node:events";
+import { createServer } from "node:http";
+import { createFeed } from "./src/feed.js";
+import { watchOrder } from "./src/watch.js";
+
+const feed = createFeed();
+const server = createServer((req, res) => {
+  if (req.url === "/orders/ORD-1042/events") return feed.subscribe(req, res);
+  res.writeHead(404).end();
+});
+server.listen(0);
+await once(server, "listening");
+
+let waiting;
+const nextStatus = () => new Promise((resolve) => (waiting = resolve));
+
+feed.publish("status", { status: "paid" });
+const watching = watchOrder(`http://localhost:${server.address().port}/orders/ORD-1042/events`, {
+  onStatus(status, id) {
+    console.log(`page shows: ${status} (event ${id})`);
+    waiting?.(status);
+  },
+  onReconnect(lastId) {
+    console.log(`connection lost, reconnecting with Last-Event-ID: ${lastId}`);
+  },
+});
+
+await nextStatus();
+feed.publish("status", { status: "packed" });
+await nextStatus();
+
+console.log("--- the phone loses signal");
+feed.dropAll();
+feed.publish("status", { status: "out for delivery" });
+await nextStatus();
+
+feed.publish("status", { status: "delivered" });
+await watching;
+console.log("feed finished; the page stopped listening");
+server.close();
+</example>
+<output>
+page shows: paid (event 1)
+page shows: packed (event 2)
+--- the phone loses signal
+connection lost, reconnecting with Last-Event-ID: 2
+page shows: out for delivery (event 3)
+page shows: delivered (event 4)
+feed finished; the page stopped listening
+</output>
+<p>"Out for delivery" was published while the client was disconnected. When it reconnected, it sent <code>Last-Event-ID: 2</code>, the server replayed only event 3, and the page caught up without a duplicate or a gap. After "delivered", the client stopped instead of reconnecting forever.</p>
+<p>In the browser, the page uses <code>EventSource</code>, which does the reconnecting for you, and renders a timeline from the events. The example feeds it a recording that includes a duplicate and an event that arrives out of order after a reconnect, to show why the page checks ids:</p>
+<example file="status-page.js" project="live" runtime="dom">
+const recording = [
+  "retry: 50", "",
+  "id: 1", "event: status", 'data: {"status":"paid"}', "",
+  "id: 2", "event: status", 'data: {"status":"packed"}', "",
+  "id: 2", "event: status", 'data: {"status":"packed"}', "",
+  "id: 1", "event: status", 'data: {"status":"paid"}', "",
+  "id: 3", "event: status", 'data: {"status":"out for delivery"}', "",
+  "id: 4", "event: status", 'data: {"status":"delivered"}', "",
+].join("\n") + "\n";
+const url = URL.createObjectURL(new Blob([recording], { type: "text/event-stream" }));
+
+const statusLine = document.querySelector("#status");
+const timeline = document.querySelector("#timeline");
+let lastId = 0;
+
+const source = new EventSource(url);
+await new Promise((resolve) => {
+  source.addEventListener("status", (event) => {
+    const id = Number(event.lastEventId);
+    if (id <= lastId) {
+      console.log(`ignored event ${id}: already applied`);
+      return;
+    }
+    lastId = id;
+    const { status } = JSON.parse(event.data);
+    statusLine.textContent = `Your order is ${status}.`;
+    const item = document.createElement("li");
+    item.textContent = status;
+    timeline.append(item);
+    if (status === "delivered") {
+      source.close();
+      resolve();
+    }
+  });
+});
+console.log(statusLine.textContent);
+console.log("timeline:", [...timeline.children].map((li) => li.textContent));
+URL.revokeObjectURL(url);
+</example>
+<output>
+ignored event 2: already applied
+ignored event 1: already applied
+Your order is delivered.
+timeline: [ 'paid', 'packed', 'out for delivery', 'delivered' ]
+</output>
+<p>The status text uses <code>textContent</code>, because event data comes from the network, and closing the source after "delivered" stops the browser from reconnecting to a feed that has nothing more to say.</p>
+</section>
+
+<section>
+<h2 id="failures">When real-time code fails</h2>
+<ul>
+<li><strong>Buffering proxies.</strong> A reverse proxy or compression middleware that collects the whole response before passing it on turns an event stream into nothing at all, until it times out. Turn buffering and compression off for event-stream routes (for nginx, the <code>X-Accel-Buffering: no</code> header), and send heartbeat comments.</li>
+<li><strong>Idle timeouts.</strong> Load balancers close connections that are quiet for 60 seconds or so. Heartbeats (SSE comments, WebSocket pings) keep them open and detect dead ones.</li>
+<li><strong>Connection limits.</strong> Over HTTP/1.1, a browser allows only six connections per host, and each open <code>EventSource</code> uses one. Seven tabs of your site and the seventh hangs. HTTP/2 removes this limit; otherwise share one connection between tabs.</li>
+<li><strong>Missed messages.</strong> WebSockets have no replay. After a reconnect, fetch the current state before applying new messages, or give messages ids and let the client ask for what it missed.</li>
+<li><strong>Trusting messages.</strong> A WebSocket message is input from a stranger, like a request body. Parse it safely, check its shape and size, check that this user may send it, and never put it in <code>innerHTML</code>.</li>
+<li><strong>Worker errors that vanish.</strong> An uncaught exception in a worker fires <code>error</code> on the <code>Worker</code>, not in your page's <code>try</code>. Catch inside the worker and send the error back.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="testing">Testing real-time code</h2>
+<ul>
+<li><strong>Parsers and message handlers are pure functions.</strong> Test <code>readEvents</code> with a <code>Response</code> made from a string, including an event split across two chunks. Test the WebSocket message validation with good and bad messages, without a network.</li>
+<li><strong>Servers on port 0.</strong> Every Node.js example in this lesson is an integration test: start the server on a free port, connect real clients, assert on what they receive, and close everything. Wait for specific messages (as <code>nextMessage</code> did), never for fixed amounts of time.</li>
+<li><strong>Failure injection.</strong> The build called <code>dropAll()</code> to cut connections on purpose. Test reconnection, duplicates and out-of-order delivery the same way, because in production they are not rare.</li>
+<li><strong>Browser tests</strong> with Playwright can intercept WebSocket and event-stream traffic to replay recorded sessions against the real page.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="production">In production</h2>
+<ul>
+<li><strong>Authentication.</strong> An SSE request carries cookies like any request. A WebSocket handshake carries cookies too (checked during the <code>upgrade</code>), but the demo's <code>?role=</code> is for teaching only: a real server decides the role from the session, never from the URL. For WebSockets across origins, a common pattern is a short-lived, single-use ticket fetched over authenticated HTTP.</li>
+<li><strong>Many servers.</strong> With two server processes behind a load balancer, the customer may be connected to one and the courier to the other. Rooms then need a shared message bus (Redis pub/sub, NATS, a message broker) so every process sees every message. <a href="/learn/zudo-messaging">ZudoJS messaging</a> and the distributed systems lessons build on this.</li>
+<li><strong>Connections cost memory.</strong> Each open connection holds a socket and buffers. Plan capacity in connections, not only requests per second, and close idle ones.</li>
+<li><strong>Mobile networks.</strong> Expect connections to drop constantly. Reconnect with exponential backoff and random jitter, and pause feeds in hidden tabs (the <code>visibilitychange</code> event) to save battery.</li>
+<li><strong>Graceful shutdown.</strong> When a server restarts, close WebSockets with code 1012 ("service restart") and end event streams, so clients reconnect promptly to the new process.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Parse one event block">
+<p>Write <code>parseEvent(block)</code> for a single SSE event block (the text between two blank lines). It returns <code>{ event, id, data, retry }</code>, joins several <code>data</code> lines with <code>"\n"</code>, removes one space after the colon, ignores comments, and returns <code>null</code> when there is no data.</p>
+<solution>
+<example file="parse-event.js">
+function parseEvent(block) {
+  const result = { event: "message", id: undefined, data: [], retry: undefined };
+  for (const line of block.split("\n")) {
+    if (line === "" || line.startsWith(":")) continue;
+    const colon = line.indexOf(":");
+    const field = colon === -1 ? line : line.slice(0, colon);
+    const value = colon === -1 ? "" : line.slice(colon + 1).replace(/^ /, "");
+    if (field === "data") result.data.push(value);
+    else if (field === "event") result.event = value;
+    else if (field === "id") result.id = value;
+    else if (field === "retry" && /^[0-9]+$/.test(value)) result.retry = Number(value);
+  }
+  return result.data.length === 0 ? null : { ...result, data: result.data.join("\n") };
+}
+
+console.log(parseEvent('id: 7\nevent: status\ndata: {"status":"packed"}'));
+console.log(parseEvent("data: line one\ndata:line two\n: a comment"));
+console.log(parseEvent("retry: 3000"));
+console.log(parseEvent("data:  two spaces"));
+</example>
+<output>
+{
+  event: 'status',
+  id: '7',
+  data: '{"status":"packed"}',
+  retry: undefined
+}
+{
+  event: 'message',
+  id: undefined,
+  data: 'line one\nline two',
+  retry: undefined
+}
+null
+{
+  event: 'message',
+  id: undefined,
+  data: ' two spaces',
+  retry: undefined
+}
+</output>
+<p>Only one space is removed after the colon, so data that starts with a space keeps it. A block with only <code>retry</code> sets the reconnect delay but is not an event, which is why the browser never fires an event for it.</p>
+</solution>
+</exercise>
+<exercise title="Reconnect with backoff and jitter">
+<p>A browser <code>WebSocket</code> does not reconnect by itself. Write <code>reconnectDelay(attempt, random)</code>: the base delay doubles from 500 ms for attempt 1, is capped at 30 seconds, and the actual delay is a random amount between half the base and the full base. <code>random</code> is a function returning a number from 0 to 1, so tests can control it.</p>
+<solution>
+<example file="backoff.js">
+function reconnectDelay(attempt, random = Math.random) {
+  const base = Math.min(30_000, 500 * 2 ** (attempt - 1));
+  return Math.round(base / 2 + random() * (base / 2));
+}
+
+for (const attempt of [1, 2, 3, 6, 7, 20]) {
+  console.log(attempt, reconnectDelay(attempt, () => 0), reconnectDelay(attempt, () => 1));
+}
+</example>
+<output>
+1 250 500
+2 500 1000
+3 1000 2000
+6 8000 16000
+7 15000 30000
+20 15000 30000
+</output>
+<p>Without the cap, attempt 20 would wait almost three days. Without jitter, when a server restarts, every client reconnects at exactly the same moments and knocks it over again; spreading them out randomly avoids that "thundering herd".</p>
+</solution>
+</exercise>
+<exercise title="Batch fast updates for the screen">
+<p>The courier's location arrives up to 20 times a second, but redrawing the map more often than the screen refreshes is wasted work. Write <code>latestPerFrame(render)</code>: it returns a function that stores each new value and makes sure <code>render</code> runs at most once per animation frame, with the latest value.</p>
+<solution>
+<example file="per-frame.js" project="live" runtime="dom">
+function latestPerFrame(render) {
+  let latest;
+  let scheduled = false;
+  return (value) => {
+    latest = value;
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => {
+      scheduled = false;
+      render(latest);
+    });
+  };
+}
+
+const renders = [];
+const showLocation = latestPerFrame((point) => renders.push(point));
+for (let update = 1; update <= 5; update++) showLocation({ update, lat: 6.5244, lng: 3.3792 });
+await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+console.log("updates received: 5, renders:", renders.length);
+console.log("rendered update", renders[0].update);
+</example>
+<output>
+updates received: 5, renders: 1
+rendered update 5
+</output>
+<p>Five updates in the same frame produced one render with the newest position. The same pattern works for any fast feed: prices, scores, progress.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Summary</h2>
+<ul>
+<li>Polling is simple but wasteful and late at scale. Push when updates matter quickly and many clients watch.</li>
+<li>Server-Sent Events: one long <code>text/event-stream</code> response from <code>node:http</code>, events of <code>id:</code>, <code>event:</code>, <code>data:</code> lines. <code>EventSource</code> parses them and reconnects with <code>Last-Event-ID</code>; the server replays what was missed and the client ignores ids it has seen.</li>
+<li>WebSockets: an HTTP upgrade to a two-way message connection. Check the <code>Origin</code> during the upgrade (no CORS protects you), validate every message, and handle heartbeats, reconnection, missed messages and backpressure yourself.</li>
+<li>Web Workers: another thread with messages that are copied (or transferred), requests matched to replies by id, errors sent back explicitly, progress reported as messages.</li>
+<li>Choose by direction and frequency: SSE for server-to-client news, WebSockets for two-way traffic, polling for rare checks, workers for heavy work in the page.</li>
+</ul>
+<p>That completes the browser module: you have built pages with the DOM, wired them with events, used the browser's APIs, connected them to your own Node.js API, and made them live. Next: <a href="/learn/js-tooling">Tooling</a>, the linters, formatters, bundlers and scripts that keep a JavaScript project like this one healthy.</p>
+</section>

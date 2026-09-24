@@ -1,0 +1,834 @@
+---
+title: Caching
+description: Build a cache from scratch: cache-aside with TTL, invalidation on writes, stampede protection, stale-while-revalidate, hit-rate metrics and what to cache.
+minutes: 50
+youNeed: Testing strategies, Type-safe API layers and Async TypeScript
+youBuild: An in-process product cache for a shop - TTL and LRU eviction, cache-aside reads, invalidation that survives a race, single-flight stampede protection, stale-while-revalidate, hit-rate metrics and a node:test suite
+keywords: caching, cache-aside, ttl, cache invalidation, cache stampede, thundering herd, single-flight, request coalescing, stale-while-revalidate, lru eviction, hit rate, negative caching, redis, fail open
+objectives: Explain what a cache buys and costs, and decide what data is safe to cache and for how long | Implement cache-aside reads with a TTL and an LRU size limit, using an injected clock | Invalidate on writes and prevent a slow reader from putting stale data back | Protect a hot key from a stampede with single-flight and stale-while-revalidate | Measure hit rate and evictions and use them to size a cache | Fail open when a shared cache is down, and test cache behaviour deterministically
+---
+<section>
+<h2 id="problem">The same row, three thousand times a minute</h2>
+<p>A grocery shop's product page shows the name and price of a product. Each view runs one query. On an ordinary day that is fine. During a flash sale, 5,000 shoppers a minute open the same three product pages, the database's CPU sits at 90%, and pages start to time out. The strange part: those three rows change maybe twice a day. The database is doing the same work thousands of times to produce the same answer.</p>
+<p>Here is the product "database" this lesson uses. It is in memory, but every read waits 5 ms, like a real query over the network, and it counts its reads:</p>
+<example file="src/catalog-db.ts" project="cache">
+export interface Product {
+  readonly id: number;
+  readonly name: string;
+  readonly priceKobo: number;
+}
+
+export class CatalogDb {
+  reads = 0;
+  private readonly products = new Map<number, Product>([
+    [1, { id: 1, name: "Rice, 5 kg", priceKobo: 950_000 }],
+    [2, { id: 2, name: "Groundnut oil, 1 L", priceKobo: 250_050 }],
+    [3, { id: 3, name: "Sugar, 1 kg", priceKobo: 120_000 }],
+  ]);
+
+  async findProduct(id: number): Promise<Product | undefined> {
+    this.reads += 1;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    return this.products.get(id);
+  }
+
+  async updatePrice(id: number, priceKobo: number): Promise<void> {
+    const product = this.products.get(id);
+    if (product !== undefined) this.products.set(id, { ...product, priceKobo });
+  }
+}
+
+export function naira(kobo: number): string {
+  return `₦${(kobo / 100).toLocaleString("en-US")}`;
+}
+</example>
+<example file="no-cache.ts" project="cache">
+import { CatalogDb } from "./src/catalog-db.js";
+
+const db = new CatalogDb();
+const started = Date.now();
+
+for (let view = 0; view < 300; view++) {
+  const productId = (view % 3) + 1;
+  await db.findProduct(productId);
+}
+
+console.log("page views: 300, database reads:", db.reads);
+console.log("slower than 1 second:", Date.now() - started > 1_000);
+</example>
+<output>
+page views: 300, database reads: 300
+slower than 1 second: true
+</output>
+<p>Three hundred page views, three hundred reads, for three products. A <strong>cache</strong> keeps a copy of a result somewhere faster and closer, so repeated requests can skip the expensive work. This lesson builds one from scratch, with no library and no framework, so you see every decision a caching library makes for you, and every way caching goes wrong.</p>
+</section>
+
+<section>
+<h2 id="why">What a cache buys, and what it costs</h2>
+<p>Caches exist because some places to fetch data are much slower than others. Rough orders of magnitude:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Where the data is</th><th>Rough time to get it</th></tr></thead>
+<tbody>
+<tr><td>A <code>Map</code> in your process's memory</td><td>well under a microsecond</td></tr>
+<tr><td>A shared cache (Redis) in the same data centre</td><td>a fraction of a millisecond</td></tr>
+<tr><td>A simple indexed database query</td><td>about a millisecond, much more under load</td></tr>
+<tr><td>A complex query, a report, another company's API</td><td>tens of milliseconds to seconds</td></tr>
+</tbody>
+</table></div>
+<p>Caches live at every layer: the browser (the <code>Cache-Control</code> header from <a href="/learn/http-deep#headers">HTTP in depth</a>), a CDN in front of your site, your process's memory, a shared cache server such as Redis, and the database's own memory. This lesson is about the application layer: your code decides what to keep, for how long, and when to throw it away.</p>
+<p>The price is always the same: a cache holds a <strong>copy</strong>, and a copy can be <strong>stale</strong>, out of date compared to the real data. Every caching decision is a trade: how stale may this be, in return for how much speed?</p>
+<reason title="What is safe to cache?">
+<p>For each piece of data, decide: cache it or not? If yes, for how long, and what happens when the copy is wrong? Think it through before reading on.</p>
+<ul>
+<li>A product's name and description</li>
+<li>A product's price</li>
+<li>How many bags of rice are left in stock</li>
+<li>A customer's wallet balance, used to approve a ₦50,000 purchase</li>
+<li>A customer's cart</li>
+<li>"Product 999 does not exist"</li>
+</ul>
+<answer>
+<p><strong>Name and description:</strong> yes, for minutes or hours. A stale description hurts nobody, and they change rarely. <strong>Price:</strong> yes, but it must be removed from the cache the moment it changes, because showing ₦9,500 and charging ₦9,900 is a complaint (or, in some countries, illegal). Checkout must use the real price, never the cached one. <strong>Stock:</strong> for display ("only a few left"), a few seconds is fine; for the decision to sell the last bag, never: that decision belongs in the database, in one statement, as in <a href="/learn/bookstore-data#repositories">BookStore: validation and PostgreSQL</a>. <strong>Wallet balance for approving a payment:</strong> never. A stale balance approves a purchase the customer cannot pay for. Data used to <em>decide</em> something about money or permissions is read fresh.</p>
+<p><strong>A cart:</strong> it belongs to one customer, so the cache key must include the customer id. A cart cached under <code>cart</code> instead of <code>cart:42</code> would show one customer's cart to everyone: a data leak, not a performance bug. <strong>"Does not exist":</strong> yes, briefly. Otherwise a script requesting random ids sends every request to the database. This is called <strong>negative caching</strong>.</p>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="cache-aside">Cache-aside with a TTL</h2>
+<p>The most common pattern is <strong>cache-aside</strong> (also called lazy loading). The application talks to the cache and the database itself:</p>
+<figure class="lx-diagram">
+<pre>read:   app ──get(key)──▶ cache ── hit ──▶ return the copy
+                            │
+                           miss
+                            ▼
+        app ──query──▶ database ──▶ app ──set(key, value, ttl)──▶ cache ──▶ return
+
+write:  app ──update──▶ database ──▶ app ──delete(key)──▶ cache</pre>
+<figcaption>Cache-aside: reads fill the cache on a miss; writes change the database and then remove the copy.</figcaption>
+</figure>
+<p>A <strong>hit</strong> means the value was in the cache; a <strong>miss</strong> means it was not. Every entry gets a <strong>TTL</strong> (time to live): after that many milliseconds it counts as gone. The TTL is the upper bound on staleness, and a safety net for every invalidation you forget.</p>
+<p>First, time. A cache that calls <code>Date.now()</code> itself can only be tested by waiting. So the cache receives a <code>Clock</code>, the same idea as in <a href="/learn/ts-api-layers#services">Type-safe API layers</a>, and tests use a manual clock they can move forward:</p>
+<example file="src/clock.ts" project="cache">
+export interface Clock {
+  now(): number;
+}
+
+export const systemClock: Clock = { now: () => Date.now() };
+
+export class ManualClock implements Clock {
+  private time = 0;
+
+  now(): number {
+    return this.time;
+  }
+
+  advance(ms: number): void {
+    this.time += ms;
+  }
+}
+</example>
+<p>The store itself. It is a <code>Map</code> with an expiry time per entry, plus a size limit. A cache without a limit is a memory leak with good intentions. When the cache is full, it evicts the <strong>least recently used</strong> entry (<strong>LRU</strong>). A JavaScript <code>Map</code> remembers insertion order, so moving an entry to the end on every read makes the first key always the least recently used one, the trick from <a href="/learn/dsa-linked-lists">Linked lists</a> without the list:</p>
+<example file="src/ttl-cache.ts" project="cache">
+import type { Clock } from "./clock.js";
+
+interface Entry<V> {
+  readonly value: V;
+  readonly expiresAt: number;
+}
+
+export class TtlCache<V> {
+  private readonly entries = new Map<string, Entry<V>>();
+  evictions = 0;
+
+  constructor(
+    private readonly clock: Clock,
+    private readonly maxEntries = 1_000,
+  ) {}
+
+  get(key: string): V | undefined {
+    const entry = this.entries.get(key);
+    if (entry === undefined) return undefined;
+    if (entry.expiresAt <= this.clock.now()) {
+      this.entries.delete(key);
+      return undefined;
+    }
+    this.entries.delete(key);
+    this.entries.set(key, entry);
+    return entry.value;
+  }
+
+  set(key: string, value: V, ttlMs: number): void {
+    this.entries.delete(key);
+    this.entries.set(key, { value, expiresAt: this.clock.now() + ttlMs });
+    if (this.entries.size > this.maxEntries) {
+      const oldest = this.entries.keys().next().value;
+      if (oldest !== undefined) this.entries.delete(oldest);
+      this.evictions += 1;
+    }
+  }
+
+  delete(key: string): void {
+    this.entries.delete(key);
+  }
+
+  get size(): number {
+    return this.entries.size;
+  }
+}
+</example>
+<p>Expired entries are removed when someone reads them. That is enough here, because the size limit bounds memory anyway; a real cache also sweeps expired keys in the background. And the cache-aside function, which also counts hits and misses:</p>
+<example file="src/cache-aside.ts" project="cache">
+import type { TtlCache } from "./ttl-cache.js";
+
+export interface CacheStats {
+  hits: number;
+  misses: number;
+}
+
+export async function cacheAside<V>(
+  cache: TtlCache<V>,
+  stats: CacheStats,
+  key: string,
+  ttlMs: number,
+  load: () => Promise<V>,
+): Promise<V> {
+  const cached = cache.get(key);
+  if (cached !== undefined) {
+    stats.hits += 1;
+    return cached;
+  }
+  stats.misses += 1;
+  const value = await load();
+  cache.set(key, value, ttlMs);
+  return value;
+}
+
+export function hitRate(stats: CacheStats): string {
+  const total = stats.hits + stats.misses;
+  return total === 0 ? "n/a" : `${((stats.hits / total) * 100).toFixed(1)}%`;
+}
+</example>
+<example file="with-cache.ts" project="cache">
+import { cacheAside, hitRate } from "./src/cache-aside.js";
+import { CatalogDb } from "./src/catalog-db.js";
+import type { Product } from "./src/catalog-db.js";
+import { systemClock } from "./src/clock.js";
+import { TtlCache } from "./src/ttl-cache.js";
+
+const db = new CatalogDb();
+const cache = new TtlCache<Product | null>(systemClock);
+const stats = { hits: 0, misses: 0 };
+
+async function productPage(id: number): Promise<string> {
+  const product = await cacheAside(cache, stats, `product:${id}`, 60_000, async () => (await db.findProduct(id)) ?? null);
+  return product === null ? "404" : product.name;
+}
+
+for (let view = 0; view < 300; view++) await productPage((view % 3) + 1);
+
+console.log("page views: 300, database reads:", db.reads);
+console.log("hits:", stats.hits, "misses:", stats.misses, "hit rate:", hitRate(stats));
+</example>
+<output>
+page views: 300, database reads: 3
+hits: 297 misses: 3 hit rate: 99.0%
+</output>
+<p>Three reads instead of three hundred: one per product, then every view is a hit. The loader returns <code>null</code> for a missing product, and <code>null</code> is cached too, so missing products are negatively cached for free. (The cache uses <code>undefined</code> to mean "not in the cache", which is why the loader must not return <code>undefined</code>.)</p>
+<h3>Watching the TTL</h3>
+<p>With the manual clock, you can watch staleness happen. The price changes at the database, and nothing tells the cache:</p>
+<example file="ttl.ts" project="cache">
+import { cacheAside } from "./src/cache-aside.js";
+import { CatalogDb, naira } from "./src/catalog-db.js";
+import type { Product } from "./src/catalog-db.js";
+import { ManualClock } from "./src/clock.js";
+import { TtlCache } from "./src/ttl-cache.js";
+
+const clock = new ManualClock();
+const db = new CatalogDb();
+const cache = new TtlCache<Product | null>(clock);
+const stats = { hits: 0, misses: 0 };
+const price = async () => {
+  const product = await cacheAside(cache, stats, "product:1", 60_000, async () => (await db.findProduct(1)) ?? null);
+  return product === null ? "gone" : naira(product.priceKobo);
+};
+
+console.log("t=0s  ", await price(), "reads:", db.reads);
+await db.updatePrice(1, 990_000);
+clock.advance(30_000);
+console.log("t=30s ", await price(), "reads:", db.reads, "(stale)");
+clock.advance(30_000);
+console.log("t=60s ", await price(), "reads:", db.reads);
+</example>
+<output>
+t=0s   ₦9,500 reads: 1
+t=30s  ₦9,500 reads: 1 (stale)
+t=60s  ₦9,900 reads: 2
+</output>
+<p>For the rest of the minute, customers saw the old price. That is the deal a TTL offers: data is at most 60 seconds stale, and the database answers at most one read per product per minute. A shorter TTL means fresher data and more reads; a longer one, the opposite.</p>
+<tip>When thousands of keys are cached at the same moment (after a deploy, or by a warm-up job), they also expire at the same moment and all miss together. Adding a little randomness to each TTL, called <strong>jitter</strong> (for example 60 seconds ± 10%), spreads the expiries out. The second exercise adds it.</tip>
+</section>
+
+<section>
+<h2 id="invalidation">Invalidation on write</h2>
+<p>Waiting for the TTL is not good enough for prices. When you change data, you <strong>invalidate</strong> the copy: delete it, so the next read loads the new value. Delete rather than update: writing the new value into the cache from the write path duplicates the loading logic and invites mistakes, while a delete always leads to a correct reload.</p>
+<example file="invalidate.ts" project="cache">
+import { cacheAside } from "./src/cache-aside.js";
+import { CatalogDb, naira } from "./src/catalog-db.js";
+import type { Product } from "./src/catalog-db.js";
+import { ManualClock } from "./src/clock.js";
+import { TtlCache } from "./src/ttl-cache.js";
+
+const db = new CatalogDb();
+const cache = new TtlCache<Product | null>(new ManualClock());
+const stats = { hits: 0, misses: 0 };
+const key = (id: number) => `product:${id}`;
+
+async function getProduct(id: number): Promise<Product | null> {
+  return cacheAside(cache, stats, key(id), 60_000, async () => (await db.findProduct(id)) ?? null);
+}
+
+async function changePrice(id: number, priceKobo: number): Promise<void> {
+  await db.updatePrice(id, priceKobo);
+  cache.delete(key(id));
+}
+
+console.log(naira((await getProduct(1))!.priceKobo));
+await changePrice(1, 990_000);
+console.log(naira((await getProduct(1))!.priceKobo), "reads:", db.reads);
+</example>
+<output>
+₦9,500
+₦9,900 reads: 2
+</output>
+<p>The order matters: update the database <em>first</em>, then delete the key. The other way round, a reader could slip in between, miss, load the old price from the database and cache it again.</p>
+<h3>The race that remains</h3>
+<p>Even in the right order, one race is left. A reader misses and starts loading. While its query is on the way back, a writer changes the price and deletes the key. Then the reader, still holding the <em>old</em> price, writes it into the cache:</p>
+<example file="race.ts" project="cache">
+import { cacheAside } from "./src/cache-aside.js";
+import { CatalogDb, naira } from "./src/catalog-db.js";
+import type { Product } from "./src/catalog-db.js";
+import { ManualClock } from "./src/clock.js";
+import { TtlCache } from "./src/ttl-cache.js";
+
+const db = new CatalogDb();
+const cache = new TtlCache<Product | null>(new ManualClock());
+const stats = { hits: 0, misses: 0 };
+
+let finishRead!: () => void;
+const slowNetwork = new Promise<void>((resolve) => (finishRead = resolve));
+
+const reader = cacheAside(cache, stats, "product:1", 60_000, async () => {
+  const product = await db.findProduct(1);
+  console.log("reader: read", naira(product!.priceKobo), "from the database");
+  await slowNetwork;
+  return product ?? null;
+});
+
+await new Promise((resolve) => setTimeout(resolve, 20));
+await db.updatePrice(1, 990_000);
+cache.delete("product:1");
+console.log("writer: price is now ₦9,900, cache entry deleted");
+
+finishRead();
+await reader;
+console.log("cache now says:", naira(cache.get("product:1")!.priceKobo), "for the next 60 seconds");
+</example>
+<output>
+reader: read ₦9,500 from the database
+writer: price is now ₦9,900, cache entry deleted
+cache now says: ₦9,500 for the next 60 seconds
+</output>
+<p>The invalidation happened, and it was undone by a reader that started before it. It needs bad timing, but on a busy shop bad timing happens daily. The fix: every key gets a <strong>generation</strong> number. Invalidating a key increases its generation. A loader remembers the generation it started with, and only stores its result if the generation is still the same.</p>
+<example file="src/single-flight.ts" project="cache">
+export class SingleFlight<V> {
+  private readonly running = new Map<string, Promise<V>>();
+
+  run(key: string, work: () => Promise<V>): Promise<V> {
+    const existing = this.running.get(key);
+    if (existing !== undefined) return existing;
+    const started = work().finally(() => this.running.delete(key));
+    this.running.set(key, started);
+    return started;
+  }
+}
+</example>
+<example file="src/safe-cache.ts" project="cache">
+import type { CacheStats } from "./cache-aside.js";
+import { SingleFlight } from "./single-flight.js";
+import type { TtlCache } from "./ttl-cache.js";
+
+export class SafeCache<V> {
+  private readonly generations = new Map<string, number>();
+  private readonly flight = new SingleFlight<V>();
+  readonly stats: CacheStats = { hits: 0, misses: 0 };
+
+  constructor(private readonly cache: TtlCache<V>) {}
+
+  async get(key: string, ttlMs: number, load: () => Promise<V>): Promise<V> {
+    const cached = this.cache.get(key);
+    if (cached !== undefined) {
+      this.stats.hits += 1;
+      return cached;
+    }
+    this.stats.misses += 1;
+    const generation = this.generations.get(key) ?? 0;
+    return this.flight.run(`${key}#${generation}`, async () => {
+      const value = await load();
+      if ((this.generations.get(key) ?? 0) === generation) this.cache.set(key, value, ttlMs);
+      return value;
+    });
+  }
+
+  invalidate(key: string): void {
+    this.generations.set(key, (this.generations.get(key) ?? 0) + 1);
+    this.cache.delete(key);
+  }
+}
+</example>
+<p><code>SafeCache</code> uses <code>SingleFlight</code>, which you will meet properly in the next section: while one load for a key is running, other callers for the same key wait for it instead of starting their own. The flight key includes the generation, so a reader that arrives after an invalidation does not join a load that started before it.</p>
+<example file="race-fixed.ts" project="cache">
+import { CatalogDb, naira } from "./src/catalog-db.js";
+import type { Product } from "./src/catalog-db.js";
+import { ManualClock } from "./src/clock.js";
+import { SafeCache } from "./src/safe-cache.js";
+import { TtlCache } from "./src/ttl-cache.js";
+
+const db = new CatalogDb();
+const cache = new SafeCache(new TtlCache<Product | null>(new ManualClock()));
+
+let finishRead!: () => void;
+const slowNetwork = new Promise<void>((resolve) => (finishRead = resolve));
+
+const reader = cache.get("product:1", 60_000, async () => {
+  const product = await db.findProduct(1);
+  await slowNetwork;
+  return product ?? null;
+});
+
+await new Promise((resolve) => setTimeout(resolve, 20));
+await db.updatePrice(1, 990_000);
+cache.invalidate("product:1");
+
+finishRead();
+console.log("the slow reader got:", naira((await reader)!.priceKobo));
+const next = await cache.get("product:1", 60_000, async () => (await db.findProduct(1)) ?? null);
+console.log("the next reader gets:", naira(next!.priceKobo), "reads:", db.reads);
+</example>
+<output>
+the slow reader got: ₦9,500
+the next reader gets: ₦9,900 reads: 2
+</output>
+<p>The slow reader still gets the price that was true when it asked. But it no longer poisons the cache, and the next reader gets ₦9,900. Across several servers with a shared cache, the same idea is done with a version number stored in the value, or by deleting the key a second time shortly after the write; the TTL stays as the last line of defence.</p>
+<h3>Keys</h3>
+<p>Invalidation is only as good as your keys. A few rules:</p>
+<ul>
+<li><strong>Put every input in the key.</strong> A price shown in naira and in dollars needs <code>product:1:NGN</code> and <code>product:1:USD</code>. A page for one customer needs their id in the key. A missing input in the key serves one request's answer to another.</li>
+<li><strong>Namespace and version keys.</strong> <code>shop:product:v2:1</code>. When the shape of the cached value changes in a new release, bump <code>v2</code> to <code>v3</code> and old entries are simply never read again.</li>
+<li><strong>Know which keys a write affects.</strong> Changing product 1's price affects <code>product:1</code>, but also cached lists such as "rice products" and "today's deals". Caching libraries offer <strong>tags</strong> for this: every entry can carry tags like <code>product:1</code>, and one call deletes everything with a tag.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="stampede">Stampedes</h2>
+<p>The flash sale starts at 12:00. At 12:00:00 the cache for the rice page is empty (or the entry just expired), and 100 shoppers arrive in the same second. Each one misses, and each one queries the database. This is a <strong>cache stampede</strong> (also called a thundering herd or dogpile): the moment the cache is needed most, it protects nothing.</p>
+<example file="stampede.ts" project="cache">
+import { cacheAside } from "./src/cache-aside.js";
+import { CatalogDb } from "./src/catalog-db.js";
+import type { Product } from "./src/catalog-db.js";
+import { ManualClock } from "./src/clock.js";
+import { SingleFlight } from "./src/single-flight.js";
+import { TtlCache } from "./src/ttl-cache.js";
+
+async function flashSale(useSingleFlight: boolean): Promise<number> {
+  const db = new CatalogDb();
+  const cache = new TtlCache<Product | null>(new ManualClock());
+  const stats = { hits: 0, misses: 0 };
+  const flight = new SingleFlight<Product | null>();
+  const load = async () => (await db.findProduct(1)) ?? null;
+
+  const shoppers = Array.from({ length: 100 }, () =>
+    cacheAside(cache, stats, "product:1", 60_000, useSingleFlight ? () => flight.run("product:1", load) : load),
+  );
+  await Promise.all(shoppers);
+  return db.reads;
+}
+
+console.log("100 shoppers, empty cache, plain cache-aside: reads =", await flashSale(false));
+console.log("100 shoppers, empty cache, single-flight:     reads =", await flashSale(true));
+</example>
+<output>
+100 shoppers, empty cache, plain cache-aside: reads = 100
+100 shoppers, empty cache, single-flight:     reads = 1
+</output>
+<p><strong>Single-flight</strong> (also called request coalescing) is the fix inside one process: the first miss starts the load and stores the promise; everyone else awaits that same promise. <code>finally</code> removes it when it settles, whether it succeeded or failed, so a failed load is retried by the next caller instead of being remembered.</p>
+<p>With several servers, each process has its own <code>SingleFlight</code>, so ten servers still send ten reads. That is usually fine. When it is not, the servers agree through a <strong>lock</strong> in the shared cache: the first to set a key such as <code>lock:product:1</code> (with Redis, <code>SET lock:product:1 &lt;id&gt; NX PX 5000</code>: only if absent, expiring after 5 seconds) does the load; the others wait briefly and read the cache. The lock needs an expiry, or a crashed server would hold it forever.</p>
+<h3>Stale-while-revalidate</h3>
+<p>Single-flight still makes the first shopper wait for the database. <strong>Stale-while-revalidate</strong> (SWR) goes further: each entry is <em>fresh</em> for a while, then <em>stale but usable</em> for a longer while. A stale entry is returned immediately, and one background refresh replaces it. Nobody waits unless the entry is completely too old:</p>
+<example file="src/swr-cache.ts" project="cache">
+import type { Clock } from "./clock.js";
+import { SingleFlight } from "./single-flight.js";
+
+interface Entry<V> {
+  readonly value: V;
+  readonly freshUntil: number;
+  readonly staleUntil: number;
+}
+
+export class SwrCache<V> {
+  private readonly entries = new Map<string, Entry<V>>();
+  private readonly flight = new SingleFlight<V>();
+  refreshErrors = 0;
+
+  constructor(
+    private readonly clock: Clock,
+    private readonly freshMs: number,
+    private readonly staleMs: number,
+  ) {}
+
+  async get(key: string, load: () => Promise<V>): Promise<V> {
+    const entry = this.entries.get(key);
+    const now = this.clock.now();
+    if (entry !== undefined && now < entry.freshUntil) return entry.value;
+    if (entry !== undefined && now < entry.staleUntil) {
+      this.refresh(key, load).catch(() => {
+        this.refreshErrors += 1;
+      });
+      return entry.value;
+    }
+    return this.refresh(key, load);
+  }
+
+  private refresh(key: string, load: () => Promise<V>): Promise<V> {
+    return this.flight.run(key, async () => {
+      const value = await load();
+      const now = this.clock.now();
+      this.entries.set(key, { value, freshUntil: now + this.freshMs, staleUntil: now + this.freshMs + this.staleMs });
+      return value;
+    });
+  }
+}
+</example>
+<example file="swr.ts" project="cache">
+import { CatalogDb, naira } from "./src/catalog-db.js";
+import type { Product } from "./src/catalog-db.js";
+import { ManualClock } from "./src/clock.js";
+import { SwrCache } from "./src/swr-cache.js";
+
+const clock = new ManualClock();
+const db = new CatalogDb();
+const cache = new SwrCache<Product | null>(clock, 60_000, 300_000);
+const load = async () => (await db.findProduct(1)) ?? null;
+const show = async (label: string) => {
+  const product = await cache.get("product:1", load);
+  console.log(label, naira(product!.priceKobo), "reads:", db.reads);
+};
+
+await show("t=0s    miss, loaded:   ");
+await db.updatePrice(1, 990_000);
+clock.advance(70_000);
+await show("t=70s   stale, served:  ");
+await new Promise((resolve) => setTimeout(resolve, 20));
+await show("t=70s   refreshed:      ");
+clock.advance(400_000);
+await show("t=470s  too old, loaded:");
+</example>
+<output>
+t=0s    miss, loaded:    ₦9,500 reads: 1
+t=70s   stale, served:   ₦9,500 reads: 2
+t=70s   refreshed:       ₦9,900 reads: 2
+t=470s  too old, loaded: ₦9,900 reads: 3
+</output>
+<p>At 70 seconds the entry was stale. The shopper got ₦9,500 at once, and the refresh had already started in the background (the second read). A moment later the new price was in. Only after the stale window ended too did a shopper wait for the database again. A failed background refresh is counted, not thrown: the shopper already has an answer, and the next request tries again. The same idea exists in HTTP as <code>Cache-Control: max-age=60, stale-while-revalidate=300</code>.</p>
+</section>
+
+<section>
+<h2 id="metrics">Measuring a cache</h2>
+<p>A cache you do not measure is a guess. The most important number is the <strong>hit rate</strong>: hits divided by all lookups. Next come the number of <strong>evictions</strong> (entries pushed out to make room) and the time a miss takes. This simulation sends 20,000 requests for 1,000 products, where a few products are much more popular than the rest, as in every real shop, and tries different sizes and TTLs:</p>
+<example file="hit-rate.ts" project="cache">
+import { cacheAside, hitRate } from "./src/cache-aside.js";
+import { ManualClock } from "./src/clock.js";
+import { TtlCache } from "./src/ttl-cache.js";
+
+function shoppers(count: number): number[] {
+  let seed = 2026;
+  const random = () => (seed = (seed * 16_807) % 2_147_483_647) / 2_147_483_647;
+  return Array.from({ length: count }, () => Math.floor(1 + 1_000 * random() ** 4));
+}
+
+async function simulate(maxEntries: number, ttlMs: number): Promise<string> {
+  const clock = new ManualClock();
+  const cache = new TtlCache<string>(clock, maxEntries);
+  const stats = { hits: 0, misses: 0 };
+  for (const productId of shoppers(20_000)) {
+    clock.advance(50);
+    await cacheAside(cache, stats, `product:${productId}`, ttlMs, async () => `product ${productId}`);
+  }
+  return `size ${String(maxEntries).padStart(4)}, ttl ${String(ttlMs / 1_000).padStart(3)}s: hit rate ${hitRate(stats).padStart(5)}, evictions ${cache.evictions}`;
+}
+
+console.log(await simulate(50, 300_000));
+console.log(await simulate(200, 300_000));
+console.log(await simulate(1_000, 300_000));
+console.log(await simulate(1_000, 10_000));
+</example>
+<output>
+size   50, ttl 300s: hit rate 33.6%, evictions 13220
+size  200, ttl 300s: hit rate 55.7%, evictions 8637
+size 1000, ttl 300s: hit rate 86.2%, evictions 0
+size 1000, ttl  10s: hit rate 42.0%, evictions 0
+</output>
+<p>How to read it:</p>
+<ul>
+<li>A cache of 50 entries is too small for this traffic: it keeps evicting entries that are needed again soon (<strong>churn</strong>). Growing it to 200 and then 1,000 raises the hit rate, and at 1,000 nothing is evicted at all.</li>
+<li>With room for everything, the TTL decides. At 10 seconds, most entries expire before the next request for them arrives.</li>
+<li>The popular products are hits in every configuration. That skew is why caches work at all: a small cache that holds the popular items serves most of the traffic.</li>
+</ul>
+<p>In production, export the hit and miss counters, the evictions and the load time as metrics (<a href="/learn/zudo-observability">Observability</a> shows how), and watch them after every change. A hit rate that suddenly drops usually means a key changed shape, for example a new field that makes every key unique.</p>
+</section>
+
+<section>
+<h2 id="failures">When the cache fails</h2>
+<p>An in-process cache cannot fail on its own, but a shared cache server can be down, slow or full. The rule for a cache of data that also lives in the database: <strong>fail open</strong>. A broken cache must make the site slower, never broken. Every cache call is wrapped, errors are counted, and the request carries on to the database:</p>
+<example file="fail-open.ts" project="cache">
+import { CatalogDb } from "./src/catalog-db.js";
+import type { Product } from "./src/catalog-db.js";
+
+interface RemoteCache {
+  get(key: string): Promise<string | undefined>;
+  set(key: string, value: string, ttlSeconds: number): Promise<void>;
+}
+
+const brokenRedis: RemoteCache = {
+  get: async () => { throw new Error("connect ECONNREFUSED 10.0.0.7:6379"); },
+  set: async () => { throw new Error("connect ECONNREFUSED 10.0.0.7:6379"); },
+};
+
+const db = new CatalogDb();
+let cacheErrors = 0;
+
+async function getProduct(cache: RemoteCache, id: number): Promise<Product | undefined> {
+  const key = `product:${id}`;
+  try {
+    const hit = await cache.get(key);
+    if (hit !== undefined) return JSON.parse(hit) as Product;
+  } catch {
+    cacheErrors += 1;
+  }
+  const product = await db.findProduct(id);
+  if (product !== undefined) {
+    cache.set(key, JSON.stringify(product), 60).catch(() => {
+      cacheErrors += 1;
+    });
+  }
+  return product;
+}
+
+console.log((await getProduct(brokenRedis, 1))?.name);
+console.log((await getProduct(brokenRedis, 2))?.name);
+await new Promise((resolve) => setTimeout(resolve, 0));
+console.log("database reads:", db.reads, "cache errors:", cacheErrors);
+</example>
+<output>
+Rice, 5 kg
+Groundnut oil, 1 L
+database reads: 2 cache errors: 4
+</output>
+<p>Both products were served from the database; four cache errors were counted (two failed reads, two failed writes). In a real client, also give every cache call a short <strong>timeout</strong>: a cache that hangs for 30 seconds is worse than one that is down, because every request waits for it. And make sure the database can survive a while without the cache, or a cache outage becomes a database outage.</p>
+<p>Other ways caching goes wrong:</p>
+<ul>
+<li><strong>Caching errors.</strong> If a failed load is stored, the error is served for the whole TTL. <code>SafeCache</code> only stores successful values.</li>
+<li><strong>Per-user data under a shared key.</strong> A leak, as the reasoning section showed. Review every key that holds personal data.</li>
+<li><strong>Unbounded keys.</strong> A key built from raw user input (a search string, a URL with random query parameters) lets anyone fill your cache with junk and push out the useful entries. Normalise inputs, and cache only known shapes.</li>
+<li><strong>Serialisation.</strong> A shared cache stores text or bytes. A <code>Date</code> stored as JSON comes back as a string; a <code>Map</code> comes back as <code>{}</code>. Convert values deliberately, like a DTO.</li>
+<li><strong>Several servers, several in-memory caches.</strong> Invalidating on one server leaves the other servers' copies alone until their TTL ends. Use a shared cache, or broadcast invalidations (for example with Redis pub/sub), or accept the TTL as your staleness bound.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="testing">Testing a cache</h2>
+<p>Caches are full of time and concurrency, the two things that make tests flaky. The manual clock removes time; counting loads and resolving promises by hand removes the concurrency guesswork. These four tests pin the promises <code>SafeCache</code> makes:</p>
+<example file="tests/safe-cache.test.ts" project="cache" browser="no">
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+
+import { ManualClock } from "../src/clock.js";
+import { SafeCache } from "../src/safe-cache.js";
+import { TtlCache } from "../src/ttl-cache.js";
+
+function setup() {
+  const clock = new ManualClock();
+  const cache = new SafeCache(new TtlCache<string>(clock));
+  let loads = 0;
+  const load = async () => `price v${++loads}`;
+  return { clock, cache, load, loads: () => loads };
+}
+
+describe("SafeCache", () => {
+  it("serves from the cache until the TTL ends", async () => {
+    const { clock, cache, load, loads } = setup();
+    await cache.get("product:1", 60_000, load);
+    clock.advance(59_999);
+    assert.equal(await cache.get("product:1", 60_000, load), "price v1");
+    clock.advance(1);
+    assert.equal(await cache.get("product:1", 60_000, load), "price v2");
+    assert.equal(loads(), 2);
+  });
+
+  it("loads once for many concurrent misses", async () => {
+    const { cache, load, loads } = setup();
+    const results = await Promise.all(Array.from({ length: 50 }, () => cache.get("product:1", 60_000, load)));
+    assert.equal(new Set(results).size, 1);
+    assert.equal(loads(), 1);
+  });
+
+  it("does not cache a failed load", async () => {
+    const { cache } = setup();
+    await assert.rejects(cache.get("product:1", 60_000, async () => { throw new Error("db down"); }), /db down/);
+    assert.equal(await cache.get("product:1", 60_000, async () => "recovered"), "recovered");
+  });
+
+  it("does not store a value loaded before an invalidation", async () => {
+    const { cache } = setup();
+    let finish!: (value: string) => void;
+    const slow = cache.get("product:1", 60_000, () => new Promise<string>((resolve) => (finish = resolve)));
+    cache.invalidate("product:1");
+    finish("old price");
+    await slow;
+    assert.equal(await cache.get("product:1", 60_000, async () => "new price"), "new price");
+  });
+});
+</example>
+<output mask="ms,num">
+▶ SafeCache
+  ✔ serves from the cache until the TTL ends (2.401785ms)
+  ✔ loads once for many concurrent misses (1.358021ms)
+  ✔ does not cache a failed load (0.88309ms)
+  ✔ does not store a value loaded before an invalidation (0.426518ms)
+✔ SafeCache (7.493762ms)
+ℹ tests 4
+ℹ suites 1
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 136.317271
+</output>
+<p>The first test checks the exact TTL boundary: at 59,999 ms the entry is alive, at 60,000 ms it is gone. The last one rebuilds the race from the invalidation section with no timers at all: the test itself decides when the slow load finishes.</p>
+</section>
+
+<section>
+<h2 id="production">In production: a shared cache</h2>
+<p>An in-process cache is the fastest kind, but it is per server, lost on every restart and limited by the process's memory. Most backends also use a <strong>shared cache</strong>, usually Redis (or Valkey, a compatible fork). The operations are the same ones you just built, over the network. Try them with Docker and <code>redis-cli</code>; the output below is an example:</p>
+<shell title="Example output">
+$ docker run --name shop-cache -p 6380:6379 -d redis:8-alpine
+$ docker exec -it shop-cache redis-cli
+127.0.0.1:6379> SET shop:product:v1:1 '{"id":1,"name":"Rice, 5 kg","priceKobo":950000}' EX 60
+OK
+127.0.0.1:6379> GET shop:product:v1:1
+"{\"id\":1,\"name\":\"Rice, 5 kg\",\"priceKobo\":950000}"
+127.0.0.1:6379> TTL shop:product:v1:1
+(integer) 57
+127.0.0.1:6379> DEL shop:product:v1:1
+(integer) 1
+127.0.0.1:6379> GET shop:product:v1:1
+(nil)
+</shell>
+<p><code>EX 60</code> is the TTL in seconds, <code>TTL</code> shows how long is left, and <code>DEL</code> is your invalidation. Configure a memory limit and an eviction policy (<code>maxmemory</code> and <code>maxmemory-policy allkeys-lru</code>), or Redis will refuse writes when it is full. Keep the cache on a private network with a password: a cache holds copies of your data. When you are done, <code>docker rm -f shop-cache</code> removes it.</p>
+<p>Everything in this lesson (TTLs, keys, tags, locks, stampede protection, metrics, in-memory and Redis adapters) is what a caching library packages. <a href="/learn/zudo-cache">Caching with ZudoJS</a> shows <code>@zudojs/cache</code>, which provides exactly these building blocks, so you can use them without rewriting them in every project.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A shorter TTL for 'not found'">
+<p>Missing products are cached for the full 60 seconds, like real ones. If product 4 is created a moment after someone asked for it, it stays invisible for a minute. Write <code>getProduct</code> so that found products are cached for 60 seconds and missing ones for 5.</p>
+<solution>
+<example file="negative-ttl.ts" project="cache">
+import { CatalogDb } from "./src/catalog-db.js";
+import type { Product } from "./src/catalog-db.js";
+import { ManualClock } from "./src/clock.js";
+import { TtlCache } from "./src/ttl-cache.js";
+
+const clock = new ManualClock();
+const db = new CatalogDb();
+const cache = new TtlCache<Product | null>(clock);
+
+async function getProduct(id: number): Promise<Product | null> {
+  const key = `product:${id}`;
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+  const product = (await db.findProduct(id)) ?? null;
+  cache.set(key, product, product === null ? 5_000 : 60_000);
+  return product;
+}
+
+await getProduct(1);
+await getProduct(4);
+clock.advance(6_000);
+await getProduct(1);
+await getProduct(4);
+console.log("reads:", db.reads, "(product 1 once, product 4 twice)");
+</example>
+<output>
+reads: 3 (product 1 once, product 4 twice)
+</output>
+<p>Negative entries protect the database from floods of requests for ids that do not exist, but they should expire quickly, because "does not exist yet" is the most likely thing to change.</p>
+</solution>
+</exercise>
+<exercise title="Jitter">
+<p>Write <code>withJitter(ttlMs, fraction, random)</code> that returns a TTL randomly spread by ± <code>fraction</code> (0.1 means ±10%). Take <code>random</code> as a parameter (a function returning a number from 0 to 1) so it can be tested. Show the spread for 1,000 keys with a TTL of 60 seconds.</p>
+<solution>
+<example file="jitter.ts" project="cache">
+function withJitter(ttlMs: number, fraction: number, random: () => number): number {
+  const spread = ttlMs * fraction;
+  return Math.round(ttlMs - spread + random() * 2 * spread);
+}
+
+let seed = 7;
+const random = () => (seed = (seed * 16_807) % 2_147_483_647) / 2_147_483_647;
+
+const ttls = Array.from({ length: 1_000 }, () => withJitter(60_000, 0.1, random));
+console.log("shortest:", Math.min(...ttls) >= 54_000, "longest:", Math.max(...ttls) <= 66_000);
+console.log("distinct expiry times:", new Set(ttls).size > 900);
+console.log(withJitter(60_000, 0.1, () => 0), withJitter(60_000, 0.1, () => 0.5), withJitter(60_000, 0.1, () => 1));
+</example>
+<output>
+shortest: true longest: true
+distinct expiry times: true
+54000 60000 66000
+</output>
+<p>Instead of 1,000 keys expiring in the same millisecond, their expiries spread over 12 seconds, so the database sees a gentle stream of reloads instead of one spike. Passing <code>random</code> in makes the edges (0, 0.5, 1) easy to check.</p>
+</solution>
+</exercise>
+<exercise title="The cart that everyone saw">
+<p>This code caches carts. Find the bug, explain its effect, and fix it.</p>
+<file name="cart-cache.ts" project="cartbug">
+async function getCart(customerId: number): Promise<Cart> {
+  return cache.get("cart", 30_000, () => carts.findByCustomer(customerId));
+}
+</file>
+<solution>
+<p>The key <code>"cart"</code> does not contain the customer id. The first customer's cart is cached, and for the next 30 seconds every other customer gets it: their name, address and items. It is a privacy breach, and the checkout would charge the wrong customer for the wrong items. The fix is to put every input in the key:</p>
+<file name="cart-cache.ts" project="cartfix">
+async function getCart(customerId: number): Promise<Cart> {
+  return cache.get(`cart:${customerId}`, 30_000, () => carts.findByCustomer(customerId));
+}
+</file>
+<p>Better still, ask whether a cart needs caching at all. It is read by one person, changes often, and is cheap to load by primary key. Cache what is read by many and changes rarely.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A cache trades freshness for speed. Cache data read by many and changed rarely; never cache data used to decide about money or permissions; put every input, including the user, in the key.</li>
+<li>Cache-aside: read the cache, on a miss load and store with a TTL; on a write, update the database and then delete the key. The TTL bounds staleness and backs up every invalidation.</li>
+<li>Bound the cache's size (LRU) and inject the clock. Cache "not found" briefly.</li>
+<li>A slow reader can put stale data back after an invalidation; per-key generations (or versions) stop it.</li>
+<li>Single-flight turns a stampede of misses into one load; locks do it across servers; stale-while-revalidate serves the old value while one refresh runs.</li>
+<li>Measure hit rate, evictions and load time. Fail open with timeouts when a shared cache breaks.</li>
+</ul>
+<p>Next: <a href="/learn/backend-queues">Queues and background jobs</a>, for work that should not happen while the customer waits.</p>
+</section>

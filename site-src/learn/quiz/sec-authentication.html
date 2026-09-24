@@ -1,0 +1,652 @@
+<question id="auth-self-describing" type="choice">
+<q>Why does a stored password hash include the algorithm and its cost parameters, as in <code>$argon2id$v=19$m=19456,t=2,p=1$salt$hash</code>?</q>
+<option>So the attacker knows how to crack it</option>
+<option correct>So the hash can still be verified after you change the defaults, and so you can detect outdated hashes and upgrade them</option>
+<option>Because Argon2id refuses to run without it</option>
+<option>To make the hash longer and therefore stronger</option>
+<explain><p>Verification reads the parameters from the stored value, so old and new hashes live side by side. Comparing them with the current parameters tells you which ones to rehash at the next log-in.</p></explain>
+</question>
+
+<question id="auth-rehash-when" type="choice">
+<q>When can a server upgrade a user's old password hash to Argon2id with new costs?</q>
+<option>At any time, by re-hashing the stored hash</option>
+<option>Only by forcing every user to reset their password</option>
+<option correct>Right after a successful log-in, because only then does the server hold the plain password</option>
+<option>When the user logs out</option>
+<explain><p>A hash cannot be turned back into the password, so the new hash must be computed from the password itself. A successful log-in is the natural moment; accounts that never log in again can be forced to reset later.</p></explain>
+</question>
+
+<question id="auth-length-cap" type="choice">
+<q>Why cap passwords at, say, 1,024 bytes before hashing?</q>
+<option>Longer passwords are weaker</option>
+<option correct>A slow hash over a huge input is a cheap way for an attacker to burn your CPU: a denial-of-service attack</option>
+<option>Argon2id only reads the first 1,024 bytes</option>
+<option>Browsers cannot send more than 1,024 bytes in a form</option>
+<explain><p>A cap far above any real passphrase costs honest users nothing and bounds the work one request can cause. Check it in bytes, before hashing.</p></explain>
+</question>
+
+<question id="auth-memory-hard" type="choice">
+<q>What does Argon2id's memory cost (for example 19 MiB per hash) defend against?</q>
+<option>Timing attacks on the comparison</option>
+<option correct>Cheap mass guessing on graphics cards and special hardware, which have lots of compute but little memory per core</option>
+<option>SQL injection in the users table</option>
+<option>Users choosing short passwords</option>
+<explain><p>Memory-hardness makes each guess need real memory, which is what attackers' hardware lacks. The same memory is a capacity limit on your servers, so plan concurrent log-ins accordingly.</p></explain>
+</question>
+
+<question id="auth-password-rules" type="choice">
+<q>Which password policy follows current NIST guidance?</q>
+<option>At least 8 characters, one symbol, one digit, and a forced change every 90 days</option>
+<option correct>A minimum length, long passwords allowed, no composition rules, no forced periodic changes, and refusing passwords from breach lists</option>
+<option>Exactly 12 characters, letters only</option>
+<option>Any password, as long as it is hashed</option>
+<explain><p>Composition rules and forced changes push people to predictable patterns. Length and refusing known-breached passwords do far more for security.</p></explain>
+</question>
+
+<question id="auth-hash-session-token" type="choice">
+<q>Why does the sessions table store SHA-256 of the session token instead of the token?</q>
+<option>To make sessions expire faster</option>
+<option correct>If the table leaks, the attacker gets hashes that cannot be used as cookies</option>
+<option>Because tokens are too long for a text column</option>
+<option>To slow down log-in</option>
+<explain><p>Whoever has a live token is logged in. Storing only the hash means a database leak does not leak live sessions.</p></explain>
+</question>
+
+<question id="auth-fast-hash-ok" type="choice">
+<q>Passwords need a slow hash, but session tokens are hashed with fast SHA-256. Why is that fine?</q>
+<option>Session tokens are less important than passwords</option>
+<option correct>The token is 32 random bytes; nobody can guess 2<sup>256</sup> possibilities, so there is nothing to slow down</option>
+<option>SHA-256 is slower than Argon2id</option>
+<option>Session tokens are never stored</option>
+<explain><p>Slow hashing protects low-entropy secrets that humans choose. A long random token has so much entropy that even billions of guesses per second get nowhere.</p></explain>
+</question>
+
+<question id="auth-two-clocks" type="choice">
+<q>A session has a 30-minute idle timeout but no absolute timeout. What is the risk?</q>
+<option>Users are logged out too often</option>
+<option correct>A session (including a stolen one) that is used at least every 30 minutes never expires</option>
+<option>The session table grows too slowly</option>
+<option>None; idle timeouts are enough</option>
+<explain><p>The idle clock moves forward on every use. An absolute limit that never moves ends every session eventually, however active.</p></explain>
+</question>
+
+<question id="auth-fixation" type="choice">
+<q>What is session fixation, and what prevents it?</q>
+<option>A session that never expires; prevented by an idle timeout</option>
+<option correct>An attacker plants a known session token in the victim's browser and it becomes logged in when the victim logs in; prevented by issuing a new token at log-in</option>
+<option>Two users sharing a session; prevented by HTTPS</option>
+<option>A session cookie that is too long; prevented by base64url</option>
+<explain><p>If log-in upgrades the existing session in place, whoever knew its token before is now logged in too. A fresh token on every privilege change breaks that link.</p></explain>
+</question>
+
+<question id="auth-jwt-readable" type="choice">
+<q>Which statement about an HS256 JWT is true?</q>
+<option>Its payload is encrypted with the secret</option>
+<option correct>Anyone holding it can read the payload; the signature only stops them from changing it</option>
+<option>It cannot be decoded without the secret</option>
+<option>It is safe to put the user's password in it</option>
+<explain><p>The header and payload are only base64url-encoded. Never put secrets or private data in a JWT.</p></explain>
+</question>
+
+<question id="auth-alg-none" type="choice">
+<q>A verifier reads <code>alg</code> from the token's header and uses that algorithm to check the signature. What is the attack?</q>
+<option>The attacker sends a very long token</option>
+<option correct>The attacker sets <code>alg</code> to <code>none</code> (or another algorithm the verifier mishandles), changes the payload and drops the signature</option>
+<option>The attacker reuses an expired token</option>
+<option>The attacker changes the <code>typ</code> field</option>
+<explain><p>The token must not choose how it is verified. The server fixes the allowed algorithm(s) and rejects everything else.</p></explain>
+</question>
+
+<question id="auth-kid" type="choice">
+<q>What is the <code>kid</code> header for, and what must the verifier check about it?</q>
+<option>It is the user id; check that the user exists</option>
+<option correct>It names the key that signed the token, enabling key rotation; the verifier must only accept ids of its own configured keys</option>
+<option>It is a random nonce; check that it is unique</option>
+<option>It is the token's expiry; check that it is in the future</option>
+<explain><p>During rotation, new tokens use the new key while old ones are still accepted. An attacker-supplied <code>kid</code> must never reach a file path, a database query or an object's prototype.</p></explain>
+</question>
+
+<question id="auth-aud" type="choice">
+<q>Two services share a signing key. Why must each check the <code>aud</code> (audience) claim?</q>
+<option>To know which language to answer in</option>
+<option correct>Otherwise a token issued for one service is accepted by the other</option>
+<option>Because <code>aud</code> contains the expiry time</option>
+<option>It is optional and only for logging</option>
+<explain><p>The audience says who the token is for. Without the check, a token leaked from the less protected service works everywhere the key is shared.</p></explain>
+</question>
+
+<question id="auth-leeway" type="choice">
+<q>Why do JWT verifiers allow a small leeway (for example 30 seconds) on <code>exp</code> and <code>nbf</code>?</q>
+<option>To let users keep expired tokens for longer</option>
+<option correct>Servers' clocks differ slightly; without leeway, a fresh token can be rejected by a server whose clock runs a little ahead</option>
+<option>Because JWT times are in minutes</option>
+<option>To make brute force harder</option>
+<explain><p>Clock skew between machines is normal. A small leeway avoids spurious failures without meaningfully extending a token's life.</p></explain>
+</question>
+
+<question id="auth-session-vs-jwt" type="choice">
+<q>A web shop's browser app talks only to its own backend. A user reports their laptop stolen. Which design lets you cut the thief off immediately with the least extra machinery?</q>
+<option>Stateless JWTs with a 24-hour expiry</option>
+<option correct>Server-side sessions: delete the user's session rows</option>
+<option>Tokens stored in localStorage</option>
+<option>Basic authentication on every request</option>
+<explain><p>Revocation is a row deletion with sessions. A stateless JWT stays valid until it expires unless you add a denylist, which brings back the lookup that JWTs were meant to avoid.</p></explain>
+</question>
+
+<question id="auth-refresh-reuse" type="choice">
+<q>With refresh-token rotation, an already-used refresh token is presented again. What should the server do?</q>
+<option>Accept it once more, in case of a network retry</option>
+<option>Ignore it and keep the family active</option>
+<option correct>Treat it as theft: revoke every token in that family, so both the thief and the user must log in again</option>
+<option>Issue a longer-lived token</option>
+<explain><p>A used token coming back means two parties hold copies, and the server cannot tell which is the thief. Revoking the family is the only safe answer; the real user just logs in again.</p></explain>
+</question>
+
+<question id="auth-localstorage" type="choice">
+<q>Why is an <code>HttpOnly</code> cookie a better home for a session token than <code>localStorage</code>?</q>
+<option>Cookies are encrypted by the browser</option>
+<option correct>Any JavaScript on the page can read localStorage, so one XSS bug leaks every token; page JavaScript cannot read an HttpOnly cookie</option>
+<option>localStorage is cleared on every page load</option>
+<option>Cookies are never sent to the server</option>
+<explain><p>XSS still lets an attacker act within the page while it is open, but it cannot copy an HttpOnly session token away for later use.</p></explain>
+</question>
+
+<question id="auth-host-prefix" type="choice">
+<q>What does naming a cookie <code>__Host-session</code> guarantee?</q>
+<option>The cookie is encrypted</option>
+<option correct>Browsers only accept it with <code>Secure</code>, <code>Path=/</code> and no <code>Domain</code>, so subdomains cannot set or overwrite it</option>
+<option>The cookie expires when the host restarts</option>
+<option>The cookie is only sent to localhost</option>
+<explain><p>The prefix closes the route where a compromised or careless subdomain plants a session cookie for the main site, one way to carry out session fixation.</p></explain>
+</question>
+
+<question id="auth-hard-lockout" type="choice">
+<q>What is the problem with "lock the account for one hour after 5 wrong passwords"?</q>
+<option>It is too gentle on attackers</option>
+<option correct>Anyone who knows a user's e-mail can lock them out on purpose, again and again</option>
+<option>It needs a second database</option>
+<option>It reveals the password's length</option>
+<explain><p>A hard lock turns your defence into a denial-of-service tool. Progressive delays, per-IP limits and second factors slow guessers without letting them lock out customers.</p></explain>
+</question>
+
+<question id="auth-stuffing" type="choice">
+<q>Credential stuffing tries one leaked password per account across 50,000 accounts. Which defence does the most against it?</q>
+<option>Per-account progressive delays</option>
+<option correct>Per-IP rate limits plus a second factor (and refusing known-breached passwords)</option>
+<option>A longer session timeout</option>
+<option>Hashing passwords with SHA-256 twice</option>
+<explain><p>Each account sees only one attempt, so per-account counting never triggers. Limits per source slow the attack, and a second factor makes a correct leaked password insufficient.</p></explain>
+</question>
+
+<question id="auth-out-b64url" type="output">
+<q>What does this print?</q>
+<code file="b64url.js">
+const b64url = (text) => btoa(text).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+console.log(b64url('{"alg":"HS256","typ":"JWT"}'));
+</code>
+<option correct>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9</option>
+<option>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9==</option>
+<option>{"alg":"HS256","typ":"JWT"}</option>
+<option>eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9</option>
+<explain><p>This is the famous start of most JWTs. The JSON text is base64-encoded and made URL-safe; this particular text needs no padding. Anyone can reverse it with <code>atob</code>.</p></explain>
+</question>
+
+<question id="auth-out-decode" type="output">
+<q>What does this print?</q>
+<code file="decode.js">
+const token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI3Iiwicm9sZSI6ImN1c3RvbWVyIn0.c2lnbmF0dXJl";
+const [, payload] = token.split(".");
+console.log(JSON.parse(atob(payload)));
+</code>
+<option correct>{ sub: '7', role: 'customer' }</option>
+<option>Error: the payload is encrypted</option>
+<option>{ alg: 'HS256' }</option>
+<option>signature</option>
+<explain><p>No key is needed to read a JWT. That is why tokens carry ids and roles, never secrets.</p></explain>
+</question>
+
+<question id="auth-out-exp" type="output">
+<q>A verifier checks expiry with a 30-second leeway. What does this print?</q>
+<code file="exp.js">
+const now = 1790244000;
+const leeway = 30;
+const expired = (exp) => typeof exp !== "number" || now > exp + leeway;
+console.log([now + 900, now - 10, now - 31, undefined].map(expired));
+</code>
+<option correct>[ false, false, true, true ]</option>
+<option>[ false, true, true, false ]</option>
+<option>[ false, false, true, false ]</option>
+<option>[ false, true, true, true ]</option>
+<explain><p>A token that expired 10 seconds ago is within the leeway; 31 seconds ago is not. A token without <code>exp</code> is treated as expired: a verifier must require it, or tokens that never expire slip through.</p></explain>
+</question>
+
+<question id="auth-out-idle" type="output">
+<q>A session was created at minute 0 with a 30-minute idle timeout and a 12-hour absolute timeout. It is used at the times listed. What does this print?</q>
+<code file="idle.js">
+const IDLE = 30, ABSOLUTE = 12 * 60;
+let lastSeen = 0;
+const alive = [];
+for (const minute of [20, 45, 74, 110]) {
+  const ok = minute - lastSeen < IDLE && minute < ABSOLUTE;
+  alive.push(ok);
+  if (!ok) break;
+  lastSeen = minute;
+}
+console.log(alive);
+</code>
+<option correct>[ true, true, true, false ]</option>
+<option>[ true, false ]</option>
+<option>[ true, true, true, true ]</option>
+<option>[ true, true, false ]</option>
+<explain><p>Each use moves the idle clock: 20, 45 and 74 are each less than 30 minutes after the previous use. At 110 the session has been idle for 36 minutes, so it is gone.</p></explain>
+</question>
+
+<question id="auth-out-fixation" type="output">
+<q>What does this print?</q>
+<code file="fixation.js">
+const sessions = new Map([["planted-123", { user: null }]]);
+
+function logIn(token, user, rotate) {
+  if (!rotate) {
+    sessions.get(token).user = user;
+    return token;
+  }
+  sessions.delete(token);
+  sessions.set("fresh-456", { user });
+  return "fresh-456";
+}
+
+logIn("planted-123", "ada", false);
+console.log(sessions.get("planted-123")?.user);
+sessions.set("planted-123", { user: null });
+logIn("planted-123", "ada", true);
+console.log(sessions.get("planted-123")?.user);
+</code>
+<option correct>ada
+undefined</option>
+<option>null
+null</option>
+<option>ada
+ada</option>
+<option>undefined
+ada</option>
+<explain><p>Without rotation, the attacker's planted token now belongs to Ada. With rotation, the planted token no longer exists, so knowing it is worthless.</p></explain>
+</question>
+
+<question id="auth-out-cookie" type="output">
+<q>What does this print?</q>
+<code file="read-cookie.js">
+function readSessionToken(header = "") {
+  for (const part of header.split(";")) {
+    const [name, ...rest] = part.trim().split("=");
+    if (name === "__Host-session") return rest.join("=") || null;
+  }
+  return null;
+}
+
+console.log(readSessionToken("theme=dark; __Host-session=abc=="));
+console.log(readSessionToken("session=abc"));
+console.log(readSessionToken("__Host-session="));
+</code>
+<option correct>abc==
+null
+null</option>
+<option>abc
+null
+null</option>
+<option>abc==
+abc
+null</option>
+<option>abc==
+null
+</option>
+<explain><p>Only the first <code>=</code> separates name from value, so the value keeps its own <code>=</code> signs. A cookie with a different name is ignored, and an empty value counts as no token.</p></explain>
+</question>
+
+<question id="auth-out-delays" type="output">
+<q>What delays does this progressive throttle produce, in seconds?</q>
+<code file="delays.js">
+const delayAfter = (failures) => (failures <= 5 ? 0 : Math.min(2 ** (failures - 6), 900));
+console.log([4, 5, 6, 7, 10, 20].map(delayAfter));
+</code>
+<option correct>[ 0, 0, 1, 2, 16, 900 ]</option>
+<option>[ 0, 1, 2, 4, 32, 900 ]</option>
+<option>[ 0, 0, 1, 2, 16, 16384 ]</option>
+<option>[ 0, 0, 2, 4, 32, 900 ]</option>
+<explain><p>Five attempts are free, then the delay doubles from one second, capped at 15 minutes (900 s). 2<sup>14</sup> would be over four hours, which the cap prevents.</p></explain>
+</question>
+
+<question id="auth-out-kid" type="output">
+<q>Why is <code>Object.hasOwn</code> used to check the key id? What does this print?</q>
+<code file="kid.js">
+const keys = { "2026-09": "secret-a", "2026-10": "secret-b" };
+for (const kid of ["2026-10", "2026-08", "constructor", "__proto__"]) {
+  console.log(kid, kid in keys, Object.hasOwn(keys, kid));
+}
+</code>
+<option correct>2026-10 true true
+2026-08 false false
+constructor true false
+__proto__ true false</option>
+<option>2026-10 true true
+2026-08 false false
+constructor false false
+__proto__ false false</option>
+<option>2026-10 true true
+2026-08 false false
+constructor true true
+__proto__ true true</option>
+<option>2026-10 true true
+2026-08 true false
+constructor true false
+__proto__ true false</option>
+<explain><p><code>in</code> also looks at the prototype chain, where <code>constructor</code> and <code>__proto__</code> live. An attacker-chosen <code>kid</code> would then pick a function or an object as the "key". <code>Object.hasOwn</code> accepts only your own keys.</p></explain>
+</question>
+
+<question id="auth-out-refresh" type="output">
+<q>A refresh token store with reuse detection. What does this print?</q>
+<code file="refresh.js">
+const tokens = new Map();
+let n = 0;
+const issue = (family) => {
+  const token = `rt-${++n}`;
+  tokens.set(token, { family, used: false });
+  return token;
+};
+function refresh(token) {
+  const entry = tokens.get(token);
+  if (!entry) return "unknown";
+  if (entry.used) {
+    for (const [t, e] of tokens) if (e.family === entry.family) tokens.delete(t);
+    return "reuse: family revoked";
+  }
+  entry.used = true;
+  return issue(entry.family);
+}
+
+const first = issue("login-1");
+const second = refresh(first);
+console.log(second, refresh(first), refresh(second));
+</code>
+<option correct>rt-2 reuse: family revoked unknown</option>
+<option>rt-2 rt-3 rt-4</option>
+<option>rt-2 reuse: family revoked rt-3</option>
+<option>rt-2 unknown unknown</option>
+<explain><p>The first refresh rotates to <code>rt-2</code>. Presenting <code>rt-1</code> again is reuse, so the whole family, including <code>rt-2</code>, is deleted. The honest client's next refresh finds nothing and must log in again.</p></explain>
+</question>
+
+<question id="auth-code-jwt-sign" type="code" file="jwt-sign.js">
+<q>Using Web Crypto (available in browsers and Node.js), write <code>async function signJwt(payload, secret)</code> that returns an HS256 JWT: base64url header <code>{"alg":"HS256","typ":"JWT"}</code>, base64url payload, and the base64url HMAC-SHA256 of <code>header.payload</code>. Print the token for <code>{ sub: "7", exp: 1790245000 }</code> with the secret <code>"academy-demo-secret"</code>.</q>
+<starter>
+const b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+const text = (value) => new TextEncoder().encode(value);
+
+async function signJwt(payload, secret) {
+  // import the secret as an HMAC key with crypto.subtle.importKey,
+  // then sign `${header}.${body}` with crypto.subtle.sign
+}
+</starter>
+<solution>
+const b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+const text = (value) => new TextEncoder().encode(value);
+
+async function signJwt(payload, secret) {
+  const header = b64url(text(JSON.stringify({ alg: "HS256", typ: "JWT" })));
+  const body = b64url(text(JSON.stringify(payload)));
+  const key = await crypto.subtle.importKey("raw", text(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = new Uint8Array(await crypto.subtle.sign("HMAC", key, text(`${header}.${body}`)));
+  return `${header}.${body}.${b64url(signature)}`;
+}
+
+console.log(await signJwt({ sub: "7", exp: 1790245000 }, "academy-demo-secret"));
+</solution>
+<expected>
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI3IiwiZXhwIjoxNzkwMjQ1MDAwfQ.dWV-DjiGkJARpKKSVgouTLS0OckrSt2IYDda-jFfQM8
+</expected>
+<explain><p>Three base64url parts: the first two are readable JSON, the third is the HMAC. The same input and secret always give the same signature, which is what lets a verifier recompute and compare it.</p></explain>
+</question>
+
+<question id="auth-code-jwt-claims" type="code" file="jwt-claims.js">
+<q>Write <code>checkClaims(header, claims, { now, issuer, audience, leeway })</code> that returns the first problem as a string, in this order: <code>"bad alg"</code> (alg is not HS256), <code>"expired"</code> (no numeric <code>exp</code>, or <code>now &gt; exp + leeway</code>), <code>"wrong issuer"</code>, <code>"wrong audience"</code>; otherwise <code>"ok"</code>. Times are in seconds.</q>
+<starter>
+function checkClaims(header, claims, { now, issuer, audience, leeway }) {
+  // your code
+}
+
+const options = { now: 1790244000, issuer: "bank-api", audience: "bank-app", leeway: 30 };
+const good = { sub: "7", iss: "bank-api", aud: "bank-app", exp: 1790244900 };
+</starter>
+<solution>
+function checkClaims(header, claims, { now, issuer, audience, leeway }) {
+  if (header.alg !== "HS256") return "bad alg";
+  if (typeof claims.exp !== "number" || now > claims.exp + leeway) return "expired";
+  if (claims.iss !== issuer) return "wrong issuer";
+  if (claims.aud !== audience) return "wrong audience";
+  return "ok";
+}
+
+const options = { now: 1790244000, issuer: "bank-api", audience: "bank-app", leeway: 30 };
+const good = { sub: "7", iss: "bank-api", aud: "bank-app", exp: 1790244900 };
+console.log(checkClaims({ alg: "HS256" }, good, options));
+console.log(checkClaims({ alg: "none" }, good, options));
+console.log(checkClaims({ alg: "HS256" }, { ...good, exp: undefined }, options));
+console.log(checkClaims({ alg: "HS256" }, { ...good, exp: 1790243990 }, options));
+console.log(checkClaims({ alg: "HS256" }, { ...good, aud: "loans-app" }, options));
+</solution>
+<expected>
+ok
+bad alg
+expired
+ok
+wrong audience
+</expected>
+<explain><p>The fourth token expired 10 seconds ago and is accepted within the 30-second leeway. In a full verifier these checks run only after the signature has been verified; unsigned claims prove nothing.</p></explain>
+</question>
+
+<question id="auth-code-session-store" type="code" file="session-store.js">
+<q>Write <code>createSessions({ idleMs, absoluteMs })</code> with <code>start(token, userId, now)</code> and <code>read(token, now)</code>. <code>read</code> returns the user id, or <code>null</code> (and deletes the session) when it has been idle for <code>idleMs</code> or older than <code>absoluteMs</code>; a successful read moves the idle clock.</q>
+<starter>
+function createSessions({ idleMs, absoluteMs }) {
+  // your code
+}
+
+const sessions = createSessions({ idleMs: 30, absoluteMs: 100 });
+</starter>
+<solution>
+function createSessions({ idleMs, absoluteMs }) {
+  const store = new Map();
+  return {
+    start(token, userId, now) {
+      store.set(token, { userId, createdAt: now, lastSeen: now });
+    },
+    read(token, now) {
+      const s = store.get(token);
+      if (!s) return null;
+      if (now - s.lastSeen >= idleMs || now - s.createdAt >= absoluteMs) {
+        store.delete(token);
+        return null;
+      }
+      s.lastSeen = now;
+      return s.userId;
+    },
+  };
+}
+
+const sessions = createSessions({ idleMs: 30, absoluteMs: 100 });
+sessions.start("a", 7, 0);
+console.log([20, 45, 70, 95, 101].map((t) => sessions.read("a", t)));
+sessions.start("b", 8, 0);
+console.log(sessions.read("b", 31), sessions.read("b", 32));
+</solution>
+<expected>
+[ 7, 7, 7, 7, null ]
+null null
+</expected>
+<explain><p>Session <code>a</code> is used often enough to stay under the idle limit, but the absolute limit ends it at 100. Session <code>b</code> sat idle for 31 and was deleted, so even the next read finds nothing.</p></explain>
+</question>
+
+<question id="auth-code-login-rotation" type="code" file="login-rotation.js">
+<q>Write <code>logIn(sessions, oldToken, userId, newToken)</code> for a <code>Map</code> of token to session. It must copy <code>cart</code> from the old session (if any), delete the old session, and store <code>{ userId, cart }</code> under <code>newToken</code>. Print the map's entries afterwards.</q>
+<starter>
+const sessions = new Map([["anon-1", { userId: null, cart: ["rice 5kg"] }]]);
+
+function logIn(sessions, oldToken, userId, newToken) {
+  // your code
+}
+</starter>
+<solution>
+const sessions = new Map([["anon-1", { userId: null, cart: ["rice 5kg"] }]]);
+
+function logIn(sessions, oldToken, userId, newToken) {
+  const cart = sessions.get(oldToken)?.cart ?? [];
+  sessions.delete(oldToken);
+  sessions.set(newToken, { userId, cart });
+  return newToken;
+}
+
+logIn(sessions, "anon-1", 7, "user-7-xyz");
+console.log(JSON.stringify([...sessions.entries()]));
+</solution>
+<expected>
+[["user-7-xyz",{"userId":7,"cart":["rice 5kg"]}]]
+</expected>
+<explain><p>The user keeps their cart, but the anonymous token, which someone else might know, is gone. The same step runs at every privilege change.</p></explain>
+</question>
+
+<question id="auth-code-throttle" type="code" file="throttle.js">
+<q>Write <code>createThrottle()</code> with <code>attempt(account, ok, now)</code>. Before checking, if <code>now</code> is before the account's <code>nextAt</code>, return <code>"wait N s"</code> (N = seconds left, rounded up). On failure, count it; after the fifth failure each further failure sets <code>nextAt = now + 2^(failures-6) × 1000</code>. On success, reset and return <code>"ok"</code>; on failure return <code>"wrong"</code>.</q>
+<starter>
+function createThrottle() {
+  // your code
+}
+
+const throttle = createThrottle();
+</starter>
+<solution>
+function createThrottle() {
+  const accounts = new Map();
+  return {
+    attempt(account, ok, now) {
+      const state = accounts.get(account) ?? { failures: 0, nextAt: 0 };
+      accounts.set(account, state);
+      if (now < state.nextAt) return `wait ${Math.ceil((state.nextAt - now) / 1000)} s`;
+      if (ok) {
+        state.failures = 0;
+        state.nextAt = 0;
+        return "ok";
+      }
+      state.failures++;
+      if (state.failures > 5) state.nextAt = now + 2 ** (state.failures - 6) * 1000;
+      return "wrong";
+    },
+  };
+}
+
+const throttle = createThrottle();
+const results = [];
+for (let i = 0; i < 6; i++) results.push(throttle.attempt("ada", false, 0));
+results.push(throttle.attempt("ada", true, 500));
+results.push(throttle.attempt("ada", false, 1000));
+results.push(throttle.attempt("ada", true, 2500));
+results.push(throttle.attempt("ada", true, 3000));
+console.log(results.join(", "));
+</solution>
+<expected>
+wrong, wrong, wrong, wrong, wrong, wrong, wait 1 s, wrong, wait 1 s, ok
+</expected>
+<explain><p>The sixth failure starts a one-second delay, so even the right password at 500 ms must wait. At 1000 ms another failure doubles the delay to two seconds. At 3000 ms it has passed, the right password works, and the counter resets.</p></explain>
+</question>
+
+<question id="auth-code-phc" type="code" file="phc.js">
+<q>Write <code>parsePhc(stored)</code> for strings like <code>$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA</code>. Return <code>{ algorithm, version, params: { m, t, p }, salt, hash }</code> with numbers for <code>version</code> and the params, or <code>null</code> if the string does not have exactly these five parts. Then write <code>needsRehash(stored, current)</code>.</q>
+<starter>
+function parsePhc(stored) {
+  // your code
+}
+
+function needsRehash(stored, current) {
+  // your code
+}
+
+const current = { m: 19456, t: 2, p: 1 };
+</starter>
+<solution>
+function parsePhc(stored) {
+  const parts = stored.split("$");
+  if (parts.length !== 6 || parts[0] !== "") return null;
+  const [, algorithm, version, costs, salt, hash] = parts;
+  const params = Object.fromEntries(costs.split(",").map((pair) => pair.split("=")).map(([k, v]) => [k, Number(v)]));
+  return { algorithm, version: Number(version.replace("v=", "")), params, salt, hash };
+}
+
+function needsRehash(stored, current) {
+  const parsed = parsePhc(stored);
+  if (!parsed || parsed.algorithm !== "argon2id") return true;
+  return ["m", "t", "p"].some((k) => parsed.params[k] !== current[k]);
+}
+
+const current = { m: 19456, t: 2, p: 1 };
+console.log(parsePhc("$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA"));
+console.log(needsRehash("$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA", current));
+console.log(needsRehash("$argon2id$v=19$m=65536,t=3,p=1$c2FsdA$aGFzaA", current));
+console.log(needsRehash("scrypt$c2FsdA$aGFzaA", current));
+</solution>
+<expected>
+{
+  algorithm: 'argon2id',
+  version: 19,
+  params: { m: 19456, t: 2, p: 1 },
+  salt: 'c2FsdA',
+  hash: 'aGFzaA'
+}
+false
+true
+true
+</expected>
+<explain><p>Any difference from the current parameters, in either direction, or any other algorithm, means the hash should be replaced at the next successful log-in. A string that does not parse is treated as outdated, never as a match.</p></explain>
+</question>
+
+<question id="auth-code-same-answer" type="code" file="same-answer.js">
+<q>Write <code>async function logIn(users, email, password, check)</code> where <code>check(password, hash)</code> is an async password check. It must call <code>check</code> exactly once whether or not the user exists (using <code>DUMMY_HASH</code> for unknown e-mails), and return the same <code>"Wrong e-mail or password"</code> message for both failures. Count the calls.</q>
+<starter>
+const DUMMY_HASH = "hash-of-a-random-password";
+const users = new Map([["ada@example.com", { id: 7, hash: "hash-of:a long passphrase" }]]);
+let checks = 0;
+const check = async (password, hash) => {
+  checks++;
+  return hash === `hash-of:${password}`;
+};
+
+async function logIn(users, email, password, check) {
+  // your code
+}
+</starter>
+<solution>
+const DUMMY_HASH = "hash-of-a-random-password";
+const users = new Map([["ada@example.com", { id: 7, hash: "hash-of:a long passphrase" }]]);
+let checks = 0;
+const check = async (password, hash) => {
+  checks++;
+  return hash === `hash-of:${password}`;
+};
+
+async function logIn(users, email, password, check) {
+  const user = users.get(email.toLowerCase());
+  const ok = await check(password, user?.hash ?? DUMMY_HASH);
+  if (!user || !ok) return "Wrong e-mail or password";
+  return `welcome, user ${user.id}`;
+}
+
+console.log(await logIn(users, "ada@example.com", "a long passphrase", check));
+console.log(await logIn(users, "ada@example.com", "guess", check));
+console.log(await logIn(users, "nobody@example.com", "guess", check));
+console.log("password checks:", checks);
+</solution>
+<expected>
+welcome, user 7
+Wrong e-mail or password
+Wrong e-mail or password
+password checks: 3
+</expected>
+<explain><p>Every attempt runs exactly one slow check, so response times do not reveal which e-mails have accounts, and the message is identical for both failures.</p></explain>
+</question>

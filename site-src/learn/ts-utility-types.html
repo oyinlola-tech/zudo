@@ -1,0 +1,711 @@
+---
+title: Utility types
+description: Use and rebuild TypeScript's utility types, from Partial, Pick and Omit to Exclude, ReturnType, InstanceType, Awaited and ThisType, and learn where each one bites.
+minutes: 55
+youNeed: Type operators, Generics and Async TypeScript
+youBuild: The API types of a shop's user module, all derived from one User interface, plus your own tested copy of every built-in utility type
+keywords: typescript utility types, Partial, Required, Readonly, Pick, Omit, Record, Exclude, Extract, NonNullable, ReturnType, Parameters, ConstructorParameters, InstanceType, Awaited, ThisType, implement utility types, distributive omit
+objectives: Choose the right utility type for input, patch, public and lookup shapes | Rebuild Partial, Required, Readonly, Pick, Omit and Record with mapped types | Rebuild Exclude, Extract and NonNullable with conditional types, and explain distribution | Rebuild ReturnType, Parameters, ConstructorParameters, InstanceType and Awaited with infer | Avoid the traps: shallow modifiers, unchecked Omit keys, Omit on unions, overloads | Type object-literal methods with ThisType
+---
+<section>
+<h2 id="problem">A patch type that let a customer become an admin</h2>
+<p>A shop's user module lets customers edit their profile with a <code>PATCH /me</code> request. The developer reached for the obvious utility type: a patch is "a user where every field is optional", so <code>Partial&lt;User&gt;</code>:</p>
+<example file="patch.ts" project="problem">
+interface User {
+  id: string;
+  email: string;
+  name: string;
+  phone?: string;
+  role: "customer" | "staff" | "admin";
+  passwordHash: string;
+}
+
+function applyPatch(user: User, patch: Partial<User>): User {
+  return { ...user, ...patch };
+}
+
+const ada: User = { id: "U-7", email: "ada@example.com", name: "Ada", role: "customer", passwordHash: "(hash)" };
+const body = JSON.parse('{"name": "Ada Obi", "role": "admin", "id": "U-1"}') as Partial<User>;
+console.log(applyPatch(ada, body));
+</example>
+<output>
+{
+  id: 'U-1',
+  email: 'ada@example.com',
+  name: 'Ada Obi',
+  role: 'admin',
+  passwordHash: '(hash)'
+}
+</output>
+<p>The type checked out, and the result is a customer who is now an admin with someone else's id. The <code>as</code> on the JSON is its own problem (<a href="/learn/ts-validation">Runtime validation</a>), but even a perfectly validated <code>Partial&lt;User&gt;</code> would allow this, because the type <em>says</em> a patch may contain <code>role</code> and <code>id</code>. <code>Partial</code> did exactly what it promises. It was the wrong promise.</p>
+<p>Utility types are generic types that build new types from old ones. They are the most common way to derive the many shapes of one entity (input, patch, public view, lookup table), and knowing precisely what each one does, and how it is built, is what keeps you from choosing the wrong one. This lesson goes through all of TypeScript's general-purpose utilities. For each one you will see a real use, the trap, and a simplified version you write yourself. <a href="/learn/ts-advanced#utility-types">Advanced and utility types</a> gave the overview; <a href="/learn/ts-type-operators">Type operators</a> gave you <code>keyof</code> and <code>T[K]</code>, which every utility is built from.</p>
+</section>
+
+<section>
+<h2 id="tools">Two tools that build every utility</h2>
+<p>All the utility types in this lesson are ordinary type aliases in TypeScript's standard library (the <code>lib.es5.d.ts</code> file that ships with the compiler), except <code>ThisType</code>, which is a marker the compiler recognises. They are made with two constructs, each covered in depth in its own lesson. You need only the basics here.</p>
+<p>A <strong>mapped type</strong> loops over a union of keys and makes one property per key, like a <code>for…in</code> loop in the type world. <code>[K in keyof T]</code> is the loop, and the right side is the property's type:</p>
+<pre>{ [K in keyof T]: T[K] }        a copy of T
+{ [K in keyof T]?: T[K] }       every property optional
+{ readonly [K in keyof T]: T[K] }   every property readonly
+{ [K in keyof T]-?: T[K] }      "-?" removes optional</pre>
+<p>A <strong>conditional type</strong> chooses between two types, like the <code>? :</code> operator: <code>T extends U ? X : Y</code> is <code>X</code> when <code>T</code> is assignable to <code>U</code>, otherwise <code>Y</code>. Inside the condition, <code>infer R</code> captures a part of <code>T</code> in a new name. And when <code>T</code> is a type parameter and you pass it a union, the condition is applied to <strong>each member separately</strong> and the results are joined. This is called <strong>distribution</strong>, and several utilities depend on it.</p>
+<p><a href="/learn/ts-mapped-types">Mapped types</a> and <a href="/learn/ts-conditional-types">Conditional types</a> come next in this course and go much further. To check each rebuilt utility against the real one, the examples use the <code>Equal</code> and <code>Expect</code> helpers from <a href="/learn/ts-type-operators#typeof">Type operators</a>:</p>
+<file name="type-tests.ts" project="utils">
+export type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+export type Expect<T extends true> = T;
+</file>
+<p>And one entity to transform throughout, a shop's user:</p>
+<file name="user.ts" project="utils">
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  phone?: string;
+  role: "customer" | "staff" | "admin";
+  passwordHash: string;
+  address: { city: string; street: string };
+}
+</file>
+</section>
+
+<section>
+<h2 id="modifiers">Partial, Required and Readonly</h2>
+<p>These three change the <strong>modifiers</strong> of every property (whether it is optional, whether it is <code>readonly</code>) and keep the property types. They are one-line mapped types:</p>
+<example file="modifiers.ts" project="utils">
+import type { Equal, Expect } from "./type-tests.js";
+import type { User } from "./user.js";
+
+type MyPartial<T> = { [K in keyof T]?: T[K] };
+type MyRequired<T> = { [K in keyof T]-?: T[K] };
+type MyReadonly<T> = { readonly [K in keyof T]: T[K] };
+
+type M1 = Expect<Equal<MyPartial<User>, Partial<User>>>;
+type M2 = Expect<Equal<MyRequired<User>, Required<User>>>;
+type M3 = Expect<Equal<MyReadonly<User>, Readonly<User>>>;
+type M4 = Expect<Equal<Required<User>["phone"], string>>;
+
+interface SearchOptions {
+  pageSize?: number;
+  sort?: "newest" | "cheapest";
+}
+
+function withDefaults(options: SearchOptions): Required<SearchOptions> {
+  return { pageSize: options.pageSize ?? 20, sort: options.sort ?? "newest" };
+}
+
+console.log(withDefaults({ sort: "cheapest" }));
+</example>
+<output>
+{ pageSize: 20, sort: 'cheapest' }
+</output>
+<p>These are exactly the standard library's definitions. <code>M4</code> shows a detail of <code>-?</code>: it removes the <code>undefined</code> that <code>?</code> added, so a required <code>phone</code> is <code>string</code>. The everyday uses: <code>Partial</code> for options objects and "fill in later" drafts, <code>Required</code> for "options after defaults are applied" (so the code that receives them never checks for <code>undefined</code>), <code>Readonly</code> for values nobody should change.</p>
+<h3>The trap: all three are shallow</h3>
+<p>The mapped type touches the properties of <code>T</code>, not the properties of objects inside <code>T</code>. And <code>Readonly</code> is a compile-time promise, not a runtime lock:</p>
+<example file="shallow.ts" project="utils">
+import type { User } from "./user.js";
+
+const frozen: Readonly<User> = {
+  id: "U-7", email: "ada@example.com", name: "Ada", role: "customer",
+  passwordHash: "(hash)", address: { city: "Lagos", street: "12 Allen Avenue" },
+};
+
+frozen.address.city = "Abuja";
+console.log(frozen.address.city);
+
+const draft: Partial<User> = { address: { city: "Kano", street: "" } };
+console.log(Object.keys(draft));
+</example>
+<output>
+Abuja
+[ 'address' ]
+</output>
+<p><code>frozen.name = "Grace"</code> would not compile, but <code>frozen.address.city = …</code> does: <code>address</code> itself is readonly (you cannot replace it), its <code>city</code> is not. Likewise a <code>Partial&lt;User&gt;</code> still requires <em>both</em> fields of an address when you give one. A deep version needs a recursive mapped type, which is an exercise in <a href="/learn/ts-mapped-types">Mapped types</a>. For a runtime guarantee, use <code>Object.freeze</code> (also shallow) or immutable data habits.</p>
+</section>
+
+<section>
+<h2 id="pick-omit-record">Pick, Omit and Record</h2>
+<p>These choose <em>which</em> keys exist. <code>Pick&lt;T, K&gt;</code> keeps the listed keys, <code>Omit&lt;T, K&gt;</code> keeps all the others, and <code>Record&lt;K, V&gt;</code> makes a property of type <code>V</code> for every key in <code>K</code>:</p>
+<example file="keys.ts" project="utils">
+import type { Equal, Expect } from "./type-tests.js";
+import type { User } from "./user.js";
+
+type MyPick<T, K extends keyof T> = { [P in K]: T[P] };
+type MyRecord<K extends keyof any, V> = { [P in K]: V };
+type MyExclude<T, U> = T extends U ? never : T;
+type MyOmit<T, K extends keyof any> = MyPick<T, MyExclude<keyof T, K>>;
+
+type P1 = Expect<Equal<MyPick<User, "id" | "email">, Pick<User, "id" | "email">>>;
+type P2 = Expect<Equal<MyOmit<User, "passwordHash">, Omit<User, "passwordHash">>>;
+type P3 = Expect<Equal<MyRecord<"lagos" | "abuja", number>, Record<"lagos" | "abuja", number>>>;
+
+type ProfilePatch = Partial<Pick<User, "name" | "phone">>;
+type PublicUser = Omit<User, "passwordHash">;
+type RoleLabels = Record<User["role"], string>;
+
+const patch: ProfilePatch = { phone: "08031234567" };
+const labels: RoleLabels = { customer: "Customer", staff: "Staff", admin: "Administrator" };
+console.log(patch, labels.admin);
+</example>
+<output>
+{ phone: '08031234567' } Administrator
+</output>
+<ul>
+<li><code>MyPick</code> loops over <code>K</code> instead of <code>keyof T</code>, and <code>K extends keyof T</code> means you can only pick keys that exist.</li>
+<li><code>MyOmit</code> is "pick the keys that are not excluded". <code>keyof any</code> is <code>string | number | symbol</code>: any possible key.</li>
+<li><code>ProfilePatch</code> is the fix for the opening bug: a patch may only contain <code>name</code> and <code>phone</code>, each optional. Compose small utilities; the order matters (<code>Partial&lt;Pick&lt;…&gt;&gt;</code> picks first, then makes those optional).</li>
+<li><code>Record&lt;User["role"], string&gt;</code> must have a label for every role, and gains a compile error the day someone adds a role.</li>
+</ul>
+<h3>Trap 1: Omit does not check its keys</h3>
+<p>Look at the constraints again. <code>Pick</code> has <code>K extends keyof T</code>, but <code>Omit</code> has <code>K extends keyof any</code>. The library chose that on purpose (so <code>Omit</code> works with keys a generic <code>T</code> might not have), and the price is that a typo is silently accepted:</p>
+<example file="omit-typo.ts" project="utils">
+import type { User } from "./user.js";
+
+type PublicUser = Omit<User, "passwrodHash">;
+
+const user: User = {
+  id: "U-7", email: "ada@example.com", name: "Ada", role: "customer",
+  passwordHash: "$2b$12$secret", address: { city: "Lagos", street: "12 Allen Avenue" },
+};
+const response: PublicUser = user;
+console.log(JSON.stringify(response));
+</example>
+<output>
+{"id":"U-7","email":"ada@example.com","name":"Ada","role":"customer","passwordHash":"$2b$12$secret","address":{"city":"Lagos","street":"12 Allen Avenue"}}
+</output>
+<p>The misspelt key omitted nothing, so <code>PublicUser</code> still has <code>passwordHash</code>, and the hash went out in the response. A stricter version is one constraint away:</p>
+<example file="strict-omit.ts" project="utils" check="tsc-error">
+import type { User } from "./user.js";
+
+type StrictOmit<T, K extends keyof T> = Pick<T, Exclude<keyof T, K>>;
+
+type PublicUser = StrictOmit<User, "passwrodHash">;
+</example>
+<output kind="tsc">
+strict-omit.ts:5:36 - error TS2344: Type '"passwrodHash"' does not satisfy the constraint 'keyof User'.
+
+5 type PublicUser = StrictOmit<User, "passwrodHash">;
+                                     ~~~~~~~~~~~~~~
+
+
+Found 1 error in strict-omit.ts:5
+</output>
+<p>Even with the right spelling, remember that a type does not remove data: <code>const response: PublicUser = user</code> compiles because a full user has every property a public user needs. Build the public object field by field, as in the <a href="/learn/ts-advanced#practice">public user exercise</a>.</p>
+<h3>Trap 2: Omit and Pick on a union</h3>
+<p>Payments are a discriminated union. Omitting the id from "a payment" seems harmless:</p>
+<example file="omit-union.ts" project="utils" check="tsc-error">
+type Payment =
+  | { id: string; kind: "card"; last4: string; amountKobo: number }
+  | { id: string; kind: "transfer"; bankCode: string; amountKobo: number };
+
+type NewPayment = Omit<Payment, "id">;
+
+const card: NewPayment = { kind: "card", last4: "4242", amountKobo: 500_000 };
+</example>
+<output kind="tsc">
+omit-union.ts:7:42 - error TS2353: Object literal may only specify known properties, and 'last4' does not exist in type 'NewPayment'.
+
+7 const card: NewPayment = { kind: "card", last4: "4242", amountKobo: 500_000 };
+                                           ~~~~~
+
+
+Found 1 error in omit-union.ts:7
+</output>
+<p><code>keyof Payment</code> is only the <em>shared</em> keys (from <a href="/learn/ts-type-operators#keyof">Type operators</a>), so <code>Omit</code> produced one flat object, <code>{ kind: "card" | "transfer"; amountKobo: number }</code>. The union and its extra fields are gone. The fix uses distribution: a conditional type on a bare type parameter runs once per member, so each member is omitted separately:</p>
+<example file="distributive-omit.ts" project="utils">
+type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
+
+type Payment =
+  | { id: string; kind: "card"; last4: string; amountKobo: number }
+  | { id: string; kind: "transfer"; bankCode: string; amountKobo: number };
+
+type NewPayment = DistributiveOmit<Payment, "id">;
+
+const drafts: NewPayment[] = [
+  { kind: "card", last4: "4242", amountKobo: 500_000 },
+  { kind: "transfer", bankCode: "058", amountKobo: 1_200_000 },
+];
+for (const draft of drafts) {
+  console.log(draft.kind === "card" ? `card *${draft.last4}` : `transfer to ${draft.bankCode}`);
+}
+</example>
+<output>
+card *4242
+transfer to 058
+</output>
+<p><code>T extends unknown</code> is always true; it is there only to trigger distribution. The result is a union of two omitted members, still discriminated by <code>kind</code>. <code>Pick</code> has the same limitation, and the same fix.</p>
+</section>
+
+<section>
+<h2 id="union-filters">Exclude, Extract and NonNullable</h2>
+<p>These three filter the <em>members of a union</em>. They are conditional types, and they work because of distribution: each member is tested on its own, members that become <code>never</code> disappear, and the rest are joined again.</p>
+<example file="filters.ts" project="utils">
+import type { Equal, Expect } from "./type-tests.js";
+
+type MyExclude<T, U> = T extends U ? never : T;
+type MyExtract<T, U> = T extends U ? T : never;
+type MyNonNullable<T> = T extends null | undefined ? never : T;
+
+type OrderStatus = "pending" | "paid" | "shipped" | "delivered" | "cancelled";
+type Payment =
+  | { kind: "card"; last4: string }
+  | { kind: "transfer"; bankCode: string }
+  | { kind: "wallet"; phone: string };
+
+type F1 = Expect<Equal<MyExclude<OrderStatus, "cancelled" | "delivered">, Exclude<OrderStatus, "cancelled" | "delivered">>>;
+type F2 = Expect<Equal<MyExtract<Payment, { kind: "card" | "wallet" }>, Extract<Payment, { kind: "card" | "wallet" }>>>;
+type F3 = Expect<Equal<MyNonNullable<string | null | undefined>, NonNullable<string | null | undefined>>>;
+
+type OpenStatus = Exclude<OrderStatus, "delivered" | "cancelled">;
+type InstantPayment = Extract<Payment, { kind: "card" | "wallet" }>;
+
+const open: OpenStatus[] = ["pending", "paid", "shipped"];
+const instant: InstantPayment = { kind: "wallet", phone: "08031234567" };
+console.log(open.length, instant.kind);
+</example>
+<output>
+3 wallet
+</output>
+<p>Step through <code>MyExclude&lt;OrderStatus, "cancelled" | "delivered"&gt;</code>: <code>"pending" extends "cancelled" | "delivered"</code> is false, so it stays; <code>"cancelled"</code> extends it, so it becomes <code>never</code>; and so on. What is left is <code>"pending" | "paid" | "shipped"</code>. <code>Extract</code> is the opposite, and it matches by shape: <code>{ kind: "card"; last4: string }</code> is assignable to <code>{ kind: "card" | "wallet" }</code>, so the card member is kept. That makes <code>Extract&lt;Payment, { kind: "card" }&gt;</code> the standard way to name one member of a discriminated union, as <a href="/learn/ts-narrowing#type-guards">Narrowing</a> did for its type guard.</p>
+<p>The real <code>NonNullable&lt;T&gt;</code> is written <code>T &amp; {}</code>. <code>{}</code> means "any value except <code>null</code> and <code>undefined</code>" (from <a href="/learn/ts-special-types#object-types">Special types</a>), so intersecting with it removes exactly those two, and it also works on a type parameter whose members are not known yet. The conditional version gives the same results on concrete types.</p>
+<h3>The trap: Exclude does not check its argument either</h3>
+<p><code>Exclude&lt;OrderStatus, "canceled"&gt;</code> (American spelling) compiles and excludes nothing, just like the <code>Omit</code> typo. When the union is yours, a checked wrapper costs one line: <code>type Without&lt;T, U extends T&gt; = Exclude&lt;T, U&gt;</code>.</p>
+</section>
+
+<section>
+<h2 id="functions-classes">ReturnType, Parameters, ConstructorParameters and InstanceType</h2>
+<p>These four take a function or class <em>type</em> apart. Each is a conditional type that matches a function shape and uses <code>infer</code> to capture one part of it:</p>
+<example file="functions.ts" project="utils">
+import type { Equal, Expect } from "./type-tests.js";
+
+type MyReturnType<F extends (...args: any) => any> = F extends (...args: any) => infer R ? R : never;
+type MyParameters<F extends (...args: any) => any> = F extends (...args: infer P) => any ? P : never;
+type MyConstructorParameters<C extends abstract new (...args: any) => any> = C extends abstract new (...args: infer P) => any ? P : never;
+type MyInstanceType<C extends abstract new (...args: any) => any> = C extends abstract new (...args: any) => infer I ? I : never;
+
+function quoteDelivery(zone: "lagos" | "abuja", weightKg: number, express = false) {
+  return { zone, feeKobo: weightKg * (express ? 90_000 : 50_000), express };
+}
+
+class Invoice {
+  constructor(readonly number: string, readonly totalKobo: number, readonly currency: "NGN" | "USD" = "NGN") {}
+}
+
+type R1 = Expect<Equal<MyReturnType<typeof quoteDelivery>, ReturnType<typeof quoteDelivery>>>;
+type R2 = Expect<Equal<MyParameters<typeof quoteDelivery>, [zone: "lagos" | "abuja", weightKg: number, express?: boolean]>>;
+type R3 = Expect<Equal<MyConstructorParameters<typeof Invoice>, ConstructorParameters<typeof Invoice>>>;
+type R4 = Expect<Equal<MyInstanceType<typeof Invoice>, Invoice>>;
+
+type Quote = ReturnType<typeof quoteDelivery>;
+const quote: Quote = quoteDelivery("abuja", 3, true);
+console.log(quote);
+</example>
+<output>
+{ zone: 'abuja', feeKobo: 270000, express: true }
+</output>
+<ul>
+<li>The constraint <code>(...args: any) =&gt; any</code> means "any function". It uses <code>any</code> on purpose: with <code>unknown</code> parameters, functions that take specific arguments would not fit, for the variance reasons in <a href="/learn/ts-type-system">The type system in depth</a>.</li>
+<li><code>Parameters</code> gives a <strong>labelled tuple</strong>, including optional elements for parameters with defaults (<code>R2</code>), so you can spread it back into another function's parameter list.</li>
+<li><code>typeof Invoice</code> is the class's constructor type (from <a href="/learn/ts-type-operators#typeof">Type operators</a>). The <code>abstract</code> in the constraint lets abstract classes fit too.</li>
+<li>The built-in <code>ReturnType</code> and <code>InstanceType</code> fall back to <code>any</code> instead of <code>never</code>; with the constraint in place, that branch is never reached for valid input.</li>
+</ul>
+<h3>Real uses: wrappers and factories</h3>
+<p>Wrapping a function without repeating its signature is the classic use of <code>Parameters</code> and <code>ReturnType</code>. <code>ConstructorParameters</code> and <code>InstanceType</code> do the same for classes:</p>
+<example file="wrappers.ts" project="utils">
+function withTiming<F extends (...args: any[]) => any>(label: string, fn: F): (...args: Parameters<F>) => ReturnType<F> {
+  return (...args) => {
+    const result = fn(...args);
+    console.log(`${label} called with ${JSON.stringify(args)}`);
+    return result;
+  };
+}
+
+function convert(kobo: number, rate: number): string {
+  return `$${(kobo / 100 / rate).toFixed(2)}`;
+}
+
+const timedConvert = withTiming("convert", convert);
+console.log(timedConvert(4_500_000, 1540.25));
+
+function createAll<C extends new (...args: any[]) => any>(Class: C, rows: ConstructorParameters<C>[]): InstanceType<C>[] {
+  return rows.map((row) => new Class(...row));
+}
+
+class Room {
+  constructor(readonly name: string, readonly priceKobo: number) {}
+}
+
+const rooms = createAll(Room, [["Deluxe", 4_500_000], ["Standard", 2_500_000]]);
+console.log(rooms.map((room) => room.name));
+</example>
+<output>
+convert called with [4500000,1540.25]
+$29.22
+[ 'Deluxe', 'Standard' ]
+</output>
+<p><code>timedConvert</code> has the type <code>(kobo: number, rate: number) =&gt; string</code>, parameter names included, and <code>createAll(Room, [["Deluxe", "cheap"]])</code> would not compile, because each row must match <code>Room</code>'s constructor.</p>
+<h3>The trap: overloads and generic functions</h3>
+<p>A function with several overload signatures has several shapes, but <code>infer</code> only sees the <strong>last</strong> one:</p>
+<example file="overloads.ts" project="utils" check="tsc-error">
+function findBooking(id: string): { id: string; guest: string };
+function findBooking(ids: string[]): { id: string; guest: string }[];
+function findBooking(input: string | string[]) {
+  return typeof input === "string" ? { id: input, guest: "Ada" } : input.map((id) => ({ id, guest: "Ada" }));
+}
+
+type Found = ReturnType<typeof findBooking>;
+const one: Found = { id: "B-1", guest: "Ada" };
+</example>
+<output kind="tsc">
+overloads.ts:8:22 - error TS2353: Object literal may only specify known properties, and 'id' does not exist in type '{ id: string; guest: string; }[]'.
+
+8 const one: Found = { id: "B-1", guest: "Ada" };
+                       ~~
+
+
+Found 1 error in overloads.ts:8
+</output>
+<p><code>ReturnType</code> picked the array overload. Generic functions have a similar limit: their type parameters become <code>unknown</code> (or their constraint) in the result, because there is no call to infer them from. When you need the result type of one specific use, name that type directly instead of deriving it.</p>
+</section>
+
+<section>
+<h2 id="awaited">Awaited</h2>
+<p><a href="/learn/ts-async#awaited">Async TypeScript</a> used <code>Awaited&lt;T&gt;</code> to describe what <code>await</code> gives. It is a recursive conditional type: if <code>T</code> is a thenable, unwrap its value and try again; otherwise stop. A simplified version:</p>
+<example file="awaited.ts" project="utils">
+import type { Equal, Expect } from "./type-tests.js";
+
+type MyAwaited<T> = T extends PromiseLike<infer V> ? MyAwaited<V> : T;
+
+async function loadWallet(id: string) {
+  return { id, balanceKobo: 1_250_000 };
+}
+
+type A1 = Expect<Equal<MyAwaited<Promise<Promise<number>>>, number>>;
+type A2 = Expect<Equal<MyAwaited<string | Promise<boolean>>, string | boolean>>;
+type A3 = Expect<Equal<MyAwaited<ReturnType<typeof loadWallet>>, Awaited<ReturnType<typeof loadWallet>>>>;
+
+type Wallet = Awaited<ReturnType<typeof loadWallet>>;
+const wallet: Wallet = await loadWallet("W-3");
+console.log(wallet.balanceKobo / 100);
+</example>
+<output>
+12500
+</output>
+<p>A type alias may refer to itself inside a conditional type, which is how the unwrapping repeats until no promise is left. It distributes too (<code>A2</code>). The real <code>Awaited</code> is stricter than this version in two ways: it only unwraps objects whose <code>then</code> method's first parameter is a callable function, exactly as <code>await</code> does at runtime, and it leaves <code>null</code> and <code>undefined</code> alone. <code>Awaited&lt;ReturnType&lt;typeof fn&gt;&gt;</code> is the everyday combination.</p>
+</section>
+
+<section>
+<h2 id="thistype">ThisType</h2>
+<p>The last utility is different: <code>interface ThisType&lt;T&gt; {}</code> is empty. It is a <strong>marker</strong>: when an object literal's contextual type includes <code>ThisType&lt;T&gt;</code>, the compiler uses <code>T</code> as the type of <code>this</code> inside that literal's methods. It exists for libraries that combine several objects into one, such as a store built from state plus actions. Without it, <code>this</code> in the actions only knows about the actions object:</p>
+<example file="store-untyped.ts" project="store" check="tsc-error">
+function defineStore<S extends object, A extends object>(definition: { state: S; actions: A }): S & A {
+  return Object.assign({}, definition.state, definition.actions);
+}
+
+const wallet = defineStore({
+  state: { owner: "Ada", balanceKobo: 0 },
+  actions: {
+    deposit(kobo: number) {
+      this.balanceKobo += kobo;
+    },
+  },
+});
+</example>
+<output kind="tsc">
+store-untyped.ts:9:12 - error TS2339: Property 'balanceKobo' does not exist on type '{ deposit(kobo: number): void; }'.
+
+9       this.balanceKobo += kobo;
+             ~~~~~~~~~~~
+
+
+Found 1 error in store-untyped.ts:9
+</output>
+<p>Add <code>ThisType&lt;S &amp; A&gt;</code> to the type of <code>actions</code>, and <code>this</code> becomes "the state and the actions together", which is what it really is when <code>wallet.deposit()</code> runs:</p>
+<example file="store.ts" project="store">
+function defineStore<S extends object, A extends object>(definition: { state: S; actions: A & ThisType<S & A> }): S & A {
+  return Object.assign({}, definition.state, definition.actions);
+}
+
+const wallet = defineStore({
+  state: { owner: "Ada", balanceKobo: 0 },
+  actions: {
+    deposit(kobo: number) {
+      this.balanceKobo += kobo;
+      return this.statement();
+    },
+    statement() {
+      return `${this.owner}: ₦${(this.balanceKobo / 100).toLocaleString("en-NG")}`;
+    },
+  },
+});
+
+console.log(wallet.deposit(500_000));
+console.log(wallet.deposit(1_250_000));
+</example>
+<output>
+Ada: ₦5,000
+Ada: ₦17,500
+</output>
+<p><code>ThisType</code> needs <code>noImplicitThis</code>, which <code>strict</code> turns on. It only affects methods written in the object literal: a method that is detached and called on its own (<code>const d = wallet.deposit; d(5)</code>) still loses <code>this</code> at runtime, as <a href="/learn/js-this">this</a> explains. You will mostly meet <code>ThisType</code> in the types of libraries, not write it.</p>
+</section>
+
+<section>
+<h2 id="build">Build: the user module's types from one interface</h2>
+<reason title="Before you derive the types">
+<p>The shop's user module needs types for: creating a user (sign-up), a customer editing their own profile, an admin editing a user, the public view sent to other users, and an audit event per change. Before you read the code, decide for each one:</p>
+<ul>
+<li>Which fields may the client send? Which must it never send (think about the opening bug)?</li>
+<li>Which fields does the server generate, and which does it never reveal?</li>
+<li>Where do you want the compiler to force an update when someone adds a field to <code>User</code>, and where would that be dangerous?</li>
+<li>What must happen at runtime that no type can do for you?</li>
+</ul>
+<answer>
+<p>The server generates <code>id</code> and <code>createdAt</code> and never reveals <code>passwordHash</code>; sign-up sends a plain <code>password</code> instead. Customers may change only <code>name</code>, <code>phone</code> and <code>address</code>; admins may also change <code>role</code>. The safe direction for inputs is an <strong>allow-list</strong> (<code>Pick</code>): a new field on <code>User</code> is not accepted from clients until someone decides it should be. For outputs, <code>Omit</code> of the secret fields is convenient but risky (a new secret field would leak), so the public view is also a <code>Pick</code>. At runtime, types do nothing: the patch must be copied field by field from an allow-list of keys, and the public object built by hand.</p>
+</answer>
+</reason>
+<example file="user-types.ts" project="users">
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  phone?: string;
+  role: "customer" | "staff" | "admin";
+  passwordHash: string;
+  address: { city: string; street: string };
+  createdAt: string;
+}
+
+type ServerFields = "id" | "createdAt" | "passwordHash";
+
+export type SignUpInput = Omit<User, ServerFields | "role"> & { password: string };
+export const PROFILE_FIELDS = ["name", "phone", "address"] as const;
+export type ProfilePatch = Partial<Pick<User, (typeof PROFILE_FIELDS)[number]>>;
+export type AdminPatch = ProfilePatch & Partial<Pick<User, "role">>;
+export type PublicUser = Readonly<Pick<User, "id" | "name" | "role">>;
+export type UserEvent =
+  | { type: "user.created"; user: PublicUser }
+  | { type: "user.updated"; userId: string; fields: (keyof AdminPatch)[] }
+  | { type: "user.deleted"; userId: string };
+export type UpdatedEvent = Extract<UserEvent, { type: "user.updated" }>;
+</example>
+<p>Every type is one line, and each one says what it means. <code>SignUpInput</code> uses <code>Omit</code> because the server fields are a fixed, known list; the intersection adds <code>password</code>. The patch types are allow-lists, and <code>ProfilePatch</code>'s keys come from a runtime array, so the code that copies fields can use the same list. Now the service, which uses the types and does the runtime half:</p>
+<example file="user-service.ts" project="users">
+import { PROFILE_FIELDS } from "./user-types.js";
+import type { ProfilePatch, PublicUser, UpdatedEvent, User } from "./user-types.js";
+
+export function toPublic(user: User): PublicUser {
+  return { id: user.id, name: user.name, role: user.role };
+}
+
+export function applyProfilePatch(user: User, body: Record<string, unknown>): { user: User; event: UpdatedEvent } {
+  const patch: ProfilePatch = {};
+  const changed: (keyof ProfilePatch)[] = [];
+  for (const field of PROFILE_FIELDS) {
+    if (body[field] === undefined) continue;
+    if (field === "address") {
+      const address = body.address;
+      if (typeof address === "object" && address !== null && "city" in address && "street" in address
+        && typeof address.city === "string" && typeof address.street === "string") {
+        patch.address = { city: address.city, street: address.street };
+        changed.push(field);
+      }
+    } else if (typeof body[field] === "string") {
+      patch[field] = body[field];
+      changed.push(field);
+    }
+  }
+  return { user: { ...user, ...patch }, event: { type: "user.updated", userId: user.id, fields: changed } };
+}
+
+export const userService = {
+  async findById(id: string): Promise<User | undefined> {
+    if (id !== "U-7") return undefined;
+    return {
+      id, email: "ada@example.com", name: "Ada", role: "customer", passwordHash: "(hash)",
+      address: { city: "Lagos", street: "12 Allen Avenue" }, createdAt: "2026-01-15",
+    };
+  },
+  toPublic,
+};
+</example>
+<p>The <code>for…of</code> over <code>PROFILE_FIELDS</code> is the runtime twin of <code>Pick</code>: nothing outside the list is even read. Inside the loop, <code>field</code> is <code>"name" | "phone" | "address"</code>; the <code>address</code> branch is split off because its value is an object, and for the other two <code>patch[field] = body[field]</code> is allowed once the value is known to be a string, since both remaining fields accept a string. Finally the attack from the start of the lesson, and the derived types of the service:</p>
+<example file="main.ts" project="users">
+import { applyProfilePatch, userService } from "./user-service.js";
+import type { PublicUser } from "./user-types.js";
+
+type FoundUser = NonNullable<Awaited<ReturnType<typeof userService.findById>>>;
+type FindArgs = Parameters<typeof userService.findById>;
+
+const args: FindArgs = ["U-7"];
+const found: FoundUser | undefined = await userService.findById(...args);
+if (found === undefined) throw new Error("user U-7 missing");
+
+const attack = JSON.parse('{"name": "Ada Obi", "role": "admin", "id": "U-1", "phone": "08031234567"}') as Record<string, unknown>;
+const { user, event } = applyProfilePatch(found, attack);
+const view: PublicUser = userService.toPublic(user);
+
+console.log(view);
+console.log(event);
+</example>
+<output>
+{ id: 'U-7', name: 'Ada Obi', role: 'customer' }
+{ type: 'user.updated', userId: 'U-7', fields: [ 'name', 'phone' ] }
+</output>
+<p>The name and phone changed; the <code>role</code> and <code>id</code> in the request were never read. The event lists exactly the changed fields, typed as <code>(keyof AdminPatch)[]</code>. And <code>FoundUser</code> shows how utilities compose: <code>ReturnType</code> gets <code>Promise&lt;User | undefined&gt;</code>, <code>Awaited</code> removes the promise, <code>NonNullable</code> removes <code>undefined</code>. Read such chains from the inside out.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing your own utility types</h2>
+<p>Rebuilding a utility is only useful if you know it is right. The tests in this lesson compared each version with the built-in on one type. A utility you write for your own code has no built-in to compare with, so test it on the cases where utilities usually break: optional properties, readonly properties, unions, and the empty case:</p>
+<example file="utils.test.ts" project="utils">
+import type { Equal, Expect } from "./type-tests.js";
+
+type StrictOmit<T, K extends keyof T> = Pick<T, Exclude<keyof T, K>>;
+type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
+
+interface Row {
+  readonly id: string;
+  note?: string;
+  kobo: number;
+}
+type Payment = { id: string; kind: "card"; last4: string } | { id: string; kind: "wallet"; phone: string };
+
+type S1 = Expect<Equal<StrictOmit<Row, "kobo">, { readonly id: string; note?: string }>>;
+type S2 = Expect<Equal<StrictOmit<Row, never>, Row>>;
+// @ts-expect-error: unknown keys must be rejected
+type S3 = StrictOmit<Row, "amount">;
+
+type D1 = Expect<Equal<DistributiveOmit<Payment, "id">, { kind: "card"; last4: string } | { kind: "wallet"; phone: string }>>;
+type D2 = Expect<Equal<DistributiveOmit<never, "id">, never>>;
+
+console.log("utility type tests compiled");
+</example>
+<output>
+utility type tests compiled
+</output>
+<p><code>S1</code> checks that modifiers survive (<code>Pick</code> keeps <code>readonly</code> and <code>?</code> because it is a <em>homomorphic</em> mapped type, a term <a href="/learn/ts-mapped-types">Mapped types</a> explains). <code>S2</code> and <code>D2</code> are the empty cases: omitting nothing, and a union with no members, which distribution turns into <code>never</code>. <code>S3</code> is the reason <code>StrictOmit</code> exists, pinned with <code>@ts-expect-error</code>.</p>
+</section>
+
+<section>
+<h2 id="production">Utility types in production</h2>
+<ul>
+<li><strong>Allow-list inputs with <code>Pick</code>; be careful deny-listing with <code>Omit</code>.</strong> A new field should not become writable or public by accident.</li>
+<li><strong>Prefer the built-ins.</strong> Everyone knows <code>Partial</code> and <code>Pick</code>; your <code>MyPartial</code> is a thing to learn. Write your own only for gaps, such as <code>StrictOmit</code> and <code>DistributiveOmit</code>, and test them.</li>
+<li><strong>Name the result.</strong> <code>type ProfilePatch = Partial&lt;Pick&lt;User, …&gt;&gt;</code> once, instead of repeating the expression at every use. Error messages also become readable.</li>
+<li><strong>Remember the traps:</strong> modifiers are shallow; <code>Omit</code> and <code>Exclude</code> do not check keys; <code>Omit</code> and <code>Pick</code> flatten unions; <code>ReturnType</code> sees only the last overload.</li>
+<li><strong>Types never change data.</strong> A <code>Pick</code> type does not remove fields from an object, and <code>Readonly</code> does not freeze it. Pair each type with the runtime code that makes it true.</li>
+<li>Libraries such as <code>type-fest</code> collect many more tested utilities (<code>SetOptional</code>, <code>PartialDeep</code>, …). Read their source once you have finished the next two lessons; it is a good way to learn.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Make some fields optional">
+<p>Write <code>Optional&lt;T, K extends keyof T&gt;</code>: the same as <code>T</code>, but with only the keys <code>K</code> made optional. Use it for a booking where <code>notes</code> and <code>roomId</code> may be filled in later, and prove it with type tests.</p>
+<solution>
+<example file="optional.ts" project="ex-optional">
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+type Optional<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
+
+interface Booking {
+  id: string;
+  guest: string;
+  nights: number;
+  roomId: string;
+  notes: string;
+}
+
+type DraftBooking = Optional<Booking, "roomId" | "notes">;
+
+type O1 = Expect<Equal<DraftBooking["roomId"], string | undefined>>;
+type O2 = Expect<Equal<DraftBooking["guest"], string>>;
+
+const draft: DraftBooking = { id: "B-12", guest: "Grace", nights: 2 };
+console.log(draft, "roomId" in draft);
+</example>
+<output>
+{ id: 'B-12', guest: 'Grace', nights: 2 } false
+</output>
+<p>Split the type in two: everything except <code>K</code> unchanged, and <code>K</code> picked and made optional; the intersection joins them. The type tests use indexed access, because an intersection is not <code>Equal</code> to the flattened object type even when it describes the same values. <a href="/learn/ts-mapped-types">Mapped types</a> shows how to flatten it.</p>
+</solution>
+</exercise>
+<exercise title="Rebuild NonNullable and Extract, then use them">
+<p>Without looking back, write <code>MyExtract</code> and <code>MyNonNullable</code>. Use them to get the refund events from the event union below, and to type a list of phone numbers with the missing ones removed.</p>
+<solution>
+<example file="rebuild.ts" project="ex-rebuild">
+type MyExtract<T, U> = T extends U ? T : never;
+type MyNonNullable<T> = T extends null | undefined ? never : T;
+
+type PaymentEvent =
+  | { type: "payment.captured"; amountKobo: number }
+  | { type: "payment.refunded"; amountKobo: number; reason: string }
+  | { type: "payment.failed"; code: string };
+
+type RefundEvent = MyExtract<PaymentEvent, { type: "payment.refunded" }>;
+
+const events: PaymentEvent[] = [
+  { type: "payment.captured", amountKobo: 500_000 },
+  { type: "payment.refunded", amountKobo: 200_000, reason: "damaged item" },
+  { type: "payment.failed", code: "card_declined" },
+];
+
+const refunds = events.filter((event): event is RefundEvent => event.type === "payment.refunded");
+console.log(refunds.map((refund) => `${refund.amountKobo} (${refund.reason})`));
+
+const phones: (string | null | undefined)[] = ["08031234567", null, "08129876543", undefined];
+const present: MyNonNullable<(typeof phones)[number]>[] = phones.filter((phone) => phone != null);
+console.log(present);
+</example>
+<output>
+[ '200000 (damaged item)' ]
+[ '08031234567', '08129876543' ]
+</output>
+<p>Both are distributive conditional types. The refund guard spells out its predicate with the extracted type, so <code>refund.reason</code> is allowed. <code>(typeof phones)[number]</code> is the element type from <a href="/learn/ts-type-operators#indexed-access">Type operators</a>, and <code>MyNonNullable</code> removes <code>null | undefined</code> from it.</p>
+</solution>
+</exercise>
+<exercise title="A typed memoize">
+<p>Write <code>memoize&lt;F extends (arg: string) =&gt; unknown&gt;(fn: F): (arg: Parameters&lt;F&gt;[0]) =&gt; ReturnType&lt;F&gt;</code> that caches results by argument. Use it on a slow exchange-rate lookup and show that the second call does not run the lookup.</p>
+<solution>
+<example file="memoize.ts" project="ex-memo">
+function memoize<F extends (arg: string) => unknown>(fn: F): (arg: Parameters<F>[0]) => ReturnType<F> {
+  const cache = new Map<string, ReturnType<F>>();
+  return (arg) => {
+    const hit = cache.get(arg);
+    if (hit !== undefined || cache.has(arg)) return hit as ReturnType<F>;
+    const result = fn(arg) as ReturnType<F>;
+    cache.set(arg, result);
+    return result;
+  };
+}
+
+let lookups = 0;
+function rateFor(currency: string): number {
+  lookups += 1;
+  return currency === "USD" ? 1540.25 : 1950.5;
+}
+
+const cachedRate = memoize(rateFor);
+console.log(cachedRate("USD"), cachedRate("USD"), cachedRate("GBP"), "lookups:", lookups);
+</example>
+<output>
+1540.25 1540.25 1950.5 lookups: 2
+</output>
+<p><code>cachedRate</code> is typed <code>(arg: string) =&gt; number</code>, derived from <code>rateFor</code>. The two <code>as ReturnType&lt;F&gt;</code> are needed because inside a generic function TypeScript cannot relate <code>fn(arg)</code>, typed by the constraint as <code>unknown</code>, to the unresolved <code>ReturnType&lt;F&gt;</code>. That is a common, accepted spot for an assertion: the signature is what callers rely on, and it is correct. <code>cache.has</code> handles a cached <code>undefined</code> result.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li><code>Partial</code>, <code>Required</code> and <code>Readonly</code> are mapped types that change modifiers. They are shallow, and <code>Readonly</code> is compile-time only.</li>
+<li><code>Pick</code>, <code>Omit</code> and <code>Record</code> choose keys. <code>Omit</code> does not check its keys and flattens unions: use <code>StrictOmit</code> and <code>DistributiveOmit</code> where it matters, and prefer <code>Pick</code> allow-lists for inputs and public views.</li>
+<li><code>Exclude</code>, <code>Extract</code> and <code>NonNullable</code> filter union members through distribution. <code>Extract&lt;Union, { kind: "x" }&gt;</code> names one member of a discriminated union.</li>
+<li><code>ReturnType</code>, <code>Parameters</code>, <code>ConstructorParameters</code> and <code>InstanceType</code> take function and class types apart with <code>infer</code>; they see only the last overload.</li>
+<li><code>Awaited</code> unwraps thenables recursively. <code>ThisType</code> is a marker that types <code>this</code> in object-literal methods.</li>
+<li>Types never change data: pair every derived type with the runtime code (allow-lists, field-by-field copies) that makes it true.</li>
+</ul>
+<p>Next: <a href="/learn/ts-mapped-types">Mapped types</a>, the construct behind half of this lesson, in depth: modifiers, key remapping with <code>as</code>, filtering keys, and a type-safe configuration system.</p>
+</section>

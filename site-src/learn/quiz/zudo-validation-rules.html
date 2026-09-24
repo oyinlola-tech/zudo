@@ -1,0 +1,692 @@
+<question id="vr-shape-vs-rule" type="choice">
+<q>Which check is a <strong>rule</strong> for <code>@zudojs/validation</code> rather than a <strong>shape</strong> for the task's <code>@zudojs/schema</code> DTO?</q>
+<option>The title is a string</option>
+<option>The priority is one of low, normal, high</option>
+<option correct>No two tasks may have titles that differ only in case and spacing</option>
+<option><code>done</code> defaults to <code>false</code></option>
+<explain><p>Types, formats, allowed values and defaults describe the shape of one value. "The same title ignoring case and spacing" depends on what the value means and on the other tasks: a rule, checked after the schema has produced a typed value.</p></explain>
+</question>
+
+<question id="vr-why-dupes" type="output">
+<q>What does this print?</q>
+<code file="dupes.ts">
+import { schema } from "@zudojs/schema";
+
+const Title = schema.string().trim().min(3).max(100);
+const seen = new Set<string>();
+for (const raw of ["Buy milk", " Buy milk ", "Buy  milk", "BUY MILK"]) {
+  seen.add(Title.parse(raw));
+}
+console.log(seen.size);
+</code>
+<option correct>3</option>
+<option>1</option>
+<option>4</option>
+<option>2</option>
+<explain><p><code>trim()</code> only removes spaces at the ends, so <code>" Buy milk "</code> joins <code>"Buy milk"</code>. The double space and the capitals still make two more distinct strings.</p></explain>
+</question>
+
+<question id="vr-code-points" type="output">
+<q>What does this print?</q>
+<code file="lengths.ts">
+import { schema } from "@zudojs/schema";
+import { checkConstraint, minLength } from "@zudojs/validation";
+
+const title = "🛒🛒";
+console.log(title.length, schema.string().min(3).safeParse(title).success, checkConstraint(minLength(3), title).success);
+</code>
+<option correct>4 true false</option>
+<option>2 false false</option>
+<option>4 true true</option>
+<option>2 true false</option>
+<explain><p>Each emoji is two UTF-16 code units, so <code>length</code> is 4 and the schema's <code>min(3)</code> passes. The constraint counts code points, what a person sees: 2 characters, so it fails.</p></explain>
+</question>
+
+<question id="vr-guards-differ" type="choice">
+<q>An error handler checks <code>isSchemaValidationError(error)</code> from <code>@zudojs/schema</code> before adding <code>issues</code> to the response. What happens with an error thrown by <code>parse</code> from <code>@zudojs/validation</code>?</q>
+<option>It is recognised, because both have the code <code>ERR_SCHEMA_VALIDATION</code></option>
+<option correct>It is not recognised, so the issues are not added; the error is still an exposed 400</option>
+<option>It becomes a 500</option>
+<option>It throws a <code>TypeError</code></option>
+<explain><p>The two packages have different error classes. They share status and code, so generic handling works, but a guard from one package does not recognise the other's errors.</p></explain>
+</question>
+
+<question id="vr-check-all" type="output">
+<q>What does this print?</q>
+<code file="check-all.ts">
+import { between, checkConstraints, integer } from "@zudojs/validation";
+
+const result = checkConstraints([integer, between(1, 8)], 12.5, ["guests"]);
+console.log(result.success, result.issues?.map((i) => `${i.path.join(".")}/${i.code}`));
+</code>
+<option correct>false [ 'guests/invalid_integer', 'guests/value_out_of_range' ]</option>
+<option>false [ 'guests/invalid_integer' ]</option>
+<option>false [ '/invalid_integer', '/value_out_of_range' ]</option>
+<option>true undefined</option>
+<explain><p><code>checkConstraints</code> runs every constraint and collects every failure, each with the path you passed, so a form can show all problems at once.</p></explain>
+</question>
+
+<question id="vr-no-value" type="choice">
+<q>Why does <code>checkConstraint</code> not copy the rejected value into the issue?</q>
+<option>To keep issues small</option>
+<option correct>Issues end up in exposed 400 responses and in logs, and the rejected value may be a password, a token or personal data</option>
+<option>Because values cannot be serialized</option>
+<option>So that the same issue can be reused for many values</option>
+<explain><p>An error that echoes "hunter2 is too short" leaks the password to anyone reading the response or the logs. The code and message are enough to fix the input.</p></explain>
+</question>
+
+<question id="vr-httpurl" type="output">
+<q>What does this print?</q>
+<code file="urls.ts">
+import { checkConstraint, httpUrl } from "@zudojs/validation";
+
+for (const url of ["https://shop.example.com", "javascript:alert(1)", "ftp://files.example.com"]) {
+  console.log(checkConstraint(httpUrl, url).success);
+}
+</code>
+<option correct>true
+false
+false</option>
+<option>true
+true
+true</option>
+<option>true
+false
+true</option>
+<option>true
+true
+false</option>
+<explain><p><code>httpUrl</code> accepts only <code>http:</code> and <code>https:</code>. A <code>javascript:</code> link in a profile would run script when clicked; an <code>ftp:</code> link is not what a web profile expects either.</p></explain>
+</question>
+
+<question id="vr-guard-option" type="choice">
+<q>What is the <code>guard</code> option of <code>createConstraint</code> for?</q>
+<option>It makes the constraint run only in production</option>
+<option correct>It checks the value's type first, so a wrong-typed value from a request is an ordinary failure instead of a <code>TypeError</code> inside your function</option>
+<option>It hides the constraint's message</option>
+<option>It caches the result</option>
+<explain><p>Constraints often receive raw request data. Without a guard, <code>value.length</code> on a number throws, and a 400 becomes a 500.</p></explain>
+</question>
+
+<question id="vr-not-message" type="output">
+<q>What does this print?</q>
+<code file="not.ts">
+import { checkConstraint, not, oneOf } from "@zudojs/validation";
+
+const plain = not(oneOf(["admin", "root"]));
+const friendly = not(oneOf(["admin", "root"]), { message: "Choose another username" });
+console.log(checkConstraint(plain, "admin").issues?.[0]?.message);
+console.log(checkConstraint(friendly, "admin").issues?.[0]?.message);
+console.log(checkConstraint(friendly, "ada").success);
+</code>
+<option correct>Value must not satisfy one_of.
+Choose another username
+true</option>
+<option>Value is not an allowed value.
+Choose another username
+true</option>
+<option>Choose another username
+Choose another username
+false</option>
+<option>Value must not satisfy one_of.
+Choose another username
+false</option>
+<explain><p>Without options, <code>not</code> reports the internal name of the constraint it negates, which means nothing to a user. Give negated constraints your own message.</p></explain>
+</question>
+
+<question id="vr-combine" type="choice">
+<q>Why might you prefer <code>checkConstraints([integer, between(1, 8)], value)</code> over <code>checkConstraint(combineConstraints(integer, between(1, 8)), value)</code>?</q>
+<option>The combined constraint is slower</option>
+<option correct>The combined constraint reports one generic message; the list reports which rules failed</option>
+<option>The combined constraint ignores the second rule</option>
+<option>The list stops at the first failure</option>
+<explain><p><code>combineConstraints</code> fails with "One or more validation constraints failed." When the user needs to know what to fix, keep the rules separate.</p></explain>
+</question>
+
+<question id="vr-normalize-order" type="choice">
+<q>A service checks "no control characters" on the raw title, then stores <code>cleanTitle(raw)</code>. What is wrong with that order?</q>
+<option>Nothing; the order does not matter</option>
+<option correct>The check approved a different value than the one stored; always normalize first, then check what you will store</option>
+<option>Normalizing twice is slow</option>
+<option><code>cleanTitle</code> adds control characters</option>
+<explain><p>Validate the exact value you keep. If normalization changes the value after the check, the check says nothing about the stored data.</p></explain>
+</question>
+
+<question id="vr-nfc-nfkc" type="choice">
+<q>Why does the Task API <em>store</em> titles in NFC but <em>compare</em> them with an NFKC-based key?</q>
+<option>NFKC is faster for comparisons</option>
+<option correct>NFC keeps what the user typed while unifying identical-looking encodings; NFKC also folds compatibility forms like fullwidth letters, which is right for deciding sameness but changes the text</option>
+<option>NFC removes accents and NFKC keeps them</option>
+<option>Stored text must be ASCII</option>
+<explain><p>NFC only merges different encodings of the same character, so it is safe for storage. NFKC turns <code>Ｂｕｙ</code> into <code>Buy</code> and <code>ﬁ</code> into <code>fi</code>: exactly what uniqueness needs, but not what you should show the user as their title.</p></explain>
+</question>
+
+<question id="vr-key" type="output">
+<q>What does this print?</q>
+<code file="key.ts">
+import { composeNormalizers, normalizeIdentifier, normalizeTrim, normalizeUnicode, normalizeWhitespace } from "@zudojs/validation";
+
+const clean = composeNormalizers(normalizeUnicode, normalizeWhitespace, normalizeTrim);
+const key = (title: string) => normalizeIdentifier(clean(title));
+
+const titles = ["Pay rent", " pay  RENT ", "Ｐａｙ rent", "Pay rent!"];
+console.log(new Set(titles.map(key)).size, JSON.stringify(clean(titles[1] ?? "")));
+</code>
+<option correct>2 "pay RENT"</option>
+<option>4 "pay  RENT"</option>
+<option>1 "pay rent"</option>
+<option>2 "pay rent"</option>
+<explain><p>The first three share the key <code>pay rent</code>; the exclamation mark makes a genuinely different title. The clean form keeps the user's capitals and only collapses and trims spaces.</p></explain>
+</question>
+
+<question id="vr-email" type="output">
+<q>What does this print?</q>
+<code file="email.ts">
+import { normalizeEmail } from "@zudojs/validation";
+
+console.log(normalizeEmail("Chiamaka.Obi@Example.COM"));
+</code>
+<option correct>Chiamaka.Obi@example.com</option>
+<option>chiamaka.obi@example.com</option>
+<option>Chiamaka.Obi@Example.COM</option>
+<option>chiamakaobi@example.com</option>
+<explain><p>Only the domain is lower-cased. The part before <code>@</code> may be case-sensitive by the e-mail standards, and folding it could merge two different mailboxes.</p></explain>
+</question>
+
+<question id="vr-foldcase" type="output">
+<q>What does this print?</q>
+<code file="fold.ts">
+import { foldCase } from "@zudojs/validation";
+
+console.log("STRASSE".toLowerCase() === "Straße".toLowerCase(), foldCase("STRASSE") === foldCase("Straße"));
+</code>
+<option correct>false true</option>
+<option>true true</option>
+<option>false false</option>
+<option>true false</option>
+<explain><p><code>toLowerCase</code> is a display transform and leaves <code>ß</code> alone. Case folding for comparison maps <code>ß</code> and <code>SS</code> to the same form.</p></explain>
+</question>
+
+<question id="vr-stop-first" type="choice">
+<q>Why does <code>createValidationComposer</code> stop at the first failing step by default?</q>
+<option>To save memory</option>
+<option correct>Steps usually build on each other; a later step would check a value an earlier step already found broken</option>
+<option>Because only one issue can be reported</option>
+<option>Because <code>assert</code> requires it</option>
+<explain><p>If step 1 found that the amount is not a number, step 2 checking "at most ₦20,000" on it produces noise. Set <code>stopOnFirstError: false</code> only for independent checks.</p></explain>
+</question>
+
+<question id="vr-when" type="output">
+<q>What does this print?</q>
+<code file="when.ts">
+import { createValidationComposer, failure, issue, success, when } from "@zudojs/validation";
+
+type Transfer = { amountKobo: number; channel: "app" | "ussd" };
+const ussdCap = when<Transfer>(
+  (t) => t.channel === "ussd",
+  (t) => (t.amountKobo <= 2_000_000 ? success(t) : failure([issue("USSD limit", { code: "ussd_cap" })])),
+);
+const rules = createValidationComposer([ussdCap]);
+
+console.log(rules.validate({ amountKobo: 5_000_000, channel: "app" }).success, rules.validate({ amountKobo: 5_000_000, channel: "ussd" }).success);
+</code>
+<option correct>true false</option>
+<option>false false</option>
+<option>true true</option>
+<option>false true</option>
+<explain><p><code>when</code> runs the step only when the predicate matches, so the ₦20,000 cap applies to USSD transfers only.</p></explain>
+</question>
+
+<question id="vr-assert" type="output">
+<q>What does this print?</q>
+<code file="assert.ts">
+import { constraintsStep, createValidationComposer, integer, between } from "@zudojs/validation";
+
+const nights = createValidationComposer([constraintsStep<number>([integer, between(1, 30)])], { name: "nights" });
+try {
+  nights.assert(45);
+} catch (error) {
+  const e = error as Error & { statusCode: number };
+  console.log(e.name, e.statusCode, e.message);
+}
+</code>
+<option correct>ConstraintValidationError 400 nights validation failed.</option>
+<option>ValidationError 500 nights validation failed.</option>
+<option>RangeError 400 Value must be between 1 and 30.</option>
+<option>ConstraintValidationError 422 Value must be between 1 and 30.</option>
+<explain><p><code>assert</code> throws a <code>ConstraintValidationError</code>, an exposed 400 whose message names the composer. The detailed issues are on the error's <code>issues</code>.</p></explain>
+</question>
+
+<question id="vr-zod-strip" type="output">
+<q>What does this print?</q>
+<code file="zod-strip.ts">
+import { validate, z } from "@zudojs/validation";
+
+const Booking = z.object({ room: z.string(), nights: z.number().int() });
+const result = validate(Booking, { room: "Lekki studio", nights: 2, discount: 100 });
+console.log(result.success && Object.keys(result.data));
+</code>
+<option correct>[ 'room', 'nights' ]</option>
+<option>[ 'room', 'nights', 'discount' ]</option>
+<option>false</option>
+<option>[ 'discount' ]</option>
+<explain><p>Zod object schemas strip unknown keys by default, like <code>@zudojs/schema</code>. The client's <code>discount</code> never reaches your code.</p></explain>
+</question>
+
+<question id="vr-parseor" type="output">
+<q>What does this print?</q>
+<code file="parse-or.ts">
+import { parseOr, z } from "@zudojs/validation";
+
+const Limit = z.coerce.number().int().min(1).max(50);
+console.log(parseOr(Limit, "10", 20), parseOr(Limit, "ten", 20), parseOr(Limit, "500", 20));
+</code>
+<option correct>10 20 20</option>
+<option>10 20 500</option>
+<option>10 NaN 50</option>
+<option>"10" 20 20</option>
+<explain><p><code>parseOr</code> returns the parsed value, or the fallback when validation fails, for both a non-number and an out-of-range number.</p></explain>
+</question>
+
+<question id="vr-async-sync" type="choice">
+<q>A Zod schema has an asynchronous <code>refine</code> ("is this username free?"). What does the synchronous <code>validate</code> from <code>@zudojs/validation</code> do with it?</q>
+<option>Returns <code>{ success: false }</code></option>
+<option>Skips the asynchronous rule</option>
+<option correct>Throws a plain <code>Error</code>, which a server would answer with 500; use <code>validateAsync</code></option>
+<option>Waits for the rule automatically</option>
+<explain><p>Zod cannot run an asynchronous rule synchronously and throws. <code>validateAsync</code> and <code>parseAsync</code> run it properly.</p></explain>
+</question>
+
+<question id="vr-unique-race" type="choice">
+<q>An asynchronous rule checks that a username is free before the insert. Why is that not enough to guarantee unique usernames?</q>
+<option>Asynchronous rules are not reliable</option>
+<option correct>Two requests can both pass the check before either inserts; only a unique index in the database guarantees it</option>
+<option>The check only looks at the first 10 users</option>
+<option>Usernames are case-sensitive</option>
+<explain><p>Check-then-act is a race. The rule gives a friendly message in the common case; the database constraint is the real guarantee.</p></explain>
+</question>
+
+<question id="vr-error-message" type="output">
+<q>What does this print?</q>
+<code file="error.ts">
+import { createValidationError, issue } from "@zudojs/validation";
+
+const error = createValidationError([
+  issue("Must be at least 3 characters", { path: ["title"] }),
+  issue("Must be low, normal or high", { path: ["priority"] }),
+]);
+console.log(error.statusCode, error.message);
+</code>
+<option correct>400 title: Must be at least 3 characters; priority: Must be low, normal or high</option>
+<option>400 Validation failed</option>
+<option>422 title: Must be at least 3 characters</option>
+<option>500 Must be at least 3 characters</option>
+<explain><p>The message lists every issue with its path, so a handler that only sends <code>message</code> still tells the client what to fix.</p></explain>
+</question>
+
+<question id="vr-redact" type="output">
+<q>What does this print?</q>
+<code file="redact.ts">
+import { createValidationError, issue } from "@zudojs/validation";
+
+const error = createValidationError([issue("PIN must have 6 digits", { path: ["pin"], received: "1234" })]);
+const logged = error.toJSON().issues[0] as unknown as Record<string, unknown>;
+console.log(logged.received, logged.receivedType, error.issues[0]?.received);
+</code>
+<option correct>undefined string(4) 1234</option>
+<option>1234 string(4) 1234</option>
+<option>undefined undefined undefined</option>
+<option>1234 undefined 1234</option>
+<explain><p><code>toJSON</code>, which loggers and error handlers use, replaces the value with its type and length. The in-memory issue still has it, so never log <code>error.issues</code> directly.</p></explain>
+</question>
+
+<question id="vr-circular" type="output">
+<q>What does this print?</q>
+<code file="circular.ts">
+import { hasCircularReference } from "@zudojs/validation";
+
+const address = { city: "Abuja" };
+const order: Record<string, unknown> = { id: "ord-1", billing: address, shipping: address };
+console.log(hasCircularReference(order));
+order.self = order;
+console.log(hasCircularReference(order));
+</code>
+<option correct>false
+true</option>
+<option>true
+true</option>
+<option>false
+false</option>
+<option>true
+false</option>
+<explain><p>The same object used twice is a shared reference, which serializes fine. Only a value that leads back to itself is a cycle.</p></explain>
+</question>
+
+<question id="vr-circular-status" type="choice">
+<q>Why is <code>CircularReferenceError</code> a 500, while <code>SerializationDepthError</code> from the depth guard is a 400?</q>
+<option>Cycles are more dangerous than deep nesting</option>
+<option correct><code>JSON.parse</code> cannot create a cycle, so a cycle comes from data your code built, a bug; too-deep JSON comes from the client</option>
+<option>Because cycles cannot be detected quickly</option>
+<option>They are both 400</option>
+<explain><p>A request body is JSON, which can nest but cannot refer back to itself. Cycles show up in outgoing data such as ORM objects, which is your responsibility.</p></explain>
+</question>
+
+<question id="vr-size-estimate" type="choice">
+<q><code>assertSizeWithinLimit(body, 65_536)</code> estimates two bytes per UTF-16 code unit. What does that mean for a title of Chinese characters or <code>₦</code> signs?</q>
+<option>The estimate is always higher than the real size, so the guard is strict</option>
+<option correct>Those characters take three bytes in UTF-8, so the estimate is too low and a larger body can pass; keep the server's byte limit as the hard cap</option>
+<option>Non-ASCII text is refused</option>
+<option>The estimate is exact for every script</option>
+<explain><p>For ASCII the estimate is about double the real size, for three-byte UTF-8 characters it is about two thirds. The guard is a cheap structural check, not a byte limit.</p></explain>
+</question>
+
+<question id="vr-response-status" type="choice">
+<q>A stored task fails its response schema. What should the client get?</q>
+<option>400 with the list of failing fields</option>
+<option>422 Unprocessable Entity</option>
+<option correct>A generic 500; the details go to the log</option>
+<option>200 with the invalid task, because the client asked for it</option>
+<explain><p>The client did nothing wrong, and the failing fields describe your internal data. It is a server bug: answer 500, log the details, fix the data.</p></explain>
+</question>
+
+<question id="vr-response-output" type="output">
+<q>What does this print?</q>
+<code file="response.ts">
+import { InternalServerError } from "@zudojs/errors";
+import { validate, z } from "@zudojs/validation";
+
+const UserResponse = z.object({ id: z.number(), name: z.string() });
+
+function respond(value: unknown) {
+  const result = validate(UserResponse, value);
+  if (!result.success) throw new InternalServerError("Response failed its schema");
+  return result.data;
+}
+
+console.log(respond({ id: 1, name: "Ada", passwordHash: "$argon2id$..." }));
+try {
+  respond({ id: "2", name: "Bayo" });
+} catch (error) {
+  console.log((error as InternalServerError).statusCode, (error as InternalServerError).expose);
+}
+</code>
+<option correct>{ id: 1, name: 'Ada' }
+500 false</option>
+<option>{ id: 1, name: 'Ada', passwordHash: '$argon2id$...' }
+500 false</option>
+<option>{ id: 1, name: 'Ada' }
+400 true</option>
+<option>{ id: 1, name: 'Ada' }
+500 true</option>
+<explain><p>The response schema is an allow-list, so the password hash never leaves. A failure becomes an unexposed 500, so the client learns nothing about the internal data.</p></explain>
+</question>
+
+<question id="vr-task-rename" type="choice">
+<q>In the Task API's <code>update</code>, why does <code>assertUniqueTitle(title, id)</code> skip the task being updated?</q>
+<option>To make updates faster</option>
+<option correct>Renaming "buy milk" to "Buy milk" gives the same key as the task itself; without skipping it, the task would conflict with itself</option>
+<option>Because updated tasks cannot have duplicates</option>
+<option>Because the store does not contain the task during an update</option>
+<explain><p>A change of capitals or spacing is a rename of the same task, not a duplicate of another one.</p></explain>
+</question>
+
+<question id="vr-validators-folder" type="choice">
+<q>Where does the lesson put the title rules, and why not in the DTO schema?</q>
+<option>In <code>src/routes/</code>, because rules are HTTP concerns</option>
+<option correct>In <code>src/validators/tasks.rules.ts</code>; the DTO describes the shape of input, while the rules (normalization, sameness, characters) are used by the service for creates and updates alike</option>
+<option>In <code>src/dtos/</code>, as another schema</option>
+<option>In <code>src/utils/http.ts</code>, next to the JSON guards</option>
+<explain><p>The generated <code>validators/</code> folder is meant for such rules. The service calls them after the schema, so every path that creates or renames a task uses the same rules.</p></explain>
+</question>
+
+<question id="vr-code-control" type="code" file="control.ts">
+<q><p>Write <code>hasControlCharacter(text)</code> that is <code>true</code> when the text contains any Unicode control character (<code>\p{Cc}</code>), and <code>cleanThenCheck(raw)</code> that first collapses every run of whitespace to one space and trims, and then returns <code>"ok"</code> or <code>"control character"</code>.</p></q>
+<starter>
+function hasControlCharacter(text: string): boolean {
+  // your code here
+  return false;
+}
+
+function cleanThenCheck(raw: string): string {
+  // your code here
+  return "ok";
+}
+
+console.log(hasControlCharacter("Buy milk"));
+</starter>
+<solution>
+function hasControlCharacter(text: string): boolean {
+  return /\p{Cc}/u.test(text);
+}
+
+function cleanThenCheck(raw: string): string {
+  const clean = raw.replace(/\s+/g, " ").trim();
+  return hasControlCharacter(clean) ? "control character" : "ok";
+}
+
+for (const raw of ["Buy milk", "Buy\tmilk\n", "Pay rent\u0007", "\u0000Book plumber"]) {
+  console.log(JSON.stringify(raw), cleanThenCheck(raw));
+}
+</solution>
+<expected>"Buy milk" ok
+"Buy\tmilk\n" ok
+"Pay rent\u0007" control character
+"\u0000Book plumber" control character</expected>
+<explain><p>Tabs and newlines are whitespace and are cleaned away first, so they do not count. Other control characters, such as the bell or NUL, survive cleaning and are refused. Checking after cleaning means you check what you store.</p></explain>
+</question>
+
+<question id="vr-code-key" type="code" file="title-key.ts">
+<q><p>Write <code>titleKey(title)</code> using only built-ins: NFKC normalization (<code>normalize("NFKC")</code>), collapse whitespace, trim, and lower-case. Then write <code>findDuplicates(titles)</code> returning the titles whose key was already seen.</p></q>
+<starter>
+function titleKey(title: string): string {
+  // your code here
+  return title;
+}
+
+function findDuplicates(titles: string[]): string[] {
+  // your code here
+  return [];
+}
+
+console.log(titleKey("Buy milk"));
+</starter>
+<solution>
+function titleKey(title: string): string {
+  return title.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function findDuplicates(titles: string[]): string[] {
+  const seen = new Set<string>();
+  const duplicates: string[] = [];
+  for (const title of titles) {
+    const key = titleKey(title);
+    if (seen.has(key)) duplicates.push(title);
+    seen.add(key);
+  }
+  return duplicates;
+}
+
+console.log(findDuplicates(["Buy milk", "Walk the dog", " BUY  MILK", "Ｗａｌｋ the dog", "Water plants"]));
+</solution>
+<expected>[ ' BUY  MILK', 'Ｗａｌｋ the dog' ]</expected>
+<explain><p>Every spelling of the same title maps to one key, so a <code>Set</code> of keys finds duplicates. <code>@zudojs/validation</code>'s <code>normalizeIdentifier</code> uses case folding instead of <code>toLowerCase</code>, which also handles cases such as <code>ß</code>.</p></explain>
+</question>
+
+<question id="vr-code-constraint" type="code" file="constraint.ts">
+<q><p>Using <code>@zudojs/validation</code>, create a constraint <code>nigerianPhone</code> with code <code>invalid_phone</code> and message <code>Enter a number like 0803 123 4567</code>, accepting 11 digits starting with 0 after removing spaces. Check the three numbers with <code>checkConstraint</code> and print whether each passed.</p></q>
+<starter>
+import { checkConstraint, createConstraint } from "@zudojs/validation";
+
+const nigerianPhone = createConstraint<string>(() => true, { name: "nigerianPhone" });
+
+console.log(nigerianPhone.name);
+</starter>
+<solution>
+import { checkConstraint, createConstraint } from "@zudojs/validation";
+
+const nigerianPhone = createConstraint<string>((value) => /^0\d{10}$/.test(value.replace(/\s+/g, "")), {
+  name: "nigerianPhone",
+  code: "invalid_phone",
+  message: "Enter a number like 0803 123 4567",
+  guard: (value): value is string => typeof value === "string",
+});
+
+for (const phone of ["0803 123 4567", "803 123 4567", "08031234567"]) {
+  const result = checkConstraint(nigerianPhone, phone);
+  console.log(phone, result.success ? "ok" : result.issues[0]?.message);
+}
+</solution>
+<expected>0803 123 4567 ok
+803 123 4567 Enter a number like 0803 123 4567
+08031234567 ok</expected>
+<explain><p>A custom constraint is a function plus a name, a code and a message. The <code>guard</code> keeps a non-string from reaching <code>replace</code>, so bad input is a failure, not a crash.</p></explain>
+</question>
+
+<question id="vr-code-composer" type="code" file="composer.ts">
+<q><p>Write your own tiny composer: <code>compose(steps, stopOnFirst)</code> returns a function that runs each step (a function returning a list of messages) and returns all messages, or only the first failing step's messages when <code>stopOnFirst</code> is true.</p></q>
+<starter>
+type Step<T> = (value: T) => string[];
+
+function compose<T>(steps: Step<T>[], stopOnFirst: boolean): (value: T) => string[] {
+  // your code here
+  return () => [];
+}
+
+const noSteps = compose<number>([], true);
+console.log(noSteps(1));
+</starter>
+<solution>
+type Step<T> = (value: T) => string[];
+
+function compose<T>(steps: Step<T>[], stopOnFirst: boolean): (value: T) => string[] {
+  return (value) => {
+    const messages: string[] = [];
+    for (const step of steps) {
+      const found = step(value);
+      messages.push(...found);
+      if (stopOnFirst && found.length > 0) break;
+    }
+    return messages;
+  };
+}
+
+const whole: Step<number> = (kobo) => (Number.isInteger(kobo) ? [] : ["whole kobo only"]);
+const ussdCap: Step<number> = (kobo) => (kobo <= 2_000_000 ? [] : ["USSD limit is ₦20,000"]);
+
+console.log(compose([whole, ussdCap], true)(4_500_000.5));
+console.log(compose([whole, ussdCap], false)(4_500_000.5));
+</solution>
+<expected>[ 'whole kobo only' ]
+[ 'whole kobo only', 'USSD limit is ₦20,000' ]</expected>
+<explain><p>Stopping at the first failure suits steps that build on each other; collecting everything suits independent checks. <code>createValidationComposer</code> offers the same choice with <code>stopOnFirstError</code>.</p></explain>
+</question>
+
+<question id="vr-code-depth" type="code" file="depth.ts">
+<q><p>Write an <em>iterative</em> <code>depthOf(value, limit)</code> that returns the nesting depth of arrays and plain objects (primitives are 0, <code>[]</code> is 1), and stops and returns <code>limit + 1</code> as soon as the depth passes <code>limit</code>. Use an explicit stack, not recursion, so hostile input cannot overflow the call stack.</p></q>
+<starter>
+function depthOf(value: unknown, limit: number): number {
+  // your code here
+  return 0;
+}
+
+console.log(depthOf("text", 10));
+</starter>
+<solution>
+function depthOf(value: unknown, limit: number): number {
+  let deepest = 0;
+  const stack: [unknown, number][] = [[value, 0]];
+  while (stack.length > 0) {
+    const [current, depth] = stack.pop()!;
+    if (typeof current !== "object" || current === null) continue;
+    const level = depth + 1;
+    if (level > limit) return limit + 1;
+    deepest = Math.max(deepest, level);
+    for (const child of Object.values(current)) stack.push([child, level]);
+  }
+  return deepest;
+}
+
+console.log(depthOf("text", 10), depthOf([], 10), depthOf({ task: { tags: ["home"] } }, 10));
+console.log(depthOf(JSON.parse("[".repeat(100000) + "]".repeat(100000)), 10));
+</solution>
+<expected>0 1 3
+11</expected>
+<explain><p>A recursive walk would overflow on the 100,000-level array before it could report anything, so the guard must be iterative and must stop as soon as the limit is passed. That is how the structural guards in <code>@zudojs/validation</code> are built.</p></explain>
+</question>
+
+<question id="vr-registry" type="output">
+<q>What does this print?</q>
+<code file="registry.ts">
+import { between, createValidationRegistry, integer } from "@zudojs/validation";
+
+const rules = createValidationRegistry();
+rules.registerConstraints<number>("guests", [integer, between(1, 4)]);
+console.log(rules.has("guests"), rules.validate("guests", 3).success, rules.validate("guests", "3").success);
+</code>
+<option correct>true true false</option>
+<option>true true true</option>
+<option>false false false</option>
+<option>true false false</option>
+<explain><p>A registry stores rules by name. The string <code>"3"</code> is not coerced: the constraints' guards report a wrong type as an ordinary failure rather than crashing.</p></explain>
+</question>
+
+<question id="vr-which-package" type="choice">
+<q>A project already describes every request body with Zod. Which approach fits ZudoJS best?</q>
+<option>Rewrite every DTO in <code>@zudojs/schema</code> and keep the Zod ones as well</option>
+<option correct>Keep Zod and use it through <code>@zudojs/validation</code>'s <code>validate</code>/<code>parse</code> and its re-exported <code>z</code>, so results and errors have the ZudoJS shapes</option>
+<option>Install a second copy of Zod next to the one <code>@zudojs/validation</code> uses</option>
+<option>Validate by hand, because the packages cannot be mixed</option>
+<explain><p>Describing the same DTO in two schema systems means two definitions that drift apart. <code>@zudojs/validation</code> exists partly for this case, and its <code>z</code> re-export avoids a second Zod.</p></explain>
+</question>
+
+<question id="vr-request-direction" type="choice">
+<q>Which check belongs to <strong>request</strong> validation rather than response validation?</q>
+<option>Dropping an internal <code>ownerId</code> before a task is sent</option>
+<option>Detecting a cycle between an order and its customer before serializing</option>
+<option correct>Refusing a body nested 1000 levels deep with 400</option>
+<option>Turning a stored task with <code>done: "no"</code> into a 500</option>
+<explain><p>Depth limits protect the server from hostile input, which only arrives in requests. The other three protect clients from your own data.</p></explain>
+</question>
+
+<question id="vr-code-fielderrors" type="code" file="field-errors.ts">
+<q><p>Write <code>fieldErrors(issues)</code>: for issues with a <code>path</code> and a <code>message</code>, return an object with one message per top-level field (the first path segment), keeping the <strong>first</strong> message for each field, and using <code>"(form)"</code> for issues with an empty path.</p></q>
+<starter>
+type Issue = { path: (string | number)[]; message: string };
+
+function fieldErrors(issues: Issue[]): Record<string, string> {
+  // your code here
+  return {};
+}
+
+console.log(fieldErrors([]));
+</starter>
+<solution>
+type Issue = { path: (string | number)[]; message: string };
+
+function fieldErrors(issues: Issue[]): Record<string, string> {
+  const errors: Record<string, string> = {};
+  for (const issue of issues) {
+    const field = issue.path.length > 0 ? String(issue.path[0]) : "(form)";
+    if (!Object.hasOwn(errors, field)) errors[field] = issue.message;
+  }
+  return errors;
+}
+
+console.log(
+  fieldErrors([
+    { path: ["tags", 1], message: "Tag too long" },
+    { path: ["tags", 2], message: "Tag has spaces" },
+    { path: ["title"], message: "Title too short" },
+    { path: [], message: "Send at least one field" },
+    { path: ["constructor"], message: "Unknown field" },
+  ]),
+);
+</solution>
+<expected>{
+  tags: 'Tag too long',
+  title: 'Title too short',
+  '(form)': 'Send at least one field',
+  constructor: 'Unknown field'
+}</expected>
+<explain><p>Using <code>Object.hasOwn</code> instead of <code>field in errors</code> matters: <code>in</code> would find the inherited <code>constructor</code> and silently drop that field's message. <code>toFieldErrors</code> in <code>@zudojs/validation</code> avoids the same trap.</p></explain>
+</question>

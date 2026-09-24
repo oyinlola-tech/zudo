@@ -1,0 +1,776 @@
+<question id="zp-why-package" type="choice">
+<q>Three services each contain a pasted copy of the payment code. A double-charge bug is fixed in one of them. What does moving the code into <code>@mycompany/zudo-payments</code> change?</q>
+<option>Nothing: each service still needs its own fix</option>
+<option correct>The fix is made once, released as a new version, and each service picks it up by upgrading</option>
+<option>The services no longer need tests</option>
+<option>The bug can no longer happen, because packages are type-checked</option>
+<explain><p>A package turns "remember every copy" into "release once, bump three version numbers". It also forces you to decide what is public, which pasted code never does.</p></explain>
+</question>
+
+<question id="zp-peer" type="choice">
+<q>Why is <code>@zudojs/errors</code> a <code>peerDependency</code> of the payments package rather than a regular dependency?</q>
+<option>Peer dependencies install faster</option>
+<option>Regular dependencies cannot be imported at run time</option>
+<option correct>So the app's own copy is used: one <code>BaseError</code> class in the process, and <code>instanceof</code> and error handling keep working</option>
+<option>npm refuses to publish packages that depend on scoped packages</option>
+<explain><p>With a regular dependency, npm may install a private copy for your package whenever the versions differ. Two copies mean two class hierarchies, which breaks <code>instanceof</code> and any module-level state.</p></explain>
+</question>
+
+<question id="zp-dev-too" type="choice">
+<q>The same <code>@zudojs</code> packages are listed in both <code>peerDependencies</code> and <code>devDependencies</code>. Why both?</q>
+<option>It is a mistake; one of them is ignored</option>
+<option correct>Peer says "the app must provide it"; dev installs it in your own repository so you can build and run the tests</option>
+<option>devDependencies are published, peerDependencies are not</option>
+<option>It makes npm install two copies on purpose</option>
+<explain><p>Installing your package in an app never installs its devDependencies. In your repository, though, you need a real copy to compile and test against, and devDependencies provide it.</p></explain>
+</question>
+
+<question id="zp-testing-entry" type="choice">
+<q>Why does <code>createFakeProvider</code> live in its own entry point, <code>@mycompany/zudo-payments/testing</code>?</q>
+<option>Because Node can only load one function per entry point</option>
+<option correct>So production code does not import a test helper by accident, while apps can still use it in their own tests</option>
+<option>Because test code must be CommonJS</option>
+<option>So it is left out of the tarball</option>
+<explain><p>A separate entry makes the purpose visible in every import line. It is still published: apps need it for their tests.</p></explain>
+</question>
+
+<question id="zp-files" type="choice">
+<q>With <code>"files": ["dist"]</code>, which of these ends up in the tarball?</q>
+<option>Only the <code>dist</code> folder</option>
+<option correct><code>dist</code>, plus <code>package.json</code>, the README and the LICENSE, which npm always includes</option>
+<option><code>dist</code> and <code>src</code>, because the declarations refer to it</option>
+<option>Everything not listed in <code>.gitignore</code></option>
+<explain><p><code>files</code> is an allow-list, and npm adds the manifest, README and license on its own. <code>npm pack --dry-run</code> shows the real list; the lesson's check found no sources, tests or configuration.</p></explain>
+</question>
+
+<question id="zp-named-barrel" type="choice">
+<q>The package's <code>src/index.ts</code> uses <code>export { A, B } from "./x.js"</code> and never <code>export * from</code>. What does that protect against?</q>
+<option>Slower builds</option>
+<option>Circular imports</option>
+<option correct>A helper added to a file later becoming public API by accident</option>
+<option>Declaration files being skipped</option>
+<explain><p><code>export *</code> publishes whatever the file exports, today and in the future. Named re-exports make each public name a decision, like the barrels of <code>@zudojs/adapters</code> and <code>@zudojs/plugins</code>.</p></explain>
+</question>
+
+<question id="zp-internal-dist" type="choice">
+<q><code>dist/internal/money.js</code> is inside the published tarball. Can an app import it?</q>
+<option>Yes, with <code>@mycompany/zudo-payments/internal/money</code></option>
+<option>Yes, with <code>@mycompany/zudo-payments/dist/internal/money.js</code></option>
+<option correct>No: no entry of the <code>exports</code> map leads to it, so Node refuses both paths with <code>ERR_PACKAGE_PATH_NOT_EXPORTED</code></option>
+<option>No, because npm removes files named "internal"</option>
+<explain><p>The file must ship because the service needs it at run time. Being in the tarball is not the same as being importable; the exports map decides that.</p></explain>
+</question>
+
+<question id="zp-kobo" type="choice">
+<q>Why are all amounts in the package integers in kobo instead of naira with decimals?</q>
+<option>JavaScript numbers cannot hold decimals</option>
+<option correct>Integer arithmetic on money is exact, while decimals like 0.1 + 0.2 are not, and the provider's API uses kobo too</option>
+<option>Kobo values are smaller, so they use less memory</option>
+<option>TypeScript cannot type decimal numbers</option>
+<explain><p>Binary floating point cannot represent most decimal fractions exactly. Integers up to <code>Number.MAX_SAFE_INTEGER</code> are exact, which is why the service rejects anything that is not a safe positive integer.</p></explain>
+</question>
+
+<question id="zp-declined-base" type="choice">
+<q>A card is declined. Which base class and status fit <code>PaymentDeclinedError</code> best?</q>
+<option><code>ExternalServiceError</code>, 502</option>
+<option correct><code>DomainError</code> with status 402: a normal business outcome the customer must see</option>
+<option><code>ValidationError</code>, 400</option>
+<option>Plain <code>Error</code>, 500</option>
+<explain><p>The provider worked correctly; it said no. That is a business outcome, exposed to the customer so they can try another card. 502 would claim your provider failed, and 500 would hide the reason.</p></explain>
+</question>
+
+<question id="zp-hidden-provider" type="choice">
+<q>Why does <code>PaymentProviderError</code> reach the client as "An unexpected error occurred." instead of its own message?</q>
+<option>Because its constructor forgets to pass the message</option>
+<option correct>Because <code>ExternalServiceError</code> is not exposed by default, so the public serializer replaces the message; the details stay on the error for the logs</option>
+<option>Because status 502 errors cannot have messages</option>
+<option>Because the cause is an <code>Error</code></option>
+<explain><p>A provider name, "ECONNRESET" or a hostname helps an attacker and means nothing to a customer. <code>expose: false</code> keeps them internal, and <code>cause</code> keeps the original for your log.</p></explain>
+</question>
+
+<question id="zp-is-payment-error" type="choice">
+<q>Why does <code>isPaymentError</code> check <code>isBaseError(value) &amp;&amp; value.code.startsWith("ERR_PAYMENT_")</code> instead of <code>value instanceof PaymentDeclinedError || …</code>?</q>
+<option>Because <code>instanceof</code> does not work with classes</option>
+<option correct>It keeps working if the app ends up with two copies of the package or of <code>@zudojs/errors</code>, and it covers every current and future payment error in one rule</option>
+<option>Because codes are faster to compare than prototypes</option>
+<option>Because the error classes are not exported</option>
+<explain><p><code>isBaseError</code> falls back to a brand from the global symbol registry, and codes are plain strings, so both survive duplicate copies. The prefix also means a new error class is covered without changing the function.</p></explain>
+</question>
+
+<question id="zp-rename-code" type="choice">
+<q>You want to rename <code>ERR_PAYMENT_DECLINED</code> to <code>ERR_CARD_DECLINED</code>. No function signature changes. Which version bump is it?</q>
+<option>Patch: only a string changes</option>
+<option>Minor: it is an improvement</option>
+<option correct>Major: clients compare the code, and theirs would silently stop matching</option>
+<option>None: codes are internal</option>
+<explain><p>Error codes are part of the public API precisely because clients branch on them. Add a new code if you must, keep the old one, and remove it only in a major.</p></explain>
+</question>
+
+<question id="zp-double-click" type="choice">
+<q>A customer double-clicks "Pay". Both requests reach <code>payments.charge</code> with reference <code>ORD-1001</code> while the provider is still answering the first. What happens?</q>
+<option>The provider is called twice and the card is charged twice</option>
+<option>The second request fails with <code>ERR_PAYMENT_CONFLICT</code></option>
+<option correct>The second request finds the first one's promise in the in-flight map and gets the same payment; the provider is called once</option>
+<option>The second request waits one second and tries again</option>
+<explain><p>The service keeps the promise of every charge in progress, keyed by reference, and a completed payment in a second map. Only a different amount under the same reference is a conflict.</p></explain>
+</question>
+
+<question id="zp-conflict" type="choice">
+<q>Order <code>ORD-1001</code> was charged ₦12,500. Later a request arrives with the same reference and ₦9.99. What should the service do, and why?</q>
+<option>Charge ₦9.99, because it is a new request</option>
+<option>Return the ₦12,500 payment silently</option>
+<option correct>Throw a 409 conflict: the same idempotency key with a different body is a bug in the caller, and guessing either way could be wrong</option>
+<option>Refund the first charge and charge again</option>
+<explain><p>An idempotency key promises "this is the same operation". Different content under the same key means that promise is broken, so fail loudly with <code>ERR_PAYMENT_CONFLICT</code>.</p></explain>
+</question>
+
+<question id="zp-inject-fetch" type="choice">
+<q>Why does <code>createPaystackProvider</code> accept a <code>fetch</code> option?</q>
+<option>Because Node 24 has no global <code>fetch</code></option>
+<option correct>So tests can pass a fake that records requests and returns canned responses, with no network and no real charges</option>
+<option>To make the adapter faster</option>
+<option>Because Paystack requires a custom <code>fetch</code></option>
+<explain><p>Injecting the one function that touches the network makes the adapter fully testable: the tests check the URL, headers and body that would have been sent.</p></explain>
+</question>
+
+<question id="zp-timeout-meaning" type="choice">
+<q>The adapter's 15-second timeout fires during a charge. What do you know about the customer's card?</q>
+<option>It was not charged</option>
+<option>It was charged</option>
+<option correct>Nothing: the charge may have happened with the answer lost, so you must find out (by reference) before telling the customer or retrying</option>
+<option>It was charged twice</option>
+<explain><p>A timeout is the third outcome of a network call: unknown. Reporting "failed" can lead to a second charge; the fix is to ask the provider about that reference, or wait for its webhook.</p></explain>
+</question>
+
+<question id="zp-interface-method" type="choice">
+<q>You add a required method <code>verify(reference)</code> to the exported <code>PaymentProvider</code> interface. Your own service calls it. Which bump is honest?</q>
+<option>Patch, because callers of <code>createPaymentService</code> change nothing</option>
+<option>Minor, because a method was added</option>
+<option correct>Major, because anyone who implemented <code>PaymentProvider</code> for their own provider no longer compiles</option>
+<option>No bump: interfaces are erased at run time</option>
+<explain><p>Adding to an interface people <em>call</em> is safe; adding a required member to an interface people <em>implement</em> breaks them. Add it as optional in a minor, then make it required in the next major.</p></explain>
+</question>
+
+<question id="zp-zero-caret" type="choice">
+<q>An app depends on <code>"@mycompany/zudo-payments": "^0.1.0"</code>. You publish 0.2.0. Does the app get it on its next fresh install?</q>
+<option>Yes, a caret accepts every newer minor</option>
+<option correct>No: below 1.0.0 a caret only accepts patches (0.1.x), because in 0.x the minor number signals breaking changes</option>
+<option>Yes, but only with <code>--force</code></option>
+<option>No, carets never accept new versions</option>
+<explain><p><code>^0.1.0</code> means <code>&gt;=0.1.0 &lt;0.2.0</code>. That is why, in 0.x, a breaking change bumps the minor.</p></explain>
+</question>
+
+<question id="zp-changeset-when" type="choice">
+<q>When is a changeset file written in the changesets workflow?</q>
+<option>By the release manager, once per release, from memory</option>
+<option correct>By the author, in the same pull request as the change, naming the package, the bump and a changelog sentence</option>
+<option>Automatically by npm when you publish</option>
+<option>By CI, from the commit messages</option>
+<explain><p>The person who knows whether a change breaks anything records it when they make it. <code>changeset version</code> later adds all pending files up into version bumps and changelog entries.</p></explain>
+</question>
+
+<question id="zp-changeset-sum" type="choice">
+<q>Three pending changesets for the package say: patch, minor, patch. The package is at 0.1.0 (and you treat minors as features). What does <code>changeset version</code> produce?</q>
+<option>0.1.3</option>
+<option correct>0.2.0, with one changelog entry per changeset</option>
+<option>0.3.2</option>
+<option>1.0.0</option>
+<explain><p>The highest bump wins and is applied once. All three sentences still appear in <code>CHANGELOG.md</code>, grouped under minor and patch changes.</p></explain>
+</question>
+
+<question id="zp-prepublish" type="choice">
+<q>The manifest has <code>"prepublishOnly": "npm run typecheck &amp;&amp; npm test &amp;&amp; npm run build"</code>. When does it run?</q>
+<option>On every <code>npm install</code></option>
+<option>On <code>npm pack</code></option>
+<option correct>Before <code>npm publish</code> uploads anything; if a step fails, nothing is published</option>
+<option>Only in CI</option>
+<explain><p><code>prepublishOnly</code> is the last gate before a release. <code>npm pack</code> does not run it, which is why the lesson builds first and then checks the tarball.</p></explain>
+</question>
+
+<question id="zp-docs-warning" type="choice">
+<q><code>validateAll</code> from <code>@zudojs/docs</code> reports a <code>BROKEN_LINK</code> warning and <code>valid: true</code>. Your CI script only checks <code>valid</code>. What happens?</q>
+<option>The build fails</option>
+<option correct>The build passes and the README ships with a link to a page that does not exist</option>
+<option>The broken link is removed automatically</option>
+<option>npm refuses to publish</option>
+<explain><p>Only errors make a result invalid; broken links are warnings. Fail the build on any issue (the lesson's script sets <code>process.exitCode</code>), or on the warning codes you care about.</p></explain>
+</question>
+
+<question id="zp-self-reference" type="choice">
+<q>A script at the root of the package does <code>import … from "@mycompany/zudo-payments"</code> and it works, although nothing is installed under that name. Why?</q>
+<option>npm links every package into its own <code>node_modules</code></option>
+<option correct>Node lets a package import itself by its own name when its <code>package.json</code> has an <code>exports</code> map, going through the same entry points as any app</option>
+<option>TypeScript rewrites the import to <code>./src/index.ts</code></option>
+<option>The name is resolved from the npm registry</option>
+<explain><p>Package self-referencing makes the script a faithful consumer: it can only reach what the exports map allows, so the internal-import test in the lesson proves what an app would see.</p></explain>
+</question>
+
+<question id="zp-default-change" type="choice">
+<q>You lower the default <code>maxAmountKobo</code> from ₦5,000,000 to ₦1,000,000. No types change. Which bump?</q>
+<option>Patch</option>
+<option>Minor</option>
+<option correct>Major: a charge of ₦2,000,000 that worked yesterday now fails for every app that relies on the default</option>
+<option>None, because defaults are not API</option>
+<explain><p>Behaviour is part of the contract, not only signatures. A stricter default breaks working callers even though every call still compiles.</p></explain>
+</question>
+
+<question id="zp-o-declined" type="output">
+<q>What does this print?</q>
+<code file="declined.js">
+import { DomainError } from "@zudojs/errors";
+
+class PaymentDeclinedError extends DomainError {
+  constructor(reference, reason) {
+    super(`Payment ${reference} was declined: ${reason}`, {
+      code: "ERR_PAYMENT_DECLINED",
+      statusCode: 402,
+      metadata: { reference, reason },
+    });
+  }
+}
+
+const error = new PaymentDeclinedError("ORD-9", "Do Not Honor");
+console.log(String(error));
+console.log(error.statusCode, error.expose, error.category, error.name);
+</code>
+<option correct>PaymentDeclinedError [ERR_PAYMENT_DECLINED]: Payment ORD-9 was declined: Do Not Honor
+402 true business PaymentDeclinedError</option>
+<option>DomainError [ERR_PAYMENT_DECLINED]: Payment ORD-9 was declined: Do Not Honor
+402 true business DomainError</option>
+<option>PaymentDeclinedError: Payment ORD-9 was declined: Do Not Honor
+422 true business PaymentDeclinedError</option>
+<option>PaymentDeclinedError [ERR_PAYMENT_DECLINED]: Payment ORD-9 was declined: Do Not Honor
+402 false validation PaymentDeclinedError</option>
+<explain><p><code>BaseError</code> sets <code>name</code> from the class actually constructed, and <code>toString</code> prints name, code and message. <code>DomainError</code> supplies the business category and <code>expose: true</code>; the 402 given here replaces its default 422.</p></explain>
+</question>
+
+<question id="zp-o-hidden" type="output">
+<q>What does this print?</q>
+<code file="hidden.js">
+import { ExternalServiceError, serializePublicError } from "@zudojs/errors";
+
+const error = new ExternalServiceError("Provider paystack failed: ECONNRESET 10.0.4.7", {
+  service: "paystack",
+  statusCode: 502,
+  code: "ERR_PAYMENT_PROVIDER",
+});
+console.log(JSON.stringify(serializePublicError(error)));
+</code>
+<option correct>{"code":"ERR_PAYMENT_PROVIDER","message":"An unexpected error occurred.","category":"external_service","statusCode":502}</option>
+<option>{"code":"ERR_PAYMENT_PROVIDER","message":"Provider paystack failed: ECONNRESET 10.0.4.7","category":"external_service","statusCode":502}</option>
+<option>{"code":"ERR_PAYMENT_PROVIDER","message":"An unexpected error occurred.","category":"external_service","statusCode":502,"metadata":{"service":"paystack"}}</option>
+<option>{"message":"Internal Server Error","statusCode":500}</option>
+<explain><p>An <code>ExternalServiceError</code> is not exposed by default, so the public view replaces the message and leaves out the metadata, including the service name. The internal address never reaches the client.</p></explain>
+</question>
+
+<question id="zp-o-issues" type="output">
+<q>What does this print?</q>
+<code file="issues.js">
+import { ValidationError } from "@zudojs/errors";
+
+const error = new ValidationError("The payment request is invalid.", {
+  code: "ERR_PAYMENT_INVALID",
+  issues: [
+    { field: "email", message: "must be an email address" },
+    { field: "amountKobo", message: "must be a positive whole number of kobo" },
+    { field: "email", message: "is too long" },
+  ],
+});
+console.log(error.statusCode, error.issueCount, error.issuesForField("email").length, error.expose);
+</code>
+<option correct>400 3 2 true</option>
+<option>422 3 2 true</option>
+<option>400 2 1 true</option>
+<option>400 3 2 false</option>
+<explain><p>A validation error defaults to 400 and is exposed, because the client can fix its input. <code>issueCount</code> counts every issue and <code>issuesForField</code> filters by field.</p></explain>
+</question>
+
+<question id="zp-o-whole-kobo" type="output">
+<q>What does this print?</q>
+<code file="kobo.js">
+const isWholeKobo = (amount) => Number.isSafeInteger(amount) && amount > 0;
+
+console.log([125_000, 0, 12.5, -500, 2 ** 53, "5000"].map(isWholeKobo).join(" "));
+</code>
+<option correct>true false false false false false</option>
+<option>true true false false true true</option>
+<option>true false false false true false</option>
+<option>true false true false false true</option>
+<explain><p>Zero and negatives fail <code>&gt; 0</code>. <code>12.5</code> is not an integer, <code>2 ** 53</code> is beyond the safe integer range, and <code>Number.isSafeInteger</code> never converts strings.</p></explain>
+</question>
+
+<question id="zp-o-idempotent" type="output">
+<q>A reduced version of the service's idempotency. What does it print?</q>
+<code file="idempotent.js">
+const completed = new Map();
+const inFlight = new Map();
+let providerCalls = 0;
+
+async function charge(reference, amount) {
+  if (completed.has(reference)) return completed.get(reference);
+  if (inFlight.has(reference)) return inFlight.get(reference);
+  const promise = (async () => {
+    providerCalls++;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const payment = { reference, amount };
+    completed.set(reference, payment);
+    return payment;
+  })().finally(() => inFlight.delete(reference));
+  inFlight.set(reference, promise);
+  return promise;
+}
+
+const [a, b] = await Promise.all([charge("ORD-1", 500), charge("ORD-1", 500)]);
+const c = await charge("ORD-1", 500);
+await charge("ORD-2", 500);
+console.log(a === b, b === c, providerCalls);
+</code>
+<option correct>true true 2</option>
+<option>false false 4</option>
+<option>true false 2</option>
+<option>true true 3</option>
+<explain><p>The concurrent pair shares the in-flight promise. The third call finds the completed payment, the same object. Only <code>ORD-2</code> calls the provider again: two calls in total.</p></explain>
+</question>
+
+<question id="zp-o-fake-fetch" type="output">
+<q>What does this print?</q>
+<code file="fake-fetch.js">
+const seen = [];
+const fakeFetch = async (url, init) => {
+  seen.push(new Request(url, init));
+  return Response.json({ status: true, data: { status: "failed", reference: "ps_7", gateway_response: "Do Not Honor" } });
+};
+
+const response = await fakeFetch("https://api.paystack.co/transaction/charge_authorization", {
+  method: "POST",
+  headers: { authorization: "Bearer sk_test_x", "content-type": "application/json" },
+  body: JSON.stringify({ amount: 150000, authorization_code: "AUTH_abc" }),
+});
+const body = await response.json();
+const request = seen[0];
+console.log(request.method, new URL(request.url).pathname);
+console.log(request.headers.get("authorization"), (await request.json()).amount);
+console.log(body.data.status, body.data.gateway_response);
+</code>
+<option correct>POST /transaction/charge_authorization
+Bearer sk_test_x 150000
+failed Do Not Honor</option>
+<option>GET /transaction/charge_authorization
+Bearer sk_test_x 150000
+failed Do Not Honor</option>
+<option>POST /transaction/charge_authorization
+null 150000
+failed Do Not Honor</option>
+<option>POST https://api.paystack.co/transaction/charge_authorization
+Bearer sk_test_x 1500
+success Approved</option>
+<explain><p>Turning the arguments into a real <code>Request</code> lets a test read the method, URL, headers and body exactly as they would have been sent. <code>Response.json</code> builds the canned answer. No network is involved.</p></explain>
+</question>
+
+<question id="zp-o-timeout" type="output">
+<q>What does this print?</q>
+<code file="timeout-name.js">
+const hangs = (url, init) =>
+  new Promise((_resolve, reject) => {
+    init.signal.addEventListener("abort", () => reject(init.signal.reason));
+  });
+
+try {
+  await hangs("https://api.paystack.co/transaction/charge_authorization", { signal: AbortSignal.timeout(30) });
+  console.log("answered");
+} catch (error) {
+  console.log(error.name);
+}
+</code>
+<option correct>TimeoutError</option>
+<option>AbortError</option>
+<option>answered</option>
+<option>Error</option>
+<explain><p>A signal from <code>AbortSignal.timeout</code> aborts with a <code>DOMException</code> named <code>TimeoutError</code>, which a real <code>fetch</code> rejects with. A manual <code>controller.abort()</code> would give <code>AbortError</code>. Compare names, not messages: messages differ between runtimes.</p></explain>
+</question>
+
+<question id="zp-o-bump" type="output">
+<q>What does this print?</q>
+<code file="bump.js">
+function bump(version, type) {
+  const [major, minor, patch] = version.split(".").map(Number);
+  if (type === "major") return `${major + 1}.0.0`;
+  if (type === "minor") return `${major}.${minor + 1}.0`;
+  return `${major}.${minor}.${patch + 1}`;
+}
+
+const rank = { patch: 0, minor: 1, major: 2 };
+const pending = ["patch", "minor", "patch"];
+const highest = pending.reduce((a, b) => (rank[b] > rank[a] ? b : a));
+console.log(bump("1.4.2", highest), bump("1.4.2", "major"), bump("0.9.9", "patch"));
+</code>
+<option correct>1.5.0 2.0.0 0.9.10</option>
+<option>1.5.2 2.4.2 0.9.10</option>
+<option>1.6.4 2.0.0 1.0.0</option>
+<option>1.5.0 2.0.0 1.0.0</option>
+<explain><p>The highest pending bump is applied once. A minor or major bump resets the numbers to its right, and version parts are numbers, so 9 + 1 is 10, not a carry.</p></explain>
+</question>
+
+<question id="zp-o-caret" type="output">
+<q>This implements the caret rule for plain versions. What does it print?</q>
+<code file="caret.js">
+function satisfiesCaret(version, base) {
+  const [vMaj, vMin, vPat] = version.split(".").map(Number);
+  const [bMaj, bMin, bPat] = base.split(".").map(Number);
+  const atLeast = vMaj > bMaj || (vMaj === bMaj && (vMin > bMin || (vMin === bMin && vPat >= bPat)));
+  if (!atLeast) return false;
+  if (bMaj > 0) return vMaj === bMaj;
+  if (bMin > 0) return vMaj === 0 && vMin === bMin;
+  return vMaj === 0 && vMin === 0 && vPat === bPat;
+}
+
+console.log(
+  satisfiesCaret("1.9.0", "1.3.0"),
+  satisfiesCaret("2.0.0", "1.3.0"),
+  satisfiesCaret("0.1.7", "0.1.0"),
+  satisfiesCaret("0.2.0", "0.1.0"),
+);
+</code>
+<option correct>true false true false</option>
+<option>true false true true</option>
+<option>true true true true</option>
+<option>false false true false</option>
+<explain><p>For 1.x and above a caret allows anything with the same major. Below 1.0.0 the first non-zero number is treated as the major, so <code>^0.1.0</code> stops before 0.2.0.</p></explain>
+</question>
+
+<question id="zp-o-exports" type="output">
+<q>A simplified model of how Node resolves a subpath through an <code>exports</code> map. What does it print?</q>
+<code file="exports-map.js">
+const exportsMap = {
+  ".": "./dist/index.js",
+  "./testing": "./dist/testing/index.js",
+  "./package.json": "./package.json",
+};
+
+function resolve(specifier) {
+  const subpath = "." + specifier.slice("@mycompany/zudo-payments".length);
+  return exportsMap[subpath] ?? "ERR_PACKAGE_PATH_NOT_EXPORTED";
+}
+
+for (const s of ["@mycompany/zudo-payments", "@mycompany/zudo-payments/testing", "@mycompany/zudo-payments/internal/money", "@mycompany/zudo-payments/dist/index.js"]) {
+  console.log(resolve(s));
+}
+</code>
+<option correct>./dist/index.js
+./dist/testing/index.js
+ERR_PACKAGE_PATH_NOT_EXPORTED
+ERR_PACKAGE_PATH_NOT_EXPORTED</option>
+<option>./dist/index.js
+./dist/testing/index.js
+./dist/internal/money.js
+./dist/index.js</option>
+<option>./dist/index.js
+ERR_PACKAGE_PATH_NOT_EXPORTED
+ERR_PACKAGE_PATH_NOT_EXPORTED
+./dist/index.js</option>
+<option>./dist/index.js
+./dist/testing/index.js
+ERR_PACKAGE_PATH_NOT_EXPORTED
+./dist/index.js</option>
+<explain><p>Only the keys of the map are reachable. Even the file behind <code>"."</code> cannot be reached by its <code>dist</code> path, because <code>./dist/index.js</code> is not a key. Real Node also supports patterns and conditions, but the rule is the same.</p></explain>
+</question>
+
+<question id="zp-o-conflict" type="output">
+<q>What does this print?</q>
+<code file="conflict.js">
+import { ConflictError, isBaseError } from "@zudojs/errors";
+
+class PaymentConflictError extends ConflictError {
+  constructor(reference) {
+    super(`Reference ${reference} was already used for a different payment.`, {
+      code: "ERR_PAYMENT_CONFLICT",
+      metadata: { reference },
+    });
+  }
+}
+
+const error = new PaymentConflictError("ORD-1001");
+const isPaymentError = (value) => isBaseError(value) && value.code.startsWith("ERR_PAYMENT_");
+console.log(error.statusCode, error.expose, isPaymentError(error), isPaymentError(new Error("ERR_PAYMENT_X")));
+</code>
+<option correct>409 true true false</option>
+<option>409 false true false</option>
+<option>400 true true true</option>
+<option>409 true true true</option>
+<explain><p><code>ConflictError</code> supplies 409 and <code>expose: true</code>. A plain <code>Error</code> is not a <code>BaseError</code>, so it fails the first half of the check even though its message contains the prefix: the check reads <code>code</code>, never the message.</p></explain>
+</question>
+
+<question id="zp-c-declined" type="code" file="declined-code.js">
+<q><p>Write <code>PaymentDeclinedError</code>: it extends <code>DomainError</code> from <code>@zudojs/errors</code>, takes a reference and a reason, uses code <code>ERR_PAYMENT_DECLINED</code>, status 402, and stores both values in <code>metadata</code>. The program should print <code>PaymentDeclinedError ERR_PAYMENT_DECLINED 402 Insufficient Funds</code>.</p></q>
+<starter>
+import { DomainError } from "@zudojs/errors";
+
+class PaymentDeclinedError extends DomainError {
+  constructor(reference, reason) {
+    // your code here
+    super("declined");
+  }
+}
+
+const error = new PaymentDeclinedError("ORD-3", "Insufficient Funds");
+console.log(error.name, error.code, error.statusCode, error.getMetadata("reason"));
+</starter>
+<solution>
+import { DomainError } from "@zudojs/errors";
+
+class PaymentDeclinedError extends DomainError {
+  constructor(reference, reason) {
+    super(`Payment ${reference} was declined: ${reason}`, {
+      code: "ERR_PAYMENT_DECLINED",
+      statusCode: 402,
+      metadata: { reference, reason },
+    });
+  }
+}
+
+const error = new PaymentDeclinedError("ORD-3", "Insufficient Funds");
+console.log(error.name, error.code, error.statusCode, error.getMetadata("reason"));
+</solution>
+<expected>PaymentDeclinedError ERR_PAYMENT_DECLINED 402 Insufficient Funds</expected>
+<explain><p>Pass the code, status and metadata to the base constructor; everything else (category, severity, <code>expose</code>, <code>name</code>) comes from <code>DomainError</code> and <code>BaseError</code>.</p></explain>
+</question>
+
+<question id="zp-c-validate" type="code" file="validate-code.js">
+<q><p>Write <code>validate(request)</code>: collect an issue for each problem (<code>reference</code> empty; <code>email</code> without <code>@</code>; <code>amountKobo</code> not a safe positive integer) and, if there are any, throw a <code>ValidationError</code> with code <code>ERR_PAYMENT_INVALID</code> and the issues. The program should print <code>ERR_PAYMENT_INVALID email,amountKobo</code>.</p></q>
+<starter>
+import { ValidationError } from "@zudojs/errors";
+
+function validate(request) {
+  // your code here
+}
+
+try {
+  validate({ reference: "ORD-8", email: "ada", amountKobo: 12.5 });
+  console.log("valid");
+} catch (error) {
+  console.log(error.code, error.issues.map((i) => i.field).join(","));
+}
+</starter>
+<solution>
+import { ValidationError } from "@zudojs/errors";
+
+function validate(request) {
+  const issues = [];
+  if (!request.reference.trim()) issues.push({ field: "reference", message: "is required" });
+  if (!request.email.includes("@")) issues.push({ field: "email", message: "must be an email address" });
+  if (!Number.isSafeInteger(request.amountKobo) || request.amountKobo <= 0) {
+    issues.push({ field: "amountKobo", message: "must be a positive whole number of kobo" });
+  }
+  if (issues.length > 0) throw new ValidationError("The payment request is invalid.", { code: "ERR_PAYMENT_INVALID", issues });
+}
+
+try {
+  validate({ reference: "ORD-8", email: "ada", amountKobo: 12.5 });
+  console.log("valid");
+} catch (error) {
+  console.log(error.code, error.issues.map((i) => i.field).join(","));
+}
+</solution>
+<expected>ERR_PAYMENT_INVALID email,amountKobo</expected>
+<explain><p>Collect every problem before throwing, so the client can fix all fields in one round trip instead of discovering them one request at a time.</p></explain>
+</question>
+
+<question id="zp-c-is-payment-error" type="code" file="is-payment-code.js">
+<q><p>Write <code>isPaymentError(value)</code> with <code>isBaseError</code> from <code>@zudojs/errors</code> and the code prefix <code>ERR_PAYMENT_</code>. The program should print <code>true false false</code>.</p></q>
+<starter>
+import { BaseError, NotFoundError, isBaseError } from "@zudojs/errors";
+
+function isPaymentError(value) {
+  // your code here
+  return value instanceof Error;
+}
+
+const declined = new BaseError("declined", { code: "ERR_PAYMENT_DECLINED", statusCode: 402 });
+console.log(isPaymentError(declined), isPaymentError(new NotFoundError("Order 5 not found")), isPaymentError("ERR_PAYMENT_DECLINED"));
+</starter>
+<solution>
+import { BaseError, NotFoundError, isBaseError } from "@zudojs/errors";
+
+function isPaymentError(value) {
+  return isBaseError(value) && value.code.startsWith("ERR_PAYMENT_");
+}
+
+const declined = new BaseError("declined", { code: "ERR_PAYMENT_DECLINED", statusCode: 402 });
+console.log(isPaymentError(declined), isPaymentError(new NotFoundError("Order 5 not found")), isPaymentError("ERR_PAYMENT_DECLINED"));
+</solution>
+<expected>true false false</expected>
+<explain><p>The <code>NotFoundError</code> is a <code>BaseError</code> with another code, and a string is not an error at all. Checking <code>isBaseError</code> first also guarantees that <code>code</code> is a string before you call <code>startsWith</code>.</p></explain>
+</question>
+
+<question id="zp-c-idempotency" type="code" file="idempotency-code.js">
+<q><p>Complete <code>charge</code> so that concurrent calls with the same reference share one provider call, a completed reference returns the stored payment, and a completed reference with a different amount throws an error whose message is <code>conflict</code>. The program should print <code>calls: 1</code>, then <code>conflict</code>.</p></q>
+<starter>
+const completed = new Map();
+const inFlight = new Map();
+let calls = 0;
+const provider = async (reference, amount) => {
+  calls++;
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  return { reference, amount };
+};
+
+async function charge(reference, amount) {
+  // your code here
+  return provider(reference, amount);
+}
+
+await Promise.all([charge("ORD-1", 900), charge("ORD-1", 900)]);
+await charge("ORD-1", 900);
+console.log("calls:", calls);
+try {
+  await charge("ORD-1", 100);
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+const completed = new Map();
+const inFlight = new Map();
+let calls = 0;
+const provider = async (reference, amount) => {
+  calls++;
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  return { reference, amount };
+};
+
+async function charge(reference, amount) {
+  const done = completed.get(reference);
+  if (done) {
+    if (done.amount !== amount) throw new Error("conflict");
+    return done;
+  }
+  const pending = inFlight.get(reference);
+  if (pending) return pending;
+  const promise = provider(reference, amount)
+    .then((payment) => {
+      completed.set(reference, payment);
+      return payment;
+    })
+    .finally(() => inFlight.delete(reference));
+  inFlight.set(reference, promise);
+  return promise;
+}
+
+await Promise.all([charge("ORD-1", 900), charge("ORD-1", 900)]);
+await charge("ORD-1", 900);
+console.log("calls:", calls);
+try {
+  await charge("ORD-1", 100);
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>calls: 1
+conflict
+</expected>
+<explain><p>Two maps cover the two moments: in flight (share the promise) and completed (return the stored result). The amount check makes a reused key with a different body fail instead of silently returning the wrong payment.</p></explain>
+</question>
+
+<question id="zp-c-map-response" type="code" file="map-response.js">
+<q><p>Write <code>toResult(body)</code>, the adapter's mapping: throw an <code>Error</code> with message <code>refused: MESSAGE</code> when <code>body.status</code> is false; otherwise return <code>{ status: "success", providerReference }</code> for <code>data.status === "success"</code>, or <code>{ status: "failed", providerReference, reason }</code> using <code>gateway_response</code>. The program should print the three lines shown in <code>expected</code>.</p></q>
+<starter>
+function toResult(body) {
+  // your code here
+  return body;
+}
+
+console.log(JSON.stringify(toResult({ status: true, message: "Charge attempted", data: { status: "success", reference: "ps_1" } })));
+console.log(JSON.stringify(toResult({ status: true, message: "Charge attempted", data: { status: "failed", reference: "ps_2", gateway_response: "Do Not Honor" } })));
+try {
+  toResult({ status: false, message: "Duplicate Transaction Reference" });
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+function toResult(body) {
+  if (!body.status || !body.data) throw new Error(`refused: ${body.message}`);
+  if (body.data.status === "success") return { status: "success", providerReference: body.data.reference };
+  return { status: "failed", providerReference: body.data.reference, reason: body.data.gateway_response ?? body.data.status };
+}
+
+console.log(JSON.stringify(toResult({ status: true, message: "Charge attempted", data: { status: "success", reference: "ps_1" } })));
+console.log(JSON.stringify(toResult({ status: true, message: "Charge attempted", data: { status: "failed", reference: "ps_2", gateway_response: "Do Not Honor" } })));
+try {
+  toResult({ status: false, message: "Duplicate Transaction Reference" });
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>{"status":"success","providerReference":"ps_1"}
+{"status":"failed","providerReference":"ps_2","reason":"Do Not Honor"}
+refused: Duplicate Transaction Reference</expected>
+<explain><p>The adapter's only job is translation: provider JSON in, your types out. A refused request is an error; a declined card is a normal result with a reason, which the service turns into <code>PaymentDeclinedError</code>.</p></explain>
+</question>
+
+<question id="zp-c-api-snapshot" type="code" file="api-snapshot.js">
+<q><p>A public-API snapshot test compares what an entry point exports with an approved list. Write <code>diffApi(actual, approved)</code> returning <code>{ added, removed }</code> (sorted arrays). The program should print <code>added: formatKobo | removed: isPaymentError</code>.</p></q>
+<starter>
+function diffApi(actual, approved) {
+  // your code here
+  return { added: [], removed: [] };
+}
+
+const approved = ["createPaymentService", "createPaystackProvider", "isPaymentError", "PaymentErrorCode"];
+const actual = ["createPaymentService", "createPaystackProvider", "PaymentErrorCode", "formatKobo"];
+const { added, removed } = diffApi(actual, approved);
+console.log(`added: ${added.join(",")} | removed: ${removed.join(",")}`);
+</starter>
+<solution>
+function diffApi(actual, approved) {
+  const a = new Set(actual);
+  const b = new Set(approved);
+  return {
+    added: [...a].filter((name) => !b.has(name)).sort(),
+    removed: [...b].filter((name) => !a.has(name)).sort(),
+  };
+}
+
+const approved = ["createPaymentService", "createPaystackProvider", "isPaymentError", "PaymentErrorCode"];
+const actual = ["createPaymentService", "createPaystackProvider", "PaymentErrorCode", "formatKobo"];
+const { added, removed } = diffApi(actual, approved);
+console.log(`added: ${added.join(",")} | removed: ${removed.join(",")}`);
+</solution>
+<expected>added: formatKobo | removed: isPaymentError</expected>
+<explain><p>An added name (here an internal helper that leaked out) needs a decision and at least a minor bump; a removed name is a breaking change. In a real test, <code>actual</code> is <code>Object.keys(await import("@mycompany/zudo-payments"))</code>.</p></explain>
+</question>
+
+<question id="zp-c-fake-provider" type="code" file="fake-provider-code.js">
+<q><p>Write <code>createFakeProvider({ decline })</code>: its <code>charge(request)</code> records the request in <code>requests</code>, returns <code>{ status: "failed", reason: "Insufficient Funds" }</code> when <code>request.authorizationCode</code> is in <code>decline</code>, and <code>{ status: "success" }</code> otherwise. The program should print <code>success failed 2</code>.</p></q>
+<starter>
+function createFakeProvider({ decline = [] } = {}) {
+  // your code here
+  return { requests: [], async charge() { return { status: "success" }; } };
+}
+
+const provider = createFakeProvider({ decline: ["AUTH_broke"] });
+const a = await provider.charge({ reference: "ORD-1", authorizationCode: "AUTH_ok" });
+const b = await provider.charge({ reference: "ORD-2", authorizationCode: "AUTH_broke" });
+console.log(a.status, b.status, provider.requests.length);
+</starter>
+<solution>
+function createFakeProvider({ decline = [] } = {}) {
+  const requests = [];
+  return {
+    requests,
+    async charge(request) {
+      requests.push(request);
+      if (decline.includes(request.authorizationCode)) return { status: "failed", reason: "Insufficient Funds" };
+      return { status: "success" };
+    },
+  };
+}
+
+const provider = createFakeProvider({ decline: ["AUTH_broke"] });
+const a = await provider.charge({ reference: "ORD-1", authorizationCode: "AUTH_ok" });
+const b = await provider.charge({ reference: "ORD-2", authorizationCode: "AUTH_broke" });
+console.log(a.status, b.status, provider.requests.length);
+</solution>
+<expected>success failed 2</expected>
+<explain><p>A fake driven by its inputs lets each test choose the outcome it needs, and the recorded requests let it assert what was sent. Shipping it under <code>/testing</code> saves every app from writing its own.</p></explain>
+</question>

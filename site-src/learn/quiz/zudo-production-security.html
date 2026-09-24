@@ -1,0 +1,795 @@
+<question id="zps-evidence" type="choice">
+<q>In a security review, which of these is the strongest evidence that "only logged-in users can read tasks" holds?</q>
+<option>The route file has <code>requireUser</code> in it</option>
+<option>The documentation lists the route as "authenticated"</option>
+<option correct>A test calls the route without credentials and gets 401, and would fail if the middleware were removed</option>
+<option>The login route rejects wrong passwords</option>
+<explain><p>Reading code and docs tells you what someone intended. A test that sends the forbidden request proves what the running app does, and it keeps proving it after the review, because it fails the moment the protection disappears.</p></explain>
+</question>
+
+<question id="zps-router-list" type="choice">
+<q>Why does the authentication check loop over <code>router.list()</code> instead of a hand-written list of paths?</q>
+<option>Because <code>router.list()</code> is faster than <code>fetch</code></option>
+<option correct>A route added next month is checked automatically, so a forgotten middleware fails the test without anyone updating it</option>
+<option>Because hand-written paths cannot contain parameters like <code>:id</code></option>
+<option>Because the router refuses unauthenticated requests by itself</option>
+<explain><p>The typical authentication bug is a new route that nobody protected. A test that asks the router for every route covers it on the day it is added. A hand-written list only covers the routes someone remembered.</p></explain>
+</question>
+
+<question id="zps-public-pin" type="choice">
+<q>The check also asserts that exactly two routes are public. What does that add?</q>
+<option>It makes the test run faster</option>
+<option>It stops public routes from being rate-limited</option>
+<option correct>Making a route public becomes a visible decision: adding one fails the test until someone updates it in a reviewed change</option>
+<option>It checks that the public routes return 200</option>
+<explain><p>Without it, anyone could mark a route <code>public</code> and the deny-by-default loop would simply skip it. Pinning the list forces the change through a test edit that a reviewer sees.</p></explain>
+</question>
+
+<question id="zps-404-403" type="choice">
+<q>Linus asks for the id of a task that belongs to Ada. Which answer is safest?</q>
+<option>403 Forbidden with "This task belongs to another user"</option>
+<option>403 Forbidden with no body</option>
+<option correct>404 Not Found, with exactly the body a missing task gets</option>
+<option>200 with an empty object</option>
+<explain><p>Any difference between "exists but not yours" and "does not exist" lets someone discover which ids are real. The same status and the same body reveal nothing.</p></explain>
+</question>
+
+<question id="zps-owner-body" type="choice">
+<q>A client sends <code>POST /tasks</code> with <code>{"title":"Pay rent","ownerId":"u-linus"}</code> while logged in as Ada. What should the Task API do?</q>
+<option>Create the task for Linus, because the client asked for it</option>
+<option>Reject the request with 403</option>
+<option correct>Create it for Ada: the owner comes from the verified token, and the schema drops <code>ownerId</code></option>
+<option>Create two tasks, one for each user</option>
+<explain><p>Who the caller is comes only from what the server verified. Fields in the body that claim an identity are ignored; the <code>NewTask</code> schema keeps only <code>title</code>.</p></explain>
+</question>
+
+<question id="zps-audience" type="choice">
+<q>Why does the review insist on <code>issuer</code> and <code>audience</code> in the token configuration?</q>
+<option>They make the token shorter</option>
+<option>They encrypt the payload</option>
+<option correct>A token made for another service is refused even if that service signs with the same key</option>
+<option>They replace the expiry time</option>
+<explain><p>The signature only proves "someone with this key made it". The <code>aud</code> and <code>iss</code> claims say who it is for and who made it, and the verifier refuses a mismatch, including a token that has none.</p></explain>
+</question>
+
+<question id="zps-refresh" type="choice">
+<q><code>verifyAccessToken(pair.refreshToken, config)</code> returns <code>valid: false</code>. Why is that the behaviour you want?</q>
+<option>Refresh tokens are expired from the start</option>
+<option correct>A long-lived refresh token must not work as an access token; it is signed with its own secret and only accepted where refreshing happens</option>
+<option>Refresh tokens have no subject</option>
+<option>Because the refresh token is encrypted</option>
+<explain><p>Refresh tokens live days, access tokens minutes. If a refresh token also opened every route, stealing one would give long-lived access to everything. Separate secrets and a type claim keep them apart.</p></explain>
+</question>
+
+<question id="zps-samesite-none" type="choice">
+<q>Which <code>Set-Cookie</code> line fails the cookie check from the lesson?</q>
+<option><code>sid=a1; Max-Age=900; Path=/; HttpOnly; Secure; SameSite=Lax</code></option>
+<option><code>_csrf=b2; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=3600</code></option>
+<option correct><code>sid=a1; Max-Age=900; Path=/; HttpOnly; Secure; SameSite=None</code></option>
+<option><code>sid=a1; Max-Age=60; HttpOnly; Secure; SameSite=Strict</code></option>
+<explain><p><code>SameSite=None</code> sends the cookie with requests started by any other site, which is what CSRF needs. The Task API has no cookie that other sites must send, so the check requires <code>Lax</code> or <code>Strict</code>.</p></explain>
+</question>
+
+<question id="zps-csrf-bearer" type="choice">
+<q>Why may requests authenticated with <code>Authorization: Bearer …</code> skip the CSRF token check?</q>
+<option>Bearer tokens are longer than cookies</option>
+<option correct>A browser never adds that header by itself, so another website cannot make a user's browser send it</option>
+<option>CSRF only affects GET requests</option>
+<option>Bearer tokens cannot be stolen</option>
+<explain><p>CSRF works because browsers attach cookies automatically. An <code>Authorization</code> header is only sent when your own JavaScript adds it, and a page on another origin cannot read your token to add it.</p></explain>
+</question>
+
+<question id="zps-csrf-session" type="choice">
+<q>Linus logs in, copies his own valid CSRF token, and tricks Ada's browser into posting it together with Ada's cookies. Why does the Task API refuse it?</q>
+<option>Because Linus's token has expired</option>
+<option>Because CSRF tokens can be used only once</option>
+<option correct>Tokens are issued and verified with a <code>sessionId</code>, so a token from another session does not match Ada's</option>
+<option>Because SameSite blocks all cross-site requests</option>
+<explain><p>A CSRF token that is not tied to a session can be taken from the attacker's own account and replayed against a victim. Passing the same <code>sessionId</code> to <code>issue</code> and <code>verify</code> closes that gap.</p></explain>
+</question>
+
+<question id="zps-cors-curl" type="choice">
+<q>A preflight from <code>https://evil.example</code> gets no <code>Access-Control-Allow-Origin</code> header. What does that protect against?</q>
+<option>Every script, bot and <code>curl</code> command calling the API</option>
+<option correct>JavaScript on that other site reading the API's responses inside a user's browser</option>
+<option>Password guessing</option>
+<option>Requests with a forged <code>Host</code> header</option>
+<explain><p>CORS is enforced by browsers, for scripts running on other origins. Direct callers ignore it; authentication, authorization and rate limits stop them.</p></explain>
+</question>
+
+<question id="zps-xff" type="choice">
+<q>The adapter has no <code>trustProxy</code> setting. An attacker sends six login attempts, each with a different <code>X-Forwarded-For</code>. What does the login limiter count?</q>
+<option>Six different clients, one attempt each</option>
+<option correct>Six attempts from one client, the connection's real address, so the sixth gets 429</option>
+<option>Nothing: requests with the header are skipped</option>
+<option>It refuses every request that has the header</option>
+<explain><p>Without <code>trustProxy</code> the header is just text the client wrote, so the limiter keys on the address of the actual connection. Behind your own proxy you set <code>trustProxy</code> to that proxy, so only its header is believed.</p></explain>
+</question>
+
+<question id="zps-ssrf-dns" type="choice">
+<q><code>https://internal.example.org/hook</code> passes <code>isSafeUrl</code>. Why does the webhook route still resolve the host name?</q>
+<option>To make the request faster later</option>
+<option correct>A public-looking name can point to a private address such as 10.0.0.8, which only a DNS lookup reveals</option>
+<option>Because <code>isSafeUrl</code> does not check the scheme</option>
+<option>To check the TLS certificate</option>
+<explain><p><code>isSafeUrl</code> can only judge the text of the URL. Where a name points is decided by DNS, so the route checks every resolved address with <code>isPrivateHostname</code>, and the sender checks again at delivery time.</p></explain>
+</question>
+
+<question id="zps-xss-store" type="choice">
+<q>A task title is <code>&lt;img src=x onerror="alert(1)"&gt;</code>. Which is the right defence?</q>
+<option>Refuse any title that contains <code>&lt;</code></option>
+<option>Strip HTML tags before saving</option>
+<option correct>Store it as typed; return it as JSON with <code>nosniff</code> and a CSP, and escape it wherever it is put into HTML</option>
+<option>Run <code>detectThreats</code> and block matches</option>
+<explain><p>The text is harmless as data. XSS happens when output is interpreted as HTML, so encode at the place it lands, for that language. Filtering input breaks legitimate text and misses encodings.</p></explain>
+</question>
+
+<question id="zps-scan-test" type="choice">
+<q>The SQL check ends with <code>check("the scan does spot one", stringBuilt.test("db.query(`…${id}`)"))</code>. Why?</q>
+<option>To run the query against the database</option>
+<option correct>To prove the scanner can fail: a pattern that never matches would pass every check forever</option>
+<option>To make the output longer</option>
+<option>Because regular expressions are cached</option>
+<explain><p>A "no problems found" result is only meaningful from a check that can find problems. Testing the scanner on a known bad line shows it actually works.</p></explain>
+</question>
+
+<question id="zps-raw-socket" type="choice">
+<q>Why do the path traversal and request smuggling checks write raw HTTP to a socket instead of using <code>fetch</code>?</q>
+<option>Sockets are faster</option>
+<option correct><code>fetch</code> normalises paths and refuses conflicting length headers, so it cannot send the requests these checks need</option>
+<option><code>fetch</code> does not work with <code>127.0.0.1</code></option>
+<option>The server does not accept <code>fetch</code> requests</option>
+<explain><p>A URL like <code>/tasks/../../etc/passwd</code> is cleaned up to <code>/etc/passwd</code> by the URL parser before it is sent, and <code>fetch</code> manages framing headers itself. To test how the server treats what a raw client or a broken proxy might send, you send those bytes yourself.</p></explain>
+</question>
+
+<question id="zps-canary" type="choice">
+<q>What is a canary in this lesson's log check?</q>
+<option>A logger that only writes errors</option>
+<option correct>A distinctive value (a test password, token or secret) whose appearance in any log line or response proves a leak</option>
+<option>A health check route</option>
+<option>A feature flag for new code</option>
+<explain><p>Because the test chose the values, it can search every captured line for them. Unlike key-based redaction, this also catches a secret glued into a message string.</p></explain>
+</question>
+
+<question id="zps-empty-log" type="choice">
+<q>Why does the log check also assert that <code>"database unavailable"</code> appears in the captured lines?</q>
+<option>To check the database</option>
+<option>Because the logger needs at least one line to flush</option>
+<option correct>A logger that writes nothing passes every "no leak" check, so the test must also prove that logging works</option>
+<option>To make the test fail on purpose</option>
+<explain><p>Absence checks are easy to satisfy by accident: a broken transport, a wrong level, a mocked logger. One presence check shows the lines searched are the real ones.</p></explain>
+</question>
+
+<question id="zps-order" type="choice">
+<q>Where must the middleware that turns errors into responses go so that error responses carry the security headers?</q>
+<option>Before <code>createSecurityMiddleware()</code> in the pipeline</option>
+<option correct>After <code>createSecurityMiddleware()</code>, so the security middleware wraps it and decorates the response it returns</option>
+<option>In the adapter's <code>events.onError</code></option>
+<option>It does not matter</option>
+<explain><p>Middleware runs like nested calls. The security middleware adds headers to whatever its <code>next()</code> returns. An error that escapes past it, or is only turned into a response outside it, gets no headers.</p></explain>
+</question>
+
+<question id="zps-core-logger" type="choice">
+<q>An app uses <code>createApplication</code> from <code>@zudojs/core</code> and logs <code>{ password }</code> on failed logins. What fixes the leak with the published package?</q>
+<option>Nothing: the core logger redacts passwords by default</option>
+<option correct>Pass <code>logger: { redact: createLogRedactor() }</code> to <code>createApplication</code>, and still stop logging passwords</option>
+<option>Set <code>structured: false</code></option>
+<option>Set the level to <code>warn</code></option>
+<explain><p>The core <code>ConsoleLogger</code> writes context as given unless a redaction hook is configured. <code>createLogRedactor()</code> is that hook. It is a safety net; the real fix is to never put a password in a log call.</p></explain>
+</question>
+
+<question id="zps-metadata" type="choice">
+<q>A <code>ConflictError</code> carries <code>metadata: { field, ownerEmail }</code>. What does <code>serializePublicError(error, { publicMetadataKeys: ["field"] })</code> guarantee?</q>
+<option>The message is replaced with a generic one</option>
+<option correct>Only <code>field</code> is copied into the public metadata; <code>ownerEmail</code> stays on the server</option>
+<option>No metadata at all is included</option>
+<option>The error is logged</option>
+<explain><p>Without the option, exposed errors publish all their metadata, with only secret-looking key names redacted. The allow-list names exactly what may leave, so new keys stay private by default.</p></explain>
+</question>
+
+<question id="zps-severity" type="choice">
+<q>Which finding deserves the highest severity?</q>
+<option>JSON error bodies from the adapter lack <code>X-Frame-Options</code></option>
+<option>The health route says <code>"ok"</code> without authentication</option>
+<option correct>Any logged-in user can read other users' tasks by changing the id in the URL</option>
+<option>Access tokens live 15 minutes instead of 10</option>
+<explain><p>Severity is impact times likelihood. Reading everyone's private data with a changed number is high impact and trivial to do. A missing framing header on a JSON body is low on both.</p></explain>
+</question>
+
+<question id="zps-out-public-error" type="output">
+<q>What does this print?</q>
+<code file="public-error.js">
+import { ConflictError, serializePublicError } from "@zudojs/errors";
+
+const error = new ConflictError("Title already used", {
+  metadata: { field: "title", ownerEmail: "grace@example.com" },
+});
+console.log(JSON.stringify(serializePublicError(error).metadata));
+console.log(JSON.stringify(serializePublicError(error, { publicMetadataKeys: ["field"] }).metadata));
+</code>
+<option correct>{"field":"title","ownerEmail":"grace@example.com"}
+{"field":"title"}</option>
+<option>undefined
+{"field":"title"}</option>
+<option>{"field":"title","ownerEmail":"[REDACTED]"}
+{"field":"title"}</option>
+<option>{"field":"title"}
+{"field":"title"}</option>
+<explain><p>A conflict is a 4xx with <code>expose: true</code>, so by default all of its metadata is published. Only secret-looking key names are redacted, and <code>ownerEmail</code> is not one. The allow-list keeps just <code>field</code>.</p></explain>
+</question>
+
+<question id="zps-out-500" type="output">
+<q>What does this print?</q>
+<code file="internal.js">
+import { normalizeUnknownError, serializePublicError } from "@zudojs/errors";
+
+const safe = serializePublicError(normalizeUnknownError(new Error("connect ECONNREFUSED 10.0.0.5:5432")));
+console.log(safe.statusCode, safe.message);
+</code>
+<option correct>500 An unexpected error occurred.</option>
+<option>500 connect ECONNREFUSED 10.0.0.5:5432</option>
+<option>503 Service Unavailable</option>
+<option>500 Internal Server Error</option>
+<explain><p>A plain <code>Error</code> becomes a non-exposed 500, and <code>serializePublicError</code> replaces the message of a non-exposed error with a safe one. The real message stays for the logs.</p></explain>
+</question>
+
+<question id="zps-out-validation" type="output">
+<q>What does this print?</q>
+<code file="validation.js">
+import { ValidationError, serializePublicError } from "@zudojs/errors";
+
+const error = new ValidationError("Title is too long", { metadata: { field: "title", receivedValue: "x".repeat(300) } });
+const safe = serializePublicError(error, { publicMetadataKeys: [] });
+console.log(safe.statusCode, safe.message, "metadata" in safe);
+</code>
+<option correct>400 Title is too long false</option>
+<option>400 Title is too long true</option>
+<option>400 An unexpected error occurred. false</option>
+<option>422 Title is too long false</option>
+<explain><p>An empty allow-list means no metadata key may leave, so the property is left out entirely. The message stays because a validation error is exposed by design.</p></explain>
+</question>
+
+<question id="zps-out-logger" type="output">
+<q>What does this print?</q>
+<code file="redact.js">
+import { createLogger } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  transports: [(entry) => console.log(entry.message, JSON.stringify(entry.metadata))],
+});
+const password = "hunter2";
+logger.info("login failed", { email: "ada@example.com", password });
+logger.info(`login failed with ${password}`);
+</code>
+<option correct>login failed {"email":"ada@example.com","password":"[REDACTED]"}
+login failed with hunter2 {}</option>
+<option>login failed {"email":"ada@example.com","password":"hunter2"}
+login failed with hunter2 {}</option>
+<option>login failed {"email":"[REDACTED]","password":"[REDACTED]"}
+login failed with [REDACTED] {}</option>
+<option>login failed {"email":"ada@example.com","password":"[REDACTED]"}
+login failed with [REDACTED] {}</option>
+<explain><p>Redaction works on metadata key names. The <code>password</code> key is hidden, <code>email</code> is not on the default list, and a value glued into the message string is never seen by the redactor. That second line is what a canary search catches.</p></explain>
+</question>
+
+<question id="zps-out-schema-proto" type="output">
+<q>What does this print?</q>
+<code file="proto.js">
+import { schema } from "@zudojs/schema";
+
+const NewTask = schema.object({ title: schema.string().min(1).max(200) });
+const result = NewTask.safeParse(JSON.parse('{"title":"Buy milk","__proto__":{"isAdmin":true}}'));
+console.log(result.success, result.success ? "" : result.issues[0].code);
+console.log(NewTask.parse({ title: "Buy milk", ownerId: "u-linus" }));
+</code>
+<option correct>false invalid_key
+{ title: 'Buy milk' }</option>
+<option>true
+{ title: 'Buy milk', ownerId: 'u-linus' }</option>
+<option>false invalid_key
+{ title: 'Buy milk', ownerId: 'u-linus' }</option>
+<option>true
+{ title: 'Buy milk' }</option>
+<explain><p>The object schema refuses a <code>__proto__</code> key outright, and it drops keys it does not know, such as <code>ownerId</code>. Both properties are what the Task API relies on for items 2 and 14.</p></explain>
+</question>
+
+<question id="zps-out-cookie" type="output">
+<q>What does this print?</q>
+<code file="cookie-check.js">
+function problems(line) {
+  const attrs = line.split(";").slice(1).map((part) => part.trim().toLowerCase());
+  const missing = [];
+  if (!attrs.includes("httponly")) missing.push("HttpOnly");
+  if (!attrs.includes("secure")) missing.push("Secure");
+  if (!attrs.some((a) => a === "samesite=lax" || a === "samesite=strict")) missing.push("SameSite");
+  return missing.join(",") || "ok";
+}
+
+console.log(problems("sid=a1; Path=/; HttpOnly; Secure; SameSite=Lax"));
+console.log(problems("sid=a1; Path=/; Secure; SameSite=None"));
+console.log(problems("theme=dark"));
+</code>
+<option correct>ok
+HttpOnly,SameSite
+HttpOnly,Secure,SameSite</option>
+<option>ok
+SameSite
+HttpOnly,Secure,SameSite</option>
+<option>ok
+HttpOnly
+ok</option>
+<option>ok
+HttpOnly,SameSite
+ok</option>
+<explain><p><code>SameSite=None</code> does not count as protection, and the second cookie lacks <code>HttpOnly</code>. The third has no attributes at all. Even a harmless cookie like a theme should follow the rule, so a check can apply it to every cookie without exceptions.</p></explain>
+</question>
+
+<question id="zps-out-origin" type="output">
+<q>What does this print?</q>
+<code file="origins.js">
+const allowed = ["https://app.example.com"];
+const naive = (origin) => origin.startsWith("https://app.example.com");
+const exact = (origin) => allowed.includes(origin);
+
+for (const origin of ["https://app.example.com", "https://app.example.com.evil.example"]) {
+  console.log(naive(origin), exact(origin));
+}
+</code>
+<option correct>true true
+true false</option>
+<option>true true
+false false</option>
+<option>true false
+true false</option>
+<option>true true
+true true</option>
+<explain><p>A prefix test accepts any host that merely begins with your name. An exact comparison with a list is the safe form; the CORS middleware's array option works that way.</p></explain>
+</question>
+
+<question id="zps-out-scan" type="output">
+<q>What does this print?</q>
+<code file="scan.js">
+const stringBuilt = /\.(query|exec)\(\s*`[^`]*\$\{/;
+const lines = [
+  'db.query("SELECT * FROM tasks WHERE id = $1", [id])',
+  "db.query(`SELECT * FROM tasks WHERE id = ${id}`)",
+  "db.exec(`CREATE TABLE tasks (id SERIAL PRIMARY KEY)`)",
+];
+console.log(lines.map((line) => stringBuilt.test(line)));
+</code>
+<option correct>[ false, true, false ]</option>
+<option>[ true, true, true ]</option>
+<option>[ false, true, true ]</option>
+<option>[ true, false, false ]</option>
+<explain><p><code>$1</code> is a placeholder inside an ordinary string, not an interpolation. The second line puts a value into the SQL text. The third is a template literal without <code>${…}</code>, which is fixed text and safe.</p></explain>
+</question>
+
+<question id="zps-out-canary" type="output">
+<q>What does this print?</q>
+<code file="canary.js">
+const canaries = { password: "canary-pw-71", token: "canary-tok-19" };
+const logLines = [
+  '{"level":"info","msg":"login succeeded","userId":"u-ada"}',
+  '{"level":"warn","msg":"login failed for ada@example.com with canary-pw-71"}',
+  '{"level":"info","msg":"task created","token":"[REDACTED]"}',
+];
+const leaks = Object.entries(canaries)
+  .filter(([, value]) => logLines.some((line) => line.includes(value)))
+  .map(([name]) => name);
+console.log(leaks.length === 0 ? "PASS" : `FAIL: ${leaks.join(", ")}`);
+</code>
+<option correct>FAIL: password</option>
+<option>PASS</option>
+<option>FAIL: password, token</option>
+<option>FAIL: token</option>
+<explain><p>The password was glued into a message, so it appears in the second line. The token was redacted by key name, so its canary never shows up. The canary search finds the leak that key-based redaction cannot.</p></explain>
+</question>
+
+<question id="zps-out-authz" type="output">
+<q>What does this print?</q>
+<code file="find-task.js">
+const tasks = new Map([["t1", { id: "t1", ownerId: "u-ada", title: "Pay rent" }]]);
+
+function getTask(userId, id) {
+  const task = tasks.get(id);
+  if (task === undefined || task.ownerId !== userId) return { status: 404, body: { error: "Task not found" } };
+  return { status: 200, body: task };
+}
+
+const forbidden = getTask("u-linus", "t1");
+const missing = getTask("u-linus", "t9");
+console.log(forbidden.status, JSON.stringify(forbidden) === JSON.stringify(missing));
+console.log(getTask("u-ada", "t1").status);
+</code>
+<option correct>404 true
+200</option>
+<option>403 false
+200</option>
+<option>404 false
+200</option>
+<option>404 true
+404</option>
+<explain><p>Both failure cases take the same branch and build the same response, so the caller cannot tell them apart. The owner still gets 200.</p></explain>
+</question>
+
+<question id="zps-out-ssrf" type="output">
+<q>What does this print?</q>
+<code file="ssrf.ts" browser="no">
+import { isSafeUrl } from "@zudojs/security";
+
+for (const url of ["https://hooks.example.org/t", "http://hooks.example.org/t", "https://127.0.0.1/", "https://0x7f000001/"]) {
+  console.log(isSafeUrl(url, ["https:"]));
+}
+</code>
+<option correct>true
+false
+false
+false</option>
+<option>true
+true
+false
+false</option>
+<option>true
+false
+false
+true</option>
+<option>true
+true
+true
+true</option>
+<explain><p>The second argument allows only <code>https:</code>, so the plain <code>http</code> URL is refused. Loopback addresses are refused however they are written, including the hexadecimal form of 127.0.0.1.</p></explain>
+</question>
+
+<question id="zps-out-core-logger" type="output">
+<q>What does this print?</q>
+<code file="core-logger.ts" browser="no">
+import { ConsoleLogger, createLogRedactor } from "@zudojs/core";
+
+new ConsoleLogger({ timestamps: false }).info("reset requested", { email: "ada@example.com", resetToken: "abc123" });
+new ConsoleLogger({ timestamps: false, redact: createLogRedactor({ patterns: ["email"] }) }).info("reset requested", { email: "ada@example.com", resetToken: "abc123" });
+</code>
+<option correct>{"level":"info","message":"reset requested","context":{"email":"ada@example.com","resetToken":"abc123"}}
+{"level":"info","message":"reset requested","context":{"email":"[REDACTED]","resetToken":"[REDACTED]"}}</option>
+<option>{"level":"info","message":"reset requested","context":{"email":"ada@example.com","resetToken":"[REDACTED]"}}
+{"level":"info","message":"reset requested","context":{"email":"[REDACTED]","resetToken":"[REDACTED]"}}</option>
+<option>{"level":"info","message":"reset requested","context":{"email":"ada@example.com","resetToken":"abc123"}}
+{"level":"info","message":"reset requested","context":{"email":"[REDACTED]","resetToken":"abc123"}}</option>
+<option>{"level":"info","message":"reset requested"}
+{"level":"info","message":"reset requested"}</option>
+<explain><p>Without a hook the core logger redacts nothing, so the reset token is printed. <code>createLogRedactor</code> redacts its default secret-looking keys (a key containing "token" is one) plus the extra patterns you pass, here <code>email</code>.</p></explain>
+</question>
+
+<question id="zps-out-check" type="output">
+<q>The review's <code>check</code> helper is below. What does this print?</q>
+<code file="check.js">
+let exitCode = 0;
+function check(name, ok) {
+  console.log(`${ok ? "PASS" : "FAIL"}  ${name}`);
+  if (!ok) exitCode = 1;
+}
+
+const statuses = [401, 401, 401, 401, 401, 401];
+check("the sixth login attempt gets 429", statuses[5] === 429);
+check("the first five get 401", statuses.slice(0, 5).every((s) => s === 401));
+console.log("exit code", exitCode);
+</code>
+<option correct>FAIL  the sixth login attempt gets 429
+PASS  the first five get 401
+exit code 1</option>
+<option>PASS  the sixth login attempt gets 429
+PASS  the first five get 401
+exit code 0</option>
+<option>FAIL  the sixth login attempt gets 429
+exit code 1</option>
+<option>FAIL  the sixth login attempt gets 429
+PASS  the first five get 401
+exit code 0</option>
+<explain><p>With no rate limit, the sixth attempt is just another 401, so the first check fails. The helper keeps going so you see every result, and remembers the failure in the exit code, which is what CI reads.</p></explain>
+</question>
+
+<question id="zps-code-public-routes" type="code" file="public-routes.js">
+<q><p>Write <code>unprotected(routes)</code>. It receives route objects like <code>router.list()</code> returns (<code>method</code>, <code>path</code>, <code>metadata</code>) and returns the <code>"METHOD path"</code> strings of every route whose <code>metadata.public</code> is not exactly <code>true</code>, in the same order. Those are the routes the deny-by-default check must call.</p></q>
+<starter>
+function unprotected(routes) {
+  // your code here
+}
+
+const routes = [
+  { method: "GET", path: "/health", metadata: { public: true } },
+  { method: "POST", path: "/auth/login", metadata: { public: true } },
+  { method: "GET", path: "/tasks", metadata: {} },
+  { method: "POST", path: "/webhooks", metadata: { public: "yes" } },
+];
+console.log(unprotected(routes));
+</starter>
+<solution>
+function unprotected(routes) {
+  return routes.filter((route) => route.metadata.public !== true).map((route) => `${route.method} ${route.path}`);
+}
+
+const routes = [
+  { method: "GET", path: "/health", metadata: { public: true } },
+  { method: "POST", path: "/auth/login", metadata: { public: true } },
+  { method: "GET", path: "/tasks", metadata: {} },
+  { method: "POST", path: "/webhooks", metadata: { public: "yes" } },
+];
+console.log(unprotected(routes));
+</solution>
+<expected>
+[ 'GET /tasks', 'POST /webhooks' ]
+</expected>
+<explain><p>Compare with <code>=== true</code>, not truthiness: a typo like <code>"yes"</code> must not quietly make a route public. Anything that is not clearly public gets checked.</p></explain>
+</question>
+
+<question id="zps-code-cookie" type="code" file="cookie-attrs.js">
+<q><p>Write <code>cookieReport(line)</code> for one <code>Set-Cookie</code> line. Return <code>"name: ok"</code> when it has <code>HttpOnly</code>, <code>Secure</code>, <code>SameSite=Lax</code> or <code>SameSite=Strict</code>, and a <code>Max-Age</code> between 1 and 3600; otherwise <code>"name: FAIL"</code>. Attribute names are case-insensitive.</p></q>
+<starter>
+function cookieReport(line) {
+  // your code here
+}
+
+console.log(cookieReport("access_token=eyJ; Path=/; Max-Age=900; HttpOnly; Secure; SameSite=Lax"));
+console.log(cookieReport("_csrf=abc; path=/; httponly; secure; samesite=strict; max-age=3600"));
+console.log(cookieReport("sid=1; Path=/; HttpOnly; Secure; SameSite=Lax"));
+console.log(cookieReport("sid=1; Max-Age=86400; HttpOnly; Secure; SameSite=Lax"));
+</starter>
+<solution>
+function cookieReport(line) {
+  const [pair, ...rest] = line.split(";").map((part) => part.trim());
+  const name = pair.split("=")[0];
+  const attrs = rest.map((part) => part.toLowerCase());
+  const maxAge = Number(attrs.find((a) => a.startsWith("max-age="))?.slice(8));
+  const ok =
+    attrs.includes("httponly") &&
+    attrs.includes("secure") &&
+    (attrs.includes("samesite=lax") || attrs.includes("samesite=strict")) &&
+    maxAge >= 1 && maxAge <= 3600;
+  return `${name}: ${ok ? "ok" : "FAIL"}`;
+}
+
+console.log(cookieReport("access_token=eyJ; Path=/; Max-Age=900; HttpOnly; Secure; SameSite=Lax"));
+console.log(cookieReport("_csrf=abc; path=/; httponly; secure; samesite=strict; max-age=3600"));
+console.log(cookieReport("sid=1; Path=/; HttpOnly; Secure; SameSite=Lax"));
+console.log(cookieReport("sid=1; Max-Age=86400; HttpOnly; Secure; SameSite=Lax"));
+</solution>
+<expected>
+access_token: ok
+_csrf: ok
+sid: FAIL
+sid: FAIL
+</expected>
+<explain><p>A cookie with no <code>Max-Age</code> lives until the browser closes, which can be weeks; <code>Number(undefined)</code> is <code>NaN</code>, and every comparison with <code>NaN</code> is false, so it fails as it should. A day-long session outlives a 15-minute token.</p></explain>
+</question>
+
+<question id="zps-code-leaks" type="code" file="leaks.js">
+<q><p>Write <code>findLeaks(lines, canaries)</code>. <code>canaries</code> is an object of name → secret value. Return the sorted names of the canaries that appear in any of the lines. Also return <code>["logging broken"]</code> if <code>lines</code> is empty, because an empty log proves nothing.</p></q>
+<starter>
+function findLeaks(lines, canaries) {
+  // your code here
+}
+
+const canaries = { password: "pw-canary-1", jwtSecret: "sec-canary-2", csrf: "csrf-canary-3" };
+console.log(findLeaks(['{"msg":"login","user":"ada"}'], canaries));
+console.log(findLeaks(['{"msg":"bad token sec-canary-2"}', '{"msg":"retry pw-canary-1"}'], canaries));
+console.log(findLeaks([], canaries));
+</starter>
+<solution>
+function findLeaks(lines, canaries) {
+  if (lines.length === 0) return ["logging broken"];
+  return Object.entries(canaries)
+    .filter(([, value]) => lines.some((line) => line.includes(value)))
+    .map(([name]) => name)
+    .sort();
+}
+
+const canaries = { password: "pw-canary-1", jwtSecret: "sec-canary-2", csrf: "csrf-canary-3" };
+console.log(findLeaks(['{"msg":"login","user":"ada"}'], canaries));
+console.log(findLeaks(['{"msg":"bad token sec-canary-2"}', '{"msg":"retry pw-canary-1"}'], canaries));
+console.log(findLeaks([], canaries));
+</solution>
+<expected>
+[]
+[ 'jwtSecret', 'password' ]
+[ 'logging broken' ]
+</expected>
+<explain><p>The search is plain substring matching on the final text, which is why it catches values in messages, nested JSON and stack traces alike. The empty-log case turns "no leaks" from a vacuous pass into a failure.</p></explain>
+</question>
+
+<question id="zps-code-public-error" type="code" file="public-error-code.js">
+<q><p>Write <code>toResponseBody(error)</code> that uses <code>serializePublicError</code> from <code>@zudojs/errors</code> and only lets the metadata keys <code>field</code> and <code>limit</code> leave the server. Plain <code>Error</code>s must be normalized first with <code>normalizeUnknownError</code>.</p></q>
+<starter>
+import { ConflictError, ValidationError, normalizeUnknownError, serializePublicError } from "@zudojs/errors";
+
+function toResponseBody(error) {
+  // your code here
+}
+
+console.log(toResponseBody(new ValidationError("Too many tags", { metadata: { field: "tags", limit: 10, userEmail: "ada@example.com" } })));
+console.log(toResponseBody(new ConflictError("Title already used", { metadata: { field: "title", ownerId: "u-grace" } })));
+console.log(toResponseBody(new Error("pool exhausted: 10/10 connections to db-primary")));
+</starter>
+<solution>
+import { ConflictError, ValidationError, normalizeUnknownError, serializePublicError } from "@zudojs/errors";
+
+function toResponseBody(error) {
+  return serializePublicError(normalizeUnknownError(error), { publicMetadataKeys: ["field", "limit"] });
+}
+
+console.log(toResponseBody(new ValidationError("Too many tags", { metadata: { field: "tags", limit: 10, userEmail: "ada@example.com" } })));
+console.log(toResponseBody(new ConflictError("Title already used", { metadata: { field: "title", ownerId: "u-grace" } })));
+console.log(toResponseBody(new Error("pool exhausted: 10/10 connections to db-primary")));
+</solution>
+<expected>
+{
+  code: 'ERR_VALIDATION_FAILED',
+  message: 'Too many tags',
+  category: 'validation',
+  statusCode: 400,
+  metadata: { field: 'tags', limit: 10 }
+}
+{
+  code: 'ERR_CONFLICT',
+  message: 'Title already used',
+  category: 'conflict',
+  statusCode: 409,
+  metadata: { field: 'title' }
+}
+{
+  code: 'ERR_INTERNAL_ERROR',
+  message: 'An unexpected error occurred.',
+  category: 'system',
+  statusCode: 500
+}
+</expected>
+<explain><p>One allow-list covers every error type. The plain error becomes a non-exposed 500 whose message is replaced, so "pool exhausted" and the host name stay in the logs.</p></explain>
+</question>
+
+<question id="zps-code-find-task" type="code" file="find-task-code.js">
+<q><p>Write <code>readTask(userId, id)</code> for the in-memory store below. Return <code>{ status: 200, body: task }</code> for the owner. For a missing task <em>and</em> for someone else's task, return exactly the same <code>{ status: 404, body: { error: "Task not found" } }</code>. Ids that are not of the form <code>t</code> followed by digits are also 404.</p></q>
+<starter>
+const tasks = new Map([
+  ["t1", { id: "t1", ownerId: "u-ada", title: "Pay rent" }],
+  ["t2", { id: "t2", ownerId: "u-linus", title: "Fix bug" }],
+]);
+
+function readTask(userId, id) {
+  // your code here
+}
+
+for (const [user, id] of [["u-ada", "t1"], ["u-ada", "t2"], ["u-ada", "t9"], ["u-ada", "../t1"]]) {
+  console.log(user, id, JSON.stringify(readTask(user, id)));
+}
+</starter>
+<solution>
+const tasks = new Map([
+  ["t1", { id: "t1", ownerId: "u-ada", title: "Pay rent" }],
+  ["t2", { id: "t2", ownerId: "u-linus", title: "Fix bug" }],
+]);
+
+const NOT_FOUND = { status: 404, body: { error: "Task not found" } };
+
+function readTask(userId, id) {
+  const task = /^t\d+$/.test(id) ? tasks.get(id) : undefined;
+  if (task === undefined || task.ownerId !== userId) return NOT_FOUND;
+  return { status: 200, body: task };
+}
+
+for (const [user, id] of [["u-ada", "t1"], ["u-ada", "t2"], ["u-ada", "t9"], ["u-ada", "../t1"]]) {
+  console.log(user, id, JSON.stringify(readTask(user, id)));
+}
+</solution>
+<expected>
+u-ada t1 {"status":200,"body":{"id":"t1","ownerId":"u-ada","title":"Pay rent"}}
+u-ada t2 {"status":404,"body":{"error":"Task not found"}}
+u-ada t9 {"status":404,"body":{"error":"Task not found"}}
+u-ada ../t1 {"status":404,"body":{"error":"Task not found"}}
+</expected>
+<explain><p>One shared response object for every failure guarantees the bodies can never drift apart. Validating the id's shape first means odd input never reaches the lookup at all.</p></explain>
+</question>
+
+<question id="zps-code-config" type="code" file="config-check.js">
+<q><p>Write <code>checkSecrets(env, names)</code>. It returns a list of problems, one per name: <code>"NAME is missing"</code> or <code>"NAME is shorter than 32 characters"</code>, plus <code>"secrets must all be different"</code> when two present secrets are equal. The messages must never contain a value.</p></q>
+<starter>
+function checkSecrets(env, names) {
+  // your code here
+}
+
+const good = "k".repeat(40);
+console.log(checkSecrets({ JWT_SECRET: "hunter2", CSRF_SECRET: good }, ["JWT_SECRET", "CSRF_SECRET", "API_KEY"]));
+console.log(checkSecrets({ A: good, B: good }, ["A", "B"]));
+console.log(checkSecrets({ A: good, B: "z".repeat(32) }, ["A", "B"]));
+</starter>
+<solution>
+function checkSecrets(env, names) {
+  const problems = [];
+  const present = [];
+  for (const name of names) {
+    const value = env[name];
+    if (value === undefined || value === "") problems.push(`${name} is missing`);
+    else if (value.length < 32) problems.push(`${name} is shorter than 32 characters`);
+    else present.push(value);
+  }
+  if (new Set(present).size !== present.length) problems.push("secrets must all be different");
+  return problems;
+}
+
+const good = "k".repeat(40);
+console.log(checkSecrets({ JWT_SECRET: "hunter2", CSRF_SECRET: good }, ["JWT_SECRET", "CSRF_SECRET", "API_KEY"]));
+console.log(checkSecrets({ A: good, B: good }, ["A", "B"]));
+console.log(checkSecrets({ A: good, B: "z".repeat(32) }, ["A", "B"]));
+</solution>
+<expected>
+[ 'JWT_SECRET is shorter than 32 characters', 'API_KEY is missing' ]
+[ 'secrets must all be different' ]
+[]
+</expected>
+<explain><p>Collect every problem before failing, so one restart fixes them all, and name settings, never values: a wrong secret in an error message has leaked into every log that message reaches.</p></explain>
+</question>
+
+<question id="zps-code-logger" type="code" file="logger-redact.js">
+<q><p>Create a <code>@zudojs/logger</code> logger named <code>task-api</code> whose transport prints <code>entry.message</code> and <code>JSON.stringify(entry.metadata)</code>, and that also redacts the <code>email</code> key. Log <code>"password reset"</code> with <code>{ userId: "u-ada", email: "ada@example.com", resetToken: "r-123" }</code>.</p></q>
+<starter>
+import { createLogger } from "@zudojs/logger";
+
+// your code here
+</starter>
+<solution>
+import { createLogger } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  redact: { keys: ["email"] },
+  transports: [(entry) => console.log(entry.message, JSON.stringify(entry.metadata))],
+});
+logger.info("password reset", { userId: "u-ada", email: "ada@example.com", resetToken: "r-123" });
+</solution>
+<expected>
+password reset {"userId":"u-ada","email":"[REDACTED]","resetToken":"[REDACTED]"}
+</expected>
+<explain><p><code>redact.keys</code> adds your own names to the built-in list, which already covers token-like keys such as <code>resetToken</code>. Personal data such as email addresses usually needs adding by hand.</p></explain>
+</question>
+
+<question id="zps-code-scan" type="code" file="scan-source.js">
+<q><p>Write <code>stringBuiltQueries(source)</code>. It returns the 1-based line numbers of every line in <code>source</code> that calls <code>.query(</code> or <code>.exec(</code> with a template literal containing <code>${</code>.</p></q>
+<starter>
+function stringBuiltQueries(source) {
+  // your code here
+}
+
+const source = [
+  "export async function find(db, id) {",
+  '  return db.query("SELECT * FROM tasks WHERE id = $1", [id]);',
+  "}",
+  "export async function search(db, term) {",
+  "  return db.query(`SELECT * FROM tasks WHERE title LIKE '%${term}%'`);",
+  "}",
+  "await db.exec(`CREATE INDEX tasks_owner_idx ON tasks (owner_id)`);",
+].join("\n");
+console.log(stringBuiltQueries(source));
+</starter>
+<solution>
+function stringBuiltQueries(source) {
+  const pattern = /\.(query|exec)\(\s*`[^`]*\$\{/;
+  return source
+    .split("\n")
+    .map((line, index) => (pattern.test(line) ? index + 1 : 0))
+    .filter((lineNumber) => lineNumber > 0);
+}
+
+const source = [
+  "export async function find(db, id) {",
+  '  return db.query("SELECT * FROM tasks WHERE id = $1", [id]);',
+  "}",
+  "export async function search(db, term) {",
+  "  return db.query(`SELECT * FROM tasks WHERE title LIKE '%${term}%'`);",
+  "}",
+  "await db.exec(`CREATE INDEX tasks_owner_idx ON tasks (owner_id)`);",
+].join("\n");
+console.log(stringBuiltQueries(source));
+</solution>
+<expected>
+[ 5 ]
+</expected>
+<explain><p>Line 5 puts the search term into the SQL text; it should be <code>title ILIKE $1</code> with the value <code>`%${term}%`</code> passed as a parameter. Line 7 is a template literal with no interpolation, so it is fixed text. Line numbers make the report actionable in CI.</p></explain>
+</question>

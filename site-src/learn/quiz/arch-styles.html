@@ -1,0 +1,931 @@
+<question id="as-lost-response" type="choice">
+<q>In the opening simulation, payments loses 1 response in 10 and checkout retries. Why were ten customers charged twice?</q>
+<option>The network delivered each request twice</option>
+<option correct>When a response is lost the charge already happened, but the caller only sees a timeout, retries, and charges again</option>
+<option>The payments service had a bug in its counter</option>
+<option>Retries are always wrong</option>
+<explain><p>A caller cannot tell a lost request from a lost response or a slow service: all three look like a timeout. Retrying a non-idempotent operation after a lost response repeats it. In a function call inside one process, this "maybe it happened" outcome does not exist.</p></explain>
+</question>
+
+<question id="as-monolith-strength" type="choice">
+<q>Which is a genuine strength of a monolith that microservices lose?</q>
+<option>Each part can be deployed on its own</option>
+<option correct>One database transaction can cover the order, the stock and the payment record</option>
+<option>Each part can use a different programming language</option>
+<option>A crash in one feature cannot affect another</option>
+<explain><p>With one database, consistency across features is a transaction. With a database per service, the same guarantee needs a saga with compensations, and the data can disagree for a while.</p></explain>
+</question>
+
+<question id="as-big-ball" type="choice">
+<q>What makes a monolith a "big ball of mud"?</q>
+<option>Having more than 100,000 lines</option>
+<option>Being deployed as one program</option>
+<option correct>Missing boundaries: any code can import any other and every feature reads every table</option>
+<option>Using one database</option>
+<explain><p>Size and a single deploy are not the problem. Tangling is. A large monolith with enforced module boundaries stays changeable.</p></explain>
+</question>
+
+<question id="as-modular-rule" type="choice">
+<q>In a modular monolith, the orders module needs a book's price. Which is the right way to get it?</q>
+<option>Query the catalog's <code>books</code> table directly, since it is the same database</option>
+<option>Import <code>bookTable</code> from <code>catalog/book-table.ts</code></option>
+<option correct>Call a function exported by <code>catalog/index.ts</code>, the catalog's public API</option>
+<option>Copy the catalog's pricing code into orders</option>
+<explain><p>Each module owns its data and exposes a small public API. Reaching into internals or tables couples orders to the catalog's implementation and makes a later extraction painful.</p></explain>
+</question>
+
+<question id="as-modular-not" type="choice">
+<q>What does a modular monolith <strong>not</strong> give you?</q>
+<option>Clear ownership of modules by teams</option>
+<option>Enforced boundaries</option>
+<option correct>Independent deploys and fault isolation between modules</option>
+<option>The ability to use transactions</option>
+<explain><p>It is still one deployable and one process: modules ship together, and a memory leak in one affects all. It keeps transactions and simple operations, which is often the better trade.</p></explain>
+</question>
+
+<question id="as-entity-service" type="choice">
+<q>A system has a "book service", a "customer service" and an "order service", each wrapping one table. Every page calls all three, and most features change two of them. What is this?</q>
+<option>A well-designed microservice architecture</option>
+<option>A modular monolith</option>
+<option correct>A distributed monolith: the costs of the network with the coupling of a monolith</option>
+<option>An event-driven system</option>
+<explain><p>Entity services are split by noun, not by business capability, so every feature crosses them. They must all be up and often deployed together.</p></explain>
+</question>
+
+<question id="as-bounded-context" type="choice">
+<q>In the catalog, "book" means title and price; in shipping it means weight and size. What does a bounded context design do with this?</q>
+<option>Makes one shared <code>Book</code> type with every field, used everywhere</option>
+<option correct>Lets each context keep its own model of a book, with only the fields it needs, linked by id</option>
+<option>Forbids the word "book" in shipping</option>
+<option>Puts shipping and catalog in one service</option>
+<explain><p>One giant shared model couples every context to every other. Separate models, connected by ids and events, let each context change on its own.</p></explain>
+</question>
+
+<question id="as-consistency-boundary" type="choice">
+<q>"An order must never be confirmed without its stock being reserved" must hold at all times. Where should order placement and stock reservation live?</q>
+<option>In two separate services, synchronised by a nightly job</option>
+<option correct>On the same side of a boundary, so one transaction covers both; otherwise accept a saga and a moment of inconsistency</option>
+<option>In the API gateway</option>
+<option>It does not matter</option>
+<explain><p>Strong consistency is cheap inside one database and expensive across services. Draw boundaries so the rules that must always agree stay together.</p></explain>
+</question>
+
+<question id="as-idempotent-def" type="choice">
+<q>Which operation is naturally idempotent?</q>
+<option>"Add ₦5,000 to Ada's balance"</option>
+<option>"Charge Ada's card ₦9,000"</option>
+<option correct>"Set order ord-7's status to paid"</option>
+<option>"Send Ada a receipt e-mail"</option>
+<explain><p>Setting a value to the same thing twice has the same effect as once. Adding, charging and sending all repeat their effect, so they need an idempotency key or a record of what was handled.</p></explain>
+</question>
+
+<question id="as-key-stable" type="choice">
+<q>A developer generates a new random idempotency key inside the retry loop, for each attempt. What happens?</q>
+<option>It works the same as a key per operation</option>
+<option correct>Each retry looks like a new operation to the server, so lost responses still lead to double charges</option>
+<option>The server rejects every request</option>
+<option>It is safer, because keys cannot be guessed</option>
+<explain><p>The key must identify the <em>operation</em>, not the attempt: made once, before the first try, and reused on every retry.</p></explain>
+</question>
+
+<question id="as-jitter-why" type="choice">
+<q>Why add jitter to exponential backoff?</q>
+<option>To make retries faster</option>
+<option>To make tests deterministic</option>
+<option correct>So that many clients that failed together do not all retry at the same instant and overload the service again</option>
+<option>Because exponential backoff alone never retries</option>
+<explain><p>Without jitter, 1,000 clients that failed at once come back at once, every time. Randomising the wait spreads them out, as the simulation's "same moment" counts showed.</p></explain>
+</question>
+
+<question id="as-what-retry" type="choice">
+<q>Which failure should a client generally <strong>not</strong> retry?</q>
+<option>A timeout on an idempotent read</option>
+<option>A 503 Service Unavailable</option>
+<option>A 429 Too Many Requests, after its <code>Retry-After</code></option>
+<option correct>A 400 Bad Request saying the quantity is invalid</option>
+<explain><p>A 400 will fail the same way every time: retrying only adds load. Retry failures that may go away, a few times, and only for idempotent operations.</p></explain>
+</question>
+
+<question id="as-breaker-purpose" type="choice">
+<q>In the outage simulation, the breaker and the plain retries confirmed the same 30 orders. What did the breaker improve?</q>
+<option>It made the payments service recover sooner</option>
+<option correct>It turned 90 calls that each waited a full timeout into 5 trial calls and 29 immediate failures, sparing customers and the struggling service</option>
+<option>It confirmed the deferred orders</option>
+<option>Nothing; it is only useful in tests</option>
+<explain><p>A breaker cannot make a dead dependency work. It limits the cost of the outage: callers fail fast, and the dependency is not hammered while it recovers.</p></explain>
+</question>
+
+<question id="as-half-open" type="choice">
+<q>What happens in the breaker's <strong>half-open</strong> state?</q>
+<option>Half the calls go through, half fail</option>
+<option correct>One trial call is allowed; success closes the breaker, failure opens it again</option>
+<option>All calls go through, but with a shorter timeout</option>
+<option>The breaker resets its failure count and stays open</option>
+<explain><p>After the pause, the breaker probes carefully. The outage log showed exactly that: half-open then open while payments was still down, half-open then closed once it recovered.</p></explain>
+</question>
+
+<question id="as-event-vs-command" type="choice">
+<q>Which message is an <strong>event</strong>?</q>
+<option><code>send-receipt</code> addressed to the e-mail service</option>
+<option><code>reserve-stock</code> for order ord-7</option>
+<option correct><code>order.placed</code>, published without knowing who listens</option>
+<option><code>charge-card</code> with an amount and a key</option>
+<explain><p>An event is a fact in the past tense, for zero or more subscribers, and cannot be refused. The others are commands: requests to one handler, which may fail or reject them.</p></explain>
+</question>
+
+<question id="as-event-cost" type="choice">
+<q>What is a real cost of an event-driven design?</q>
+<option>Publishers must know every subscriber</option>
+<option correct>The steps of a business process are spread across subscriptions, so the flow is hard to see without tracing</option>
+<option>Adding a subscriber requires changing the publisher</option>
+<option>Events cannot carry data</option>
+<explain><p>Loose coupling means nobody's code lists the whole process. You gain independence and pay in visibility, which traces and good event documentation recover.</p></explain>
+</question>
+
+<question id="as-at-least-once" type="choice">
+<q>A broker promises at-least-once delivery. What must consumers do?</q>
+<option>Nothing; the broker removes duplicates</option>
+<option correct>Be idempotent, for example by recording handled message ids with the work</option>
+<option>Acknowledge before doing the work</option>
+<option>Process messages in a random order</option>
+<explain><p>Redelivery after a crash between "work done" and "acknowledged" produces duplicates. Acknowledging first would turn duplicates into lost messages instead.</p></explain>
+</question>
+
+<question id="as-outbox" type="choice">
+<q>What problem does the transactional outbox solve?</q>
+<option>Messages arriving twice</option>
+<option correct>The order being saved but its event never published (or published but never saved) when the process dies between the two steps</option>
+<option>Slow consumers</option>
+<option>Events arriving out of order</option>
+<explain><p>The event is written in the same transaction as the order, so both exist or neither does. A relay publishes it later. It can publish twice, which idempotent consumers handle.</p></explain>
+</question>
+
+<question id="as-cqrs-lag" type="choice">
+<q>Right after Ada places an order, her "my orders" read model does not show it. Which fix fits CQRS best?</q>
+<option>Make every command wait until all projections have run</option>
+<option correct>Return the new order's data from the command so the screen can show it immediately, and let the read model catch up</option>
+<option>Remove the read model and query the write model's events on every page view</option>
+<option>Run the projector twice</option>
+<explain><p>Read models are eventually consistent by design. Waiting for projections couples the write side to every reader again. Showing the command's own result covers the moment the user cares about.</p></explain>
+</question>
+
+<question id="as-cqrs-when" type="choice">
+<q>When is full CQRS with separate read models most worth its cost?</q>
+<option>A settings form that saves one row</option>
+<option correct>A shop where checkout writes must be fast and a dashboard needs many aggregated views over the same orders</option>
+<option>A command-line script</option>
+<option>Any project with more than one table</option>
+<explain><p>Separate read models pay off when reads and writes differ strongly in shape or load. For simple forms, they add projections and lag for nothing.</p></explain>
+</question>
+
+<question id="as-gateway-keep" type="choice">
+<q>Which job should an API gateway <strong>not</strong> take on?</q>
+<option>Authenticating the request once</option>
+<option>Routing <code>/books/*</code> to the catalog</option>
+<option>Rate limiting per client</option>
+<option correct>Deciding whether an order qualifies for a discount</option>
+<explain><p>Business rules belong in the services that own them. A gateway that accumulates rules becomes a monolith in front of your services, and every team must change it.</p></explain>
+</question>
+
+<question id="as-trace-id" type="choice">
+<q>Why must every service copy the incoming trace id into its outgoing calls and log lines?</q>
+<option>To make requests faster</option>
+<option>For authentication</option>
+<option correct>So one customer request can be followed across all the processes it touched</option>
+<option>Because HTTP requires it</option>
+<explain><p>Without a shared id, the logs of five services are five unrelated piles. With it, a trace tree and a log search show one request's whole journey.</p></explain>
+</question>
+
+<question id="as-out-retry-count" type="output">
+<q>A call fails on attempts 1 and 2 and succeeds on attempt 3. What does this print?</q>
+<code file="retry.ts">
+const outcomes = ["timeout", "timeout", "ok"];
+let charges = 0;
+let calls = 0;
+
+function charge(): string {
+  const outcome = outcomes[calls++]!;
+  charges++;
+  return outcome;
+}
+
+for (let attempt = 1; attempt <= 3; attempt++) {
+  if (charge() === "ok") break;
+}
+console.log(`calls: ${calls}, charges: ${charges}`);
+</code>
+<option correct>calls: 3, charges: 3</option>
+<option>calls: 3, charges: 1</option>
+<option>calls: 1, charges: 1</option>
+<option>calls: 2, charges: 2</option>
+<explain><p>Here the service did the work on every attempt: the timeouts were lost responses. Without an idempotency key, three calls mean three charges.</p></explain>
+</question>
+
+<question id="as-out-idempotency" type="output">
+<q>What does this print?</q>
+<code file="keys.ts">
+const answers = new Map<string, string>();
+let charged = 0;
+
+function charge(key: string): string {
+  const earlier = answers.get(key);
+  if (earlier) return earlier;
+  charged++;
+  const reference = `ref-${charged}`;
+  answers.set(key, reference);
+  return reference;
+}
+
+const results = [charge("order-7"), charge("order-7"), charge("order-8"), charge("order-7")];
+console.log(results.join(" "), charged);
+</code>
+<option correct>ref-1 ref-1 ref-2 ref-1 2</option>
+<option>ref-1 ref-2 ref-3 ref-4 4</option>
+<option>ref-1 ref-1 ref-2 ref-2 2</option>
+<option>ref-1 ref-1 ref-2 ref-1 4</option>
+<explain><p>Every call with <code>order-7</code> after the first returns the saved reference and charges nothing. Only two distinct operations happened.</p></explain>
+</question>
+
+<question id="as-out-backoff" type="output">
+<q>What does this print?</q>
+<code file="backoff.ts">
+const base = 100;
+const cap = 1_000;
+const waits: number[] = [];
+for (let attempt = 1; attempt <= 6; attempt++) {
+  waits.push(Math.min(cap, base * 2 ** (attempt - 1)));
+}
+console.log(waits.join(", "));
+</code>
+<option correct>100, 200, 400, 800, 1000, 1000</option>
+<option>100, 200, 400, 800, 1600, 3200</option>
+<option>100, 200, 300, 400, 500, 600</option>
+<option>200, 400, 800, 1000, 1000, 1000</option>
+<explain><p>The wait doubles each attempt, starting from the base, and is capped at 1,000 ms so it never grows without bound. Real clients then add jitter to each wait.</p></explain>
+</question>
+
+<question id="as-out-breaker" type="output">
+<q>A breaker opens after 2 failures in a row and pauses 1,000 ms. What does this print?</q>
+<code file="breaker.ts">
+let state = "closed";
+let failures = 0;
+let openedAt = 0;
+const log: string[] = [];
+
+function call(now: number, works: boolean): void {
+  if (state === "open" && now - openedAt >= 1_000) state = "half-open";
+  if (state === "open") {
+    log.push(`${now}:fast-fail`);
+    return;
+  }
+  if (works) {
+    failures = 0;
+    state = "closed";
+    log.push(`${now}:ok`);
+  } else {
+    failures++;
+    if (state === "half-open" || failures >= 2) {
+      state = "open";
+      openedAt = now;
+    }
+    log.push(`${now}:fail`);
+  }
+}
+
+call(0, false);
+call(100, false);
+call(200, true);
+call(1_200, true);
+console.log(log.join(" "), state);
+</code>
+<option correct>0:fail 100:fail 200:fast-fail 1200:ok closed</option>
+<option>0:fail 100:fail 200:ok 1200:ok closed</option>
+<option>0:fail 100:fail 200:fast-fail 1200:fast-fail open</option>
+<option>0:fail 100:fast-fail 200:fast-fail 1200:ok closed</option>
+<explain><p>The second failure opens the breaker at 100. At 200 the pause has not passed, so the call fails fast even though the service now works. At 1,200 the pause has passed: half-open, the trial succeeds, and the breaker closes.</p></explain>
+</question>
+
+<question id="as-out-parallel" type="output">
+<q>The gateway calls two services in parallel with <code>Promise.all</code>. Each "call" returns its simulated latency. What does this print?</q>
+<code file="parallel.ts">
+async function call(service: string, ms: number): Promise<{ service: string; ms: number }> {
+  return { service, ms };
+}
+
+const results = await Promise.all([call("catalog", 45), call("reviews", 120), call("stock", 30)]);
+const sequential = results.reduce((sum, r) => sum + r.ms, 0);
+const parallel = Math.max(...results.map((r) => r.ms));
+console.log(`sequential ${sequential} ms, parallel ${parallel} ms`);
+</code>
+<option correct>sequential 195 ms, parallel 120 ms</option>
+<option>sequential 195 ms, parallel 195 ms</option>
+<option>sequential 120 ms, parallel 45 ms</option>
+<option>sequential 195 ms, parallel 65 ms</option>
+<explain><p>Calls one after another take the sum of their latencies; calls in parallel take as long as the slowest one. That is why a gateway aggregating services fans out in parallel.</p></explain>
+</question>
+
+<question id="as-out-duplicates" type="output">
+<q>The broker delivered <code>msg-2</code> twice. What does this print?</q>
+<code file="dedupe.ts">
+const deliveries = ["msg-1", "msg-2", "msg-2", "msg-3"];
+const handled = new Set<string>();
+let naive = 0;
+let idempotent = 0;
+
+for (const id of deliveries) {
+  naive++;
+  if (handled.has(id)) continue;
+  handled.add(id);
+  idempotent++;
+}
+console.log(naive, idempotent, handled.size);
+</code>
+<option correct>4 3 3</option>
+<option>4 4 4</option>
+<option>3 3 3</option>
+<option>4 3 4</option>
+<explain><p>The naive count sees every delivery. The idempotent one skips the id it has already handled, so it counts each message once.</p></explain>
+</question>
+
+<question id="as-out-outbox" type="output">
+<q>What does this print?</q>
+<code file="outbox.ts">
+const db = { orders: [] as string[], outbox: [] as { event: string; sent: boolean }[] };
+const published: string[] = [];
+
+function placeOrder(id: string): void {
+  db.orders.push(id);
+  db.outbox.push({ event: `order.placed:${id}`, sent: false });
+}
+
+function relay(): void {
+  for (const row of db.outbox) {
+    if (row.sent) continue;
+    published.push(row.event);
+    row.sent = true;
+  }
+}
+
+placeOrder("ord-1");
+placeOrder("ord-2");
+relay();
+placeOrder("ord-3");
+relay();
+relay();
+console.log(published);
+</code>
+<option correct>[ 'order.placed:ord-1', 'order.placed:ord-2', 'order.placed:ord-3' ]</option>
+<option>[ 'order.placed:ord-1', 'order.placed:ord-2', 'order.placed:ord-1', 'order.placed:ord-2', 'order.placed:ord-3' ]</option>
+<option>[ 'order.placed:ord-1', 'order.placed:ord-2' ]</option>
+<option>[ 'order.placed:ord-3' ]</option>
+<explain><p>The relay publishes only unsent rows and marks them sent, so running it again publishes nothing new. <code>ord-3</code> goes out on the second run.</p></explain>
+</question>
+
+<question id="as-out-projection" type="output">
+<q>What does this print?</q>
+<code file="projection.ts">
+const pending: { customer: string; orderId: string }[] = [];
+const myOrders = new Map<string, string[]>();
+
+function placeOrder(customer: string, orderId: string): void {
+  pending.push({ customer, orderId });
+}
+
+function runProjector(): void {
+  for (const event of pending.splice(0)) {
+    myOrders.set(event.customer, [...(myOrders.get(event.customer) ?? []), event.orderId]);
+  }
+}
+
+placeOrder("ada", "ord-1");
+runProjector();
+placeOrder("ada", "ord-2");
+console.log(myOrders.get("ada"));
+runProjector();
+console.log(myOrders.get("ada"));
+</code>
+<option correct>[ 'ord-1' ]
+[ 'ord-1', 'ord-2' ]</option>
+<option>[ 'ord-1', 'ord-2' ]
+[ 'ord-1', 'ord-2' ]</option>
+<option>undefined
+[ 'ord-1', 'ord-2' ]</option>
+<option>[ 'ord-1' ]
+[ 'ord-1' ]</option>
+<explain><p>Between the command and the next projector run, the read model is behind by one order: that is eventual consistency. <code>splice(0)</code> empties the queue, so each event is projected once.</p></explain>
+</question>
+
+<question id="as-out-saga" type="output">
+<q>What does this print?</q>
+<code file="saga.ts">
+let stock = 5;
+const log: string[] = [];
+
+function reserve(quantity: number): boolean {
+  if (stock < quantity) return false;
+  stock -= quantity;
+  return true;
+}
+
+function placeOrder(id: string, quantity: number, cardWorks: boolean): void {
+  if (!reserve(quantity)) {
+    log.push(`${id}:rejected`);
+    return;
+  }
+  if (!cardWorks) {
+    stock += quantity;
+    log.push(`${id}:compensated`);
+    return;
+  }
+  log.push(`${id}:confirmed`);
+}
+
+placeOrder("ord-1", 2, true);
+placeOrder("ord-2", 2, false);
+placeOrder("ord-3", 4, true);
+placeOrder("ord-4", 3, true);
+console.log(log.join(" "), "stock:", stock);
+</code>
+<option correct>ord-1:confirmed ord-2:compensated ord-3:rejected ord-4:confirmed stock: 0</option>
+<option>ord-1:confirmed ord-2:compensated ord-3:confirmed ord-4:rejected stock: -1</option>
+<option>ord-1:confirmed ord-2:rejected ord-3:rejected ord-4:confirmed stock: 0</option>
+<option>ord-1:confirmed ord-2:compensated ord-3:rejected ord-4:rejected stock: 1</option>
+<explain><p>ord-1 takes 2 (3 left). ord-2 reserves 2, the charge fails, and the compensation gives them back (3 left). ord-3 wants 4 of 3: rejected. ord-4 takes 3 (0 left).</p></explain>
+</question>
+
+<question id="as-out-chatty" type="output">
+<q>Each network call costs 40 ms of simulated latency. What does this print?</q>
+<code file="chatty.ts">
+const LATENCY = 40;
+const cart = ["b1", "b2", "b3", "b1", "b2"];
+
+let perLine = 0;
+for (const _ of cart) perLine += LATENCY;
+
+const unique = new Set(cart).size;
+let perBook = 0;
+for (let i = 0; i < unique; i++) perBook += LATENCY;
+
+const batch = LATENCY;
+console.log(perLine, perBook, batch);
+</code>
+<option correct>200 120 40</option>
+<option>200 200 40</option>
+<option>120 120 40</option>
+<option>200 120 200</option>
+<explain><p>One call per line is 5 calls; one per distinct book is 3; one batch call is 1. Chatty boundaries multiply latency and failure chances, which is why good service boundaries need few calls per request.</p></explain>
+</question>
+
+<question id="as-code-idempotent-consumer" type="code" file="consumer.ts">
+<q><p>Write <code>handle(message)</code> for the receipt consumer so that each message id sends at most one receipt, even when the broker delivers it again. The program should print <code>receipts: 3</code> and <code>skipped: 2</code>.</p></q>
+<starter>
+const deliveries = [
+  { id: "msg-1", email: "ada@shop.ng" },
+  { id: "msg-2", email: "tunde@shop.ng" },
+  { id: "msg-1", email: "ada@shop.ng" },
+  { id: "msg-3", email: "chioma@shop.ng" },
+  { id: "msg-2", email: "tunde@shop.ng" },
+];
+const sent: string[] = [];
+let skipped = 0;
+
+// write handle(message) and call it for each delivery
+
+console.log(`receipts: ${sent.length}`);
+console.log(`skipped: ${skipped}`);
+</starter>
+<solution>
+const deliveries = [
+  { id: "msg-1", email: "ada@shop.ng" },
+  { id: "msg-2", email: "tunde@shop.ng" },
+  { id: "msg-1", email: "ada@shop.ng" },
+  { id: "msg-3", email: "chioma@shop.ng" },
+  { id: "msg-2", email: "tunde@shop.ng" },
+];
+const sent: string[] = [];
+let skipped = 0;
+const handled = new Set<string>();
+
+function handle(message: { id: string; email: string }): void {
+  if (handled.has(message.id)) {
+    skipped++;
+    return;
+  }
+  sent.push(message.email);
+  handled.add(message.id);
+}
+
+for (const message of deliveries) handle(message);
+
+console.log(`receipts: ${sent.length}`);
+console.log(`skipped: ${skipped}`);
+</solution>
+<expected>
+receipts: 3
+skipped: 2
+</expected>
+<explain><p>The consumer records each handled id after doing the work. In production that record lives in the consumer's database, written in the same transaction as the work, so a crash cannot separate them.</p></explain>
+</question>
+
+<question id="as-code-breaker" type="code" file="breaker.ts">
+<q><p>Write a <code>CircuitBreaker</code> with <code>allows(now)</code>, <code>succeeded()</code> and <code>failed(now)</code>: it opens after 3 failures in a row, stays open for 5,000 ms, then lets one trial through (half-open). The program should print <code>closed closed open open half-open closed</code>.</p></q>
+<starter>
+// write class CircuitBreaker here
+
+const breaker = new CircuitBreaker();
+const states: string[] = [];
+breaker.failed(0); states.push(breaker.state);
+breaker.failed(100); states.push(breaker.state);
+breaker.failed(200); states.push(breaker.state);
+breaker.allows(3_000); states.push(breaker.state);
+breaker.allows(5_300); states.push(breaker.state);
+breaker.succeeded(); states.push(breaker.state);
+console.log(states.join(" "));
+</starter>
+<solution>
+class CircuitBreaker {
+  state: "closed" | "open" | "half-open" = "closed";
+  private failures = 0;
+  private openedAt = 0;
+
+  allows(now: number): boolean {
+    if (this.state === "open" && now - this.openedAt >= 5_000) this.state = "half-open";
+    return this.state !== "open";
+  }
+
+  succeeded(): void {
+    this.failures = 0;
+    this.state = "closed";
+  }
+
+  failed(now: number): void {
+    this.failures++;
+    if (this.state === "half-open" || this.failures >= 3) {
+      this.state = "open";
+      this.openedAt = now;
+    }
+  }
+}
+
+const breaker = new CircuitBreaker();
+const states: string[] = [];
+breaker.failed(0); states.push(breaker.state);
+breaker.failed(100); states.push(breaker.state);
+breaker.failed(200); states.push(breaker.state);
+breaker.allows(3_000); states.push(breaker.state);
+breaker.allows(5_300); states.push(breaker.state);
+breaker.succeeded(); states.push(breaker.state);
+console.log(states.join(" "));
+</solution>
+<expected>
+closed closed open open half-open closed
+</expected>
+<explain><p>The third failure opens it at 200. At 3,000 the 5,000 ms pause has not passed; at 5,300 it has, so the breaker goes half-open, and the successful trial closes it. Passing <code>now</code> in keeps the breaker testable without waiting.</p></explain>
+</question>
+
+<question id="as-code-outbox-relay" type="code" file="relay.ts">
+<q><p>Write <code>relay(db, publish)</code>: publish every outbox row that is not sent, in order, and mark it sent only <em>after</em> <code>publish</code> succeeds. If <code>publish</code> throws, stop and leave that row unsent. The program should print <code>published: evt-1</code>, then <code>published: evt-1,evt-2,evt-3</code>.</p></q>
+<starter>
+interface Row { id: string; sent: boolean }
+const db: { outbox: Row[] } = { outbox: [{ id: "evt-1", sent: false }, { id: "evt-2", sent: false }, { id: "evt-3", sent: false }] };
+const published: string[] = [];
+let brokerUp = true;
+
+function publish(id: string): void {
+  if (!brokerUp) throw new Error("broker unavailable");
+  published.push(id);
+  if (id === "evt-1") brokerUp = false;
+}
+
+// write relay(db, publish)
+
+relay(db, publish);
+console.log(`published: ${published.join(",")}`);
+brokerUp = true;
+relay(db, publish);
+console.log(`published: ${published.join(",")}`);
+</starter>
+<solution>
+interface Row { id: string; sent: boolean }
+const db: { outbox: Row[] } = { outbox: [{ id: "evt-1", sent: false }, { id: "evt-2", sent: false }, { id: "evt-3", sent: false }] };
+const published: string[] = [];
+let brokerUp = true;
+
+function publish(id: string): void {
+  if (!brokerUp) throw new Error("broker unavailable");
+  published.push(id);
+  if (id === "evt-1") brokerUp = false;
+}
+
+function relay(database: { outbox: Row[] }, send: (id: string) => void): void {
+  for (const row of database.outbox) {
+    if (row.sent) continue;
+    try {
+      send(row.id);
+    } catch {
+      return;
+    }
+    row.sent = true;
+  }
+}
+
+relay(db, publish);
+console.log(`published: ${published.join(",")}`);
+brokerUp = true;
+relay(db, publish);
+console.log(`published: ${published.join(",")}`);
+</solution>
+<expected>
+published: evt-1
+published: evt-1,evt-2,evt-3
+</expected>
+<explain><p>Marking a row sent only after a successful publish means a broker outage delays events instead of losing them. The next relay run picks up where the last one stopped, in order.</p></explain>
+</question>
+
+<question id="as-code-fallback" type="code" file="fallback.ts">
+<q><p>Write <code>bookPage(bookId)</code>: get the book (required) and its reviews (optional) in parallel. If the reviews call rejects, still answer with <code>reviews: "unavailable"</code>; if the book call rejects, answer <code>{ status: 503 }</code>. The program should print <code>200 4.5</code>, then <code>200 unavailable</code>, then <code>503</code>.</p></q>
+<starter>
+const catalog = async (id: string) => {
+  if (id === "b9") throw new Error("catalog down");
+  return { title: "Things Fall Apart" };
+};
+const reviews = async (id: string) => {
+  if (id === "b2") throw new Error("reviews timed out");
+  return [5, 4];
+};
+
+// write bookPage(bookId) using Promise.allSettled
+
+const a = await bookPage("b1");
+console.log(a.status, a.body?.reviews);
+const b = await bookPage("b2");
+console.log(b.status, b.body?.reviews);
+console.log((await bookPage("b9")).status);
+</starter>
+<solution>
+const catalog = async (id: string) => {
+  if (id === "b9") throw new Error("catalog down");
+  return { title: "Things Fall Apart" };
+};
+const reviews = async (id: string) => {
+  if (id === "b2") throw new Error("reviews timed out");
+  return [5, 4];
+};
+
+async function bookPage(bookId: string): Promise<{ status: number; body?: { title: string; reviews: number | string } }> {
+  const [book, scores] = await Promise.allSettled([catalog(bookId), reviews(bookId)]);
+  if (book.status === "rejected") return { status: 503 };
+  const rating = scores.status === "fulfilled" ? scores.value.reduce((a, b) => a + b, 0) / scores.value.length : "unavailable";
+  return { status: 200, body: { title: book.value.title, reviews: rating } };
+}
+
+const a = await bookPage("b1");
+console.log(a.status, a.body?.reviews);
+const b = await bookPage("b2");
+console.log(b.status, b.body?.reviews);
+console.log((await bookPage("b9")).status);
+</solution>
+<expected>
+200 4.5
+200 unavailable
+503
+</expected>
+<explain><p><code>Promise.allSettled</code> waits for both calls and never rejects, so one failing call cannot throw away the other's result. The required dependency decides the status; the optional one only adds data when it is there.</p></explain>
+</question>
+
+<question id="as-code-modules" type="code" file="modules.ts">
+<q><p>Write <code>crossesBoundary(from, target)</code> for a modular monolith: it returns <code>true</code> when <code>target</code> is in a different module under <code>src/modules/</code> and is not that module's <code>index.ts</code>. The program should print <code>false true false false</code>.</p></q>
+<starter>
+// write crossesBoundary(from, target)
+
+console.log(
+  crossesBoundary("src/modules/orders/place.ts", "src/modules/catalog/index.ts"),
+  crossesBoundary("src/modules/orders/place.ts", "src/modules/catalog/book-table.ts"),
+  crossesBoundary("src/modules/orders/place.ts", "src/modules/orders/order.ts"),
+  crossesBoundary("src/modules/orders/place.ts", "src/shared/money.ts"),
+);
+</starter>
+<solution>
+function moduleOf(path: string): string | undefined {
+  return /^src\/modules\/([\w-]+)\//.exec(path)?.[1];
+}
+
+function crossesBoundary(from: string, target: string): boolean {
+  const to = moduleOf(target);
+  if (to === undefined || to === moduleOf(from)) return false;
+  return target !== `src/modules/${to}/index.ts`;
+}
+
+console.log(
+  crossesBoundary("src/modules/orders/place.ts", "src/modules/catalog/index.ts"),
+  crossesBoundary("src/modules/orders/place.ts", "src/modules/catalog/book-table.ts"),
+  crossesBoundary("src/modules/orders/place.ts", "src/modules/orders/order.ts"),
+  crossesBoundary("src/modules/orders/place.ts", "src/shared/money.ts"),
+);
+</solution>
+<expected>
+false true false false
+</expected>
+<explain><p>Going through another module's <code>index.ts</code>, staying inside your own module, and using shared code outside the modules are all allowed. Reaching into another module's internal file is the one violation.</p></explain>
+</question>
+
+<question id="as-out-ack" type="output">
+<q>A consumer crashes once while handling <code>msg-2</code>. What does this print?</q>
+<code file="ack.ts">
+function consume(ackFirst: boolean): string[] {
+  const queue = ["msg-1", "msg-2", "msg-3"];
+  const done: string[] = [];
+  let crashed = false;
+  while (queue.length > 0) {
+    const id = queue[0]!;
+    if (ackFirst) queue.shift();
+    if (id === "msg-2" && !crashed) {
+      crashed = true;
+      continue;
+    }
+    done.push(id);
+    if (!ackFirst) queue.shift();
+  }
+  return done;
+}
+
+console.log("ack first:", consume(true));
+console.log("ack after:", consume(false));
+</code>
+<option correct>ack first: [ 'msg-1', 'msg-3' ]
+ack after: [ 'msg-1', 'msg-2', 'msg-3' ]</option>
+<option>ack first: [ 'msg-1', 'msg-2', 'msg-3' ]
+ack after: [ 'msg-1', 'msg-3' ]</option>
+<option>ack first: [ 'msg-1', 'msg-2', 'msg-3' ]
+ack after: [ 'msg-1', 'msg-2', 'msg-3' ]</option>
+<option>ack first: [ 'msg-1', 'msg-3' ]
+ack after: [ 'msg-1', 'msg-2', 'msg-2', 'msg-3' ]</option>
+<explain><p>Acknowledging first removes the message before the work is done, so the crash loses it: at-most-once. Acknowledging after the work means the message is still there after the crash and is delivered again: at-least-once, which is why consumers must tolerate duplicates.</p></explain>
+</question>
+
+<question id="as-out-trace" type="output">
+<q>What does this print?</q>
+<code file="trace.ts">
+const spans = [
+  { id: 1, parent: null, name: "gateway", ms: 130 },
+  { id: 2, parent: 1, name: "catalog", ms: 40 },
+  { id: 3, parent: 1, name: "reviews", ms: 125 },
+  { id: 4, parent: 3, name: "reviews-db", ms: 110 },
+];
+
+function print(parent: number | null, indent: string): void {
+  for (const span of spans.filter((s) => s.parent === parent)) {
+    console.log(`${indent}${span.name} ${span.ms}`);
+    print(span.id, indent + "  ");
+  }
+}
+
+print(null, "");
+const slowest = spans.filter((s) => s.parent === 1).sort((a, b) => b.ms - a.ms)[0];
+console.log("slowest call:", slowest?.name);
+</code>
+<option correct>gateway 130
+  catalog 40
+  reviews 125
+    reviews-db 110
+slowest call: reviews</option>
+<option>gateway 130
+  catalog 40
+  reviews 125
+  reviews-db 110
+slowest call: reviews</option>
+<option>gateway 130
+  catalog 40
+  reviews 125
+    reviews-db 110
+slowest call: reviews-db</option>
+<option>gateway 130
+catalog 40
+reviews 125
+reviews-db 110
+slowest call: gateway</option>
+<explain><p>Each span is printed under its parent, one level deeper. Among the gateway's direct children, reviews took longest, and its own child shows why: the database behind it used 110 of its 125 ms.</p></explain>
+</question>
+
+<question id="as-code-backoff" type="code" file="backoff.ts">
+<q><p>Write <code>retryDelays(attempts, base, cap, random)</code>: for attempt <em>n</em> (from 1), the limit is <code>min(cap, base * 2 ** (n - 1))</code> and the delay is <code>Math.floor(random() * limit)</code> (full jitter). With the fake random below, the program should print <code>[ 50, 100, 300, 400 ]</code>.</p></q>
+<starter>
+const values = [0.5, 0.5, 0.75, 0.5];
+let i = 0;
+const fakeRandom = () => values[i++ % values.length]!;
+
+// write retryDelays(attempts, base, cap, random)
+
+console.log(retryDelays(4, 100, 800, fakeRandom));
+</starter>
+<solution>
+const values = [0.5, 0.5, 0.75, 0.5];
+let i = 0;
+const fakeRandom = () => values[i++ % values.length]!;
+
+function retryDelays(attempts: number, base: number, cap: number, random: () => number): number[] {
+  const delays: number[] = [];
+  for (let n = 1; n <= attempts; n++) {
+    const limit = Math.min(cap, base * 2 ** (n - 1));
+    delays.push(Math.floor(random() * limit));
+  }
+  return delays;
+}
+
+console.log(retryDelays(4, 100, 800, fakeRandom));
+</solution>
+<expected>
+[ 50, 100, 300, 400 ]
+</expected>
+<explain><p>The limits are 100, 200, 400 and 800; the fake random picks a fraction of each. Taking <code>random</code> as a parameter is the same trick as the <code>Clock</code> port: the function stays deterministic under test.</p></explain>
+</question>
+
+<question id="as-code-projector" type="code" file="projector.ts">
+<q><p>Write <code>bestSellers(events)</code>, a projection: sum the copies per title over <code>order.placed</code> events, ignore <code>order.cancelled</code> for this exercise, and return the titles sorted by copies, most first, as <code>"title: copies"</code>. The program should print <code>[ 'Purple Hibiscus: 5', 'Things Fall Apart: 3' ]</code>.</p></q>
+<starter>
+type ShopEvent =
+  | { type: "order.placed"; lines: { title: string; quantity: number }[] }
+  | { type: "order.cancelled"; orderId: string };
+
+const events: ShopEvent[] = [
+  { type: "order.placed", lines: [{ title: "Things Fall Apart", quantity: 2 }] },
+  { type: "order.placed", lines: [{ title: "Purple Hibiscus", quantity: 4 }, { title: "Things Fall Apart", quantity: 1 }] },
+  { type: "order.cancelled", orderId: "ord-9" },
+  { type: "order.placed", lines: [{ title: "Purple Hibiscus", quantity: 1 }] },
+];
+
+// write bestSellers(events)
+
+console.log(bestSellers(events));
+</starter>
+<solution>
+type ShopEvent =
+  | { type: "order.placed"; lines: { title: string; quantity: number }[] }
+  | { type: "order.cancelled"; orderId: string };
+
+const events: ShopEvent[] = [
+  { type: "order.placed", lines: [{ title: "Things Fall Apart", quantity: 2 }] },
+  { type: "order.placed", lines: [{ title: "Purple Hibiscus", quantity: 4 }, { title: "Things Fall Apart", quantity: 1 }] },
+  { type: "order.cancelled", orderId: "ord-9" },
+  { type: "order.placed", lines: [{ title: "Purple Hibiscus", quantity: 1 }] },
+];
+
+function bestSellers(all: ShopEvent[]): string[] {
+  const copies = new Map<string, number>();
+  for (const event of all) {
+    if (event.type !== "order.placed") continue;
+    for (const line of event.lines) copies.set(line.title, (copies.get(line.title) ?? 0) + line.quantity);
+  }
+  return [...copies].sort((a, b) => b[1] - a[1]).map(([title, n]) => `${title}: ${n}`);
+}
+
+console.log(bestSellers(events));
+</solution>
+<expected>
+[ 'Purple Hibiscus: 5', 'Things Fall Apart: 3' ]
+</expected>
+<explain><p>A projection is a fold over events into a shape one screen needs. Because it can be rebuilt from the events at any time, you can add new read models later without touching the write side.</p></explain>
+</question>
+
+<question id="as-code-saga" type="code" file="saga.ts">
+<q><p>Write <code>placeOrder(id, quantity, pay)</code> as a saga: reserve stock (reject if not enough), then call <code>pay()</code>; if it returns <code>false</code>, release the stock. Return <code>"confirmed"</code>, <code>"rejected"</code> or <code>"compensated"</code>. The program should print <code>confirmed compensated rejected</code> and then <code>stock: 1</code>.</p></q>
+<starter>
+let stock = 4;
+
+// write placeOrder(id, quantity, pay)
+
+const results = [
+  placeOrder("ord-1", 3, () => true),
+  placeOrder("ord-2", 1, () => false),
+  placeOrder("ord-3", 2, () => true),
+];
+console.log(results.join(" "));
+console.log(`stock: ${stock}`);
+</starter>
+<solution>
+let stock = 4;
+
+function placeOrder(id: string, quantity: number, pay: () => boolean): string {
+  if (stock < quantity) return "rejected";
+  stock -= quantity;
+  if (!pay()) {
+    stock += quantity;
+    return "compensated";
+  }
+  return "confirmed";
+}
+
+const results = [
+  placeOrder("ord-1", 3, () => true),
+  placeOrder("ord-2", 1, () => false),
+  placeOrder("ord-3", 2, () => true),
+];
+console.log(results.join(" "));
+console.log(`stock: ${stock}`);
+</solution>
+<expected>
+confirmed compensated rejected
+stock: 1
+</expected>
+<explain><p>ord-1 takes 3 (1 left). ord-2 takes 1, the payment fails, and the compensation returns it (1 left). ord-3 needs 2: rejected. Each step that changes something has an undo that runs when a later step fails.</p></explain>
+</question>

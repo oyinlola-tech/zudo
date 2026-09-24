@@ -1,0 +1,798 @@
+---
+title: Writing injection-safe code
+description: Keep untrusted data from becoming code: parameterized SQL, argument arrays, confined file paths, outbound URL allow-lists, strict HTTP parsing, safe merges and linear-time regexes.
+minutes: 60
+youNeed: SQL basics, Events, processes and workers, Prototypes in depth, Regular expressions, and Browser attacks and defences
+youBuild: A supplier catalogue importer for a shop whose database queries, thumbnail command, file storage, image downloads, settings merge and SKU checks each keep data separate from code, with a test per defence
+keywords: injection, sql injection, parameterized query, prepared statement, pglite, command injection, execFile, argument array, path traversal, path confinement, ssrf, server-side request forgery, dns rebinding, request smuggling, content-length transfer-encoding, prototype pollution, redos, linear-time regex
+objectives: Explain why building SQL, shell commands and paths from strings lets data become code, and use parameters, argument arrays and structured APIs instead | Store and read back hostile-looking text through parameterized PGlite queries, and allow-list identifiers such as sort columns | Confine user-supplied file names to a base folder with resolve, a separator-aware prefix check and realpath | Allow-list outbound URLs by scheme and host, refuse private addresses at connection time, and explain DNS rebinding | Explain request smuggling and why one strict HTTP parser prevents it | Merge untrusted objects without prototype pollution and write regular expressions that run in linear time
+---
+<section>
+<h2 id="problem">One import feature, seven ways out</h2>
+<p>Your shop is adding suppliers. A shop admin pastes the address of a supplier's catalogue, and the server does the rest:</p>
+<ol>
+<li>It downloads the catalogue (JSON) and each product image from the supplier's servers.</li>
+<li>It stores every product in PostgreSQL: name, SKU, price, description.</li>
+<li>It runs a command-line image tool to make thumbnails.</li>
+<li>It saves the files under an <code>uploads</code> folder, named after the supplier's file names.</li>
+<li>It merges the supplier's display settings into the shop's defaults.</li>
+<li>It checks every SKU with a regular expression.</li>
+</ol>
+<p>Every one of those steps takes text that someone else wrote and hands it to something that <em>interprets</em> text: the SQL parser, the shell, the file system's path rules, the network, the JavaScript object model, the regular expression engine. And in front of all of it sits a seventh interpreter: the HTTP parser that decides where each request starts and ends.</p>
+<p>An <strong>injection</strong> happens when data crosses into one of these interpreters and is read as instructions instead of as data. A product name that contains a quote character is ordinary data; if it is glued into a SQL string, the quote ends the string early and the rest of the name is read as SQL. The name did not change. What changed is that the code let the interpreter decide where the data ends.</p>
+<p>So every defence in this lesson follows one rule: <strong>keep data and code in separate channels</strong>. Send the query and its values separately. Pass a program its arguments as a list, not a command line. Build paths from checked parts. Choose outbound hosts from a list you wrote. Where separation is impossible, <strong>allow-list</strong>: accept only values you have decided in advance are safe.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Interpreter</th><th>What goes wrong</th><th>Safe pattern</th></tr></thead>
+<tbody>
+<tr><td>SQL database</td><td>Text is spliced into a query string</td><td>Parameterized queries; allow-listed identifiers</td></tr>
+<tr><td>Shell</td><td>Text is spliced into a command line</td><td><code>execFile</code> with an argument array, no shell</td></tr>
+<tr><td>File system</td><td>A name contains path syntax</td><td>Server-chosen names, or resolve + prefix check + realpath</td></tr>
+<tr><td>Network (outbound)</td><td>A URL points inside your own network</td><td>Scheme and host allow-list, private addresses refused at connect time</td></tr>
+<tr><td>HTTP framing</td><td>Two servers disagree about where a request ends</td><td>One strict parser that rejects ambiguous requests</td></tr>
+<tr><td>Object model</td><td>Special keys reach <code>Object.prototype</code></td><td>Merges that skip <code>__proto__</code>, <code>constructor</code>, <code>prototype</code></td></tr>
+<tr><td>Regex engine</td><td>A pattern takes exponential time on some inputs</td><td>Length limits and patterns with one way to match</td></tr>
+</tbody>
+</table></div>
+<p>Several earlier lessons touched these topics: safe paths in <a href="/learn/node-apis#path">Files, paths and your computer</a>, shell injection in <a href="/learn/node-events-processes#child-processes">Events, processes and workers</a>, prototype pollution in <a href="/learn/js-prototypes#pollution">Prototypes in depth</a>, catastrophic backtracking in <a href="/learn/js-regexp#redos">Regular expressions</a>, and SSRF checks with @zudojs/security in <a href="/learn/zudo-security#ssrf">Security for every public API</a>. This lesson goes deeper into the defences, the edge cases that break naive versions of them, and how to test them. Every runnable example shows the safe pattern, and every test feeds it input that looks hostile and proves nothing bad happens.</p>
+<reason title="Before you build the importer">
+<p>Take the step "store every product in PostgreSQL" and think it through:</p>
+<ul>
+<li>Which parts of the <code>INSERT</code> statement are fixed by you, and which come from the supplier?</li>
+<li>Product names can legitimately contain apostrophes (<code>Mama's Kitchen Rice</code>), semicolons and words like <code>select</code> or <code>drop</code>. Should the importer reject such names?</li>
+<li>The admin can sort the product list by a column chosen in the URL. Can that column name be passed the same way as a value?</li>
+<li>Suppose one defence has a bug. What limits the damage?</li>
+</ul>
+<answer>
+<p>The statement's shape (table, columns, keywords) is yours; the values (name, SKU, price, description) are the supplier's. Those two must never be mixed into one string. With a parameterized query the statement is sent with placeholders (<code>$1</code>, <code>$2</code>), and the values are sent separately. The database parses the statement before it ever sees a value, so a value cannot change the statement's structure.</p>
+<p>Rejecting apostrophes would be wrong: they are real data, and "Mama's" is a real name. The goal is not to filter "dangerous" characters (a losing game, and one that corrupts legitimate data) but to make every character harmless by keeping it in the data channel.</p>
+<p>A column name is part of the statement's structure, and placeholders can only stand for values. So identifiers need a different defence: an allow-list that maps the few sort options you support to column names you wrote.</p>
+<p>If a defence fails anyway, <strong>least privilege</strong> limits the damage: the importer's database user can insert and read products, but cannot drop tables or read the users table. Defences are layered because each one will eventually have a bug.</p>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="sql">SQL: send values separately</h2>
+<p>Why is building SQL from strings unsafe? A SQL statement is a small program. When you write <code>"... WHERE name = '" + name + "'"</code>, the database receives one piece of text and has to work out, character by character, where your program ends and the data begins. The quote characters you typed are the only boundary markers, and the data can contain the same characters. Whoever controls the data can therefore move the boundary, and anything after it is parsed as SQL. Escaping quotes by hand is fragile (character sets, backslashes and numeric contexts all have their own rules), and it is easy to forget in one place out of a hundred.</p>
+<p>A <strong>parameterized query</strong> (also called a prepared statement) removes the problem instead of patching it. PostgreSQL's protocol sends the statement text with numbered placeholders in one message, and the values in another. The statement is parsed first, so its structure is fixed before any value arrives; values are only ever values. In PGlite (PostgreSQL compiled to run inside Node.js, used throughout the database lessons) that is <code>db.query(text, values)</code>.</p>
+<p>Here is the test the reasoning block asked for: a customer name with an apostrophe and a delivery note full of SQL words and punctuation, stored and read back:</p>
+<file name="db.js" project="importer">
+import { PGlite } from "@electric-sql/pglite";
+
+export async function openShopDb() {
+  const db = new PGlite();
+  await db.exec(`
+    CREATE TABLE customers (id serial PRIMARY KEY, name text NOT NULL, note text NOT NULL);
+    CREATE TABLE products (
+      sku text PRIMARY KEY,
+      name text NOT NULL,
+      price_kobo integer NOT NULL CHECK (price_kobo > 0),
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  return db;
+}
+</file>
+<example file="params.js" project="importer" browser="no">
+import { openShopDb } from "./db.js";
+
+const db = await openShopDb();
+const name = "Chidi O'Neil";
+const note = "Leave it at gate 2; DROP OFF after 5pm -- call first, don't SELECT the side door";
+
+const inserted = await db.query("INSERT INTO customers (name, note) VALUES ($1, $2) RETURNING id", [name, note]);
+console.log("rows inserted:", inserted.affectedRows);
+
+const { rows } = await db.query("SELECT name, note FROM customers WHERE name = $1", [name]);
+console.log("rows found:", rows.length);
+console.log("name stored exactly:", rows[0].name === name);
+console.log("note stored exactly:", rows[0].note === note);
+
+const count = await db.query("SELECT count(*)::int AS n FROM customers");
+console.log("customers in table:", count.rows[0].n);
+</example>
+<output>
+rows inserted: 1
+rows found: 1
+name stored exactly: true
+note stored exactly: true
+customers in table: 1
+</output>
+<p>Every character arrived as data: one row inserted, one found, both strings identical to the input, and the table still has exactly one customer. The apostrophe did not need escaping and the note did not need filtering.</p>
+<p>PGlite also offers a tagged template, <code>db.sql`… ${value} …`</code>, which turns every <code>${…}</code> into a placeholder for you. A tagged template is safe because the tag function receives the fixed text and the values separately; an ordinary template string (without the tag) glues them together and is exactly the unsafe pattern.</p>
+<h3>Where placeholders are not enough</h3>
+<p>Three situations catch people who have learned "always use parameters":</p>
+<ul>
+<li><strong>LIKE patterns.</strong> In <code>LIKE $1</code>, the value is safely a value, but inside it <code>%</code> and <code>_</code> are wildcards. A search for <code>50%</code> would also match <code>500g</code>. Escape the wildcard characters in the search term.</li>
+<li><strong>Identifiers.</strong> Table names, column names and sort directions are structure. A placeholder cannot stand for them. Map the user's choice through an allow-list.</li>
+<li><strong>Lists.</strong> For "any of these SKUs", do not build <code>IN ('a', 'b', …)</code> as text. Pass one array parameter: <code>sku = ANY($1)</code>.</li>
+</ul>
+<example file="search.js" project="importer" browser="no">
+import { openShopDb } from "./db.js";
+
+const db = await openShopDb();
+for (const [sku, name, price] of [
+  ["RICE-5", "Rice 5kg, 50% extra free", 4_500_000],
+  ["RICE-500", "Rice 500g", 120_000],
+  ["BEANS_2", "Beans 2kg", 380_000],
+]) {
+  await db.query("INSERT INTO products (sku, name, price_kobo) VALUES ($1, $2, $3)", [sku, name, price]);
+}
+
+const escapeLike = (text) => text.replace(/[\\%_]/g, "\\$&");
+async function search(term) {
+  const { rows } = await db.query("SELECT sku FROM products WHERE name ILIKE $1 ESCAPE '\\' ORDER BY sku", [
+    `%${escapeLike(term)}%`,
+  ]);
+  return rows.map((row) => row.sku);
+}
+console.log("search '50%':", await search("50%"));
+console.log("search 'rice':", await search("rice"));
+
+const SORTS = { price: "price_kobo", name: "name", newest: "created_at" };
+async function list(sortKey, direction) {
+  const column = Object.hasOwn(SORTS, sortKey) ? SORTS[sortKey] : "sku";
+  const dir = direction === "desc" ? "DESC" : "ASC";
+  const { rows } = await db.query(`SELECT sku FROM products ORDER BY ${column} ${dir}, sku`);
+  return rows.map((row) => row.sku);
+}
+console.log("sort by price desc:", await list("price", "desc"));
+console.log("unknown sort key:  ", await list("price_kobo; anything", "sideways"));
+
+const wanted = ["RICE-5", "BEANS_2", "NOT-A-SKU"];
+const found = await db.query("SELECT sku FROM products WHERE sku = ANY($1) ORDER BY sku", [wanted]);
+console.log("any of the list:", found.rows.map((row) => row.sku));
+</example>
+<output>
+search '50%': [ 'RICE-5' ]
+search 'rice': [ 'RICE-5', 'RICE-500' ]
+sort by price desc: [ 'RICE-5', 'BEANS_2', 'RICE-500' ]
+unknown sort key:   [ 'BEANS_2', 'RICE-5', 'RICE-500' ]
+any of the list: [ 'BEANS_2', 'RICE-5' ]
+</output>
+<p>The sort column is the one place where text is put into the statement, and it is text you wrote: the user's input only chooses <em>which</em> of your strings is used. Unknown keys fall back to a default. <code>Object.hasOwn</code> matters here: <code>SORTS["constructor"]</code> would otherwise find a function inherited from <code>Object.prototype</code>.</p>
+<h3>Other layers</h3>
+<ul>
+<li><strong>Never pass user input to multi-statement APIs.</strong> PGlite's <code>db.exec</code> (like many drivers' "simple query" functions) runs several statements and takes no parameters. Keep it for fixed migrations like <code>openShopDb</code>.</li>
+<li><strong>ORMs and query builders</strong> parameterize for you, but all of them have a raw-SQL escape hatch. Treat every use of it like hand-written SQL.</li>
+<li><strong>Least privilege.</strong> The application's database user should own only what it needs. Migrations run as a different user.</li>
+</ul>
+<note title="CODE REVIEW">Search for SQL built with <code>+</code> or untagged template strings containing <code>${</code>. Every value must be a parameter; every identifier must come from an allow-list; <code>LIKE</code> terms must have their wildcards escaped; raw-SQL helpers need a comment explaining why they are safe.</note>
+</section>
+
+<section>
+<h2 id="commands">Running programs without a shell</h2>
+<p>The importer makes thumbnails with a command-line tool. The unsafe way is to build a command line as one string and run it with <code>exec</code>, which hands the string to a <strong>shell</strong> (<code>/bin/sh</code> or <code>cmd.exe</code>). A shell is a programming language: spaces separate words, quotes group them, and characters such as <code>;</code>, <code>|</code>, <code>&amp;</code>, <code>$</code>, backticks and redirections are instructions. A file name placed into that string is parsed by the shell's rules, so its characters can change what the command does. <a href="/learn/node-events-processes#child-processes">Events, processes and workers</a> showed the problem; here is the defence in depth.</p>
+<p>Operating systems start programs with an <strong>argument array</strong>, not a command line: the program receives a list of separate strings. A shell is just one way to produce that list from text. <code>execFile(program, args)</code> skips the shell and hands your array to the operating system directly, so each element arrives as exactly one argument, whatever characters it contains. There is nothing to parse, so there is nothing to inject into.</p>
+<p>To see exactly what a program receives, here is a stand-in for the thumbnail tool that prints its arguments:</p>
+<file name="thumbnail-tool.js" project="commands">
+// Stand-in for a real image tool: prints the arguments it received, one per line.
+for (const [i, arg] of process.argv.slice(2).entries()) {
+  console.log(`argv[${i}] = ${JSON.stringify(arg)}`);
+}
+</file>
+<example file="run-tool.js" project="commands" browser="no">
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+
+const run = promisify(execFile);
+const tool = fileURLToPath(new URL("./thumbnail-tool.js", import.meta.url));
+
+async function makeThumbnail(inputName) {
+  const { stdout } = await run(process.execPath, [tool, "--width", "200", "--", inputName], {
+    timeout: 10_000,
+    maxBuffer: 1024 * 1024,
+    env: { PATH: process.env.PATH },
+  });
+  return stdout.trimEnd();
+}
+
+console.log(await makeThumbnail("Chidi's rice (5kg); photo 2 & $HOME `final`.jpg"));
+console.log(await makeThumbnail("-rf.jpg"));
+</example>
+<output>
+argv[0] = "--width"
+argv[1] = "200"
+argv[2] = "--"
+argv[3] = "Chidi's rice (5kg); photo 2 & $HOME `final`.jpg"
+argv[0] = "--width"
+argv[1] = "200"
+argv[2] = "--"
+argv[3] = "-rf.jpg"
+</output>
+<p>The whole name, with its apostrophe, semicolon, ampersand, dollar sign and backticks, arrived as <em>one</em> argument, byte for byte. Nothing was expanded, because no shell ever saw it. The options do the rest of the work:</p>
+<ul>
+<li><strong><code>"--"</code></strong> is the usual "end of options" marker. A file name that starts with <code>-</code> (the second call) could otherwise be read as an option by the tool, a problem called <strong>argument injection</strong> that argument arrays alone do not prevent. Most command-line tools honour <code>--</code>; check the tool's documentation, or make sure names can never start with <code>-</code> (for example, prefix them with <code>./</code> or generate them yourself).</li>
+<li><strong><code>timeout</code> and <code>maxBuffer</code></strong> stop a stuck or chatty process from tying up your server.</li>
+<li><strong><code>env</code></strong> gives the child only what it needs, so your secrets in <code>process.env</code> are not inherited by a third-party tool.</li>
+<li><strong>The program is fixed.</strong> Only arguments come from data; the program path is yours. If users may choose between tools, map their choice through an allow-list, like the SQL sort column.</li>
+</ul>
+<warn title="SHELL: TRUE BRINGS THE SHELL BACK">Both <code>execFile</code> and <code>spawn</code> accept an option <code>shell: true</code>, which joins the arguments into a command line and runs it through the shell, bringing back every problem above. On Windows, <code>.bat</code> and <code>.cmd</code> files always run through <code>cmd.exe</code>; Node.js refuses to start them without <code>shell: true</code> for that reason. Prefer a real executable, or better, a library that does the job inside your process (an image library instead of an image command).</warn>
+<note title="CODE REVIEW">Look for <code>exec</code>, <code>execSync</code>, <code>shell: true</code> and template strings passed to any child-process function. Data must only ever appear as separate elements of an argument array, after <code>--</code>, with a fixed program, a timeout and a minimal environment.</note>
+</section>
+
+<section>
+<h2 id="paths">Confining file paths to a folder</h2>
+<p>The importer saves images under <code>uploads/</code> using names from the supplier's catalogue. A file path is also a tiny language: <code>/</code> separates folders, <code>..</code> means "go up one level", and a leading <code>/</code> means "start at the root of the disk". If a name from outside is joined to your folder, those rules apply to it, and a name can walk out of the folder to read or overwrite files elsewhere. That is <strong>path traversal</strong>.</p>
+<p>The strongest defence avoids the problem: <strong>do not use outside names as file names at all</strong>. Generate the file name yourself (an id, or a random value), store it, and keep the supplier's name in the database as a label. When a path must come from outside (serving files a user picked, for example), confine it:</p>
+<ol>
+<li><strong>Resolve</strong> it against the base folder with <code>path.resolve(base, name)</code>. That applies every <code>..</code> and <code>/</code> and gives the absolute path the file system would really use.</li>
+<li><strong>Check the prefix</strong>: the result must start with the base folder <em>plus a separator</em>. Without the separator, a base of <code>/srv/uploads</code> would also accept <code>/srv/uploads-old/…</code>, a sibling folder that merely starts with the same letters.</li>
+<li><strong>Follow links</strong>: a symbolic link inside the folder can point anywhere. Before opening, take the <code>realpath</code> (the path with every link followed) of both the file and the base, and check the prefix again.</li>
+</ol>
+<file name="confine.js" project="paths">
+import { realpath } from "node:fs/promises";
+import { resolve, sep } from "node:path";
+
+/** Returns the absolute path inside baseDir, or null if the name would leave it. */
+export function confine(baseDir, name) {
+  if (typeof name !== "string" || name.length === 0 || name.length > 255 || name.includes("\0")) return null;
+  const base = resolve(baseDir);
+  const full = resolve(base, name);
+  return full.startsWith(base + sep) ? full : null;
+}
+
+/** Like confine, but also follows symbolic links. The file must exist. */
+export async function confineExisting(baseDir, name) {
+  const full = confine(baseDir, name);
+  if (full === null) return null;
+  try {
+    const [realBase, realFull] = await Promise.all([realpath(baseDir), realpath(full)]);
+    return realFull.startsWith(realBase + sep) ? realFull : null;
+  } catch {
+    return null;
+  }
+}
+</file>
+<p>The test builds a small folder tree in a temporary directory, including a sibling folder with a similar name and a symbolic link that points out of <code>uploads</code>:</p>
+<example file="confine-test.js" project="paths" browser="no">
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, relative } from "node:path";
+import { confine, confineExisting } from "./confine.js";
+
+const root = await mkdtemp(join(tmpdir(), "shop-"));
+const uploads = join(root, "uploads");
+await mkdir(join(uploads, "2026"), { recursive: true });
+await mkdir(join(root, "uploads-old"));
+await mkdir(join(root, "config"));
+await writeFile(join(uploads, "RICE-5.jpg"), "image");
+await writeFile(join(uploads, "2026", "BEANS-2.jpg"), "image");
+await writeFile(join(root, "config", "app.env"), "DATABASE_URL=...");
+await symlink(join(root, "config", "app.env"), join(uploads, "linked.jpg"));
+
+const names = [
+  "RICE-5.jpg",
+  "2026/BEANS-2.jpg",
+  "2026/../RICE-5.jpg",
+  "../config/app.env",
+  "../uploads-old/RICE-5.jpg",
+  join(root, "config", "app.env"),
+  "RICE-5.jpg\0.png",
+  "",
+  "linked.jpg",
+];
+for (const name of names) {
+  const shown = JSON.stringify(name.replace(root, "<root>"));
+  const lexical = confine(uploads, name);
+  const real = await confineExisting(uploads, name);
+  const verdict = real ? `ok: ${relative(uploads, real)}` : lexical ? "refused: link leaves the folder" : "refused";
+  console.log(shown.padEnd(30), verdict);
+}
+await rm(root, { recursive: true, force: true });
+</example>
+<output>
+"RICE-5.jpg"                   ok: RICE-5.jpg
+"2026/BEANS-2.jpg"             ok: 2026/BEANS-2.jpg
+"2026/../RICE-5.jpg"           ok: RICE-5.jpg
+"../config/app.env"            refused
+"../uploads-old/RICE-5.jpg"    refused
+"<root>/config/app.env"        refused
+"RICE-5.jpg\u0000.png"         refused
+""                             refused
+"linked.jpg"                   refused: link leaves the folder
+</output>
+<ul>
+<li><code>2026/../RICE-5.jpg</code> is accepted: it goes up and back down, and ends inside the folder. Confinement checks where a path <em>ends up</em>, not whether it contains <code>..</code>. Searching the text for <code>..</code> would refuse legitimate names and miss other tricks.</li>
+<li><code>../uploads-old/RICE-5.jpg</code> resolves to a path that begins with the letters <code>…/uploads</code>; only the separator in the prefix check refuses it.</li>
+<li>An absolute path and a name containing a NUL character (<code>\0</code>) are refused. Node.js's file functions also throw on NUL, but refusing early gives one clear error path.</li>
+<li><code>linked.jpg</code> passes the text check (it is a name inside the folder) and is refused by <code>realpath</code>. Links can also be swapped between your check and your <code>open</code>; for folders that other people can write to, open the file first and then check the opened file, or do not allow links at all.</li>
+</ul>
+<p>On Windows, paths are case-insensitive and have drive letters, and <code>path.resolve</code> handles both, which is one more reason to use it instead of your own string checks.</p>
+<note title="CODE REVIEW">Any <code>path.join</code> or <code>path.resolve</code> with request or file data needs a confinement check with a separator-aware prefix, and <code>realpath</code> if links are possible. Better still, ask whether the name needs to come from outside at all.</note>
+</section>
+
+<section>
+<h2 id="ssrf">Outbound URLs: server-side request forgery</h2>
+<p>The importer downloads whatever catalogue URL an admin pastes, and whatever image URLs the catalogue lists. Your server runs <em>inside</em> your network, next to things the internet cannot reach: databases, admin panels, and the cloud provider's metadata service, which hands out the server's own credentials. When outside data decides where your server sends requests, someone can use your server to reach those internal places. That is <strong>server-side request forgery</strong> (SSRF).</p>
+<p>The defence has four parts. Each closes a gap the previous one leaves open:</p>
+<ol>
+<li><strong>Allow-list scheme and host.</strong> Accept <code>https</code> only, on the default port, with no user name or password in the URL, and only for hosts on a list you maintain (your suppliers' catalogue hosts). An allow-list of what is expected is far stronger than a deny-list of what is dangerous, because you cannot list every dangerous thing.</li>
+<li><strong>Refuse private addresses.</strong> Even an allowed name can resolve (through DNS) to an internal address, by mistake or because someone controls that name's DNS. Check every address the name resolves to, and refuse loopback, private, link-local and other special ranges.</li>
+<li><strong>Check at connection time.</strong> If you look the name up, check the answer, and then let the HTTP client look it up <em>again</em> to connect, the second answer can differ from the first. A DNS server that answers "public address" to the check and "internal address" a moment later is called <strong>DNS rebinding</strong>. The fix is to make the check and the connection use the same lookup: the address that was checked is the address that is dialled.</li>
+<li><strong>Do not follow redirects blindly.</strong> An allowed host can answer "moved to" an internal URL. Turn redirects off, or run every hop through steps 1 to 3 again. Add a timeout and a maximum response size.</li>
+</ol>
+<file name="outbound.js" project="ssrf">
+import { lookup as dnsLookup } from "node:dns";
+import { BlockList } from "node:net";
+
+export const ALLOWED_HOSTS = new Set(["catalogue.supplier-one.example", "images.supplier-one.example"]);
+
+const blocked = new BlockList();
+for (const [network, prefix] of [
+  ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8], ["169.254.0.0", 16],
+  ["172.16.0.0", 12], ["192.168.0.0", 16], ["198.18.0.0", 15], ["224.0.0.0", 3],
+]) blocked.addSubnet(network, prefix, "ipv4");
+for (const [network, prefix] of [["::", 127], ["fc00::", 7], ["fe80::", 10], ["ff00::", 8]]) {
+  blocked.addSubnet(network, prefix, "ipv6");
+}
+
+/** Step 1: returns null if the URL may be fetched, or the reason it may not. */
+export function checkUrl(text) {
+  let url;
+  try {
+    url = new URL(text);
+  } catch {
+    return "not a URL";
+  }
+  if (url.protocol !== "https:") return "only https is allowed";
+  if (url.username !== "" || url.password !== "") return "credentials in URL";
+  if (url.port !== "") return "non-default port";
+  if (!ALLOWED_HOSTS.has(url.hostname)) return "host not on the allow-list";
+  return null;
+}
+
+/** Step 2: true if an address is public. */
+export function isPublicAddress(address, family) {
+  return !blocked.check(address, family === 6 ? "ipv6" : "ipv4");
+}
+
+/** Step 3: a lookup function for http.request/https.request that refuses private answers. */
+export function guardedLookup(resolve = defaultResolve) {
+  return (hostname, options, callback) => {
+    resolve(hostname).then((addresses) => {
+      const bad = addresses.length === 0 || addresses.some((a) => !isPublicAddress(a.address, a.family));
+      if (bad) {
+        const error = new Error(`refused to connect to ${hostname}: private or missing address`);
+        error.code = "ERR_OUTBOUND_BLOCKED";
+        return callback(error);
+      }
+      if (options.all) return callback(null, addresses);
+      callback(null, addresses[0].address, addresses[0].family);
+    }, callback);
+  };
+}
+
+function defaultResolve(hostname) {
+  return new Promise((resolve, reject) =>
+    dnsLookup(hostname, { all: true }, (error, addresses) => (error ? reject(error) : resolve(addresses))),
+  );
+}
+</file>
+<p>First, the URL rules. Only the first URL passes:</p>
+<example file="check-urls.js" project="ssrf" browser="no">
+import { checkUrl } from "./outbound.js";
+
+for (const url of [
+  "https://catalogue.supplier-one.example/products.json",
+  "http://catalogue.supplier-one.example/products.json",
+  "https://catalogue.supplier-one.example:8443/products.json",
+  "https://ada@catalogue.supplier-one.example/products.json",
+  "https://admin.shop.internal/",
+  "file:///etc/hostname",
+  "catalogue.supplier-one.example/products.json",
+]) {
+  console.log((checkUrl(url) ?? "allowed").padEnd(28), url);
+}
+</example>
+<output>
+allowed                      https://catalogue.supplier-one.example/products.json
+only https is allowed        http://catalogue.supplier-one.example/products.json
+non-default port             https://catalogue.supplier-one.example:8443/products.json
+credentials in URL           https://ada@catalogue.supplier-one.example/products.json
+host not on the allow-list   https://admin.shop.internal/
+only https is allowed        file:///etc/hostname
+not a URL                    catalogue.supplier-one.example/products.json
+</output>
+<p>Then the address rules, fed with the answers a DNS server might give for an allowed name. The test uses a fake resolver so it does not depend on the network:</p>
+<example file="check-addresses.js" project="ssrf" browser="no">
+import { isPublicAddress } from "./outbound.js";
+
+for (const [address, family] of [
+  ["203.0.113.40", 4],
+  ["10.0.0.8", 4],
+  ["127.0.0.1", 4],
+  ["169.254.169.254", 4],
+  ["172.20.1.1", 4],
+  ["::1", 6],
+  ["::ffff:127.0.0.1", 6],
+  ["fd12:3456::1", 6],
+  ["2001:db8::1", 6],
+]) {
+  console.log(address.padEnd(18), isPublicAddress(address, family) ? "public" : "refused");
+}
+</example>
+<output>
+203.0.113.40       public
+10.0.0.8           refused
+127.0.0.1          refused
+169.254.169.254    refused
+172.20.1.1         refused
+::1                refused
+::ffff:127.0.0.1   refused
+fd12:3456::1       refused
+2001:db8::1        public
+</output>
+<p><code>::ffff:127.0.0.1</code> is an IPv4 address written in IPv6 form; <code>BlockList</code> understands that it is the loopback address. The documentation ranges <code>203.0.113.0/24</code> and <code>2001:db8::/32</code> count as public here because they are only used in examples; a production list should come from a maintained source and include every special-purpose range your network uses.</p>
+<p>Finally, the connection-time check. A local HTTP server plays an internal service. The fake DNS answers "127.0.0.1" for an allowed supplier host, which is what a rebinding DNS server would do. The request goes through <code>guardedLookup</code>, which is called by the HTTP client at the moment it connects:</p>
+<example file="rebinding-test.js" project="ssrf" browser="no">
+import { once } from "node:events";
+import { createServer, get } from "node:http";
+import { guardedLookup } from "./outbound.js";
+
+let internalHits = 0;
+const internal = createServer((req, res) => {
+  internalHits++;
+  res.end("internal data");
+});
+internal.listen(0, "127.0.0.1");
+await once(internal, "listening");
+
+const fakeDns = async (hostname) =>
+  hostname === "images.supplier-one.example" ? [{ address: "127.0.0.1", family: 4 }] : [];
+
+const url = `http://images.supplier-one.example:${internal.address().port}/RICE-5.jpg`;
+const outcome = await new Promise((resolve) => {
+  const request = get(url, { lookup: guardedLookup(fakeDns), agent: false, timeout: 5_000 }, (res) => {
+    res.resume();
+    resolve(`connected: ${res.statusCode}`);
+  });
+  request.on("error", (error) => resolve(`refused: ${error.code}`));
+});
+console.log(outcome);
+console.log("requests that reached the internal service:", internalHits);
+internal.close();
+</example>
+<output>
+refused: ERR_OUTBOUND_BLOCKED
+requests that reached the internal service: 0
+</output>
+<p>The request never left: the lookup refused the address, so no connection was made and the internal service saw nothing. (The test uses <code>http</code> and a port so it can target a local server; in the importer, <code>checkUrl</code> would already have refused both.) Because the check lives <em>inside</em> the lookup the client uses to connect, there is no second lookup for a rebinding DNS server to answer differently.</p>
+<p><code>fetch</code> in Node.js has no <code>lookup</code> option. You get the same effect by giving it a custom dispatcher whose connector uses a checked lookup (the undici package's <code>Agent</code> with <code>connect: { lookup }</code>), or by using <code>http.request</code>/<code>https.request</code> as above. With <code>fetch</code>, also pass <code>redirect: "manual"</code> or <code>"error"</code>. <a href="/learn/zudo-security#ssrf">@zudojs/security</a> provides <code>isSafeUrl</code> and <code>isPrivateHostname</code> for steps 1 and 2.</p>
+<p>At the network level, add a second layer that does not depend on your code at all: run the importer where outbound traffic can only reach the internet (an egress proxy or firewall rules), and require a token for the cloud metadata service (for example IMDSv2 on AWS).</p>
+<note title="CODE REVIEW">Every outbound request whose URL, host or path is influenced by data should go through one function that applies the allow-list, refuses private addresses in the connection's own lookup, and disables or re-checks redirects, with a timeout and a size limit.</note>
+</section>
+
+<section>
+<h2 id="smuggling">Ambiguous HTTP: request smuggling</h2>
+<p>HTTP/1.1 sends requests one after another over the same connection, so every server must work out where one request's body ends and the next request begins. There are two ways to say it: a <code>Content-Length</code> header gives the body's size in bytes, and <code>Transfer-Encoding: chunked</code> says the body comes in pieces, each prefixed with its size, ending with an empty piece. The standard says a request must not use both, and must not repeat <code>Content-Length</code> with different values.</p>
+<p>Most sites have more than one HTTP parser in a row: a load balancer, a CDN or a reverse proxy in front, and your Node.js server behind. If the front server and the back server read an ambiguous request differently (one trusts <code>Content-Length</code>, the other <code>Transfer-Encoding</code>), they disagree about where the request ends. Bytes that the front server considered part of one request's body are, for the back server, the start of a <em>new</em> request, which the front server never inspected. That is <strong>request smuggling</strong>: a request slipped past the front server's checks, and possibly attached to another user's connection.</p>
+<figure class="lx-diagram">
+<pre>
+               one ambiguous request
+ client  ───────────────────────────────►  proxy: "body ends HERE ▲"
+                                              │  forwards everything
+                                              ▼
+                                           app server: "body ends here ▲,
+                                                        and the rest is a new request"
+</pre>
+<figcaption>Two parsers, two answers to "where does this request end?". Any bytes they disagree about are a request only one of them has seen.</figcaption>
+</figure>
+<p>The defence is not in your route handlers; it is in how requests are parsed:</p>
+<ul>
+<li><strong>One strict parser.</strong> Every server in the chain must reject ambiguous framing (both headers, conflicting lengths, malformed chunk sizes) with <code>400</code> and close the connection, instead of guessing. If no server guesses, they cannot guess differently.</li>
+<li><strong>Keep Node.js's strict parser on.</strong> Node.js's HTTP parser (llhttp) is strict by default. The <code>insecureHTTPParser</code> option and the <code>--insecure-http-parser</code> flag turn leniency on; they exist for broken legacy clients and should not appear in your code.</li>
+<li><strong>Keep the proxy updated and strict</strong>, prefer HTTP/2 from the proxy to your server where supported (it frames requests in binary and has no such ambiguity), and let the proxy normalise requests rather than pass odd ones through.</li>
+</ul>
+<p>You can test the first property directly: send your server requests with ambiguous framing over a raw socket and check that each one is refused. The requests below contain no hidden second request; they only check that the parser refuses to guess:</p>
+<example file="framing-test.js" browser="no">
+import { once } from "node:events";
+import { createServer } from "node:http";
+import { connect } from "node:net";
+
+let handled = 0;
+const server = createServer((req, res) => {
+  handled++;
+  req.resume();
+  req.on("end", () => res.end("order received\n"));
+});
+server.listen(0, "127.0.0.1");
+await once(server, "listening");
+
+function send(head, body = "") {
+  return new Promise((resolve) => {
+    const socket = connect(server.address().port, "127.0.0.1", () => socket.end(`${head}\r\n\r\n${body}`));
+    let reply = "";
+    socket.on("data", (chunk) => (reply += chunk));
+    socket.on("close", () => resolve(reply.split("\r\n")[0] || "(no response)"));
+  });
+}
+
+const start = "POST /orders HTTP/1.1\r\nHost: shop.test\r\nConnection: close";
+console.log("normal request:        ", await send(`${start}\r\nContent-Length: 2`, "{}"));
+console.log("both length headers:   ", await send(`${start}\r\nContent-Length: 5\r\nTransfer-Encoding: chunked`, "0\r\n\r\n"));
+console.log("two different lengths: ", await send(`${start}\r\nContent-Length: 2\r\nContent-Length: 3`, "{}"));
+console.log("no Host header:        ", await send("POST /orders HTTP/1.1\r\nConnection: close\r\nContent-Length: 2", "{}"));
+console.log("requests handled:", handled);
+server.close();
+</example>
+<output>
+normal request:         HTTP/1.1 200 OK
+both length headers:    HTTP/1.1 400 Bad Request
+two different lengths:  HTTP/1.1 400 Bad Request
+no Host header:         HTTP/1.1 400 Bad Request
+requests handled: 1
+</output>
+<p>Only the well-formed request reached the handler. The ambiguous ones were refused by the parser before any of your code ran, and so was the request without a <code>Host</code> header (HTTP/1.1 requires one, and Node.js enforces it by default with the <code>requireHostHeader</code> option). A test like this belongs in the suite of any service that sits behind a proxy, together with the same test run through the proxy in a staging environment.</p>
+<note title="CODE REVIEW">Search for <code>insecureHTTPParser</code>, <code>--insecure-http-parser</code> and custom HTTP parsing code. Proxy configuration changes deserve the same review as code: they are the other half of the parsing chain.</note>
+</section>
+
+<section>
+<h2 id="prototype-pollution">Merging objects safely: prototype pollution</h2>
+<p>The importer merges the supplier's display settings (JSON) into the shop's defaults. <a href="/learn/js-prototypes#pollution">Prototypes in depth</a> explained why a naive deep merge is dangerous: <code>JSON.parse</code> creates an ordinary own property named <code>"__proto__"</code>, and a merge that then writes <code>target["__proto__"][key]</code> is writing to <code>Object.prototype</code>, which every object in the program inherits from. Afterwards, a check such as <code>if (user.isAdmin)</code> can find a property that no user object ever had. The same happens through the key path <code>constructor.prototype</code>.</p>
+<p>In backend code, the pattern shows up in more places than hand-written merges: helpers that set a value by a dotted path (<code>set(settings, "display.theme", value)</code>) with a path from the request, query-string parsers that build nested objects from names like <code>filter[price][max]</code>, and configuration loaders that combine several files. The defence is the same everywhere:</p>
+<ul>
+<li>Skip the keys <code>__proto__</code>, <code>constructor</code> and <code>prototype</code> whenever keys come from data.</li>
+<li>Only walk into <strong>own</strong> properties (<code>Object.hasOwn</code>), and only into plain objects.</li>
+<li>Build objects keyed by data with <code>Object.create(null)</code> or a <code>Map</code>, so there is no prototype to reach.</li>
+<li>Best of all, validate first with a strict schema (<a href="/learn/ts-security#validate">Types are not security</a>) and copy only known fields.</li>
+</ul>
+<file name="safe-merge.js" project="merge">
+const FORBIDDEN = new Set(["__proto__", "constructor", "prototype"]);
+const isPlainObject = (value) =>
+  typeof value === "object" && value !== null && [Object.prototype, null].includes(Object.getPrototypeOf(value));
+
+/** Deep-merges source into a copy of target. Ignores forbidden keys and inherited properties. */
+export function safeMerge(target, source, depth = 0) {
+  if (depth > 10) throw new Error("settings nested too deeply");
+  const result = Object.assign(Object.create(null), target);
+  for (const key of Object.keys(source)) {
+    if (FORBIDDEN.has(key)) continue;
+    const value = source[key];
+    result[key] = isPlainObject(value) && isPlainObject(result[key])
+      ? safeMerge(result[key], value, depth + 1)
+      : value;
+  }
+  return result;
+}
+
+/** Sets a value by a dotted path such as "display.theme". Returns false for forbidden paths. */
+export function setByPath(target, path, value) {
+  const parts = path.split(".");
+  if (parts.length > 10 || parts.some((part) => part === "" || FORBIDDEN.has(part))) return false;
+  let node = target;
+  for (const part of parts.slice(0, -1)) {
+    if (!Object.hasOwn(node, part) || !isPlainObject(node[part])) node[part] = Object.create(null);
+    node = node[part];
+  }
+  node[parts.at(-1)] = value;
+  return true;
+}
+</file>
+<example file="merge-test.js" project="merge" browser="no">
+import { safeMerge, setByPath } from "./safe-merge.js";
+
+const defaults = { display: { theme: "light", perPage: 20 }, currency: "NGN" };
+const supplierJson =
+  '{"display":{"theme":"dark","__proto__":{"isAdmin":true}},"constructor":{"prototype":{"isAdmin":true}},"__proto__":{"isAdmin":true}}';
+
+const settings = safeMerge(defaults, JSON.parse(supplierJson));
+console.log(JSON.stringify(settings));
+console.log("every object isAdmin?", ({}).isAdmin, "| settings.isAdmin:", settings.isAdmin);
+
+const prefs = Object.create(null);
+console.log(setByPath(prefs, "display.perPage", 50), JSON.stringify(prefs));
+console.log(setByPath(prefs, "__proto__.isAdmin", true), setByPath(prefs, "constructor.prototype.isAdmin", true));
+console.log("after path attempts:", ({}).isAdmin, Object.prototype.hasOwnProperty.call(Object.prototype, "isAdmin"));
+</example>
+<output>
+{"display":{"theme":"dark","perPage":20},"currency":"NGN"}
+every object isAdmin? undefined | settings.isAdmin: undefined
+true {"display":{"perPage":50}}
+false false
+after path attempts: undefined false
+</output>
+<p>The supplier's real setting (<code>theme: "dark"</code>) was merged; every forbidden key was ignored at every depth; and a fresh <code>{}</code> still has no <code>isAdmin</code>. The result objects have a <code>null</code> prototype, so even a key that slipped through would have no prototype to write into. The depth limit stops a deeply nested document from exhausting the stack.</p>
+<h3>Hardening the whole process</h3>
+<p>Two process-wide switches make pollution much harder even if a dependency has the bug. <code>node --disable-proto=delete</code> removes the <code>__proto__</code> accessor from <code>Object.prototype</code>, and <code>Object.freeze(Object.prototype)</code> at startup makes the shared prototype unchangeable. Both can break old libraries that rely on these features, so turn them on with a full test run, but they are worth trying on a new service.</p>
+<note title="CODE REVIEW">Any code that copies keys from data into objects (merges, path setters, query parsers, <code>Object.assign</code> into shared objects) must skip <code>__proto__</code>, <code>constructor</code> and <code>prototype</code>, walk only own properties, and have a test that <code>({}).polluted</code> stays <code>undefined</code>.</note>
+</section>
+
+<section>
+<h2 id="redos">Regular expressions that run in linear time</h2>
+<p>Every SKU in the catalogue goes through a regular expression. JavaScript's regex engine is a backtracking engine: when a match fails, it goes back and tries other ways to split the text among the pattern's parts. For most patterns there are few ways. But a pattern that offers <em>many</em> ways to match the same text (the classic shapes are a repeated group that itself repeats, and alternatives that overlap) can make the engine try an exponential number of splits on an input that almost matches. Node.js runs your JavaScript on one thread (<a href="/learn/js-event-loop">The event loop</a>), so one such match can freeze the whole server for every user. This is <strong>ReDoS</strong>, regular-expression denial of service. <a href="/learn/js-regexp#redos">Regular expressions</a> showed the problem; here is how to design patterns that cannot have it.</p>
+<p>Rules for a <strong>linear-time</strong> pattern, one where the time grows in proportion to the input length:</p>
+<ul>
+<li><strong>Limit the length first.</strong> Check <code>text.length</code> before matching. A SKU is never 5,000 characters. This alone caps the worst case of any pattern.</li>
+<li><strong>Anchor it</strong> with <code>^</code> and <code>$</code>, so the engine does not retry from every starting position.</li>
+<li><strong>Give every piece of text exactly one way to match.</strong> Make each repetition begin with a character the previous part cannot consume: <code>^[A-Z]+(?:-[A-Z0-9]+)*$</code> (every repeat starts with <code>-</code>, which <code>[A-Z0-9]</code> cannot match) rather than a group that repeats a repeating class.</li>
+<li><strong>Bound repetitions</strong> where the format allows: <code>[A-Z]{2,10}</code> instead of <code>[A-Z]+</code>.</li>
+<li><strong>Do not build patterns from user text.</strong> If you must search for user text, escape it with <code>RegExp.escape</code>, or do not use a regex at all (<code>includes</code>, <code>startsWith</code>, <code>split</code>).</li>
+<li><strong>For patterns you do not control</strong>, use an engine with a linear-time guarantee, such as the <code>re2</code> package.</li>
+</ul>
+<example file="sku.js">
+const SKU = /^[A-Z]{2,10}(?:-[A-Z0-9]{1,10}){0,4}$/;
+const MAX_SKU_LENGTH = 40;
+
+function checkSku(text) {
+  if (typeof text !== "string") return "not text";
+  if (text.length > MAX_SKU_LENGTH) return "too long";
+  return SKU.test(text) ? "ok" : "bad format";
+}
+
+for (const sku of ["RICE-5", "RICE-5KG-BAG", "rice-5", "RICE--5", "RICE-5-", "A".repeat(50)]) {
+  console.log(sku.padEnd(14).slice(0, 14), checkSku(sku));
+}
+
+const nearMiss = "RICE" + "-AAAAAAAAAA".repeat(20_000) + "!";
+const start = performance.now();
+const matched = /^[A-Z]+(?:-[A-Z0-9]+)*$/.test(nearMiss);
+const elapsed = performance.now() - start;
+console.log(`unbounded pattern on ${nearMiss.length} characters: matched=${matched}, under 100 ms: ${elapsed < 100}`);
+
+const term = "₦5,000 (promo)";
+const note = "Use code SAVE for ₦5,000 (promo) until Friday";
+console.log("literal search:", new RegExp(RegExp.escape(term)).test(note));
+</example>
+<output>
+RICE-5         ok
+RICE-5KG-BAG   ok
+rice-5         bad format
+RICE--5        bad format
+RICE-5-        bad format
+AAAAAAAAAAAAAA too long
+unbounded pattern on 220005 characters: matched=false, under 100 ms: true
+literal search: true
+</output>
+<p>The timing line is the test that matters. Even the unbounded version of the pattern (no length limit, no <code>{…}</code> bounds) finished a 220,000-character near-miss quickly, because each repetition must start with <code>-</code>, so there is only one way to split the text and a failure is found in one pass. The production version adds the length check and the bounds anyway: defence in depth, and a clear error message for the user. <code>RegExp.escape</code> turns the user's search term into a pattern that matches only that literal text; brackets, commas and the naira sign lose any special meaning.</p>
+<p>Pattern checks belong in tests too. For every regex that sees outside input, add a test with a long input that <em>almost</em> matches and assert that it finishes quickly, as above. Linters such as <code>eslint-plugin-regexp</code> can flag risky shapes in review, and a request-level timeout plus a body size limit keeps one slow request from taking the service down.</p>
+<note title="CODE REVIEW">Every regex applied to outside input needs a length check before it, anchors, and repetitions that cannot overlap. Any <code>new RegExp(…)</code> built from data must use <code>RegExp.escape</code> or be replaced by a plain string method.</note>
+</section>
+
+<section>
+<h2 id="testing">Testing the defences</h2>
+<p>Each section ended with a test that feeds hostile-looking input to the safe code. Collected, they form a pattern you can reuse for any interpreter your code talks to:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Defence</th><th>Test input</th><th>Assertion</th></tr></thead>
+<tbody>
+<tr><td>Parameterized SQL</td><td>Text with quotes, semicolons and SQL words</td><td>Stored value equals the input exactly; row counts are what you expect</td></tr>
+<tr><td>Allow-listed identifiers</td><td>Unknown sort keys, inherited names like <code>constructor</code></td><td>The default is used</td></tr>
+<tr><td>Argument arrays</td><td>Names with spaces, quotes, shell characters, a leading dash</td><td>The program receives each as one literal argument</td></tr>
+<tr><td>Path confinement</td><td><code>..</code> segments, absolute paths, similar sibling folders, NUL, links</td><td>Refused, and legitimate nested names accepted</td></tr>
+<tr><td>Outbound allow-list</td><td>Other schemes, ports, hosts, credentials, private DNS answers</td><td>Refused before connecting; the internal service sees no request</td></tr>
+<tr><td>Strict HTTP parsing</td><td>Both length headers, conflicting lengths, missing Host</td><td><code>400</code>, handler never runs</td></tr>
+<tr><td>Safe merge</td><td><code>__proto__</code>, <code>constructor.prototype</code> at several depths</td><td><code>({}).isAdmin</code> stays <code>undefined</code></td></tr>
+<tr><td>Linear regex</td><td>Very long near-matches</td><td>Finishes within a time budget</td></tr>
+</tbody>
+</table></div>
+<p>Two habits make these tests trustworthy. First, test that <strong>legitimate</strong> input still works (an apostrophe in a name, a nested folder, a real supplier host), because a defence that refuses real data will be switched off by the next frustrated developer. Second, run the whole set on every change: injection bugs are usually introduced by a small later edit ("just add a sort option", "just allow one more host"), not by the original author.</p>
+</section>
+
+<section>
+<h2 id="review">A code-review checklist</h2>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Look for</th><th>Ask</th></tr></thead>
+<tbody>
+<tr><td>SQL strings with <code>+</code> or <code>${</code></td><td>Are all values parameters? Identifiers from an allow-list? <code>LIKE</code> wildcards escaped? No user data in multi-statement calls?</td></tr>
+<tr><td><code>exec</code>, <code>shell: true</code>, child processes</td><td>Fixed program, argument array, <code>--</code> before data, timeout, minimal <code>env</code>? Could a library replace the command?</td></tr>
+<tr><td><code>path.join</code>/<code>resolve</code> with data</td><td>Separator-aware prefix check? <code>realpath</code> when links are possible? Could the server choose the name instead?</td></tr>
+<tr><td>Outbound requests</td><td>Scheme and host allow-list, private addresses refused in the connection's lookup, redirects off or re-checked, timeout and size limit?</td></tr>
+<tr><td>HTTP server and proxy settings</td><td>No <code>insecureHTTPParser</code>? Proxy up to date and strict?</td></tr>
+<tr><td>Merges and path setters</td><td>Forbidden keys skipped, own properties only, null-prototype results, depth limit?</td></tr>
+<tr><td>Regular expressions</td><td>Length check first, anchored, non-overlapping repetitions, no patterns built from data?</td></tr>
+<tr><td>Tests</td><td>Hostile-looking input for each defence, and legitimate input that must still work?</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="production">In production</h2>
+<ul>
+<li><strong>Least privilege everywhere.</strong> A database user without <code>DROP</code>, a process user that cannot read <code>/etc</code> or your secrets folder, a network that cannot reach internal services from the importer. Each limits what a missed injection can do.</li>
+<li><strong>A web application firewall is a layer, not a fix.</strong> WAFs match known attack patterns in requests. They catch some attacks, miss others, and sometimes block legitimate data (such as the delivery note above). Fix the code; treat the WAF as an extra net.</li>
+<li><strong>Keep dependencies patched.</strong> Many real injection bugs live in libraries: query builders, merge utilities, URL parsers, proxies. Automated dependency updates and advisories (<code>npm audit</code>, Dependabot) matter as much as your own code.</li>
+<li><strong>Log refusals.</strong> Refused paths, blocked outbound hosts and rejected requests are signals. A spike often means someone is probing.</li>
+<li><strong>Use shared building blocks.</strong> In ZudoJS, <a href="/learn/zudo-security">@zudojs/security</a> provides URL and host checks, body limits and unsafe-key detection, and <a href="/learn/zudo-database">@zudojs/database</a> runs parameterized queries. One well-tested implementation beats ten hand-written ones.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="An invoice download route">
+<p>Customers download invoices at <code>GET /invoices/:id</code>, where files are stored as <code>invoices/INV-1042.pdf</code>. Write <code>invoicePath(id)</code> that avoids path traversal without using <code>confine</code> at all, and explain why it is safe. Then say what else the route must check before sending the file.</p>
+<solution>
+<example file="invoice-path.js" browser="no">
+import { join } from "node:path";
+
+const INVOICE_ID = /^INV-\d{1,10}$/;
+
+function invoicePath(id) {
+  if (typeof id !== "string" || !INVOICE_ID.test(id)) return null;
+  return join("invoices", `${id}.pdf`);
+}
+
+for (const id of ["INV-1042", "INV-1042/../../config", "../INV-1042", "INV-", "inv-1042"]) {
+  console.log(JSON.stringify(id).padEnd(26), invoicePath(id));
+}
+</example>
+<output>
+"INV-1042"                 invoices/INV-1042.pdf
+"INV-1042/../../config"    null
+"../INV-1042"              null
+"INV-"                     null
+"inv-1042"                 null
+</output>
+<p>The id is checked against an anchored pattern that allows only <code>INV-</code> and digits, and the server builds the file name itself. No accepted id can contain <code>/</code>, <code>.</code> or <code>\</code>, so path syntax never reaches the file system; this is the "server chooses the name" defence. The route must also check <strong>authorization</strong>: that the invoice belongs to the logged-in customer (return <code>404</code> otherwise, so ids cannot be probed). Path safety says the file is inside the folder, not that this user may read it.</p>
+</solution>
+</exercise>
+
+<exercise title="Safe product search with several filters">
+<p>Write <code>searchProducts(db, filters)</code> using the <code>products</code> table from this lesson. <code>filters</code> may contain <code>text</code> (a substring of the name), <code>maxPriceKobo</code> (a whole number) and <code>skus</code> (an array). Build the <code>WHERE</code> clause from fixed fragments and numbered placeholders only, and test it with a search term containing <code>%</code> and an apostrophe.</p>
+<solution>
+<example file="filters.js" project="importer" browser="no">
+import { openShopDb } from "./db.js";
+
+async function searchProducts(db, filters) {
+  const where = [];
+  const values = [];
+  const param = (value) => {
+    values.push(value);
+    return `$${values.length}`;
+  };
+  if (typeof filters.text === "string" && filters.text.length <= 100) {
+    where.push(`name ILIKE ${param(`%${filters.text.replace(/[\\%_]/g, "\\$&")}%`)} ESCAPE '\\'`);
+  }
+  if (Number.isInteger(filters.maxPriceKobo)) where.push(`price_kobo <= ${param(filters.maxPriceKobo)}`);
+  if (Array.isArray(filters.skus)) where.push(`sku = ANY(${param(filters.skus.map(String))})`);
+  const sql = `SELECT sku FROM products${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY sku`;
+  const { rows } = await db.query(sql, values);
+  return rows.map((row) => row.sku);
+}
+
+const db = await openShopDb();
+for (const [sku, name, price] of [
+  ["RICE-5", "Mama's Rice 5kg, 50% extra", 4_500_000],
+  ["RICE-500", "Rice 500g", 120_000],
+  ["OIL-1", "Mama's Palm Oil 1L", 250_000],
+]) {
+  await db.query("INSERT INTO products (sku, name, price_kobo) VALUES ($1, $2, $3)", [sku, name, price]);
+}
+
+console.log(await searchProducts(db, { text: "mama's" }));
+console.log(await searchProducts(db, { text: "50%" }));
+console.log(await searchProducts(db, { text: "rice", maxPriceKobo: 1_000_000 }));
+console.log(await searchProducts(db, { skus: ["OIL-1", "RICE-5"], maxPriceKobo: "cheap" }));
+</example>
+<output>
+[ 'OIL-1', 'RICE-5' ]
+[ 'RICE-5' ]
+[ 'RICE-500' ]
+[ 'OIL-1', 'RICE-5' ]
+</output>
+<p>The SQL text is assembled only from fragments you wrote and placeholder numbers; every value, including the apostrophe in <code>mama's</code>, travels as a parameter. A <code>maxPriceKobo</code> that is not a whole number is ignored rather than passed along (a stricter API would answer <code>400</code>). This is how query builders work inside.</p>
+</solution>
+</exercise>
+
+<exercise title="Allow a second supplier, safely">
+<p>A new supplier serves images from <code>cdn.supplier-two.example</code>. A colleague proposes changing the host check to <code>url.hostname.endsWith("supplier-two.example")</code> "so all their subdomains work". What is wrong with that, and what would you do instead?</p>
+<solution>
+<p><code>endsWith("supplier-two.example")</code> also matches <code>evil-supplier-two.example</code>, a completely different domain that anyone could register, because there is no dot in front. Even <code>endsWith(".supplier-two.example")</code> trusts every subdomain the supplier has now or will ever have, including forgotten ones that could be taken over. Add the exact host <code>cdn.supplier-two.example</code> to <code>ALLOWED_HOSTS</code>, preferably from configuration, and add a test that the lookalike host is refused. Exact matches are easy to review; patterns are where allow-lists quietly turn into deny-lists.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Summary</h2>
+<ul>
+<li>Injection is data read as instructions by an interpreter. The cure is to keep data and code in separate channels, and to allow-list where separation is impossible. Filtering "bad characters" is not a defence.</li>
+<li>SQL: parameterized queries (<code>$1</code> with a values array, or a tagged template); allow-listed identifiers; escaped <code>LIKE</code> wildcards; <code>= ANY($1)</code> for lists; least-privilege database users.</li>
+<li>Programs: <code>execFile</code> with an argument array, no shell, <code>--</code> before data, a fixed program, a timeout and a minimal environment.</li>
+<li>Paths: let the server choose names; otherwise <code>resolve</code>, check the prefix with a separator, and <code>realpath</code> to follow links.</li>
+<li>SSRF: allow-list scheme and host, refuse private addresses inside the connection's own lookup (which defeats DNS rebinding), and do not follow redirects blindly.</li>
+<li>Request smuggling: ambiguous framing must be rejected by one strict parser in every hop; never enable the insecure parser.</li>
+<li>Prototype pollution: skip <code>__proto__</code>, <code>constructor</code> and <code>prototype</code>, walk own properties only, use null-prototype objects.</li>
+<li>ReDoS: length limits first, anchored patterns whose repetitions cannot overlap, <code>RegExp.escape</code> for user text, and a timing test on long near-matches.</li>
+</ul>
+<p>Next: <a href="/learn/sec-crypto">Cryptography for developers</a>, where you choose between hashing, HMAC, encryption and signatures, and learn to manage and rotate the keys that protect everything else.</p>
+</section>

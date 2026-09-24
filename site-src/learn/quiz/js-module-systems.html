@@ -1,0 +1,711 @@
+<question id="ms-which-system" type="choice">
+<q>A project's <code>package.json</code> has <code>"type": "module"</code>. Which files are CommonJS?</q>
+<option>All <code>.js</code> files</option>
+<option correct>Only files ending in <code>.cjs</code></option>
+<option>Files that use <code>require</code>, whatever their extension</option>
+<option>None; CommonJS is not allowed in such a project</option>
+<explain><p><code>.cjs</code> is always CommonJS and <code>.mjs</code> always ESM. <code>.js</code> follows the nearest <code>package.json</code> <code>"type"</code>, here <code>"module"</code>.</p></explain>
+</question>
+
+<question id="ms-no-type" type="choice">
+<q>A <code>package.json</code> has no <code>"type"</code> field. How does Node.js 24 treat a <code>.js</code> file in that package?</q>
+<option>Always as ESM</option>
+<option correct>As CommonJS, unless the file uses ESM syntax that cannot be CommonJS, in which case Node guesses ESM and warns</option>
+<option>It refuses to run it</option>
+<option>As TypeScript</option>
+<explain><p>No <code>"type"</code> means CommonJS by default, with syntax detection as a fallback. Setting <code>"type"</code> explicitly avoids the guess and the warning.</p></explain>
+</question>
+
+<question id="ms-phases" type="choice">
+<q>Why can an ES module <code>import</code> not be placed inside an <code>if</code> block?</q>
+<option>Because <code>if</code> blocks are not allowed in modules</option>
+<option correct>Imports are found by parsing, before any code runs, so they must be static top-level declarations; <code>import()</code> is the dynamic form</option>
+<option>Because imports are slow</option>
+<option>It is allowed; only exports are restricted</option>
+<explain><p>The parse and link phases need to know every import without running code. For a conditional load, use <code>await import(…)</code>.</p></explain>
+</question>
+
+<question id="ms-link-error-first-line" type="choice">
+<q>An ES module starts with <code>console.log("start")</code> and then imports a name that the other module does not export. What happens?</q>
+<option>"start" is printed, then a <code>ReferenceError</code> when the name is used</option>
+<option correct>Nothing is printed: loading fails with a <code>SyntaxError</code> during linking, before any module code runs</option>
+<option>The name is <code>undefined</code> and the program continues</option>
+<option>"start" is printed, then a <code>TypeError</code></option>
+<explain><p>Linking connects every imported name before evaluation. A missing export stops the whole graph from running. CommonJS, by contrast, would run until the missing value was used.</p></explain>
+</question>
+
+<question id="ms-cjs-missing" type="output">
+<q>This CommonJS-style code destructures a function that the module does not export. What does it print?</q>
+<code file="cjs-missing.js">
+const moduleExports = { createOrder: (id) => ({ id }) };
+const { createOrder, cancelOrder } = moduleExports;
+console.log("started", typeof cancelOrder);
+try {
+  cancelOrder(createOrder("ORD-7"));
+} catch (error) {
+  console.log(error.name);
+}
+</code>
+<option correct>started undefined
+TypeError</option>
+<option>SyntaxError</option>
+<option>started function</option>
+<option>ReferenceError</option>
+<explain><p>With <code>require</code>, you get an ordinary object, and destructuring a missing property gives <code>undefined</code> without complaint. The mistake only surfaces when the value is called, which is what CommonJS code does in practice.</p></explain>
+</question>
+
+<question id="ms-this-top" type="choice">
+<q>What is <code>this</code> at the top level of a file?</q>
+<option><code>globalThis</code> in both systems</option>
+<option correct><code>undefined</code> in an ES module; <code>module.exports</code> in a CommonJS file</option>
+<option><code>module.exports</code> in both</option>
+<option><code>undefined</code> in both</option>
+<explain><p>ES modules run in strict mode without a module object. CommonJS wraps each file in a function called with <code>this</code> set to <code>module.exports</code>.</p></explain>
+</question>
+
+<question id="ms-dirname" type="choice">
+<q>An ES module needs the folder it lives in. <code>__dirname</code> is not defined there. What should it use?</q>
+<option><code>process.cwd()</code></option>
+<option correct><code>import.meta.dirname</code> (or derive it from <code>import.meta.url</code>)</option>
+<option><code>require.main.path</code></option>
+<option><code>window.location</code></option>
+<explain><p><code>process.cwd()</code> is where the process was started, which is often a different folder. <code>import.meta</code> describes the current module.</p></explain>
+</question>
+
+<question id="ms-strict" type="output">
+<q>This file is an ES module. What does it print?</q>
+<code file="strict-esm.js">
+try {
+  orderTotal = 1500;
+  console.log("created", orderTotal);
+} catch (error) {
+  console.log(error.name);
+}
+</code>
+<option correct>ReferenceError</option>
+<option>created 1500</option>
+<option>TypeError</option>
+<option>SyntaxError</option>
+<explain><p>Modules are always strict, and in strict mode assigning to an undeclared name throws instead of creating a global. A CommonJS file without <code>"use strict"</code> would have created the global.</p></explain>
+</question>
+
+<question id="ms-live-binding" type="output">
+<q>An ES module imports from itself to show how imports behave. What does it print?</q>
+<code file="live-binding.js" browser="no">
+import { ordersToday as seenByImport } from "./live-binding.js";
+
+export let ordersToday = 0;
+
+function record() {
+  ordersToday += 1;
+}
+record();
+record();
+console.log(seenByImport);
+</code>
+<option correct>2</option>
+<option>0</option>
+<option>undefined</option>
+<option>1</option>
+<explain><p>An import is a live binding to the exporter's variable, not a copy. Each <code>record()</code> updates the variable, and the imported name shows the current value. (Importing a module from itself is only a trick to fit the demonstration into one file.)</p></explain>
+</question>
+
+<question id="ms-copy" type="output">
+<q>This simulates what destructuring a <code>require</code> result does. What does it print?</q>
+<code file="copy.js">
+let count = 0;
+const moduleExports = {
+  count,
+  record() {
+    count += 1;
+  },
+};
+const { count: copied, record } = moduleExports;
+record();
+record();
+console.log(copied, moduleExports.count, count);
+</code>
+<option correct>0 0 2</option>
+<option>2 2 2</option>
+<option>0 2 2</option>
+<option>2 0 2</option>
+<explain><p>The object got a copy of <code>count</code> when it was built, and destructuring copied it again. Only the module's own variable changed. That is why CommonJS state must be read through a function or a property that is updated, while ESM imports are live.</p></explain>
+</question>
+
+<question id="ms-readonly-import" type="choice">
+<q>Code does <code>import { vatRate } from "./config.js";</code> and later <code>vatRate = 0.1;</code>. What happens?</q>
+<option>The rate changes for every module</option>
+<option>Only this module's copy changes</option>
+<option correct>A <code>TypeError</code>: imported bindings are read-only; only <code>config.js</code> can change its own variable</option>
+<option>Nothing; the assignment is ignored</option>
+<explain><p>Imports are views, not variables of the importer. If other modules must be able to change a value, the owner exports a function that does it.</p></explain>
+</question>
+
+<question id="ms-cjs-named" type="choice">
+<q>An ES module does <code>import { refund } from "./payments.cjs"</code> and gets "Named export 'refund' not found", although <code>refund</code> is on <code>module.exports</code> at run time. Why?</q>
+<option>CommonJS files cannot be imported from ESM</option>
+<option correct>Node finds CommonJS named exports by scanning the source for simple patterns before the file runs; <code>refund</code> was added in a way the scan cannot see (for example in a loop)</option>
+<option>The file extension is wrong</option>
+<option><code>refund</code> is a reserved word</option>
+<explain><p>ESM needs export names at link time. The default import (<code>import payments from "./payments.cjs"</code>) always works, and then you destructure the object.</p></explain>
+</question>
+
+<question id="ms-cjs-default" type="choice">
+<q>What does the <strong>default</strong> import of a CommonJS module give you?</q>
+<option>Its first exported function</option>
+<option correct>The whole <code>module.exports</code> value</option>
+<option>A namespace object with <code>.default</code></option>
+<option><code>undefined</code> unless the file sets <code>exports.default</code></option>
+<explain><p>Importing CommonJS from ESM always maps <code>module.exports</code> to the default import. That is why <code>import pkg from "old-lib"</code> is the reliable form.</p></explain>
+</question>
+
+<question id="ms-require-esm" type="choice">
+<q>In Node.js 24, a CommonJS file calls <code>require("./money.js")</code>, where <code>money.js</code> is an ES module with <code>export default</code> and <code>export const VAT_RATE</code>. What does it get?</q>
+<option>An error: CommonJS cannot load ESM</option>
+<option>The default export directly</option>
+<option correct>The module's namespace object: <code>VAT_RATE</code> as a property and the default export under <code>.default</code></option>
+<option>A promise for the namespace</option>
+<explain><p><code>require(esm)</code> is synchronous and returns the namespace object, as long as nothing in the module's graph uses top-level <code>await</code>.</p></explain>
+</question>
+
+<question id="ms-require-tla" type="choice">
+<q><code>require("./settings.js")</code> throws <code>ERR_REQUIRE_ASYNC_MODULE</code>. What does that tell you, and what works instead?</q>
+<option>The file does not exist; fix the path</option>
+<option correct><code>settings.js</code> (or something it imports) uses top-level <code>await</code>, so it cannot be loaded synchronously; use <code>await import("./settings.js")</code></option>
+<option>The file is CommonJS; rename it to <code>.mjs</code></option>
+<option>Node.js is too old; upgrade</option>
+<explain><p><code>require</code> must return immediately, and a module that awaits at the top level cannot finish immediately. <code>import()</code> is asynchronous and always works.</p></explain>
+</question>
+
+<question id="ms-library-tla" type="choice">
+<q>Why is adding a top-level <code>await</code> to a published library a breaking change?</q>
+<option>Top-level <code>await</code> is not allowed in libraries</option>
+<option correct>CommonJS users who load the library with <code>require</code> start getting <code>ERR_REQUIRE_ASYNC_MODULE</code>, and every importer's startup now waits for it</option>
+<option>It makes the library larger</option>
+<option>It changes all exports to promises</option>
+<explain><p>Top-level <code>await</code> belongs in application entry points and small config modules. Libraries should expose an explicit async setup function instead.</p></explain>
+</question>
+
+<question id="ms-tla-order" type="output">
+<q>What does this print?</q>
+<code file="tla.js">
+console.log("config: loading");
+const config = await new Promise((resolve) => setTimeout(() => resolve({ vatRate: 0.075 }), 10));
+console.log("config: ready", config.vatRate);
+</code>
+<option correct>config: loading
+config: ready 0.075</option>
+<option>config: ready 0.075
+config: loading</option>
+<option>config: loading
+config: ready undefined</option>
+<option>SyntaxError: await is only valid in async functions</option>
+<explain><p>Top-level <code>await</code> is allowed in ES modules. The module pauses at the <code>await</code>, and anything that imports it would wait too.</p></explain>
+</question>
+
+<question id="ms-specifier-kinds" type="choice">
+<q>Which specifier is a <strong>bare</strong> specifier?</q>
+<option><code>"./money.js"</code></option>
+<option><code>"node:crypto"</code></option>
+<option correct><code>"@zudojs/errors/http"</code></option>
+<option><code>"file:///app/src/money.js"</code></option>
+<explain><p>A bare specifier is a package name, optionally with a subpath. It is found through <code>node_modules</code> and the package's <code>"exports"</code> map. <code>node:</code> names are built-ins.</p></explain>
+</question>
+
+<question id="ms-esm-extension" type="choice">
+<q>In an ES module, <code>import { toNaira } from "./money"</code> fails with <code>ERR_MODULE_NOT_FOUND</code> although <code>money.js</code> exists. Why?</q>
+<option>ES modules cannot import from the same folder</option>
+<option correct>ESM does not guess extensions or <code>index.js</code>; relative specifiers must name the file exactly: <code>"./money.js"</code></option>
+<option><code>toNaira</code> is not exported</option>
+<option>The file must be called <code>money.mjs</code></option>
+<explain><p>CommonJS tries <code>.js</code>, <code>.json</code> and <code>/index.js</code>. ESM, like browsers, resolves exactly what you wrote.</p></explain>
+</question>
+
+<question id="ms-node-modules-walk" type="choice">
+<q>A file at <code>/app/src/orders/create.js</code> imports <code>"zod"</code>. Where does Node.js look first?</q>
+<option><code>/node_modules/zod</code></option>
+<option><code>/app/node_modules/zod</code></option>
+<option correct><code>/app/src/orders/node_modules/zod</code>, then each parent folder's <code>node_modules</code> in turn</option>
+<option>In a global folder of installed packages</option>
+<explain><p>Resolution walks up from the importing file's folder. That is how a monorepo root <code>node_modules</code> can serve many packages, and how nested folders can hold different versions.</p></explain>
+</question>
+
+<question id="ms-exports-hide" type="choice">
+<q>A package's <code>"exports"</code> lists only <code>"."</code> and <code>"./money"</code>. What happens to <code>import "shop-core/src/internal/rates.js"</code> from another package?</q>
+<option>It works, because the file exists</option>
+<option correct>It fails with <code>ERR_PACKAGE_PATH_NOT_EXPORTED</code>: only listed subpaths are reachable</option>
+<option>It loads <code>"."</code> instead</option>
+<option>It warns but works</option>
+<explain><p>The exports map is the package's public API. Internal files can be moved or renamed without breaking anyone, because nobody outside can import them.</p></explain>
+</question>
+
+<question id="ms-conditions-order" type="choice">
+<q>An exports entry is <code>{ "default": "./a.js", "import": "./b.js" }</code>. What does <code>import</code> load?</q>
+<option><code>./b.js</code>, because <code>"import"</code> is more specific</option>
+<option correct><code>./a.js</code>: conditions are checked in the order written, and <code>"default"</code> always matches</option>
+<option>Both files</option>
+<option>An error for ambiguous conditions</option>
+<explain><p>Node takes the first matching condition. <code>"default"</code> matches everything, so it must come last.</p></explain>
+</question>
+
+<question id="ms-imports-field" type="choice">
+<q>What is the <code>"imports"</code> field (names starting with <code>#</code>) in <code>package.json</code> for?</q>
+<option>Listing the package's dependencies</option>
+<option correct>Private aliases that code <em>inside</em> the package can use, such as <code>#rates</code>, so internal paths can change in one place</option>
+<option>Making internal files public</option>
+<option>Loading CommonJS files</option>
+<explain><p><code>#</code> specifiers resolve through the package's own <code>"imports"</code> map and are not available to other packages.</p></explain>
+</question>
+
+<question id="ms-dual-hazard" type="choice">
+<q>An app imports <code>shop-errors</code> (ESM build) while an older dependency <code>require</code>s it (CJS build). An error thrown by the dependency fails <code>err instanceof PaymentError</code> in the app. Why?</q>
+<option><code>instanceof</code> does not work with errors</option>
+<option correct>Two builds were loaded, so there are two different <code>PaymentError</code> classes</option>
+<option>The error was not thrown correctly</option>
+<option>CommonJS errors have no prototype</option>
+<explain><p>This is the dual package hazard. Ship one implementation, or check errors by <code>name</code>, a <code>code</code> or a <code>Symbol.for</code> brand, which work across copies.</p></explain>
+</question>
+
+<question id="ms-dynamic-import-cache" type="output">
+<q>What does this print?</q>
+<code file="cache.js" browser="no">
+const url = "data:text/javascript,export const loadedAt = Math.random();";
+const first = await import(url);
+const second = await import(url);
+console.log(first === second, first.loadedAt === second.loadedAt);
+</code>
+<option correct>true true</option>
+<option>false false</option>
+<option>false true</option>
+<option>true false</option>
+<explain><p>A module is evaluated once per specifier and cached. Importing it again, statically or with <code>import()</code>, returns the same namespace object with the same values.</p></explain>
+</question>
+
+<question id="ms-dynamic-returns" type="output">
+<q>What does this print?</q>
+<code file="namespace.js" browser="no">
+const pending = import("data:text/javascript,export default 'gig'; export const quote = () => 150000;");
+console.log(pending instanceof Promise);
+const carrier = await pending;
+console.log(carrier.default, carrier.quote(), Object.keys(carrier).join(","));
+</code>
+<option correct>true
+gig 150000 default,quote</option>
+<option>false
+gig 150000 default,quote</option>
+<option>true
+undefined 150000 quote</option>
+<option>true
+gig 150000 quote</option>
+<explain><p><code>import()</code> returns a promise for the namespace object. The default export is the <code>default</code> property.</p></explain>
+</question>
+
+<question id="ms-plugin-security" type="choice">
+<q>A route does <code>await import(`./carriers/${req.query.carrier}.js`)</code>. What is wrong?</q>
+<option>Template literals cannot be used with <code>import()</code></option>
+<option correct>The request chooses which file runs; <code>../</code> can reach outside the folder. Map names through an allow-list before importing</option>
+<option>It should use <code>require</code></option>
+<option>Nothing, as long as the file exists</option>
+<explain><p>Importing runs a file's code with full permissions. Never build a specifier from input you do not control.</p></explain>
+</question>
+
+<question id="ms-plugins-when" type="choice">
+<q>When should a service load its plugins with <code>import()</code>?</q>
+<option>On each request, so new plugins are picked up immediately</option>
+<option correct>Once during startup, failing fast if none load and logging the ones that failed</option>
+<option>Never; plugins must be static imports</option>
+<option>Only in the browser</option>
+<explain><p>Loading at startup turns deployment mistakes into startup errors instead of slow or failing customer requests.</p></explain>
+</question>
+
+<question id="ms-cycle-esm-function" type="choice">
+<q>Modules <code>format.js</code> and <code>tax.js</code> import each other. <code>tax.js</code> runs first and calls <code>formatNaira</code>, a function declaration exported by <code>format.js</code>. What happens?</q>
+<option>It throws "Cannot access 'formatNaira' before initialization"</option>
+<option correct>It works: function declarations are initialised during linking, before any module body runs</option>
+<option><code>formatNaira</code> is <code>undefined</code></option>
+<option>The program hangs</option>
+<explain><p>Hoisted function declarations are ready as soon as the module is linked. A <code>const</code> arrow function or a class would still be in the temporal dead zone and throw.</p></explain>
+</question>
+
+<question id="ms-cycle-esm-const" type="output">
+<q>This simulates reading a <code>const</code> that another module in a cycle has not initialised yet. What does it print?</q>
+<code file="tdz.js">
+function readTitle() {
+  return RECEIPT_TITLE;
+}
+try {
+  console.log(readTitle());
+} catch (error) {
+  console.log(error.name);
+}
+const RECEIPT_TITLE = "Shop receipt";
+console.log(readTitle());
+</code>
+<option correct>ReferenceError
+Shop receipt</option>
+<option>undefined
+Shop receipt</option>
+<option>Shop receipt
+Shop receipt</option>
+<option>TypeError
+Shop receipt</option>
+<explain><p>A <code>const</code> exists from the start of its scope but cannot be read until its line runs: the temporal dead zone. An ESM import in a cycle points at such a binding, which is why the error is "Cannot access … before initialization".</p></explain>
+</question>
+
+<question id="ms-cycle-cjs-symptom" type="choice">
+<q>A CommonJS app crashes with <code>TypeError: Class extends value undefined is not a constructor or null</code> right after someone added a <code>require</code>. What is the most likely cause?</q>
+<option>A syntax error in the class</option>
+<option correct>A circular <code>require</code>: the base class was destructured from a <code>module.exports</code> that was still empty because its module had not finished loading</option>
+<option>The class name is misspelled in the error</option>
+<option>CommonJS does not support classes</option>
+<explain><p>In a cycle, <code>require</code> returns the half-finished exports object. Destructuring copies <code>undefined</code>, and <code>extends undefined</code> fails.</p></explain>
+</question>
+
+<question id="ms-cycle-fix" type="choice">
+<q>Which change does <strong>not</strong> remove a circular dependency?</q>
+<option>Moving what both modules need into a third module</option>
+<option>Passing the dependency in as a function argument</option>
+<option>Looking the other module up inside the function that needs it, at call time</option>
+<option correct>Renaming one of the files</option>
+<explain><p>File names do not matter; the direction of imports does. The first three make the dependencies point one way or delay the lookup until both modules have loaded.</p></explain>
+</question>
+
+<question id="ms-simulated-require" type="output">
+<q>This small simulation of CommonJS's cache shows what a cycle hands out. What does it print?</q>
+<code file="mini-require.js">
+const cache = {};
+const sources = {
+  base(module, require) {
+    const card = require("card");
+    module.exports.Base = class Base {};
+    module.exports.cardSawBase = card.sawBase;
+  },
+  card(module, require) {
+    const { Base } = require("base");
+    module.exports.sawBase = typeof Base;
+  },
+};
+function require(name) {
+  if (cache[name]) return cache[name].exports;
+  const module = { exports: {} };
+  cache[name] = module;
+  sources[name](module, require);
+  return module.exports;
+}
+const base = require("base");
+console.log(base.cardSawBase, typeof base.Base);
+</code>
+<option correct>undefined function</option>
+<option>function function</option>
+<option>undefined undefined</option>
+<option>function undefined</option>
+<explain><p><code>base</code> is put in the cache before it runs. When <code>card</code> requires it back, it gets <code>base</code>'s still-empty exports, so <code>Base</code> is <code>undefined</code> there, even though it exists once <code>base</code> finishes.</p></explain>
+</question>
+
+<question id="ms-browser" type="choice">
+<q>Why does <code>import { z } from "zod"</code> fail when a browser loads the file directly with <code>&lt;script type="module"&gt;</code>?</q>
+<option>Browsers do not support ES modules</option>
+<option correct>Browsers resolve specifiers as URLs and have no <code>node_modules</code> lookup; a bare name needs an import map or a bundler</option>
+<option>zod only works in Node.js</option>
+<option>Named imports are not allowed in browsers</option>
+<explain><p>Node's resolution algorithm is a Node feature. In browsers, bundlers resolve bare specifiers at build time, or an import map maps them to URLs.</p></explain>
+</question>
+
+<question id="ms-code-resolve-exports" type="code" file="resolve.js">
+<q><p>Write <code>resolveSubpath(exportsMap, subpath, condition)</code> that mimics a simplified <code>"exports"</code> lookup: find the entry for <code>subpath</code>; if it is a string, return it; if it is an object of conditions, return the first entry (in order) whose key is <code>condition</code> or <code>"default"</code>. If nothing matches, throw an <code>Error</code> with the message <code>ERR_PACKAGE_PATH_NOT_EXPORTED SUBPATH</code>.</p></q>
+<starter>
+function resolveSubpath(exportsMap, subpath, condition) {
+  // your code here
+}
+
+const map = {
+  ".": { import: "./esm/index.js", require: "./cjs/index.cjs" },
+  "./money": "./src/money.js",
+  "./legacy": { default: "./legacy.cjs", import: "./never.js" },
+};
+console.log(resolveSubpath(map, ".", "import"), resolveSubpath(map, ".", "require"));
+console.log(resolveSubpath(map, "./money", "import"), resolveSubpath(map, "./legacy", "import"));
+try {
+  resolveSubpath(map, "./src/internal.js", "import");
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+function resolveSubpath(exportsMap, subpath, condition) {
+  const entry = Object.hasOwn(exportsMap, subpath) ? exportsMap[subpath] : undefined;
+  if (typeof entry === "string") return entry;
+  if (entry && typeof entry === "object") {
+    for (const [key, target] of Object.entries(entry)) {
+      if (key === condition || key === "default") return target;
+    }
+  }
+  throw new Error(`ERR_PACKAGE_PATH_NOT_EXPORTED ${subpath}`);
+}
+
+const map = {
+  ".": { import: "./esm/index.js", require: "./cjs/index.cjs" },
+  "./money": "./src/money.js",
+  "./legacy": { default: "./legacy.cjs", import: "./never.js" },
+};
+console.log(resolveSubpath(map, ".", "import"), resolveSubpath(map, ".", "require"));
+console.log(resolveSubpath(map, "./money", "import"), resolveSubpath(map, "./legacy", "import"));
+try {
+  resolveSubpath(map, "./src/internal.js", "import");
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>
+./esm/index.js ./cjs/index.cjs
+./src/money.js ./legacy.cjs
+ERR_PACKAGE_PATH_NOT_EXPORTED ./src/internal.js
+</expected>
+<explain><p>Conditions are tried in the order written, so a <code>"default"</code> placed first wins even for <code>import</code>. Anything not in the map is refused, which is how packages hide their internals.</p></explain>
+</question>
+
+<question id="ms-code-allow-list" type="code" file="allow-list.js">
+<q><p>Write <code>carrierPath(name)</code> for a plugin loader: return the module path for a known carrier from the <code>KNOWN</code> map, and throw an <code>Error</code> with the message <code>not an allowed carrier: NAME</code> for anything else, including inherited keys like <code>toString</code>.</p></q>
+<starter>
+const KNOWN = { gig: "./carriers/gig.js", kwik: "./carriers/kwik.js" };
+
+function carrierPath(name) {
+  // your code here
+}
+
+for (const name of ["gig", "../../etc/passwd", "toString", "kwik"]) {
+  try {
+    console.log(carrierPath(name));
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</starter>
+<solution>
+const KNOWN = { gig: "./carriers/gig.js", kwik: "./carriers/kwik.js" };
+
+function carrierPath(name) {
+  if (!Object.hasOwn(KNOWN, name)) throw new Error(`not an allowed carrier: ${name}`);
+  return KNOWN[name];
+}
+
+for (const name of ["gig", "../../etc/passwd", "toString", "kwik"]) {
+  try {
+    console.log(carrierPath(name));
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</solution>
+<expected>
+./carriers/gig.js
+not an allowed carrier: ../../etc/passwd
+not an allowed carrier: toString
+./carriers/kwik.js
+</expected>
+<explain><p>An allow-list maps trusted names to paths, so configuration or request data never becomes part of a path. <code>Object.hasOwn</code> ignores inherited keys such as <code>toString</code>.</p></explain>
+</question>
+
+<question id="ms-code-find-cycle" type="code" file="cycles.js">
+<q><p>A module graph maps each file to the files it imports. Write <code>findCycle(graph, start)</code> that returns the first import cycle reachable from <code>start</code> as an array of names ending with the repeated one (for example <code>[ 'a', 'b', 'a' ]</code>), or <code>null</code> if there is none. Use depth-first search with the current path.</p></q>
+<starter>
+function findCycle(graph, start) {
+  // depth-first search, tracking the current path
+}
+
+const shop = {
+  "main.js": ["orders.js", "logger.js"],
+  "orders.js": ["payments.js", "logger.js"],
+  "payments.js": ["base-payment.js"],
+  "base-payment.js": ["card-payment.js"],
+  "card-payment.js": ["base-payment.js"],
+  "logger.js": [],
+};
+console.log(findCycle(shop, "main.js"));
+console.log(findCycle({ "a.js": ["b.js"], "b.js": [] }, "a.js"));
+</starter>
+<solution>
+function findCycle(graph, start) {
+  const path = [];
+  const done = new Set();
+  function visit(node) {
+    const index = path.indexOf(node);
+    if (index !== -1) return [...path.slice(index), node];
+    if (done.has(node)) return null;
+    path.push(node);
+    for (const next of graph[node] ?? []) {
+      const cycle = visit(next);
+      if (cycle) return cycle;
+    }
+    path.pop();
+    done.add(node);
+    return null;
+  }
+  return visit(start);
+}
+
+const shop = {
+  "main.js": ["orders.js", "logger.js"],
+  "orders.js": ["payments.js", "logger.js"],
+  "payments.js": ["base-payment.js"],
+  "base-payment.js": ["card-payment.js"],
+  "card-payment.js": ["base-payment.js"],
+  "logger.js": [],
+};
+console.log(findCycle(shop, "main.js"));
+console.log(findCycle({ "a.js": ["b.js"], "b.js": [] }, "a.js"));
+</solution>
+<expected>
+[ 'base-payment.js', 'card-payment.js', 'base-payment.js' ]
+null
+</expected>
+<explain><p>A node that appears again on the <em>current path</em> closes a cycle; a node already fully explored cannot lead to a new one. This is what tools such as madge do over your real imports.</p></explain>
+</question>
+
+<question id="ms-code-lazy-once" type="code" file="lazy.js">
+<q><p>Write <code>lazy(load)</code>: it returns a function that calls <code>load()</code> (which returns a promise, like <code>import()</code>) the first time it is called, and returns the same promise on every later call, so the module is only loaded once even when two callers ask at the same time.</p></q>
+<starter>
+function lazy(load) {
+  // your code here
+}
+
+let loads = 0;
+const getPdf = lazy(async () => {
+  loads++;
+  return { render: (id) => `%PDF ${id}` };
+});
+
+Promise.all([getPdf(), getPdf()]).then(async ([a, b]) => {
+  const c = await getPdf();
+  console.log(a === b, b === c, loads, c.render("INV-98"));
+});
+</starter>
+<solution>
+function lazy(load) {
+  let pending = null;
+  return () => {
+    pending ??= load();
+    return pending;
+  };
+}
+
+let loads = 0;
+const getPdf = lazy(async () => {
+  loads++;
+  return { render: (id) => `%PDF ${id}` };
+});
+
+Promise.all([getPdf(), getPdf()]).then(async ([a, b]) => {
+  const c = await getPdf();
+  console.log(a === b, b === c, loads, c.render("INV-98"));
+});
+</solution>
+<expected>true true 1 %PDF INV-98</expected>
+<explain><p>Storing the promise, not the result, is what makes simultaneous callers share one load. <code>import()</code> itself caches modules, but a wrapper like this is useful when loading also involves setup work.</p></explain>
+</question>
+
+<question id="ms-code-default-interop" type="code" file="interop.js">
+<q><p>Simulate an ES module importing a CommonJS module: write <code>importCjs(moduleExports, detectedNames)</code> that returns a namespace object with <code>default</code> set to <code>moduleExports</code>, plus one property for each name in <code>detectedNames</code> (the names Node's scan found). Show that <code>refund</code>, added dynamically, is only reachable through <code>default</code>.</p></q>
+<starter>
+function importCjs(moduleExports, detectedNames) {
+  // your code here
+}
+
+const moduleExports = { charge: () => "charged" };
+moduleExports["ref" + "und"] = () => "refunded";
+
+const ns = importCjs(moduleExports, ["charge"]);
+console.log(Object.keys(ns));
+console.log(typeof ns.refund, ns.default.refund());
+</starter>
+<solution>
+function importCjs(moduleExports, detectedNames) {
+  const namespace = { default: moduleExports };
+  for (const name of detectedNames) namespace[name] = moduleExports[name];
+  return namespace;
+}
+
+const moduleExports = { charge: () => "charged" };
+moduleExports["ref" + "und"] = () => "refunded";
+
+const ns = importCjs(moduleExports, ["charge"]);
+console.log(Object.keys(ns));
+console.log(typeof ns.refund, ns.default.refund());
+</solution>
+<expected>
+[ 'default', 'charge' ]
+undefined refunded
+</expected>
+<explain><p>Named exports from CommonJS are only those the static scan detected; the default export is always the whole <code>module.exports</code>. That is why <code>import pkg from "./x.cjs"</code> is the dependable form.</p></explain>
+</question>
+
+<question id="ms-json-import" type="output">
+<q>What does this print?</q>
+<code file="json-import.js" browser="no">
+const url = 'data:application/json,{"vatRate":0.075}';
+try {
+  await import(url);
+} catch (error) {
+  console.log(error.code);
+}
+const settings = await import(url, { with: { type: "json" } });
+console.log(settings.default.vatRate);
+</code>
+<option correct>ERR_IMPORT_ATTRIBUTE_MISSING
+0.075</option>
+<option>0.075
+0.075</option>
+<option>ERR_UNKNOWN_FILE_EXTENSION
+0.075</option>
+<option>ERR_IMPORT_ATTRIBUTE_MISSING
+undefined</option>
+<explain><p>ES modules only load JSON when you say so with the import attribute <code>type: "json"</code> (statically: <code>import settings from "./settings.json" with { type: "json" }</code>). The data becomes the default export.</p></explain>
+</question>
+
+<question id="ms-esm-globals" type="output">
+<q>This file is an ES module run by Node.js. What does it print?</q>
+<code file="globals.js" browser="no">
+console.log(typeof require, typeof module, typeof __dirname, typeof import.meta.url);
+</code>
+<option correct>undefined undefined undefined string</option>
+<option>function object string string</option>
+<option>function undefined string string</option>
+<option>undefined object undefined string</option>
+<explain><p><code>require</code>, <code>module</code> and <code>__dirname</code> are provided to CommonJS files only. ES modules use <code>import</code>, <code>import()</code>, <code>import.meta</code> and, when needed, <code>createRequire(import.meta.url)</code>.</p></explain>
+</question>
+
+<question id="ms-code-scan" type="code" file="scan.js">
+<q><p>Node detects CommonJS named exports by scanning source text. Write a tiny version: <code>detectExports(source)</code> returns the names assigned with the literal patterns <code>exports.NAME =</code> or <code>module.exports.NAME =</code>, in order, without duplicates. Names added any other way are not detected.</p></q>
+<starter>
+function detectExports(source) {
+  // use a regular expression with matchAll
+}
+
+const source = `
+exports.charge = charge;
+module.exports.refund = refund;
+exports.charge = chargeV2;
+for (const [name, fn] of Object.entries({ capture })) module.exports[name] = fn;
+`;
+console.log(detectExports(source));
+</starter>
+<solution>
+function detectExports(source) {
+  const names = [];
+  for (const match of source.matchAll(/(?:module\.)?exports\.([A-Za-z_$][\w$]*)\s*=/g)) {
+    if (!names.includes(match[1])) names.push(match[1]);
+  }
+  return names;
+}
+
+const source = `
+exports.charge = charge;
+module.exports.refund = refund;
+exports.charge = chargeV2;
+for (const [name, fn] of Object.entries({ capture })) module.exports[name] = fn;
+`;
+console.log(detectExports(source));
+</solution>
+<expected>[ 'charge', 'refund' ]</expected>
+<explain><p><code>capture</code> is assigned through a computed key in a loop, so no text pattern can know its name without running the code. That is exactly the case where an ES module must use the default import of a CommonJS file.</p></explain>
+</question>

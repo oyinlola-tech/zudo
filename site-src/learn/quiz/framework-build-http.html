@@ -1,0 +1,821 @@
+<question id="fbh-unhandled" type="choice">
+<q>In the raw <code>node:http</code> server, <code>JSON.parse</code> threw inside the <code>async</code> request callback. Why did the client hang instead of getting an error response?</q>
+<option>Node retries the request automatically</option>
+<option correct>Nobody awaited the callback's promise, so the error became an unhandled rejection and no code ever wrote a response</option>
+<option>JSON.parse returns undefined on bad input</option>
+<option>fetch does not support POST</option>
+<explain><p><code>node:http</code> calls your function and ignores what it returns. A rejected promise from it goes nowhere: no response is written, and without an <code>unhandledRejection</code> handler Node ends the process. The framework wraps every request in its own <code>try</code>/<code>catch</code>.</p></explain>
+</question>
+
+<question id="fbh-mass-assignment" type="choice">
+<q>The raw server did <code>{ id: newId, ...JSON.parse(text) }</code>. What went wrong when the client sent <code>{"title":"Kindred","id":"b1","featured":true}</code>?</q>
+<option>Nothing; the server chose the id</option>
+<option correct>The client's <code>id</code> and <code>featured</code> overwrote and extended the record: mass assignment</option>
+<option>The request was rejected with 400</option>
+<option>The title was lost</option>
+<explain><p>Later properties in a spread win, so the client's <code>id</code> replaced the server's, and any extra field was stored. A strict schema that refuses unknown keys, and a record built from named fields, prevent it.</p></explain>
+</question>
+
+<question id="fbh-404-405" type="choice">
+<q><code>DELETE /books/b1</code> is sent to a router that only has <code>GET /books/:id</code>. What is the correct answer?</q>
+<option>404 Not Found</option>
+<option correct>405 Method Not Allowed, with an <code>Allow: GET</code> header</option>
+<option>400 Bad Request</option>
+<option>500 Internal Server Error</option>
+<explain><p>The resource exists; the method is not supported on it. 405 with <code>Allow</code> tells the client exactly what would work, which 404 would hide.</p></explain>
+</question>
+
+<question id="fbh-specificity" type="choice">
+<q>Routes <code>GET /books/:id</code> and <code>GET /books/new</code> are registered in that order. Which one handles <code>GET /books/new</code> in the mini router, and why?</q>
+<option><code>/books/:id</code> with <code>id = "new"</code>, because it was registered first</option>
+<option correct><code>/books/new</code>, because static segments are more specific and the routes are sorted by specificity</option>
+<option>Both, one after the other</option>
+<option>Neither; it is ambiguous, so 404</option>
+<explain><p>Registration order should not decide this, or adding a route in the wrong file silently breaks another. Scoring static segments above parameters makes the result predictable.</p></explain>
+</question>
+
+<question id="fbh-decode" type="choice">
+<q>Why does the router wrap <code>decodeURIComponent</code> in <code>try</code>/<code>catch</code>?</q>
+<option>It is slow</option>
+<option correct>A broken percent-encoding such as <code>%E0%A4%A</code> makes it throw a <code>URIError</code>; that is the client's mistake and should be a 400, not a 500</option>
+<option>It returns undefined for unknown characters</option>
+<option>To support Unicode</option>
+<explain><p>Any input the client controls can be malformed. Turning parser exceptions into client errors keeps the status honest and the error logs free of noise.</p></explain>
+</question>
+
+<question id="fbh-onion" type="choice">
+<q>Middleware <code>[logging, auth, handler]</code> run as an onion. In what order do their "after" parts run?</q>
+<option>logging, auth</option>
+<option correct>auth, then logging</option>
+<option>At the same time</option>
+<option>Only the last one runs its "after" part</option>
+<explain><p>Each middleware wraps everything inside it, so the innermost finishes first. The outermost starts first and finishes last, seeing the final response.</p></explain>
+</question>
+
+<question id="fbh-log-order" type="choice">
+<q>A request-logging middleware is placed <em>inside</em> the error-handling middleware. What goes wrong?</q>
+<option>Nothing</option>
+<option correct>When a handler throws, the error skips the logger's "after" code, so failed requests are never logged</option>
+<option>Every request is logged twice</option>
+<option>The error handler never runs</option>
+<explain><p>The thrown error travels outward past the logger to the error handler. With the logger outside, it receives the response the error handler built, including the 4xx and 5xx ones you most need to see.</p></explain>
+</question>
+
+<question id="fbh-next-twice" type="choice">
+<q>Why does <code>compose</code> throw when a middleware calls <code>next()</code> twice?</q>
+<option>To save memory</option>
+<option correct>The rest of the pipeline, including the handler, would run twice: two orders, two charges</option>
+<option>JavaScript does not allow calling a function twice</option>
+<option>Because the second call would be too slow</option>
+<explain><p>A bug like "retry by calling next again" silently duplicates side effects. Failing loudly turns it into an error during development.</p></explain>
+</question>
+
+<question id="fbh-short-circuit" type="choice">
+<q>A maintenance middleware returns a 503 without calling <code>next()</code>. What happens to the handler?</q>
+<option>It runs after the 503 is sent</option>
+<option correct>It never runs; the outer middleware still see the 503 on the way out</option>
+<option>It runs first, then the 503 replaces its response</option>
+<option>The request hangs</option>
+<explain><p>Answering early is how authentication, rate limits and maintenance modes work: the inner layers are skipped, the outer ones still observe the response.</p></explain>
+</question>
+
+<question id="fbh-schema-once" type="choice">
+<q>What do you gain by describing the body once with <code>s.object({...})</code> instead of writing an interface and a separate parser?</q>
+<option>Faster requests</option>
+<option correct>The runtime check and the TypeScript type come from the same description, so they cannot drift apart</option>
+<option>The body no longer needs to be JSON</option>
+<option>The client gets the TypeScript type</option>
+<explain><p><code>Infer&lt;typeof NewBook&gt;</code> is computed from the schema. Change a field in one place and both the check and every handler's type change with it.</p></explain>
+</question>
+
+<question id="fbh-unknown-keys" type="choice">
+<q>Why does <code>s.object</code> refuse keys that are not in the shape, instead of silently dropping them?</q>
+<option>Dropping them is impossible</option>
+<option correct>A client sending <code>role</code> or <code>id</code> is either confused or attacking; a clear 400 surfaces client bugs and makes probing visible</option>
+<option>To make responses larger</option>
+<option>TypeScript requires it</option>
+<explain><p>Both choices prevent mass assignment. Refusing also tells an honest client about its mistake, which silently dropping hides.</p></explain>
+</question>
+
+<question id="fbh-500-body" type="choice">
+<q>A handler throws <code>TypeError: Cannot read properties of undefined (reading 'priceKobo')</code>. What should the response body contain?</q>
+<option>The error message, so the client can report it</option>
+<option>The stack trace</option>
+<option correct>A generic message and the request id; the details go to the log under that id</option>
+<option>Nothing; close the connection</option>
+<explain><p>Internal messages reveal field names, file paths and library versions to attackers. The request id connects a user's report to the full log entry.</p></explain>
+</question>
+
+<question id="fbh-error-code" type="choice">
+<q>Why does <code>HttpError</code> carry a <code>code</code> such as <code>"conflict"</code> besides the English message?</q>
+<option>For the logs only</option>
+<option correct>Clients can branch on a stable machine-readable code, while the message stays free to change or be translated</option>
+<option>HTTP requires it</option>
+<option>To replace the status code</option>
+<explain><p>A client that compares messages breaks when someone fixes a typo. Codes are part of the API contract; messages are for people.</p></explain>
+</question>
+
+<question id="fbh-listener-fails" type="choice">
+<q>A book was saved, then the newsletter listener threw. What should the client receive?</q>
+<option>500, because something failed</option>
+<option correct>201: the operation succeeded; the listener's failure is logged and handled separately</option>
+<option>202 Accepted</option>
+<option>409 Conflict</option>
+<explain><p>The bus isolates listeners with <code>Promise.allSettled</code>. Reporting a failure for a saved book would make the client retry and create a duplicate.</p></explain>
+</question>
+
+<question id="fbh-bus-limit" type="choice">
+<q>When should a reaction to <code>book.added</code> go to a queue or outbox instead of the in-process bus?</q>
+<option>Never</option>
+<option correct>When it is slow or must survive a crash, like sending e-mails or charging cards</option>
+<option>When it only logs</option>
+<option>When there is exactly one listener</option>
+<explain><p>In-process listeners run inside the request and die with the process. Durable, retryable work belongs in a queue, published reliably with an outbox.</p></explain>
+</question>
+
+<question id="fbh-body-limit" type="choice">
+<q>Why does <code>readBody</code> check the size <em>while</em> reading the chunks instead of after reading the whole body?</q>
+<option>It is shorter code</option>
+<option correct>Checking afterwards means buffering the whole 2 GB first, which is exactly the memory exhaustion the limit exists to prevent</option>
+<option>Chunks cannot be counted afterwards</option>
+<option>To support streaming responses</option>
+<explain><p>A limit that is enforced after the damage is not a limit. Counting as bytes arrive lets the server refuse with 413 early.</p></explain>
+</question>
+
+<question id="fbh-415" type="choice">
+<q>A client sends <code>title=Kindred</code> with <code>Content-Type: text/plain</code> to an endpoint that expects JSON. Which status fits best?</q>
+<option>400 Bad Request</option>
+<option correct>415 Unsupported Media Type</option>
+<option>406 Not Acceptable</option>
+<option>422 Unprocessable Content</option>
+<explain><p>415 says "I cannot read this kind of body". 406 is about the response type the client accepts; 400 and 422 are for bodies in the right format with wrong content.</p></explain>
+</question>
+
+<question id="fbh-scope" type="choice">
+<q>The adapter opens a container scope per request and disposes it in <code>finally</code>. What does that give controllers?</q>
+<option>Faster resolution</option>
+<option correct>They can depend on request-scoped objects (a transaction, the current user) that are created for this request and always cleaned up, even after an error</option>
+<option>They become singletons</option>
+<option>Nothing; scopes are only for tests</option>
+<explain><p>The scoped controller and its scoped dependencies live exactly as long as the request. <code>finally</code> guarantees disposal, so a failed request cannot leak an open transaction.</p></explain>
+</question>
+
+<question id="fbh-graceful" type="choice">
+<q>What does <code>server.close()</code> do to a request that is still being handled?</q>
+<option>Aborts it immediately</option>
+<option correct>Lets it finish; it only stops accepting new connections, and its callback runs when the last connection ends</option>
+<option>Restarts it on another port</option>
+<option>Nothing, and it also keeps accepting new connections</option>
+<explain><p>That is why the in-flight <code>/report</code> still got its 200 during the stop. <code>closeIdleConnections()</code> additionally drops kept-alive connections that are doing nothing, so shutdown does not wait for them.</p></explain>
+</question>
+
+<question id="fbh-port-zero" type="choice">
+<q>Why do the examples and tests listen on port <code>0</code>?</q>
+<option>Port 0 is the default HTTP port</option>
+<option correct>The operating system picks a free port, so parallel tests never collide; the code then reads which port it got</option>
+<option>Port 0 disables the network</option>
+<option>It makes the server faster</option>
+<explain><p>Hard-coded ports fail when two test runs, or a developer's other server, already use them. <code>server.address().port</code> tells you the real one.</p></explain>
+</question>
+
+<question id="fbh-zudo-body" type="choice">
+<q>In <code>@zudojs/http</code>, what is <code>ctx.request.body</code> for a JSON POST?</q>
+<option>The parsed object</option>
+<option correct>The raw bytes (a <code>Uint8Array</code>), which you decode and parse yourself</option>
+<option>A string</option>
+<option>Always undefined</option>
+<explain><p>The server cannot know whether bytes are JSON, a form or an image, so it gives you the bytes (within a size limit). Your mini framework made the opposite choice and parsed JSON for every request.</p></explain>
+</question>
+
+<question id="fbh-out-split" type="output">
+<q>What does this print?</q>
+<code file="split.ts">
+const split = (path: string) => path.split("/").filter((segment) => segment !== "");
+console.log(split("/books/b1"), split("/books/b1/"), split("//books///b1"), split("/"));
+</code>
+<option correct>[ 'books', 'b1' ] [ 'books', 'b1' ] [ 'books', 'b1' ] []</option>
+<option>[ 'books', 'b1' ] [ 'books', 'b1', '' ] [ '', 'books', '', '', 'b1' ] [ '' ]</option>
+<option>[ '', 'books', 'b1' ] [ '', 'books', 'b1', '' ] [ 'books', 'b1' ] []</option>
+<option>[ 'books', 'b1' ] [ 'books', 'b1' ] [ 'books', '', 'b1' ] []</option>
+<explain><p>Splitting on <code>/</code> produces empty strings for leading, trailing and doubled slashes; filtering them out normalises all these spellings to the same segments.</p></explain>
+</question>
+
+<question id="fbh-out-params" type="output">
+<q>What does this print?</q>
+<code file="params.ts">
+function match(pattern: string, path: string): Record<string, string> | undefined {
+  const segments = pattern.split("/").filter(Boolean);
+  const parts = path.split("/").filter(Boolean);
+  if (segments.length !== parts.length) return undefined;
+  const params: Record<string, string> = {};
+  for (const [i, segment] of segments.entries()) {
+    if (segment.startsWith(":")) params[segment.slice(1)] = decodeURIComponent(parts[i]!);
+    else if (segment !== parts[i]) return undefined;
+  }
+  return params;
+}
+
+console.log(match("/authors/:author/books/:id", "/authors/chimamanda%20adichie/books/b3"));
+console.log(match("/books/:id", "/books/b3/reviews"));
+console.log(match("/books/:id", "/authors/b3"));
+</code>
+<option correct>{ author: 'chimamanda adichie', id: 'b3' }
+undefined
+undefined</option>
+<option>{ author: 'chimamanda%20adichie', id: 'b3' }
+undefined
+undefined</option>
+<option>{ author: 'chimamanda adichie', id: 'b3' }
+{ id: 'b3' }
+undefined</option>
+<option>{ author: 'chimamanda adichie', id: 'b3' }
+undefined
+{ id: 'b3' }</option>
+<explain><p>Parameters are decoded, so <code>%20</code> becomes a space. A path with more segments than the pattern does not match, and a static segment must be equal.</p></explain>
+</question>
+
+<question id="fbh-out-onion" type="output">
+<q>What does this print?</q>
+<code file="onion.ts">
+type Next = () => Promise<string>;
+type Mw = (next: Next) => Promise<string>;
+
+function compose(middleware: Mw[], handler: () => Promise<string>): () => Promise<string> {
+  const run = (i: number): Promise<string> => (i < middleware.length ? middleware[i]!(() => run(i + 1)) : handler());
+  return () => run(0);
+}
+
+const log: string[] = [];
+const tag = (name: string): Mw => async (next) => {
+  log.push(`>${name}`);
+  const result = await next();
+  log.push(`<${name}`);
+  return `${name}(${result})`;
+};
+
+const result = await compose([tag("a"), tag("b")], async () => {
+  log.push("handler");
+  return "ok";
+})();
+console.log(log.join(" "), "|", result);
+</code>
+<option correct>&gt;a &gt;b handler &lt;b &lt;a | a(b(ok))</option>
+<option>&gt;a &gt;b handler &lt;a &lt;b | b(a(ok))</option>
+<option>&gt;a &lt;a &gt;b &lt;b handler | a(b(ok))</option>
+<option>handler &gt;a &gt;b &lt;b &lt;a | a(b(ok))</option>
+<explain><p>Each layer wraps the next: <code>a</code> starts first and finishes last, and its result wraps <code>b</code>'s, which wraps the handler's.</p></explain>
+</question>
+
+<question id="fbh-out-shortcircuit" type="output">
+<q>What does this print?</q>
+<code file="short.ts">
+type Handler = (day: string) => Promise<number>;
+type Mw = (day: string, next: () => Promise<number>) => Promise<number>;
+
+const seen: string[] = [];
+const logging: Mw = async (day, next) => {
+  const status = await next();
+  seen.push(`${day}:${status}`);
+  return status;
+};
+const closedOnSunday: Mw = async (day, next) => (day === "sunday" ? 503 : next());
+const handler: Handler = async () => 200;
+
+function run(day: string): Promise<number> {
+  return logging(day, () => closedOnSunday(day, () => handler(day)));
+}
+
+await run("monday");
+await run("sunday");
+console.log(seen);
+</code>
+<option correct>[ 'monday:200', 'sunday:503' ]</option>
+<option>[ 'monday:200' ]</option>
+<option>[ 'monday:200', 'sunday:200' ]</option>
+<option>[ 'monday:200', 'sunday:503', 'sunday:200' ]</option>
+<explain><p>On Sunday the inner middleware answers 503 without calling <code>next</code>, so the handler never runs, but the outer logging middleware still records the 503.</p></explain>
+</question>
+
+<question id="fbh-out-validation" type="output">
+<q>What does this print?</q>
+<code file="validate.ts">
+type Issue = { path: string; message: string };
+
+function parseBook(input: Record<string, unknown>): Issue[] {
+  const issues: Issue[] = [];
+  for (const key of Object.keys(input)) {
+    if (!["title", "priceKobo"].includes(key)) issues.push({ path: `body.${key}`, message: "is not allowed" });
+  }
+  if (typeof input.title !== "string" || input.title.trim() === "") issues.push({ path: "body.title", message: "is required" });
+  if (!Number.isSafeInteger(input.priceKobo)) issues.push({ path: "body.priceKobo", message: "must be whole kobo" });
+  return issues;
+}
+
+console.log(parseBook({ title: "Kindred", priceKobo: 450000 }).length);
+console.log(parseBook({ title: " ", priceKobo: 4500.5, id: "b1" }).map((i) => i.path).join(", "));
+</code>
+<option correct>0
+body.id, body.title, body.priceKobo</option>
+<option>0
+body.title</option>
+<option>0
+body.title, body.priceKobo</option>
+<option>1
+body.id, body.title, body.priceKobo</option>
+<explain><p>The first body is valid. The second has three problems, and all three are reported: the refused <code>id</code>, the blank title and the fractional price.</p></explain>
+</question>
+
+<question id="fbh-out-to-response" type="output">
+<q>What does this print?</q>
+<code file="respond.ts">
+class HttpError extends Error {
+  constructor(readonly status: number, readonly code: string, message: string) {
+    super(message);
+  }
+}
+
+function toResponse(error: unknown, requestId: string): { status: number; body: unknown } {
+  if (error instanceof HttpError) return { status: error.status, body: { error: error.code, message: error.message } };
+  return { status: 500, body: { error: "internal_error", requestId } };
+}
+
+for (const error of [new HttpError(404, "not_found", "Book b9 was not found"), new TypeError("x is undefined"), "a thrown string"]) {
+  const response = toResponse(error, "req-4");
+  console.log(response.status, JSON.stringify(response.body));
+}
+</code>
+<option correct>404 {"error":"not_found","message":"Book b9 was not found"}
+500 {"error":"internal_error","requestId":"req-4"}
+500 {"error":"internal_error","requestId":"req-4"}</option>
+<option>404 {"error":"not_found","message":"Book b9 was not found"}
+500 {"error":"x is undefined","requestId":"req-4"}
+500 {"error":"a thrown string","requestId":"req-4"}</option>
+<option>404 {"error":"not_found","message":"Book b9 was not found"}
+500 {"error":"internal_error","requestId":"req-4"}
+400 {"error":"a thrown string"}</option>
+<option>404 {"error":"not_found","message":"Book b9 was not found"}
+404 {"error":"internal_error","requestId":"req-4"}
+404 {"error":"internal_error","requestId":"req-4"}</option>
+<explain><p>Only deliberate <code>HttpError</code>s reach the client with their message. Anything else, even a thrown string, is treated as a bug: a generic 500 with the request id.</p></explain>
+</question>
+
+<question id="fbh-out-allsettled" type="output">
+<q>What does this print?</q>
+<code file="listeners.ts">
+const listeners = [
+  async () => console.log("search index updated"),
+  async () => {
+    throw new Error("newsletter down");
+  },
+  async () => console.log("dashboard counted"),
+];
+
+const results = await Promise.allSettled(listeners.map((listener) => listener()));
+console.log(results.map((r) => r.status).join(", "));
+</code>
+<option correct>search index updated
+dashboard counted
+fulfilled, rejected, fulfilled</option>
+<option>search index updated
+fulfilled, rejected</option>
+<option>search index updated
+dashboard counted
+fulfilled, fulfilled, fulfilled</option>
+<option>search index updated</option>
+<explain><p><code>allSettled</code> waits for every listener and never rejects, so one failure cannot stop the others or the request. <code>Promise.all</code> would reject as soon as the newsletter failed.</p></explain>
+</question>
+
+<question id="fbh-out-limit" type="output">
+<q>What does this print?</q>
+<code file="limit.ts">
+function readBody(chunks: string[], limit: number): string {
+  let size = 0;
+  let read = 0;
+  for (const chunk of chunks) {
+    read++;
+    size += chunk.length;
+    if (size > limit) throw new Error(`413 after ${read} chunks`);
+  }
+  return `ok after ${read} chunks`;
+}
+
+console.log(readBody(["{", '"title":', '"Kindred"}'], 64));
+try {
+  console.log(readBody(["x".repeat(40), "x".repeat(40), "x".repeat(40), "x".repeat(40)], 64));
+} catch (error) {
+  console.log((error as Error).message);
+}
+</code>
+<option correct>ok after 3 chunks
+413 after 2 chunks</option>
+<option>ok after 3 chunks
+413 after 4 chunks</option>
+<option>ok after 3 chunks
+413 after 1 chunks</option>
+<option>ok after 1 chunks
+413 after 2 chunks</option>
+<explain><p>The second body passes the 64-character limit on its second chunk (80 characters), and reading stops there: the last two chunks are never buffered.</p></explain>
+</question>
+
+<question id="fbh-code-router" type="code" file="router.ts">
+<q><p>Write <code>matchRoute(routes, method, path)</code> returning <code>"&lt;name&gt; {params}"</code> for a match, <code>"405 &lt;allowed&gt;"</code> when only the method is wrong, and <code>"404"</code> otherwise. Parameters start with <code>:</code>. The program should print the four lines in the expected output.</p></q>
+<starter>
+const routes = [
+  { method: "GET", pattern: "/books", name: "list" },
+  { method: "POST", pattern: "/books", name: "create" },
+  { method: "GET", pattern: "/books/:id", name: "show" },
+];
+
+// write matchRoute(routes, method, path)
+
+console.log(matchRoute(routes, "GET", "/books/b7"));
+console.log(matchRoute(routes, "POST", "/books"));
+console.log(matchRoute(routes, "DELETE", "/books"));
+console.log(matchRoute(routes, "GET", "/orders"));
+</starter>
+<solution>
+const routes = [
+  { method: "GET", pattern: "/books", name: "list" },
+  { method: "POST", pattern: "/books", name: "create" },
+  { method: "GET", pattern: "/books/:id", name: "show" },
+];
+
+function matchRoute(list: typeof routes, method: string, path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  const allowed: string[] = [];
+  for (const route of list) {
+    const segments = route.pattern.split("/").filter(Boolean);
+    if (segments.length !== parts.length) continue;
+    const params: Record<string, string> = {};
+    const fits = segments.every((segment, i) => {
+      if (segment.startsWith(":")) {
+        params[segment.slice(1)] = parts[i]!;
+        return true;
+      }
+      return segment === parts[i];
+    });
+    if (!fits) continue;
+    if (route.method === method) return `${route.name} ${JSON.stringify(params)}`;
+    allowed.push(route.method);
+  }
+  return allowed.length > 0 ? `405 ${allowed.join(",")}` : "404";
+}
+
+console.log(matchRoute(routes, "GET", "/books/b7"));
+console.log(matchRoute(routes, "POST", "/books"));
+console.log(matchRoute(routes, "DELETE", "/books"));
+console.log(matchRoute(routes, "GET", "/orders"));
+</solution>
+<expected>
+show {"id":"b7"}
+create {}
+405 GET,POST
+404
+</expected>
+<explain><p>The router remembers the methods of routes whose path matched, so it can tell "no such resource" (404) from "not with this method" (405, with the list for the <code>Allow</code> header).</p></explain>
+</question>
+
+<question id="fbh-code-compose" type="code" file="compose.ts">
+<q><p>Write <code>compose(middleware, handler)</code> for the onion model: each middleware gets <code>(ctx, next)</code>; calling <code>next</code> twice must throw <code>next() called twice</code>. The program should print the lines shown in the expected output.</p></q>
+<starter>
+type Ctx = { log: string[] };
+type Mw = (ctx: Ctx, next: () => Promise<number>) => Promise<number>;
+
+// write compose(middleware, handler)
+
+const trace = (name: string): Mw => async (ctx, next) => {
+  ctx.log.push(`${name} in`);
+  const status = await next();
+  ctx.log.push(`${name} out ${status}`);
+  return status;
+};
+
+const ctx: Ctx = { log: [] };
+await compose([trace("logging"), trace("auth")], async (c) => {
+  c.log.push("handler");
+  return 200;
+})(ctx);
+console.log(ctx.log.join(" | "));
+
+const twice: Mw = async (_, next) => {
+  await next();
+  return next();
+};
+await compose([twice], async () => 200)({ log: [] }).catch((error: Error) => console.log(error.message));
+</starter>
+<solution>
+type Ctx = { log: string[] };
+type Mw = (ctx: Ctx, next: () => Promise<number>) => Promise<number>;
+
+function compose(middleware: Mw[], handler: (ctx: Ctx) => Promise<number>) {
+  return (ctx: Ctx): Promise<number> => {
+    let last = -1;
+    const run = async (index: number): Promise<number> => {
+      if (index <= last) throw new Error("next() called twice");
+      last = index;
+      const current = middleware[index];
+      return current ? current(ctx, () => run(index + 1)) : handler(ctx);
+    };
+    return run(0);
+  };
+}
+
+const trace = (name: string): Mw => async (ctx, next) => {
+  ctx.log.push(`${name} in`);
+  const status = await next();
+  ctx.log.push(`${name} out ${status}`);
+  return status;
+};
+
+const ctx: Ctx = { log: [] };
+await compose([trace("logging"), trace("auth")], async (c) => {
+  c.log.push("handler");
+  return 200;
+})(ctx);
+console.log(ctx.log.join(" | "));
+
+const twice: Mw = async (_, next) => {
+  await next();
+  return next();
+};
+await compose([twice], async () => 200)({ log: [] }).catch((error: Error) => console.log(error.message));
+</solution>
+<expected>
+logging in | auth in | handler | auth out 200 | logging out 200
+next() called twice
+</expected>
+<explain><p><code>last</code> remembers the deepest index already entered; a second <code>next()</code> from the same layer asks for an index that is not deeper, which can only mean a repeat.</p></explain>
+</question>
+
+<question id="fbh-code-with-body" type="code" file="with-body.ts">
+<q><p>Write <code>withBody(parse, handler)</code>: it runs <code>parse(ctx.body)</code>; on failure it returns <code>{ status: 400, body: { error: "validation_failed", issues } }</code> without calling the handler; on success it calls <code>handler(ctx, value)</code>. The program should print the two lines in the expected output.</p></q>
+<starter>
+type Parsed<T> = { ok: true; value: T } | { ok: false; issues: string[] };
+type Ctx = { body: unknown };
+type Response = { status: number; body: unknown };
+
+function parseNewBook(input: unknown): Parsed<{ title: string }> {
+  if (typeof input === "object" && input !== null && typeof (input as { title?: unknown }).title === "string") {
+    return { ok: true, value: { title: (input as { title: string }).title } };
+  }
+  return { ok: false, issues: ["body.title is required"] };
+}
+
+// write withBody(parse, handler)
+
+const create = withBody(parseNewBook, (ctx, book) => ({ status: 201, body: { id: "b2", ...book } }));
+for (const body of [{ title: "Kindred" }, { name: "Kindred" }]) {
+  const response = create({ body });
+  console.log(response.status, JSON.stringify(response.body));
+}
+</starter>
+<solution>
+type Parsed<T> = { ok: true; value: T } | { ok: false; issues: string[] };
+type Ctx = { body: unknown };
+type Response = { status: number; body: unknown };
+
+function parseNewBook(input: unknown): Parsed<{ title: string }> {
+  if (typeof input === "object" && input !== null && typeof (input as { title?: unknown }).title === "string") {
+    return { ok: true, value: { title: (input as { title: string }).title } };
+  }
+  return { ok: false, issues: ["body.title is required"] };
+}
+
+function withBody<T>(parse: (input: unknown) => Parsed<T>, handler: (ctx: Ctx, value: T) => Response) {
+  return (ctx: Ctx): Response => {
+    const result = parse(ctx.body);
+    if (!result.ok) return { status: 400, body: { error: "validation_failed", issues: result.issues } };
+    return handler(ctx, result.value);
+  };
+}
+
+const create = withBody(parseNewBook, (ctx, book) => ({ status: 201, body: { id: "b2", ...book } }));
+for (const body of [{ title: "Kindred" }, { name: "Kindred" }]) {
+  const response = create({ body });
+  console.log(response.status, JSON.stringify(response.body));
+}
+</solution>
+<expected>
+201 {"id":"b2","title":"Kindred"}
+400 {"error":"validation_failed","issues":["body.title is required"]}
+</expected>
+<explain><p>The generic <code>T</code> flows from the parser to the handler, so <code>book</code> is typed <code>{ title: string }</code> without a cast, and the handler can never see an unchecked body.</p></explain>
+</question>
+
+<question id="fbh-code-bus" type="code" file="bus.ts">
+<q><p>Write a typed <code>EventBus&lt;M&gt;</code> with <code>on(name, listener)</code> returning an unsubscribe function, and <code>emit(name, payload)</code> that runs all listeners with <code>Promise.allSettled</code> and returns the number that failed. The program should print the lines shown in the expected output.</p></q>
+<starter>
+interface ShopEvents {
+  "book.added": { id: string; title: string };
+}
+
+// write class EventBus<M>
+
+const bus = new EventBus<ShopEvents>();
+const off = bus.on("book.added", (book) => console.log(`indexed ${book.title}`));
+bus.on("book.added", () => {
+  throw new Error("newsletter down");
+});
+console.log("failed:", await bus.emit("book.added", { id: "b2", title: "Purple Hibiscus" }));
+off();
+console.log("failed:", await bus.emit("book.added", { id: "b3", title: "Americanah" }));
+</starter>
+<solution>
+interface ShopEvents {
+  "book.added": { id: string; title: string };
+}
+
+type Listener<P> = (payload: P) => void | Promise<void>;
+
+class EventBus<M extends object> {
+  readonly #listeners = new Map<keyof M, Listener<never>[]>();
+
+  on<K extends keyof M>(name: K, listener: Listener<M[K]>): () => void {
+    this.#listeners.set(name, [...(this.#listeners.get(name) ?? []), listener as Listener<never>]);
+    return () => this.#listeners.set(name, (this.#listeners.get(name) ?? []).filter((l) => l !== listener));
+  }
+
+  async emit<K extends keyof M>(name: K, payload: M[K]): Promise<number> {
+    const listeners = (this.#listeners.get(name) ?? []) as Listener<M[K]>[];
+    const results = await Promise.allSettled(listeners.map(async (listener) => listener(payload)));
+    return results.filter((result) => result.status === "rejected").length;
+  }
+}
+
+const bus = new EventBus<ShopEvents>();
+const off = bus.on("book.added", (book) => console.log(`indexed ${book.title}`));
+bus.on("book.added", () => {
+  throw new Error("newsletter down");
+});
+console.log("failed:", await bus.emit("book.added", { id: "b2", title: "Purple Hibiscus" }));
+off();
+console.log("failed:", await bus.emit("book.added", { id: "b3", title: "Americanah" }));
+</solution>
+<expected>
+indexed Purple Hibiscus
+failed: 1
+failed: 1
+</expected>
+<explain><p>After <code>off()</code> only the failing listener is left, so the second emit indexes nothing and still reports one failure. Wrapping each listener in an <code>async</code> function turns a synchronous <code>throw</code> into a rejection that <code>allSettled</code> can collect.</p></explain>
+</question>
+
+<question id="fbh-code-rate" type="code" file="rate.ts">
+<q><p>Write <code>allow(key, now)</code> for a fixed-window limiter: at most 2 requests per key per 1,000 ms window; it returns <code>true</code> or <code>false</code>. The program should print <code>true true false true true</code>.</p></q>
+<starter>
+// write allow(key, now)
+
+console.log(allow("ada", 0), allow("ada", 100), allow("ada", 200), allow("tunde", 250), allow("ada", 1_000));
+</starter>
+<solution>
+const windows = new Map<string, { start: number; count: number }>();
+
+function allow(key: string, now: number): boolean {
+  let window = windows.get(key);
+  if (window === undefined || now - window.start >= 1_000) {
+    window = { start: now, count: 0 };
+    windows.set(key, window);
+  }
+  window.count++;
+  return window.count <= 2;
+}
+
+console.log(allow("ada", 0), allow("ada", 100), allow("ada", 200), allow("tunde", 250), allow("ada", 1_000));
+</solution>
+<expected>
+true true false true true
+</expected>
+<explain><p>Ada's third request in her first window is refused; Tunde has his own window; at 1,000 ms Ada's window resets. Taking <code>now</code> as a parameter makes the limiter testable without waiting.</p></explain>
+</question>
+
+<question id="fbh-out-specificity" type="output">
+<q>What does this print?</q>
+<code file="specificity.ts">
+const patterns = ["/books/:id", "/books/new", "/:section/new", "/books/:id/reviews", "/books/featured"];
+const score = (pattern: string) =>
+  pattern.split("/").filter(Boolean).map((segment) => (segment.startsWith(":") ? "1" : "2")).join("");
+const sorted = [...patterns].sort((a, b) => (score(a) > score(b) ? -1 : score(a) < score(b) ? 1 : 0));
+console.log(sorted.join("  "));
+</code>
+<option>/books/:id/reviews  /books/new  /books/featured  /books/:id  /:section/new</option>
+<option correct>/books/new  /books/featured  /books/:id/reviews  /books/:id  /:section/new</option>
+<option>/books/featured  /books/new  /books/:id/reviews  /books/:id  /:section/new</option>
+<option>/books/:id  /books/new  /:section/new  /books/:id/reviews  /books/featured</option>
+<explain><p>The scores are compared as strings, character by character: <code>"22"</code> beats <code>"212"</code> at the second character, and <code>"212"</code> beats <code>"21"</code> because it is longer with the same start, then comes <code>"12"</code>. Mixing lengths looks odd but is harmless: routes with different segment counts never compete for the same path, so only the order within one length matters. Equal scores keep their original order because the sort is stable.</p></explain>
+</question>
+
+<question id="fbh-out-finally" type="output">
+<q>What does this print?</q>
+<code file="scope.ts">
+const log: string[] = [];
+
+async function handle(fail: boolean): Promise<number> {
+  const scope = { dispose: async () => log.push("scope disposed") };
+  let status: number;
+  try {
+    if (fail) throw new Error("bug");
+    log.push("handler ran");
+    status = 200;
+  } catch {
+    log.push("error mapped");
+    status = 500;
+  } finally {
+    await scope.dispose();
+  }
+  log.push(`sent ${status}`);
+  return status;
+}
+
+await handle(false);
+await handle(true);
+console.log(log.join(", "));
+</code>
+<option correct>handler ran, scope disposed, sent 200, error mapped, scope disposed, sent 500</option>
+<option>handler ran, sent 200, error mapped, sent 500</option>
+<option>handler ran, scope disposed, sent 200, error mapped, sent 500</option>
+<option>handler ran, sent 200, scope disposed, error mapped, sent 500, scope disposed</option>
+<explain><p><code>finally</code> runs after the <code>try</code> or the <code>catch</code>, whichever ran, and before the code that follows. That is why the adapter disposes the request scope in <code>finally</code>: success or failure, it is cleaned up before the response is written.</p></explain>
+</question>
+
+<question id="fbh-code-to-response" type="code" file="to-response.ts">
+<q><p>Write <code>toResponse(error, requestId)</code>: an <code>HttpError</code> becomes its status with <code>{ error: code, message }</code>; anything else becomes 500 with <code>{ error: "internal_error", requestId }</code> and pushes <code>"logged: &lt;message or value&gt;"</code> to <code>logs</code>. The program should print the lines shown in the expected output.</p></q>
+<starter>
+class HttpError extends Error {
+  constructor(readonly status: number, readonly code: string, message: string) {
+    super(message);
+  }
+}
+const logs: string[] = [];
+
+// write toResponse(error, requestId)
+
+for (const error of [new HttpError(409, "conflict", "already in the catalog"), new RangeError("index 7 out of range")]) {
+  const response = toResponse(error, "req-3");
+  console.log(response.status, JSON.stringify(response.body));
+}
+console.log(logs);
+</starter>
+<solution>
+class HttpError extends Error {
+  constructor(readonly status: number, readonly code: string, message: string) {
+    super(message);
+  }
+}
+const logs: string[] = [];
+
+function toResponse(error: unknown, requestId: string): { status: number; body: unknown } {
+  if (error instanceof HttpError) return { status: error.status, body: { error: error.code, message: error.message } };
+  logs.push(`logged: ${error instanceof Error ? error.message : String(error)}`);
+  return { status: 500, body: { error: "internal_error", requestId } };
+}
+
+for (const error of [new HttpError(409, "conflict", "already in the catalog"), new RangeError("index 7 out of range")]) {
+  const response = toResponse(error, "req-3");
+  console.log(response.status, JSON.stringify(response.body));
+}
+console.log(logs);
+</solution>
+<expected>
+409 {"error":"conflict","message":"already in the catalog"}
+500 {"error":"internal_error","requestId":"req-3"}
+[ 'logged: index 7 out of range' ]
+</expected>
+<explain><p>The internal message reaches the log, never the client. The shared request id is what lets a support person connect the two.</p></explain>
+</question>
+
+<question id="fbh-code-parse-body" type="code" file="parse-body.ts">
+<q><p>Write <code>parseBody(text, contentType, limit)</code> returning <code>{ status: 200, value }</code>, or <code>{ status: 413 }</code> when <code>text.length</code> exceeds <code>limit</code>, <code>{ status: 415 }</code> when the type does not start with <code>application/json</code>, and <code>{ status: 400 }</code> for invalid JSON. Check in that order. The program should print <code>200 413 415 400</code>.</p></q>
+<starter>
+// write parseBody(text, contentType, limit)
+
+const cases: [string, string][] = [
+  ['{"title":"Kindred"}', "application/json; charset=utf-8"],
+  ["x".repeat(100), "application/json"],
+  ["title=Kindred", "application/x-www-form-urlencoded"],
+  ["{ not json", "application/json"],
+];
+console.log(cases.map(([text, type]) => parseBody(text, type, 64).status).join(" "));
+</starter>
+<solution>
+function parseBody(text: string, contentType: string, limit: number): { status: number; value?: unknown } {
+  if (text.length > limit) return { status: 413 };
+  if (!contentType.startsWith("application/json")) return { status: 415 };
+  try {
+    return { status: 200, value: JSON.parse(text) };
+  } catch {
+    return { status: 400 };
+  }
+}
+
+const cases: [string, string][] = [
+  ['{"title":"Kindred"}', "application/json; charset=utf-8"],
+  ["x".repeat(100), "application/json"],
+  ["title=Kindred", "application/x-www-form-urlencoded"],
+  ["{ not json", "application/json"],
+];
+console.log(cases.map(([text, type]) => parseBody(text, type, 64).status).join(" "));
+</solution>
+<expected>
+200 413 415 400
+</expected>
+<explain><p>The cheapest checks come first: size before anything else, then the declared type, and only then the parse. A <code>charset</code> parameter after the media type is normal, which is why the check uses <code>startsWith</code>.</p></explain>
+</question>

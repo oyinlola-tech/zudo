@@ -1,0 +1,1000 @@
+---
+title: DI architecture with ZudoJS
+description: Decide where every object in a ZudoJS app is built. Keep one composition root, choose constructor or factory injection, swap fakes in tests and freeze wiring in production.
+minutes: 50
+youNeed: Dependency injection with @zudojs/container, and The application runtime and lifecycle
+youBuild: A Task API whose wiring lives in one place, is checked at startup, is frozen in production, and can be swapped piece by piece in tests
+keywords: dependency injection architecture, composition root, constructor injection, factory injection, service locator anti-pattern, zudojs container, registerFactory, freezeRegistrations, autoRegisterClasses, snapshot restoreSnapshot, replace, test doubles, request scope, AsyncProviderError, verify container at startup
+objectives: Find the composition root of a generated ZudoJS project and explain why src/container.ts and the @zudojs/container container are two different things | Choose between constructor injection, a factory registration and an injected factory function for a given dependency | Recognise the service locator pattern and show the two failures it causes in @zudojs/container | Replace dependencies in tests with fresh containers, replace and snapshots, and avoid stale references | Make production wiring fail at startup instead of during a request, and freeze it once the app runs
+---
+<section>
+<h2 id="why">The problem: two task lists</h2>
+<p>A tester files a bug against the Task API: "I created <em>Buy milk</em> with <code>POST /tasks</code> and it appears in <code>GET /tasks</code>. But the store module's log, and the readiness check that counts tasks, never see it." Nobody changed the store. Here is a small copy of what happened. Two files each built the objects they needed:</p>
+<file name="domain.ts" project="di">
+import { createToken } from "@zudojs/container";
+
+export interface Clock {
+  now(): Date;
+}
+export const systemClock: Clock = { now: () => new Date() };
+
+export interface Task {
+  readonly id: number;
+  readonly title: string;
+  readonly createdAt: string;
+}
+
+export class TaskStore {
+  readonly tasks = new Map<number, Task>();
+  private lastId = 0;
+  nextId(): number {
+    this.lastId += 1;
+    return this.lastId;
+  }
+}
+
+export class TaskService {
+  constructor(private readonly store: TaskStore, private readonly clock: Clock) {}
+
+  create(title: string): Task {
+    const task = { id: this.store.nextId(), title, createdAt: this.clock.now().toISOString() };
+    this.store.tasks.set(task.id, task);
+    return task;
+  }
+
+  list(): Task[] {
+    return [...this.store.tasks.values()];
+  }
+}
+
+export interface Mailer {
+  send(to: string, text: string): void;
+}
+
+export class TaskNotifier {
+  constructor(private readonly mailer: Mailer) {}
+  taskDone(task: Task): void {
+    this.mailer.send("ada@example.com", `"${task.title}" is done`);
+  }
+}
+
+export const CLOCK = createToken<Clock>("Clock");
+export const MAILER = createToken<Mailer>("Mailer");
+</file>
+<example file="two-lists.ts" project="di">
+import { ContainerScope, createContainer } from "@zudojs/container";
+import { TaskService, TaskStore, systemClock } from "./domain.js";
+
+// app.ts: the runtime's container gives the modules their store
+const container = createContainer();
+container.registerClass(TaskStore, TaskStore, { scope: ContainerScope.SINGLETON });
+const moduleStore = container.resolve(TaskStore);
+moduleStore.tasks.set(moduleStore.nextId(), { id: 1, title: "Read the runtime lesson", createdAt: "2026-09-23" });
+
+// container.ts: hand-written dependencies for the routes
+function createDependencies() {
+  return { tasks: new TaskService(new TaskStore(), systemClock) };
+}
+
+const deps = createDependencies();
+deps.tasks.create("Buy milk");
+console.log("GET /tasks sees:  ", deps.tasks.list().map((t) => `#${t.id} ${t.title}`));
+console.log("store module sees:", [...moduleStore.tasks.values()].map((t) => `#${t.id} ${t.title}`));
+</example>
+<output>
+GET /tasks sees:   [ '#1 Buy milk' ]
+store module sees: [ '#1 Read the runtime lesson' ]
+</output>
+<p>Two stores exist, and each one numbers its tasks from 1. Each piece of code works on its own. The bug is in the <em>wiring</em>: two places decided, separately, how a <code>TaskStore</code> is made. The type checker cannot catch it, because both lines are correct TypeScript.</p>
+<p>In <a href="/learn/zudo-container">Dependency injection with @zudojs/container</a> you learned the tools: tokens, providers, lifetimes and scopes. This lesson is about the <strong>architecture</strong> around them: where objects are created, who is allowed to ask the container for things, how tests replace parts, and how production wiring fails early instead of in the middle of a request.</p>
+</section>
+
+<section>
+<h2 id="root">One composition root</h2>
+<p>The <strong>composition root</strong> is the one place in a program where the concrete objects are created and connected. You met the term in <a href="/learn/design-principles#composition">Design principles</a>. Three rules keep it useful:</p>
+<ul>
+<li><strong>One place.</strong> Every decision of the form "which class, which lifetime, which settings" is made there, once. The bug above came from two places.</li>
+<li><strong>At the edge.</strong> It runs at startup, next to the entry point. Services, repositories and controllers never create their own collaborators.</li>
+<li><strong>Only there may you call <code>resolve</code>.</strong> Everything else receives what it needs. You will see why in <a href="#locator">the service locator section</a>.</li>
+</ul>
+<h3>Where it is in a generated project</h3>
+<p>This is the confusing part of a generated ZudoJS project, so it is worth being precise. There are <strong>two different wiring mechanisms</strong>, and the names do not help:</p>
+<figure class="lx-diagram">
+<pre>
+src/server.ts      entry point: loads config, calls createApp, builds the router
+   │
+   ├─▶ src/app.ts        createContainer()          a @zudojs/container container
+   │                     → given to createRuntime    (generated EMPTY; you filled it
+   │                                                  with registerServices)
+   │
+   └─▶ src/container.ts  createDependencies()       plain TypeScript, no container:
+                         new ExamplesController(      `zudojs generate resource`
+                           new ExamplesService(       writes these `new` chains
+                             new InMemoryExamples…))  between the markers
+</pre>
+<figcaption>The file called <code>container.ts</code> does not contain the @zudojs/container container; <code>app.ts</code> does.</figcaption>
+</figure>
+<ul>
+<li><code>src/app.ts</code> creates a real <code>@zudojs/container</code> with <code>createContainer()</code> and hands it to the runtime, which keeps it as <code>runtime.context.container</code>. The generator puts nothing in it. As generated, nothing reads it either.</li>
+<li><code>src/container.ts</code> is a <strong>hand-written</strong> composition root: <code>createDependencies</code> calls constructors directly. The CLI calls it the composition root, and <code>zudojs generate resource</code> adds its <code>new</code> chains there.</li>
+</ul>
+<p>Neither is wrong. Hand wiring is clearer for a few objects with no shared parts. A container earns its place once objects are shared, have lifetimes, need disposing, or must be swapped in tests. The Task API now has both, and that is fine, as long as each object is built by exactly one of them. After <a href="/learn/zudo-container#task-api">the container lesson</a> the split is:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Object</th><th>Built by</th><th>Why there</th></tr></thead>
+<tbody>
+<tr><td><code>TaskStore</code>, <code>TaskService</code>, <code>CLOCK</code></td><td>The container, through <code>registerServices</code> in <code>src/container.ts</code></td><td>Shared by modules and routes, singletons, the clock is replaced in tests</td></tr>
+<tr><td><code>StoreModule</code>, <code>TasksModule</code></td><td><code>new</code> in <code>src/app.ts</code>, with the store resolved from the container</td><td>The runtime owns their lifecycle, not the container</td></tr>
+<tr><td><code>ExamplesController</code> and its service and repository</td><td><code>new</code> in <code>createDependencies</code></td><td>Generated, used by one route file, nothing shared</td></tr>
+</tbody>
+</table></div>
+<p>So in this project the composition root is two files that work together: <code>src/container.ts</code> says <em>how</em> things are built (<code>registerServices</code>, <code>createDependencies</code>), and <code>src/app.ts</code> and <code>src/server.ts</code> say <em>when</em> (at startup, before the server listens). No other file creates a shared object or calls <code>resolve</code>.</p>
+<reason title="Where should each object be built?">
+<p>Before reading the answer, decide for each object below whether it belongs in the container, in hand-written wiring, or nowhere near the composition root. Think about who shares it, how long it lives, who cleans it up, and whether a test needs to replace it.</p>
+<ul>
+<li>A PostgreSQL connection pool.</li>
+<li>The loaded <code>AppConfig</code> object.</li>
+<li>An audit log that collects one request's events and writes them when the request ends.</li>
+<li>A <code>Task</code> object for a newly created task.</li>
+<li>The generated <code>ExamplesController</code>.</li>
+</ul>
+<answer>
+<ul>
+<li><strong>The pool</strong>: the container, as a singleton. It is shared by every repository, must be closed at shutdown (the container disposes singletons newest first), and tests replace it with an in-memory database. It needs an <code>await</code> to connect, which matters: see <a href="#production">production composition</a>.</li>
+<li><strong>The config</strong>: loaded once in <code>server.ts</code> and handed to the composition root. Register it as a value (<code>registerValue(CONFIG, config)</code>) if services need it; the container did not create it, so it will not dispose it.</li>
+<li><strong>The audit log</strong>: the container, as <strong>scoped</strong>. One per request, disposed when the request's scope ends.</li>
+<li><strong>A <code>Task</code></strong>: nowhere near it. Data objects are created by your code while it runs (<code>TaskService.create</code> builds them). A container builds the <em>machinery</em> of the app, not the data flowing through it.</li>
+<li><strong><code>ExamplesController</code></strong>: leave it in <code>createDependencies</code>, where the CLI keeps it up to date. Move it into the container only when something else needs to share its parts.</li>
+</ul>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="constructor">Constructor injection</h2>
+<p><strong>Constructor injection</strong> means a class lists everything it needs as constructor parameters. It is the default style, for three reasons:</p>
+<ul>
+<li><strong>Visible</strong>: the constructor is the complete list of dependencies. A reader, a test and the container all see the same list.</li>
+<li><strong>Complete</strong>: once <code>new</code> returns, the object works. There is no moment where it exists but is not ready.</li>
+<li><strong>Immutable</strong>: with <code>private readonly</code>, nothing can swap a dependency behind the object's back.</li>
+</ul>
+<p>Compare the alternative, <strong>property injection</strong>, where a dependency is assigned after construction. It looks flexible, and it creates a half-built object:</p>
+<example file="half-built.ts" project="di">
+import type { Clock, Task } from "./domain.js";
+
+class ReportService {
+  clock?: Clock;
+
+  dueToday(tasks: Task[]): string {
+    const today = this.clock!.now().toISOString().slice(0, 10);
+    return `${tasks.filter((t) => t.createdAt.startsWith(today)).length} task(s) created today`;
+  }
+}
+
+const reports = new ReportService();
+try {
+  console.log(reports.dueToday([]));
+} catch (error) {
+  console.log((error as Error).name, (error as Error).message);
+}
+</example>
+<output>
+TypeError Cannot read properties of undefined (reading 'now')
+</output>
+<p>Somebody forgot to set <code>clock</code>, and the failure appears only when the method runs, far from the forgetting. The <code>!</code> told TypeScript to stop checking. With <code>constructor(private readonly clock: Clock)</code>, the same mistake is a compile error at the <code>new</code>.</p>
+<h3>Class registration or factory registration</h3>
+<p>You have two ways to register a constructor-injected class. <code>registerClass(TaskService, TaskService, { inject: [TaskStore, CLOCK] })</code> is short, but, as the container lesson warned, its <code>inject</code> list is not compared with the constructor. A factory registration is checked, because its parameters are typed from the <code>inject</code> list:</p>
+<example file="factory-registration.ts" project="di">
+import { ContainerScope, createContainer } from "@zudojs/container";
+import { CLOCK, TaskService, TaskStore } from "./domain.js";
+
+const container = createContainer();
+container.registerValue(CLOCK, { now: () => new Date("2026-09-24T09:00:00Z") });
+container.registerClass(TaskStore, TaskStore, { scope: ContainerScope.SINGLETON });
+container.registerFactory(TaskService, (store, clock) => new TaskService(store, clock), [TaskStore, CLOCK], {
+  scope: ContainerScope.SINGLETON,
+});
+
+console.log(container.resolve(TaskService).create("Buy milk"));
+</example>
+<output>
+{ id: 1, title: 'Buy milk', createdAt: '2026-09-24T09:00:00.000Z' }
+</output>
+<p>Swap <code>TaskStore</code> and <code>CLOCK</code> in that list and the arrow function no longer type-checks. That costs you one short arrow function per class, and every piece of wiring is then checked by the compiler. This lesson uses factory registrations for every class with dependencies.</p>
+<tip>A constructor with seven parameters is not a DI problem; it is a design message. The class probably does several jobs. Split it (see <a href="/learn/design-principles#cohesion">cohesion</a>) rather than hiding the parameters in an "options bag" or a service locator.</tip>
+</section>
+
+<section>
+<h2 id="factory">Factory injection</h2>
+<p>"Factory injection" is used for two different ideas. Both are useful, and both keep the container out of your services.</p>
+<h3>1. A factory registration that decides</h3>
+<p>Sometimes the composition root must choose <em>which</em> implementation to build, based on settings. That decision belongs in a factory registration, not in the service. In development the Task API should print e-mails; in production it should send them:</p>
+<example file="choose.ts" project="di">
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+import { MAILER, TaskNotifier } from "./domain.js";
+import type { Mailer } from "./domain.js";
+
+interface MailSettings {
+  readonly transport: "console" | "smtp";
+  readonly smtpHost: string;
+}
+const MAIL_SETTINGS = createToken<MailSettings>("MailSettings");
+
+class ConsoleMailer implements Mailer {
+  send(to: string, text: string): void {
+    console.log(`  [console mail] to ${to}: ${text}`);
+  }
+}
+class SmtpMailer implements Mailer {
+  constructor(private readonly host: string) {}
+  send(to: string, text: string): void {
+    console.log(`  [smtp ${this.host}] to ${to}: ${text}`);
+  }
+}
+
+function compose(settings: MailSettings) {
+  const container = createContainer();
+  container.registerValue(MAIL_SETTINGS, settings);
+  container.registerFactory(
+    MAILER,
+    (mail) => (mail.transport === "smtp" ? new SmtpMailer(mail.smtpHost) : new ConsoleMailer()),
+    [MAIL_SETTINGS],
+    { scope: ContainerScope.SINGLETON },
+  );
+  container.registerFactory(TaskNotifier, (mailer) => new TaskNotifier(mailer), [MAILER]);
+  return container;
+}
+
+const task = { id: 1, title: "Pay the ₦45,000 electricity bill", createdAt: "2026-09-24" };
+for (const transport of ["console", "smtp"] as const) {
+  console.log(transport);
+  compose({ transport, smtpHost: "mail.tasks.example.com" }).resolve(TaskNotifier).taskDone(task);
+}
+</example>
+<output>
+console
+  [console mail] to ada@example.com: "Pay the ₦45,000 electricity bill" is done
+smtp
+  [smtp mail.tasks.example.com] to ada@example.com: "Pay the ₦45,000 electricity bill" is done
+</output>
+<p><code>TaskNotifier</code> has no <code>if</code> about environments. It asked for "a mailer" and got the right one. When a third transport arrives, you change one factory, not every class that sends e-mail.</p>
+<h3>2. Injecting a factory function</h3>
+<p>The second idea: a service needs to create objects <em>while it runs</em>, several times, or with data it only learns later. An importer that reads tasks from a CSV file needs a fresh report for every import. It cannot receive one report in its constructor, because that single report would be shared by every import. It receives a <strong>factory function</strong> instead:</p>
+<example file="inject-factory.ts" project="di">
+import { createContainer, createToken } from "@zudojs/container";
+import { CLOCK } from "./domain.js";
+import type { Clock } from "./domain.js";
+
+class ImportReport {
+  readonly lines: string[] = [];
+  constructor(readonly source: string, private readonly clock: Clock) {}
+  add(line: string): void {
+    this.lines.push(line);
+  }
+  summary(): string {
+    return `${this.source}: ${this.lines.length} task(s) at ${this.clock.now().toISOString().slice(11, 16)}`;
+  }
+}
+
+type ReportFactory = (source: string) => ImportReport;
+const REPORT_FACTORY = createToken<ReportFactory>("ImportReportFactory");
+
+class TaskImporter {
+  constructor(private readonly newReport: ReportFactory) {}
+  importCsv(source: string, csv: string): string {
+    const report = this.newReport(source);
+    for (const line of csv.split("\n").filter(Boolean)) report.add(line);
+    return report.summary();
+  }
+}
+
+const container = createContainer();
+container.registerValue(CLOCK, { now: () => new Date("2026-09-24T08:30:00Z") });
+container.registerFactory(REPORT_FACTORY, (clock) => (source: string) => new ImportReport(source, clock), [CLOCK]);
+container.registerFactory(TaskImporter, (newReport) => new TaskImporter(newReport), [REPORT_FACTORY]);
+
+const importer = container.resolve(TaskImporter);
+console.log(importer.importCsv("monday.csv", "Buy milk\nWalk the dog\n"));
+console.log(importer.importCsv("tuesday.csv", "Water the plants\n"));
+</example>
+<output>
+monday.csv: 2 task(s) at 08:30
+tuesday.csv: 1 task(s) at 08:30
+</output>
+<p>Each import got its own report, and the report still received its clock from the composition root. <code>TaskImporter</code> knows only one thing: "I can make a report from a source name". It cannot reach anything else, and a test can pass <code>(source) =&gt; fakeReport</code> without any container at all.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>You need</th><th>Use</th></tr></thead>
+<tbody>
+<tr><td>One collaborator for the object's whole life</td><td>Constructor injection</td></tr>
+<tr><td>The composition root must pick an implementation or build it from settings</td><td>A factory registration</td></tr>
+<tr><td>New objects at run time, many of them, or built from run-time data</td><td>Inject a typed factory function</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="locator">The service locator trap</h2>
+<p>There is a tempting shortcut: give a class the container itself, and let it <code>resolve</code> whatever it needs, when it needs it. That pattern is called a <strong>service locator</strong>. It looks like less wiring. It moves two failures from startup into production.</p>
+<h3>Failure 1: a missing registration is found late</h3>
+<p>A reminder job e-mails users about tasks due today. Written as a locator, its only visible dependency is the container. The composition root below forgot to register a mailer, and the startup check, which resolves every service once, does not notice:</p>
+<example file="locator-late.ts" project="di">
+import { ContainerScope, createContainer } from "@zudojs/container";
+import type { Container } from "@zudojs/container";
+import { MAILER } from "./domain.js";
+
+class DueTodayReminder {
+  constructor(private readonly container: Container) {}
+  run(): void {
+    this.container.resolve(MAILER).send("ada@example.com", "2 tasks are due today");
+  }
+}
+
+const container = createContainer();
+container.registerFactory(DueTodayReminder, () => new DueTodayReminder(container), [], {
+  scope: ContainerScope.SINGLETON,
+});
+
+const reminder = container.resolve(DueTodayReminder);
+console.log("startup check passed");
+
+try {
+  reminder.run(); // the next morning at 08:00
+} catch (error) {
+  console.log((error as Error).name, (error as Error).message);
+}
+</example>
+<output>
+startup check passed
+RegistrationNotFoundError No registration found for token "Mailer".
+</output>
+<p>The server started, passed its checks, and failed the next morning when the job ran. Now the same class with constructor injection:</p>
+<example file="locator-early.ts" project="di">
+import { ContainerScope, createContainer } from "@zudojs/container";
+import { MAILER } from "./domain.js";
+import type { Mailer } from "./domain.js";
+
+class DueTodayReminder {
+  constructor(private readonly mailer: Mailer) {}
+  run(): void {
+    this.mailer.send("ada@example.com", "2 tasks are due today");
+  }
+}
+
+const container = createContainer();
+container.registerFactory(DueTodayReminder, (mailer) => new DueTodayReminder(mailer), [MAILER], {
+  scope: ContainerScope.SINGLETON,
+});
+
+try {
+  container.resolve(DueTodayReminder);
+  console.log("startup check passed");
+} catch (error) {
+  console.log((error as Error).name, (error as Error).message);
+}
+</example>
+<output>
+DependencyResolutionError Failed to resolve DueTodayReminder: No registration found for token "Mailer". (chain: DueTodayReminder)
+</output>
+<p>The missing mailer stops the app at startup, with the chain that needed it. A deploy that fails to start is rolled back before a single user notices; a job that fails at 08:00 is a bug report.</p>
+<h3>Failure 2: the container cannot see the dependency</h3>
+<p>A factory that calls <code>container.resolve</code> inside its body, instead of listing tokens in <code>inject</code>, is a locator too, even though it sits in the composition root. The container does not know the dependency exists. When a test replaces the clock, the container rebuilds every singleton that listed <code>CLOCK</code>, and only those:</p>
+<example file="locator-replace.ts" project="di">
+import { ContainerScope, createContainer } from "@zudojs/container";
+import { CLOCK, TaskService, TaskStore } from "./domain.js";
+
+const container = createContainer();
+container.registerValue(CLOCK, { now: () => new Date("2026-09-24T09:00:00Z") });
+container.registerClass(TaskStore, TaskStore, { scope: ContainerScope.SINGLETON });
+
+class ListedService extends TaskService {}
+class HiddenService extends TaskService {}
+container.registerFactory(ListedService, (store, clock) => new ListedService(store, clock), [TaskStore, CLOCK], {
+  scope: ContainerScope.SINGLETON,
+});
+container.registerFactory(
+  HiddenService,
+  () => new HiddenService(container.resolve(TaskStore), container.resolve(CLOCK)),
+  [],
+  { scope: ContainerScope.SINGLETON },
+);
+
+container.resolve(ListedService);
+container.resolve(HiddenService);
+container.replace(CLOCK, { useValue: { now: () => new Date("2030-01-01T00:00:00Z") } });
+
+console.log("listed:", container.resolve(ListedService).create("Buy milk").createdAt);
+console.log("hidden:", container.resolve(HiddenService).create("Buy bread").createdAt);
+</example>
+<output>
+listed: 2030-01-01T00:00:00.000Z
+hidden: 2026-09-24T09:00:00.000Z
+</output>
+<p>The hidden service still uses the old clock, so a test that replaced the clock gets a date from 2026 and fails in a confusing way. The same blindness defeats the lifetime checks: the container refuses a singleton that <em>lists</em> a scoped dependency (a <code>CaptiveDependencyError</code>), but it cannot refuse one it was never told about.</p>
+<h3>Who may call resolve</h3>
+<ul>
+<li>The composition root: <code>src/app.ts</code> (to hand the store to modules) and <code>createDependencies</code> (to hand services to routes).</li>
+<li>Edge code that creates a per-request scope, shown in <a href="#request-scope">the next section</a>.</li>
+<li>Tests.</li>
+</ul>
+<p>Nobody else. A service, repository or controller that takes a <code>Container</code> parameter is a locator. The <a href="/learn/zudo-core#module-context">module context</a> of <code>@zudojs/core</code> follows the same idea: it does not hand modules the container, only what they need.</p>
+</section>
+
+<section>
+<h2 id="testing">Replacing parts in tests</h2>
+<p>A good test uses the <em>production</em> wiring and replaces only the outside world: the clock, the mailer, the payment gateway. Then a wiring mistake shows up in the test run, not in production. Put the production registrations in a function that both the app and the tests call:</p>
+<file name="registrations.ts" project="di">
+import { ContainerScope } from "@zudojs/container";
+import type { Container } from "@zudojs/container";
+import { CLOCK, MAILER, TaskNotifier, TaskService, TaskStore, systemClock } from "./domain.js";
+
+/** The production wiring. The app and every test call this one function. */
+export function registerTaskServices(container: Container): void {
+  container.registerValue(CLOCK, systemClock);
+  container.registerValue(MAILER, { send: (to, text) => console.log(`SMTP to ${to}: ${text}`) });
+  container.registerClass(TaskStore, TaskStore, { scope: ContainerScope.SINGLETON });
+  container.registerFactory(TaskService, (store, clock) => new TaskService(store, clock), [TaskStore, CLOCK], {
+    scope: ContainerScope.SINGLETON,
+  });
+  container.registerFactory(TaskNotifier, (mailer) => new TaskNotifier(mailer), [MAILER], {
+    scope: ContainerScope.SINGLETON,
+  });
+}
+</file>
+<h3>A fresh container per test</h3>
+<p>The simplest and safest approach: every test builds its own container, calls the real registration function, then replaces what it needs. Nothing leaks from one test to the next:</p>
+<example file="fresh.ts" project="di">
+import { createContainer } from "@zudojs/container";
+import { CLOCK, MAILER, TaskNotifier, TaskService } from "./domain.js";
+import { registerTaskServices } from "./registrations.js";
+
+function testContainer(fakes: { now?: string; sent?: string[] } = {}) {
+  const container = createContainer({ name: "test" });
+  registerTaskServices(container);
+  if (fakes.now !== undefined) {
+    const fixed = new Date(fakes.now);
+    container.replace(CLOCK, { useValue: { now: () => fixed } });
+  }
+  const sent = fakes.sent;
+  if (sent) {
+    container.replace(MAILER, { useValue: { send: (_to, text) => void sent.push(text) } });
+  }
+  return container;
+}
+
+function check(label: string, ok: boolean): void {
+  console.log(`${ok ? "PASS" : "FAIL"} ${label}`);
+}
+
+const first = testContainer({ now: "2026-09-24T09:00:00Z" });
+check("uses the fixed clock", first.resolve(TaskService).create("Buy milk").createdAt === "2026-09-24T09:00:00.000Z");
+
+const sent: string[] = [];
+const second = testContainer({ sent });
+const task = second.resolve(TaskService).create("Walk the dog");
+second.resolve(TaskNotifier).taskDone(task);
+check("records the e-mail instead of sending it", sent[0] === '"Walk the dog" is done');
+check("tests do not share a store", second.resolve(TaskService).list().length === 1);
+</example>
+<output>
+PASS uses the fixed clock
+PASS records the e-mail instead of sending it
+PASS tests do not share a store
+</output>
+<p><code>replace</code> is type-checked against the token, so a fake clock without <code>now()</code> does not compile. And because both tests went through <code>registerTaskServices</code>, a missing or broken registration fails them, exactly as it would fail the app.</p>
+<h3>Snapshots on a shared container</h3>
+<p>When building the container is expensive, tests can share one and put it back after each change. <code>snapshot()</code> saves the registrations, <code>restoreSnapshot()</code> brings them back and rebuilds every singleton made from the changed set. Watch what happens to an object someone resolved <em>before</em> the replacement:</p>
+<example file="snapshot.ts" project="di">
+import { ContainerScope, createContainer } from "@zudojs/container";
+import { CLOCK, TaskService, TaskStore } from "./domain.js";
+
+class Reports {
+  constructor(readonly tasks: TaskService) {}
+  dispose(): void {
+    console.log("  old Reports disposed");
+  }
+}
+
+const container = createContainer();
+container.registerValue(CLOCK, { now: () => new Date("2026-09-24T09:00:00Z") });
+container.registerClass(TaskStore, TaskStore, { scope: ContainerScope.SINGLETON });
+container.registerFactory(TaskService, (store, clock) => new TaskService(store, clock), [TaskStore, CLOCK], {
+  scope: ContainerScope.SINGLETON,
+});
+container.registerFactory(Reports, (tasks) => new Reports(tasks), [TaskService], { scope: ContainerScope.SINGLETON });
+
+const keptByHand = container.resolve(Reports);
+const saved = container.snapshot();
+
+console.log("replace the clock:");
+container.replace(CLOCK, { useValue: { now: () => new Date("2030-01-01T00:00:00Z") } });
+console.log("fresh resolve:", container.resolve(Reports).tasks.create("Buy milk").createdAt);
+console.log("kept by hand: ", keptByHand.tasks.create("Buy bread").createdAt);
+
+console.log("store before restore:", container.resolve(TaskService).list().length, "task(s)");
+
+container.restoreSnapshot(saved);
+const restored = container.resolve(Reports).tasks;
+console.log("after restore:", restored.create("Buy eggs").createdAt, "|", restored.list().length, "task(s)");
+</example>
+<output>
+replace the clock:
+  old Reports disposed
+fresh resolve: 2030-01-01T00:00:00.000Z
+kept by hand:  2026-09-24T09:00:00.000Z
+store before restore: 2 task(s)
+  old Reports disposed
+after restore: 2026-09-24T09:00:00.000Z | 1 task(s)
+</output>
+<p>Three lessons in one output:</p>
+<ul>
+<li><code>replace</code> rebuilt <code>Reports</code>, because it depends on the clock through <code>TaskService</code>, and <strong>disposed</strong> the old instance. <code>TaskStore</code> does not depend on the clock, so it was kept: the store held two tasks before the restore.</li>
+<li>The object resolved before the replacement did not change. <code>keptByHand</code> still points at the old, already disposed, service with the 2026 clock. A replacement only reaches code that resolves <em>after</em> it. In tests, replace first, then resolve.</li>
+<li>A snapshot holds registrations, not instances. The restore disposed the 2030 <code>Reports</code> (the second "disposed" line) and every other singleton, then built fresh ones on the original clock, including a new, empty store. Singletons are rebuilt, not rolled back to their old contents.</li>
+</ul>
+<warn title="SNAPSHOTS DO NOT MAKE PARALLEL TESTS SAFE">A shared container is shared state. If two tests run at the same time and one replaces the clock, the other sees it. Test runners such as Vitest run files in parallel. Keep a shared container inside one test file, or use a fresh container per test.</warn>
+</section>
+
+<section>
+<h2 id="production">Production composition</h2>
+<p>In production you want the opposite of test flexibility: the wiring must be complete before the first request, and nothing may change it afterwards.</p>
+<h3>Check every registration at startup</h3>
+<p>A container is lazy: it builds an object the first time someone asks for it. A broken registration that nobody asks for at startup waits for the first request that needs it. A small helper resolves every registration once, scoped ones inside a throwaway scope, and reports all the problems at once:</p>
+<file name="verify.ts" project="di">
+import { describeToken, isScopedRegistration } from "@zudojs/container";
+import type { Container } from "@zudojs/container";
+
+/** Resolves every registration once; throws one error listing every one that fails. */
+export async function verifyContainer(container: Container): Promise<number> {
+  const problems: string[] = [];
+  const scope = container.createScope({ name: "startup-check" });
+  const registrations = container.getRegistrations();
+  for (const registration of registrations) {
+    try {
+      (isScopedRegistration(registration) ? scope : container).resolve(registration.token);
+    } catch (error) {
+      problems.push(`${describeToken(registration.token)}: ${(error as Error).message}`);
+    }
+  }
+  await scope.dispose();
+  if (problems.length > 0) {
+    throw new AggregateError([], `Wiring is broken:\n- ${problems.join("\n- ")}`);
+  }
+  return registrations.length;
+}
+</file>
+<example file="verify-run.ts" project="di">
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+import { MAILER, TaskNotifier } from "./domain.js";
+import { registerTaskServices } from "./registrations.js";
+import { verifyContainer } from "./verify.js";
+
+const good = createContainer();
+registerTaskServices(good);
+console.log("registrations checked:", await verifyContainer(good));
+
+interface PaymentGateway {
+  charge(kobo: number): void;
+}
+const PAYMENTS = createToken<PaymentGateway>("PaymentGateway");
+class InvoiceService {
+  constructor(readonly payments: PaymentGateway) {}
+}
+
+const broken = createContainer();
+broken.registerFactory(TaskNotifier, (mailer) => new TaskNotifier(mailer), [MAILER]);
+broken.registerFactory(InvoiceService, (payments) => new InvoiceService(payments), [PAYMENTS], {
+  scope: ContainerScope.SCOPED,
+});
+try {
+  await verifyContainer(broken);
+} catch (error) {
+  console.log((error as Error).message);
+}
+</example>
+<output>
+registrations checked: 5
+Wiring is broken:
+- TaskNotifier: Failed to resolve TaskNotifier: No registration found for token "Mailer". (chain: TaskNotifier)
+- InvoiceService: Failed to resolve InvoiceService: No registration found for token "PaymentGateway". (chain: InvoiceService)
+</output>
+<p>Both mistakes, including the one in a scoped registration that only a request would have reached, are reported before the app accepts traffic. Call the helper in the composition root, right after registering. The same call in a test checks the production wiring on every test run.</p>
+<h3>Freeze the wiring</h3>
+<p>Once the app runs, nothing should be able to register or replace a service. A later <code>register</code> call is either a bug or someone patching production at run time. Two container options make that impossible:</p>
+<ul>
+<li><code>freezeRegistrations: true</code>: the registration set is frozen when the container starts, which happens at the first <code>resolve</code>. Later <code>register</code>, <code>replace</code>, <code>remove</code> and <code>restoreSnapshot</code> calls throw.</li>
+<li><code>resolution: { autoRegisterClasses: false }</code>: resolving a class that was never registered fails, instead of quietly building a new transient instance.</li>
+</ul>
+<example file="freeze.ts" project="di">
+import { createContainer } from "@zudojs/container";
+import { CLOCK, TaskService } from "./domain.js";
+import { registerTaskServices } from "./registrations.js";
+
+class ForgottenService {}
+
+const container = createContainer({
+  name: "task-api",
+  freezeRegistrations: true,
+  resolution: { autoRegisterClasses: false },
+});
+registerTaskServices(container);
+container.resolve(TaskService);
+console.log("started:", container.isStarted());
+
+for (const attempt of [
+  () => container.replace(CLOCK, { useValue: { now: () => new Date(0) } }),
+  () => container.resolve(ForgottenService),
+]) {
+  try {
+    attempt();
+  } catch (error) {
+    console.log((error as Error).name, (error as Error).message);
+  }
+}
+</example>
+<output>
+started: true
+ContainerError Registrations for container "task-api" are frozen.
+RegistrationNotFoundError No registration found for token "ForgottenService".
+</output>
+<p>Freeze only the production container. Test containers stay unfrozen, because replacing parts is their job. That is another reason to keep the registrations in one function and let the caller create the container.</p>
+<h3>Resources that need await</h3>
+<p>The container is synchronous: <code>resolve</code> returns a value, not a promise. A database pool or a cache client usually needs <code>await connect()</code> first. A singleton factory that returns a promise is refused:</p>
+<example file="async-resource.ts" project="di">
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+
+class Pool {
+  static async connect(url: string): Promise<Pool> {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return new Pool(url);
+  }
+  private constructor(readonly url: string) {}
+  async dispose(): Promise<void> {
+    console.log("pool closed");
+  }
+}
+const POOL = createToken<Pool>("Pool");
+
+const wrong = createContainer();
+wrong.registerFactory(POOL, () => Pool.connect("postgres://localhost/tasks") as unknown as Pool, [], {
+  scope: ContainerScope.SINGLETON,
+});
+try {
+  wrong.resolve(POOL);
+} catch (error) {
+  console.log((error as Error).name);
+}
+
+const right = createContainer();
+const pool = await Pool.connect("postgres://localhost/tasks");
+right.registerValue(POOL, pool);
+console.log("connected to", right.resolve(POOL).url);
+await right.dispose();
+await pool.dispose();
+</example>
+<output>
+AsyncProviderError
+connected to postgres://localhost/tasks
+pool closed
+</output>
+<p>The fix is to <code>await</code> the resource in the composition root and register the finished object with <code>registerValue</code>. The type checker hid the problem only because of the <code>as unknown as Pool</code> cast; without it, TypeScript refuses the factory. Note the last two lines: the container did not create the pool, so disposing the container did not close it. Whoever opened it closes it. In the Task API, that is a job for a runtime module or an integration, whose <code>stop</code> runs at shutdown.</p>
+<h3 id="request-scope">A scope per request</h3>
+<p>Scoped registrations need a scope, and in an HTTP app the natural scope is one request. The edge of the app, a middleware, is part of the composition root's job: it creates the scope, puts it on the request, and disposes it when the response is done:</p>
+<example file="request-scope.ts" browser="no">
+import { ContainerScope, createContainer } from "@zudojs/container";
+import type { ContainerScopeContext } from "@zudojs/container";
+import { createRequestContext, createResponseContext, createRouter, HttpMiddlewarePipeline } from "@zudojs/http";
+import type { HttpMiddleware, HttpRequestContext } from "@zudojs/http";
+
+class AuditLog {
+  readonly entries: string[] = [];
+  dispose(): void {
+    console.log(`audit written: ${this.entries.join(", ")}`);
+  }
+}
+class TaskCommands {
+  constructor(private readonly audit: AuditLog) {}
+  create(title: string) {
+    this.audit.entries.push(`created "${title}"`);
+    return { title };
+  }
+}
+
+const container = createContainer();
+container.registerClass(AuditLog, AuditLog, { scope: ContainerScope.SCOPED });
+container.registerFactory(TaskCommands, (audit) => new TaskCommands(audit), [AuditLog], { scope: ContainerScope.SCOPED });
+
+const REQUEST_SCOPE = Symbol("request scope");
+const requestScope: HttpMiddleware = async (context, next) => {
+  const scope = container.createScope({ name: context.request.id });
+  context.request.setState(REQUEST_SCOPE, scope);
+  try {
+    return await next();
+  } finally {
+    await scope.dispose();
+  }
+};
+function scopeOf(request: HttpRequestContext): ContainerScopeContext {
+  const scope = request.getState<ContainerScopeContext>(REQUEST_SCOPE);
+  if (!scope) throw new Error("the requestScope middleware is not installed");
+  return scope;
+}
+
+const router = createRouter();
+router.post("/tasks", (ctx) => scopeOf(ctx.request).resolve(TaskCommands).create("Buy milk"));
+
+const pipeline = new HttpMiddlewarePipeline({
+  middlewares: [requestScope, async (context) => (await router.dispatch(context.request)).response],
+});
+for (const id of ["req-1", "req-2"]) {
+  const response = await pipeline.execute(createRequestContext({ id, method: "POST", url: "/tasks" }), createResponseContext());
+  console.log(id, response.status, response.body);
+}
+</example>
+<output>
+audit written: created "Buy milk"
+req-1 200 {"title":"Buy milk"}
+audit written: created "Buy milk"
+req-2 200 {"title":"Buy milk"}
+</output>
+<p>Each request got its own <code>AuditLog</code>, and each log was written when its request finished, even if the route had thrown, thanks to <code>finally</code>. The route calls <code>resolve</code> on the request's scope. That is the one resolve per request, at the edge; everything below it receives its dependencies through constructors.</p>
+</section>
+
+<section>
+<h2 id="task-api">Put it in the Task API</h2>
+<p>Apply this lesson to the Task API in three small edits. The files from the previous lessons (<code>tasks.store.ts</code>, <code>tasks.dto.ts</code>, <code>tasks.service.ts</code> and the two modules) do not change.</p>
+<p>First, in <code>src/container.ts</code>, register <code>TaskService</code> with a factory so the compiler checks its wiring, and add the startup check next to it. Add <code>describeToken</code> and <code>isScopedRegistration</code> to the existing <code>@zudojs/container</code> import:</p>
+<example file="src/container.ts (part)" browser="no" check="skip">
+import { ContainerScope, createToken, describeToken, isScopedRegistration } from "@zudojs/container";
+import type { Container } from "@zudojs/container";
+
+/** The clock the Task API uses; a test can replace it with a fixed one. */
+export const CLOCK = createToken<Clock>("Clock");
+
+/** Tells the runtime's container how to build the shared task services. */
+export function registerServices(container: Container): void {
+  container.registerValue(CLOCK, { now: () => new Date() });
+  container.registerClass(TaskStore, TaskStore, { scope: ContainerScope.SINGLETON });
+  container.registerFactory(TaskService, (store, clock) => new TaskService(store, clock), [TaskStore, CLOCK], {
+    scope: ContainerScope.SINGLETON,
+  });
+}
+
+/** Resolves every registration once; throws one error listing every one that fails. */
+export async function verifyContainer(container: Container): Promise<number> {
+  const problems: string[] = [];
+  const scope = container.createScope({ name: "startup-check" });
+  const registrations = container.getRegistrations();
+  for (const registration of registrations) {
+    try {
+      (isScopedRegistration(registration) ? scope : container).resolve(registration.token);
+    } catch (error) {
+      problems.push(`${describeToken(registration.token)}: ${(error as Error).message}`);
+    }
+  }
+  await scope.dispose();
+  if (problems.length > 0) {
+    throw new AggregateError([], `Wiring is broken:\n- ${problems.join("\n- ")}`);
+  }
+  return registrations.length;
+}
+</example>
+<p>Second, in <code>src/app.ts</code>, create the production container frozen and strict. <code>createApp</code> is synchronous, so it cannot await the check; it only creates the container. Change the one line:</p>
+<example file="src/app.ts (part)" browser="no" check="skip">
+  const container = createContainer({
+    name: "task-api",
+    freezeRegistrations: true,
+    resolution: { autoRegisterClasses: false },
+  });
+  registerServices(container);
+  const store = container.resolve(TaskStore);
+</example>
+<p>The <code>resolve</code> on the next line starts the container, so from here on its registrations are frozen. The runtime works with a frozen container: it only reads from it, and disposes it on stop if you set <code>disposeContainerOnStop</code>, as <a href="/learn/zudo-middleware#task-api">the middleware lesson</a> will.</p>
+<p>Third, in <code>src/server.ts</code>, run the check before the runtime starts. The generated file already uses top-level <code>await</code>, so add one line after <code>createApp</code>, and import <code>verifyContainer</code> next to <code>createDependencies</code>:</p>
+<example file="src/server.ts (part)" browser="no" check="skip">
+import { createDependencies, verifyContainer } from "./container.js";
+
+const config = await loadConfig();
+const httpServer = createServer();
+const runtime = createApp({ config, httpServer });
+await verifyContainer(runtime.context.container);
+</example>
+<p>A broken registration now stops <code>npm run dev</code> with one message listing every problem, before the port opens. To see both sides, save this check script as <code>src/check-wiring.ts</code>. It builds the frozen production container through <code>createApp</code>, and a test container through the same <code>registerServices</code>:</p>
+<example file="src/check-wiring.ts" browser="no" check="skip">
+import { createContainer } from "@zudojs/container";
+import { createApp } from "./app.js";
+import { loadConfig } from "./configs/index.js";
+import { CLOCK, registerServices, verifyContainer } from "./container.js";
+import { TaskService } from "./services/tasks.service.js";
+
+// Production: the real composition root, frozen.
+const runtime = createApp({ config: await loadConfig({}) });
+const production = runtime.context.container;
+console.log("production registrations:", await verifyContainer(production));
+try {
+  production.replace(CLOCK, { useValue: { now: () => new Date(0) } });
+} catch (error) {
+  console.log("production replace:", (error as Error).message);
+}
+
+// A test: the same registrations, a fixed clock.
+const test = createContainer({ name: "test" });
+registerServices(test);
+test.replace(CLOCK, { useValue: { now: () => new Date("2026-09-24T09:00:00Z") } });
+console.log("test registrations:", await verifyContainer(test));
+console.log(test.resolve(TaskService).create({ title: "Buy milk" }).createdAt);
+</example>
+<shell title="Terminal on your computer">
+$ npx tsc --noEmit
+$ npx tsx src/check-wiring.ts
+production registrations: 3
+production replace: Registrations for container "task-api" are frozen.
+test registrations: 3
+2026-09-24T09:00:00.000Z
+</shell>
+<p>The production container refused to change, while the test container took a fixed clock through the very same <code>registerServices</code>. When you add a service in a later lesson, register it in <code>registerServices</code>, and the startup check covers it automatically.</p>
+<note>The next lesson hands <code>TaskService</code> to the routes: <code>createDependencies</code> will receive <code>runtime.context.container</code> and call <code>resolve(TaskService)</code>. That is a resolve in the composition root, which is where it belongs. The generated <code>ExamplesController</code> line between the markers stays hand-wired.</note>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Remove a service locator">
+<p>This invoice sender pulls its collaborators from the container. Rewrite it with constructor injection, register it with a factory, and show that a forgotten <code>CLOCK</code> registration now fails when the sender is resolved, not when it runs.</p>
+<example file="invoice-locator.ts" check="skip">
+class InvoiceSender {
+  constructor(private readonly container: Container) {}
+  sendMonthly(customer: string): void {
+    const month = this.container.resolve(CLOCK).now().toISOString().slice(0, 7);
+    this.container.resolve(MAILER).send(customer, `Your invoice for ${month}: ₦12,500`);
+  }
+}
+</example>
+<solution>
+<example file="invoice-injected.ts" project="di">
+import { createContainer } from "@zudojs/container";
+import { CLOCK, MAILER } from "./domain.js";
+import type { Clock, Mailer } from "./domain.js";
+
+class InvoiceSender {
+  constructor(private readonly clock: Clock, private readonly mailer: Mailer) {}
+  sendMonthly(customer: string): void {
+    const month = this.clock.now().toISOString().slice(0, 7);
+    this.mailer.send(customer, `Your invoice for ${month}: ₦12,500`);
+  }
+}
+
+function compose(withClock: boolean) {
+  const container = createContainer();
+  if (withClock) container.registerValue(CLOCK, { now: () => new Date("2026-09-24T09:00:00Z") });
+  container.registerValue(MAILER, { send: (to, text) => console.log(`to ${to}: ${text}`) });
+  container.registerFactory(InvoiceSender, (clock, mailer) => new InvoiceSender(clock, mailer), [CLOCK, MAILER]);
+  return container;
+}
+
+compose(true).resolve(InvoiceSender).sendMonthly("chiamaka@example.com");
+try {
+  compose(false).resolve(InvoiceSender);
+} catch (error) {
+  console.log((error as Error).message);
+}
+</example>
+<output>
+to chiamaka@example.com: Your invoice for 2026-09: ₦12,500
+Failed to resolve InvoiceSender: No registration found for token "Clock". (chain: InvoiceSender)
+</output>
+<p>The class now states its two dependencies, a test can build it with <code>new InvoiceSender(fakeClock, fakeMailer)</code> and no container, and a missing registration surfaces at resolve time, which the startup check turns into a failed deploy.</p>
+</solution>
+</exercise>
+<exercise title="A test container with typed overrides">
+<p>Write <code>buildTestContainer(overrides)</code> for the <code>di</code> project. <code>overrides</code> may contain a <code>clock</code> and a <code>mailer</code>. It must use <code>registerTaskServices</code>, replace only what was given, and run <code>verifyContainer</code>. Show two containers with different clocks that do not affect each other.</p>
+<solution>
+<example file="test-container.ts" project="di">
+import { createContainer } from "@zudojs/container";
+import { CLOCK, MAILER, TaskService } from "./domain.js";
+import type { Clock, Mailer } from "./domain.js";
+import { registerTaskServices } from "./registrations.js";
+import { verifyContainer } from "./verify.js";
+
+interface Overrides {
+  readonly clock?: Clock;
+  readonly mailer?: Mailer;
+}
+
+async function buildTestContainer(overrides: Overrides = {}) {
+  const container = createContainer({ name: "test" });
+  registerTaskServices(container);
+  if (overrides.clock) container.replace(CLOCK, { useValue: overrides.clock });
+  if (overrides.mailer) container.replace(MAILER, { useValue: overrides.mailer });
+  await verifyContainer(container);
+  return container;
+}
+
+const at = (iso: string): Clock => ({ now: () => new Date(iso) });
+const monday = await buildTestContainer({ clock: at("2026-09-21T09:00:00Z") });
+const friday = await buildTestContainer({ clock: at("2026-09-25T17:00:00Z") });
+
+console.log(monday.resolve(TaskService).create("Plan the week").createdAt);
+console.log(friday.resolve(TaskService).create("Send the report").createdAt);
+console.log(monday.resolve(TaskService).list().length, friday.resolve(TaskService).list().length);
+</example>
+<output>
+2026-09-21T09:00:00.000Z
+2026-09-25T17:00:00.000Z
+1 1
+</output>
+<p>Because <code>Overrides</code> uses the real <code>Clock</code> and <code>Mailer</code> interfaces, a fake with the wrong shape does not compile. Each call builds a separate container, so the two tests have separate stores and clocks.</p>
+</solution>
+</exercise>
+<exercise title="Pick the storage at the composition root">
+<p>The Task API will get a PostgreSQL repository. Define a <code>TaskRepository</code> interface with <code>save(title)</code> and <code>count()</code>, an in-memory and a (fake) PostgreSQL implementation, and a <code>TASK_REPOSITORY</code> token. Register it with a factory that reads a <code>storage: "memory" | "postgres"</code> setting. <code>TaskService</code>-like code must not contain an <code>if</code> about storage.</p>
+<solution>
+<example file="choose-storage.ts" project="di">
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+
+interface TaskRepository {
+  save(title: string): void;
+  count(): number;
+}
+class MemoryTaskRepository implements TaskRepository {
+  private readonly titles: string[] = [];
+  save(title: string): void {
+    this.titles.push(title);
+  }
+  count(): number {
+    return this.titles.length;
+  }
+}
+class PostgresTaskRepository extends MemoryTaskRepository {
+  override save(title: string): void {
+    console.log(`  INSERT INTO tasks (title) VALUES ('${title}')`);
+    super.save(title);
+  }
+}
+
+const STORAGE = createToken<"memory" | "postgres">("Storage");
+const TASK_REPOSITORY = createToken<TaskRepository>("TaskRepository");
+
+class TaskRecorder {
+  constructor(private readonly repository: TaskRepository) {}
+  record(title: string): string {
+    this.repository.save(title);
+    return `${this.repository.count()} task(s) stored`;
+  }
+}
+
+for (const storage of ["memory", "postgres"] as const) {
+  const container = createContainer();
+  container.registerValue(STORAGE, storage);
+  container.registerFactory(
+    TASK_REPOSITORY,
+    (kind) => (kind === "postgres" ? new PostgresTaskRepository() : new MemoryTaskRepository()),
+    [STORAGE],
+    { scope: ContainerScope.SINGLETON },
+  );
+  container.registerFactory(TaskRecorder, (repository) => new TaskRecorder(repository), [TASK_REPOSITORY]);
+  console.log(storage);
+  console.log(" ", container.resolve(TaskRecorder).record("Buy milk"));
+}
+</example>
+<output>
+memory
+  1 task(s) stored
+postgres
+  INSERT INTO tasks (title) VALUES ('Buy milk')
+  1 task(s) stored
+</output>
+<p>The only <code>if</code> about storage is in the factory. The real PostgreSQL repository in <a href="/learn/zudo-database">the database lesson</a> must use parameterised queries, never a title pasted into SQL as this fake does for display.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>The <strong>composition root</strong> is the one place where objects are created and connected. In a generated project it is <code>src/container.ts</code> together with <code>src/app.ts</code> and <code>src/server.ts</code>. The generated <code>app.ts</code> creates an empty <code>@zudojs/container</code> container, while <code>src/container.ts</code> wires the example resource by hand. Build each object with exactly one of them.</li>
+<li><strong>Constructor injection</strong> is the default: visible, complete, immutable. Register such classes with <code>registerFactory</code>, so the compiler checks the order of the <code>inject</code> list.</li>
+<li><strong>Factory injection</strong>: a factory registration chooses an implementation from settings; an injected factory function lets a service create objects at run time.</li>
+<li>A <strong>service locator</strong> (a class or factory that calls <code>container.resolve</code>) hides dependencies. Missing registrations then surface late, and <code>replace</code> and the lifetime checks cannot see them. Only the composition root, per-request edge code and tests call <code>resolve</code>.</li>
+<li>Tests reuse the production registrations and <code>replace</code> the outside world, in a fresh container per test or with <code>snapshot</code>/<code>restoreSnapshot</code>. Resolve after replacing; earlier references keep the old objects.</li>
+<li>Production: verify every registration at startup, create the container with <code>freezeRegistrations: true</code> and <code>autoRegisterClasses: false</code>, <code>await</code> async resources before <code>registerValue</code>, and give each request its own scope, disposed in <code>finally</code>.</li>
+</ul>
+<p>The Task API's services are wired and checked, but nothing reaches them over the network yet. Next, <a href="/learn/zudo-http">Routes, requests and responses</a> gives them HTTP routes.</p>
+</section>

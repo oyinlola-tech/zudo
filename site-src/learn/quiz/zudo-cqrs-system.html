@@ -1,0 +1,870 @@
+<question id="cq-page-lies" type="choice">
+<q>Ada was charged ₦14,000 but "My orders" showed ₦12,500. What is the real cause?</q>
+<option>The page query used <code>sum</code> on integers and lost precision</option>
+<option correct>The page recomputed the total from the lines and did not know the delivery-fee rule that the write side applied</option>
+<option>The order was placed in a transaction that had not committed yet</option>
+<option>The read model was eventually consistent and had not caught up</option>
+<explain><p>Every read that re-derives a business decision is a second copy of the rules, and copies drift. A read model built from what the write side decided (the total in the event) cannot disagree with it.</p></explain>
+</question>
+
+<question id="cq-enforce-rule" type="choice">
+<q>A new rule says a customer may have at most 5 open orders. Where must it be enforced?</q>
+<option>In the projector that maintains <code>order_summaries</code></option>
+<option>In the <code>ListMyOrders</code> query, by counting rows</option>
+<option correct>In the <code>PlaceOrder</code> command handler, against the write model, inside its transaction</option>
+<option>In the API layer, by reading the read model before sending the command</option>
+<explain><p>The read model may be seconds behind, so any check against it can let a sixth order through. Rules are enforced where the truth is: the write model, in the transaction that makes the change.</p></explain>
+</question>
+
+<question id="cq-only-writer" type="choice">
+<q>Who writes to <code>order_summaries</code> in the lesson's design?</q>
+<option>The command handlers, right after they change <code>orders</code></option>
+<option correct>Only the projector, from recorded events</option>
+<option>The query handlers, when a row is missing</option>
+<option>The relay, when it publishes a row</option>
+<explain><p>One writer per read model keeps it consistent with the events and makes it rebuildable. If command handlers also wrote to it, a rebuild from events would not reproduce what they wrote.</p></explain>
+</question>
+
+<question id="cq-503-why" type="choice">
+<q>Right after a successful <code>POST /orders</code>, <code>GET /orders/ORD-1042?minVersion=1</code> answers 503 with <code>Retry-After: 1</code>. Why is that better than a 404?</q>
+<option>A 404 cannot carry a JSON body</option>
+<option>503 responses are cached by browsers, 404 responses are not</option>
+<option correct>The order exists; the read model has not caught up. 404 would make the app tell Ada her new order was not found, while 503 with Retry-After says "try again shortly"</option>
+<option>A 404 would roll back the command</option>
+<explain><p>Eventual consistency has to be visible in the API. The client passed the version it just received, the server could see it was behind, and it said so with a status that means "temporarily unavailable, retry".</p></explain>
+</question>
+
+<question id="cq-expected-version" type="choice">
+<q>What does <code>expectedVersion</code> on <code>CancelOrder</code> protect against?</q>
+<option>Two orders getting the same id</option>
+<option>Events being applied twice by the projector</option>
+<option correct>Acting on a stale page: a change made from an old view of the order is refused with a conflict instead of silently overwriting a newer change</option>
+<option>Customers cancelling each other's orders</option>
+<explain><p>This is optimistic concurrency. The <code>UPDATE … WHERE version = $expected</code> matches only if nothing changed since the client read the order. Ownership is a separate check (<code>customer_id</code>).</p></explain>
+</question>
+
+<question id="cq-404-not-403" type="choice">
+<q>Tunde tries to cancel Ada's order <code>ORD-1</code>. Why does the command answer <code>NotFoundError</code> rather than a "forbidden" error?</q>
+<option>Because the order really does not exist in the read model</option>
+<option correct>Because "forbidden" would confirm to Tunde that ORD-1 exists; "not found" tells an outsider nothing</option>
+<option>Because <code>@zudojs/errors</code> has no forbidden error</option>
+<option>Because the version did not match</option>
+<explain><p>Answering the same way for "does not exist" and "not yours" avoids leaking which ids exist. The query side does the same by filtering on the signed-in customer.</p></explain>
+</question>
+
+<question id="cq-idempotent-place" type="choice">
+<q>Why does the client choose the order id in <code>PlaceOrder</code>?</q>
+<option>So the database needs no primary key</option>
+<option correct>So a retried request with the same id can be recognised and answered with the first result instead of placing a second order</option>
+<option>So the projector can sort orders alphabetically</option>
+<option>Because <code>@zudojs/cqrs</code> requires every command to carry an id</option>
+<explain><p>A timeout does not tell the client whether the order was placed. With a client-generated id (a UUID in a real app), sending the same command again is safe: the handler finds the existing order and returns its result.</p></explain>
+</question>
+
+<question id="cq-for-update" type="choice">
+<q>Why does <code>PlaceOrder</code> read the product with <code>SELECT … FOR UPDATE</code> before decrementing the stock?</q>
+<option>Because PGlite cannot run <code>UPDATE</code> without it</option>
+<option correct>It locks the row, so a second checkout for the same product waits and then sees the new stock, instead of both seeing "1 left" and both selling it</option>
+<option>It makes the query read-only</option>
+<option>It publishes an event when the stock changes</option>
+<explain><p>Without the lock, two transactions can both read stock 1, both pass the check and both decrement. The <code>CHECK (stock &gt;= 0)</code> constraint is a last line of defence, but the lock makes the check itself correct.</p></explain>
+</question>
+
+<question id="cq-rollback-oil" type="choice">
+<q>Tunde's order reserved 1 bottle of oil, then failed on the rice. Afterwards the oil stock is unchanged. Why?</q>
+<option>The projector restored the oil when it saw the failure</option>
+<option>The command handler caught the error and added the oil back</option>
+<option correct>Both reservations ran in one transaction, and the thrown <code>ConflictError</code> made <code>manager.run</code> roll the whole transaction back</option>
+<option>The oil was never reserved, because rice is checked first</option>
+<explain><p><code>manager.run</code> commits when the callback returns and rolls back when it throws. Every change the command made, including the outbox row it never reached, disappears together.</p></explain>
+</question>
+
+<question id="cq-execute-claim" type="choice">
+<q>With plain <code>@zudojs/cqrs</code>, what does <code>await bus.execute&lt;PlaceOrder, { receiptUrl: string }&gt;(command)</code> do when the handler returns <code>{ orderId, version, totalKobo }</code>?</q>
+<option>It fails to compile, because the handler returns a different type</option>
+<option>It throws at runtime, because the result does not match</option>
+<option correct>It compiles, and at runtime the result is the handler's object, so <code>result.receiptUrl</code> is <code>undefined</code></option>
+<option>It converts the result to the requested type</option>
+<explain><p>The result type argument is not connected to the handler, so it is a claim. The typed facade in the lesson derives the result type from one map for both registration and execution, which turns this mistake into a compile error.</p></explain>
+</question>
+
+<question id="cq-facade-cast" type="choice">
+<q>The typed facade contains one cast, <code>bus.execute(request, context) as Promise&lt;never&gt;</code>. Why is that acceptable?</q>
+<option>Casts are free at runtime, so they are always acceptable</option>
+<option correct>It is the only claim in the codebase, and it is guaranteed by construction: <code>register</code> only accepts handlers whose return type matches the same map entry</option>
+<option>Because <code>never</code> disables type checking for the caller</option>
+<option>Because the underlying bus validates results at runtime</option>
+<explain><p>You cannot avoid the claim entirely, because the bus stores handlers in an untyped table. You can make it once, in a place whose other half (registration) enforces the same types.</p></explain>
+</question>
+
+<question id="cq-decorators" type="choice">
+<q>What does putting <code>@CommandHandlerFor("CancelOrder")</code> on a class do?</q>
+<option>It registers a new instance of the class on every command bus</option>
+<option>It registers the class on the default command bus</option>
+<option correct>It only attaches metadata to the class; startup code must read it and call <code>bus.register</code></option>
+<option>It makes the class's <code>execute</code> method run in a transaction</option>
+<explain><p>The decorator marks; it does not wire. <code>bus.has("CancelOrder")</code> stays <code>false</code> until something reads <code>getCommandHandlerMetadata</code> and registers an instance. Forgetting that step only shows up at runtime.</p></explain>
+</question>
+
+<question id="cq-gap" type="choice">
+<q>The read model of ORD-7 is at version 1, and the projector receives the event with version 3. What does it do, and why?</q>
+<option>Applies it, because newer is better</option>
+<option>Skips it as a duplicate</option>
+<option correct>Throws, so the queue retries it later: version 2 is missing, and applying 3 first could produce a state that never existed</option>
+<option>Rebuilds the whole read model</option>
+<explain><p>Only the next version is applied. A gap means an earlier event is still on its way (for example a retry), and the queue's retry gives it time to arrive.</p></explain>
+</question>
+
+<question id="cq-no-processed-table" type="choice">
+<q>The event-driven lesson used a <code>processed_events</code> table for idempotency. Why does this projector not need one?</q>
+<option>Because the queue never delivers a job twice</option>
+<option correct>Because the read row stores the last applied version, and every event carries its version, so "already applied" is simply <code>event.version &lt;= row.version</code></option>
+<option>Because query handlers remove duplicates when they read</option>
+<option>Because PostgreSQL ignores duplicate inserts automatically</option>
+<explain><p>When events of one aggregate are numbered, the version does the job of the processed-events table and also detects out-of-order delivery. Without versions, you need the table.</p></explain>
+</question>
+
+<question id="cq-readonly" type="choice">
+<q>Why do the query handlers run in <code>readOnly</code> transactions?</q>
+<option>Read-only transactions skip the adapter's lock</option>
+<option correct>PostgreSQL then refuses any write, so a query handler cannot change data even by mistake</option>
+<option>Because the read model table is marked read-only</option>
+<option>So that queries see uncommitted changes from commands</option>
+<explain><p>"A query never changes anything" becomes a rule the database enforces, not a convention. The lesson's example tried a <code>DELETE</code> in a read-only transaction and got "cannot execute DELETE in a read-only transaction".</p></explain>
+</question>
+
+<question id="cq-als-boundary" type="choice">
+<q>Why does the command store the <code>traceparent</code> in the outbox row instead of relying on <code>AsyncLocalStorage</code>?</q>
+<option>AsyncLocalStorage only works in the browser</option>
+<option correct>AsyncLocalStorage follows one chain of calls; the relay runs later, in its own chain, so the trace has to travel inside the data it reads</option>
+<option>The outbox needs a unique column</option>
+<option>To make the event id unique</option>
+<explain><p>Every storage boundary (a table, a queue, a broker message) breaks the chain. Context crosses it only if you write it down on one side and restore it on the other.</p></explain>
+</question>
+
+<question id="cq-carrier" type="choice">
+<q>What does a <code>QueueContextCarrier</code> passed to <code>createInMemoryQueue({ contextCarriers })</code> do?</q>
+<option>It copies the whole AsyncLocalStorage store into the job</option>
+<option correct>Its <code>capture()</code> runs at <code>add()</code> and stores a small value with the job; its <code>restore()</code> wraps the processor so the job runs inside that context</option>
+<option>It retries jobs whose context is missing</option>
+<option>It encrypts the job's payload</option>
+<explain><p>The lesson's carrier captured the current <code>traceparent</code> and restored it by starting a consumer span with that parent, so the projection joined the request's trace.</p></explain>
+</question>
+
+<question id="cq-carrier-forge" type="choice">
+<q>The queue discards any value a caller puts in job metadata under its own key <code>"zudo:context"</code>. Why?</q>
+<option>To save memory</option>
+<option correct>So code that adds jobs cannot forge the tenant, correlation id or trace a job runs under; only the queue's carriers write that key</option>
+<option>Because metadata must be JSON</option>
+<option>Because the key is reserved for dead letters</option>
+<explain><p>Context that decides behaviour (a tenant, for example) must come from the trusted side. Letting any enqueuer set it would let one tenant's request run work as another.</p></explain>
+</question>
+
+<question id="cq-rebuild" type="choice">
+<q>What makes it possible to delete <code>order_summaries</code> and rebuild it?</q>
+<option>PGlite keeps a backup of every table</option>
+<option correct>Every change is also recorded as an event with its version in the outbox, and the projector is the read model's only writer</option>
+<option>The query handlers cache every row</option>
+<option>The write model has the same columns as the read model</option>
+<explain><p>Replaying the recorded events through the projector reproduces the read model. That only holds if nothing else writes to it and the events are kept.</p></explain>
+</question>
+
+<question id="cq-event-content" type="choice">
+<q>While backfilling <code>customer_stats</code>, the projector had to remember each order's total from <code>order.placed</code> to handle <code>order.cancelled</code>. What does that teach?</q>
+<option>Cancellation events should never be recorded</option>
+<option>Read models must be built from the write tables instead</option>
+<option correct>Events must carry enough information for the read models you will build later, or projectors have to keep extra state</option>
+<option>Totals should be recomputed in every projector</option>
+<option>Events should always contain the whole database row</option>
+<explain><p>Design events with their consumers in mind: the facts that happened, with enough context to use them. Not everything, but not so little that every projector needs its own memory.</p></explain>
+</question>
+
+<question id="cq-when-not" type="choice">
+<q>Where is full CQRS (separate read models fed by events) most likely <strong>not</strong> worth it?</q>
+<option>A busy order history list read far more often than orders are placed</option>
+<option>A support dashboard that combines data from several parts of the system</option>
+<option correct>An admin form that edits a shop's opening hours</option>
+<option>A search page served from a search index</option>
+<explain><p>A small form over one table gains nothing from a projector, a queue and eventual consistency. Use a transaction and a query over the same table, and keep CQRS for reads that really differ from the writes.</p></explain>
+</question>
+
+<question id="cq-out-projector" type="output">
+<q>A projector applies an event only when its version is the next one. What does this print?</q>
+<code file="versions.js">
+let applied = 0;
+const outcomes = [];
+
+function project(event) {
+  if (event.version <= applied) return "duplicate";
+  if (event.version !== applied + 1) throw new Error(`gap at v${event.version}`);
+  applied = event.version;
+  return "applied";
+}
+
+for (const version of [2, 1, 1, 3, 2, 3]) {
+  try {
+    outcomes.push(`${version}:${project({ version })}`);
+  } catch (error) {
+    outcomes.push(`${version}:${error.message}`);
+  }
+}
+console.log(outcomes.join(" "));
+</code>
+<option correct>2:gap at v2 1:applied 1:duplicate 3:gap at v3 2:applied 3:applied</option>
+<option>2:applied 1:duplicate 1:duplicate 3:applied 2:duplicate 3:duplicate</option>
+<option>2:gap at v2 1:applied 1:applied 3:gap at v3 2:applied 3:applied</option>
+<option>2:gap at v2 1:applied 1:duplicate 3:applied 2:duplicate 3:duplicate</option>
+<explain><p>Version 2 is refused before 1 arrives, the repeated 1 is a duplicate, 3 is refused while 2 is missing, and then 2 and 3 apply in order. The final state is the same as if every event had arrived once, in order.</p></explain>
+</question>
+
+<question id="cq-out-claim" type="output">
+<q>What does this print?</q>
+<code file="claim.ts">
+import { createCommandBus } from "@zudojs/cqrs";
+import type { CommandOf } from "@zudojs/cqrs";
+
+type PlaceOrder = CommandOf<"PlaceOrder", { orderId: string }>;
+
+const bus = createCommandBus();
+bus.register<PlaceOrder, { orderId: string; version: number }>("PlaceOrder", async (command) => ({ orderId: command.orderId, version: 1 }));
+
+const result = await bus.execute<PlaceOrder, { total: number }>({ type: "PlaceOrder", orderId: "ORD-7" });
+console.log(result.total, Object.keys(result).join(","));
+</code>
+<option correct>undefined orderId,version</option>
+<option>0 orderId,version</option>
+<option>undefined total</option>
+<option>TypeError: result.total is not defined</option>
+<explain><p>The second type argument of <code>execute</code> is a claim. At runtime the caller gets whatever the handler returned, which has no <code>total</code>.</p></explain>
+</question>
+
+<question id="cq-out-optimistic" type="output">
+<q>Two browser tabs cancel the same order, both having loaded version 1. What does this print?</q>
+<code file="tabs.js">
+const orders = new Map([["ORD-1", { status: "placed", version: 1 }]]);
+
+function cancel(orderId, expectedVersion) {
+  const order = orders.get(orderId);
+  if (!order) return "404";
+  if (order.version !== expectedVersion) return `409 now at v${order.version}`;
+  if (order.status !== "placed") return `409 already ${order.status}`;
+  orders.set(orderId, { status: "cancelled", version: order.version + 1 });
+  return `200 v${order.version + 1}`;
+}
+
+console.log(cancel("ORD-1", 1), "|", cancel("ORD-1", 1), "|", cancel("ORD-1", 2), "|", cancel("ORD-9", 1));
+</code>
+<option correct>200 v2 | 409 now at v2 | 409 already cancelled | 404</option>
+<option>200 v2 | 200 v3 | 409 already cancelled | 404</option>
+<option>200 v2 | 409 already cancelled | 409 now at v2 | 404</option>
+<option>200 v2 | 409 now at v2 | 200 v3 | 404</option>
+<explain><p>The second tab's version is stale, so it is refused with the current version. A request with the current version still fails, because a cancelled order cannot be cancelled again. Checking the version first tells a stale client to reload.</p></explain>
+</question>
+
+<question id="cq-out-child-context" type="output">
+<q>A command causes another command. What does this print?</q>
+<code file="child.ts">
+import { createChildExecutionContext, createExecutionContext, withUser } from "@zudojs/cqrs";
+
+const request = withUser(createExecutionContext({ source: "http", correlationId: "req-7f3a" }), "cus_ada");
+const child = createChildExecutionContext(request);
+
+console.log(child.userId, child.correlationId, child.source);
+console.log(child.causationId === request.requestId, child.requestId === request.requestId, Object.isFrozen(child));
+</code>
+<option correct>cus_ada req-7f3a http
+true false true</option>
+<option>undefined req-7f3a http
+true false true</option>
+<option>cus_ada undefined http
+false false true</option>
+<option>cus_ada req-7f3a http
+true true false</option>
+<explain><p>A child context keeps who is asking and the correlation id, gets its own request id, and records the parent's request id as its <code>causationId</code>. Contexts are frozen, like commands and events.</p></explain>
+</question>
+
+<question id="cq-out-idempotent-place" type="output">
+<q>The client retries <code>PlaceOrder</code> after a timeout. What does this print?</q>
+<code file="retry.js">
+const orders = new Map();
+let stockOfRice = 3;
+
+function placeOrder(customerId, orderId, qty) {
+  const existing = orders.get(orderId);
+  if (existing) {
+    if (existing.customerId !== customerId) throw new Error(`order id ${orderId} is taken`);
+    return existing;
+  }
+  if (stockOfRice < qty) throw new Error(`only ${stockOfRice} left`);
+  stockOfRice -= qty;
+  const order = { orderId, customerId, qty };
+  orders.set(orderId, order);
+  return order;
+}
+
+const first = placeOrder("cus_ada", "ORD-1", 2);
+const retry = placeOrder("cus_ada", "ORD-1", 2);
+let other;
+try {
+  placeOrder("cus_tunde", "ORD-1", 1);
+} catch (error) {
+  other = error.message;
+}
+console.log(first === retry, stockOfRice, orders.size, other);
+</code>
+<option correct>true 1 1 order id ORD-1 is taken</option>
+<option>false -1 2 undefined</option>
+<option>true 1 1 undefined</option>
+<option>false 1 1 order id ORD-1 is taken</option>
+<explain><p>The retry finds the order with the same id and returns it, so stock is reserved once. Another customer reusing the id is a conflict, not a silent overwrite.</p></explain>
+</question>
+
+<question id="cq-out-min-version" type="output">
+<q>What does this print?</q>
+<code file="min-version.js">
+const readModel = new Map([["ORD-1", { status: "placed", version: 1 }]]);
+
+function getOrder(orderId, minVersion = 0) {
+  const row = readModel.get(orderId);
+  if ((row?.version ?? 0) < minVersion) return "503 retry-after 1";
+  if (!row) return "404";
+  return `200 ${row.status} v${row.version}`;
+}
+
+console.log([getOrder("ORD-1"), getOrder("ORD-1", 2), getOrder("ORD-2", 1), getOrder("ORD-2")].join(" | "));
+</code>
+<option correct>200 placed v1 | 503 retry-after 1 | 503 retry-after 1 | 404</option>
+<option>200 placed v1 | 200 placed v1 | 404 | 404</option>
+<option>200 placed v1 | 503 retry-after 1 | 404 | 404</option>
+<option>200 placed v1 | 404 | 503 retry-after 1 | 404</option>
+<explain><p>The version check comes first: a client that says it produced version 1 of ORD-2 knows the order exists, so a missing row means "not projected yet", not "not found". Without <code>minVersion</code>, a missing row is a plain 404.</p></explain>
+</question>
+
+<question id="cq-out-fold" type="output">
+<q>A read model is rebuilt by folding the recorded events in order. What does this print?</q>
+<code file="fold.js">
+const events = [
+  { orderId: "ORD-1", version: 1, type: "order.placed", totalKobo: 2_500_000 },
+  { orderId: "ORD-2", version: 1, type: "order.placed", totalKobo: 300_000 },
+  { orderId: "ORD-2", version: 2, type: "order.cancelled" },
+  { orderId: "ORD-3", version: 1, type: "order.placed", totalKobo: 7_500_000 },
+];
+
+const summaries = events.reduce((rows, e) => {
+  if (e.type === "order.placed") rows[e.orderId] = { status: "placed", totalKobo: e.totalKobo, version: e.version };
+  else rows[e.orderId] = { ...rows[e.orderId], status: "cancelled", version: e.version };
+  return rows;
+}, {});
+
+const open = Object.values(summaries).filter((s) => s.status === "placed");
+console.log(open.length, open.reduce((sum, s) => sum + s.totalKobo, 0), summaries["ORD-2"].version);
+</code>
+<option correct>2 10000000 2</option>
+<option>3 10300000 2</option>
+<option>2 10000000 1</option>
+<option>3 10300000 1</option>
+<explain><p>Replaying the events gives the current state: ORD-2 ends cancelled at version 2, and the two open orders total ₦100,000. The cancelled order keeps its total in its row; it is just not counted as open.</p></explain>
+</question>
+
+<question id="cq-out-timing" type="output">
+<q>What does this print?</q>
+<code file="timing.ts">
+import { createCommandBus, timingMiddleware } from "@zudojs/cqrs";
+
+const lines: string[] = [];
+const timing = timingMiddleware({
+  onTiming: ({ request, succeeded, context }) => void lines.push(`${request.type} ${succeeded ? "ok" : "failed"} ${context?.correlationId}`),
+});
+const bus = createCommandBus({ middleware: [timing] });
+bus.register("PlaceOrder", async () => ({ orderId: "ORD-1" }));
+bus.register("CancelOrder", async () => {
+  throw new Error("already cancelled");
+});
+
+await bus.execute({ type: "PlaceOrder" }, { correlationId: "4bf92f35" });
+await bus.execute({ type: "CancelOrder" }, { correlationId: "4bf92f35" }).catch(() => lines.push("caller saw the error"));
+console.log(lines.join("\n"));
+console.log("timed:", timing.count);
+</code>
+<option correct>PlaceOrder ok 4bf92f35
+CancelOrder failed 4bf92f35
+caller saw the error
+timed: 2</option>
+<option>PlaceOrder ok 4bf92f35
+caller saw the error
+timed: 1</option>
+<option>PlaceOrder ok undefined
+CancelOrder failed undefined
+caller saw the error
+timed: 2</option>
+<option>PlaceOrder ok 4bf92f35
+caller saw the error
+CancelOrder failed 4bf92f35
+timed: 2</option>
+<explain><p>The timing middleware sees every request, failed ones included, before the error reaches the caller. It also receives the execution context, which is how the lesson's log lines carry the correlation id.</p></explain>
+</question>
+
+<question id="cq-out-lock" type="output">
+<q>Two cancels for the same order run at the same time, with and without <code>lockMiddleware</code>. What does this print?</q>
+<code file="lock.ts">
+import { createCommandBus, lockMiddleware } from "@zudojs/cqrs";
+import type { CqrsLock } from "@zudojs/cqrs";
+
+const tails = new Map<string, Promise<void>>();
+const lock: CqrsLock = {
+  async acquire(key) {
+    const previous = tails.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    tails.set(key, previous.then(() => new Promise<void>((resolve) => (release = resolve))));
+    await previous;
+    return () => release();
+  },
+};
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+for (const locked of [false, true]) {
+  const middleware = locked ? [lockMiddleware(lock, { key: (r) => `order:${(r as { orderId?: string }).orderId}` })] : [];
+  const bus = createCommandBus({ middleware });
+  const log: string[] = [];
+  bus.register("CancelOrder", async (c: { type: "CancelOrder"; orderId: string; tab: string }) => {
+    log.push(`${c.tab} reads`);
+    await wait(10);
+    log.push(`${c.tab} writes`);
+  });
+  await Promise.all([
+    bus.execute({ type: "CancelOrder", orderId: "ORD-1", tab: "A" }),
+    bus.execute({ type: "CancelOrder", orderId: "ORD-1", tab: "B" }),
+  ]);
+  console.log(locked ? "locked:  " : "unlocked:", log.join(", "));
+}
+</code>
+<option correct>unlocked: A reads, B reads, A writes, B writes
+locked:   A reads, A writes, B reads, B writes</option>
+<option>unlocked: A reads, A writes, B reads, B writes
+locked:   A reads, A writes, B reads, B writes</option>
+<option>unlocked: A reads, B reads, A writes, B writes
+locked:   A reads, B reads, A writes, B writes</option>
+<option>unlocked: A reads, B reads, B writes, A writes
+locked:   B reads, B writes, A reads, A writes</option>
+<explain><p>Without a lock, both handlers read before either writes: the classic lost-update shape. <code>lockMiddleware</code> takes a lock per key (here per order) before the handler runs, so the second command starts only after the first finished. Optimistic concurrency detects this race; a lock prevents it, at the cost of waiting.</p></explain>
+</question>
+
+<question id="cq-out-lag" type="output">
+<q>What does this print?</q>
+<code file="lag.js">
+const outbox = [
+  { orderId: "ORD-1", version: 1 },
+  { orderId: "ORD-1", version: 2 },
+  { orderId: "ORD-2", version: 1 },
+  { orderId: "ORD-3", version: 1 },
+];
+const summaries = new Map([["ORD-1", 1], ["ORD-3", 1]]);
+
+const lag = outbox.filter((e) => (summaries.get(e.orderId) ?? 0) < e.version).length;
+console.log(lag);
+</code>
+<option correct>2</option>
+<option>1</option>
+<option>3</option>
+<option>0</option>
+<explain><p>ORD-1 v2 and ORD-2 v1 are not applied yet. Projection lag is the number to chart and alert on: a read model far behind looks like a bug to customers.</p></explain>
+</question>
+
+<question id="cq-out-duplicate-handler" type="output">
+<q>Two modules register a handler for the same command. What does this print?</q>
+<code file="duplicate.ts">
+import { createCommandBus, DuplicateHandlerError } from "@zudojs/cqrs";
+
+const bus = createCommandBus();
+bus.register("PlaceOrder", async () => "orders module");
+try {
+  bus.register("PlaceOrder", async () => "legacy checkout");
+} catch (error) {
+  console.log(error instanceof DuplicateHandlerError, (error as Error).message);
+}
+console.log(await bus.execute<{ type: "PlaceOrder" }, string>({ type: "PlaceOrder" }));
+</code>
+<option correct>true A command handler is already registered for "PlaceOrder".
+orders module</option>
+<option>legacy checkout</option>
+<option>true A command handler is already registered for "PlaceOrder".
+legacy checkout</option>
+<option>orders module</option>
+<explain><p>A command has exactly one handler, and the bus enforces it when the second registers, usually at startup. The first handler stays in place.</p></explain>
+</question>
+
+<question id="cq-code-project" type="code" file="project.js">
+<q><p>Write <code>project(row, event)</code> for an order-summary read model. <code>row</code> is the current summary or <code>undefined</code>. Return <code>{ row, outcome }</code>: if <code>event.version</code> is not above the row's version (0 when there is no row), return the row unchanged with outcome <code>"duplicate"</code>; if it is not exactly one more, throw an <code>Error</code> with the message <code>gap</code>; otherwise apply it (<code>order.placed</code> creates <code>{ status: "placed", totalKobo, version }</code>, <code>order.cancelled</code> sets status <code>"cancelled"</code> and the new version) with outcome <code>"applied"</code>.</p></q>
+<starter>
+function project(row, event) {
+  // your code here
+}
+
+let row;
+for (const event of [
+  { type: "order.placed", version: 1, totalKobo: 2500000 },
+  { type: "order.placed", version: 1, totalKobo: 2500000 },
+  { type: "order.cancelled", version: 3 },
+  { type: "order.cancelled", version: 2 },
+]) {
+  try {
+    const result = project(row, event);
+    row = result.row;
+    console.log(result.outcome, JSON.stringify(row));
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</starter>
+<solution>
+function project(row, event) {
+  const current = row?.version ?? 0;
+  if (event.version <= current) return { row, outcome: "duplicate" };
+  if (event.version !== current + 1) throw new Error("gap");
+  if (event.type === "order.placed") {
+    return { row: { status: "placed", totalKobo: event.totalKobo, version: event.version }, outcome: "applied" };
+  }
+  return { row: { ...row, status: "cancelled", version: event.version }, outcome: "applied" };
+}
+
+let row;
+for (const event of [
+  { type: "order.placed", version: 1, totalKobo: 2500000 },
+  { type: "order.placed", version: 1, totalKobo: 2500000 },
+  { type: "order.cancelled", version: 3 },
+  { type: "order.cancelled", version: 2 },
+]) {
+  try {
+    const result = project(row, event);
+    row = result.row;
+    console.log(result.outcome, JSON.stringify(row));
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</solution>
+<expected>
+applied {"status":"placed","totalKobo":2500000,"version":1}
+duplicate {"status":"placed","totalKobo":2500000,"version":1}
+gap
+applied {"status":"cancelled","totalKobo":2500000,"version":2}
+</expected>
+<explain><p>Compare with the current version first; that single rule handles duplicates and ordering. The cancelled row keeps the total it had, because <code>order.cancelled</code> does not carry one.</p></explain>
+</question>
+
+<question id="cq-code-cancel" type="code" file="cancel.js">
+<q><p>Finish <code>cancelOrder(orders, customerId, orderId, expectedVersion)</code>. Throw <code>Error("not found")</code> when the order is missing <strong>or</strong> belongs to another customer; throw <code>Error("stale: now vN")</code> when the version differs; throw <code>Error("already STATUS")</code> when the status is not <code>"placed"</code>; otherwise set status <code>"cancelled"</code>, increase the version and return the new version.</p></q>
+<starter>
+function cancelOrder(orders, customerId, orderId, expectedVersion) {
+  // your code here
+}
+
+const orders = new Map([
+  ["ORD-1", { customerId: "cus_ada", status: "placed", version: 1 }],
+  ["ORD-2", { customerId: "cus_ada", status: "shipped", version: 3 }],
+]);
+const attempts = [
+  ["cus_tunde", "ORD-1", 1],
+  ["cus_ada", "ORD-1", 1],
+  ["cus_ada", "ORD-1", 1],
+  ["cus_ada", "ORD-2", 3],
+  ["cus_ada", "ORD-9", 1],
+];
+for (const [customer, id, version] of attempts) {
+  try {
+    console.log(id, "->", cancelOrder(orders, customer, id, version));
+  } catch (error) {
+    console.log(id, "->", error.message);
+  }
+}
+</starter>
+<solution>
+function cancelOrder(orders, customerId, orderId, expectedVersion) {
+  const order = orders.get(orderId);
+  if (!order || order.customerId !== customerId) throw new Error("not found");
+  if (order.version !== expectedVersion) throw new Error(`stale: now v${order.version}`);
+  if (order.status !== "placed") throw new Error(`already ${order.status}`);
+  const version = order.version + 1;
+  orders.set(orderId, { ...order, status: "cancelled", version });
+  return version;
+}
+
+const orders = new Map([
+  ["ORD-1", { customerId: "cus_ada", status: "placed", version: 1 }],
+  ["ORD-2", { customerId: "cus_ada", status: "shipped", version: 3 }],
+]);
+const attempts = [
+  ["cus_tunde", "ORD-1", 1],
+  ["cus_ada", "ORD-1", 1],
+  ["cus_ada", "ORD-1", 1],
+  ["cus_ada", "ORD-2", 3],
+  ["cus_ada", "ORD-9", 1],
+];
+for (const [customer, id, version] of attempts) {
+  try {
+    console.log(id, "->", cancelOrder(orders, customer, id, version));
+  } catch (error) {
+    console.log(id, "->", error.message);
+  }
+}
+</solution>
+<expected>
+ORD-1 -> not found
+ORD-1 -> 2
+ORD-1 -> stale: now v2
+ORD-2 -> already shipped
+ORD-9 -> not found
+</expected>
+<explain><p>Ownership first (and answered like "missing", so ids do not leak), then the version, then the business rule. The order of checks decides which message the client gets, so it is part of the design.</p></explain>
+</question>
+
+<question id="cq-code-backfill" type="code" file="backfill.js">
+<q><p>Write <code>customerStats(events)</code> that backfills a new read model from recorded events, in order. <code>order.placed</code> has <code>orderId</code>, <code>customerId</code> and <code>totalKobo</code>; <code>order.cancelled</code> has only <code>orderId</code>. Return an object mapping each customer to <code>{ orders, spentKobo }</code>, where a cancelled order no longer counts.</p></q>
+<starter>
+function customerStats(events) {
+  // your code here
+}
+
+console.log(customerStats([
+  { type: "order.placed", orderId: "ORD-1", customerId: "cus_ada", totalKobo: 2500000 },
+  { type: "order.placed", orderId: "ORD-2", customerId: "cus_ada", totalKobo: 300000 },
+  { type: "order.placed", orderId: "ORD-3", customerId: "cus_bola", totalKobo: 7500000 },
+  { type: "order.cancelled", orderId: "ORD-2" },
+]));
+</starter>
+<solution>
+function customerStats(events) {
+  const stats = {};
+  const placed = new Map();
+  for (const event of events) {
+    if (event.type === "order.placed") {
+      placed.set(event.orderId, event);
+      const s = stats[event.customerId] ?? { orders: 0, spentKobo: 0 };
+      stats[event.customerId] = { orders: s.orders + 1, spentKobo: s.spentKobo + event.totalKobo };
+    } else if (event.type === "order.cancelled") {
+      const order = placed.get(event.orderId);
+      if (!order) continue;
+      const s = stats[order.customerId];
+      stats[order.customerId] = { orders: s.orders - 1, spentKobo: s.spentKobo - order.totalKobo };
+    }
+  }
+  return stats;
+}
+
+console.log(customerStats([
+  { type: "order.placed", orderId: "ORD-1", customerId: "cus_ada", totalKobo: 2500000 },
+  { type: "order.placed", orderId: "ORD-2", customerId: "cus_ada", totalKobo: 300000 },
+  { type: "order.placed", orderId: "ORD-3", customerId: "cus_bola", totalKobo: 7500000 },
+  { type: "order.cancelled", orderId: "ORD-2" },
+]));
+</solution>
+<expected>
+{
+  cus_ada: { orders: 1, spentKobo: 2500000 },
+  cus_bola: { orders: 1, spentKobo: 7500000 }
+}
+</expected>
+<explain><p>The cancellation event does not say whose order it was or what it cost, so the projector keeps the placed orders it has seen. That extra memory is the price of a thin event.</p></explain>
+</question>
+
+<question id="cq-code-middleware" type="code" file="correlation.ts">
+<q><p>Write a <code>@zudojs/cqrs</code> middleware <code>audit</code> that pushes <code>"TYPE by USER corr=CORRELATION"</code> into <code>lines</code> before calling the handler, using <code>"anonymous"</code> when the context has no user. It must pass the request and context on and return the handler's result.</p></q>
+<starter>
+import { createCommandBus } from "@zudojs/cqrs";
+import type { CqrsMiddleware } from "@zudojs/cqrs";
+
+const lines: string[] = [];
+
+const audit: CqrsMiddleware = async (request, context, next) => {
+  // your code here
+  return undefined;
+};
+
+const bus = createCommandBus({ middleware: [audit] });
+bus.register("PlaceOrder", async () => ({ orderId: "ORD-1" }));
+
+const result = await bus.execute<{ type: "PlaceOrder" }, { orderId: string }>(
+  { type: "PlaceOrder" }, { userId: "cus_ada", correlationId: "4bf92f35" });
+await bus.execute({ type: "PlaceOrder" }, { correlationId: "9c0e11aa" });
+console.log(lines.join("\n"));
+console.log(result);
+</starter>
+<solution>
+import { createCommandBus } from "@zudojs/cqrs";
+import type { CqrsMiddleware } from "@zudojs/cqrs";
+
+const lines: string[] = [];
+
+const audit: CqrsMiddleware = async (request, context, next) => {
+  lines.push(`${request.type} by ${context?.userId ?? "anonymous"} corr=${context?.correlationId}`);
+  return next(request, context);
+};
+
+const bus = createCommandBus({ middleware: [audit] });
+bus.register("PlaceOrder", async () => ({ orderId: "ORD-1" }));
+
+const result = await bus.execute<{ type: "PlaceOrder" }, { orderId: string }>(
+  { type: "PlaceOrder" }, { userId: "cus_ada", correlationId: "4bf92f35" });
+await bus.execute({ type: "PlaceOrder" }, { correlationId: "9c0e11aa" });
+console.log(lines.join("\n"));
+console.log(result);
+</solution>
+<expected>
+PlaceOrder by cus_ada corr=4bf92f35
+PlaceOrder by anonymous corr=9c0e11aa
+{ orderId: 'ORD-1' }
+</expected>
+<explain><p>Always <code>return next(request, context)</code>: forgetting the <code>return</code> makes every command return <code>undefined</code>, and not calling <code>next</code> skips the handler. The context is how the correlation id reaches code that has no access to the HTTP request.</p></explain>
+</question>
+
+<question id="cq-code-place" type="code" file="place.js">
+<q><p>Finish <code>placeOrder(state, customerId, orderId, lines)</code> over an in-memory write model. It is idempotent by <code>orderId</code> (same customer: return the stored result; other customer: throw <code>Error("taken")</code>). It checks every line first and throws <code>Error("only N of SKU left")</code> without changing any stock if one fails. Otherwise it reserves the stock, stores and returns <code>{ orderId, totalKobo }</code>, and pushes an event <code>{ type: "order.placed", orderId, version: 1 }</code> to <code>state.outbox</code>.</p></q>
+<starter>
+function placeOrder(state, customerId, orderId, lines) {
+  // your code here
+}
+
+const state = {
+  products: new Map([["RICE", { priceKobo: 7500000, stock: 3 }], ["OIL", { priceKobo: 1250000, stock: 10 }]]),
+  orders: new Map(),
+  outbox: [],
+};
+const attempt = (...args) => {
+  try {
+    return JSON.stringify(placeOrder(state, ...args));
+  } catch (error) {
+    return error.message;
+  }
+};
+console.log(attempt("cus_ada", "ORD-1", [{ sku: "RICE", qty: 2 }, { sku: "OIL", qty: 1 }]));
+console.log(attempt("cus_ada", "ORD-1", [{ sku: "RICE", qty: 2 }, { sku: "OIL", qty: 1 }]));
+console.log(attempt("cus_tunde", "ORD-2", [{ sku: "OIL", qty: 1 }, { sku: "RICE", qty: 2 }]));
+console.log(attempt("cus_tunde", "ORD-1", [{ sku: "OIL", qty: 1 }]));
+console.log(state.products.get("RICE").stock, state.products.get("OIL").stock, state.outbox.length);
+</starter>
+<solution>
+function placeOrder(state, customerId, orderId, lines) {
+  const existing = state.orders.get(orderId);
+  if (existing) {
+    if (existing.customerId !== customerId) throw new Error("taken");
+    return existing.result;
+  }
+  for (const line of lines) {
+    const product = state.products.get(line.sku);
+    if (product.stock < line.qty) throw new Error(`only ${product.stock} of ${line.sku} left`);
+  }
+  let totalKobo = 0;
+  for (const line of lines) {
+    const product = state.products.get(line.sku);
+    product.stock -= line.qty;
+    totalKobo += product.priceKobo * line.qty;
+  }
+  const result = { orderId, totalKobo };
+  state.orders.set(orderId, { customerId, result });
+  state.outbox.push({ type: "order.placed", orderId, version: 1 });
+  return result;
+}
+
+const state = {
+  products: new Map([["RICE", { priceKobo: 7500000, stock: 3 }], ["OIL", { priceKobo: 1250000, stock: 10 }]]),
+  orders: new Map(),
+  outbox: [],
+};
+const attempt = (...args) => {
+  try {
+    return JSON.stringify(placeOrder(state, ...args));
+  } catch (error) {
+    return error.message;
+  }
+};
+console.log(attempt("cus_ada", "ORD-1", [{ sku: "RICE", qty: 2 }, { sku: "OIL", qty: 1 }]));
+console.log(attempt("cus_ada", "ORD-1", [{ sku: "RICE", qty: 2 }, { sku: "OIL", qty: 1 }]));
+console.log(attempt("cus_tunde", "ORD-2", [{ sku: "OIL", qty: 1 }, { sku: "RICE", qty: 2 }]));
+console.log(attempt("cus_tunde", "ORD-1", [{ sku: "OIL", qty: 1 }]));
+console.log(state.products.get("RICE").stock, state.products.get("OIL").stock, state.outbox.length);
+</solution>
+<expected>
+{"orderId":"ORD-1","totalKobo":16250000}
+{"orderId":"ORD-1","totalKobo":16250000}
+only 1 of RICE left
+taken
+1 9 1
+</expected>
+<explain><p>Checking every line before changing anything is what a transaction gives you for free in the database: no half-reserved order. The retry returns the stored result and records no second event.</p></explain>
+</question>
+
+<question id="cq-code-status" type="code" file="status.js">
+<q><p>Write <code>toStatus(error)</code> for the API layer: <code>ValidationError</code> → 400, <code>AuthenticationError</code> → 401, <code>NotFoundError</code> → 404, <code>ConflictError</code> → 409, <code>ServiceUnavailableError</code> → 503, and anything else → 500. Decide by <code>error.name</code>.</p></q>
+<starter>
+function toStatus(error) {
+  // your code here
+}
+
+const names = ["NotFoundError", "ConflictError", "ServiceUnavailableError", "TypeError", "ValidationError", "AuthenticationError"];
+console.log(names.map((name) => toStatus({ name })).join(" "));
+</starter>
+<solution>
+const STATUS = {
+  ValidationError: 400,
+  AuthenticationError: 401,
+  NotFoundError: 404,
+  ConflictError: 409,
+  ServiceUnavailableError: 503,
+};
+
+function toStatus(error) {
+  return Object.hasOwn(STATUS, error.name) ? STATUS[error.name] : 500;
+}
+
+const names = ["NotFoundError", "ConflictError", "ServiceUnavailableError", "TypeError", "ValidationError", "AuthenticationError"];
+console.log(names.map((name) => toStatus({ name })).join(" "));
+</solution>
+<expected>404 409 503 500 400 401</expected>
+<explain><p>Every error a client can cause maps to a precise 4xx, so the client knows what to do next; anything unexpected is a 500. The <code>@zudojs/errors</code> classes carry these statuses as <code>statusCode</code> already, which is what the router uses; this table makes the decision explicit.</p></explain>
+</question>
+
+<question id="cq-code-poll" type="code" file="poll.js">
+<q><p>Write the client side of read-your-writes: <code>async function readAfterWrite(get, minVersion, maxTries)</code> calls <code>get(minVersion)</code>, which returns <code>{ status, body }</code>. While the status is 503 and tries remain, it waits 10 ms and tries again. It returns <code>{ tries, status }</code> of the last response.</p></q>
+<starter>
+async function readAfterWrite(get, minVersion, maxTries) {
+  // your code here
+}
+
+let calls = 0;
+const get = async (minVersion) => {
+  calls++;
+  const projectedVersion = calls >= 4 ? 1 : 0;
+  return projectedVersion >= minVersion ? { status: 200, body: { version: projectedVersion } } : { status: 503, body: null };
+};
+
+console.log(await readAfterWrite(get, 1, 10));
+console.log(await readAfterWrite(get, 2, 3));
+</starter>
+<solution>
+async function readAfterWrite(get, minVersion, maxTries) {
+  let tries = 0;
+  let response;
+  do {
+    if (tries > 0) await new Promise((resolve) => setTimeout(resolve, 10));
+    response = await get(minVersion);
+    tries++;
+  } while (response.status === 503 && tries < maxTries);
+  return { tries, status: response.status };
+}
+
+let calls = 0;
+const get = async (minVersion) => {
+  calls++;
+  const projectedVersion = calls >= 4 ? 1 : 0;
+  return projectedVersion >= minVersion ? { status: 200, body: { version: projectedVersion } } : { status: 503, body: null };
+};
+
+console.log(await readAfterWrite(get, 1, 10));
+console.log(await readAfterWrite(get, 2, 3));
+</solution>
+<expected>
+{ tries: 4, status: 200 }
+{ tries: 3, status: 503 }
+</expected>
+<explain><p>Here the fake read model catches up on the fourth request. The first read succeeds then; the second gives up after three tries because version 2 never arrives, and the app can show "still processing" instead of waiting forever. A real client would also honour the <code>Retry-After</code> header.</p></explain>
+</question>

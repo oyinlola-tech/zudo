@@ -1,0 +1,970 @@
+<question id="di-shared-cart" type="choice">
+<q>In the opening example, Tunde was charged for Ada's rice although every type was correct. What was the real bug?</q>
+<option>A missing type annotation on <code>Cart</code></option>
+<option correct>A lifetime bug: one <code>Cart</code> was created at startup and shared by every request, although a cart must live for one request only</option>
+<option>A race condition between two async functions</option>
+<option>The cart's <code>items</code> array should have been <code>readonly</code></option>
+<explain><p>Types describe shapes, not how long objects live or who shares them. The cart was correct as a type and wrong as a lifetime. Scopes give each request its own instance.</p></explain>
+</question>
+
+<question id="di-composition-root" type="choice">
+<q>What is the <strong>composition root</strong>?</q>
+<option>The base class all services extend</option>
+<option correct>The one place, usually the program's entry point, where the object graph is wired: dependencies are created and passed to the services that need them</option>
+<option>The folder that contains the <code>node_modules</code></option>
+<option>The first service a container resolves</option>
+<explain><p>Services only declare what they need in their constructors. The composition root (hand-written or a container) is the only code that knows the concrete classes and how they fit together.</p></explain>
+</question>
+
+<question id="di-interface-token" type="choice">
+<q>Why can't <code>container.resolve(Clock)</code> work when <code>Clock</code> is an interface?</q>
+<option>Because interfaces cannot have methods</option>
+<option correct>Interfaces are erased at compile time, so there is no runtime value to use as a key</option>
+<option>Because <code>resolve</code> only accepts strings</option>
+<option>It works if the interface is exported</option>
+<explain><p>TypeScript reports "'Clock' only refers to a type, but is being used as a value here." A container needs a key that exists at runtime: a string, a symbol, a class or a token object.</p></explain>
+</question>
+
+<question id="di-string-token" type="choice">
+<q>What is wrong with using plain strings such as <code>"clock"</code> as tokens?</q>
+<option>Strings are slower to compare than objects</option>
+<option correct>A string carries no type, so <code>resolve&lt;Clock&gt;("clock")</code> is a claim, and two modules can accidentally use the same string</option>
+<option>Maps cannot use strings as keys</option>
+<option>Strings cannot be exported</option>
+<explain><p>The string exists at runtime but says nothing about the type registered under it. A token object carries its type (through a phantom type parameter) and is unique by identity.</p></explain>
+</question>
+
+<question id="di-phantom" type="choice">
+<q>What does <code>declare readonly __type: T</code> do in <code>class Token&lt;T&gt;</code>?</q>
+<option>It stores the registered value on the token</option>
+<option>It checks at runtime that the resolved value has type <code>T</code></option>
+<option correct>It emits no JavaScript, but makes <code>Token&lt;Clock&gt;</code> and <code>Token&lt;Logger&gt;</code> structurally different, so <code>resolve</code> can infer the right type</option>
+<option>It makes the token immutable</option>
+<explain><p>Without a property that uses <code>T</code>, every <code>Token&lt;X&gt;</code> has the same shape and TypeScript could not tell them apart. The <code>declare</code> field exists only for the type checker.</p></explain>
+</question>
+
+<question id="di-token-identity" type="choice">
+<q>A file creates <code>new Token&lt;Clock&gt;("Clock")</code> instead of importing the exported <code>CLOCK</code>. What happens when it resolves it?</q>
+<option>It gets the registered clock, because the name matches</option>
+<option>A compile error, because the types differ</option>
+<option correct>A runtime "nothing registered" error: the new token is a different object, so a different key</option>
+<option>It gets <code>undefined</code> with no error</option>
+<explain><p>Token identity is the key; the name is only for messages. The type is identical, so the compiler cannot help. Export each token from exactly one module and import it everywhere.</p></explain>
+</question>
+
+<question id="di-const-d" type="choice">
+<q>Why is <code>register</code> declared with <code>&lt;T, const D extends readonly Token&lt;unknown&gt;[]&gt;</code>?</q>
+<option><code>const</code> makes the dependency list immutable at runtime</option>
+<option correct><code>const</code> makes TypeScript infer <code>[CART, CLOCK]</code> as a tuple, so each position keeps its own token type and the factory's parameters can be checked in order</option>
+<option>It prevents the same token being registered twice</option>
+<option><code>const</code> type parameters are required for classes</option>
+<explain><p>Without <code>const</code>, <code>[CART, CLOCK]</code> would be inferred as an array of a union, and <code>TypesOf</code> could not map position 0 to <code>Cart</code> and position 1 to <code>Clock</code>.</p></explain>
+</question>
+
+<question id="di-typesof" type="choice">
+<q>What is <code>TypesOf&lt;[Token&lt;Cart&gt;, Token&lt;Clock&gt;, Token&lt;Logger&gt;]&gt;</code>?</q>
+<option><code>(Cart | Clock | Logger)[]</code></option>
+<option correct><code>[Cart, Clock, Logger]</code></option>
+<option><code>Token&lt;Cart | Clock | Logger&gt;</code></option>
+<option><code>[Token&lt;Cart&gt;, Token&lt;Clock&gt;, Token&lt;Logger&gt;]</code></option>
+<explain><p>A mapped type over a tuple maps each position separately. The conditional type with <code>infer U</code> pulls the type out of each token, keeping the order, so the result can be a factory's parameter list.</p></explain>
+</question>
+
+<question id="di-registerclass-check" type="choice">
+<q>The lesson's <code>registerClass(token, lifetime, deps, type)</code> types <code>type</code> as <code>new (...deps: TypesOf&lt;D&gt;) =&gt; T</code>. Which mistake does that catch?</q>
+<option>A dependency that was never registered</option>
+<option>A cycle between two classes</option>
+<option correct>Dependency tokens in the wrong order, too few of them, or of the wrong type for the constructor</option>
+<option>A scoped dependency held by a singleton</option>
+<explain><p>The constructor's real parameter list is compared with the types of the tokens, position by position. Whether those tokens are registered, and with which lifetime, is runtime information.</p></explain>
+</question>
+
+<question id="di-lifetime-cart" type="choice">
+<q>Which lifetime fits a shopping cart that belongs to one HTTP request?</q>
+<option>Singleton</option>
+<option correct>Scoped</option>
+<option>Transient</option>
+<option>Any; lifetimes only affect performance</option>
+<explain><p>Scoped means one instance per scope, and a web server creates one scope per request. Every service in that request shares the cart; the next request gets a new one.</p></explain>
+</question>
+
+<question id="di-lifetime-pool" type="choice">
+<q>Which lifetime fits a database connection pool?</q>
+<option correct>Singleton: it is expensive to create and designed to be shared by the whole process</option>
+<option>Scoped: one pool per request</option>
+<option>Transient: a new pool every time a repository needs one</option>
+<option>It should not be in the container</option>
+<explain><p>A pool exists precisely to share a few connections across all requests. Creating one per request (or per resolve) would open connections until the database refused them.</p></explain>
+</question>
+
+<question id="di-captive" type="choice">
+<q>Why must a container refuse a singleton that depends on a scoped service?</q>
+<option>Because singletons cannot have dependencies</option>
+<option correct>The singleton is built once and would keep the first request's instance forever, handing it to every later request</option>
+<option>Because scoped services are slower</option>
+<option>It should not; this is a normal pattern</option>
+<explain><p>This is a <strong>captive dependency</strong>: a longer-lived object captures a shorter-lived one. With a scoped cart or current user it becomes a data leak between customers.</p></explain>
+</question>
+
+<question id="di-captive-transient" type="choice">
+<q><code>DailyReport</code> (singleton) needs <code>CheckoutService</code> (transient), which needs <code>Cart</code> (scoped). Is <code>Cart</code> captive?</q>
+<option>No: a transient in between breaks the chain</option>
+<option correct>Yes: the transient checkout is built once, for the singleton, so it and its cart live as long as the singleton</option>
+<option>Only if the report is resolved at the root</option>
+<option>No: transient services cannot depend on scoped ones</option>
+<explain><p>What matters is the longest-lived object above the scoped one on the path. That is why the lesson's container looks for <em>any</em> singleton on the path, not only the direct parent.</p></explain>
+</question>
+
+<question id="di-cycle-path" type="choice">
+<q>How does the lesson's <code>#resolve</code> detect a cycle such as <code>OrderService -&gt; InvoiceService -&gt; OrderService</code>?</q>
+<option>By counting how many instances were created</option>
+<option>With a timeout</option>
+<option correct>It passes the path of tokens being resolved down the recursion, and fails when the current token is already on the path</option>
+<option>TypeScript reports it at compile time</option>
+<explain><p>Resolving is a depth-first walk of the dependency graph. A token that appears twice on the current path is a cycle; naive recursion would instead overflow the stack. The path also makes the error message useful.</p></explain>
+</question>
+
+<question id="di-missing-runtime" type="choice">
+<q>Why is "nothing is registered for PaymentGateway" not a compile error in an ordinary container?</q>
+<option>Because TypeScript does not check method calls</option>
+<option correct>Registration happens through runtime calls; the container's type is the same before and after each <code>register</code>, so the compiler cannot know which tokens were registered</option>
+<option>Because tokens are symbols</option>
+<option>It is a compile error if <code>strict</code> is on</option>
+<explain><p>Which registrations ran can depend on conditions, loops or plugins. Only a design whose type changes with each registration (the lesson's builder) can move this error to compile time.</p></explain>
+</question>
+
+<question id="di-same-type" type="choice">
+<q>A factory lists <code>FIXED_CLOCK</code> where <code>SYSTEM_CLOCK</code> was meant; both are <code>Token&lt;Clock&gt;</code>. What catches it?</q>
+<option>The compiler, because the token names differ</option>
+<option>The container, because it checks names at runtime</option>
+<option correct>Nothing automatic: both tokens have the same type, so only review or a test of the real wiring can catch it</option>
+<option>The <code>const</code> type parameter</option>
+<explain><p>Types compare shapes. Two tokens of the same type are interchangeable to the compiler, and the container happily resolves whichever you asked for. Give such tokens very different names and test the composition root.</p></explain>
+</question>
+
+<question id="di-startup" type="choice">
+<q>What is the best practical defence against the wiring errors types cannot catch?</q>
+<option>Adding more type annotations to services</option>
+<option>Catching errors around every <code>resolve</code> call</option>
+<option correct>Validating the container at startup (resolve every top-level service or check the graph) and testing the real composition root</option>
+<option>Making every service a singleton</option>
+<explain><p>A missing registration, a cycle or a captive dependency found at startup stops the deployment. Found at the first request, it stops a customer.</p></explain>
+</question>
+
+<question id="di-builder-cost" type="choice">
+<q>The typed <code>ServiceBuilder</code> makes a missing service a compile error. What does it cost?</q>
+<option>Nothing; it is strictly better than a runtime container</option>
+<option correct>Registration order is fixed by the dependencies, everything is one chained expression, plugins cannot add services at runtime, and scopes need extra machinery</option>
+<option>Services can no longer be tested with fakes</option>
+<option>It only works with classes</option>
+<explain><p>The builder's type grows with each <code>add</code>, so it must see every registration in one place and in dependency order. That fits small apps and libraries; frameworks with modules usually prefer a runtime container plus startup checks.</p></explain>
+</question>
+
+<question id="di-builder-never" type="choice">
+<q>In <code>add&lt;K extends string, T&gt;(name: K extends keyof S ? never : K, …)</code>, what does <code>K extends keyof S ? never : K</code> achieve?</q>
+<option>It makes names case-insensitive</option>
+<option correct>A name that is already a service becomes <code>never</code>, so adding it twice is a compile error</option>
+<option>It removes the service from the builder</option>
+<option>It allows only one service in total</option>
+<explain><p>No string is assignable to <code>never</code>, so a duplicate name is refused with "not assignable to parameter of type 'never'". It is a conditional type used as a guard.</p></explain>
+</question>
+
+<question id="di-zudo-default" type="choice">
+<q>In <code>@zudojs/container</code>, what lifetime does <code>registerFactory(token, factory)</code> use when you pass no <code>scope</code>?</q>
+<option>Singleton</option>
+<option>Scoped</option>
+<option correct>Transient: a new instance on every resolve</option>
+<option>It throws until you choose one</option>
+<explain><p>The package defaults to <code>ContainerScope.TRANSIENT</code>. <code>registerValue</code> is always a singleton, because a value provider returns the same object anyway. Many other containers default to singleton, so check before you rely on sharing.</p></explain>
+</question>
+
+<question id="di-zudo-registerclass" type="choice">
+<q><code>container.registerClass(CHECKOUT, CheckoutService, { inject: [CLOCK, CART, LOGGER] })</code> has the first two tokens swapped. What happens with <code>@zudojs/container</code>?</q>
+<option>A compile error, like <code>registerFactory</code></option>
+<option correct>It compiles, because the class is typed as <code>Constructor&lt;T&gt;</code> with <code>any[]</code> parameters, and fails later at runtime inside the service</option>
+<option>The container reorders the tokens by type</option>
+<option>A <code>CircularDependencyError</code></option>
+<explain><p><code>registerFactory</code> types the factory's parameters from its <code>inject</code> list; <code>registerClass</code> does not check <code>inject</code> against the constructor. A one-line factory, <code>(cart, clock, log) =&gt; new CheckoutService(cart, clock, log)</code>, makes the mistake a compile error.</p></explain>
+</question>
+
+<question id="di-service-locator" type="choice">
+<q>Why should services receive dependencies through their constructors instead of calling <code>container.resolve</code> themselves?</q>
+<option>Because <code>resolve</code> is slow</option>
+<option correct>A service that pulls from the container hides what it needs, cannot be built without the container, and its wiring cannot be checked or seen in one place</option>
+<option>Because constructors run before the container exists</option>
+<option>There is no difference</option>
+<explain><p>Calling the container from inside services is the "service locator" style. Constructor parameters make dependencies explicit and typed, so a test can pass fakes directly and the composition root shows the whole graph.</p></explain>
+</question>
+
+<question id="di-when-container" type="choice">
+<q>A small service has eight classes and no per-request state. Should it use a DI container?</q>
+<option>Yes, every TypeScript project needs one</option>
+<option correct>Probably not: hand wiring in one composition root is clearer; a container pays off when lifetimes, scopes and many services make hand wiring error-prone</option>
+<option>Yes, otherwise it cannot be tested</option>
+<option>No, containers do not work with classes</option>
+<explain><p>Dependency injection is the idea (pass dependencies in); a container is a tool for doing the wiring. Fakes work just as well with hand wiring, as the Classes lesson showed.</p></explain>
+</question>
+
+<question id="di-out-default-transient" type="output">
+<q>What does this print?</q>
+<code file="default-transient.ts">
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+
+let built = 0;
+const ID = createToken<number>("Id");
+const container = createContainer();
+container.registerFactory(ID, () => ++built);
+
+console.log(container.resolve(ID), container.resolve(ID));
+container.replace(ID, { useFactory: () => ++built }, { scope: ContainerScope.SINGLETON });
+console.log(container.resolve(ID), container.resolve(ID));
+</code>
+<option>1 1
+2 2</option>
+<option correct>1 2
+3 3</option>
+<option>1 2
+3 4</option>
+<option>1 1
+1 1</option>
+<explain><p>Without a <code>scope</code>, the factory is transient and runs on every resolve (1, then 2). After replacing it with a singleton registration, it runs once (3) and the instance is reused.</p></explain>
+</question>
+
+<question id="di-out-identity" type="output">
+<q>What does this print?</q>
+<code file="identity.ts">
+class Token<T> {
+  declare readonly __type: T;
+  constructor(readonly name: string) {}
+}
+
+const CLOCK = new Token<{ now(): Date }>("Clock");
+const registry = new Map<Token<unknown>, string>([[CLOCK, "system clock"]]);
+
+const again = new Token<{ now(): Date }>("Clock");
+console.log(registry.get(CLOCK), registry.get(again), CLOCK === again);
+console.log(Object.keys(CLOCK));
+</code>
+<option>system clock system clock true
+[ 'name' ]</option>
+<option correct>system clock undefined false
+[ 'name' ]</option>
+<option>system clock undefined false
+[ 'name', '__type' ]</option>
+<option>system clock system clock false
+[ '__type', 'name' ]</option>
+<explain><p>A <code>Map</code> compares object keys by identity, so a second token with the same name is a different key. The phantom <code>__type</code> field is <code>declare</code>d, so it never exists at runtime.</p></explain>
+</question>
+
+<question id="di-out-scoped" type="output">
+<q>What does this print?</q>
+<code file="scoped.ts">
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+
+let carts = 0;
+const CART = createToken<{ id: number }>("Cart");
+const container = createContainer();
+container.registerFactory(CART, () => ({ id: ++carts }), [], { scope: ContainerScope.SCOPED });
+
+const ada = container.createScope();
+const tunde = container.createScope();
+console.log(ada.resolve(CART).id, ada.resolve(CART).id, tunde.resolve(CART).id);
+try {
+  container.resolve(CART);
+} catch (error) {
+  console.log((error as Error).name);
+}
+</code>
+<option>1 2 3
+ScopedResolutionError</option>
+<option correct>1 1 2
+ScopedResolutionError</option>
+<option>1 1 2
+3</option>
+<option>1 1 1
+RegistrationNotFoundError</option>
+<explain><p>Inside one scope the scoped cart is built once and reused; another scope gets its own. At the root there is no scope to own a scoped instance, so the container refuses instead of silently making it a singleton.</p></explain>
+</question>
+
+<question id="di-out-captive" type="output">
+<q>The same audit log is registered once as a singleton and once as scoped. What does this print?</q>
+<code file="captive.ts">
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+
+const USER = createToken<{ name: string }>("CurrentUser");
+const AUDIT = createToken<{ log(action: string): string }>("AuditLog");
+
+for (const scope of [ContainerScope.SINGLETON, ContainerScope.SCOPED]) {
+  const container = createContainer();
+  container.registerFactory(USER, () => ({ name: "Ada" }), [], { scope: ContainerScope.SCOPED });
+  container.registerFactory(AUDIT, (user) => ({ log: (action: string) => `${user.name}: ${action}` }), [USER], { scope });
+  try {
+    console.log(container.createScope().resolve(AUDIT).log("refund ORD-7"));
+  } catch (error) {
+    console.log((error as Error).name);
+  }
+}
+</code>
+<option>Ada: refund ORD-7
+Ada: refund ORD-7</option>
+<option correct>CaptiveDependencyError
+Ada: refund ORD-7</option>
+<option>Ada: refund ORD-7
+CaptiveDependencyError</option>
+<option>ScopedResolutionError
+Ada: refund ORD-7</option>
+<explain><p>A singleton audit log would keep the first request's user forever, so the container refuses it even when resolved inside a scope. As a scoped service it lives exactly as long as the user it depends on.</p></explain>
+</question>
+
+<question id="di-out-cycle" type="output">
+<q>What does this print?</q>
+<code file="cycle.ts">
+import { createContainer, createToken } from "@zudojs/container";
+
+const ORDERS = createToken<object>("Orders");
+const INVOICES = createToken<object>("Invoices");
+const container = createContainer();
+container.registerFactory(ORDERS, (invoices) => ({ invoices }), [INVOICES]);
+container.registerFactory(INVOICES, (orders) => ({ orders }), [ORDERS]);
+
+try {
+  container.resolve(INVOICES);
+} catch (error) {
+  console.log((error as Error).name);
+  console.log((error as Error).message);
+}
+</code>
+<option>RangeError
+Maximum call stack size exceeded</option>
+<option>CircularDependencyError
+Circular dependency detected: Orders -> Invoices -> Orders.</option>
+<option correct>CircularDependencyError
+Circular dependency detected: Invoices -> Orders -> Invoices.</option>
+<option>RegistrationNotFoundError
+No registration found for token "Orders".</option>
+<explain><p>The container tracks the resolution path and reports the cycle starting from the token you asked for. Both registrations compiled; the cycle only exists in the graph they form together.</p></explain>
+</question>
+
+<question id="di-out-lazy" type="output">
+<q>The builder creates services lazily in getters. What does this print?</q>
+<code file="lazy.ts">
+const created: string[] = [];
+const services = {} as { clock: string; payments: string };
+const factories = {
+  clock: () => "clock",
+  payments: () => "payments",
+};
+for (const [name, factory] of Object.entries(factories)) {
+  let instance: string | undefined;
+  Object.defineProperty(services, name, {
+    enumerable: true,
+    get: () => {
+      if (instance === undefined) {
+        created.push(name);
+        instance = factory();
+      }
+      return instance;
+    },
+  });
+}
+
+console.log(created.length);
+console.log(services.payments, created.join(","));
+console.log(JSON.stringify(services), created.join(","));
+</code>
+<option>2
+payments clock,payments
+{"clock":"clock","payments":"payments"} clock,payments</option>
+<option correct>0
+payments payments
+{"clock":"clock","payments":"payments"} payments,clock</option>
+<option>0
+payments payments
+{} payments</option>
+<option>0
+payments payments
+{"clock":"clock","payments":"payments"} payments</option>
+<explain><p>Nothing is created until a getter runs. Reading <code>payments</code> creates it. <code>JSON.stringify</code> reads every enumerable property, which runs the <code>clock</code> getter too: logging or serialising a lazy container can create services you did not intend to start.</p></explain>
+</question>
+
+<question id="di-out-lifetimes" type="output">
+<q>What does this print?</q>
+<code file="lifetimes.ts">
+type Lifetime = "singleton" | "transient";
+const registrations = new Map<string, { lifetime: Lifetime; create: () => object }>();
+const singletons = new Map<string, object>();
+
+function resolve(name: string): object {
+  const registration = registrations.get(name);
+  if (!registration) throw new Error(`nothing registered for ${name}`);
+  if (registration.lifetime === "transient") return registration.create();
+  if (!singletons.has(name)) singletons.set(name, registration.create());
+  return singletons.get(name)!;
+}
+
+registrations.set("Pool", { lifetime: "singleton", create: () => ({}) });
+registrations.set("Mailer", { lifetime: "transient", create: () => ({}) });
+console.log(resolve("Pool") === resolve("Pool"), resolve("Mailer") === resolve("Mailer"));
+try {
+  resolve("PaymentGateway");
+} catch (error) {
+  console.log(String(error));
+}
+</code>
+<option>true true
+Error: nothing registered for PaymentGateway</option>
+<option correct>true false
+Error: nothing registered for PaymentGateway</option>
+<option>false false
+undefined</option>
+<option>true false
+undefined</option>
+<explain><p>The singleton is cached after the first build, so both resolves return the same object. The transient is built fresh each time, and two different empty objects are never <code>===</code>. An unknown name is a runtime error.</p></explain>
+</question>
+
+<question id="di-out-resolve-many" type="output">
+<q>What does this print?</q>
+<code file="resolve-many.ts">
+import { createContainer, createToken } from "@zudojs/container";
+
+const RATE = createToken<number>("VatRate");
+const LABEL = createToken<string>("Currency");
+const container = createContainer();
+container.registerValue(RATE, 0.075);
+container.registerValue(LABEL, "NGN");
+
+const [currency, rate] = container.resolveMany([LABEL, RATE]);
+console.log(currency, rate * 200_000);
+console.log(container.resolveOptional(createToken<string>("Missing")));
+</code>
+<option>0.075 NaN
+undefined</option>
+<option correct>NGN 15000
+undefined</option>
+<option>NGN 15000
+RegistrationNotFoundError</option>
+<option>NGN 15000
+null</option>
+<explain><p><code>resolveMany</code> returns the values in the order of the tokens, typed per position, so <code>rate</code> is a number. <code>resolveOptional</code> returns <code>undefined</code> for a token with no registration instead of throwing.</p></explain>
+</question>
+
+<question id="di-out-autoregister" type="output">
+<q><code>@zudojs/container</code> can register a class token automatically. What does this print?</q>
+<code file="autoregister.ts">
+import { createContainer } from "@zudojs/container";
+
+class Clock {
+  now(): string {
+    return "2026-09-24";
+  }
+}
+
+class Mailer {
+  constructor(readonly from: string) {}
+}
+
+const container = createContainer();
+console.log(container.resolve(Clock).now(), container.has(Clock));
+try {
+  container.resolve(Mailer);
+} catch (error) {
+  console.log((error as Error).name);
+}
+</code>
+<option>2026-09-24 false
+TypeError</option>
+<option correct>2026-09-24 true
+RegistrationNotFoundError</option>
+<option>RegistrationNotFoundError
+RegistrationNotFoundError</option>
+<option>2026-09-24 true
+undefined</option>
+<explain><p>A class with a zero-parameter constructor is registered on first resolve. <code>Mailer</code> declares a parameter and has no inject list, so building it would pass <code>undefined</code>; the container refuses and explains how to register it.</p></explain>
+</question>
+
+<question id="di-code-singleton" type="code" file="mini-container.ts">
+<q><p>Finish <code>resolve</code>: return the cached instance if there is one; otherwise look up the factory (throw <code>Error("nothing registered for NAME")</code> if there is none), build the instance, cache it and return it. The program should print the three lines shown.</p></q>
+<starter>
+class Token<T> {
+  declare readonly __type: T;
+  constructor(readonly name: string) {}
+}
+
+class MiniContainer {
+  readonly #factories = new Map<Token<unknown>, () => unknown>();
+  readonly #singletons = new Map<Token<unknown>, unknown>();
+
+  singleton<T>(token: Token<T>, factory: () => T): this {
+    this.#factories.set(token, factory);
+    return this;
+  }
+
+  resolve<T>(token: Token<T>): T {
+    // your code here
+    throw new Error("not written yet");
+  }
+}
+
+let pools = 0;
+const DB = new Token<{ id: number; query(sql: string): string }>("DatabasePool");
+const container = new MiniContainer().singleton(DB, () => {
+  const id = ++pools;
+  return { id, query: (sql: string) => `pool ${id}: ${sql}` };
+});
+
+try {
+  console.log(container.resolve(DB).query("SELECT 1"));
+  console.log(container.resolve(DB) === container.resolve(DB), pools);
+  container.resolve(new Token<string>("Mailer"));
+} catch (error) {
+  console.log(String(error));
+}
+</starter>
+<solution>
+class Token<T> {
+  declare readonly __type: T;
+  constructor(readonly name: string) {}
+}
+
+class MiniContainer {
+  readonly #factories = new Map<Token<unknown>, () => unknown>();
+  readonly #singletons = new Map<Token<unknown>, unknown>();
+
+  singleton<T>(token: Token<T>, factory: () => T): this {
+    this.#factories.set(token, factory);
+    return this;
+  }
+
+  resolve<T>(token: Token<T>): T {
+    if (this.#singletons.has(token)) return this.#singletons.get(token) as T;
+    const factory = this.#factories.get(token);
+    if (!factory) throw new Error(`nothing registered for ${token.name}`);
+    const instance = factory() as T;
+    this.#singletons.set(token, instance);
+    return instance;
+  }
+}
+
+let pools = 0;
+const DB = new Token<{ id: number; query(sql: string): string }>("DatabasePool");
+const container = new MiniContainer().singleton(DB, () => {
+  const id = ++pools;
+  return { id, query: (sql: string) => `pool ${id}: ${sql}` };
+});
+
+try {
+  console.log(container.resolve(DB).query("SELECT 1"));
+  console.log(container.resolve(DB) === container.resolve(DB), pools);
+  container.resolve(new Token<string>("Mailer"));
+} catch (error) {
+  console.log(String(error));
+}
+</solution>
+<expected>
+pool 1: SELECT 1
+true 1
+Error: nothing registered for Mailer
+</expected>
+<explain><p>The token's phantom type makes <code>resolve(DB)</code> return the pool type, so <code>query</code> is checked. The two casts are safe because a value is only ever stored under the token it was built for.</p></explain>
+</question>
+
+<question id="di-code-cycle" type="code" file="cycle-check.ts">
+<q><p>Make <code>resolve</code> detect cycles: pass the path of names being resolved down the recursion and throw <code>Error("circular dependency: A -&gt; B -&gt; A")</code> when a name is already on it. The program should print <code>Clock()</code> and the cycle.</p></q>
+<starter>
+const deps = new Map<string, string[]>([
+  ["OrderService", ["InvoiceService", "Clock"]],
+  ["InvoiceService", ["TaxService"]],
+  ["TaxService", ["OrderService"]],
+  ["Clock", []],
+]);
+
+let calls = 0;
+function resolve(name: string, path: readonly string[] = []): string {
+  if (++calls > 50) throw new Error("gave up: probably a cycle");
+  // your code here: detect the cycle using path
+  const needs = deps.get(name);
+  if (!needs) throw new Error(`nothing registered for ${name}`);
+  const built = needs.map((dep) => resolve(dep, [...path, name]));
+  return `${name}(${built.join(", ")})`;
+}
+
+console.log(resolve("Clock"));
+try {
+  resolve("OrderService");
+} catch (error) {
+  console.log(String(error));
+}
+</starter>
+<solution>
+const deps = new Map<string, string[]>([
+  ["OrderService", ["InvoiceService", "Clock"]],
+  ["InvoiceService", ["TaxService"]],
+  ["TaxService", ["OrderService"]],
+  ["Clock", []],
+]);
+
+let calls = 0;
+function resolve(name: string, path: readonly string[] = []): string {
+  if (++calls > 50) throw new Error("gave up: probably a cycle");
+  if (path.includes(name)) throw new Error(`circular dependency: ${[...path, name].join(" -> ")}`);
+  const needs = deps.get(name);
+  if (!needs) throw new Error(`nothing registered for ${name}`);
+  const built = needs.map((dep) => resolve(dep, [...path, name]));
+  return `${name}(${built.join(", ")})`;
+}
+
+console.log(resolve("Clock"));
+try {
+  resolve("OrderService");
+} catch (error) {
+  console.log(String(error));
+}
+</solution>
+<expected>
+Clock()
+Error: circular dependency: OrderService -> InvoiceService -> TaxService -> OrderService
+</expected>
+<explain><p>The path is exactly the chain of "needs" that led here, so the same array detects the cycle and explains it. Checking before looking up the registration means the error names the cycle, not a later symptom.</p></explain>
+</question>
+
+<question id="di-code-scopes" type="code" file="scopes.ts">
+<q><p>Finish <code>createScope</code>: the returned resolver caches singletons in the container's shared map and scoped instances in a map that belongs to that scope only. The program should print the three lines shown.</p></q>
+<starter>
+class Token<T> {
+  declare readonly __type: T;
+  constructor(readonly name: string) {}
+}
+
+type Lifetime = "singleton" | "scoped";
+
+class ScopedContainer {
+  readonly #registrations = new Map<Token<unknown>, { lifetime: Lifetime; create: () => unknown }>();
+  readonly #singletons = new Map<Token<unknown>, unknown>();
+
+  register<T>(token: Token<T>, lifetime: Lifetime, create: () => T): this {
+    this.#registrations.set(token, { lifetime, create });
+    return this;
+  }
+
+  createScope(): { resolve<T>(token: Token<T>): T } {
+    // your code here
+    return {
+      resolve: <T>(token: Token<T>): T => this.#registrations.get(token)!.create() as T,
+    };
+  }
+}
+
+let carts = 0;
+const CART = new Token<{ id: number; items: string[] }>("Cart");
+const CONFIG = new Token<{ currency: string }>("Config");
+const container = new ScopedContainer()
+  .register(CART, "scoped", () => ({ id: ++carts, items: [] }))
+  .register(CONFIG, "singleton", () => ({ currency: "NGN" }));
+
+const ada = container.createScope();
+const tunde = container.createScope();
+ada.resolve(CART).items.push("RICE-50KG");
+tunde.resolve(CART).items.push("OIL-5L");
+console.log(ada.resolve(CART).id, ada.resolve(CART).items.join(","));
+console.log(tunde.resolve(CART).id, tunde.resolve(CART).items.join(","));
+console.log(ada.resolve(CONFIG) === tunde.resolve(CONFIG));
+</starter>
+<solution>
+class Token<T> {
+  declare readonly __type: T;
+  constructor(readonly name: string) {}
+}
+
+type Lifetime = "singleton" | "scoped";
+
+class ScopedContainer {
+  readonly #registrations = new Map<Token<unknown>, { lifetime: Lifetime; create: () => unknown }>();
+  readonly #singletons = new Map<Token<unknown>, unknown>();
+
+  register<T>(token: Token<T>, lifetime: Lifetime, create: () => T): this {
+    this.#registrations.set(token, { lifetime, create });
+    return this;
+  }
+
+  createScope(): { resolve<T>(token: Token<T>): T } {
+    const scoped = new Map<Token<unknown>, unknown>();
+    return {
+      resolve: <T>(token: Token<T>): T => {
+        const registration = this.#registrations.get(token);
+        if (!registration) throw new Error(`nothing registered for ${token.name}`);
+        const cache = registration.lifetime === "singleton" ? this.#singletons : scoped;
+        if (!cache.has(token)) cache.set(token, registration.create());
+        return cache.get(token) as T;
+      },
+    };
+  }
+}
+
+let carts = 0;
+const CART = new Token<{ id: number; items: string[] }>("Cart");
+const CONFIG = new Token<{ currency: string }>("Config");
+const container = new ScopedContainer()
+  .register(CART, "scoped", () => ({ id: ++carts, items: [] }))
+  .register(CONFIG, "singleton", () => ({ currency: "NGN" }));
+
+const ada = container.createScope();
+const tunde = container.createScope();
+ada.resolve(CART).items.push("RICE-50KG");
+tunde.resolve(CART).items.push("OIL-5L");
+console.log(ada.resolve(CART).id, ada.resolve(CART).items.join(","));
+console.log(tunde.resolve(CART).id, tunde.resolve(CART).items.join(","));
+console.log(ada.resolve(CONFIG) === tunde.resolve(CONFIG));
+</solution>
+<expected>
+1 RICE-50KG
+2 OIL-5L
+true
+</expected>
+<explain><p>Each call to <code>createScope</code> creates a new <code>scoped</code> map, captured by the returned closure, so each request has its own cart. Singletons go to the one map owned by the container, so every scope shares the configuration.</p></explain>
+</question>
+
+<question id="di-code-captive" type="code" file="captive-check.ts">
+<q><p>Write <code>checkCaptive(path)</code>: when the last name on the path is scoped and <em>any</em> earlier name is a singleton, return <code>"captive: HOLDER would keep TARGET"</code>; otherwise return <code>"ok"</code>. The program should print the three lines shown.</p></q>
+<starter>
+type Lifetime = "singleton" | "scoped" | "transient";
+
+const lifetimes = new Map<string, Lifetime>([
+  ["DailyReport", "singleton"],
+  ["CheckoutService", "transient"],
+  ["Cart", "scoped"],
+  ["Clock", "singleton"],
+]);
+
+function checkCaptive(path: readonly string[]): string {
+  // your code here
+  return "ok";
+}
+
+console.log(checkCaptive(["DailyReport", "CheckoutService", "Cart"]));
+console.log(checkCaptive(["CheckoutService", "Cart"]));
+console.log(checkCaptive(["DailyReport", "Clock"]));
+</starter>
+<solution>
+type Lifetime = "singleton" | "scoped" | "transient";
+
+const lifetimes = new Map<string, Lifetime>([
+  ["DailyReport", "singleton"],
+  ["CheckoutService", "transient"],
+  ["Cart", "scoped"],
+  ["Clock", "singleton"],
+]);
+
+function checkCaptive(path: readonly string[]): string {
+  const target = path.at(-1)!;
+  if (lifetimes.get(target) !== "scoped") return "ok";
+  const holder = path.slice(0, -1).find((name) => lifetimes.get(name) === "singleton");
+  return holder ? `captive: ${holder} would keep ${target}` : "ok";
+}
+
+console.log(checkCaptive(["DailyReport", "CheckoutService", "Cart"]));
+console.log(checkCaptive(["CheckoutService", "Cart"]));
+console.log(checkCaptive(["DailyReport", "Clock"]));
+</solution>
+<expected>
+captive: DailyReport would keep Cart
+ok
+ok
+</expected>
+<explain><p>Looking only at the direct parent would miss the first case: the transient checkout in the middle is built once for the singleton report, so the cart would live forever too. A singleton depending on another singleton is fine.</p></explain>
+</question>
+
+<question id="di-code-resolve-all" type="code" file="resolve-all.ts">
+<q><p>Write <code>resolveAll(tokens)</code>. It returns the registered values as a tuple typed per token (use the given <code>TypesOf</code> and a <code>const</code> type parameter), and throws <code>Error("nothing registered for NAME")</code> for a missing one. The program should print <code>NGN 30000.00</code> and the error.</p></q>
+<starter>
+class Token<T> {
+  declare readonly __type: T;
+  constructor(readonly name: string) {}
+}
+type TypesOf<D extends readonly Token<unknown>[]> = { -readonly [I in keyof D]: D[I] extends Token<infer U> ? U : never };
+
+const values = new Map<Token<unknown>, unknown>();
+function provide<T>(token: Token<T>, value: T): void {
+  values.set(token, value);
+}
+
+function resolveAll(tokens: readonly Token<unknown>[]): unknown[] {
+  // your code here
+  return [];
+}
+
+const VAT = new Token<number>("VatRate");
+const CURRENCY = new Token<string>("Currency");
+provide(VAT, 0.075);
+provide(CURRENCY, "NGN");
+
+try {
+  const [currency, vat] = resolveAll([CURRENCY, VAT]) as [string, number];
+  console.log(`${currency} ${(vat * 400_000).toFixed(2)}`);
+  resolveAll([VAT, new Token<boolean>("FeatureFlag")]);
+} catch (error) {
+  console.log(String(error));
+}
+</starter>
+<solution>
+class Token<T> {
+  declare readonly __type: T;
+  constructor(readonly name: string) {}
+}
+type TypesOf<D extends readonly Token<unknown>[]> = { -readonly [I in keyof D]: D[I] extends Token<infer U> ? U : never };
+
+const values = new Map<Token<unknown>, unknown>();
+function provide<T>(token: Token<T>, value: T): void {
+  values.set(token, value);
+}
+
+function resolveAll<const D extends readonly Token<unknown>[]>(tokens: D): TypesOf<D> {
+  return tokens.map((token) => {
+    if (!values.has(token)) throw new Error(`nothing registered for ${token.name}`);
+    return values.get(token);
+  }) as TypesOf<D>;
+}
+
+const VAT = new Token<number>("VatRate");
+const CURRENCY = new Token<string>("Currency");
+provide(VAT, 0.075);
+provide(CURRENCY, "NGN");
+
+try {
+  const [currency, vat] = resolveAll([CURRENCY, VAT]);
+  console.log(`${currency} ${(vat * 400_000).toFixed(2)}`);
+  resolveAll([VAT, new Token<boolean>("FeatureFlag")]);
+} catch (error) {
+  console.log(String(error));
+}
+</solution>
+<expected>
+NGN 30000.00
+Error: nothing registered for FeatureFlag
+</expected>
+<explain><p>With <code>const D</code> the argument stays a tuple, and <code>TypesOf&lt;D&gt;</code> gives <code>[string, number]</code>, so the starter's <code>as [string, number]</code> is no longer needed and a swapped destructuring would be a type error. The cast inside is safe because <code>map</code> keeps one value per token, in order.</p></explain>
+</question>
+
+<question id="di-code-zudo" type="code" file="zudo-wiring.ts">
+<q><p>Register the three services in <code>@zudojs/container</code>: the clock as a value, the cart as a <strong>scoped</strong> factory, and the checkout with <code>registerFactory</code> so its dependencies are type-checked. The program should print <code>2 item(s) on 2026-09-24</code> for the first request and <code>0 item(s) on 2026-09-24</code> for a new one.</p></q>
+<starter>
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+
+interface Clock {
+  now(): Date;
+}
+class Cart {
+  readonly items: string[] = [];
+}
+class Checkout {
+  constructor(
+    private readonly cart: Cart,
+    private readonly clock: Clock,
+  ) {}
+  total(): string {
+    return `${this.cart.items.length} item(s) on ${this.clock.now().toISOString().slice(0, 10)}`;
+  }
+}
+
+const CLOCK = createToken<Clock>("Clock");
+const CART = createToken<Cart>("Cart");
+const CHECKOUT = createToken<Checkout>("Checkout");
+
+const container = createContainer();
+// your code here: register CLOCK, CART and CHECKOUT
+
+try {
+  const request = container.createScope();
+  request.resolve(CART).items.push("RICE-50KG", "OIL-5L");
+  console.log(request.resolve(CHECKOUT).total());
+  console.log(container.createScope().resolve(CHECKOUT).total());
+} catch (error) {
+  console.log((error as Error).name);
+}
+</starter>
+<solution>
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+
+interface Clock {
+  now(): Date;
+}
+class Cart {
+  readonly items: string[] = [];
+}
+class Checkout {
+  constructor(
+    private readonly cart: Cart,
+    private readonly clock: Clock,
+  ) {}
+  total(): string {
+    return `${this.cart.items.length} item(s) on ${this.clock.now().toISOString().slice(0, 10)}`;
+  }
+}
+
+const CLOCK = createToken<Clock>("Clock");
+const CART = createToken<Cart>("Cart");
+const CHECKOUT = createToken<Checkout>("Checkout");
+
+const container = createContainer();
+container.registerValue(CLOCK, { now: () => new Date("2026-09-24T09:00:00Z") });
+container.registerFactory(CART, () => new Cart(), [], { scope: ContainerScope.SCOPED });
+container.registerFactory(CHECKOUT, (cart, clock) => new Checkout(cart, clock), [CART, CLOCK]);
+
+try {
+  const request = container.createScope();
+  request.resolve(CART).items.push("RICE-50KG", "OIL-5L");
+  console.log(request.resolve(CHECKOUT).total());
+  console.log(container.createScope().resolve(CHECKOUT).total());
+} catch (error) {
+  console.log((error as Error).name);
+}
+</solution>
+<expected>
+2 item(s) on 2026-09-24
+0 item(s) on 2026-09-24
+</expected>
+<explain><p>The factory's <code>cart</code> and <code>clock</code> parameters are typed from <code>[CART, CLOCK]</code>, so swapping the tokens would not compile. The checkout is transient (the default), so each request builds one around its own scoped cart.</p></explain>
+</question>
+
+<question id="di-code-missing" type="code" file="missing-deps.ts">
+<q><p>Write <code>missingDependencies(graph)</code>: for every service, list each dependency that is not itself a key of the graph, as <code>"SERVICE needs DEP"</code>. The program should print the two missing dependencies.</p></q>
+<starter>
+function missingDependencies(graph: ReadonlyMap<string, readonly string[]>): string[] {
+  // your code here
+  return [];
+}
+
+const graph = new Map<string, readonly string[]>([
+  ["CheckoutService", ["Cart", "Clock", "Logger"]],
+  ["Cart", []],
+  ["Clock", []],
+  ["ReceiptPrinter", ["PaymentGateway", "Clock"]],
+]);
+
+console.log(missingDependencies(graph).join("\n") || "all registered");
+</starter>
+<solution>
+function missingDependencies(graph: ReadonlyMap<string, readonly string[]>): string[] {
+  const missing: string[] = [];
+  for (const [service, deps] of graph) {
+    for (const dep of deps) {
+      if (!graph.has(dep)) missing.push(`${service} needs ${dep}`);
+    }
+  }
+  return missing;
+}
+
+const graph = new Map<string, readonly string[]>([
+  ["CheckoutService", ["Cart", "Clock", "Logger"]],
+  ["Cart", []],
+  ["Clock", []],
+  ["ReceiptPrinter", ["PaymentGateway", "Clock"]],
+]);
+
+console.log(missingDependencies(graph).join("\n") || "all registered");
+</solution>
+<expected>
+CheckoutService needs Logger
+ReceiptPrinter needs PaymentGateway
+</expected>
+<explain><p>This is the cheapest startup check a container can run: it reads registrations only and builds nothing, so it cannot trigger side effects. It turns the error types cannot catch into a failed deployment instead of a failed request.</p></explain>
+</question>

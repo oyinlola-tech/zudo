@@ -1,0 +1,792 @@
+<question id="dc-owner-event" type="choice">
+<q>Which team owns the schema of the <code>order.placed</code> event?</q>
+<option correct>The orders team, because the event describes the orders service's own facts</option>
+<option>The payments team, because payments is the most important consumer</option>
+<option>Every consumer jointly, and each must approve every change</option>
+<option>Nobody: events are free-form by nature</option>
+<explain><p>An event is owned by its producer. Consumers adapt to it, and the producer has to keep old and new consumers working, which is what versions and tolerant readers are for.</p></explain>
+</question>
+
+<question id="dc-owner-command" type="choice">
+<q>Checkout, the admin panel and the subscriptions service all send a <code>payments.charge</code> command to the payments service's queue. Who should own the command's schema?</q>
+<option>Checkout, because it sends the most commands</option>
+<option correct>Payments, because it is the one handler; a command is like an API the handler publishes</option>
+<option>Each sender defines its own version of the schema</option>
+<option>The message broker's team</option>
+<explain><p>A command has many senders and one handler. The handler says what it accepts, exactly like an API provider, and senders adapt to it.</p></explain>
+</question>
+
+<question id="dc-forward-def" type="choice">
+<q>What does <strong>forward compatible</strong> mean for a message format?</q>
+<option>New code can read data written by old code</option>
+<option correct>Old code can read data written by new code</option>
+<option>The format can be sent forward to other services unchanged</option>
+<option>The newest version is always used</option>
+<explain><p>Forward compatibility is old readers surviving new writers. Backward compatibility is the other direction: new readers reading old data, such as v1 events still in a queue.</p></explain>
+</question>
+
+<question id="dc-nan-bug" type="choice">
+<q>In the ₦NaN bug, orders v2 sent <code>total: { … }</code> and the unchanged payments service read <code>totalKobo</code>. Which property was missing?</q>
+<option>Backward compatibility: the new orders service could not read old events</option>
+<option correct>Forward compatibility: an old reader met data from a newer writer</option>
+<option>Idempotency: the same event was handled twice</option>
+<option>Serialization: JSON could not represent the object</option>
+<explain><p>Payments was the old reader, orders v2 the new writer. The top-right cell of the compatibility matrix was broken.</p></explain>
+</question>
+
+<question id="dc-deploy-order" type="choice">
+<q>You must change a field's shape in an event with three consumers. Which release order is safe?</q>
+<option>Producer first, then consumers as soon as possible</option>
+<option>All four services in one coordinated release at midnight</option>
+<option correct>Consumers first (able to read old and new), then the producer, then remove old-version support later</option>
+<option>Consumers first, then remove old-version support, then the producer</option>
+<explain><p>Readers first means that when the new shape appears, everyone already understands it. Old-version support can only go once no old message can exist anywhere. A "coordinated release" never happens atomically across machines.</p></explain>
+</question>
+
+<question id="dc-remove-upcaster" type="choice">
+<q>When can the payments team delete the upcaster that turns <code>order.placed</code> v1 into v2?</q>
+<option>As soon as orders v2 is fully deployed</option>
+<option>After one successful week in production</option>
+<option correct>When metrics show no v1 messages in flight and the retention of every place a v1 message could still live (queue, dead-letter list, event store) has passed</option>
+<option>Never: upcasters must be kept forever</option>
+<explain><p>v1 messages outlive the code that wrote them. Measure versions in flight and know your retention periods; then deleting old support is a decision backed by evidence. (If you keep an event store forever, the upcaster may indeed be permanent.)</p></explain>
+</question>
+
+<question id="dc-rollback" type="choice">
+<q>Payments v2 (reads v1 and v2) and orders v2 (writes v2) are in production. Which rollback is dangerous?</q>
+<option>Rolling orders back to v1</option>
+<option correct>Rolling payments back to a v1 build that cannot read v2 events</option>
+<option>Both are equally safe</option>
+<option>Neither: rollbacks never affect message formats</option>
+<explain><p>Rolling back a writer is safe because readers already understand both versions. Rolling back a reader re-creates the ₦NaN situation. Readers must be forward compatible, or at least park what they cannot read.</p></explain>
+</question>
+
+<question id="dc-future-version" type="choice">
+<q>A payments instance receives <code>order.placed</code> with <code>schemaVersion: 3</code>, but its build only knows up to v2. What should it do?</q>
+<option>Drop the message: it cannot be for this build</option>
+<option>Parse it as v2 and hope the fields it needs are there</option>
+<option correct>Park it where it can be replayed after an upgrade, and alert</option>
+<option>Throw, so the queue retries it forever</option>
+<explain><p>A message from the future means a producer is ahead. Dropping it loses a real order; guessing risks misreading; endless retries burn resources. Parking keeps it safe until the reader can handle it.</p></explain>
+</question>
+
+<question id="dc-mislabelled" type="choice">
+<q>A producer bug sends a v1 body labelled <code>schemaVersion: 2</code>. In the lesson's reader, what catches it?</q>
+<option>The serialization envelope's <code>metadata.version</code></option>
+<option>The upcaster</option>
+<option correct>Parsing the body with the v2 schema, which sends it to the dead-letter list</option>
+<option>Nothing: the version number is trusted</option>
+<explain><p>The version routes the message; the schema is still the judge. Validating the body against the schema of its claimed version catches producer bugs like this one.</p></explain>
+</question>
+
+<question id="dc-two-versions" type="choice">
+<q>ShopFlow's message has <code>schemaVersion</code>, and its <code>body</code> envelope from <code>@zudojs/serialization</code> has <code>metadata.version</code>. What is the difference?</q>
+<option>They are the same number written twice for safety</option>
+<option correct><code>metadata.version</code> is the serializer's wire format (how values are tagged); <code>schemaVersion</code> is the meaning of the payload, owned by the contract</option>
+<option><code>metadata.version</code> is the producer's release number</option>
+<option><code>schemaVersion</code> is the version of <code>@zudojs/schema</code></option>
+<explain><p>Two layers, two versions. The package owns the encoding; you own the payload's shape. Mixing them means a package upgrade could look like a schema change, or the other way round.</p></explain>
+</question>
+
+<question id="dc-strict-where" type="choice">
+<q>Where is a schema that <em>rejects unknown fields</em> (<code>.strict()</code>) a good choice?</q>
+<option>In every consumer of an event, to catch changes early</option>
+<option correct>For requests from the public internet, where an unknown field is more likely a typo or an attack</option>
+<option>In the previous release's reader, used in forward-compatibility tests</option>
+<option>Never</option>
+<explain><p>Between your own services, readers should tolerate unknown fields so producers can add optional ones. At the public edge you are not expecting newer versions of yourself, so rejecting unknown input is reasonable.</p></explain>
+</question>
+
+<question id="dc-write-back" type="choice">
+<q>During a rolling deploy, an old orders instance reads an order document, changes the address and saves the whole document. The <code>giftMessage</code> added by the new version is gone. What is the best fix?</q>
+<option>Make the schema strict so the old instance refuses the document</option>
+<option correct>Update only the fields you own (or keep unknown fields with <code>passthrough()</code> when you must rewrite the whole document)</option>
+<option>Stop doing rolling deploys</option>
+<option>Add <code>giftMessage</code> to the old version's schema retroactively</option>
+<explain><p>Stripping is safe for reading and dangerous for read-modify-write. Updating only your own fields, or passing unknown ones through, keeps data you do not understand.</p></explain>
+</question>
+
+<question id="dc-enum-add" type="choice">
+<q>The checkout team wants to add <code>"ussd"</code> to the <code>method</code> enum in <code>payment.requested</code>. Which statement is right?</q>
+<option>It is always safe: adding values never breaks anyone</option>
+<option correct>Old readers with an enum schema reject the message, so readers must learn to handle unknown values before the producer sends <code>"ussd"</code></option>
+<option>Readers should treat unknown values as the first known value</option>
+<option>Enum changes require deleting the old enum</option>
+<explain><p>An added enum value is new data for old readers. Map unknown values to an explicit, handled case (like "hold for manual review"), deploy that first, and only then start sending the new value.</p></explain>
+</question>
+
+<question id="dc-new-type" type="choice">
+<q>Orders v3 registers a <code>Money</code> transformer and starts sending <code>Money</code> objects with <code>preserveTypes</code>. What does an older reader that never registered <code>Money</code> see?</q>
+<option>A <code>Money</code> instance, rebuilt automatically</option>
+<option correct>The raw tagged object <code>{ $type: "Money", $value: … }</code> without <code>strict</code>, or an <code>InvalidSerializedDataError</code> with <code>strict</code></option>
+<option>A plain number of kobo</option>
+<option><code>undefined</code></option>
+<explain><p>A reader can only rebuild types it knows. A new tagged type is a breaking change for old readers: register the transformer in readers first, then start sending it.</p></explain>
+</question>
+
+<question id="dc-contracts-package" type="choice">
+<q>Which of these does <strong>not</strong> belong in a shared contracts package?</q>
+<option>The schemas for each version of each event</option>
+<option>The TypeScript types inferred from those schemas</option>
+<option>Example payloads (fixtures) for every version</option>
+<option correct>A <code>calculateDiscount()</code> function both services use</option>
+<explain><p>A contract is data about data. Behaviour in a shared package forces lock-step upgrades whenever it changes, which recreates the monolith's coupling with extra network hops.</p></explain>
+</question>
+
+<question id="dc-shared-type" type="choice">
+<q>Both services import <code>type OrderPlacedV2</code> from the contracts package. Why must payments still parse incoming events with the schema?</q>
+<option>TypeScript types are slower than schemas</option>
+<option correct>Types disappear at runtime and the producer may run a different build; only a runtime check proves what arrived</option>
+<option>Parsing is only needed for events from outside the company</option>
+<option>It does not need to: shared types make both sides agree</option>
+<explain><p>The type is what you hope arrives. Services deploy independently, so the bytes on the wire may come from a different version of the contracts than the one you compiled with.</p></explain>
+</question>
+
+<question id="dc-cdc-purpose" type="choice">
+<q>What does consumer-driven contract testing tell the provider that a schema alone does not?</q>
+<option>Whether the provider's code has bugs in its business logic</option>
+<option correct>Which fields and interactions each consumer actually relies on, and so which consumer a change would break</option>
+<option>How fast the provider answers</option>
+<option>Whether the network between services is reliable</option>
+<explain><p>A schema says what may be sent. Consumer expectations say what is used. That turns "is this change safe?" from a guess into a test result with names attached.</p></explain>
+</question>
+
+<question id="dc-provider-state" type="choice">
+<q>What is a <strong>provider state</strong> such as "order ord_1 is pending with 2 lamps at ₦1,250"?</q>
+<option>The provider's current deployment status</option>
+<option correct>A named setup the provider performs before replaying an interaction, so the expected response is predictable</option>
+<option>A state machine inside the orders service</option>
+<option>The HTTP status the consumer expects</option>
+<explain><p>The consumer names the situation it assumes; the provider's verification code creates that data (here, an order in a map) before calling its real service.</p></explain>
+</question>
+
+<question id="dc-exact-vs-like" type="choice">
+<q>Why did the payments pact use <code>exact(250000)</code> for <code>totalKobo</code> but <code>like("NGN")</code> for <code>currency</code>?</q>
+<option>Numbers must always be exact and strings never</option>
+<option correct>The total follows from the provider state (2 × ₦1,250), so an exact value catches a change of meaning; other values should only be type-checked so harmless data changes do not break the pact</option>
+<option><code>exact</code> is faster to check</option>
+<option>It is a mistake; both should be <code>exact</code></option>
+<explain><p>Exact values tied to a state catch semantic changes such as naira instead of kobo. Exact values that do not follow from the state make pacts brittle.</p></explain>
+</question>
+
+<question id="dc-semantic" type="choice">
+<q>A release changes <code>totalKobo</code> from 250000 to 2500 (naira) without renaming it. Which check fails?</q>
+<option>The JSON Schema check: it is an integer, but the wrong integer</option>
+<option>A <code>like(250000)</code> matcher</option>
+<option correct>An <code>exact(250000)</code> expectation under a provider state that fixes the order's contents</option>
+<option>None: such a change cannot be detected by any test</option>
+<explain><p>Same name, same type, different meaning. Only a check that knows the expected value for a known situation can catch it.</p></explain>
+</question>
+
+<question id="dc-can-i-deploy" type="choice">
+<q>Orders 2.5.0 has been verified against payments 1.9.0. Production runs payments 1.8.0. May orders 2.5.0 be deployed?</q>
+<option>Yes, because it was verified against a newer payments</option>
+<option correct>No, not until it is verified against payments 1.8.0 or payments 1.9.0 is in production</option>
+<option>Yes, if the orders team's own unit tests pass</option>
+<option>Only during a maintenance window</option>
+<explain><p>can-i-deploy asks about the consumer versions actually in production. A verification against a version nobody runs yet proves nothing about today's traffic.</p></explain>
+</question>
+
+<question id="dc-fake-provider" type="choice">
+<q>In the consumer test, payments' code ran against a fake orders server that returned only values built from the pact. Why?</q>
+<option>The real orders service is too slow for tests</option>
+<option correct>If payments reads a field it did not declare, the fake returns <code>undefined</code> and the consumer test fails, so the pact really lists everything payments uses</option>
+<option>To test the orders service's business logic</option>
+<option>Fake servers are required by <code>@zudojs/rpc</code></option>
+<explain><p>The consumer test keeps the pact honest. Without it, a consumer could depend on a field it never declared, and provider verification would miss that dependency.</p></explain>
+</question>
+
+<question id="dc-never-reuse" type="choice">
+<q>A week after publishing <code>order.placed</code> v2, you notice <code>couponCode</code> should have been an object. What do you do?</q>
+<option>Edit the v2 schema, since only a week has passed</option>
+<option correct>Publish v3 with the new shape and an upcaster from v2; v2 stays as it was</option>
+<option>Delete all v2 events and republish them</option>
+<option>Rename the event type to avoid versions</option>
+<explain><p>Once a version is published, messages of that shape exist in queues and stores. Changing the schema under them turns valid messages invalid. A fix is always a new version.</p></explain>
+</question>
+
+<question id="dc-shared-db" type="choice">
+<q>Why is a table read directly by two services described as "a contract with no version, no owner and no tests"?</q>
+<option>Databases do not support schemas</option>
+<option correct>Any column change by the owning service can break the other service, with nothing in between to version, validate or verify the dependency</option>
+<option>Two services reading one table is always too slow</option>
+<option>SQL cannot be tested</option>
+<explain><p>A shared table couples both services to its exact layout. An event or an API puts a versioned, testable contract at the boundary instead.</p></explain>
+</question>
+
+<question id="dc-out-strip" type="output">
+<q>What does this print?</q>
+<code file="strip.js">
+import { schema } from "@zudojs/schema";
+
+const Reader = schema.object({ orderId: schema.string(), totalKobo: schema.number() });
+const result = Reader.safeParse({ orderId: "ord_1", totalKobo: 250000, couponCode: "SALE10" });
+console.log(result.success, Object.keys(result.data));
+</code>
+<option correct>true [ 'orderId', 'totalKobo' ]</option>
+<option>true [ 'orderId', 'totalKobo', 'couponCode' ]</option>
+<option>false [ 'orderId', 'totalKobo' ]</option>
+<option>TypeError: Cannot convert undefined or null to object</option>
+<explain><p>By default <code>@zudojs/schema</code> object schemas <em>strip</em> unknown keys: the parse succeeds and the result contains only the declared fields. That is the tolerant-reader behaviour.</p></explain>
+</question>
+
+<question id="dc-out-strict" type="output">
+<q>What does this print?</q>
+<code file="strict.js">
+import { schema } from "@zudojs/schema";
+
+const Reader = schema.object({ orderId: schema.string() }).strict();
+const result = Reader.safeParse({ orderId: "ord_1", channel: "mobile" });
+console.log(result.success, result.success ? "" : result.issues[0].message);
+</code>
+<option correct>false Unknown key: channel</option>
+<option>true</option>
+<option>false Required field missing: channel</option>
+<option>false Expected object, received object</option>
+<explain><p><code>.strict()</code> turns an unknown key into an issue. For a reader between services, that makes every harmless new field a breaking change.</p></explain>
+</question>
+
+<question id="dc-out-passthrough" type="output">
+<q>An old instance updates the address. What does this print?</q>
+<code file="passthrough.js">
+import { schema } from "@zudojs/schema";
+
+const Doc = schema.object({ id: schema.string(), address: schema.string() });
+const stored = { id: "ord_7", address: "Ikeja", giftMessage: "Happy birthday" };
+
+const a = { ...Doc.parse(stored), address: "Yaba" };
+const b = { ...Doc.passthrough().parse(stored), address: "Yaba" };
+console.log(Object.keys(a).length, Object.keys(b).length);
+</code>
+<option correct>2 3</option>
+<option>3 3</option>
+<option>2 2</option>
+<option>3 2</option>
+<explain><p>The default strips <code>giftMessage</code>, so writing <code>a</code> back would delete it. <code>passthrough()</code> keeps unknown keys, so <code>b</code> still has all three.</p></explain>
+</question>
+
+<question id="dc-out-upcast" type="output">
+<q>What does this print?</q>
+<code file="upcast.js">
+const upcasters = {
+  1: (body) => ({ id: body.id, totalKobo: body.totalNaira * 100 }),
+  2: (body) => ({ ...body, currency: "NGN" }),
+};
+
+function readLatest(version, body) {
+  let current = body;
+  for (let v = version; v < 3; v++) current = upcasters[v](current);
+  return current;
+}
+
+console.log(readLatest(1, { id: "ord_1", totalNaira: 2500 }));
+console.log(readLatest(3, { id: "ord_3", totalKobo: 900, currency: "GHS" }));
+</code>
+<option correct>{ id: 'ord_1', totalKobo: 250000, currency: 'NGN' }
+{ id: 'ord_3', totalKobo: 900, currency: 'GHS' }</option>
+<option>{ id: 'ord_1', totalKobo: 250000 }
+{ id: 'ord_3', totalKobo: 900, currency: 'GHS' }</option>
+<option>{ id: 'ord_1', totalNaira: 2500, totalKobo: 250000, currency: 'NGN' }
+{ id: 'ord_3', totalKobo: 900, currency: 'GHS' }</option>
+<option>{ id: 'ord_1', totalKobo: 250000, currency: 'NGN' }
+{ id: 'ord_3', totalKobo: 900, currency: 'NGN' }</option>
+<explain><p>A v1 body runs through both steps, 1→2 then 2→3. The v1 step builds a new object, so <code>totalNaira</code> is gone. A v3 body needs no step and comes out unchanged.</p></explain>
+</question>
+
+<question id="dc-out-matrix" type="output">
+<q>What does this print?</q>
+<code file="matrix.js">
+const writers = [{ totalKobo: 500 }, { total: { amountMinor: 700 } }];
+const readers = {
+  old: (b) => b.totalKobo,
+  new: (b) => b.total?.amountMinor ?? b.totalKobo,
+};
+
+for (const [name, read] of Object.entries(readers)) {
+  console.log(name, writers.map((w) => read(w)).join(" "));
+}
+</code>
+<option correct>old 500
+new 500 700</option>
+<option>old 500 undefined
+new 500 700</option>
+<option>old 500 NaN
+new 500 700</option>
+<option>old 500
+new 700 700</option>
+<explain><p>The old reader returns <code>undefined</code> for the new shape, and <code>Array.prototype.join</code> writes <code>undefined</code> as an empty string, so the line ends with a space. The silent <code>undefined</code> is exactly how the ₦NaN bug started.</p></explain>
+</question>
+
+<question id="dc-out-envelope-version" type="output">
+<q>What does this print?</q>
+<code file="envelope.js">
+import { createEnvelope, unwrapEnvelope } from "@zudojs/serialization";
+
+const fromNewerBuild = createEnvelope('{"orderId":"ord_1"}', "json", { version: 2 });
+try {
+  console.log(unwrapEnvelope(fromNewerBuild));
+} catch (error) {
+  console.log(error.name);
+}
+console.log(unwrapEnvelope(createEnvelope('{"orderId":"ord_1"}')));
+</code>
+<option correct>InvalidSerializedDataError
+{"orderId":"ord_1"}</option>
+<option>{"orderId":"ord_1"}
+{"orderId":"ord_1"}</option>
+<option>InvalidSerializedDataError
+{ orderId: 'ord_1' }</option>
+<option>TypeError
+{"orderId":"ord_1"}</option>
+<explain><p>This build understands wire-format version 1, so an envelope claiming version 2 is refused instead of misread. <code>unwrapEnvelope</code> returns the raw data string; it does not parse it.</p></explain>
+</question>
+
+<question id="dc-out-unknown-tag" type="output">
+<q>A newer producer sent a <code>Money</code> value. What does this older reader print?</q>
+<code file="tag.js">
+import { createSerializer } from "@zudojs/serialization";
+
+const reader = createSerializer("json", { preserveTypes: true });
+const text = '{"total":{"$type":"Money","$value":{"kobo":"250000"}},"at":{"$type":"Date","$value":"2026-09-24T10:00:00.000Z"}}';
+const value = reader.deserialize(text);
+console.log(value.total.$type, value.at instanceof Date);
+</code>
+<option correct>Money true</option>
+<option>undefined true</option>
+<option>Money false</option>
+<option>InvalidSerializedDataError</option>
+<explain><p>Without <code>strict</code>, an unknown tag is left as a plain tagged object, while known tags like <code>Date</code> are rebuilt. The reader gets something it did not expect, silently. Use <code>strict</code> between services to fail loudly instead.</p></explain>
+</question>
+
+<question id="dc-out-check" type="output">
+<q>Using a small version of the lesson's pact checker, what does this print?</q>
+<code file="check.js">
+function check(expects, actual, path = "$") {
+  const problems = [];
+  for (const [field, e] of Object.entries(expects)) {
+    const value = actual?.[field];
+    const at = `${path}.${field}`;
+    if (value === undefined) problems.push(`${at} is missing`);
+    else if (!("$match" in e)) problems.push(...check(e, value, at));
+    else if (typeof value !== typeof e.example) problems.push(`${at} should be ${typeof e.example}`);
+  }
+  return problems;
+}
+
+const like = (example) => ({ $match: "type", example });
+const expects = { id: like("ord_1"), customer: { email: like("a@b.ng") }, totalKobo: like(1) };
+console.log(check(expects, { id: "ord_9", customer: { name: "Ada" }, totalKobo: "250000", note: "gift" }));
+</code>
+<option correct>[ '$.customer.email is missing', '$.totalKobo should be number' ]</option>
+<option>[ '$.customer.email is missing', '$.totalKobo should be number', '$.note is not allowed' ]</option>
+<option>[ '$.totalKobo should be number' ]</option>
+<option>[ '$.customer is missing', '$.totalKobo should be number' ]</option>
+<explain><p>The checker walks into nested expectations, so it reports the missing <code>customer.email</code> with its full path. It only checks declared fields, so the extra <code>note</code> is fine: consumers are tolerant readers.</p></explain>
+</question>
+
+<question id="dc-out-enum" type="output">
+<q>What does this print?</q>
+<code file="enum.js">
+import { schema } from "@zudojs/schema";
+
+const Method = schema.enum(["card", "transfer"]);
+const Tolerant = schema.string().transform((m) => (m === "card" || m === "transfer" ? m : "unknown"));
+console.log(Method.safeParse("ussd").success, Tolerant.parse("ussd"), Tolerant.parse("card"));
+</code>
+<option correct>false unknown card</option>
+<option>true ussd card</option>
+<option>false ussd card</option>
+<option>false unknown unknown</option>
+<explain><p>The enum schema rejects the new value outright. The tolerant version accepts any string and maps unknown ones to an explicit <code>"unknown"</code> that the code must handle.</p></explain>
+</question>
+
+<question id="dc-out-can-i-deploy" type="output">
+<q>What does this print?</q>
+<code file="deploy.js">
+const verified = new Set(["orders@3|payments@2", "orders@3|shipping@5"]);
+const production = { payments: "2", shipping: "4", email: "1" };
+
+const missing = Object.entries(production)
+  .map(([name, version]) => `${name}@${version}`)
+  .filter((consumer) => !verified.has(`orders@3|${consumer}`));
+console.log(missing.length === 0 ? "deploy" : `wait for ${missing.join(" and ")}`);
+</code>
+<option correct>wait for shipping@4 and email@1</option>
+<option>deploy</option>
+<option>wait for shipping@4</option>
+<option>wait for email@1</option>
+<explain><p>shipping@5 was verified, but production runs shipping@4. email@1 was never verified at all, perhaps because it has no pact yet, which is a finding in itself.</p></explain>
+</question>
+
+<question id="dc-out-route" type="output">
+<q>What does this print?</q>
+<code file="route.js">
+const LATEST = 2;
+
+function route(message) {
+  if (message.type !== "order.placed") return "dead-letter";
+  if (message.schemaVersion > LATEST) return "parked";
+  if (message.schemaVersion < 1) return "dead-letter";
+  return message.schemaVersion < LATEST ? "upcast, then handle" : "handle";
+}
+
+for (const v of [1, 2, 3]) console.log(v, route({ type: "order.placed", schemaVersion: v }));
+console.log(route({ type: "order.paid", schemaVersion: 1 }));
+</code>
+<option correct>1 upcast, then handle
+2 handle
+3 parked
+dead-letter</option>
+<option>1 handle
+2 handle
+3 parked
+dead-letter</option>
+<option>1 upcast, then handle
+2 handle
+3 dead-letter
+dead-letter</option>
+<option>1 upcast, then handle
+2 handle
+3 parked
+parked</option>
+<explain><p>Old versions are upcast, the current one handled, a version from the future parked for later, and a message this reader should never receive goes to the dead-letter list for a human.</p></explain>
+</question>
+
+<question id="dc-out-optional" type="output">
+<q>A v2 schema adds a <strong>required</strong> field. What does this print?</q>
+<code file="optional.js">
+import { schema } from "@zudojs/schema";
+
+const V2 = schema.object({ orderId: schema.string(), channel: schema.string() });
+const V2Optional = schema.object({ orderId: schema.string(), channel: schema.string().optional() });
+const storedV1 = { orderId: "ord_1" };
+console.log(V2.safeParse(storedV1).success, V2Optional.safeParse(storedV1).success);
+</code>
+<option correct>false true</option>
+<option>true true</option>
+<option>false false</option>
+<option>true false</option>
+<explain><p>A new required field breaks backward compatibility: stored messages do not have it. Make it optional, or add an upcaster that fills it in.</p></explain>
+</question>
+
+<question id="dc-out-join" type="output">
+<q>Payments v1 formats the amount. What does this print for a v2 event?</q>
+<code file="format.js">
+const naira = (kobo) => `₦${(kobo / 100).toFixed(2)}`;
+const v2 = { orderId: "ord_2", total: { amountMinor: 480000, currency: "NGN" } };
+console.log(naira(v2.totalKobo), naira(v2.total.amountMinor));
+</code>
+<option correct>₦NaN ₦4800.00</option>
+<option>₦0.00 ₦4800.00</option>
+<option>TypeError ₦4800.00</option>
+<option>₦undefined ₦4800.00</option>
+<explain><p><code>undefined / 100</code> is <code>NaN</code>, and <code>NaN.toFixed(2)</code> is the string <code>"NaN"</code>. No exception is thrown, which is why this kind of break slips through.</p></explain>
+</question>
+
+<question id="dc-code-upcast" type="code" file="upcast.js">
+<q><p>Write <code>readLatest(version, body)</code> for <code>order.placed</code>, where the latest version is 2. Version 1 bodies are <code>{ orderId, totalKobo }</code>; version 2 bodies are <code>{ orderId, total: { amountMinor, currency } }</code>, and every v1 order was in <code>"NGN"</code>. A version above 2 must throw an error with the message <code>parked: v3</code> (for version 3).</p></q>
+<starter>
+function readLatest(version, body) {
+  // your code here
+}
+
+console.log(readLatest(1, { orderId: "ord_1", totalKobo: 250000 }));
+console.log(readLatest(2, { orderId: "ord_2", total: { amountMinor: 480000, currency: "GHS" } }));
+try {
+  readLatest(3, { orderId: "ord_3" });
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+function readLatest(version, body) {
+  if (version > 2) throw new Error(`parked: v${version}`);
+  if (version === 1) return { orderId: body.orderId, total: { amountMinor: body.totalKobo, currency: "NGN" } };
+  return body;
+}
+
+console.log(readLatest(1, { orderId: "ord_1", totalKobo: 250000 }));
+console.log(readLatest(2, { orderId: "ord_2", total: { amountMinor: 480000, currency: "GHS" } }));
+try {
+  readLatest(3, { orderId: "ord_3" });
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>
+{ orderId: 'ord_1', total: { amountMinor: 250000, currency: 'NGN' } }
+{ orderId: 'ord_2', total: { amountMinor: 480000, currency: 'GHS' } }
+parked: v3
+</expected>
+<explain><p>Upcast old versions to one shape so the handler has a single code path, and refuse versions from the future instead of guessing what they mean.</p></explain>
+</question>
+
+<question id="dc-code-tolerant-enum" type="code" file="tolerant.js">
+<q><p>Write <code>readMethod(value)</code> that returns <code>"card"</code> or <code>"transfer"</code> for those values and <code>"unknown"</code> for anything else (including non-strings), then <code>route(method)</code> that returns <code>"gateway"</code>, <code>"await-transfer"</code> or <code>"manual-review"</code>.</p></q>
+<starter>
+function readMethod(value) {
+  // your code here
+}
+
+function route(method) {
+  // your code here
+}
+
+for (const value of ["card", "transfer", "ussd", 42]) {
+  console.log(value, "->", route(readMethod(value)));
+}
+</starter>
+<solution>
+function readMethod(value) {
+  return value === "card" || value === "transfer" ? value : "unknown";
+}
+
+function route(method) {
+  switch (method) {
+    case "card": return "gateway";
+    case "transfer": return "await-transfer";
+    default: return "manual-review";
+  }
+}
+
+for (const value of ["card", "transfer", "ussd", 42]) {
+  console.log(value, "->", route(readMethod(value)));
+}
+</solution>
+<expected>
+card -> gateway
+transfer -> await-transfer
+ussd -> manual-review
+42 -> manual-review
+</expected>
+<explain><p>A tolerant reader never rejects the whole message for a value it does not know, and never silently treats it as a known value. "Unknown" gets its own, safe handling.</p></explain>
+</question>
+
+<question id="dc-code-matrix" type="code" file="matrix.js">
+<q><p>Print a compatibility line for each reader: its name, then <code>ok</code> or <code>BROKEN</code> for each writer, in order. A reader is broken for a writer when it throws or returns something that is not an integer.</p></q>
+<starter>
+const writers = [
+  { orderId: "ord_1", totalKobo: 250000 },
+  { orderId: "ord_2", total: { amountMinor: 480000, currency: "NGN" } },
+];
+const readers = {
+  "payments v1": (body) => body.totalKobo,
+  "payments v2": (body) => body.total?.amountMinor ?? body.totalKobo,
+  "analytics v1": (body) => body.total.amountMinor,
+};
+
+// your code here
+</starter>
+<solution>
+const writers = [
+  { orderId: "ord_1", totalKobo: 250000 },
+  { orderId: "ord_2", total: { amountMinor: 480000, currency: "NGN" } },
+];
+const readers = {
+  "payments v1": (body) => body.totalKobo,
+  "payments v2": (body) => body.total?.amountMinor ?? body.totalKobo,
+  "analytics v1": (body) => body.total.amountMinor,
+};
+
+for (const [name, read] of Object.entries(readers)) {
+  const cells = writers.map((body) => {
+    try {
+      return Number.isInteger(read(body)) ? "ok" : "BROKEN";
+    } catch {
+      return "BROKEN";
+    }
+  });
+  console.log(name, cells.join(" "));
+}
+</solution>
+<expected>
+payments v1 ok BROKEN
+payments v2 ok ok
+analytics v1 BROKEN ok
+</expected>
+<explain><p>"analytics v1" was written against the new shape only, so it cannot read old events still in the queue: it is not backward compatible. Only a reader that is ok in every column may run while both writers exist.</p></explain>
+</question>
+
+<question id="dc-code-check" type="code" file="check.js">
+<q><p>Write <code>missingFields(expected, actual)</code>. <code>expected</code> is an object whose values are either <code>true</code> (the field must exist) or a nested object of the same kind. Return the paths of missing fields, like <code>"customer.email"</code>.</p></q>
+<starter>
+function missingFields(expected, actual, prefix = "") {
+  // your code here
+}
+
+const expects = { id: true, status: true, customer: { email: true, phone: true } };
+console.log(missingFields(expects, { id: "ord_1", status: "paid", customer: { email: "ada@shop.ng" } }));
+console.log(missingFields(expects, { id: "ord_2" }));
+</starter>
+<solution>
+function missingFields(expected, actual, prefix = "") {
+  const missing = [];
+  for (const [field, rule] of Object.entries(expected)) {
+    const path = prefix + field;
+    const value = actual?.[field];
+    if (value === undefined) missing.push(path);
+    else if (rule !== true) missing.push(...missingFields(rule, value, path + "."));
+  }
+  return missing;
+}
+
+const expects = { id: true, status: true, customer: { email: true, phone: true } };
+console.log(missingFields(expects, { id: "ord_1", status: "paid", customer: { email: "ada@shop.ng" } }));
+console.log(missingFields(expects, { id: "ord_2" }));
+</solution>
+<expected>
+[ 'customer.phone' ]
+[ 'status', 'customer' ]
+</expected>
+<explain><p>Recursion follows nested expectations. When a whole object is missing, reporting the object itself (not each field inside it) keeps the message short and accurate.</p></explain>
+</question>
+
+<question id="dc-code-can-i-deploy" type="code" file="deploy.js">
+<q><p>Write <code>canIDeploy(candidate, production, verified)</code>. It returns <code>"yes"</code> if <code>verified</code> contains <code>candidate|consumer@version</code> for every consumer in <code>production</code>, otherwise <code>"no: "</code> followed by the unverified consumers joined with <code>", "</code>.</p></q>
+<starter>
+function canIDeploy(candidate, production, verified) {
+  // your code here
+}
+
+const verified = new Set(["orders@2.5.0|payments@1.9.0", "orders@2.5.0|inventory@0.9.2"]);
+console.log(canIDeploy("orders@2.5.0", { payments: "1.9.0", inventory: "0.9.2" }, verified));
+console.log(canIDeploy("orders@2.5.0", { payments: "1.8.0", inventory: "0.9.2", email: "3.0.0" }, verified));
+</starter>
+<solution>
+function canIDeploy(candidate, production, verified) {
+  const missing = Object.entries(production)
+    .map(([name, version]) => `${name}@${version}`)
+    .filter((consumer) => !verified.has(`${candidate}|${consumer}`));
+  return missing.length === 0 ? "yes" : `no: ${missing.join(", ")}`;
+}
+
+const verified = new Set(["orders@2.5.0|payments@1.9.0", "orders@2.5.0|inventory@0.9.2"]);
+console.log(canIDeploy("orders@2.5.0", { payments: "1.9.0", inventory: "0.9.2" }, verified));
+console.log(canIDeploy("orders@2.5.0", { payments: "1.8.0", inventory: "0.9.2", email: "3.0.0" }, verified));
+</solution>
+<expected>
+yes
+no: payments@1.8.0, email@3.0.0
+</expected>
+<explain><p>The check is about what runs in production now. A candidate verified against a newer consumer must still wait until that consumer is deployed.</p></explain>
+</question>
+
+<question id="dc-code-route" type="code" file="route.ts">
+<q><p>Complete <code>outcome(message)</code> using <code>@zudojs/schema</code>. Messages with <code>schemaVersion</code> above 2 are <code>"parked"</code>. Version 1 bodies (<code>{ orderId, totalKobo }</code>) are upcast to v2 (<code>{ orderId, total: { amountMinor, currency: "NGN" } }</code>). The result is <code>"handled ORDER_ID"</code> if the v2 schema accepts the body, otherwise <code>"dead-letter"</code>.</p></q>
+<starter>
+import { schema } from "@zudojs/schema";
+
+const V2 = schema.object({
+  orderId: schema.string(),
+  total: schema.object({ amountMinor: schema.number().int().positive(), currency: schema.enum(["NGN", "GHS"]) }),
+});
+
+function outcome(message: { schemaVersion: number; body: any }): string {
+  // your code here
+  return "";
+}
+
+console.log(outcome({ schemaVersion: 1, body: { orderId: "ord_1", totalKobo: 250000 } }));
+console.log(outcome({ schemaVersion: 2, body: { orderId: "ord_2", total: { amountMinor: 480000, currency: "GHS" } } }));
+console.log(outcome({ schemaVersion: 2, body: { orderId: "ord_3", totalKobo: 100 } }));
+console.log(outcome({ schemaVersion: 3, body: {} }));
+</starter>
+<solution>
+import { schema } from "@zudojs/schema";
+
+const V2 = schema.object({
+  orderId: schema.string(),
+  total: schema.object({ amountMinor: schema.number().int().positive(), currency: schema.enum(["NGN", "GHS"]) }),
+});
+
+function outcome(message: { schemaVersion: number; body: any }): string {
+  if (message.schemaVersion > 2) return "parked";
+  const body = message.schemaVersion === 1
+    ? { orderId: message.body.orderId, total: { amountMinor: message.body.totalKobo, currency: "NGN" } }
+    : message.body;
+  const result = V2.safeParse(body);
+  return result.success ? `handled ${result.data.orderId}` : "dead-letter";
+}
+
+console.log(outcome({ schemaVersion: 1, body: { orderId: "ord_1", totalKobo: 250000 } }));
+console.log(outcome({ schemaVersion: 2, body: { orderId: "ord_2", total: { amountMinor: 480000, currency: "GHS" } } }));
+console.log(outcome({ schemaVersion: 2, body: { orderId: "ord_3", totalKobo: 100 } }));
+console.log(outcome({ schemaVersion: 3, body: {} }));
+</solution>
+<expected>
+handled ord_1
+handled ord_2
+dead-letter
+parked
+</expected>
+<explain><p>The version decides the route (park, upcast or handle), and the schema has the last word: the third message claims v2 but carries a v1 body, so it is dead-lettered for a human to inspect.</p></explain>
+</question>
+
+<question id="dc-code-version-metrics" type="code" file="metrics.js">
+<q><p>Count the messages in flight by <code>type@vVERSION</code> and print each count in the order first seen, like <code>order.placed@v1: 2</code>. This is the evidence you need before deleting an upcaster.</p></q>
+<starter>
+const inFlight = [
+  { type: "order.placed", schemaVersion: 1 },
+  { type: "order.placed", schemaVersion: 2 },
+  { type: "payment.captured", schemaVersion: 1 },
+  { type: "order.placed", schemaVersion: 1 },
+  { type: "order.placed", schemaVersion: 2 },
+  { type: "order.placed", schemaVersion: 2 },
+];
+
+// your code here
+</starter>
+<solution>
+const inFlight = [
+  { type: "order.placed", schemaVersion: 1 },
+  { type: "order.placed", schemaVersion: 2 },
+  { type: "payment.captured", schemaVersion: 1 },
+  { type: "order.placed", schemaVersion: 1 },
+  { type: "order.placed", schemaVersion: 2 },
+  { type: "order.placed", schemaVersion: 2 },
+];
+
+const counts = new Map();
+for (const message of inFlight) {
+  const key = `${message.type}@v${message.schemaVersion}`;
+  counts.set(key, (counts.get(key) ?? 0) + 1);
+}
+for (const [key, count] of counts) console.log(`${key}: ${count}`);
+</solution>
+<expected>
+order.placed@v1: 2
+order.placed@v2: 3
+payment.captured@v1: 1
+</expected>
+<explain><p>A <code>Map</code> keeps insertion order, so the report lists keys in the order first seen. In production the same counter is a metric labelled with type and version, watched until the old version reaches zero.</p></explain>
+</question>
+
+<question id="dc-code-envelope" type="code" file="envelope.ts">
+<q><p>Use <code>@zudojs/serialization</code> to send a reminder with a <code>BigInt</code> amount across a "wire". Wrap <code>{ orderId: "ord_1", amountKobo: 250000n }</code> with <code>serializeToEnvelope</code> (with <code>preserveTypes</code>), turn the envelope into a JSON string and back, then read it with <code>deserializeFromEnvelope</code> and print the amount's type and the envelope's format and version.</p></q>
+<starter>
+import { createSerializer, deserializeFromEnvelope, serializeToEnvelope } from "@zudojs/serialization";
+import type { SerializedEnvelope } from "@zudojs/serialization";
+
+const serializer = createSerializer("json", { preserveTypes: true });
+
+// your code here
+</starter>
+<solution>
+import { createSerializer, deserializeFromEnvelope, serializeToEnvelope } from "@zudojs/serialization";
+import type { SerializedEnvelope } from "@zudojs/serialization";
+
+const serializer = createSerializer("json", { preserveTypes: true });
+
+const envelope = serializeToEnvelope({ orderId: "ord_1", amountKobo: 250000n }, serializer, "json", { preserveTypes: true });
+const onTheWire = JSON.stringify(envelope);
+const received = JSON.parse(onTheWire) as SerializedEnvelope;
+const value = deserializeFromEnvelope<{ orderId: string; amountKobo: bigint }>(received, serializer, "json", { preserveTypes: true, strict: true });
+console.log(typeof value.amountKobo, value.amountKobo);
+console.log(received.metadata.format, received.metadata.version);
+</solution>
+<expected>
+bigint 250000n
+json 1
+</expected>
+<explain><p>The envelope's metadata tells the reader how to decode the data (format <code>json</code>, wire-format version 1), and <code>preserveTypes</code> brings the <code>BigInt</code> back as a <code>BigInt</code>. The schema version of your own payload is a separate number you add around it.</p></explain>
+</question>

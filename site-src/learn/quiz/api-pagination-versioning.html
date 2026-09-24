@@ -1,0 +1,660 @@
+<question id="apv-offset-cost" type="choice">
+<q>A query uses <code>ORDER BY created_at DESC, id DESC LIMIT 20 OFFSET 50000</code> and a matching index exists. Roughly how many index entries does PostgreSQL read?</q>
+<option>20, because the index lets it jump to row 50,000</option>
+<option correct>About 50,020: it walks past every skipped row and discards it</option>
+<option>50,000, because the 20 returned rows are already cached</option>
+<option>All rows in the table, because OFFSET disables the index</option>
+<explain><p>An index is sorted, but it has no "row number" to jump to. The database reads the rows in order and throws away the first 50,000. The cost of a page grows with its offset, which is why deep pages and full exports get slow.</p></explain>
+</question>
+
+<question id="apv-keyset-meaning" type="choice">
+<q>What does keyset (cursor) pagination send to the database to get the next page?</q>
+<option>The page number, multiplied by the page size</option>
+<option>The ids of every row already shown</option>
+<option correct>The sort values of the last row shown, so the query can ask for rows after them</option>
+<option>A server-side cursor that keeps a transaction open between requests</option>
+<explain><p>Keyset pagination describes the next page by values: "rows that sort after (created_at, id) of the last row I saw". With a matching index the database jumps straight to that point, so every page costs the same.</p></explain>
+</question>
+
+<question id="apv-row-comparison" type="choice">
+<q>In PostgreSQL, when is <code>(created_at, id) &lt; ($1, $2)</code> true?</q>
+<option>When <code>created_at &lt; $1</code> and <code>id &lt; $2</code> are both true</option>
+<option>When either <code>created_at &lt; $1</code> or <code>id &lt; $2</code> is true</option>
+<option correct>When <code>created_at &lt; $1</code>, or when <code>created_at = $1</code> and <code>id &lt; $2</code></option>
+<option>Only when the two rows have the same <code>created_at</code></option>
+<explain><p>A row comparison is lexicographic, like sorting words: compare the first column, and only on a tie compare the next. That matches an index on <code>(created_at, id)</code>, which is why PostgreSQL can use the index for it.</p></explain>
+</question>
+
+<question id="apv-tie-bug" type="choice">
+<q>A cursor stores only the <code>created_at</code> of the last order, and the next page uses <code>WHERE created_at &lt; $1</code>. Several orders share a timestamp. What goes wrong?</q>
+<option>Nothing, as long as the sort is <code>created_at DESC</code></option>
+<option>Tied orders appear on two pages</option>
+<option correct>Orders with the same timestamp as the last one shown, but not yet shown, are skipped</option>
+<option>The query becomes slow because it cannot use the index</option>
+<explain><p>The remaining tied orders are not <em>older</em> than the last one, they are the same age, so <code>&lt;</code> excludes them. Add a unique tie-breaker (the id) to the sort, the cursor and the comparison.</p></explain>
+</question>
+
+<question id="apv-total-order" type="choice">
+<q>Why should the last column in a paginated <code>ORDER BY</code> be unique, even with offset pagination?</q>
+<option>Because PostgreSQL refuses ORDER BY on non-unique columns with LIMIT</option>
+<option correct>Because SQL gives no fixed order among tied rows, so a tied row can move between pages from one request to the next</option>
+<option>Because unique columns are always indexed</option>
+<option>Because it makes <code>COUNT(*)</code> faster</option>
+<explain><p>Rows that compare equal may come back in any order, and that order can change between two runs of the same query. A unique tie-breaker gives every row exactly one position, so pages are repeatable.</p></explain>
+</question>
+
+<question id="apv-nullable" type="choice">
+<q>You paginate by <code>(shipped_at, id)</code>, but <code>shipped_at</code> is <code>NULL</code> for unshipped orders. What happens to them with <code>WHERE (shipped_at, id) &lt; ($1, $2)</code>?</q>
+<option>They sort first and appear on page 1</option>
+<option>They appear on every page</option>
+<option correct>After the first page, they never match the comparison, so they are never shown</option>
+<option>PostgreSQL throws an error for NULL in a row comparison</option>
+<explain><p>A comparison with <code>NULL</code> is unknown, not true, so those rows drop out of every page after the first. Sort by NOT NULL columns, or use the same <code>COALESCE(...)</code> in the index and the query.</p></explain>
+</question>
+
+<question id="apv-cursor-tamper" type="choice">
+<q>A client edits the cursor it received. Assuming your server decodes it, validates its types and passes its values as SQL parameters, what is the worst the edit can do?</q>
+<option>Read orders that belong to another customer</option>
+<option>Run arbitrary SQL</option>
+<option correct>Start the page at a different position in the same result set the client may already see</option>
+<option>Nothing at all: a cursor cannot be edited</option>
+<explain><p>With typed values passed as parameters and authorization taken from the session, a forged cursor only moves the starting point. That is why authorization must never live in the cursor.</p></explain>
+</question>
+
+<question id="apv-cursor-auth" type="choice">
+<q>A teammate suggests putting <code>customerId</code> inside the cursor "so the next page knows whose orders to load". What is the problem?</q>
+<option>It makes the cursor too long for a URL</option>
+<option correct>Anyone can edit the cursor and read another customer's orders; who may see what must come from the verified session</option>
+<option>Customer ids are not allowed in base64</option>
+<option>There is no problem if the cursor is base64url encoded</option>
+<explain><p>Encoding is not protection. A cursor is client input. Authorization is decided on every request from the authenticated user, never from anything the client sends back.</p></explain>
+</question>
+
+<question id="apv-cursor-filter" type="choice">
+<q>A client gets a cursor from <code>?status=paid</code> and sends it with <code>?status=shipped</code>. What is the best response?</q>
+<option>Ignore the cursor and return the first page of shipped orders</option>
+<option>Use the cursor anyway and return whatever matches</option>
+<option correct>400, saying the cursor does not match these filters</option>
+<option>500, because the request is inconsistent</option>
+<explain><p>A cursor belongs to one sort and one set of filters. Mixing them gives pages that make no sense. Binding the cursor to a fingerprint of the filters lets you answer with a clear client error.</p></explain>
+</question>
+
+<question id="apv-deleted-row" type="choice">
+<q>The order that a keyset cursor points at is deleted before the client asks for the next page. What happens?</q>
+<option>The server must return 404</option>
+<option correct>The next page works normally: the query asks for rows after the stored values, whether or not that row still exists</option>
+<option>The next page repeats the whole previous page</option>
+<option>The next page is empty</option>
+<explain><p>A keyset cursor stores values, not a pointer to a row. "Rows with (created_at, id) less than these" is well defined even if no row has exactly those values anymore.</p></explain>
+</question>
+
+<question id="apv-limit-plus-one" type="choice">
+<q>Why does <code>listOrders</code> ask the database for <code>limit + 1</code> rows?</q>
+<option>To make up for an off-by-one error in OFFSET</option>
+<option correct>If the extra row exists there is a next page, so it can return a next cursor without counting all rows</option>
+<option>So the client can see one row of the next page</option>
+<option>Because LIMIT in PostgreSQL is exclusive</option>
+<explain><p>One extra row answers "is there more?" cheaply. The extra row is not sent; the cursor is built from the last row that is sent.</p></explain>
+</question>
+
+<question id="apv-count" type="choice">
+<q>A product manager wants "Showing 1-20 of N" on a 50-million-row orders list. Which answer is sound?</q>
+<option>Run <code>SELECT count(*)</code> on every page request; it is cached by PostgreSQL</option>
+<option correct>Omit the exact total, or show a labelled estimate, or offer an exact count on a separate endpoint used only when needed</option>
+<option>Compute the total by multiplying the page number by 20</option>
+<option>Store the total in the cursor</option>
+<explain><p>An exact count visits every matching row, the cost keyset pagination removed. Estimates (such as the planner's statistics) or an on-demand count keep normal paging fast.</p></explain>
+</question>
+
+<question id="apv-offset-when" type="choice">
+<q>Which of these is a good fit for plain offset pagination?</q>
+<option>An infinite-scroll activity feed with new items every second</option>
+<option>A nightly job that copies all 30 million orders to accounting</option>
+<option correct>An admin table of 2,000 suppliers with page numbers</option>
+<option>A mobile app syncing a user's full order history</option>
+<explain><p>Offsets are simple, allow jumping to page 7, and are fast enough on small tables that rarely change during paging. Feeds, syncs and exports need cursors.</p></explain>
+</question>
+
+<question id="apv-test" type="choice">
+<q>Which test would catch the "order shown twice, another never" bug?</q>
+<option>Fetch page 1 of a 10-row table and check it has 10 rows</option>
+<option correct>Walk every page of a large table while inserting new rows between requests, and assert that each original row appears exactly once</option>
+<option>Check that the response has a <code>next_cursor</code> field</option>
+<option>Check that page 2 is different from page 1</option>
+<explain><p>The bug only appears when data changes during paging and pages are compared as a whole. A test that reproduces those conditions fails for offsets and passes for correct cursors.</p></explain>
+</question>
+
+<question id="apv-breaking-add-field" type="choice">
+<q>You add a <code>currency</code> field to every order in the response. When does this break a client?</q>
+<option>Never; adding is always safe</option>
+<option>Always; any change needs a new version</option>
+<option correct>When the client rejects fields it does not know, instead of ignoring them</option>
+<option>Only when the client is written in TypeScript</option>
+<explain><p>Additive changes are safe for tolerant readers. Document that clients must ignore unknown fields, and write your own clients that way, and additions become free.</p></explain>
+</question>
+
+<question id="apv-breaking-unit" type="choice">
+<q>Which change is the most dangerous for existing clients?</q>
+<option>Adding an optional <code>?customer=</code> filter</option>
+<option>Adding a <code>delivery_eta</code> field</option>
+<option correct>Keeping the field name <code>total</code> but sending kobo instead of naira</option>
+<option>Adding a new endpoint <code>/v1/refunds</code></option>
+<explain><p>Same name, different meaning: nothing crashes, every client just shows amounts 100 times too large. Change units only under a new name or a new version.</p></explain>
+</question>
+
+<question id="apv-breaking-validation" type="choice">
+<q>Is lowering the maximum <code>limit</code> from 100 to 50 a breaking change?</q>
+<option>No, because the server still returns valid pages</option>
+<option correct>Yes: a request with <code>limit=100</code> that worked yesterday now gets 400</option>
+<option>Only if the database has fewer than 100 rows</option>
+<option>No, clients must always send the default limit</option>
+<explain><p>Tightening validation turns valid requests into errors. Keep the old rule for old versions, or ship the change in a new version.</p></explain>
+</question>
+
+<question id="apv-header-version-cache" type="choice">
+<q>Your API chooses the version from a <code>Shop-Version</code> header, and a CDN caches GET responses. What must you add?</q>
+<option><code>Cache-Control: no-store</code> on every response</option>
+<option correct><code>Vary: Shop-Version</code>, so the cache keeps separate copies per version</option>
+<option>A version number in the response body only</option>
+<option>Nothing; caches read all headers automatically</option>
+<explain><p>Caches key on the URL unless told otherwise. <code>Vary</code> lists the request headers that change the response, so a v2 body is never served to a v1 client.</p></explain>
+</question>
+
+<question id="apv-unknown-version" type="choice">
+<q>A request sends <code>Shop-Version: 2026-9-1</code>, which is not a version you have. What should the server do?</q>
+<option>Use the latest version</option>
+<option>Use the oldest version</option>
+<option correct>Answer 400 with a message naming the unknown version</option>
+<option>Ignore the header and use the account's default without telling the client</option>
+<explain><p>Guessing puts the client on a version it was never tested against, silently. A clear 400 makes the typo visible at once.</p></explain>
+</question>
+
+<question id="apv-transformers" type="choice">
+<q>What is the main advantage of "one current implementation plus version changes" over copying the code for each version?</q>
+<option>Old versions run faster</option>
+<option correct>Logic and bug fixes exist once; each old version costs only small, documented translation functions</option>
+<option>Clients no longer need to send a version</option>
+<option>It removes the need for tests</option>
+<explain><p>Copies drift: a fix applied to one copy is missing in the others. Version changes translate the single current response backwards, and the list of changes doubles as a changelog.</p></explain>
+</question>
+
+<question id="apv-sunset" type="choice">
+<q>What do the <code>Deprecation</code> and <code>Sunset</code> response headers tell a client?</q>
+<option>Deprecation: the server is overloaded; Sunset: retry after this time</option>
+<option correct>Deprecation: since when this resource is deprecated; Sunset: when it will stop working</option>
+<option>Both are cache headers for time-based expiry</option>
+<option>Deprecation: the request used a wrong method; Sunset: the session expires</option>
+<explain><p>RFC 9745 defines <code>Deprecation</code> (a date, written as <code>@</code> plus a Unix timestamp) and RFC 8594 defines <code>Sunset</code> (an HTTP date). A <code>Link</code> with <code>rel="deprecation"</code> points at the migration guide.</p></explain>
+</question>
+
+<question id="apv-retired-status" type="choice">
+<q>After the sunset date, which status code should a retired version answer with?</q>
+<option>404 Not Found</option>
+<option correct>410 Gone, with a body that links to the migration guide</option>
+<option>301 Moved Permanently to the new version</option>
+<option>500 Internal Server Error</option>
+<explain><p>410 says "this existed and has been removed on purpose". A redirect to v2 would send old clients a response shape they cannot parse.</p></explain>
+</question>
+
+<question id="apv-out-tie" type="output">
+<q>A cursor keeps only the timestamp. What does this print?</q>
+<code file="ties.js">
+const orders = [
+  { id: 6, at: 3 }, { id: 5, at: 2 }, { id: 4, at: 2 }, { id: 3, at: 2 }, { id: 2, at: 1 }, { id: 1, at: 1 },
+];
+
+let after = Infinity;
+const seen = [];
+while (true) {
+  const page = orders.filter((o) => o.at < after).slice(0, 2);
+  if (page.length === 0) break;
+  seen.push(...page.map((o) => o.id));
+  after = page.at(-1).at;
+}
+console.log(seen);
+</code>
+<option correct>[ 6, 5, 2, 1 ]</option>
+<option>[ 6, 5, 4, 3, 2, 1 ]</option>
+<option>[ 6, 5, 3, 2, 1 ]</option>
+<option>[ 6, 5, 5, 4, 3, 2, 1 ]</option>
+<explain><p>The first page ends on order 5 with <code>at = 2</code>. "Less than 2" skips orders 4 and 3, which have the same timestamp. That is the tie bug; the fix is to compare <code>(at, id)</code>.</p></explain>
+</question>
+
+<question id="apv-out-tie-fixed" type="output">
+<q>The same data, now compared on <code>(at, id)</code>. What does this print?</q>
+<code file="ties-fixed.js">
+const orders = [
+  { id: 6, at: 3 }, { id: 5, at: 2 }, { id: 4, at: 2 }, { id: 3, at: 2 }, { id: 2, at: 1 }, { id: 1, at: 1 },
+];
+
+const before = (o, c) => o.at < c.at || (o.at === c.at && o.id < c.id);
+let cursor = null;
+const pages = [];
+while (true) {
+  const page = orders.filter((o) => cursor === null || before(o, cursor)).slice(0, 4);
+  if (page.length === 0) break;
+  pages.push(page.map((o) => o.id).join(","));
+  cursor = page.at(-1);
+}
+console.log(pages);
+</code>
+<option correct>[ '6,5,4,3', '2,1' ]</option>
+<option>[ '6,5,4,3', '3,2,1' ]</option>
+<option>[ '6,5,4,3', '1' ]</option>
+<option>[ '6,5,4,3,2,1' ]</option>
+<explain><p>The cursor is order 3 (<code>at 2, id 3</code>). Orders 2 and 1 have a smaller <code>at</code>, so they come next, and order 3 itself is excluded because its id is not smaller than 3.</p></explain>
+</question>
+
+<question id="apv-out-offset-shift" type="output">
+<q>A new order arrives between two offset pages. What does this print?</q>
+<code file="shift.js">
+const ids = [5, 4, 3, 2, 1];
+const page1 = ids.slice(0, 2);
+ids.unshift(6);
+const page2 = ids.slice(2, 4);
+console.log(page1, page2);
+</code>
+<option correct>[ 5, 4 ] [ 4, 3 ]</option>
+<option>[ 5, 4 ] [ 3, 2 ]</option>
+<option>[ 5, 4 ] [ 6, 3 ]</option>
+<option>[ 6, 5 ] [ 4, 3 ]</option>
+<explain><p>The new order 6 goes to the front and pushes everything one place down. Offset 2 now starts at order 4, which was already shown. Deletes do the opposite and skip a row.</p></explain>
+</question>
+
+<question id="apv-out-filterkey" type="output">
+<q>What does this print?</q>
+<code file="filter-key.js">
+function filterKey(filters) {
+  return Object.keys(filters).sort().map((name) => `${name}=${filters[name]}`).join("&");
+}
+
+console.log(filterKey({ status: "paid", customer: "17" }) === filterKey({ customer: "17", status: "paid" }));
+console.log(filterKey({ status: "paid" }));
+console.log(filterKey({}));
+</code>
+<option correct>true
+status=paid
+</option>
+<option>false
+status=paid
+</option>
+<option>true
+status=paid
+undefined</option>
+<option>true
+status="paid"
+</option>
+<explain><p>Sorting the names makes the fingerprint independent of the order the filters were written in. With no filters the key is the empty string, so the last line is empty.</p></explain>
+</question>
+
+<question id="apv-out-cursor-roundtrip" type="output">
+<q>What does this print?</q>
+<code file="roundtrip.js">
+const toB64 = (t) => btoa(t).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+const fromB64 = (t) => atob(t.replaceAll("-", "+").replaceAll("_", "/"));
+
+const cursor = toB64(JSON.stringify({ v: 1, k: ["2026-03-01T09:30:00Z", 88412] }));
+const decoded = JSON.parse(fromB64(cursor));
+console.log(decoded.k[1], typeof decoded.k[1], cursor.includes("="));
+</code>
+<option correct>88412 number false</option>
+<option>88412 string false</option>
+<option>88412 number true</option>
+<option>undefined undefined false</option>
+<explain><p>JSON keeps the number a number. The padding <code>=</code> signs were removed when encoding, and <code>atob</code> accepts the unpadded text, so the round trip works.</p></explain>
+</question>
+
+<question id="apv-out-forged-id" type="output">
+<q>A decoder checks the id in a cursor. What does this print?</q>
+<code file="check-id.js">
+const candidates = [88412, "88412", "1 OR 1=1", 2 ** 60, -3];
+console.log(candidates.map((id) => Number.isSafeInteger(id)));
+</code>
+<option correct>[ true, false, false, false, true ]</option>
+<option>[ true, true, false, false, false ]</option>
+<option>[ true, false, false, true, true ]</option>
+<option>[ true, false, false, false, false ]</option>
+<explain><p>A string is never a safe integer, even <code>"88412"</code>. <code>2 ** 60</code> is too large to be exact. <code>-3</code> is a safe integer, so a real decoder also checks the range (for example, at least 1) if negative ids are impossible.</p></explain>
+</question>
+
+<question id="apv-out-limit-plus-one" type="output">
+<q>What does this print?</q>
+<code file="has-more.js">
+function page(all, limit) {
+  const rows = all.slice(0, limit + 1);
+  return { data: rows.slice(0, limit), hasMore: rows.length > limit };
+}
+
+console.log(page([1, 2, 3, 4], 3));
+console.log(page([1, 2, 3], 3));
+</code>
+<option correct>{ data: [ 1, 2, 3 ], hasMore: true }
+{ data: [ 1, 2, 3 ], hasMore: false }</option>
+<option>{ data: [ 1, 2, 3, 4 ], hasMore: true }
+{ data: [ 1, 2, 3 ], hasMore: false }</option>
+<option>{ data: [ 1, 2, 3 ], hasMore: true }
+{ data: [ 1, 2, 3 ], hasMore: true }</option>
+<option>{ data: [ 1, 2, 3 ], hasMore: false }
+{ data: [ 1, 2, 3 ], hasMore: false }</option>
+<explain><p>With four rows available, the fourth proves there is more. With exactly three, there is no extra row, so this is the last page. Returning <code>hasMore: true</code> there would make clients request an empty page.</p></explain>
+</question>
+
+<question id="apv-out-version-compare" type="output">
+<q>Which version changes apply to a client pinned to <code>2026-06-01</code>?</q>
+<code file="which-changes.js">
+const changes = ["2026-01-15", "2026-06-01", "2026-09-01", "2026-10-01"];
+console.log(changes.filter((version) => version > "2026-06-01"));
+</code>
+<option correct>[ '2026-09-01', '2026-10-01' ]</option>
+<option>[ '2026-06-01', '2026-09-01', '2026-10-01' ]</option>
+<option>[ '2026-01-15' ]</option>
+<option>[]</option>
+<explain><p>Dates in <code>YYYY-MM-DD</code> form compare correctly as strings. A client on <code>2026-06-01</code> already has that change, so only the two later changes must be undone for it.</p></explain>
+</question>
+
+<question id="apv-out-undo-order" type="output">
+<q>Two version changes are undone in the wrong order. What does this print?</q>
+<code file="undo-order.js">
+const changes = [
+  { version: "2026-06-01", undo: ({ total_kobo, ...o }) => ({ ...o, total: total_kobo / 100 }) },
+  { version: "2026-09-01", undo: ({ amount, ...o }) => ({ ...o, total_kobo: amount }) },
+];
+
+const current = { id: 1, amount: 500000 };
+const right = changes.toReversed().reduce((o, c) => c.undo(o), current);
+const wrong = changes.reduce((o, c) => c.undo(o), current);
+console.log(right, wrong);
+</code>
+<option correct>{ id: 1, total: 5000 } { id: 1, total: NaN, total_kobo: 500000 }</option>
+<option>{ id: 1, total: 5000 } { id: 1, total: 5000 }</option>
+<option>{ id: 1, total_kobo: 500000 } { id: 1, total: 5000 }</option>
+<option>{ id: 1, total: 5000 } { id: 1, total: undefined, total_kobo: 500000 }</option>
+<explain><p>Each undo expects the shape that existed right after its own change. Undoing the older change first finds no <code>total_kobo</code> yet, so <code>undefined / 100</code> is <code>NaN</code>. Undo newest first.</p></explain>
+</question>
+
+<question id="apv-out-tolerant" type="output">
+<q>What does this tolerant client print for a status it has never seen?</q>
+<code file="tolerant.js">
+const labels = { paid: "Paid", shipped: "On its way" };
+const orders = [{ status: "paid" }, { status: "refunded" }, { status: "shipped", eta: "Friday" }];
+console.log(orders.map(({ status }) => labels[status] ?? "Updated"));
+</code>
+<option correct>[ 'Paid', 'Updated', 'On its way' ]</option>
+<option>[ 'Paid', undefined, 'On its way' ]</option>
+<option>[ 'Paid', 'refunded', 'On its way' ]</option>
+<option>TypeError: Cannot read properties of undefined</option>
+<explain><p>The unknown status falls back to a safe label, and the unknown <code>eta</code> field is simply not read. That is what makes additive server changes harmless.</p></explain>
+</question>
+
+<question id="apv-out-deprecation-header" type="output">
+<q>What does this print?</q>
+<code file="headers.js">
+const deprecatedAt = Date.UTC(2026, 8, 1);
+const sunsetAt = Date.UTC(2027, 2, 31);
+console.log(`@${deprecatedAt / 1000}`);
+console.log(new Date(sunsetAt).toUTCString());
+</code>
+<option correct>@1788220800
+Wed, 31 Mar 2027 00:00:00 GMT</option>
+<option>@1788220800000
+Wed, 31 Mar 2027 00:00:00 GMT</option>
+<option>@1788220800
+Thu, 31 Feb 2027 00:00:00 GMT</option>
+<option>@2026-09-01
+Wed, 31 Mar 2027 00:00:00 GMT</option>
+<explain><p><code>Date.UTC</code> counts months from 0, so 8 is September and 2 is March. The Deprecation header wants seconds, hence the division by 1000; Sunset uses the HTTP date format that <code>toUTCString</code> produces.</p></explain>
+</question>
+
+<question id="apv-code-next-cursor" type="code" file="next-page.js">
+<q>Write <code>nextPage(orders, after, limit)</code>. <code>orders</code> is sorted newest first by <code>(at, id)</code> descending. <code>after</code> is <code>null</code> or the last order of the previous page. Return the next <code>limit</code> orders. Walk all pages of size 2 and print each page's ids joined with commas.</q>
+<starter>
+const orders = [
+  { id: 7, at: 3 }, { id: 6, at: 3 }, { id: 5, at: 2 }, { id: 4, at: 2 },
+  { id: 3, at: 2 }, { id: 2, at: 1 }, { id: 1, at: 1 },
+];
+
+function nextPage(orders, after, limit) {
+  // return the orders that sort after `after`, at most `limit` of them
+}
+
+let after = null;
+while (true) {
+  const page = nextPage(orders, after, 2);
+  if (!page || page.length === 0) break;
+  console.log(page.map((o) => o.id).join(","));
+  after = page.at(-1);
+}
+</starter>
+<solution>
+const orders = [
+  { id: 7, at: 3 }, { id: 6, at: 3 }, { id: 5, at: 2 }, { id: 4, at: 2 },
+  { id: 3, at: 2 }, { id: 2, at: 1 }, { id: 1, at: 1 },
+];
+
+function nextPage(orders, after, limit) {
+  const isAfter = (o) => after === null || o.at < after.at || (o.at === after.at && o.id < after.id);
+  return orders.filter(isAfter).slice(0, limit);
+}
+
+let after = null;
+while (true) {
+  const page = nextPage(orders, after, 2);
+  if (!page || page.length === 0) break;
+  console.log(page.map((o) => o.id).join(","));
+  after = page.at(-1);
+}
+</solution>
+<expected>
+7,6
+5,4
+3,2
+1
+</expected>
+<explain><p>Compare the timestamp first, and the id only on a tie, exactly like <code>(created_at, id) &lt; ($1, $2)</code> in SQL. Comparing only <code>at</code> would lose orders 6, 4 and 3.</p></explain>
+</question>
+
+<question id="apv-code-cursor-codec" type="code" file="cursor-codec.js">
+<q>Write <code>encode(obj)</code> and <code>decode(token)</code> for base64url cursors (no <code>+</code>, <code>/</code> or <code>=</code>). <code>decode</code> returns <code>null</code> for anything that is not valid. Print the round trip of <code>{ v: 1, k: [88412] }</code>, whether the token contains <code>=</code>, and <code>decode("%%%")</code>.</q>
+<starter>
+function encode(obj) {
+  // JSON, then base64, then make it URL-safe
+}
+
+function decode(token) {
+  // reverse encode; return null when anything fails
+}
+
+const token = encode({ v: 1, k: [88412] });
+</starter>
+<solution>
+function encode(obj) {
+  return btoa(JSON.stringify(obj)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+
+function decode(token) {
+  try {
+    return JSON.parse(atob(token.replaceAll("-", "+").replaceAll("_", "/")));
+  } catch {
+    return null;
+  }
+}
+
+const token = encode({ v: 1, k: [88412] });
+console.log(decode(token));
+console.log(token.includes("="));
+console.log(decode("%%%"));
+</solution>
+<expected>
+{ v: 1, k: [ 88412 ] }
+false
+null
+</expected>
+<explain><p><code>atob</code> throws on characters that are not base64, and <code>JSON.parse</code> throws on text that is not JSON. Catching both and returning <code>null</code> lets the endpoint answer 400 instead of crashing.</p></explain>
+</question>
+
+<question id="apv-code-validate-cursor" type="code" file="validate-cursor.js">
+<q>Write <code>checkCursor(data, filters)</code> for a decoded cursor object. Return <code>"ok"</code> when <code>data.v === 1</code>, <code>data.f</code> equals the filter key (names sorted, <code>name=value</code> joined by <code>&amp;</code>), and <code>data.k</code> is <code>[isoDateString, safeInteger]</code>. Otherwise return <code>"version"</code>, <code>"filters"</code> or <code>"invalid"</code>, checked in that order.</q>
+<starter>
+function checkCursor(data, filters) {
+  // your checks here
+}
+
+const good = { v: 1, f: "status=paid", k: ["2026-03-01T09:30:00.000Z", 42] };
+</starter>
+<solution>
+function checkCursor(data, filters) {
+  const key = Object.keys(filters).sort().map((n) => `${n}=${filters[n]}`).join("&");
+  if (data?.v !== 1) return "version";
+  if (data.f !== key) return "filters";
+  const [at, id] = Array.isArray(data.k) ? data.k : [];
+  if (typeof at !== "string" || Number.isNaN(Date.parse(at)) || !Number.isSafeInteger(id)) return "invalid";
+  return "ok";
+}
+
+const good = { v: 1, f: "status=paid", k: ["2026-03-01T09:30:00.000Z", 42] };
+console.log(checkCursor(good, { status: "paid" }));
+console.log(checkCursor({ ...good, v: 0 }, { status: "paid" }));
+console.log(checkCursor(good, { status: "shipped" }));
+console.log(checkCursor({ ...good, k: ["yesterday", 42] }, { status: "paid" }));
+console.log(checkCursor({ ...good, k: ["2026-03-01", "42"] }, { status: "paid" }));
+</solution>
+<expected>
+ok
+version
+filters
+invalid
+invalid
+</expected>
+<explain><p>Each check turns a different client mistake into a specific 400 message: an old cursor, a cursor reused with other filters, and damaged or forged values. The id must be a real integer, not the string <code>"42"</code>.</p></explain>
+</question>
+
+<question id="apv-code-render-version" type="code" file="render-version.js">
+<q>Complete <code>render(order, clientVersion)</code> so a client pinned to an older version gets the older shape. Undo only changes newer than the client's version, newest first. Print the order for <code>2026-01-15</code> and <code>2026-09-01</code> with <code>JSON.stringify</code>.</q>
+<starter>
+const changes = [
+  { version: "2026-06-01", undo: ({ total_kobo, ...o }) => ({ ...o, total: total_kobo / 100 }) },
+  { version: "2026-09-01", undo: ({ customer, ...o }) => ({ ...o, customer_id: customer.id }) },
+];
+
+function render(order, clientVersion) {
+  // apply the right undo functions in the right order
+}
+
+const current = { id: 7, total_kobo: 250000, customer: { id: 17, name: "Ada Obi" } };
+</starter>
+<solution>
+const changes = [
+  { version: "2026-06-01", undo: ({ total_kobo, ...o }) => ({ ...o, total: total_kobo / 100 }) },
+  { version: "2026-09-01", undo: ({ customer, ...o }) => ({ ...o, customer_id: customer.id }) },
+];
+
+function render(order, clientVersion) {
+  return changes
+    .filter((c) => c.version > clientVersion)
+    .toReversed()
+    .reduce((shape, c) => c.undo(shape), order);
+}
+
+const current = { id: 7, total_kobo: 250000, customer: { id: 17, name: "Ada Obi" } };
+console.log(JSON.stringify(render(current, "2026-01-15")));
+console.log(JSON.stringify(render(current, "2026-09-01")));
+</solution>
+<expected>
+{"id":7,"customer_id":17,"total":2500}
+{"id":7,"total_kobo":250000,"customer":{"id":17,"name":"Ada Obi"}}
+</expected>
+<explain><p>The newest change is undone first because each undo expects the shape right after its own change. A client on the newest version gets the current object untouched.</p></explain>
+</question>
+
+<question id="apv-code-resolve" type="code" file="resolve.js">
+<q>Write <code>resolveVersion(path, headers, fallback)</code>. The major version is the first path segment and must be <code>v1</code> or <code>v2</code> (else <code>{ status: 404 }</code>). The dated version is the <code>shop-version</code> header or the fallback, and must be one of <code>2026-06-01</code>, <code>2026-09-01</code> (else <code>{ status: 400 }</code>). Otherwise return <code>{ major, dated }</code>.</q>
+<starter>
+function resolveVersion(path, headers, fallback) {
+  // your code
+}
+</starter>
+<solution>
+const MAJORS = ["v1", "v2"];
+const DATED = ["2026-06-01", "2026-09-01"];
+
+function resolveVersion(path, headers, fallback) {
+  const major = path.split("/")[1];
+  if (!MAJORS.includes(major)) return { status: 404 };
+  const dated = headers["shop-version"] ?? fallback;
+  if (!DATED.includes(dated)) return { status: 400 };
+  return { major, dated };
+}
+
+console.log(resolveVersion("/v2/orders", {}, "2026-06-01"));
+console.log(resolveVersion("/v1/orders", { "shop-version": "2026-09-01" }, "2026-06-01"));
+console.log(resolveVersion("/v1/orders", { "shop-version": "latest" }, "2026-06-01"));
+console.log(resolveVersion("/v9/orders", {}, "2026-06-01"));
+</solution>
+<expected>
+{ major: 'v2', dated: '2026-06-01' }
+{ major: 'v1', dated: '2026-09-01' }
+{ status: 400 }
+{ status: 404 }
+</expected>
+<explain><p>Resolving the version once at the edge, and rejecting unknown values, means no request is ever handled by a version it did not ask for. <code>"latest"</code> is refused on purpose: a client pinned to "latest" breaks every time you ship.</p></explain>
+</question>
+
+<question id="apv-code-breaking" type="code" file="breaking.js">
+<q>Write <code>breakingChanges(oldSample, newSample)</code> that compares two response objects field by field and returns a list: <code>"removed X"</code> for a field that disappeared and <code>"retyped X"</code> for a field whose <code>typeof</code> changed. Added fields are not breaking. Print the result for the two samples in the starter.</q>
+<starter>
+const v1 = { id: 88412, total: 15000, created_at: "2026-03-01T09:30:00Z", status: "paid" };
+const v2 = { id: 88412, total_kobo: 1500000, created_at: 1772357400, status: "paid", currency: "NGN" };
+
+function breakingChanges(oldSample, newSample) {
+  // your code
+}
+</starter>
+<solution>
+const v1 = { id: 88412, total: 15000, created_at: "2026-03-01T09:30:00Z", status: "paid" };
+const v2 = { id: 88412, total_kobo: 1500000, created_at: 1772357400, status: "paid", currency: "NGN" };
+
+function breakingChanges(oldSample, newSample) {
+  const problems = [];
+  for (const [name, value] of Object.entries(oldSample)) {
+    if (!(name in newSample)) problems.push(`removed ${name}`);
+    else if (typeof newSample[name] !== typeof value) problems.push(`retyped ${name}`);
+  }
+  return problems;
+}
+
+console.log(breakingChanges(v1, v2));
+</solution>
+<expected>
+[ 'removed total', 'retyped created_at' ]
+</expected>
+<explain><p>Only the old sample's fields matter: they are what existing clients read. <code>total_kobo</code> and <code>currency</code> are additions and pass. The rename shows up as a removal, which is exactly how an old client experiences it. Contract tests in the <a href="/learn/api-contracts">API contracts</a> lesson do this with full schemas.</p></explain>
+</question>
+
+<question id="apv-code-newer-page" type="code" file="newer.js">
+<q>Orders are shown newest first. Write <code>newerPage(orders, before, limit)</code> that returns the <code>limit</code> orders just newer than <code>before</code> (compare <code>(at, id)</code>), still newest first. With the starter data, the page newer than order 3 with limit 2 must be <code>[5, 4]</code>. Print the ids.</q>
+<starter>
+const orders = [
+  { id: 6, at: 3 }, { id: 5, at: 2 }, { id: 4, at: 2 }, { id: 3, at: 2 }, { id: 2, at: 1 }, { id: 1, at: 1 },
+];
+
+function newerPage(orders, before, limit) {
+  // your code
+}
+</starter>
+<solution>
+const orders = [
+  { id: 6, at: 3 }, { id: 5, at: 2 }, { id: 4, at: 2 }, { id: 3, at: 2 }, { id: 2, at: 1 }, { id: 1, at: 1 },
+];
+
+function newerPage(orders, before, limit) {
+  const isNewer = (o) => o.at > before.at || (o.at === before.at && o.id > before.id);
+  return orders.filter(isNewer).toReversed().slice(0, limit).toReversed();
+}
+
+console.log(newerPage(orders, { id: 3, at: 2 }, 2).map((o) => o.id));
+</solution>
+<expected>
+[ 5, 4 ]
+</expected>
+<explain><p>The orders newer than 3 are 6, 5 and 4. The ones <em>next to</em> order 3 are the oldest of those, so read them in ascending order, take <code>limit</code>, and reverse back. Taking the first two of the newest-first list would give 6 and 5, skipping order 4.</p></explain>
+</question>

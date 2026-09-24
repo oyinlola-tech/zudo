@@ -1,0 +1,873 @@
+<question id="bp-strategy-def" type="choice">
+<q>What is the <strong>strategy</strong> pattern?</q>
+<option>A plan for how a team releases software</option>
+<option correct>A family of interchangeable algorithms behind one interface, so the code that uses them can pick one at run time without knowing how it works</option>
+<option>A way to create objects of the right class</option>
+<option>A way to notify many objects of an event</option>
+<explain><p>Each delivery method is a strategy with the same <code>available</code> and <code>feeKobo</code> methods. The checkout uses whichever the customer picked.</p></explain>
+</question>
+
+<question id="bp-strategy-leak" type="choice">
+<q>In one <code>shippingFeeKobo</code> function, a "free over ₦50,000" line meant for standard delivery also made express free. Why does moving each method into its own strategy prevent this?</q>
+<option>Strategies run faster</option>
+<option correct>Each method's rules live only in its own object, so a rule written for standard cannot reach express</option>
+<option>Strategies cannot contain <code>if</code> statements</option>
+<option>TypeScript checks strategies for business mistakes</option>
+<explain><p>In the shared function, every line above a method's branch applies to it. Separate strategies have no shared lines to leak through.</p></explain>
+</question>
+
+<question id="bp-strategy-unknown" type="choice">
+<q>The mobile app sends the method id <code>"sameday"</code> instead of <code>"same-day"</code>. What should <code>strategyFor</code> do?</q>
+<option>Fall back to standard delivery</option>
+<option>Return a fee of 0</option>
+<option correct>Throw a clear "unknown shipping method" error, so the bug in the app is found instead of charging the wrong price</option>
+<option>Guess the closest id</option>
+<explain><p>The old <code>return 150_000</code> at the end of the if chain hid the typo. Unknown input is a bug to surface, not a case to guess.</p></explain>
+</question>
+
+<question id="bp-strategy-chooser" type="choice">
+<q>Who should choose which strategy is used?</q>
+<option>The strategy itself</option>
+<option correct>Something outside the code that uses it: the customer's choice, the configuration, or the data (such as the customer's tier)</option>
+<option>Always a global variable</option>
+<option>The database</option>
+<explain><p>The code that uses a strategy only calls it. Keeping the choice outside is what makes strategies interchangeable and testable.</p></explain>
+</question>
+
+<question id="bp-strategy-function" type="choice">
+<q>When is a strategy best written as a plain function type instead of an object with methods?</q>
+<option>Never; strategies must be classes</option>
+<option correct>When it is a single calculation, such as <code>(order) =&gt; number</code>; the object form pays off when each strategy has several related rules and an id</option>
+<option>Only in JavaScript, not TypeScript</option>
+<option>When there are more than ten strategies</option>
+<explain><p>A function is the smallest possible strategy. The shipping strategies are objects because each has an id, an availability rule and a fee rule.</p></explain>
+</question>
+
+<question id="bp-strategy-time" type="choice">
+<q>Same-day delivery is only offered before 14:00 Lagos time. Why does <code>available(order, now)</code> take the time as a parameter?</q>
+<option>Because <code>Date</code> does not work inside objects</option>
+<option correct>So tests can check 10:30 and 15:00 deterministically, on any day and in any time zone</option>
+<option>To make the strategy a singleton</option>
+<option>Because strategies cannot read the clock</option>
+<explain><p>The clock is part of the outside world. Passing it in keeps the rule pure and testable, as in earlier lessons.</p></explain>
+</question>
+
+<question id="bp-observer-def" type="choice">
+<q>In the <strong>observer</strong> pattern, what does the publisher know about its observers?</q>
+<option>The name and code of each one</option>
+<option correct>Nothing beyond the shape of the event: it publishes what happened, and whoever subscribed reacts</option>
+<option>Which ones will fail</option>
+<option>The order in which they were written</option>
+<explain><p>That ignorance is the point: new reactions are added by subscribing, and the checkout does not change.</p></explain>
+</question>
+
+<question id="bp-allsettled" type="choice">
+<q>Why does <code>OrderPlacedTopic.publish</code> use <code>Promise.allSettled</code> instead of <code>Promise.all</code>?</q>
+<option>It is faster</option>
+<option correct><code>Promise.all</code> rejects as soon as one observer fails, hiding the others' results; <code>allSettled</code> waits for every observer and reports each failure</option>
+<option><code>Promise.all</code> runs observers one at a time</option>
+<option>There is no difference</option>
+<explain><p>With <code>allSettled</code>, a failing analytics observer is reported by name while the e-mail and warehouse observers still complete.</p></explain>
+</question>
+
+<question id="bp-not-observer-stock" type="choice">
+<q>Which reaction to a new order should <strong>not</strong> be an observer that may fail independently?</q>
+<option>Sending the confirmation e-mail</option>
+<option>Recording analytics</option>
+<option correct>Reducing stock for the items ordered</option>
+<option>Posting to the sales team's chat</option>
+<explain><p>If stock is not reduced atomically with saving the order, two customers can buy the last item. It is a rule of the use case and must succeed or fail with it.</p></explain>
+</question>
+
+<question id="bp-no-veto" type="choice">
+<q>Why can "refuse the order if the account is blocked" not be an observer of <code>order.placed</code>?</q>
+<option>Observers cannot read the database</option>
+<option correct>Observers react to something that already happened; by the time they run the order exists, so they cannot prevent it. Checks that may refuse belong inside the use case, before the order is made</option>
+<option>Blocked accounts cannot place orders anyway</option>
+<option>Because events have no payload</option>
+<explain><p>An event says "this happened" in the past tense. Anything with a veto must run before that is true.</p></explain>
+</question>
+
+<question id="bp-outbox" type="choice">
+<q>The order is saved, and the process crashes before the in-memory event reaches the warehouse observer. What is the standard fix for events that must not be lost?</q>
+<option>Publish the event twice</option>
+<option correct>Write the event to an outbox table in the same database transaction as the order, and deliver it from there (or use a durable queue)</option>
+<option>Increase the server's memory</option>
+<option>Publish the event before saving the order</option>
+<explain><p>An in-memory event only exists in one process's memory. Storing it atomically with the order means it is delivered after a restart.</p></explain>
+</question>
+
+<question id="bp-observer-order" type="choice">
+<q>The loyalty observer assumes the e-mail observer has already run. Why is this fragile?</q>
+<option>It is not fragile; observers always run in the order they were subscribed</option>
+<option correct>Observers should be independent of each other; the order can change when subscriptions move, handlers run concurrently, or a bus is swapped</option>
+<option>Because e-mail is slow</option>
+<option>Because loyalty points are optional</option>
+<explain><p><code>Promise.allSettled</code> starts all observers together. If one step truly depends on another, that is a sequence inside one handler or the use case, not two observers.</p></explain>
+</question>
+
+<question id="bp-unsubscribe" type="choice">
+<q>Why does <code>subscribe</code> return a function?</q>
+<option>To publish events</option>
+<option correct>It unsubscribes the observer; without it, observers attached by short-lived objects stay referenced forever (a memory leak) and keep reacting</option>
+<option>It returns the observer's result</option>
+<option>It is required by TypeScript</option>
+<explain><p>A topic holds a reference to every observer. Unsubscribing releases it, which is how long-running servers avoid leaking listeners.</p></explain>
+</question>
+
+<question id="bp-command-def" type="choice">
+<q>What does the <strong>command</strong> pattern do?</q>
+<option>It runs shell commands from Node</option>
+<option correct>It turns an action into an object that holds what is needed to carry it out (and often undo it), so actions can be recorded, undone, queued and audited</option>
+<option>It chooses between algorithms</option>
+<option>It passes requests along a chain</option>
+<explain><p>Once "set rice to ₦7,650" is an object, a history can execute it, keep it, undo it and write down who did it.</p></explain>
+</question>
+
+<question id="bp-undo-capture" type="choice">
+<q>When should <code>changePrice</code> record the previous price for undo?</q>
+<option>When the command object is created</option>
+<option correct>When it executes, because the price may have changed between creating the command and running it</option>
+<option>When undo is called</option>
+<option>It should not; undo should read an audit log</option>
+<explain><p>A command created in the morning and run in the afternoon must undo to the afternoon's price. Capturing at creation would restore a stale value.</p></explain>
+</question>
+
+<question id="bp-batch-reverse" type="choice">
+<q>A batch command runs A, then B, then C. In which order must it undo them?</q>
+<option>A, B, C</option>
+<option correct>C, B, A</option>
+<option>Any order</option>
+<option>Only C</option>
+<explain><p>Later steps may depend on earlier ones (B may change what A set). Undoing in reverse is the only order that is always correct.</p></explain>
+</question>
+
+<question id="bp-invoker" type="choice">
+<q>What is the job of <code>CommandHistory</code> (the invoker)?</q>
+<option>To know how prices are stored</option>
+<option correct>To run commands, keep them for undo and write the audit trail, without knowing what any command does inside</option>
+<option>To validate prices</option>
+<option>To send commands over the network</option>
+<explain><p>Because it only uses the <code>Command</code> interface, the same history works for price changes, deactivations and any future command.</p></explain>
+</question>
+
+<question id="bp-command-data" type="choice">
+<q>Why must a command sent through a job queue be plain data rather than an object with methods?</q>
+<option>Queues only accept numbers</option>
+<option correct>The queue stores text (usually JSON), and functions, closures and class methods do not survive serialisation; the worker needs a handler that knows how to carry out each command type</option>
+<option>Methods are slower to call on a worker</option>
+<option>Because TypeScript types are erased</option>
+<explain><p>After <code>JSON.parse(JSON.stringify(command))</code>, <code>execute</code> is <code>undefined</code>. So the data says <em>what</em>, and the worker's handler says <em>how</em>.</p></explain>
+</question>
+
+<question id="bp-at-least-once" type="choice">
+<q>Queues deliver messages <em>at least once</em>. What does that require of a job handler such as "send invoice e-mail"?</q>
+<option>Nothing</option>
+<option correct>It must be idempotent: handling the same command twice must not send two e-mails or charge twice, for example by recording which commands were already handled</option>
+<option>It must run faster than the queue's timeout</option>
+<option>It must delete the queue after running</option>
+<explain><p>After a worker crash the same message can be delivered again. Idempotent handlers turn "at least once" into "effectively once".</p></explain>
+</question>
+
+<question id="bp-validate-job" type="choice">
+<q>Why does the worker validate each queued message with <code>parseJob</code> before handling it, even though the web server wrote it?</q>
+<option>To make the worker slower</option>
+<option correct>A message from a queue is input from outside the program: it may come from an older version, a bug, or an attacker, and TypeScript types do not exist at run time</option>
+<option>Because JSON.parse always returns strings</option>
+<option>It does not need to</option>
+<explain><p>The rejected <code>DeleteAllOrders</code> message shows why: without a check, the worker would trust whatever arrives.</p></explain>
+</question>
+
+<question id="bp-chain-def" type="choice">
+<q>What is a <strong>chain of responsibility</strong>?</q>
+<option>A list of people responsible for a service</option>
+<option correct>A request passed along a sequence of handlers, where each one either handles it completely or does its part and passes it on</option>
+<option>A way to create objects step by step</option>
+<option>A database transaction</option>
+<explain><p>Web middleware is this pattern: logging, authentication and authorization are links in front of every route.</p></explain>
+</question>
+
+<question id="bp-error-outermost" type="choice">
+<q>Why must the error-handling middleware be the <strong>first</strong> (outermost) link?</q>
+<option>So it runs fastest</option>
+<option correct>It can only catch errors thrown by links that run inside it; placed later, errors from earlier links escape</option>
+<option>Because it sets the user</option>
+<option>The order does not matter</option>
+<explain><p>Each middleware wraps everything after it, like an onion. The outermost layer sees every error on the way out.</p></explain>
+</question>
+
+<question id="bp-limit-before-auth" type="choice">
+<q>Should a rate limiter run before or after authentication?</q>
+<option>After, so only logged-in users are limited</option>
+<option correct>Usually before, so failed login attempts are limited too, which stops password guessing</option>
+<option>It must replace authentication</option>
+<option>The order has no effect</option>
+<explain><p>If the limiter runs after authentication, a request with a wrong token is rejected with 401 before it is ever counted, so guessing is unlimited.</p></explain>
+</question>
+
+<question id="bp-short-circuit" type="choice">
+<q>What does it mean when a middleware <strong>short-circuits</strong>?</q>
+<option>It throws an error</option>
+<option correct>It returns a response without calling <code>next</code>, so the remaining links and the handler never run</option>
+<option>It calls <code>next</code> twice</option>
+<option>It skips logging</option>
+<explain><p><code>authenticate</code> short-circuits with 401 when there is no valid token: the export handler is never reached.</p></explain>
+</question>
+
+<question id="bp-next-twice" type="choice">
+<q>A middleware accidentally calls <code>next()</code> twice. What can happen, and how does the lesson's <code>chain</code> respond?</q>
+<option>Nothing; the second call is ignored by JavaScript</option>
+<option correct>The rest of the chain and the handler run twice (a refund could be issued twice); the lesson's <code>chain</code> throws "next() called twice" instead</option>
+<option>The request is cached</option>
+<option>The first call is cancelled</option>
+<explain><p>A guard in the composer turns a dangerous, silent bug into an immediate error during development.</p></explain>
+</question>
+
+<question id="bp-classic-chain" type="choice">
+<q>In the refund approval chain (support up to ₦5,000, manager up to ₦100,000, finance up to ₦1,000,000), what happens to a request for ₦5,000,000?</q>
+<option>Support approves it</option>
+<option>It is approved by finance</option>
+<option correct>It passes along the whole chain and gets the answer "nobody can approve", instead of disappearing</option>
+<option>It throws a TypeError</option>
+<explain><p>A well-built chain always gives exactly one answer, including an explicit "no" at the end of the chain.</p></explain>
+</question>
+
+<question id="bp-zudo-capture" type="choice">
+<q>With <code>@zudojs/middleware</code>'s <code>createPipeline</code> and the default settings, what happens when the handler throws?</q>
+<option>The error propagates to the caller as an exception</option>
+<option correct>The run ends and the result is <code>{ success: false, error, … }</code>; the error is captured, not thrown</option>
+<option>The pipeline retries the handler</option>
+<option>The error is silently ignored and <code>success</code> is true</option>
+<explain><p>The default error mode is <code>"capture"</code>, so callers check <code>outcome.success</code>. <code>"throw"</code> and <code>"continue"</code> are the other modes.</p></explain>
+</question>
+
+<question id="bp-when-not" type="choice">
+<q>A function picks between two tax rates with one <code>if</code>, and the rates have not changed in five years. Should it become a strategy?</q>
+<option>Yes, every <code>if</code> should be a strategy</option>
+<option correct>No. Patterns move control flow somewhere less visible; that price is worth paying only when the rules really grow or vary</option>
+<option>Yes, but only if written as classes</option>
+<option>No, because strategies cannot hold numbers</option>
+<explain><p>Use the pattern when the symptom is real: a switch that grows with every campaign. Two stable branches are clearest as they are.</p></explain>
+</question>
+
+<question id="bp-out-if-chain" type="output">
+<q>What does this print?</q>
+<code file="if-chain.ts">
+function fee(method: string, subtotal: number): number {
+  if (method === "pickup") return 0;
+  if (subtotal >= 50000) return 0;
+  if (method === "standard") return 1500;
+  if (method === "express") return 3000;
+  return 1500;
+}
+
+console.log(fee("express", 60000), fee("express", 1000), fee("expres", 1000));
+</code>
+<option>3000 3000 1500</option>
+<option correct>0 3000 1500</option>
+<option>0 3000 3000</option>
+<option>3000 3000 0</option>
+<explain><p>The free-delivery line runs before the express branch, so big express orders are free. The misspelled method falls through to the default instead of failing.</p></explain>
+</question>
+
+<question id="bp-out-available" type="output">
+<q>What does this print?</q>
+<code file="available.ts">
+type Strategy = { id: string; available: (hourUtc: number) => boolean };
+
+const strategies: Strategy[] = [
+  { id: "standard", available: () => true },
+  { id: "same-day", available: (h) => (h + 1) % 24 < 14 },
+  { id: "night", available: (h) => (h + 1) % 24 >= 20 },
+];
+
+const options = (h: number) => strategies.filter((s) => s.available(h)).map((s) => s.id).join(",");
+console.log(options(9), "|", options(13), "|", options(23));
+</code>
+<option>standard,same-day | standard,same-day | standard,night</option>
+<option>standard,same-day | standard | standard</option>
+<option>standard | standard | standard,night</option>
+<option correct>standard,same-day | standard | standard,same-day</option>
+<explain><p>Local time is UTC+1. At 9 UTC it is 10:00: same-day is offered. At 13 UTC it is 14:00: too late. At 23 UTC it is 00:00, and 0 is less than 14, so same-day is offered at midnight, while 0 is not at least 20, so night delivery is not. The rule "before 14:00" silently includes the small hours: exactly the kind of edge a test at fixed times reveals.</p></explain>
+</question>
+
+<question id="bp-out-all-vs-settled" type="output">
+<q>What does this print?</q>
+<code file="settled.ts">
+const observers = [
+  async () => "email",
+  async () => { throw new Error("analytics down"); },
+  async () => "warehouse",
+];
+
+try {
+  await Promise.all(observers.map((o) => o()));
+} catch (error) {
+  console.log("all:", (error as Error).message);
+}
+
+const results = await Promise.allSettled(observers.map((o) => o()));
+console.log("allSettled:", results.map((r) => r.status).join(","));
+</code>
+<option>all: analytics down
+allSettled: rejected</option>
+<option correct>all: analytics down
+allSettled: fulfilled,rejected,fulfilled</option>
+<option>allSettled: fulfilled,rejected,fulfilled</option>
+<option>all: email,warehouse
+allSettled: fulfilled,fulfilled,fulfilled</option>
+<explain><p><code>Promise.all</code> rejects with the first failure. <code>allSettled</code> waits for all three and reports each outcome, which is what an event topic needs.</p></explain>
+</question>
+
+<question id="bp-out-unsubscribe" type="output">
+<q>What does this print?</q>
+<code file="unsubscribe.ts">
+const observers = new Set<(n: number) => void>();
+const subscribe = (fn: (n: number) => void) => {
+  observers.add(fn);
+  return () => observers.delete(fn);
+};
+const publish = (n: number) => observers.forEach((fn) => fn(n));
+
+const seen: number[] = [];
+const stop = subscribe((n) => seen.push(n));
+subscribe((n) => seen.push(n * 10));
+
+publish(1);
+stop();
+publish(2);
+console.log(seen);
+</code>
+<option>[ 1, 10, 2, 20 ]</option>
+<option correct>[ 1, 10, 20 ]</option>
+<option>[ 1, 10 ]</option>
+<option>[ 10, 20 ]</option>
+<explain><p>Both observers see event 1. After <code>stop()</code>, only the second observer remains, so event 2 adds just 20.</p></explain>
+</question>
+
+<question id="bp-out-stale-undo" type="output">
+<q>This command captures the previous price when it is <em>created</em>. What does this print?</q>
+<code file="stale-undo.ts">
+const prices = new Map([["RICE", 850000]]);
+
+function changePrice(sku: string, kobo: number) {
+  const previous = prices.get(sku)!;
+  return {
+    execute: () => void prices.set(sku, kobo),
+    undo: () => void prices.set(sku, previous),
+  };
+}
+
+const sale = changePrice("RICE", 765000);
+prices.set("RICE", 900000); // a supplier price rise before the sale runs
+sale.execute();
+sale.undo();
+console.log(prices.get("RICE"));
+</code>
+<option>900000</option>
+<option correct>850000</option>
+<option>765000</option>
+<option>undefined</option>
+<explain><p>Undo restores the value captured at creation (850000), not the 900000 that was current when the command ran. Capture the previous state in <code>execute</code>.</p></explain>
+</question>
+
+<question id="bp-out-batch" type="output">
+<q>What does this print?</q>
+<code file="batch.ts">
+const log: string[] = [];
+const step = (name: string) => ({ execute: () => log.push(`do ${name}`), undo: () => log.push(`undo ${name}`) });
+
+const steps = [step("A"), step("B"), step("C")];
+steps.forEach((s) => s.execute());
+[...steps].reverse().forEach((s) => s.undo());
+console.log(log.join(", "));
+</code>
+<option>do A, do B, do C, undo A, undo B, undo C</option>
+<option correct>do A, do B, do C, undo C, undo B, undo A</option>
+<option>do C, do B, do A, undo A, undo B, undo C</option>
+<option>do A, undo A, do B, undo B, do C, undo C</option>
+<explain><p>A batch executes in order and undoes in reverse. <code>[...steps]</code> copies the array so that <code>reverse</code> does not change the original.</p></explain>
+</question>
+
+<question id="bp-out-json-command" type="output">
+<q>What does this print?</q>
+<code file="json-command.ts">
+class SendInvoice {
+  constructor(readonly invoiceId: string) {}
+  execute() {
+    return `sent ${this.invoiceId}`;
+  }
+}
+
+const wire = JSON.stringify(new SendInvoice("INV-7"));
+const revived = JSON.parse(wire);
+console.log(wire, typeof revived.execute, revived instanceof SendInvoice);
+</code>
+<option>{"invoiceId":"INV-7","execute":"function"} function true</option>
+<option correct>{"invoiceId":"INV-7"} undefined false</option>
+<option>{"invoiceId":"INV-7"} function false</option>
+<option>{} undefined false</option>
+<explain><p>JSON keeps only own data properties. The method lives on the prototype and the class identity is lost, so a queued command must be plain data with a handler on the worker side.</p></explain>
+</question>
+
+<question id="bp-out-onion" type="output">
+<q>What does this print?</q>
+<code file="onion.ts">
+type Mw = (next: () => Promise<string>) => Promise<string>;
+const log: string[] = [];
+
+const named = (name: string): Mw => async (next) => {
+  log.push(`${name} before`);
+  const result = await next();
+  log.push(`${name} after`);
+  return result;
+};
+
+const chain = [named("errors"), named("auth")];
+const run = (i: number): Promise<string> => (i < chain.length ? chain[i]!(() => run(i + 1)) : Promise.resolve("handler"));
+
+console.log(await run(0), log.join(", "));
+</code>
+<option>handler errors before, errors after, auth before, auth after</option>
+<option correct>handler errors before, auth before, auth after, errors after</option>
+<option>handler auth before, errors before, errors after, auth after</option>
+<option>errors before, auth before, handler, auth after, errors after</option>
+<explain><p>The first middleware is outermost: it starts first and finishes last. <code>console.log</code> runs after the whole chain, so <code>"handler"</code> is printed first on the line.</p></explain>
+</question>
+
+<question id="bp-out-short-circuit" type="output">
+<q>What does this print?</q>
+<code file="short-circuit.ts">
+let handlerRuns = 0;
+type Ctx = { token?: string };
+
+const auth = async (ctx: Ctx, next: () => Promise<number>) => (ctx.token ? next() : 401);
+const handler = async () => {
+  handlerRuns++;
+  return 200;
+};
+
+const route = (ctx: Ctx) => auth(ctx, handler);
+console.log(await route({}), await route({ token: "t-1" }), handlerRuns);
+</code>
+<option>401 200 2</option>
+<option correct>401 200 1</option>
+<option>200 200 2</option>
+<option>401 401 0</option>
+<explain><p>Without a token, <code>auth</code> returns 401 and never calls <code>next</code>, so the handler runs only for the second request.</p></explain>
+</question>
+
+<question id="bp-out-missing-await" type="output">
+<q>The error middleware forgot <code>await</code>. What does this print?</q>
+<code file="missing-await.ts">
+const handler = async (): Promise<number> => {
+  throw new Error("db down");
+};
+
+const withoutAwait = async (next: () => Promise<number>) => {
+  try {
+    return next();
+  } catch {
+    return 500;
+  }
+};
+const withAwait = async (next: () => Promise<number>) => {
+  try {
+    return await next();
+  } catch {
+    return 500;
+  }
+};
+
+console.log(await withAwait(handler));
+try {
+  console.log(await withoutAwait(handler));
+} catch (error) {
+  console.log("escaped:", (error as Error).message);
+}
+</code>
+<option>500
+500</option>
+<option correct>500
+escaped: db down</option>
+<option>escaped: db down
+escaped: db down</option>
+<option>500
+undefined</option>
+<explain><p><code>return next()</code> returns the rejected promise without waiting for it, so the <code>try</code> block has already finished when it rejects. Only <code>return await next()</code> lets <code>catch</code> see the error.</p></explain>
+</question>
+
+<question id="bp-out-approval" type="output">
+<q>What does this print?</q>
+<code file="approval.ts">
+type Approver = (kobo: number) => string;
+
+const approver = (name: string, limit: number, next?: Approver): Approver => (kobo) =>
+  kobo <= limit ? name : next ? next(kobo) : "nobody";
+
+const chain = approver("support", 500000, approver("manager", 10000000));
+console.log([500000, 500001, 10000001].map(chain).join(" "));
+</code>
+<option>support support manager</option>
+<option correct>support manager nobody</option>
+<option>support manager manager</option>
+<option>manager manager nobody</option>
+<explain><p>Exactly 500,000 is within support's limit. One kobo more goes to the manager. Above the manager's limit, the chain ends with an explicit "nobody".</p></explain>
+</question>
+
+<question id="bp-code-strategy" type="code" file="tax-strategy.ts">
+<q><p>Write <code>taxFor(countryId)</code> that returns a strategy from the list below and throws <code>new Error("no tax rule for " + id)</code> for an unknown id, then add a <code>KE</code> strategy (16% VAT, <code>Math.round</code>). The program should print <code>75 160</code> then <code>no tax rule for ZA</code>.</p></q>
+<starter>
+type TaxStrategy = { id: string; taxKobo(amountKobo: number): number };
+
+const nigeria: TaxStrategy = { id: "NG", taxKobo: (a) => Math.round(a * 0.075) };
+const strategies: TaxStrategy[] = [nigeria];
+
+// add a KE strategy and write taxFor here
+
+console.log(taxFor("NG").taxKobo(1000), taxFor("KE").taxKobo(1000));
+try {
+  taxFor("ZA");
+} catch (error) {
+  console.log((error as Error).message);
+}
+</starter>
+<solution>
+type TaxStrategy = { id: string; taxKobo(amountKobo: number): number };
+
+const nigeria: TaxStrategy = { id: "NG", taxKobo: (a) => Math.round(a * 0.075) };
+const kenya: TaxStrategy = { id: "KE", taxKobo: (a) => Math.round(a * 0.16) };
+const strategies: TaxStrategy[] = [nigeria, kenya];
+
+function taxFor(id: string): TaxStrategy {
+  const strategy = strategies.find((s) => s.id === id);
+  if (strategy === undefined) throw new Error(`no tax rule for ${id}`);
+  return strategy;
+}
+
+console.log(taxFor("NG").taxKobo(1000), taxFor("KE").taxKobo(1000));
+try {
+  taxFor("ZA");
+} catch (error) {
+  console.log((error as Error).message);
+}
+</solution>
+<expected>
+75 160
+no tax rule for ZA
+</expected>
+<explain><p>A new country is a new strategy in the list, and an unknown id fails loudly instead of silently using another country's rate.</p></explain>
+</question>
+
+<question id="bp-code-topic" type="code" file="topic.ts">
+<q><p>Write a <code>Topic</code> class with <code>subscribe(fn)</code> (returns an unsubscribe function) and <code>async publish(value)</code>, which runs every subscriber, waits for all of them, and returns the number that failed. The program should print <code>1 [ 'email ORD-1', 'ship ORD-1' ]</code>, then <code>0</code>.</p></q>
+<starter>
+// write Topic here
+
+const topic = new Topic<string>();
+const done: string[] = [];
+topic.subscribe(async (id) => void done.push(`email ${id}`));
+const stop = topic.subscribe(async () => {
+  throw new Error("analytics down");
+});
+topic.subscribe(async (id) => void done.push(`ship ${id}`));
+
+console.log(await topic.publish("ORD-1"), done);
+stop();
+console.log(await topic.publish("ORD-2"));
+</starter>
+<solution>
+class Topic<T> {
+  readonly #subscribers = new Set<(value: T) => Promise<void>>();
+
+  subscribe(fn: (value: T) => Promise<void>): () => void {
+    this.#subscribers.add(fn);
+    return () => {
+      this.#subscribers.delete(fn);
+    };
+  }
+
+  async publish(value: T): Promise<number> {
+    const results = await Promise.allSettled([...this.#subscribers].map((fn) => fn(value)));
+    return results.filter((r) => r.status === "rejected").length;
+  }
+}
+
+const topic = new Topic<string>();
+const done: string[] = [];
+topic.subscribe(async (id) => void done.push(`email ${id}`));
+const stop = topic.subscribe(async () => {
+  throw new Error("analytics down");
+});
+topic.subscribe(async (id) => void done.push(`ship ${id}`));
+
+console.log(await topic.publish("ORD-1"), done);
+stop();
+console.log(await topic.publish("ORD-2"));
+</solution>
+<expected>
+1 [ 'email ORD-1', 'ship ORD-1' ]
+0
+</expected>
+<explain><p>One failing subscriber is counted, not allowed to stop the others. After unsubscribing it, the next publish has no failures.</p></explain>
+</question>
+
+<question id="bp-code-command" type="code" file="command.ts">
+<q><p>Write <code>changeStock(stock, sku, qty)</code>, a command whose <code>execute</code> records the current quantity and sets the new one, and whose <code>undo</code> restores the recorded quantity. The program should print <code>3</code> then <code>12</code>.</p></q>
+<starter>
+type Command = { execute(): void; undo(): void };
+const stock = new Map<string, number>([["RICE-5KG", 10]]);
+
+// write changeStock here
+
+const fix = changeStock(stock, "RICE-5KG", 3);
+stock.set("RICE-5KG", 12); // a delivery arrives before the command runs
+fix.execute();
+console.log(stock.get("RICE-5KG"));
+fix.undo();
+console.log(stock.get("RICE-5KG"));
+</starter>
+<solution>
+type Command = { execute(): void; undo(): void };
+const stock = new Map<string, number>([["RICE-5KG", 10]]);
+
+function changeStock(levels: Map<string, number>, sku: string, qty: number): Command {
+  let previous: number | undefined;
+  return {
+    execute() {
+      previous = levels.get(sku) ?? 0;
+      levels.set(sku, qty);
+    },
+    undo() {
+      if (previous === undefined) throw new Error("never executed");
+      levels.set(sku, previous);
+    },
+  };
+}
+
+const fix = changeStock(stock, "RICE-5KG", 3);
+stock.set("RICE-5KG", 12); // a delivery arrives before the command runs
+fix.execute();
+console.log(stock.get("RICE-5KG"));
+fix.undo();
+console.log(stock.get("RICE-5KG"));
+</solution>
+<expected>
+3
+12
+</expected>
+<explain><p>Capturing the previous value in <code>execute</code> makes undo return to 12, the value just before the command ran, not the 10 that was there when it was created.</p></explain>
+</question>
+
+<question id="bp-code-history" type="code" file="history.ts">
+<q><p>Write <code>History</code> with <code>run(command, user)</code> (execute, remember, audit <code>"user: description"</code>) and <code>undo(user)</code> (undo the last command, audit <code>"user: undo description"</code>, return <code>false</code> if there is nothing to undo). The program should print <code>1</code>, <code>false</code>, and the audit list shown in the starter comment.</p></q>
+<starter>
+type Command = { description: string; execute(): void; undo(): void };
+
+let price = 1;
+const double: Command = { description: "double price", execute: () => void (price *= 2), undo: () => void (price /= 2) };
+
+// write History here
+
+const history = new History();
+history.run(double, "musa");
+history.undo("ngozi");
+console.log(price);
+console.log(history.undo("ngozi"));
+console.log(history.audit);
+// expected audit: [ 'musa: double price', 'ngozi: undo double price' ]
+</starter>
+<solution>
+type Command = { description: string; execute(): void; undo(): void };
+
+let price = 1;
+const double: Command = { description: "double price", execute: () => void (price *= 2), undo: () => void (price /= 2) };
+
+class History {
+  readonly #done: Command[] = [];
+  readonly audit: string[] = [];
+
+  run(command: Command, user: string): void {
+    command.execute();
+    this.#done.push(command);
+    this.audit.push(`${user}: ${command.description}`);
+  }
+
+  undo(user: string): boolean {
+    const command = this.#done.pop();
+    if (command === undefined) return false;
+    command.undo();
+    this.audit.push(`${user}: undo ${command.description}`);
+    return true;
+  }
+}
+
+const history = new History();
+history.run(double, "musa");
+history.undo("ngozi");
+console.log(price);
+console.log(history.undo("ngozi"));
+console.log(history.audit);
+// expected audit: [ 'musa: double price', 'ngozi: undo double price' ]
+</solution>
+<expected>
+1
+false
+[ 'musa: double price', 'ngozi: undo double price' ]
+</expected>
+<explain><p>The history only uses the <code>Command</code> interface. It keeps the undo stack and the audit trail for any kind of command.</p></explain>
+</question>
+
+<question id="bp-code-parse-job" type="code" file="parse-job.ts">
+<q><p>Write <code>parseJob(text)</code> that returns a <code>JobCommand</code> only if the JSON is an object with <code>type: "SendReceipt"</code> and a string <code>orderId</code>; otherwise <code>undefined</code>. The program should print <code>SendReceipt ORD-9</code>, <code>undefined</code>, <code>undefined</code>.</p></q>
+<starter>
+type JobCommand = { type: "SendReceipt"; orderId: string };
+
+// write parseJob here
+
+const ok = parseJob('{"type":"SendReceipt","orderId":"ORD-9"}');
+console.log(ok?.type, ok?.orderId);
+console.log(parseJob('{"type":"SendReceipt","orderId":9}'));
+console.log(parseJob('{"type":"DropTables"}'));
+</starter>
+<solution>
+type JobCommand = { type: "SendReceipt"; orderId: string };
+
+function parseJob(text: string): JobCommand | undefined {
+  const data: unknown = JSON.parse(text);
+  if (typeof data !== "object" || data === null) return undefined;
+  if (!("type" in data) || data.type !== "SendReceipt") return undefined;
+  if (!("orderId" in data) || typeof data.orderId !== "string") return undefined;
+  return { type: "SendReceipt", orderId: data.orderId };
+}
+
+const ok = parseJob('{"type":"SendReceipt","orderId":"ORD-9"}');
+console.log(ok?.type, ok?.orderId);
+console.log(parseJob('{"type":"SendReceipt","orderId":9}'));
+console.log(parseJob('{"type":"DropTables"}'));
+</solution>
+<expected>
+SendReceipt ORD-9
+undefined
+undefined
+</expected>
+<explain><p>The worker trusts nothing it reads from the queue: a wrong field type or an unknown command type is rejected before any handler runs.</p></explain>
+</question>
+
+<question id="bp-code-chain" type="code" file="chain-code.ts">
+<q><p>Write <code>chain(middlewares, handler)</code>: it returns a function of <code>ctx</code> that calls the first middleware with <code>ctx</code> and a <code>next</code> that runs the rest, ending with the handler. The program should print <code>[ 'log in', 'auth ok', 'handler', 'log out' ]</code>.</p></q>
+<starter>
+type Mw = (ctx: string[], next: () => Promise<string>) => Promise<string>;
+
+const logMw: Mw = async (ctx, next) => {
+  ctx.push("log in");
+  const result = await next();
+  ctx.push("log out");
+  return result;
+};
+const authMw: Mw = async (ctx, next) => {
+  ctx.push("auth ok");
+  return next();
+};
+
+// write chain here
+
+const trace: string[] = [];
+await chain([logMw, authMw], async (ctx) => {
+  ctx.push("handler");
+  return "done";
+})(trace);
+console.log(trace);
+</starter>
+<solution>
+type Mw = (ctx: string[], next: () => Promise<string>) => Promise<string>;
+
+const logMw: Mw = async (ctx, next) => {
+  ctx.push("log in");
+  const result = await next();
+  ctx.push("log out");
+  return result;
+};
+const authMw: Mw = async (ctx, next) => {
+  ctx.push("auth ok");
+  return next();
+};
+
+function chain(middlewares: Mw[], handler: (ctx: string[]) => Promise<string>) {
+  return (ctx: string[]): Promise<string> => {
+    const run = (i: number): Promise<string> => {
+      const middleware = middlewares[i];
+      return middleware === undefined ? handler(ctx) : middleware(ctx, () => run(i + 1));
+    };
+    return run(0);
+  };
+}
+
+const trace: string[] = [];
+await chain([logMw, authMw], async (ctx) => {
+  ctx.push("handler");
+  return "done";
+})(trace);
+console.log(trace);
+</solution>
+<expected>[ 'log in', 'auth ok', 'handler', 'log out' ]</expected>
+<explain><p>Each <code>next</code> runs the following link, and the last link's <code>next</code> runs the handler. The outermost middleware finishes last, which is why "log out" comes at the end.</p></explain>
+</question>
+
+<question id="bp-code-require-role" type="code" file="require-role.ts">
+<q><p>Write <code>requireRole(role)</code>, a middleware that calls <code>next()</code> only when <code>ctx.user?.role === role</code>, and otherwise returns <code>{ status: 403 }</code> without calling it. The program should print <code>403 200</code>.</p></q>
+<starter>
+type Ctx = { user?: { role: string } };
+type Res = { status: number };
+type Mw = (ctx: Ctx, next: () => Promise<Res>) => Promise<Res>;
+
+// write requireRole here
+
+const handler = async (): Promise<Res> => ({ status: 200 });
+const guard = requireRole("admin");
+const a = await guard({ user: { role: "support" } }, handler);
+const b = await guard({ user: { role: "admin" } }, handler);
+console.log(a.status, b.status);
+</starter>
+<solution>
+type Ctx = { user?: { role: string } };
+type Res = { status: number };
+type Mw = (ctx: Ctx, next: () => Promise<Res>) => Promise<Res>;
+
+function requireRole(role: string): Mw {
+  return async (ctx, next) => (ctx.user?.role === role ? next() : { status: 403 });
+}
+
+const handler = async (): Promise<Res> => ({ status: 200 });
+const guard = requireRole("admin");
+const a = await guard({ user: { role: "support" } }, handler);
+const b = await guard({ user: { role: "admin" } }, handler);
+console.log(a.status, b.status);
+</solution>
+<expected>403 200</expected>
+<explain><p>A middleware factory takes configuration (the role) and returns the link. It short-circuits for the wrong role, so the handler never runs for support staff.</p></explain>
+</question>
+
+<question id="bp-code-approval" type="code" file="approval-code.ts">
+<q><p>Build a refund approval chain with a function <code>approver(name, limitKobo, next?)</code> returning a function of the amount: the first approver whose limit covers the amount answers with its name; past the last one, the answer is <code>"nobody"</code>. Use support (500000), manager (10000000) and finance (100000000). The program should print <code>support manager finance nobody</code>.</p></q>
+<starter>
+// write approver and build the chain here
+
+console.log([300000, 4500000, 25000000, 500000000].map(chain).join(" "));
+</starter>
+<solution>
+type Approve = (kobo: number) => string;
+
+function approver(name: string, limitKobo: number, next?: Approve): Approve {
+  return (kobo) => {
+    if (kobo <= limitKobo) return name;
+    return next === undefined ? "nobody" : next(kobo);
+  };
+}
+
+const chain = approver("support", 500000, approver("manager", 10000000, approver("finance", 100000000)));
+console.log([300000, 4500000, 25000000, 500000000].map(chain).join(" "));
+</solution>
+<expected>support manager finance nobody</expected>
+<explain><p>Each link either handles the request or passes it on, and the end of the chain gives an explicit answer. Changing a limit or adding a level changes the chain in one place.</p></explain>
+</question>

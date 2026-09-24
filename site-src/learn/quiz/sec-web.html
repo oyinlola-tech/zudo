@@ -1,0 +1,696 @@
+<question id="web-ambient" type="choice">
+<q>Why can a page on another site make Ada's browser send a transfer request that the wallet accepts?</q>
+<option>The other page can read Ada's session cookie with <code>document.cookie</code></option>
+<option correct>The browser attaches the wallet's cookies to every request to the wallet, whoever started it</option>
+<option>The same-origin policy allows other sites to read the wallet's responses</option>
+<option>Form submissions skip the server's authentication</option>
+<explain><p>This is ambient authority: the credential travels with the request automatically. The other site never sees the cookie and never reads the answer; it only needs the request to be sent.</p></explain>
+</question>
+
+<question id="web-httponly-csrf" type="choice">
+<q>The session cookie is <code>HttpOnly</code>. What does that do against CSRF?</q>
+<option>It blocks CSRF completely</option>
+<option>It stops the cookie from being sent on cross-site requests</option>
+<option correct>Nothing: it stops scripts from reading the cookie, not the browser from sending it</option>
+<option>It forces the request to use HTTPS</option>
+<explain><p><code>HttpOnly</code> protects the cookie's <em>value</em> from page JavaScript (useful against XSS). CSRF does not need the value, only that the browser sends it. <code>SameSite</code> is the cookie attribute that controls sending.</p></explain>
+</question>
+
+<question id="web-samesite-lax" type="choice">
+<q>A session cookie has <code>SameSite=Lax</code>. On which request started by another site does the browser still send it?</q>
+<option>A hidden form that <code>POST</code>s to your transfer route</option>
+<option>A <code>fetch</code> with <code>credentials: "include"</code></option>
+<option correct>A normal link the user clicks, which opens your page with <code>GET</code></option>
+<option>None: <code>Lax</code> never sends it cross-site</option>
+<explain><p><code>Lax</code> sends the cookie on top-level <code>GET</code> navigations so links from email still arrive logged in. That is why a <code>GET</code> handler must never change data.</p></explain>
+</question>
+
+<question id="web-samesite-strict" type="choice">
+<q>Which cookie is the best fit for <code>SameSite=Strict</code>?</q>
+<option correct>A cookie that authorises admin actions or money moves, where arriving logged out from a link is acceptable</option>
+<option>A cookie for a widget embedded in other people's sites</option>
+<option>Every cookie, because Strict is always best</option>
+<option>A cookie that must be read by page JavaScript</option>
+<explain><p><code>Strict</code> is never sent on requests from other sites, not even link clicks. That is the safest choice for high-value actions, at the cost of users following a link arriving without that cookie.</p></explain>
+</question>
+
+<question id="web-samesite-subdomain" type="choice">
+<q>Why is <code>SameSite</code> not enough on its own?</q>
+<option>Browsers only apply it to <code>GET</code> requests</option>
+<option correct>Every subdomain of your registrable domain counts as the same site, and old browsers ignore the attribute</option>
+<option>It only works over HTTP, not HTTPS</option>
+<option>Attackers can remove it from the cookie</option>
+<explain><p>A request from <code>blog.wallet.example</code> is same-site for <code>app.wallet.example</code>. If a subdomain runs untrusted code or can be taken over, SameSite does not help. Add a token or an origin check as a second layer.</p></explain>
+</question>
+
+<question id="web-token-why" type="choice">
+<q>Why does a CSRF token in a hidden form field stop the forged request?</q>
+<option>The token is encrypted, so the other site cannot change it</option>
+<option>Browsers refuse to submit forms that contain hidden fields</option>
+<option correct>The other site cannot read your pages, so it cannot learn the token the request must carry</option>
+<option>The token makes the request a preflighted CORS request</option>
+<explain><p>The same-origin policy stops the other site from reading your form page. Without the per-session secret, the forged request fails the server's token check.</p></explain>
+</question>
+
+<question id="web-token-bound" type="choice">
+<q>A server issues one CSRF token per session but accepts <em>any</em> token it has ever issued. What can an attacker do?</q>
+<option>Nothing, the token is still secret</option>
+<option correct>Log in with their own account, take their own valid token, and put it in the forged form</option>
+<option>Read the victim's token with <code>document.cookie</code></option>
+<option>Bypass SameSite</option>
+<explain><p>A token proves something only if it is checked against <em>this</em> session. Otherwise the attacker's own token works in the victim's request.</p></explain>
+</question>
+
+<question id="web-fetch-metadata" type="choice">
+<q>What makes <code>Origin</code> and <code>Sec-Fetch-Site</code> useful for CSRF checks?</q>
+<option>They are signed by the server</option>
+<option correct>The browser sets them, and page JavaScript cannot set or change them</option>
+<option>They contain the session id</option>
+<option>They are only sent by trusted clients</option>
+<explain><p>They are controlled by the browser. A request with <code>Sec-Fetch-Site: cross-site</code> or a foreign <code>Origin</code> can be refused before the body is read. A non-browser client can send anything, but it also does not hold the victim's cookie.</p></explain>
+</question>
+
+<question id="web-bearer-csrf" type="choice">
+<q>An API authenticates with <code>Authorization: Bearer …</code>, added by the app's own JavaScript. No cookies are used. Does it need CSRF tokens?</q>
+<option>Yes, every API needs CSRF tokens</option>
+<option correct>No: another site cannot make the browser add that header, so there is no ambient credential to abuse</option>
+<option>Only for GET requests</option>
+<option>Only if CORS allows <code>*</code></option>
+<explain><p>CSRF relies on credentials the browser adds automatically. A bearer token added by your own script is not sent by requests other sites start. The risk returns if the token moves into a cookie.</p></explain>
+</question>
+
+<question id="web-layers-tests" type="choice">
+<q>The wallet test sends a request with the correct <code>Origin</code> but no token. Why test that, if the origin check already blocks real attacks?</q>
+<option>To check the origin header is parsed</option>
+<option correct>To prove the token layer works on its own, so removing one layer by accident makes a test fail</option>
+<option>Because browsers sometimes send the wrong origin</option>
+<option>To measure performance</option>
+<explain><p>With one test for the whole attack, a refactor could delete a whole layer and the test would still pass thanks to the other layer. One test per layer keeps every layer honest.</p></explain>
+</question>
+
+<question id="web-cors-reflect" type="choice">
+<q>A server copies the request's <code>Origin</code> into <code>Access-Control-Allow-Origin</code> and sends <code>Access-Control-Allow-Credentials: true</code>. What does this allow?</q>
+<option>Nothing, because browsers reject reflected origins</option>
+<option>Only same-site pages to read responses</option>
+<option correct>Any website to read the logged-in user's responses, including any CSRF token they contain</option>
+<option>Any website to send requests, but not read them</option>
+<explain><p>The browser's rule is "exact origin plus credentials true". Reflection satisfies it for every origin, so every site can read the user's data, and a token read from a response defeats the CSRF token too.</p></explain>
+</question>
+
+<question id="web-cors-vary" type="choice">
+<q>Why should a server add <code>Vary: Origin</code> when its CORS headers depend on the origin?</q>
+<option>Browsers ignore CORS headers without it</option>
+<option correct>So a shared cache never serves one origin's response, with its permission header, to another origin</option>
+<option>It makes the preflight faster</option>
+<option>It is required for cookies to be sent</option>
+<explain><p><code>Vary</code> tells caches which request headers change the response. Without it, a cache could store the answer for a trusted origin and replay it for a different one.</p></explain>
+</question>
+
+<question id="web-cors-not-authz" type="choice">
+<q>Which statement about CORS is true?</q>
+<option>CORS stops <code>curl</code> from calling your API</option>
+<option>CORS stops other sites from sending requests to your API</option>
+<option correct>CORS only tells browsers which other origins may read responses; authentication and permissions protect the data</option>
+<option>CORS replaces the need for CSRF protection</option>
+<explain><p>CORS is a browser rule for reading. Simple requests (like form posts) are still sent, and non-browser clients ignore CORS completely.</p></explain>
+</question>
+
+<question id="web-null-origin" type="choice">
+<q>Why should an allow-list never contain the origin <code>null</code>?</q>
+<option>Because <code>null</code> is not valid JSON</option>
+<option correct>Sandboxed frames and local files send it, so an attacker can produce it on purpose</option>
+<option>Because browsers never send it</option>
+<option>Because it would disable HTTPS</option>
+<explain><p>The <code>null</code> origin does not identify anyone. Any page can create a sandboxed frame whose requests carry <code>Origin: null</code>.</p></explain>
+</question>
+
+<question id="web-xss-kinds" type="choice">
+<q>A search page puts the <code>q</code> query parameter into its HTML without encoding. Which kind of XSS is that?</q>
+<option>Stored</option>
+<option correct>Reflected</option>
+<option>DOM-based</option>
+<option>CSRF</option>
+<explain><p>The data comes from the current request and goes straight back in the server's HTML, so whoever controls the link decides the markup. Stored XSS comes from saved data; DOM XSS happens in page JavaScript.</p></explain>
+</question>
+
+<question id="web-dom-xss-kind" type="choice">
+<q>The server sends a static page. Its script does <code>el.innerHTML = location.hash.slice(1)</code>. Which kind of XSS is this, and where is it fixed?</q>
+<option>Reflected; fix it on the server</option>
+<option>Stored; fix it in the database</option>
+<option correct>DOM-based; fix it in the page's JavaScript, for example with <code>textContent</code></option>
+<option>It is not XSS because the server never sees the hash</option>
+<explain><p>The fragment is never even sent to the server. The page's own code moves a source (the URL) into a markup sink, so the fix is in that code.</p></explain>
+</question>
+
+<question id="web-xss-beats-csrf" type="choice">
+<q>Why does an XSS bug defeat CSRF tokens and CORS?</q>
+<option>XSS turns off cookies</option>
+<option correct>The attacker's script runs in your origin, so it can read your pages (and their tokens) and send same-origin requests</option>
+<option>XSS changes the server's CORS configuration</option>
+<option>It does not; CSRF tokens stop XSS</option>
+<explain><p>The same-origin policy protects the attacker's script once it runs inside your origin. That is why output encoding and CSP matter so much.</p></explain>
+</question>
+
+<question id="web-context-url" type="choice">
+<q>A profile shows <code>&lt;a href="${website}"&gt;</code>. The value is HTML-escaped. What is still missing?</q>
+<option>Nothing, HTML escaping is enough</option>
+<option>Base64-encoding the URL</option>
+<option correct>A scheme allow-list: parse it with <code>URL</code> and accept only <code>https:</code> or <code>http:</code></option>
+<option>Wrapping it in <code>encodeURIComponent</code> and nothing else</option>
+<explain><p>Escaping stops the value from leaving the attribute, but <code>javascript:…</code> contains no characters to escape and still runs when clicked. URL contexts need a scheme check.</p></explain>
+</question>
+
+<question id="web-sanitize" type="choice">
+<q>Product descriptions come from a rich-text editor and must keep bold text, lists and links. What should the server do?</q>
+<option>HTML-escape them like any other text</option>
+<option>Remove <code>&lt;script&gt;</code> tags with a regular expression</option>
+<option correct>Run them through a maintained HTML sanitizer with an allow-list of tags and attributes</option>
+<option>Store them base64-encoded</option>
+<explain><p>Escaping would show the markup as text. Hand-written regex filters miss event attributes, odd nesting and parser quirks. A sanitizer parses the HTML and keeps only what the allow-list names.</p></explain>
+</question>
+
+<question id="web-csp-role" type="choice">
+<q>What is the role of a Content-Security-Policy against XSS?</q>
+<option>It replaces output encoding</option>
+<option correct>A second layer: when an encoding bug slips through, the browser refuses to run the injected script</option>
+<option>It encrypts the page</option>
+<option>It stops other sites from sending requests to you</option>
+<explain><p>Encoding is the fix; CSP limits the damage of the encoding bug you have not found yet.</p></explain>
+</question>
+
+<question id="web-csp-nonce" type="choice">
+<q>Which of these nonce setups protects the page?</q>
+<option>A long nonce stored in configuration and reused for every response</option>
+<option correct>A fresh random nonce per response, the same in the header and in the page's own script tags</option>
+<option>A nonce derived from the user id</option>
+<option>A nonce in the header only, with <code>'unsafe-inline'</code> as a fallback</option>
+<explain><p>The attacker must not be able to predict the nonce of the page the victim will load. A fixed or guessable nonce can simply be copied into the injected tag. <code>'unsafe-inline'</code> would allow inline scripts anyway.</p></explain>
+</question>
+
+<question id="web-csp-meta" type="choice">
+<q>What can a CSP in a <code>&lt;meta&gt;</code> tag <strong>not</strong> do that the header can?</q>
+<option>Restrict <code>script-src</code></option>
+<option correct>Use <code>frame-ancestors</code> (clickjacking protection) and reporting</option>
+<option>Block inline event handlers</option>
+<option>Allow scripts with a nonce</option>
+<explain><p>Browsers ignore <code>frame-ancestors</code>, <code>report-uri</code> and <code>sandbox</code> in meta policies. Send the policy as a header.</p></explain>
+</question>
+
+<question id="web-report-only" type="choice">
+<q>You are adding a strict CSP to an old app with many inline scripts. What is the safe rollout?</q>
+<option>Add <code>'unsafe-inline'</code> permanently</option>
+<option correct>Send <code>Content-Security-Policy-Report-Only</code> first, fix what it reports, then enforce</option>
+<option>Enforce immediately and fix whatever breaks</option>
+<option>Put the policy in a meta tag so it is weaker</option>
+<explain><p>Report-Only makes the browser report violations without blocking, so you find your own inline scripts before users see broken pages.</p></explain>
+</question>
+
+<question id="web-headers-match" type="choice">
+<q>Which header stops the browser from treating an uploaded <code>.txt</code> file as HTML or script?</q>
+<option><code>Strict-Transport-Security</code></option>
+<option><code>Referrer-Policy</code></option>
+<option correct><code>X-Content-Type-Options: nosniff</code></option>
+<option><code>Cross-Origin-Opener-Policy</code></option>
+<explain><p><code>nosniff</code> makes the browser trust the declared <code>Content-Type</code> instead of guessing from the content.</p></explain>
+</question>
+
+<question id="web-host-prefix" type="choice">
+<q>What does naming the session cookie <code>__Host-sid</code> add?</q>
+<option>It encrypts the cookie</option>
+<option correct>The browser accepts it only with <code>Secure</code>, <code>Path=/</code> and no <code>Domain</code>, so sibling subdomains cannot set or overwrite it</option>
+<option>It makes the cookie <code>HttpOnly</code></option>
+<option>It sends the cookie to all subdomains</option>
+<explain><p>The prefix is enforced by the browser. It locks the cookie to exactly your host, which blocks cookie injection from other subdomains.</p></explain>
+</question>
+
+<question id="web-out-origins" type="output">
+<q>What does this print?</q>
+<code file="origins.js">
+const allowed = (origin) => origin.endsWith("shop.example");
+for (const origin of ["https://shop.example", "https://myshop.example", "http://shop.example"]) {
+  console.log(allowed(origin));
+}
+</code>
+<option correct>true
+true
+true</option>
+<option>true
+false
+false</option>
+<option>true
+false
+true</option>
+<option>true
+true
+false</option>
+<explain><p><code>endsWith</code> only looks at the last letters. <code>myshop.example</code> ends the same way, and the scheme is never checked. An exact <code>Set</code> lookup accepts only the listed origin.</p></explain>
+</question>
+
+<question id="web-out-regex" type="output">
+<q>What does this print?</q>
+<code file="regex-origin.js">
+const loose = /https:\/\/shop\.example/;
+const strict = /^https:\/\/shop\.example$/;
+const origin = "https://shop.example.deals.test";
+console.log(loose.test(origin), strict.test(origin));
+</code>
+<option correct>true false</option>
+<option>false false</option>
+<option>true true</option>
+<option>false true</option>
+<explain><p>Without <code>^</code> and <code>$</code>, the pattern matches anywhere inside the string, so a longer domain that starts with yours passes.</p></explain>
+</question>
+
+<question id="web-out-set" type="output">
+<q>What does this print?</q>
+<code file="set-origin.js">
+const trusted = new Set("https://shop.example,".split(","));
+console.log(trusted.size, trusted.has(""), trusted.has("https://shop.example"));
+</code>
+<option correct>2 true true</option>
+<option>1 false true</option>
+<option>2 false true</option>
+<option>1 true true</option>
+<explain><p>The trailing comma produces an empty string, which becomes an allowed "origin". Trim and filter empty entries when you read the list from configuration.</p></explain>
+</question>
+
+<question id="web-out-escape" type="output">
+<q>What does this print?</q>
+<code file="escape.js">
+const ENTITIES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (ch) => ENTITIES[ch]);
+console.log(escapeHtml(`Tom & Jerry's <b>"deal"</b>`));
+</code>
+<option correct>Tom &amp;amp; Jerry&amp;#39;s &amp;lt;b&amp;gt;&amp;quot;deal&amp;quot;&amp;lt;/b&amp;gt;</option>
+<option>Tom &amp;amp; Jerry's &amp;lt;b&amp;gt;"deal"&amp;lt;/b&amp;gt;</option>
+<option>Tom &amp;amp;amp; Jerry&amp;#39;s &amp;lt;b&amp;gt;&amp;quot;deal&amp;quot;&amp;lt;/b&amp;gt;</option>
+<option>Tom & Jerry's &lt;b&gt;"deal"&lt;/b&gt;</option>
+<explain><p>A single <code>replace</code> with one regular expression visits each character once, so the <code>&amp;</code> in a new entity is never escaped again. All five special characters are replaced.</p></explain>
+</question>
+
+<question id="web-out-unsafe-template" type="output">
+<q>What does this print?</q>
+<code file="template.js">
+const review = { author: "Kemi", text: "nice <i>rice</i>" };
+const page = `<li>${review.author}: ${review.text}</li>`;
+console.log(page.includes("<i>"), page.length);
+</code>
+<option correct>true 31</option>
+<option>false 31</option>
+<option>true 26</option>
+<option>false 43</option>
+<explain><p>A plain template string pastes the text in as it is, so the tag is in the HTML: the browser would build an <code>&lt;i&gt;</code> element. That is stored XSS in its smallest form.</p></explain>
+</question>
+
+<question id="web-out-script-json" type="output">
+<q>What does this print?</q>
+<code file="script-json.js">
+const data = { note: "</script>" };
+const a = `<script>const d = ${JSON.stringify(data)}</script>`;
+const b = `<script>const d = ${JSON.stringify(data).replaceAll("<", "\\u003c")}</script>`;
+console.log(a.split("</script>").length - 1, b.split("</script>").length - 1);
+</code>
+<option correct>2 1</option>
+<option>1 1</option>
+<option>2 2</option>
+<option>1 2</option>
+<explain><p><code>JSON.stringify</code> leaves <code>&lt;/script&gt;</code> inside the string, and the HTML parser would end the script there. Replacing <code>&lt;</code> with <code>\u003c</code> leaves only the real closing tag, and the JSON still reads back the same.</p></explain>
+</question>
+
+<question id="web-out-safe-href" type="output">
+<q>What does this print?</q>
+<code file="safe-href.js">
+function safeHref(value) {
+  try {
+    const url = new URL(value);
+    return ["https:", "http:"].includes(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+console.log(safeHref("https://ada.example"));
+console.log(safeHref(" JavaScript:void(0)"));
+console.log(safeHref("/profile"));
+</code>
+<option correct>https://ada.example/
+null
+null</option>
+<option>https://ada.example
+null
+/profile</option>
+<option>https://ada.example/
+JavaScript:void(0)
+null</option>
+<option>https://ada.example/
+null
+/profile</option>
+<explain><p><code>URL</code> normalises the address (adding the <code>/</code>) and lower-cases the scheme, even with a leading space and capitals, so the check sees <code>javascript:</code> and refuses it. A relative path throws without a base, so it is refused too.</p></explain>
+</question>
+
+<question id="web-out-startswith" type="output">
+<q>A developer checks URLs with <code>startsWith("http")</code>. What does this print?</q>
+<code file="startswith.js">
+const check = (value) => value.startsWith("http");
+console.log(check("https://ada.example"), check("httpx:alert"), check("JavaScript:void(0)"));
+</code>
+<option correct>true true false</option>
+<option>true false false</option>
+<option>true true true</option>
+<option>true false true</option>
+<explain><p>A prefix test is not a scheme check: <code>httpx:alert</code> passes although it is not HTTP at all. Parse with <code>URL</code> and compare <code>protocol</code> exactly.</p></explain>
+</question>
+
+<question id="web-out-timing" type="output">
+<q>What does this print?</q>
+<code file="same-secret.js" browser="no">
+import { timingSafeEqual } from "node:crypto";
+
+function sameSecret(a, b) {
+  const x = Buffer.from(a ?? "");
+  const y = Buffer.from(b ?? "");
+  return x.length > 0 && x.length === y.length && timingSafeEqual(x, y);
+}
+console.log(sameSecret("tok123", "tok123"), sameSecret("tok123", "tok12"), sameSecret(undefined, undefined));
+</code>
+<option correct>true false false</option>
+<option>true false true</option>
+<option>true, then an error is thrown</option>
+<option>false false false</option>
+<explain><p><code>timingSafeEqual</code> throws on different lengths, so the length is checked first. The <code>x.length &gt; 0</code> check makes a missing token on both sides fail instead of "matching".</p></explain>
+</question>
+
+<question id="web-out-sameorigin" type="output">
+<q>What does this print?</q>
+<code file="own-page.js">
+const APP_ORIGIN = "https://wallet.example";
+function fromOurOwnPage(headers) {
+  if (headers.origin !== undefined) return headers.origin === APP_ORIGIN;
+  const site = headers["sec-fetch-site"];
+  return site === undefined || site === "same-origin" || site === "none";
+}
+console.log(fromOurOwnPage({ origin: "https://deals.example" }));
+console.log(fromOurOwnPage({ "sec-fetch-site": "cross-site" }));
+console.log(fromOurOwnPage({}));
+</code>
+<option correct>false
+false
+true</option>
+<option>false
+false
+false</option>
+<option>false
+true
+true</option>
+<option>true
+false
+true</option>
+<explain><p>A foreign origin and a cross-site fetch are refused. A request with neither header (curl, a server) passes this layer, because it cannot carry the victim's browser cookie; the token check still applies to it.</p></explain>
+</question>
+
+<question id="web-out-samesite" type="output">
+<q>This function models the browser's <code>SameSite</code> rule. What does it print?</q>
+<code file="samesite.js">
+function sendsCookie(sameSite, { crossSite, method, topLevel }) {
+  if (!crossSite) return true;
+  if (sameSite === "Strict") return false;
+  if (sameSite === "Lax") return method === "GET" && topLevel;
+  return true;
+}
+console.log(sendsCookie("Lax", { crossSite: true, method: "POST", topLevel: true }));
+console.log(sendsCookie("Lax", { crossSite: true, method: "GET", topLevel: true }));
+console.log(sendsCookie("Strict", { crossSite: true, method: "GET", topLevel: true }));
+</code>
+<option correct>false
+true
+false</option>
+<option>false
+false
+false</option>
+<option>true
+true
+false</option>
+<option>false
+true
+true</option>
+<explain><p>A cross-site form <code>POST</code> gets no <code>Lax</code> cookie, which is what stops classic CSRF. A cross-site link (<code>GET</code>, top level) still carries it. <code>Strict</code> sends it only when the request starts on your own site.</p></explain>
+</question>
+
+<question id="web-code-origin" type="code" file="trusted.js">
+<q><p>Write <code>isTrustedOrigin(origin)</code> for the allow-list setting below. Trim spaces, ignore empty entries, and accept only exact matches. The program should print <code>true false false false</code>.</p></q>
+<starter>
+const SETTING = " https://wallet.example , https://mobile.wallet.example ,";
+
+function isTrustedOrigin(origin) {
+  // your code here
+}
+
+console.log(
+  isTrustedOrigin("https://mobile.wallet.example"),
+  isTrustedOrigin("https://wallet.example.evil.test"),
+  isTrustedOrigin(""),
+  isTrustedOrigin("null"),
+);
+</starter>
+<solution>
+const SETTING = " https://wallet.example , https://mobile.wallet.example ,";
+const TRUSTED = new Set(SETTING.split(",").map((s) => s.trim()).filter((s) => s !== ""));
+
+function isTrustedOrigin(origin) {
+  return TRUSTED.has(origin);
+}
+
+console.log(
+  isTrustedOrigin("https://mobile.wallet.example"),
+  isTrustedOrigin("https://wallet.example.evil.test"),
+  isTrustedOrigin(""),
+  isTrustedOrigin("null"),
+);
+</solution>
+<expected>true false false false</expected>
+<explain><p>Build the <code>Set</code> once from configuration. Without the trim, <code>" https://mobile.wallet.example "</code> would never match; without the filter, the trailing comma would allow the empty origin.</p></explain>
+</question>
+
+<question id="web-code-cors" type="code" file="cors-headers.js">
+<q><p>Finish <code>corsHeaders(origin)</code>. It must always include <code>Vary: Origin</code>, and add <code>Access-Control-Allow-Origin</code> (the origin itself) and <code>Access-Control-Allow-Credentials: "true"</code> only for trusted origins.</p></q>
+<starter>
+const TRUSTED = new Set(["https://wallet.example"]);
+
+function corsHeaders(origin) {
+  // your code here
+}
+
+console.log(corsHeaders("https://wallet.example"));
+console.log(corsHeaders("https://deals.example"));
+console.log(corsHeaders(undefined));
+</starter>
+<solution>
+const TRUSTED = new Set(["https://wallet.example"]);
+
+function corsHeaders(origin) {
+  const headers = { Vary: "Origin" };
+  if (TRUSTED.has(origin)) {
+    headers["Access-Control-Allow-Origin"] = origin;
+    headers["Access-Control-Allow-Credentials"] = "true";
+  }
+  return headers;
+}
+
+console.log(corsHeaders("https://wallet.example"));
+console.log(corsHeaders("https://deals.example"));
+console.log(corsHeaders(undefined));
+</solution>
+<expected>
+{
+  Vary: 'Origin',
+  'Access-Control-Allow-Origin': 'https://wallet.example',
+  'Access-Control-Allow-Credentials': 'true'
+}
+{ Vary: 'Origin' }
+{ Vary: 'Origin' }
+</expected>
+<explain><p>Unknown origins get no permission at all, so the browser hides the response from them. <code>Vary</code> goes on every response, because the answer depends on the origin either way.</p></explain>
+</question>
+
+<question id="web-code-escape" type="code" file="escape-html.js">
+<q><p>Write <code>escapeHtml(value)</code> that replaces <code>&amp;</code>, <code>&lt;</code>, <code>&gt;</code>, <code>"</code> and <code>'</code> with <code>&amp;amp;</code>, <code>&amp;lt;</code>, <code>&amp;gt;</code>, <code>&amp;quot;</code> and <code>&amp;#39;</code>, and converts non-strings with <code>String</code>.</p></q>
+<starter>
+function escapeHtml(value) {
+  // your code here
+}
+
+console.log(escapeHtml(`<a href="x">Bello & Sons'</a>`));
+console.log(escapeHtml(42));
+</starter>
+<solution>
+const ENTITIES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (ch) => ENTITIES[ch]);
+}
+
+console.log(escapeHtml(`<a href="x">Bello & Sons'</a>`));
+console.log(escapeHtml(42));
+</solution>
+<expected>
+&lt;a href=&quot;x&quot;&gt;Bello &amp; Sons&#39;&lt;/a&gt;
+42
+</expected>
+<explain><p>One pass with a character class escapes each character exactly once. With a chain of <code>replaceAll</code> calls, <code>&amp;</code> must come first, or the entities you just created would be escaped again.</p></explain>
+</question>
+
+<question id="web-code-html-tag" type="code" file="html-tag.js">
+<q><p>Write a tagged template <code>html</code> that HTML-escapes every interpolated value (use the given <code>escapeHtml</code>) and returns a string. The program should print the list item with the review text escaped.</p></q>
+<starter>
+const ENTITIES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (ch) => ENTITIES[ch]);
+
+function html(strings, ...values) {
+  // your code here
+}
+
+const review = { author: "Kemi", text: "good <u>rice</u>" };
+console.log(html`<li><b>${review.author}</b>: ${review.text}</li>`);
+</starter>
+<solution>
+const ENTITIES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (ch) => ENTITIES[ch]);
+
+function html(strings, ...values) {
+  let out = strings[0];
+  values.forEach((value, i) => (out += escapeHtml(value) + strings[i + 1]));
+  return out;
+}
+
+const review = { author: "Kemi", text: "good <u>rice</u>" };
+console.log(html`<li><b>${review.author}</b>: ${review.text}</li>`);
+</solution>
+<expected><li><b>Kemi</b>: good &lt;u&gt;rice&lt;/u&gt;</li></expected>
+<explain><p>A tag function receives the fixed parts (<code>strings</code>, written by you) and the values separately. Escaping only the values keeps your markup and turns the user's into text. That is how auto-escaping template engines work.</p></explain>
+</question>
+
+<question id="web-code-safe-href" type="code" file="safe-href.js">
+<q><p>Write <code>safeHref(value)</code>: return the normalised URL (<code>url.href</code>) if it parses as an absolute URL with the <code>https:</code> scheme, otherwise <code>null</code>. Do not use <code>startsWith</code>.</p></q>
+<starter>
+function safeHref(value) {
+  // your code here
+}
+
+console.log(safeHref("https://shop.example/rice"));
+console.log(safeHref("http://shop.example"));
+console.log(safeHref("javascript:void(0)"));
+console.log(safeHref("not a url"));
+</starter>
+<solution>
+function safeHref(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+console.log(safeHref("https://shop.example/rice"));
+console.log(safeHref("http://shop.example"));
+console.log(safeHref("javascript:void(0)"));
+console.log(safeHref("not a url"));
+</solution>
+<expected>
+https://shop.example/rice
+null
+null
+null
+</expected>
+<explain><p>Parsing gives you the scheme the browser will use. <code>new URL</code> throws for text that is not an absolute URL, so the <code>catch</code> turns it into <code>null</code>.</p></explain>
+</question>
+
+<question id="web-code-json-script" type="code" file="state-script.js">
+<q><p>Write <code>stateScript(state)</code> that returns <code>&lt;script&gt;window.STATE = …&lt;/script&gt;</code> with the state as JSON, escaped so that no <code>&lt;</code> from the data appears in the output. The program checks there is exactly one closing tag and that the JSON reads back unchanged.</p></q>
+<starter>
+function stateScript(state) {
+  // your code here
+}
+
+const state = { note: "gate </script> code" };
+const tag = stateScript(state);
+console.log(tag.split("</script>").length - 1);
+console.log(JSON.parse(tag.slice(22, -9)).note);
+</starter>
+<solution>
+function stateScript(state) {
+  const json = JSON.stringify(state).replaceAll("<", "\\u003c");
+  return `<script>window.STATE = ${json}</script>`;
+}
+
+const state = { note: "gate </script> code" };
+const tag = stateScript(state);
+console.log(tag.split("</script>").length - 1);
+console.log(JSON.parse(tag.slice(22, -9)).note);
+</solution>
+<expected>
+1
+gate </script> code
+</expected>
+<explain><p>In the output string, <code>"\\u003c"</code> is the six characters <code>\u003c</code>, which JSON reads back as <code>&lt;</code>. The HTML parser, which runs first, never sees a closing tag inside the data.</p></explain>
+</question>
+
+<question id="web-code-csp" type="code" file="csp.js">
+<q><p>Write <code>buildCsp(nonce)</code> that returns the strict policy from the lesson: <code>script-src</code> with the nonce and <code>'strict-dynamic'</code>, then <code>object-src 'none'</code>, <code>base-uri 'none'</code> and <code>frame-ancestors 'none'</code>, joined with <code>"; "</code>.</p></q>
+<starter>
+function buildCsp(nonce) {
+  // your code here
+}
+
+console.log(buildCsp("r4nd0m"));
+</starter>
+<solution>
+function buildCsp(nonce) {
+  return [
+    `script-src 'nonce-${nonce}' 'strict-dynamic'`,
+    "object-src 'none'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'",
+  ].join("; ");
+}
+
+console.log(buildCsp("r4nd0m"));
+</solution>
+<expected>script-src 'nonce-r4nd0m' 'strict-dynamic'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'</expected>
+<explain><p>Building the policy from a list keeps each directive readable in review. In the server, the nonce comes from <code>randomBytes(16)</code> on every response, and the same value goes into your own script tags.</p></explain>
+</question>
+
+<question id="web-code-review-get" type="code" file="method-guard.js">
+<q><p>Write <code>allowRequest({ method, origin })</code> for a cookie-authenticated app at <code>https://wallet.example</code>: <code>GET</code> and <code>HEAD</code> are always allowed (they must not change data); any other method is allowed only when <code>origin</code> is missing or equals the app origin.</p></q>
+<starter>
+const APP_ORIGIN = "https://wallet.example";
+
+function allowRequest({ method, origin }) {
+  // your code here
+}
+
+console.log(allowRequest({ method: "GET", origin: "https://deals.example" }));
+console.log(allowRequest({ method: "POST", origin: "https://deals.example" }));
+console.log(allowRequest({ method: "DELETE", origin: APP_ORIGIN }));
+console.log(allowRequest({ method: "POST" }));
+</starter>
+<solution>
+const APP_ORIGIN = "https://wallet.example";
+
+function allowRequest({ method, origin }) {
+  if (method === "GET" || method === "HEAD") return true;
+  return origin === undefined || origin === APP_ORIGIN;
+}
+
+console.log(allowRequest({ method: "GET", origin: "https://deals.example" }));
+console.log(allowRequest({ method: "POST", origin: "https://deals.example" }));
+console.log(allowRequest({ method: "DELETE", origin: APP_ORIGIN }));
+console.log(allowRequest({ method: "POST" }));
+</solution>
+<expected>
+true
+false
+true
+true
+</expected>
+<explain><p>Safe methods pass because they must never change state. A missing <code>Origin</code> means a non-browser client, which does not carry the victim's cookie; the CSRF token check still runs for it later.</p></explain>
+</question>

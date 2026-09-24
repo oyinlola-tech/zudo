@@ -1,0 +1,722 @@
+<question id="rt-polling" type="choice">
+<q>10,000 customers poll their order status every 5 seconds. Why is that a poor design?</q>
+<option>Browsers limit pages to one <code>fetch</code> per second</option>
+<option correct>The server answers about 2,000 requests a second, nearly all saying "nothing changed", and customers still see changes up to 5 seconds late</option>
+<option>Polling cannot send cookies</option>
+<option>Polling only works over HTTP/2</option>
+<explain><p>Polling costs grow with the number of watchers times the polling rate, not with the number of changes. Pushing costs one message per change per watcher.</p></explain>
+</question>
+
+<question id="rt-direction" type="choice">
+<q>What is the main difference between Server-Sent Events and WebSockets?</q>
+<option>SSE is encrypted, WebSockets are not</option>
+<option correct>SSE sends events from server to client over one long HTTP response; WebSockets carry messages in both directions over an upgraded connection</option>
+<option>WebSockets only work in Node.js</option>
+<option>SSE can only send one event per connection</option>
+<explain><p>With SSE, the client talks back with ordinary requests if it needs to. WebSockets are a separate protocol after the upgrade, suited to frequent two-way traffic.</p></explain>
+</question>
+
+<question id="rt-last-event-id" type="choice">
+<q>What is the <code>Last-Event-ID</code> header for?</q>
+<option>The server uses it to name the next event</option>
+<option correct>When <code>EventSource</code> reconnects, it sends the id of the last event it received, so the server can send only what was missed</option>
+<option>It tells the browser to stop reconnecting</option>
+<option>It is a security token for the stream</option>
+<explain><p>Every event with an <code>id:</code> updates the browser's last event id. On reconnect, the header lets the server resume instead of losing or repeating events, but only if the server honours it.</p></explain>
+</question>
+
+<question id="rt-close" type="choice">
+<q>An order has been delivered and the page no longer needs its <code>EventSource</code>. The server ends the stream. What happens if the page does nothing?</q>
+<option>The <code>EventSource</code> closes for good</option>
+<option correct>The browser reconnects after the <code>retry</code> delay, again and again; the page must call <code>source.close()</code></option>
+<option>The page reloads</option>
+<option>An exception is thrown</option>
+<explain><p>An ended stream looks like a dropped connection, so <code>EventSource</code> reconnects. Only <code>close()</code> stops it (or a server answer with an error status or a wrong content type).</p></explain>
+</question>
+
+<question id="rt-comment" type="choice">
+<q>Why does the SSE server write <code>: keep-alive</code> every 15 seconds?</q>
+<option>It is an event the page must handle</option>
+<option correct>A line starting with <code>:</code> is a comment the browser ignores; sending it keeps proxies and load balancers from closing a quiet connection, and reveals dead connections to the server</option>
+<option>It tells the browser the retry delay</option>
+<option>It resets the event ids</option>
+<explain><p>Idle connections are often closed after about a minute by infrastructure between the server and the browser. A small comment costs almost nothing and keeps the stream alive.</p></explain>
+</question>
+
+<question id="rt-ws-cors" type="choice">
+<q>Why must a WebSocket server check the <code>Origin</code> header during the upgrade?</q>
+<option>Because the browser blocks WebSockets without it</option>
+<option correct>WebSockets are not protected by CORS: any site can open one to your server with the user's cookies, and the <code>Origin</code> header is how the server knows which site is asking</option>
+<option>Because <code>ws://</code> URLs cannot contain paths</option>
+<option>It is only needed for binary messages</option>
+<explain><p>Without the check, a malicious page can open a socket as the logged-in user and read and send messages: cross-site WebSocket hijacking. Compare the origin against an exact allow-list.</p></explain>
+</question>
+
+<question id="rt-handshake" type="choice">
+<q>How does a WebSocket connection start?</q>
+<option>With a UDP packet to port 80</option>
+<option correct>With an HTTP request carrying <code>Upgrade: websocket</code>, answered by <code>101 Switching Protocols</code>; the same connection then carries WebSocket frames</option>
+<option>With an <code>OPTIONS</code> preflight</option>
+<option>With a <code>POST</code> that the server never answers</option>
+<explain><p>Starting as HTTP lets WebSockets use the same ports, TLS and proxies as the web, and lets the server check cookies and the origin before agreeing.</p></explain>
+</question>
+
+<question id="rt-no-reconnect" type="choice">
+<q>A chat page uses a WebSocket. The user's train goes through a tunnel for 20 seconds. What must the page's code do?</q>
+<option>Nothing; <code>WebSocket</code> reconnects and replays missed messages automatically</option>
+<option correct>Notice the <code>close</code> event, reconnect with increasing delays, and then fetch the messages it missed, because nothing replays them</option>
+<option>Reload the page</option>
+<option>Switch to <code>mode: "no-cors"</code></option>
+<explain><p>Unlike <code>EventSource</code>, a browser <code>WebSocket</code> never reconnects by itself and has no message history. Reconnection and catching up are the application's job.</p></explain>
+</question>
+
+<question id="rt-backpressure" type="choice">
+<q>A server sends a courier's location 50 times a second to a customer on a slow mobile network. What does <code>socket.bufferedAmount</code> tell the sender?</q>
+<option>How many messages the customer has read</option>
+<option correct>How many bytes are queued and not yet sent; if it keeps growing, the sender should slow down or drop stale updates</option>
+<option>The maximum message size</option>
+<option>The network's speed in bytes per second</option>
+<explain><p><code>send</code> never blocks, so a fast sender and a slow network fill memory. For location updates, only the newest one matters, so dropping old ones is correct.</p></explain>
+</question>
+
+<question id="rt-heartbeat" type="choice">
+<q>Why do WebSocket servers send a ping every 30 seconds or so?</q>
+<option>To measure the user's typing speed</option>
+<option correct>A client that vanished (lost signal, closed laptop) sends no close message; a missing pong reveals the dead connection so the server can clean it up</option>
+<option>Because messages expire after 30 seconds</option>
+<option>To keep the TLS certificate valid</option>
+<explain><p>TCP can take a very long time to notice a peer that disappeared. Pings detect it quickly, and they also keep idle-timeout proxies from closing healthy connections.</p></explain>
+</question>
+
+<question id="rt-scale" type="choice">
+<q>The courier chat runs on two server processes behind a load balancer. The customer is connected to process A and the courier to process B. Their messages never arrive. Why, and what fixes it?</q>
+<option>WebSockets cannot pass through load balancers</option>
+<option correct>Each process only knows its own sockets, so rooms are split; a shared pub/sub channel (such as Redis) lets every process deliver every room's messages</option>
+<option>The two processes need different ports</option>
+<option>The courier must reconnect every second</option>
+<explain><p>In-memory rooms work on one process only. With several, each process publishes messages to a shared bus and delivers what it receives to its local sockets.</p></explain>
+</question>
+
+<question id="rt-six" type="choice">
+<q>A site uses HTTP/1.1 and one <code>EventSource</code> per tab. A user opens seven tabs, and the seventh never loads its data. Why?</q>
+<option>Servers refuse more than six streams per user</option>
+<option correct>Browsers allow about six HTTP/1.1 connections per host, and each open event stream keeps one busy; HTTP/2 multiplexes streams over one connection</option>
+<option><code>EventSource</code> only works in one tab at a time</option>
+<option>The seventh tab has no cookies</option>
+<explain><p>Long-lived streams hold connections. Serve them over HTTP/2, or share one stream between tabs (with a SharedWorker or a <code>BroadcastChannel</code>).</p></explain>
+</question>
+
+<question id="rt-proxy-buffer" type="choice">
+<q>The event stream works on a developer's machine but in production the page receives nothing for a minute, then everything at once. What is the usual cause?</q>
+<option>The server's clock is wrong</option>
+<option correct>A proxy or compression layer buffers the response before passing it on; turn buffering and compression off for the stream</option>
+<option>The browser caches event streams</option>
+<option>Production needs <code>ws://</code> instead of <code>http://</code></option>
+<explain><p>SSE depends on each event being passed on immediately. Buffering reverse proxies (and gzip middleware) hold data back; nginx, for example, respects an <code>X-Accel-Buffering: no</code> header.</p></explain>
+</question>
+
+<question id="rt-copy" type="choice">
+<q>A page runs <code>worker.postMessage(order)</code> and on the next line <code>order.status = "cancelled"</code>. Which status does the worker see?</q>
+<option><code>"cancelled"</code>, because objects are shared between threads</option>
+<option correct>The status at the moment of <code>postMessage</code>, because the message is copied when it is sent</option>
+<option>Whichever change happens last</option>
+<option><code>undefined</code>, because objects cannot be posted</option>
+<explain><p>Structured clone copies the data when <code>postMessage</code> is called. Later changes on either side affect only that side's copy.</p></explain>
+</question>
+
+<question id="rt-transfer" type="choice">
+<q>What happens to an <code>ArrayBuffer</code> listed as a transferable in <code>worker.postMessage({ photo }, [photo])</code>?</q>
+<option>It is copied, and both sides keep a copy</option>
+<option correct>Ownership moves to the worker without copying; the page's buffer becomes empty (<code>byteLength</code> 0)</option>
+<option>It is shared, and both sides see each other's changes</option>
+<option>It is compressed</option>
+<explain><p>Transferring avoids copying large data, at the cost of the sender losing access. Sharing memory between threads needs <code>SharedArrayBuffer</code>, which has extra security requirements.</p></explain>
+</question>
+
+<question id="rt-worker-error" type="choice">
+<q>Code in a worker throws an uncaught exception. What does the page's <code>try { await callWorker(…) } catch</code> see?</q>
+<option>The exception, as a rejection</option>
+<option correct>Nothing: the error fires an <code>error</code> event on the <code>Worker</code> object, and the waiting promise never settles unless the code handles it</option>
+<option>A <code>DataCloneError</code></option>
+<option>The page reloads</option>
+<explain><p>The worker runs on another thread with its own call stack. Catch errors inside the worker and send them back in a reply, as the lesson's wrapper did, and give calls a timeout.</p></explain>
+</question>
+
+<question id="rt-choose" type="choice">
+<q>Which pairing of feature and tool is best?</q>
+<option>Delivery driver chat: polling every 30 seconds</option>
+<option>Parsing a 50 MB bank statement in the page: WebSocket</option>
+<option correct>Order status updates: Server-Sent Events; courier chat: WebSocket; parsing a large file: Web Worker</option>
+<option>Nightly report ready: WebSocket kept open all day</option>
+<explain><p>Pick by direction and frequency: one-way news fits SSE, two-way chat fits WebSockets, heavy local work fits a worker, and something that happens once a day fits a simple poll or a notification.</p></explain>
+</question>
+
+<question id="rt-message-input" type="choice">
+<q>What should a WebSocket server do with each incoming message?</q>
+<option>Broadcast it unchanged to the room; clients will validate it</option>
+<option correct>Treat it as untrusted input: parse it safely, check its type, fields, size and whether this user may send it, then build a new message to forward</option>
+<option>Evaluate it as JavaScript</option>
+<option>Insert it into the other clients' pages with <code>innerHTML</code></option>
+<explain><p>A socket message is like a request body from a stranger. The lesson's server refused a location from a customer and text that was not JSON, and forwarded only fields it had checked.</p></explain>
+</question>
+
+<question id="rt-idempotent" type="choice">
+<q>Why does each status event carry the whole new status (<code>{"status":"packed"}</code>) rather than an instruction like "advance one step"?</q>
+<option>It makes events smaller</option>
+<option correct>Applying the same event twice then does no harm, so replays and duplicates after reconnecting cannot push the order past its real status</option>
+<option>Browsers cannot parse instructions</option>
+<option>So that events need no ids</option>
+<explain><p>Events that describe the resulting state are idempotent. Combined with ignoring ids that were already applied, the page stays correct whatever the network does.</p></explain>
+</question>
+
+<question id="rt-out-format" type="output">
+<q>What does this print?</q>
+<code file="format.js">
+const format = ({ id, event, data }) => `id: ${id}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+console.log(JSON.stringify(format({ id: 3, event: "status", data: { status: "packed" } })));
+</code>
+<option correct>"id: 3\nevent: status\ndata: {\"status\":\"packed\"}\n\n"</option>
+<option>"id: 3\nevent: status\ndata: [object Object]\n\n"</option>
+<option>"id: 3 event: status data: {"status":"packed"}"</option>
+<option>{"id":3,"event":"status","data":{"status":"packed"}}</option>
+<explain><p>Printing the string through <code>JSON.stringify</code> shows its line breaks as <code>\n</code> and escapes the inner quotes. The event ends with a blank line (two <code>\n</code>). Stringifying the data keeps it on one <code>data:</code> line.</p></explain>
+</question>
+
+<question id="rt-out-string-ids" type="output">
+<q>A server keeps event ids as strings and resumes from <code>Last-Event-ID</code>. What does this print?</q>
+<code file="string-ids.js">
+const history = ["8", "9", "10", "11"];
+const lastEventId = "9";
+console.log(history.filter((id) => id > lastEventId));
+console.log(history.filter((id) => Number(id) > Number(lastEventId)));
+</code>
+<option correct>[]
+[ '10', '11' ]</option>
+<option>[ '10', '11' ]
+[ '10', '11' ]</option>
+<option>[ '8' ]
+[ '10', '11' ]</option>
+<option>[]
+[]</option>
+<explain><p>Two strings are compared character by character: <code>"10" &gt; "9"</code> is false because <code>"1"</code> comes before <code>"9"</code>. Headers are always strings, so convert ids to numbers before comparing, or the client silently misses every event after id 9.</p></explain>
+</question>
+
+<question id="rt-out-dedupe" type="output">
+<q>After reconnects, events arrive with these ids. What does this print?</q>
+<code file="dedupe.js">
+let lastId = 0;
+const applied = [];
+for (const id of [1, 2, 2, 1, 3, 5, 4]) {
+  if (id <= lastId) continue;
+  lastId = id;
+  applied.push(id);
+}
+console.log(applied, lastId);
+</code>
+<option correct>[ 1, 2, 3, 5 ] 5</option>
+<option>[ 1, 2, 3, 4, 5 ] 5</option>
+<option>[ 1, 2, 2, 1, 3, 5, 4 ] 4</option>
+<option>[ 1, 2, 3, 5, 4 ] 4</option>
+<explain><p>Duplicates and anything older than the last applied id are skipped. Event 4 arrived after 5 and is dropped too, which is right for "latest status" feeds; a feed where every event matters would instead need to fill the gap.</p></explain>
+</question>
+
+<question id="rt-out-channel" type="output">
+<q><code>MessageChannel</code> passes messages the same way as a worker. What does this print?</q>
+<code file="channel.js">
+const { port1, port2 } = new MessageChannel();
+const order = { id: "ORD-1042", status: "paid" };
+port2.onmessage = (event) => {
+  console.log("received:", event.data.status, event.data === order);
+  port1.close();
+};
+port1.postMessage(order);
+order.status = "delivered";
+console.log("sent, then changed to:", order.status);
+</code>
+<option correct>sent, then changed to: delivered
+received: paid false</option>
+<option>received: paid false
+sent, then changed to: delivered</option>
+<option>sent, then changed to: delivered
+received: delivered true</option>
+<option>sent, then changed to: delivered
+received: delivered false</option>
+<explain><p>Messages are delivered asynchronously, so the synchronous log comes first. The message was copied when it was posted, so the receiver sees <code>paid</code>, in an object that is not the original.</p></explain>
+</question>
+
+<question id="rt-out-transfer" type="output">
+<q>What does this print?</q>
+<code file="transfer.js">
+const buffer = new ArrayBuffer(16);
+const moved = structuredClone(buffer, { transfer: [buffer] });
+console.log(buffer.byteLength, moved.byteLength);
+const copied = structuredClone(moved);
+console.log(moved.byteLength, copied.byteLength);
+</code>
+<option correct>0 16
+16 16</option>
+<option>16 16
+16 16</option>
+<option>0 16
+0 16</option>
+<option>16 0
+16 16</option>
+<explain><p>Transferring moves the memory: the original buffer is detached and reports length 0. A normal clone copies, and both keep their data. <code>postMessage(data, [buffer])</code> behaves the same way.</p></explain>
+</question>
+
+<question id="rt-out-states" type="output">
+<q>What does this print?</q>
+<code file="states.js">
+console.log(WebSocket.CONNECTING, WebSocket.OPEN, WebSocket.CLOSING, WebSocket.CLOSED);
+</code>
+<option correct>0 1 2 3</option>
+<option>1 2 3 4</option>
+<option>connecting open closing closed</option>
+<option>0 1 3 2</option>
+<explain><p><code>readyState</code> moves from 0 (connecting) to 1 (open), then 2 (closing) and 3 (closed). Only send while it is 1. <code>EventSource</code> uses 0, 1 and 2 for connecting, open and closed.</p></explain>
+</question>
+
+<question id="rt-out-rooms" type="output">
+<q>What does this print?</q>
+<code file="rooms.js">
+const rooms = new Map([["ORD-1042", new Set(["customer", "courier", "support"])], ["ORD-2001", new Set(["customer-2"])]]);
+function recipients(orderId, sender) {
+  return [...(rooms.get(orderId) ?? [])].filter((member) => member !== sender);
+}
+console.log(recipients("ORD-1042", "courier"));
+console.log(recipients("ORD-2001", "customer-2"));
+console.log(recipients("ORD-9999", "customer"));
+</code>
+<option correct>[ 'customer', 'support' ]
+[]
+[]</option>
+<option>[ 'customer', 'courier', 'support' ]
+[ 'customer-2' ]
+[]</option>
+<option>[ 'customer', 'support' ]
+[]
+TypeError: rooms.get(...) is not iterable</option>
+<option>[ 'support' ]
+[]
+[]</option>
+<explain><p>A broadcast goes to everyone in the room except the sender. An unknown room gives an empty list thanks to <code>?? []</code>, instead of crashing the server.</p></explain>
+</question>
+
+<question id="rt-out-validate" type="output">
+<q>What does this message check print?</q>
+<code file="validate.js">
+function check(raw, role) {
+  let message;
+  try {
+    message = JSON.parse(raw);
+  } catch {
+    return "error: not JSON";
+  }
+  if (message?.type === "chat" && typeof message.text === "string" && message.text.length <= 20) return `chat from ${role}`;
+  if (message?.type === "location" && role === "courier") return "location";
+  return `error: ${String(message?.type)} not allowed`;
+}
+console.log(check('{"type":"chat","text":"Gate is on the left"}', "customer"));
+console.log(check('{"type":"location","lat":0,"lng":0}', "customer"));
+console.log(check("null", "courier"));
+console.log(check('{"type":"chat","text":"I will be there in five minutes"}', "courier"));
+</code>
+<option correct>chat from customer
+error: location not allowed
+error: undefined not allowed
+error: chat not allowed</option>
+<option>chat from customer
+location
+error: not JSON
+chat from courier</option>
+<option>chat from customer
+error: location not allowed
+TypeError: Cannot read properties of null (reading 'type')
+error: chat not allowed</option>
+<option>chat from customer
+error: location not allowed
+error: not JSON
+error: chat not allowed</option>
+<explain><p><code>"null"</code> is valid JSON, so parsing succeeds and <code>message</code> is <code>null</code>; optional chaining (<code>?.</code>) keeps the checks from throwing. The long chat message breaks the 20-character limit, and customers may not send locations.</p></explain>
+</question>
+
+<question id="rt-out-rpc" type="output">
+<q>Replies arrive in a different order from the calls. What does this print?</q>
+<code file="rpc.js">
+const pending = new Map();
+let nextId = 1;
+function call(method) {
+  const id = nextId++;
+  return new Promise((resolve) => pending.set(id, resolve)).then((result) => `${method} -> ${result}`);
+}
+function reply(id, result) {
+  pending.get(id)(result);
+  pending.delete(id);
+}
+const a = call("totalKobo");
+const b = call("slowest");
+reply(2, "ORD-1042");
+reply(1, 1930000);
+console.log(await a);
+console.log(await b, pending.size);
+</code>
+<option correct>totalKobo -> 1930000
+slowest -> ORD-1042 0</option>
+<option>totalKobo -> ORD-1042
+slowest -> 1930000 0</option>
+<option>slowest -> ORD-1042
+totalKobo -> 1930000 0</option>
+<option>totalKobo -> 1930000
+slowest -> ORD-1042 2</option>
+<explain><p>The id in each reply finds the right waiting promise, whatever order the replies come in. Deleting the entry after use keeps the map from growing forever.</p></explain>
+</question>
+
+<question id="rt-code-format" type="code" file="format-event.js">
+<q><p>Write <code>formatEvent({ id, event, data })</code> that returns the text of one SSE event. Include <code>id:</code> and <code>event:</code> lines only when given. <code>data</code> is a string that may contain line breaks: write one <code>data:</code> line per line of it. End with a blank line.</p></q>
+<starter>
+function formatEvent({ id, event, data }) {
+  // your code here
+}
+
+console.log(JSON.stringify(formatEvent({ id: 4, event: "status", data: '{"status":"delivered"}' })));
+console.log(JSON.stringify(formatEvent({ data: "Your rider is Musa.\nHe will call on arrival." })));
+</starter>
+<solution>
+function formatEvent({ id, event, data }) {
+  let text = "";
+  if (id !== undefined) text += `id: ${id}\n`;
+  if (event !== undefined) text += `event: ${event}\n`;
+  for (const line of data.split("\n")) text += `data: ${line}\n`;
+  return text + "\n";
+}
+
+console.log(JSON.stringify(formatEvent({ id: 4, event: "status", data: '{"status":"delivered"}' })));
+console.log(JSON.stringify(formatEvent({ data: "Your rider is Musa.\nHe will call on arrival." })));
+</solution>
+<expected>
+"id: 4\nevent: status\ndata: {\"status\":\"delivered\"}\n\n"
+"data: Your rider is Musa.\ndata: He will call on arrival.\n\n"
+</expected>
+<explain><p>A raw line break inside <code>data</code> would end the field early, and a blank line would end the event. Splitting into several <code>data:</code> lines is how the format carries multi-line text; the browser joins them again.</p></explain>
+</question>
+
+<question id="rt-code-split" type="code" file="split-events.js">
+<q><p>Network chunks can end in the middle of an event. Write <code>splitEvents(buffer)</code> that returns <code>{ blocks, rest }</code>: every complete event block (text before a <code>"\n\n"</code>) in order, and the unfinished text left over for the next chunk.</p></q>
+<starter>
+function splitEvents(buffer) {
+  // your code here
+}
+
+let rest = "";
+for (const chunk of ["id: 1\ndata: pa", "id\n\nid: 2\ndata: packed\n\nid: 3", "\ndata: out\n\n"]) {
+  const result = splitEvents(rest + chunk);
+  rest = result.rest;
+  console.log(JSON.stringify(result.blocks), JSON.stringify(rest));
+}
+</starter>
+<solution>
+function splitEvents(buffer) {
+  const blocks = [];
+  let end;
+  while ((end = buffer.indexOf("\n\n")) !== -1) {
+    blocks.push(buffer.slice(0, end));
+    buffer = buffer.slice(end + 2);
+  }
+  return { blocks, rest: buffer };
+}
+
+let rest = "";
+for (const chunk of ["id: 1\ndata: pa", "id\n\nid: 2\ndata: packed\n\nid: 3", "\ndata: out\n\n"]) {
+  const result = splitEvents(rest + chunk);
+  rest = result.rest;
+  console.log(JSON.stringify(result.blocks), JSON.stringify(rest));
+}
+</solution>
+<expected>
+[] "id: 1\ndata: pa"
+["id: 1\ndata: paid","id: 2\ndata: packed"] "id: 3"
+["id: 3\ndata: out"] ""
+</expected>
+<explain><p>The first chunk held no complete event, so everything was kept for later. A parser that assumed one chunk equals one event would have produced "pa" and then garbage. This buffer is the heart of every stream parser, including <code>readEvents</code> in the lesson.</p></explain>
+</question>
+
+<question id="rt-code-dedupe" type="code" file="deduper.js">
+<q><p>Write <code>createDeduper()</code> returning <code>accept(id)</code>. It converts <code>id</code> to a number and returns <code>true</code> (and remembers it) only if it is larger than every id accepted so far. Ids that are not whole numbers return <code>false</code>.</p></q>
+<starter>
+function createDeduper() {
+  // your code here
+}
+
+const accept = createDeduper();
+console.log(["1", "2", "2", "10", "9", "abc", "11"].map(accept).join(" "));
+</starter>
+<solution>
+function createDeduper() {
+  let last = 0;
+  return (id) => {
+    const n = Number(id);
+    if (!Number.isInteger(n) || n <= last) return false;
+    last = n;
+    return true;
+  };
+}
+
+const accept = createDeduper();
+console.log(["1", "2", "2", "10", "9", "abc", "11"].map(accept).join(" "));
+</solution>
+<expected>true true false true false false true</expected>
+<explain><p>Converting first avoids the string comparison trap (<code>"10" &lt; "9"</code>). The closure keeps the last accepted id, the same state <code>EventSource</code> keeps as <code>lastEventId</code>.</p></explain>
+</question>
+
+<question id="rt-code-backoff" type="code" file="backoff.js">
+<q><p>Write <code>reconnectDelay(attempt, random)</code>: the base delay is 500 ms for attempt 1 and doubles each attempt, capped at 30,000 ms; the result is <code>Math.round(base / 2 + random() * (base / 2))</code>.</p></q>
+<starter>
+function reconnectDelay(attempt, random = Math.random) {
+  // your code here
+}
+
+console.log([1, 2, 3, 5, 7, 12].map((attempt) => reconnectDelay(attempt, () => 0.5)));
+</starter>
+<solution>
+function reconnectDelay(attempt, random = Math.random) {
+  const base = Math.min(30_000, 500 * 2 ** (attempt - 1));
+  return Math.round(base / 2 + random() * (base / 2));
+}
+
+console.log([1, 2, 3, 5, 7, 12].map((attempt) => reconnectDelay(attempt, () => 0.5)));
+</solution>
+<expected>[ 375, 750, 1500, 6000, 22500, 22500 ]</expected>
+<explain><p>With <code>random</code> fixed at 0.5, each delay is three quarters of its base. The cap stops the delay growing forever, and in real use the random part spreads thousands of reconnecting clients over time.</p></explain>
+</question>
+
+<question id="rt-code-rpc" type="code" file="worker-client.js">
+<q><p>Write <code>createClient(port)</code> for a worker-style port (an object with <code>postMessage</code> and an <code>onmessage</code> property). <code>call(method, args)</code> sends <code>{ id, method, args }</code> and returns a promise that resolves with the reply's <code>result</code>, or rejects with <code>new Error(reply.error)</code>.</p></q>
+<starter>
+function createClient(port) {
+  // your code here
+}
+
+const fakeWorker = {
+  onmessage: null,
+  postMessage({ id, method, args }) {
+    setTimeout(() => {
+      if (method === "total") this.onmessage({ data: { id, result: args.reduce((a, b) => a + b, 0) } });
+      else this.onmessage({ data: { id, error: `unknown method ${method}` } });
+    }, method === "total" ? 20 : 5);
+  },
+};
+
+const client = createClient(fakeWorker);
+const total = client.call("total", [850000, 230000]);
+const refund = client.call("refund", {}).catch((error) => error.message);
+console.log(await total);
+console.log(await refund);
+</starter>
+<solution>
+function createClient(port) {
+  let nextId = 1;
+  const pending = new Map();
+  port.onmessage = ({ data }) => {
+    const call = pending.get(data.id);
+    if (!call) return;
+    pending.delete(data.id);
+    if ("error" in data) call.reject(new Error(data.error));
+    else call.resolve(data.result);
+  };
+  return {
+    call(method, args) {
+      return new Promise((resolve, reject) => {
+        const id = nextId++;
+        pending.set(id, { resolve, reject });
+        port.postMessage({ id, method, args });
+      });
+    },
+  };
+}
+
+const fakeWorker = {
+  onmessage: null,
+  postMessage({ id, method, args }) {
+    setTimeout(() => {
+      if (method === "total") this.onmessage({ data: { id, result: args.reduce((a, b) => a + b, 0) } });
+      else this.onmessage({ data: { id, error: `unknown method ${method}` } });
+    }, method === "total" ? 20 : 5);
+  },
+};
+
+const client = createClient(fakeWorker);
+const total = client.call("total", [850000, 230000]);
+const refund = client.call("refund", {}).catch((error) => error.message);
+console.log(await total);
+console.log(await refund);
+</solution>
+<expected>
+1080000
+unknown method refund
+</expected>
+<explain><p>The refund's error arrived first, but each reply found its own promise by id. The <code>.catch</code> is attached straight away: a rejection nobody is listening for yet counts as unhandled, and Node.js stops the program for it. The fake port lets you test the client without a real worker; the same code works with <code>new Worker(…)</code>.</p></explain>
+</question>
+
+<question id="rt-code-rooms" type="code" file="rooms.js">
+<q><p>Write <code>createRooms()</code> with <code>join(room, member)</code>, <code>leave(room, member)</code> and <code>broadcast(room, sender, text)</code>. <code>broadcast</code> returns the list of <code>"member: text"</code> deliveries to everyone in the room except the sender. An empty room must be deleted when its last member leaves (report the number of rooms with <code>count()</code>).</p></q>
+<starter>
+function createRooms() {
+  // your code here
+}
+
+const rooms = createRooms();
+rooms.join("ORD-1042", "customer");
+rooms.join("ORD-1042", "courier");
+rooms.join("ORD-2001", "customer-2");
+console.log(rooms.broadcast("ORD-1042", "customer", "Gate is on the left"));
+rooms.leave("ORD-2001", "customer-2");
+console.log(rooms.count());
+console.log(rooms.broadcast("ORD-2001", "support", "Hello?"));
+</starter>
+<solution>
+function createRooms() {
+  const rooms = new Map();
+  return {
+    join(room, member) {
+      if (!rooms.has(room)) rooms.set(room, new Set());
+      rooms.get(room).add(member);
+    },
+    leave(room, member) {
+      const members = rooms.get(room);
+      if (!members) return;
+      members.delete(member);
+      if (members.size === 0) rooms.delete(room);
+    },
+    broadcast(room, sender, text) {
+      return [...(rooms.get(room) ?? [])].filter((m) => m !== sender).map((m) => `${m}: ${text}`);
+    },
+    count: () => rooms.size,
+  };
+}
+
+const rooms = createRooms();
+rooms.join("ORD-1042", "customer");
+rooms.join("ORD-1042", "courier");
+rooms.join("ORD-2001", "customer-2");
+console.log(rooms.broadcast("ORD-1042", "customer", "Gate is on the left"));
+rooms.leave("ORD-2001", "customer-2");
+console.log(rooms.count());
+console.log(rooms.broadcast("ORD-2001", "support", "Hello?"));
+</solution>
+<expected>
+[ 'courier: Gate is on the left' ]
+1
+[]
+</expected>
+<explain><p>Deleting empty rooms matters on a long-running server: every finished order would otherwise leave an empty <code>Set</code> in memory forever. That is the same clean-up the lesson's server does in its <code>close</code> handler.</p></explain>
+</question>
+
+<question id="rt-sse-auth" type="choice">
+<q>An API authenticates every request with an <code>Authorization: Bearer …</code> header. Why is <code>EventSource</code> awkward for it?</q>
+<option><code>EventSource</code> cannot use HTTPS</option>
+<option correct><code>EventSource</code> cannot set custom request headers; it can only send cookies (with <code>withCredentials</code> across origins), so the feed needs cookie authentication or a <code>fetch</code>-based stream reader</option>
+<option><code>EventSource</code> strips the cookie header</option>
+<option>Bearer tokens only work with WebSockets</option>
+<explain><p>The browser's <code>EventSource</code> constructor takes only a URL and a credentials flag. Putting a token in the URL leaks it into logs, so prefer an HttpOnly session cookie, or read the stream with <code>fetch</code>, which can set headers, as the lesson's Node.js client did.</p></explain>
+</question>
+
+<question id="rt-out-frames" type="output">
+<q>Here <code>requestFrame</code> collects callbacks, and the code runs each "frame" by hand. What does it print?</q>
+<code file="frames.js">
+const frames = [];
+const requestFrame = (callback) => frames.push(callback);
+function latestPerFrame(render) {
+  let latest;
+  let scheduled = false;
+  return (value) => {
+    latest = value;
+    if (scheduled) return;
+    scheduled = true;
+    requestFrame(() => {
+      scheduled = false;
+      render(latest);
+    });
+  };
+}
+const show = latestPerFrame((update) => console.log("render update", update));
+show(1); show(2); show(3);
+frames.shift()();
+show(4);
+frames.shift()();
+console.log("frames left:", frames.length);
+</code>
+<option correct>render update 3
+render update 4
+frames left: 0</option>
+<option>render update 1
+render update 4
+frames left: 0</option>
+<option>render update 1
+render update 2
+render update 3
+render update 4
+frames left: 0</option>
+<option>render update 3
+render update 4
+frames left: 2</option>
+<option>render update 3
+frames left: 1</option>
+<explain><p>Three updates before the first frame schedule only one frame, which renders the latest value, 3. After it runs, the next update schedules a new frame. Only two frames were ever requested.</p></explain>
+</question>
+
+<question id="rt-out-drop" type="output">
+<q>A slow connection can only hold two queued location updates, so the oldest is dropped. What does this print?</q>
+<code file="drop.js">
+const queue = [];
+function sendLocation(update, limit = 2) {
+  if (queue.length >= limit) queue.shift();
+  queue.push(update);
+}
+for (let second = 1; second <= 5; second++) sendLocation({ second });
+console.log(queue.map((u) => u.second));
+</code>
+<option correct>[ 4, 5 ]</option>
+<option>[ 1, 2 ]</option>
+<option>[ 1, 2, 3, 4, 5 ]</option>
+<option>[ 5 ]</option>
+<explain><p>Each new update pushes out the oldest once the queue is full, so only the two newest remain. For live locations that is exactly right: a stale position has no value, and memory stays bounded however slow the network is.</p></explain>
+</question>
+
+<question id="rt-code-timeout" type="code" file="with-timeout.js">
+<q><p>A worker call that never gets a reply leaves a promise pending forever. Write <code>withTimeout(promise, ms)</code> that resolves like <code>promise</code>, or rejects with <code>new Error("no reply after &lt;ms&gt; ms")</code> if it takes longer. Clear the timer when the promise wins.</p></q>
+<starter>
+function withTimeout(promise, ms) {
+  // your code here
+}
+
+const reply = (value, ms) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+console.log(await withTimeout(reply("₦19,300", 10), 100));
+try {
+  await withTimeout(reply("late", 200), 30);
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`no reply after ${ms} ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+const reply = (value, ms) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+console.log(await withTimeout(reply("₦19,300", 10), 100));
+try {
+  await withTimeout(reply("late", 200), 30);
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>
+₦19,300
+no reply after 30 ms
+</expected>
+<explain><p><code>Promise.race</code> settles with whichever finishes first. Clearing the timer in <code>finally</code> means a fast reply does not leave a timer running for nothing. A worker wrapper would also delete the call from its pending map on timeout.</p></explain>
+</question>

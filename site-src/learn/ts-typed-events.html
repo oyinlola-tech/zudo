@@ -1,0 +1,841 @@
+---
+title: A type-safe event system
+description: Build an event bus where emit("order.placed", payload) only accepts the right payload: typed listeners, unsubscribe, wildcards and their limits.
+minutes: 55
+youNeed: Generic API design, Mapped types, Conditional types and Template literal types
+youBuild: A typed event bus for a shop, with checked names and payloads, unsubscribe by function or AbortSignal, once and waitFor, namespace wildcards, async listeners with error isolation, and a typed layer over @zudojs/events
+keywords: typescript event emitter, typed events, event map, type safe emit, typed listeners, unsubscribe, AbortSignal, wildcard events, correlated union, error isolation, zudojs events, node EventEmitter generic
+objectives: Describe every event of a system in one event map and derive names, payloads and listener types from it | Write emit and on so that a wrong event name or payload is a compile error, including events without a payload | Explain the correlated-union hole and close it by keeping name and payload in one value | Type namespace wildcards with template literal types and say what they cannot express | Isolate listener failures and validate events that arrive from outside the program | Put a typed layer over @zudojs/events and know which of its types are claims rather than checks
+---
+<section>
+<h2 id="problem">The order e-mail that silently stopped</h2>
+<p>A shop sends a confirmation e-mail after every order. The checkout code does not call the e-mail code directly; it <strong>emits an event</strong>, a named message that says "this happened", and whoever cares <strong>listens</strong> for that name. Checkout does not know that e-mail, inventory or analytics exist, and they do not know about each other. That loose coupling is the whole point of events.</p>
+<p>Last month a developer renamed the event from <code>"order.created"</code> to <code>"order.placed"</code>, because an order is placed before it is paid. They even used Node's typed <code>EventEmitter</code>, which accepts an <strong>event map</strong>: a type that lists each event name with its arguments. They updated checkout. They did not find the listener in another folder:</p>
+<example file="problem.ts" browser="no">
+import { EventEmitter } from "node:events";
+
+interface OrderPlaced {
+  orderId: string;
+  email: string;
+  totalKobo: number;
+}
+
+interface ShopEvents {
+  "order.placed": [order: OrderPlaced];
+  "stock.low": [sku: string, left: number];
+}
+
+const shop = new EventEmitter<ShopEvents>();
+
+// notifications.ts, written last year when the event was still "order.created"
+shop.on("order.created", (order) => {
+  console.log(`e-mail ${order.email}: we received order ${order.orderId}`);
+});
+
+// checkout.ts, after the rename
+const delivered = shop.emit("order.placed", { orderId: "ORD-1042", email: "ada@shop.ng", totalKobo: 1_850_000 });
+console.log("anyone listening?", delivered);
+</example>
+<output>
+anyone listening? false
+</output>
+<p>This compiles with no error, runs with no error, and no customer gets an e-mail. <code>emit</code> returns <code>false</code> ("nobody listened"), which nobody checks. Node's type definitions deliberately accept <em>any</em> event name, because a Node emitter may also carry events the map does not list, and for an unknown name the listener's parameter is <code>any</code>, so even <code>order.emial</code> would compile. The map made the known events nicer to use, but it did not make unknown names wrong.</p>
+<p>In this lesson you build an event system where that bug cannot compile: a misspelled name, a missing field and a listener that expects the wrong shape are all type errors. You will see exactly where TypeScript's help ends (wildcards, variables that hold "one of several" names, data from outside the program), and then how <code>@zudojs/events</code>, which you meet in <a href="/learn/zudo-events">Events in ZudoJS</a>, types the same ideas. <a href="/learn/ts-generic-design#events">Generic API design</a> built a first <code>TypedEmitter</code> with <code>on</code> and <code>emit</code>; this lesson starts from that idea and goes much deeper.</p>
+</section>
+
+<section>
+<h2 id="event-map">The event map: one type as the contract</h2>
+<p>Everything starts from one interface. Each key is an event name, and its value is the <strong>payload</strong>, the data that travels with the event. An event with nothing to say, like "the cart was cleared", has the payload type <code>void</code>:</p>
+<file name="shop-events.ts" project="bus">
+export interface OrderPlaced {
+  orderId: string;
+  email: string;
+  totalKobo: number;
+}
+
+export interface ShopEvents {
+  "order.placed": OrderPlaced;
+  "order.cancelled": { orderId: string; reason: string };
+  "stock.low": { sku: string; left: number };
+  "cart.cleared": void;
+}
+</file>
+<p>Using one payload value per event (instead of Node's argument lists) keeps things simple: a listener always receives one argument, and you can add a field later without changing every listener's parameter list.</p>
+<p>From this map you derive every other type the bus needs, with the tools from <a href="/learn/ts-type-operators">Type operators</a>, <a href="/learn/ts-mapped-types">Mapped types</a> and <a href="/learn/ts-conditional-types">Conditional types</a>. Nobody writes an event name or a payload type twice:</p>
+<example file="event-types.ts" project="bus">
+export type EventName<E> = keyof E & string;
+export type PayloadArgs<P> = [P] extends [void] ? [] : [payload: P];
+export type Listener<P> = (...args: PayloadArgs<P>) => void | Promise<void>;
+
+export type EventOf<E, K extends EventName<E> = EventName<E>> = {
+  [N in K]: { readonly name: N; readonly payload: E[N] };
+}[K];
+
+type Namespace<E> = EventName<E> extends infer N ? (N extends `${infer NS}.${string}` ? NS : never) : never;
+export type Pattern<E> = "*" | `${Namespace<E>}.*`;
+export type Matching<E, P extends string> = P extends `${infer NS}.*` ? Extract<EventName<E>, `${NS}.${string}`> : EventName<E>;
+
+export interface EmitReport {
+  readonly delivered: number;
+  readonly failed: number;
+  readonly errors: readonly unknown[];
+}
+</example>
+<ul>
+<li><code>EventName&lt;E&gt;</code> is the union of the names. <code>&amp; string</code> drops number and symbol keys, which <code>keyof</code> could otherwise include.</li>
+<li><code>PayloadArgs&lt;P&gt;</code> turns a payload into an <em>argument list</em>: an empty tuple for <code>void</code>, a one-element tuple otherwise. Used as a rest parameter, it makes <code>emit("cart.cleared")</code> take no payload and every other event require one. The <code>[P] extends [void]</code> wrapping stops the conditional type from distributing over unions, as <a href="/learn/ts-conditional-types#distribution">Conditional types</a> explained.</li>
+<li><code>EventOf&lt;E&gt;</code> is a <strong>discriminated union</strong> of <code>{ name, payload }</code> objects, one member per event. It is built with the "mapped type, then index it with its own keys" trick. You will need it twice: for wildcard listeners and to close a type hole.</li>
+<li><code>Pattern</code> and <code>Matching</code> use <a href="/learn/ts-template-literals">template literal types</a> to describe wildcards like <code>"order.*"</code>. The wildcards section explains them.</li>
+</ul>
+<p>Check the derived types before building on them. The type-level test helpers are the ones from <a href="/learn/ts-type-operators#testing">Type operators</a>:</p>
+<file name="type-tests.ts" project="bus">
+export type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+export type Expect<T extends true> = T;
+</file>
+<example file="map-facts.ts" project="bus">
+import type { Equal, Expect } from "./type-tests.js";
+import type { EventName, EventOf, Matching, PayloadArgs, Pattern } from "./event-types.js";
+import type { ShopEvents } from "./shop-events.js";
+
+type M1 = Expect<Equal<EventName<ShopEvents>, "order.placed" | "order.cancelled" | "stock.low" | "cart.cleared">>;
+type M2 = Expect<Equal<PayloadArgs<ShopEvents["cart.cleared"]>, []>>;
+type M3 = Expect<Equal<PayloadArgs<ShopEvents["stock.low"]>, [payload: { sku: string; left: number }]>>;
+type M4 = Expect<Equal<Pattern<ShopEvents>, "*" | "order.*" | "stock.*" | "cart.*">>;
+type M5 = Expect<Equal<Matching<ShopEvents, "order.*">, "order.placed" | "order.cancelled">>;
+type M6 = Expect<Equal<EventOf<ShopEvents, "stock.low">, { readonly name: "stock.low"; readonly payload: { sku: string; left: number } }>>;
+
+console.log("6 facts about the event map compiled");
+</example>
+<output>
+6 facts about the event map compiled
+</output>
+</section>
+
+<section>
+<h2 id="emit">A typed emit and on</h2>
+<reason title="Before you write emit">
+<p>You are about to write <code>emit(name, payload)</code> and <code>on(name, listener)</code>. Think first:</p>
+<ul>
+<li>Who should decide the payload type: the caller, the listener, or the event name?</li>
+<li>How does <code>emit</code> know that <code>"cart.cleared"</code> takes no payload?</li>
+<li>Listeners for different events have different parameter types. What type can the one internal collection that stores all of them have?</li>
+<li>A listener may unsubscribe itself while <code>emit</code> is looping over the listeners. What happens to the loop?</li>
+</ul>
+<answer>
+<p>The <strong>name</strong> must decide, so <code>emit</code> is generic in the name: <code>K extends EventName&lt;E&gt;</code> is inferred from the string you pass, and the payload parameter is <code>E[K]</code>. If the caller or the listener could choose the type, it would be a claim, not a check. The payload parameter becomes a rest parameter of type <code>PayloadArgs&lt;E[K]&gt;</code>, which is <code>[]</code> for <code>void</code>. The internal collection cannot say "for each name, listeners of that name's payload": TypeScript has no type for a <code>Map</code> whose value type depends on the key. So the storage is typed loosely, and exactly one cast connects the public, precise signatures to it. The loop should run over a <strong>copy</strong> of the listener list, so removing a listener during the loop cannot skip the next one.</p>
+</answer>
+</reason>
+<example file="emitter.ts" project="first">
+type EventName<E> = keyof E & string;
+type PayloadArgs<P> = [P] extends [void] ? [] : [payload: P];
+type Listener<P> = (...args: PayloadArgs<P>) => void;
+
+export class TypedEmitter<E extends object> {
+  readonly #listeners = new Map<string, Set<Listener<unknown>>>();
+
+  on<K extends EventName<E>>(name: K, listener: Listener<E[K]>): () => void {
+    let set = this.#listeners.get(name);
+    if (!set) this.#listeners.set(name, (set = new Set()));
+    const stored = listener as Listener<unknown>;
+    set.add(stored);
+    return () => void set.delete(stored);
+  }
+
+  emit<K extends EventName<E>>(name: K, ...args: PayloadArgs<E[K]>): number {
+    const set = this.#listeners.get(name);
+    if (!set) return 0;
+    for (const listener of [...set]) listener(...(args as PayloadArgs<unknown>));
+    return set.size;
+  }
+}
+</example>
+<file name="shop-events.ts" project="first">
+export interface OrderPlaced {
+  orderId: string;
+  email: string;
+  totalKobo: number;
+}
+
+export interface ShopEvents {
+  "order.placed": OrderPlaced;
+  "order.cancelled": { orderId: string; reason: string };
+  "stock.low": { sku: string; left: number };
+  "cart.cleared": void;
+}
+</file>
+<example file="demo.ts" project="first">
+import { TypedEmitter } from "./emitter.js";
+import type { ShopEvents } from "./shop-events.js";
+
+const shop = new TypedEmitter<ShopEvents>();
+
+const stop = shop.on("order.placed", (order) => {
+  console.log(`e-mail ${order.email}: order ${order.orderId}, ₦${order.totalKobo / 100}`);
+});
+shop.on("cart.cleared", () => console.log("cart badge -> 0"));
+
+console.log(shop.emit("order.placed", { orderId: "ORD-1042", email: "ada@shop.ng", totalKobo: 1_850_000 }));
+console.log(shop.emit("cart.cleared"));
+stop();
+console.log(shop.emit("order.placed", { orderId: "ORD-1043", email: "tunde@shop.ng", totalKobo: 90_000 }));
+</example>
+<output>
+e-mail ada@shop.ng: order ORD-1042, ₦18500
+1
+cart badge -> 0
+1
+0
+</output>
+<p>You never wrote a type argument: <code>K</code> is inferred as <code>"order.placed"</code> from the string, and from it the payload type flows into the listener's <code>order</code> parameter (contextual typing, from <a href="/learn/ts-inference#contextual">Type inference</a>). <code>on</code> returns an <strong>unsubscribe function</strong>: calling it removes exactly that listener, so the caller never needs access to the emitter's internals. Now every mistake from the opening story, and a few more:</p>
+<example file="misuse.ts" project="first" check="tsc-error">
+import { TypedEmitter } from "./emitter.js";
+import type { ShopEvents } from "./shop-events.js";
+
+const shop = new TypedEmitter<ShopEvents>();
+
+shop.on("order.created", (order) => console.log(order));
+shop.emit("order.placed", { orderId: "ORD-1042", email: "ada@shop.ng", totalKobo: "18500" });
+shop.emit("stock.low");
+shop.emit("cart.cleared", { items: 3 });
+shop.on("stock.low", (event) => console.log(event.quantity));
+</example>
+<output kind="tsc">
+misuse.ts:6:9 - error TS2345: Argument of type '"order.created"' is not assignable to parameter of type 'EventName<ShopEvents>'.
+
+6 shop.on("order.created", (order) => console.log(order));
+          ~~~~~~~~~~~~~~~
+
+misuse.ts:7:72 - error TS2322: Type 'string' is not assignable to type 'number'.
+
+7 shop.emit("order.placed", { orderId: "ORD-1042", email: "ada@shop.ng", totalKobo: "18500" });
+                                                                         ~~~~~~~~~
+
+  shop-events.ts:4:3 - The expected type comes from property 'totalKobo' which is declared here on type 'OrderPlaced'
+    4   totalKobo: number;
+        ~~~~~~~~~
+
+misuse.ts:8:6 - error TS2554: Expected 2 arguments, but got 1.
+
+8 shop.emit("stock.low");
+       ~~~~
+
+  emitter.ts:16:41 - Arguments for the rest parameter 'args' were not provided.
+    16   emit<K extends EventName<E>>(name: K, ...args: PayloadArgs<E[K]>): number {
+                                               ~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+misuse.ts:9:27 - error TS2554: Expected 1 arguments, but got 2.
+
+9 shop.emit("cart.cleared", { items: 3 });
+                            ~~~~~~~~~~~~
+
+misuse.ts:10:51 - error TS2339: Property 'quantity' does not exist on type '{ sku: string; left: number; }'.
+
+10 shop.on("stock.low", (event) => console.log(event.quantity));
+                                                     ~~~~~~~~
+
+
+Found 5 errors in the same file, starting at: misuse.ts:6
+</output>
+<p>The old name is refused, the price as text is refused, a missing payload and an unexpected payload are refused, and the listener cannot read a field the event does not have. The single <code>as Listener&lt;unknown&gt;</code> cast inside <code>on</code> is the price of the heterogeneous storage. It is safe for one reason only: a listener stored under name <code>K</code> is only ever called with arguments that were checked against <code>E[K]</code> by <code>emit</code>. That reasoning lives in your head, not in the compiler, which is why such a cast belongs in one small, tested class and nowhere else.</p>
+
+<h3 id="union-hole">The correlated-union hole</h3>
+<p>The generic <code>K</code> is precise as long as you pass a literal name. Now a function forwards "one of two" events, so its name and payload are unions:</p>
+<example file="hole.ts" project="first">
+import { TypedEmitter } from "./emitter.js";
+import type { ShopEvents } from "./shop-events.js";
+
+const shop = new TypedEmitter<ShopEvents>();
+shop.on("stock.low", (event) => console.log(`reorder ${event.sku}: ${event.left} left`));
+
+function forward(name: "order.cancelled" | "stock.low", payload: ShopEvents["order.cancelled" | "stock.low"]) {
+  shop.emit(name, payload);
+}
+
+forward("stock.low", { orderId: "ORD-1042", reason: "customer changed mind" });
+</example>
+<output>
+reorder undefined: undefined left
+</output>
+<p>It compiles and it is wrong. Inside <code>forward</code>, <code>K</code> is inferred as the whole union <code>"order.cancelled" | "stock.low"</code>, so <code>E[K]</code> is the union of both payloads, and a cancellation payload is accepted for <code>"stock.low"</code>. Two separate union variables have lost the information that they belong <em>together</em>. TypeScript calls this the <strong>correlated union</strong> problem, and there is no compiler switch for it. The fix is a design rule: <strong>as long as a name and a payload travel together, keep them in one value</strong>. That is what <code>EventOf&lt;E&gt;</code> is for. Each member ties one name to its payload, so a mismatched pair cannot even be written:</p>
+<example file="together.ts" project="bus" check="tsc-error">
+import type { EventOf } from "./event-types.js";
+import type { ShopEvents } from "./shop-events.js";
+
+function forward(event: EventOf<ShopEvents, "order.cancelled" | "stock.low">): string {
+  return event.name === "stock.low" ? `reorder ${event.payload.sku}` : `cancel ${event.payload.orderId}`;
+}
+
+forward({ name: "stock.low", payload: { sku: "RICE-50KG", left: 3 } });
+forward({ name: "stock.low", payload: { orderId: "ORD-1042", reason: "customer changed mind" } });
+</example>
+<output kind="tsc">
+together.ts:9:41 - error TS2353: Object literal may only specify known properties, and 'orderId' does not exist in type '{ sku: string; left: number; }'.
+
+9 forward({ name: "stock.low", payload: { orderId: "ORD-1042", reason: "customer changed mind" } });
+                                          ~~~~~~~
+
+
+Found 1 error in together.ts:9
+</output>
+<p>Checking <code>event.name</code> also narrows <code>event.payload</code>, which two separate variables could never do. The full bus below gets a <code>publish(event)</code> method that takes exactly such an object.</p>
+</section>
+
+<section>
+<h2 id="bus">The full bus: unsubscribe, once, waitFor and wildcards</h2>
+<p>A production event system needs more than <code>on</code> and <code>emit</code>. Listeners that live as long as one HTTP request must be removed when the request ends, or they pile up (a <strong>listener leak</strong>). Some code needs only the next event. Audit logs want every event. And listeners are often <code>async</code>. Here is the complete bus, built on the types from <code>event-types.ts</code>:</p>
+<example file="event-bus.ts" project="bus">
+import type { EmitReport, EventName, EventOf, Listener, Matching, PayloadArgs, Pattern } from "./event-types.js";
+
+type Stored = (...args: unknown[]) => void | Promise<void>;
+type PatternListener = (event: { name: string; payload: unknown }) => void | Promise<void>;
+
+export class EventBus<E extends object> {
+  readonly #listeners = new Map<string, Set<Stored>>();
+  readonly #patterns = new Map<PatternListener, string>();
+
+  on<K extends EventName<E>>(name: K, listener: Listener<E[K]>, options: { signal?: AbortSignal } = {}): () => void {
+    let set = this.#listeners.get(name);
+    if (!set) this.#listeners.set(name, (set = new Set()));
+    const stored = listener as Stored;
+    set.add(stored);
+    const off = () => void set.delete(stored);
+    options.signal?.addEventListener("abort", off, { once: true });
+    return off;
+  }
+
+  once<K extends EventName<E>>(name: K, listener: Listener<E[K]>): () => void {
+    const off = this.on(name, (...args) => {
+      off();
+      return listener(...args);
+    });
+    return off;
+  }
+
+  waitFor<K extends EventName<E>>(name: K): Promise<E[K]> {
+    return new Promise((resolve) => this.once(name, (...args) => resolve(args[0] as E[K])));
+  }
+
+  onPattern<P extends Pattern<E>>(pattern: P, listener: (event: EventOf<E, Matching<E, P>>) => void | Promise<void>): () => void {
+    const stored = listener as PatternListener;
+    this.#patterns.set(stored, pattern);
+    return () => void this.#patterns.delete(stored);
+  }
+
+  emit<K extends EventName<E>>(name: K, ...args: PayloadArgs<E[K]>): Promise<EmitReport> {
+    return this.#dispatch(name, args);
+  }
+
+  publish(event: EventOf<E>): Promise<EmitReport> {
+    return this.#dispatch(event.name, event.payload === undefined ? [] : [event.payload]);
+  }
+
+  async #dispatch(name: string, args: readonly unknown[]): Promise<EmitReport> {
+    const calls: (() => void | Promise<void>)[] = [];
+    for (const listener of this.#listeners.get(name) ?? []) calls.push(() => listener(...args));
+    for (const [listener, pattern] of this.#patterns) {
+      if (pattern === "*" || name.startsWith(pattern.slice(0, -1))) calls.push(() => listener({ name, payload: args[0] }));
+    }
+    const results = await Promise.allSettled(calls.map(async (call) => call()));
+    const errors = results.flatMap((r) => (r.status === "rejected" ? [r.reason] : []));
+    return { delivered: results.length - errors.length, failed: errors.length, errors };
+  }
+}
+</example>
+<p>The structure is the important part: a <strong>typed facade over an untyped core</strong>. The public methods (<code>on</code>, <code>once</code>, <code>emit</code>, <code>publish</code>, <code>onPattern</code>) have precise generic signatures. The private <code>#dispatch</code> works with plain strings and <code>unknown</code> values. Every cast sits on the line where a precise type enters the loose storage. <code>once</code> and <code>waitFor</code> are built on <code>on</code> and need no new cast except <code>args[0] as E[K]</code>, because TypeScript cannot index the still-unresolved <code>PayloadArgs&lt;E[K]&gt;</code>.</p>
+<example file="subscriptions.ts" project="bus">
+import { EventBus } from "./event-bus.js";
+import type { ShopEvents } from "./shop-events.js";
+
+const shop = new EventBus<ShopEvents>();
+
+const request = new AbortController();
+shop.on("stock.low", (s) => console.log(`[request] ${s.sku} is low`), { signal: request.signal });
+shop.once("order.placed", (o) => console.log(`[once] first order today: ${o.orderId}`));
+
+const nextCancellation = shop.waitFor("order.cancelled");
+
+await shop.emit("stock.low", { sku: "RICE-50KG", left: 3 });
+request.abort();
+await shop.emit("stock.low", { sku: "RICE-50KG", left: 2 });
+
+await shop.emit("order.placed", { orderId: "ORD-1", email: "ada@shop.ng", totalKobo: 500_000 });
+await shop.emit("order.placed", { orderId: "ORD-2", email: "tunde@shop.ng", totalKobo: 90_000 });
+
+await shop.emit("order.cancelled", { orderId: "ORD-2", reason: "paid twice" });
+const cancelled = await nextCancellation;
+console.log("waitFor got:", cancelled.reason);
+</example>
+<output>
+[request] RICE-50KG is low
+[once] first order today: ORD-1
+waitFor got: paid twice
+</output>
+<ul>
+<li>An <code>AbortSignal</code> is the standard way to cancel many things at once: <code>fetch</code>, timers and listeners can all share one signal, so ending a request cleans up everything it started. <code>request.abort()</code> removed the listener before the second <code>stock.low</code>.</li>
+<li><code>once</code> fired for the first order only. <code>waitFor</code> turned the next <code>order.cancelled</code> into a promise, and <code>cancelled</code> is typed as that event's payload, so <code>cancelled.reason</code> is checked.</li>
+</ul>
+
+<h3 id="wildcards">Wildcards and their limits</h3>
+<p>An audit log wants every event, and an order dashboard wants every <code>order.*</code> event. A wildcard listener cannot receive "the payload", because it receives several kinds of event. So <code>onPattern</code> hands it the <code>{ name, payload }</code> union for exactly the matching names, and the listener narrows on <code>name</code>:</p>
+<example file="patterns.ts" project="bus">
+import { EventBus } from "./event-bus.js";
+import type { ShopEvents } from "./shop-events.js";
+
+const shop = new EventBus<ShopEvents>();
+
+shop.onPattern("order.*", (event) => {
+  switch (event.name) {
+    case "order.placed":
+      console.log(`[orders] +₦${event.payload.totalKobo / 100}`);
+      break;
+    case "order.cancelled":
+      console.log(`[orders] ${event.payload.orderId} cancelled: ${event.payload.reason}`);
+      break;
+  }
+});
+shop.onPattern("*", (event) => console.log(`[audit] ${event.name}`));
+
+await shop.emit("order.placed", { orderId: "ORD-7", email: "ada@shop.ng", totalKobo: 1_200_000 });
+await shop.emit("order.cancelled", { orderId: "ORD-7", reason: "out of stock" });
+await shop.emit("cart.cleared");
+</example>
+<output>
+[orders] +₦12000
+[audit] order.placed
+[orders] ORD-7 cancelled: out of stock
+[audit] order.cancelled
+[audit] cart.cleared
+</output>
+<p>How the types work: <code>Namespace&lt;ShopEvents&gt;</code> takes every name apart with <code>`${infer NS}.${string}`</code> and keeps the part before the first dot, giving <code>"order" | "stock" | "cart"</code>. <code>Pattern</code> turns that into <code>"*" | "order.*" | "stock.*" | "cart.*"</code>. <code>Matching&lt;E, "order.*"&gt;</code> keeps the names that start with <code>order.</code>, and <code>EventOf</code> turns them into the union the listener receives. The type-level rule and the runtime rule (<code>name.startsWith("order.")</code>) must agree, and they do: both match every depth below the namespace. Here is what the compiler refuses:</p>
+<example file="patterns-misuse.ts" project="bus" check="tsc-error">
+import { EventBus } from "./event-bus.js";
+import type { ShopEvents } from "./shop-events.js";
+
+const shop = new EventBus<ShopEvents>();
+
+shop.onPattern("shipping.*", (event) => console.log(event.name));
+shop.onPattern("order.*", (event) => console.log(event.payload.email));
+shop.onPattern("*.placed", (event) => console.log(event.name));
+</example>
+<output kind="tsc">
+patterns-misuse.ts:6:16 - error TS2345: Argument of type '"shipping.*"' is not assignable to parameter of type 'Pattern<ShopEvents>'.
+
+6 shop.onPattern("shipping.*", (event) => console.log(event.name));
+                 ~~~~~~~~~~~~
+
+patterns-misuse.ts:7:64 - error TS2339: Property 'email' does not exist on type 'OrderPlaced | { orderId: string; reason: string; }'.
+  Property 'email' does not exist on type '{ orderId: string; reason: string; }'.
+
+7 shop.onPattern("order.*", (event) => console.log(event.payload.email));
+                                                                 ~~~~~
+
+patterns-misuse.ts:8:16 - error TS2345: Argument of type '"*.placed"' is not assignable to parameter of type 'Pattern<ShopEvents>'.
+
+8 shop.onPattern("*.placed", (event) => console.log(event.name));
+                 ~~~~~~~~~~
+
+
+Found 3 errors in the same file, starting at: patterns-misuse.ts:6
+</output>
+<p>These are real limits of typed wildcards, and you should know them before you design around them:</p>
+<ul>
+<li><strong>A wildcard listener gets a union.</strong> <code>event.payload.email</code> is refused because a cancellation has no e-mail. That is correct, but it means wildcard listeners are for cross-cutting work (logging, metrics, forwarding to a queue) that treats events generically, not for business logic.</li>
+<li><strong>Only the patterns you teach the types.</strong> <code>"*.placed"</code> ("any namespace, action placed") is a perfectly reasonable runtime pattern, but <code>Pattern</code> does not describe it, so it is refused. Every new pattern form needs new template-literal machinery and matching runtime code, and the two can drift apart. Keep the pattern language small.</li>
+<li><strong>Patterns built at runtime</strong> such as <code>`${moduleName}.*`</code> with <code>moduleName: string</code> have the type <code>`${string}.*`</code>, which is not a <code>Pattern&lt;ShopEvents&gt;</code>. You must check the value at runtime and cast, or not use the typed method.</li>
+<li><strong>The map is closed at compile time.</strong> A plugin loaded at runtime cannot add events the types know about. Because <code>ShopEvents</code> is an <em>interface</em>, a plugin package can add names with module augmentation (<a href="/learn/ts-declarations">Declaration files</a> shows how), but only for plugins known when you compile.</li>
+<li><strong>Large maps cost compile time.</strong> <code>EventOf</code> and <code>Matching</code> are recomputed per use. A few hundred events are fine; thousands of names with deep patterns make editors slow (<a href="/learn/ts-performance">Compiler performance</a>).</li>
+</ul>
+</section>
+
+<section>
+<h2 id="async">Async listeners and error isolation</h2>
+<p>An e-mail listener that throws must not stop the inventory listener from reserving stock. The bus runs every listener, collects failures, and reports them to the publisher instead of throwing the first one. This is <strong>error isolation</strong>. <code>Promise.allSettled</code> does the work: it waits for every promise and never rejects. Wrapping each call in <code>async (call) =&gt; call()</code> turns a <em>synchronous</em> throw into a rejected promise too, so both kinds of failure land in the same report:</p>
+<example file="isolation.ts" project="bus">
+import { EventBus } from "./event-bus.js";
+import type { ShopEvents } from "./shop-events.js";
+
+const shop = new EventBus<ShopEvents>();
+
+shop.on("order.placed", (o) => console.log(`[inventory] reserve items for ${o.orderId}`));
+shop.on("order.placed", async (o) => {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  throw new Error(`SMTP timeout sending to ${o.email}`);
+});
+shop.on("order.placed", () => {
+  throw new TypeError("loyalty service misconfigured");
+});
+shop.on("order.placed", async (o) => {
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  console.log(`[analytics] revenue +${o.totalKobo}`);
+});
+
+const report = await shop.emit("order.placed", { orderId: "ORD-9", email: "ada@shop.ng", totalKobo: 700_000 });
+console.log(`delivered ${report.delivered}, failed ${report.failed}`);
+for (const error of report.errors) console.log(" -", String(error));
+</example>
+<output>
+[inventory] reserve items for ORD-9
+[analytics] revenue +700000
+delivered 2, failed 2
+ - Error: SMTP timeout sending to ada@shop.ng
+ - TypeError: loyalty service misconfigured
+</output>
+<p>Two design decisions are baked in here, and both are choices, not facts:</p>
+<ul>
+<li><strong>Listeners run concurrently.</strong> Their synchronous parts start in subscription order, but the analytics listener finished before the e-mail listener. If one listener must finish before another starts, they are not independent, and they probably belong in one listener or one command (next lesson).</li>
+<li><strong><code>emit</code> waits.</strong> The publisher gets the report, so a test can <code>await</code> the event and then check its effects. A web request, though, should not wait ten seconds for an e-mail server. In production, slow side effects move to a queue (<a href="/learn/backend-queues">Queues and background jobs</a>), and the listener only enqueues a job.</li>
+</ul>
+<p>The report's <code>errors</code> are <code>unknown[]</code>, not <code>Error[]</code>: a listener can throw anything, as <a href="/learn/ts-errors#unknown">Error handling in TypeScript</a> showed. <code>String(error)</code> is safe for any value.</p>
+</section>
+
+<section>
+<h2 id="boundaries">Events from outside the program</h2>
+<p>Everything so far was checked because the payloads were written in TypeScript. Events that arrive from a message queue, a webhook or another service are just text. <code>JSON.parse</code> returns <code>any</code>, and the event map says nothing about what really arrived. Types never validate data at runtime (<a href="/learn/ts-runtime">Types meet the runtime</a>), so you need one runtime check per event. A mapped type makes the compiler demand that check for every name in the map, so a new event cannot be added without a validator:</p>
+<example file="inbox.ts" project="bus">
+import { EventBus } from "./event-bus.js";
+import type { EventName, EventOf } from "./event-types.js";
+import type { ShopEvents } from "./shop-events.js";
+
+type Validators<E> = { readonly [K in EventName<E>]: (payload: unknown) => payload is E[K] };
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+
+const validators: Validators<ShopEvents> = {
+  "order.placed": (p): p is ShopEvents["order.placed"] =>
+    isObject(p) && typeof p.orderId === "string" && typeof p.email === "string" && Number.isInteger(p.totalKobo),
+  "order.cancelled": (p): p is ShopEvents["order.cancelled"] =>
+    isObject(p) && typeof p.orderId === "string" && typeof p.reason === "string",
+  "stock.low": (p): p is ShopEvents["stock.low"] => isObject(p) && typeof p.sku === "string" && typeof p.left === "number",
+  "cart.cleared": (p): p is void => p === undefined,
+};
+
+function parseEvent(raw: string): EventOf<ShopEvents> | string {
+  const message: unknown = JSON.parse(raw);
+  if (!isObject(message) || typeof message.name !== "string") return "not an event";
+  if (!Object.hasOwn(validators, message.name)) return `unknown event "${message.name}"`;
+  const name = message.name as EventName<ShopEvents>;
+  if (!validators[name](message.payload)) return `bad payload for ${name}`;
+  return { name, payload: message.payload } as EventOf<ShopEvents>;
+}
+
+const shop = new EventBus<ShopEvents>();
+shop.onPattern("*", (event) => console.log("published", event.name));
+
+const queue = [
+  '{"name":"stock.low","payload":{"sku":"GARRI-5KG","left":4}}',
+  '{"name":"stock.low","payload":{"sku":"GARRI-5KG","left":"four"}}',
+  '{"name":"order.shipped","payload":{"orderId":"ORD-3"}}',
+  '{"name":"cart.cleared"}',
+];
+for (const raw of queue) {
+  const event = parseEvent(raw);
+  if (typeof event === "string") console.log("rejected:", event);
+  else await shop.publish(event);
+}
+</example>
+<output>
+published stock.low
+rejected: bad payload for stock.low
+rejected: unknown event "order.shipped"
+published cart.cleared
+</output>
+<p>The two casts in <code>parseEvent</code> are each backed by a runtime check on the line before: <code>Object.hasOwn</code> proves the name is in the map (and not an inherited key like <code>"toString"</code>), and the validator proves the payload fits <em>that</em> name. The compiler cannot connect "the validator for <code>name</code> passed" to "the payload fits <code>name</code>", which is the correlated-union problem once more. Writing validators by hand gets long; <a href="/learn/ts-validation">Runtime validation</a> and <a href="/learn/zudo-validation">Validation in ZudoJS</a> generate them from schemas.</p>
+</section>
+
+<section>
+<h2 id="zudo">The same ideas in @zudojs/events</h2>
+<p><code>@zudojs/events</code> is a full event bus: every event is an object with a unique <code>id</code>, a <code>timestamp</code> and a <code>payload</code>, handlers have priorities and timeouts, middleware can wrap publishing, and failures are reported per handler. <a href="/learn/zudo-events">Events in ZudoJS</a> teaches it in full. Here, look only at its types. Its runtime event type is a plain <code>string</code>, so the typing happens in two places: <code>defineEvent</code> ties a name to a payload type, and <code>on</code> takes the handler's event type as a <strong>type argument</strong>:</p>
+<file name="shop-events.ts" project="zudo">
+export interface OrderPlaced {
+  orderId: string;
+  email: string;
+  totalKobo: number;
+}
+
+export interface ShopEvents {
+  "order.placed": OrderPlaced;
+  "order.cancelled": { orderId: string; reason: string };
+  "stock.low": { sku: string; left: number };
+  "cart.cleared": void;
+}
+</file>
+<example file="zudo.ts" project="zudo">
+import { createEventBus, defineEvent } from "@zudojs/events";
+import type { Event } from "@zudojs/events";
+import type { OrderPlaced, ShopEvents } from "./shop-events.js";
+
+const OrderPlacedEvent = defineEvent<"order.placed", OrderPlaced>("order.placed");
+const StockLowEvent = defineEvent<"stock.low", ShopEvents["stock.low"]>("stock.low");
+
+const bus = createEventBus();
+
+bus.on<Event<OrderPlaced>>("order.placed", (event) => {
+  console.log(`e-mail ${event.payload.email}: order ${event.payload.orderId}`);
+});
+bus.on<Event<OrderPlaced>>("stock.low", (event) => {
+  console.log(`wrong claim: ${event.payload.email}`);
+});
+bus.on("order.*", (event) => console.log("[orders]", event.type));
+
+const placed = await bus.publish(OrderPlacedEvent.create({ orderId: "ORD-1042", email: "ada@shop.ng", totalKobo: 1_850_000 }));
+console.log(placed.handled, placed.handlerCount);
+await bus.publish(StockLowEvent.create({ sku: "RICE-50KG", left: 3 }));
+</example>
+<output>
+e-mail ada@shop.ng: order ORD-1042
+[orders] order.placed
+true 2
+wrong claim: undefined
+</output>
+<p><code>OrderPlacedEvent.create(…)</code> is checked: the payload must be an <code>OrderPlaced</code>. But look at the second handler. <code>bus.on&lt;Event&lt;OrderPlaced&gt;&gt;("stock.low", …)</code> compiles, because nothing connects the type argument to the name. A type argument that only describes what a callback will <em>receive</em> is a <strong>claim</strong>, exactly like <code>as</code>: <a href="/learn/ts-generic-design#earn-their-place">Generic API design</a> called these return-only generics. The handler then reads <code>undefined</code>. This is not a bug in the package so much as a trade-off: a bus whose names are plain strings (so that <code>"order.*"</code>, modules and plugins work at runtime) cannot know every payload at compile time. The package also exports <code>EventUnion&lt;Map&gt;</code>, the same idea as your <code>EventOf</code>, but its constraint is <code>Record&lt;string, unknown&gt;</code>, which an <code>interface</code> does not satisfy; use a <code>type</code> alias for maps you pass to it.</p>
+<p>You can have both: the package's runtime and your compile-time map. A thin layer that takes the map as a type parameter lets the <em>name</em> choose the type again, and hides the claim in one place:</p>
+<example file="typed-zudo.ts" project="zudo">
+import { createEventBus } from "@zudojs/events";
+import type { Event, EventBus, EventPublishResult } from "@zudojs/events";
+
+export interface TypedZudoBus<M extends object> {
+  on<K extends keyof M & string>(type: K, handler: (event: Event<M[K]>) => void | Promise<void>): () => void;
+  publish<K extends keyof M & string>(type: K, payload: M[K]): Promise<EventPublishResult<Event<M[K]>>>;
+  readonly raw: EventBus;
+}
+
+export function typedBus<M extends object>(raw: EventBus = createEventBus()): TypedZudoBus<M> {
+  return {
+    on(type, handler) {
+      const subscription = raw.on<Event<M[typeof type]>>(type, handler);
+      return () => subscription.unsubscribe();
+    },
+    publish(type, payload) {
+      return raw.publishEvent({ type, payload });
+    },
+    raw,
+  };
+}
+</example>
+<example file="use-typed.ts" project="zudo">
+import { typedBus } from "./typed-zudo.js";
+import type { ShopEvents } from "./shop-events.js";
+
+const shop = typedBus<ShopEvents>();
+const off = shop.on("stock.low", (event) => console.log(`reorder ${event.payload.sku} (${event.payload.left} left)`));
+shop.raw.on("*", (event) => console.log("[audit]", event.type, event.id.startsWith("event:")));
+
+const result = await shop.publish("stock.low", { sku: "RICE-50KG", left: 3 });
+console.log("handled:", result.handled, "handlers:", result.handlerCount);
+off();
+console.log("handlers left:", shop.raw.handlerCount);
+</example>
+<output>
+reorder RICE-50KG (3 left)
+[audit] stock.low true
+handled: true handlers: 2
+handlers left: 1
+</output>
+<p>Compare the pieces with what you built:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Your bus</th><th>@zudojs/events</th></tr></thead>
+<tbody>
+<tr><td>Event map interface, name chooses the payload</td><td><code>defineEvent&lt;Name, Payload&gt;</code> per event; <code>on&lt;Event&lt;P&gt;&gt;</code> is a claim unless you add a layer like <code>typedBus</code></td></tr>
+<tr><td><code>on</code> returns an unsubscribe function</td><td><code>on</code> returns a subscription object with <code>unsubscribe()</code> and <code>active</code></td></tr>
+<tr><td><code>"order.*"</code> and <code>"*"</code>, typed to a union</td><td>The same patterns at runtime; <code>"order.*"</code> also matches a bare <code>"order"</code> event; the handler's type is again your claim</td></tr>
+<tr><td><code>EmitReport</code> with <code>delivered</code>, <code>failed</code>, <code>errors</code></td><td>The publish result has <code>handled</code>, <code>succeeded</code>, <code>failed</code> and <code>errors</code> (each an <code>EventHandlerError</code> whose <code>cause</code> is what was thrown). The bus continues after a failing handler by default</td></tr>
+<tr><td>Payload is whatever you passed</td><td>Handlers receive a deeply frozen copy, so one handler cannot change what the next one sees</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="mistakes">Common mistakes</h2>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Mistake</th><th>What happens</th><th>Fix</th></tr></thead>
+<tbody>
+<tr><td><code>emit(name: keyof E, payload: E[keyof E])</code> without a generic <code>K</code></td><td>Any payload is accepted for any name</td><td>A type parameter <code>K extends EventName&lt;E&gt;</code> per call</td></tr>
+<tr><td>Passing a union-typed name and a separate payload</td><td>The correlated-union hole: mismatched pairs compile</td><td>Keep them in one <code>EventOf&lt;E&gt;</code> value</td></tr>
+<tr><td>Letting the listener choose its payload type (<code>on&lt;T&gt;</code>)</td><td>A claim nothing checks</td><td>Derive the listener type from the name</td></tr>
+<tr><td>Business logic in a <code>"*"</code> listener</td><td>A union payload and constant narrowing</td><td>Wildcards for logging, metrics and forwarding only</td></tr>
+<tr><td>Subscribing inside a request handler and never unsubscribing</td><td>A listener leak: every request adds a listener</td><td>Subscribe at startup, or pass the request's <code>AbortSignal</code></td></tr>
+<tr><td>Looping over the live listener set</td><td>A listener that unsubscribes itself can make the loop skip the next one</td><td>Loop over a copy</td></tr>
+<tr><td>Trusting payloads from a queue because the map says so</td><td>Bad data reaches listeners with a trusted type</td><td>One validator per event at the boundary</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="testing">Testing the event system</h2>
+<p>An event system needs both kinds of test from <a href="/learn/ts-generic-design#testing">Generic API design</a>. Type-level tests prove the compiler refuses what it should: <code>// @ts-expect-error</code> makes <code>tsc</code> fail if the next line ever <em>stops</em> being an error, for example after someone loosens <code>emit</code> to <code>string</code>. Runtime tests prove the behaviour no type can see: that unsubscribing works, that <code>once</code> fires once and that failures are isolated.</p>
+<example file="bus.test.ts" project="bus">
+import { EventBus } from "./event-bus.js";
+import type { ShopEvents } from "./shop-events.js";
+
+const shop = new EventBus<ShopEvents>();
+
+// @ts-expect-error: unknown event name
+void shop.emit("order.created", { orderId: "ORD-1", email: "ada@shop.ng", totalKobo: 1 });
+// @ts-expect-error: payload of another event
+void shop.emit("stock.low", { orderId: "ORD-1", reason: "duplicate" });
+// @ts-expect-error: "cart.cleared" has no payload
+void shop.emit("cart.cleared", {});
+// @ts-expect-error: a mismatched pair cannot be published
+void shop.publish({ name: "stock.low", payload: { orderId: "ORD-1", reason: "duplicate" } });
+
+function check(label: string, actual: unknown, expected: unknown): void {
+  console.log(`${Object.is(actual, expected) ? "PASS" : "FAIL"} ${label}`);
+}
+
+const seen: string[] = [];
+const off = shop.on("stock.low", (s) => void seen.push(s.sku));
+shop.once("stock.low", () => void seen.push("once"));
+await shop.emit("stock.low", { sku: "A", left: 1 });
+off();
+await shop.emit("stock.low", { sku: "B", left: 1 });
+check("unsubscribe and once", seen.join(","), "A,once");
+
+shop.on("cart.cleared", () => {
+  throw new Error("boom");
+});
+shop.on("cart.cleared", () => void seen.push("second"));
+const report = await shop.emit("cart.cleared");
+check("a failing listener does not stop the next", seen.at(-1), "second");
+check("the failure is reported", report.failed, 1);
+</example>
+<output>
+PASS unsubscribe and once
+PASS a failing listener does not stop the next
+PASS the failure is reported
+</output>
+<p>With Vitest (<a href="/learn/ts-testing">Testing TypeScript</a>), <code>check</code> becomes <code>expect(…).toBe(…)</code>, and <code>expectTypeOf</code> can also assert that the listener's parameter has the expected type.</p>
+</section>
+
+<section>
+<h2 id="production">Typed events in production</h2>
+<ul>
+<li><strong>One map per boundary, owned by the publisher.</strong> The module that emits <code>order.placed</code> owns its payload type and exports it. Listeners import the type; they never redeclare it.</li>
+<li><strong>Payloads are a public contract.</strong> Adding an optional field is safe. Renaming or removing a field breaks every listener, including ones in other services that read from a queue and are not compiled with yours. For a breaking change, publish a new event (<code>order.placed.v2</code>) alongside the old one until every listener has moved.</li>
+<li><strong>In-memory events are not durable.</strong> If the process crashes between saving the order and the e-mail listener finishing, the e-mail is lost. Durable side effects go through a database outbox or a queue (<a href="/learn/zudo-queue">Queues in ZudoJS</a>, <a href="/learn/zudo-event-driven">Event-driven architecture</a>).</li>
+<li><strong>Events describe the past.</strong> Name them in the past tense (<code>order.placed</code>, not <code>place.order</code>) and do not expect a return value from listeners. When you need an answer or a guarantee that exactly one handler ran, you want a command or a query, which is the next lesson.</li>
+<li><strong>Watch the listener count.</strong> Count listeners per name in development and warn above a limit, the way Node's <code>EventEmitter</code> and <code>@zudojs/events</code> do, to catch leaks early.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="waitFor with a timeout">
+<p><code>waitFor</code> waits forever if the event never comes. Write <code>waitForWithin(bus, name, ms)</code> that resolves with the payload, or rejects with <code>Error("timed out waiting for NAME")</code> after <code>ms</code> milliseconds, and unsubscribes in both cases. The payload type must still follow the name.</p>
+<solution>
+<example file="wait-within.ts" project="bus">
+import { EventBus } from "./event-bus.js";
+import type { EventName } from "./event-types.js";
+import type { ShopEvents } from "./shop-events.js";
+
+function waitForWithin<E extends object, K extends EventName<E>>(bus: EventBus<E>, name: K, ms: number): Promise<E[K]> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      off();
+      reject(new Error(`timed out waiting for ${name}`));
+    }, ms);
+    const off = bus.once(name, (...args) => {
+      clearTimeout(timer);
+      resolve(args[0] as E[K]);
+    });
+  });
+}
+
+const shop = new EventBus<ShopEvents>();
+setTimeout(() => void shop.emit("stock.low", { sku: "YAM-TUBER", left: 2 }), 5);
+
+const low = await waitForWithin(shop, "stock.low", 100);
+console.log("got", low.sku);
+await waitForWithin(shop, "order.cancelled", 20).catch((error: unknown) => console.log(String(error)));
+</example>
+<output>
+got YAM-TUBER
+Error: timed out waiting for order.cancelled
+</output>
+<p><code>K</code> is inferred from the name, so <code>low</code> is typed <code>{ sku: string; left: number }</code>. Both paths clean up: the timer is cleared when the event arrives, and the listener is removed when the timer wins, so a late event does not resolve an already rejected promise and nothing leaks.</p>
+</solution>
+</exercise>
+<exercise title="One analytics line per event, enforced">
+<p>Analytics wants one line of text for every shop event. Write a mapped type <code>Formatters&lt;E&gt;</code> that requires a formatter for every event name, taking that event's payload, and a function <code>trackAll(bus, formatters, log)</code> that subscribes all of them. Adding a new event to <code>ShopEvents</code> must make the formatters object fail to compile until it has a line for it.</p>
+<solution>
+<example file="track-all.ts" project="bus">
+import { EventBus } from "./event-bus.js";
+import type { EventName } from "./event-types.js";
+import type { ShopEvents } from "./shop-events.js";
+
+type Formatters<E> = { readonly [K in EventName<E>]: (payload: E[K]) => string };
+
+function trackAll<E extends object>(bus: EventBus<E>, formatters: Formatters<E>, log: (line: string) => void): void {
+  bus.onPattern("*", (event) => {
+    const format = formatters[event.name] as (payload: unknown) => string;
+    log(`${event.name}: ${format(event.payload)}`);
+  });
+}
+
+const shop = new EventBus<ShopEvents>();
+trackAll(
+  shop,
+  {
+    "order.placed": (o) => `₦${o.totalKobo / 100}`,
+    "order.cancelled": (c) => c.reason,
+    "stock.low": (s) => `${s.sku} x${s.left}`,
+    "cart.cleared": () => "-",
+  },
+  (line) => console.log(line),
+);
+
+await shop.emit("order.placed", { orderId: "ORD-5", email: "ada@shop.ng", totalKobo: 250_000 });
+await shop.emit("stock.low", { sku: "OIL-5L", left: 1 });
+await shop.emit("cart.cleared");
+</example>
+<output>
+order.placed: ₦2500
+stock.low: OIL-5L x1
+cart.cleared: -
+</output>
+<p>The mapped type is the compile-time guarantee: a missing key or a formatter reading a field its event does not have is an error. Inside <code>trackAll</code>, <code>event</code> is a union, so <code>formatters[event.name]</code> is a union of functions that cannot be called with a union payload: the correlated-union problem again, solved with one cast that is safe because name and payload came from the same event object.</p>
+</solution>
+</exercise>
+<exercise title="Close the hole in forward">
+<p>The <code>forward(name, payload)</code> function from the correlated-union section accepted a cancellation payload for <code>"stock.low"</code>. Rewrite it so that it takes one <code>EventOf</code> value and publishes it on the full bus, and show that the correct call still works.</p>
+<solution>
+<example file="forward.ts" project="bus">
+import { EventBus } from "./event-bus.js";
+import type { EventOf } from "./event-types.js";
+import type { ShopEvents } from "./shop-events.js";
+
+const shop = new EventBus<ShopEvents>();
+shop.on("stock.low", (s) => console.log(`reorder ${s.sku}: ${s.left} left`));
+shop.on("order.cancelled", (c) => console.log(`refund ${c.orderId}`));
+
+async function forward(event: EventOf<ShopEvents, "order.cancelled" | "stock.low">): Promise<number> {
+  const report = await shop.publish(event);
+  return report.delivered;
+}
+
+console.log(await forward({ name: "stock.low", payload: { sku: "RICE-50KG", left: 3 } }));
+console.log(await forward({ name: "order.cancelled", payload: { orderId: "ORD-1042", reason: "customer changed mind" } }));
+</example>
+<output>
+reorder RICE-50KG: 3 left
+1
+refund ORD-1042
+1
+</output>
+<p>The wrong call, <code>forward({ name: "stock.low", payload: { orderId: …, reason: … } })</code>, is now a compile error, because no member of the union has that combination. The parameter type also documents which events <code>forward</code> handles.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Describe every event in one <strong>event map</strong> and derive names (<code>keyof E &amp; string</code>), payload arguments (<code>PayloadArgs</code>, empty for <code>void</code>), listener types and the <code>{ name, payload }</code> union (<code>EventOf</code>) from it.</li>
+<li>Make <code>emit</code> and <code>on</code> generic in the name, <code>K extends EventName&lt;E&gt;</code>, so the name decides the payload. A type argument chosen by the caller or the listener is a claim, not a check.</li>
+<li>Two separate union-typed variables lose their pairing (the <strong>correlated-union</strong> problem). Keep a name and its payload in one value.</li>
+<li>Store listeners loosely and keep the single cast where precise types enter the storage: a typed facade over an untyped core.</li>
+<li>Typed wildcards give listeners a union, only support the pattern forms you teach the types, cannot follow patterns built at runtime and describe a map that is closed at compile time.</li>
+<li>Run listeners with <code>Promise.allSettled</code> so one failure cannot stop the rest, and validate events from outside with one validator per name.</li>
+<li><code>@zudojs/events</code> types events with <code>defineEvent</code>, but <code>on&lt;Event&lt;P&gt;&gt;</code> is a claim; a thin typed layer puts your map back in charge.</li>
+</ul>
+<p>Next: <a href="/learn/ts-typed-cqrs">Type-safe CQRS</a>, where exactly one handler answers each command and query, and its result type follows the request.</p>
+</section>

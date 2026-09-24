@@ -1,0 +1,675 @@
+<question id="tid-same-const" type="choice">
+<q>What is the type of <code>a</code>?</q>
+<code file="a.ts">function same<T>(value: T): T {
+  return value;
+}
+const a = same("NGN");</code>
+<option><code>string</code></option>
+<option correct><code>"NGN"</code></option>
+<option><code>unknown</code></option>
+<option><code>T</code></option>
+<explain><p>The candidate for <code>T</code> is the literal <code>"NGN"</code>. <code>T</code> is the whole return type, so the literal is kept, and a <code>const</code> does not widen it.</p></explain>
+</question>
+
+<question id="tid-boxed" type="choice">
+<q>What is the type of <code>c</code>?</q>
+<code file="a.ts">function boxed<T>(value: T): { value: T } {
+  return { value };
+}
+const c = boxed("NGN");</code>
+<option><code>{ value: "NGN" }</code></option>
+<option correct><code>{ value: string }</code></option>
+<option><code>{ readonly value: "NGN" }</code></option>
+<option><code>{ value: unknown }</code></option>
+<explain><p>When <code>T</code> only appears inside something (a property, an array), the inferred literal is widened to <code>string</code>, because the container usually holds other values later.</p></explain>
+</question>
+
+<question id="tid-constraint-keeps" type="choice">
+<q>Which change makes <code>boxed("NGN")</code> return <code>{ value: "NGN" }</code> without the caller writing anything extra?</q>
+<option>Adding a return type annotation <code>: { value: string }</code></option>
+<option correct>Constraining the type parameter: <code>&lt;T extends string&gt;</code></option>
+<option>Declaring the result with <code>let</code></option>
+<option>Using <code>unknown</code> instead of <code>T</code></option>
+<explain><p>A constraint that mentions a primitive type tells TypeScript the exact value matters, so the literal is kept even inside the object. A <code>const</code> type parameter would also work.</p></explain>
+</question>
+
+<question id="tid-let-widen" type="choice">
+<q>What is the type of <code>b</code>?</q>
+<code file="a.ts">function same<T>(value: T): T {
+  return value;
+}
+let b = same("NGN");</code>
+<option><code>"NGN"</code></option>
+<option correct><code>string</code></option>
+<option><code>"NGN" | string</code></option>
+<option><code>T</code></option>
+<explain><p><code>T</code> is inferred as <code>"NGN"</code>, but a <code>let</code> may be reassigned, so the variable's type is widened, exactly as for <code>let b = "NGN"</code>.</p></explain>
+</question>
+
+<question id="tid-candidates" type="choice">
+<q>What does the compiler say about this call?</q>
+<code file="a.ts">function pair<T>(first: T, second: T): [T, T] {
+  return [first, second];
+}
+const mixed = pair(150_000, "NGN");</code>
+<option>Nothing; <code>T</code> is <code>number | string</code></option>
+<option correct>TS2345 on <code>"NGN"</code>: <code>T</code> was inferred as <code>number</code> from the first argument</option>
+<option>TS2345 on <code>150_000</code>: <code>T</code> was inferred as <code>string</code></option>
+<option>Nothing; <code>T</code> is <code>unknown</code></option>
+<explain><p>With competing candidates and no common supertype among them, the first candidate wins and the other argument is reported. That catches "same type" arguments that are not the same type. Write <code>pair&lt;number | string&gt;(…)</code> or use two type parameters if mixing is intended.</p></explain>
+</question>
+
+<question id="tid-context-sensitive" type="choice">
+<q>What is a <strong>context-sensitive</strong> argument?</q>
+<option>An argument that depends on a runtime condition</option>
+<option correct>An expression, such as an arrow function with unannotated parameters, whose type needs a contextual type; TypeScript checks it after the other arguments</option>
+<option>An argument whose value is a literal</option>
+<option>Any argument to a generic function</option>
+<explain><p>TypeScript infers type parameters from the other arguments first, then checks the context-sensitive callbacks with those types. That is how <code>(input) =&gt; …</code> can get a type that comes from another argument.</p></explain>
+</question>
+
+<question id="tid-order-matters" type="choice">
+<q>Why does the second call report <code>'input' is of type 'unknown'</code>?</q>
+<code file="a.ts">declare function defineJob<In, Out>(job: {
+  parse: (raw: string) => In;
+  run: (input: In) => Out;
+}): void;
+
+defineJob({ parse: (raw) => ({ orderId: raw }), run: (input) => input.orderId });
+defineJob({ run: (input) => input.orderId, parse: (raw) => ({ orderId: raw }) });</code>
+<option>Because <code>run</code> must always be declared last in an interface</option>
+<option correct>Because properties are processed in order: <code>run</code> is checked before <code>parse</code> has produced a candidate for <code>In</code></option>
+<option>Because <code>parse</code> returns an object literal</option>
+<option>Because object literals cannot contain two callbacks</option>
+<explain><p>Context-sensitive functions in an object literal are inferred left to right. Put the property that produces a type before the one that consumes it, or annotate the consumer's parameter.</p></explain>
+</question>
+
+<question id="tid-context-sources" type="choice">
+<q>Which of these does <strong>not</strong> give an arrow function's parameters a contextual type?</q>
+<option>Passing it directly as an argument to a function that declares the callback type</option>
+<option>Writing it in an object literal followed by <code>satisfies Record&lt;string, (id: string) =&gt; void&gt;</code></option>
+<option>Assigning it to a variable annotated with a function type</option>
+<option correct>Declaring it in its own <code>const</code> and passing that variable to the function later</option>
+<explain><p>A contextual type flows into an expression from the place it is written. A later use of the variable does not flow back, so the parameters are implicitly <code>any</code> (TS7006).</p></explain>
+</question>
+
+<question id="tid-recursion" type="choice">
+<q>Why does a recursive function without a return type annotation report TS7023?</q>
+<option>Because recursion is not allowed in strict mode</option>
+<option correct>Because inferring its return type requires the type of its own recursive call, which is the type being inferred</option>
+<option>Because recursive functions must be declared with <code>function</code></option>
+<option>Because the call stack may overflow</option>
+<explain><p>The inference is circular, so TypeScript gives up and would use <code>any</code>, which strict mode reports. A return type annotation breaks the circle.</p></explain>
+</question>
+
+<question id="tid-param-inference" type="choice">
+<q>In <code>function applyVat(order) { return order.totalKobo * 1.075; }</code>, what type does TypeScript infer for <code>order</code>?</q>
+<option><code>{ totalKobo: number }</code>, from how the body uses it</option>
+<option correct>None: without an annotation or a context it is implicitly <code>any</code>, which strict mode reports as TS7006</option>
+<option><code>unknown</code></option>
+<option><code>object</code></option>
+<explain><p>TypeScript never infers parameter types from the function body. Parameters are the boundary where you declare what the function accepts.</p></explain>
+</question>
+
+<question id="tid-const-param" type="choice">
+<q>What is the type of <code>x</code>?</q>
+<code file="a.ts">function exact<const T>(value: T): T {
+  return value;
+}
+const x = exact({ currency: "NGN", methods: ["card", "transfer"] });</code>
+<option><code>{ currency: string; methods: string[] }</code></option>
+<option><code>{ currency: "NGN"; methods: ("card" | "transfer")[] }</code></option>
+<option correct><code>{ readonly currency: "NGN"; readonly methods: readonly ["card", "transfer"] }</code></option>
+<option><code>Readonly&lt;object&gt;</code></option>
+<explain><p>A const type parameter infers as if the caller had written <code>as const</code>: literals kept, arrays become readonly tuples, properties become read-only.</p></explain>
+</question>
+
+<question id="tid-const-variable" type="choice">
+<q>What is the type of <code>fromVariable</code>?</q>
+<code file="a.ts">function exactList<const T extends readonly string[]>(values: T): T {
+  return values;
+}
+const roles = ["customer", "admin"];
+const fromVariable = exactList(roles);</code>
+<option><code>readonly ["customer", "admin"]</code></option>
+<option><code>("customer" | "admin")[]</code></option>
+<option correct><code>string[]</code></option>
+<option>A compile error</option>
+<explain><p><code>const T</code> only affects literals written in the call. <code>roles</code> was already widened to <code>string[]</code> when it was declared, and the call cannot bring the literals back.</p></explain>
+</question>
+
+<question id="tid-as-const-checks" type="choice">
+<q>Which mistake does <code>as const</code> catch in <code>const METHODS = ["GET", "POST", "GTE"] as const;</code>?</q>
+<option>The typo <code>"GTE"</code></option>
+<option>A duplicate method</option>
+<option correct>None; <code>as const</code> keeps values precise and read-only, but checks nothing about them</option>
+<option>That the array should be frozen</option>
+<explain><p>A const assertion preserves; it has no target type to check against. Add <code>satisfies readonly Method[]</code> to check the values.</p></explain>
+</question>
+
+<question id="tid-as-const-runtime" type="choice">
+<q>What does <code>as const</code> change in the JavaScript that runs?</q>
+<option>It calls <code>Object.freeze</code> on the value</option>
+<option>It makes the value a constant in the engine</option>
+<option correct>Nothing; it is erased, and the object can still be changed by code the compiler does not stop</option>
+<option>It deep-copies the value</option>
+<explain><p><code>readonly</code> exists only for the compiler. Use <code>Object.freeze</code> when the value must really not change at runtime.</p></explain>
+</question>
+
+<question id="tid-as-const-where" type="choice">
+<q>Which line is a compile error?</q>
+<option><code>const roles = ["customer", "admin"] as const;</code></option>
+<option><code>const fee = { percent: 1.5 } as const;</code></option>
+<option correct><code>const code = currency.toUpperCase() as const;</code></option>
+<option><code>const zero = 0 as const;</code></option>
+<explain><p>A const assertion can only be applied to literals (and enum member references): TS1355. A function call's result already has its type; there is no literal to keep.</p></explain>
+</question>
+
+<question id="tid-satisfies-literal" type="choice">
+<q>What is the type of <code>r.method</code>?</q>
+<code file="a.ts">type Method = "GET" | "POST";
+const r = { method: "GET", path: "/products" } satisfies { method: Method; path: string };</code>
+<option><code>string</code></option>
+<option correct><code>"GET"</code></option>
+<option><code>Method</code></option>
+<option><code>"GET" | "POST"</code></option>
+<explain><p><code>satisfies</code> gives the literal a contextual type. Where that type contains literal types, the literal is checked against them and kept, so <code>method</code> is <code>"GET"</code> without <code>as const</code>. The variable keeps its own type, not <code>Method</code>.</p></explain>
+</question>
+
+<question id="tid-satisfies-string" type="choice">
+<q>What is the type of <code>r.method</code> now?</q>
+<code file="a.ts">const r = { method: "GET", path: "/products" } satisfies { method: string; path: string };</code>
+<option correct><code>string</code></option>
+<option><code>"GET"</code></option>
+<option><code>readonly "GET"</code></option>
+<option><code>unknown</code></option>
+<explain><p>The contextual type for <code>method</code> is <code>string</code>, which has no literal types in it, so the literal is widened as usual.</p></explain>
+</question>
+
+<question id="tid-satisfies-callbacks" type="choice">
+<q>What is the type of <code>orderId</code> inside <code>refund</code>?</q>
+<code file="a.ts">const handlers = {
+  refund: (orderId) => `refunding ${orderId}`,
+} satisfies Record<string, (orderId: string) => string>;</code>
+<option>Implicitly <code>any</code>, a TS7006 error</option>
+<option correct><code>string</code>, from the context <code>satisfies</code> provides</option>
+<option><code>unknown</code></option>
+<option><code>never</code></option>
+<explain><p><code>satisfies</code> contextually types the whole literal, including the callbacks inside it. With <code>as const</code> alone there would be no context and <code>orderId</code> would be an implicit <code>any</code>.</p></explain>
+</question>
+
+<question id="tid-order-as-const-satisfies" type="choice">
+<q>Which line compiles and produces a checked, read-only tuple <code>readonly ["NGN", "USD"]</code>?</q>
+<option><code>const c = ["NGN", "USD"] satisfies readonly Currency[] as const;</code></option>
+<option correct><code>const c = ["NGN", "USD"] as const satisfies readonly Currency[];</code></option>
+<option><code>const c: readonly Currency[] = ["NGN", "USD"] as const;</code></option>
+<option><code>const c = ["NGN", "USD"] as readonly Currency[];</code></option>
+<explain><p><code>as const</code> must be applied to the literal itself, then <code>satisfies</code> checks the result. The annotated version checks too, but its type is the general <code>readonly Currency[]</code>, and <code>as</code> checks almost nothing.</p></explain>
+</question>
+
+<question id="tid-annotation-keys" type="choice">
+<q><code>const routes: Record&lt;string, RouteDef&gt; = { listProducts: { … } };</code> What happens with <code>routes.listProdcts.handler</code>?</q>
+<option>A compile error: property does not exist</option>
+<option correct>It compiles, because every string is a valid key of <code>Record&lt;string, RouteDef&gt;</code>, and it throws at runtime</option>
+<option>It returns <code>undefined</code> without throwing</option>
+<option>The compiler suggests <code>listProducts</code></option>
+<explain><p>An annotation replaces the value's type with the annotated one, and that type has an index signature. The typo is only caught with <code>satisfies</code>, which keeps the exact keys.</p></explain>
+</question>
+
+<question id="tid-as-overlap" type="choice">
+<q>An array of routes, one of them missing its <code>handler</code>, ends in <code>as RouteDef[]</code> and compiles. Why?</q>
+<option>Because <code>as</code> never checks anything</option>
+<option correct>Because an assertion only requires the types to overlap, and the element type is a union that includes a complete route, which overlaps with <code>RouteDef</code></option>
+<option>Because arrays are not type-checked</option>
+<option>Because <code>handler</code> is optional</option>
+<explain><p>An assertion rejects only conversions between types that do not overlap at all. Whether an incomplete entry is caught depends on the other entries and on literal types, so it is not a check you can rely on.</p></explain>
+</question>
+
+<question id="tid-when-annotate" type="choice">
+<q>When is an annotation better than <code>satisfies</code> for a value you write?</q>
+<option>Never; <code>satisfies</code> is always better</option>
+<option correct>When you want the variable to have exactly the general type, for example because it will be reassigned, or because it is exported and callers should not depend on its details</option>
+<option>When the value contains callbacks</option>
+<option>When you need literal types</option>
+<explain><p><code>satisfies</code> keeps details you may not want to commit to. <code>let current: Route = routes.home</code> must accept other routes later, and a public export's type is a promise to its users.</p></explain>
+</question>
+
+<question id="tid-derive-union" type="choice">
+<q>What is <code>Role</code>?</q>
+<code file="a.ts">const ROLES = ["public", "customer", "admin"] as const;
+type Role = (typeof ROLES)[number];</code>
+<option><code>string</code></option>
+<option correct><code>"public" | "customer" | "admin"</code></option>
+<option><code>readonly ["public", "customer", "admin"]</code></option>
+<option><code>number</code></option>
+<explain><p><code>typeof ROLES</code> is the readonly tuple, and indexing it with <code>number</code> gives the type of any element: the union. Without <code>as const</code> it would be <code>string</code>.</p></explain>
+</question>
+
+<question id="tid-admin-route" type="choice">
+<q>What does <code>AdminRoute</code> compute?</q>
+<code file="a.ts">type AdminRoute = { [N in RouteName]: (typeof routes)[N]["auth"] extends "admin" ? N : never }[RouteName];</code>
+<option>An object with one property per admin route</option>
+<option correct>The union of the route names whose <code>auth</code> is <code>"admin"</code></option>
+<option>A boolean for each route</option>
+<option>The handlers of the admin routes</option>
+<explain><p>The mapped type gives each route either its own name or <code>never</code>. Indexing it with all its keys collects the values into a union, and the <code>never</code>s disappear. It only works because <code>satisfies</code> kept each route's literal <code>auth</code>.</p></explain>
+</question>
+
+<question id="tid-refactor-risk" type="choice">
+<q>During a refactor, someone replaces <code>satisfies Record&lt;string, RouteDef&gt;</code> with an annotation. Which test notices?</q>
+<option>None; the code still compiles and runs</option>
+<option correct>A type test such as <code>Expect&lt;Equal&lt;RouteName, "listProducts" | "getOrder" | "refundOrder"&gt;&gt;</code>, because <code>RouteName</code> becomes <code>string</code></option>
+<option>A runtime test of <code>dispatch</code></option>
+<option>A lint rule against <code>satisfies</code></option>
+<explain><p>The runtime behaviour does not change, so runtime tests pass. The inferred types do change, silently switching off checks in code like <code>link</code>. Type tests pin the inferred facts you depend on.</p></explain>
+</question>
+
+<question id="tid-out-as-crash" type="output">
+<q>This compiles. What does it print?</q>
+<code file="as-crash.ts">
+interface Route {
+  path: string;
+  handler: () => string;
+}
+
+const ROUTES = [
+  { path: "/products", handler: () => "2 products" },
+  { path: "/orders" },
+] as Route[];
+
+for (const route of ROUTES) {
+  try {
+    console.log(route.path, route.handler());
+  } catch (error) {
+    console.log(route.path, String(error));
+  }
+}
+</code>
+<option correct>/products 2 products
+/orders TypeError: route.handler is not a function</option>
+<option>/products 2 products
+/orders undefined</option>
+<option>/products 2 products</option>
+<option>TypeError: route.handler is not a function</option>
+<explain><p>The array's element type is a union that overlaps with <code>Route</code>, so the assertion passed with an incomplete entry. The crash only happens when that route is used.</p></explain>
+</question>
+
+<question id="tid-out-let-widened" type="output">
+<q>This compiles. What does it print?</q>
+<code file="widened.ts">
+function same<T>(value: T): T {
+  return value;
+}
+
+let currency = same("NGN");
+currency = "USD";
+const fixed = same("NGN");
+console.log(currency, fixed, typeof fixed);
+</code>
+<option correct>USD NGN string</option>
+<option>NGN NGN string</option>
+<option>USD NGN "NGN"</option>
+<option>USD NGN literal</option>
+<explain><p>The <code>let</code> widened to <code>string</code>, so the reassignment is allowed. At runtime, <code>typeof</code> reports JavaScript's type, which is always <code>"string"</code>; literal types exist only in the compiler.</p></explain>
+</question>
+
+<question id="tid-out-as-const-mutate" type="output">
+<q>What does this print?</q>
+<code file="mutate.ts">
+const settings = { currency: "NGN", vatPercent: 7.5 } as const;
+Object.assign(settings, { vatPercent: 10 });
+console.log(settings.vatPercent, Object.isFrozen(settings));
+</code>
+<option correct>10 false</option>
+<option>7.5 true</option>
+<option>7.5 false</option>
+<option>TypeError: Cannot assign to read only property 'vatPercent' of object '#&lt;Object&gt;'</option>
+<explain><p><code>as const</code> is erased. The object is ordinary and mutable at runtime, and <code>Object.assign</code> changes it.</p></explain>
+</question>
+
+<question id="tid-out-freeze" type="output">
+<q>What does this print?</q>
+<code file="freeze.ts">
+const settings = Object.freeze({ currency: "NGN", vatPercent: 7.5 });
+try {
+  Object.assign(settings, { vatPercent: 10 });
+  console.log("changed to", settings.vatPercent);
+} catch (error) {
+  console.log(error instanceof TypeError, settings.vatPercent);
+}
+</code>
+<option correct>true 7.5</option>
+<option>changed to 10</option>
+<option>changed to 7.5</option>
+<option>false 7.5</option>
+<explain><p><code>Object.freeze</code> really prevents changes. Module code runs in strict mode, where writing to a frozen property throws a <code>TypeError</code> instead of failing silently.</p></explain>
+</question>
+
+<question id="tid-out-annotated-typo" type="output">
+<q>This compiles. What does it print?</q>
+<code file="annotated.ts">
+interface RouteDef {
+  path: string;
+  handler: () => string;
+}
+
+const routes: Record<string, RouteDef> = {
+  listProducts: { path: "/products", handler: () => "2 products" },
+};
+
+const name = "listProdcts";
+console.log(name in routes, routes.listProducts.handler(), routes[name]?.handler() ?? "no route");
+</code>
+<option correct>false 2 products no route</option>
+<option>true 2 products no route</option>
+<option>false 2 products undefined</option>
+<option>TypeError: Cannot read properties of undefined (reading 'handler')</option>
+<explain><p>With the annotation, any string key is allowed at compile time, so only runtime code can notice the typo. Here <code>?.</code> and <code>??</code> handle it; without them, reading <code>.handler</code> would throw.</p></explain>
+</question>
+
+<question id="tid-out-satisfies-runtime" type="output">
+<q>What does this print?</q>
+<code file="satisfies.ts">
+type Currency = "NGN" | "USD";
+
+const fees = {
+  NGN: { percent: 1.5, capKobo: 200_000 },
+  USD: { percent: 2.9 },
+} satisfies Record<Currency, { percent: number; capKobo?: number }>;
+
+console.log(Object.keys(fees).join(","), fees.NGN.capKobo, "capKobo" in fees.USD);
+</code>
+<option correct>NGN,USD 200000 false</option>
+<option>NGN,USD 200000 true</option>
+<option>NGN,USD undefined false</option>
+<option>NGN 200000 false</option>
+<explain><p><code>satisfies</code> changes nothing at runtime. It checked both entries, and it kept the precise type, so <code>fees.NGN.capKobo</code> is known to be a number without <code>!</code>.</p></explain>
+</question>
+
+<question id="tid-out-link" type="output">
+<q>What does this print?</q>
+<code file="link.ts">
+function link(path: string, params: Record<string, string>): string {
+  return path.replace(/:(\w+)/g, (_match, key: string) => encodeURIComponent(params[key]));
+}
+
+console.log(link("/orders/:orderId", { orderId: "ORD 1/2" }));
+console.log(link("/shops/:shopId/orders/:orderId", { shopId: "ada", orderId: "ORD-9" }));
+</code>
+<option correct>/orders/ORD%201%2F2
+/shops/ada/orders/ORD-9</option>
+<option>/orders/ORD 1/2
+/shops/ada/orders/ORD-9</option>
+<option>/orders/ORD%201/2
+/shops/ada/orders/ORD-9</option>
+<option>/orders/:orderId
+/shops/:shopId/orders/:orderId</option>
+<explain><p>Each <code>:name</code> is replaced by its encoded value. Encoding turns the space and the <code>/</code> into escapes, so a value can never add path segments or change the route.</p></explain>
+</question>
+
+<question id="tid-out-rank" type="output">
+<q>What does this print?</q>
+<code file="rank.ts">
+const ROLES = ["public", "customer", "admin"] as const;
+type Role = (typeof ROLES)[number];
+
+const RANK: Record<Role, number> = { public: 0, customer: 1, admin: 2 };
+
+function allowed(role: Role, required: Role): boolean {
+  return RANK[role] >= RANK[required];
+}
+
+console.log(allowed("customer", "public"), allowed("customer", "admin"), ROLES.indexOf("admin"));
+</code>
+<option correct>true false 2</option>
+<option>false true 2</option>
+<option>true false 3</option>
+<option>true true 2</option>
+<explain><p>A customer ranks above public and below admin. <code>ROLES</code> still exists at runtime, so it can be searched; the <code>Role</code> type was derived from it.</p></explain>
+</question>
+
+<question id="tid-out-define-job" type="output">
+<q>What does this print?</q>
+<code file="job.ts">
+function defineJob<In, Out>(job: { parse: (raw: string) => In; run: (input: In) => Out }) {
+  return job;
+}
+
+const refundJob = defineJob({
+  parse: (raw) => ({ orderId: raw.trim(), attempts: 0 }),
+  run: (input) => `${input.orderId} refund queued (attempt ${input.attempts + 1})`,
+});
+
+console.log(refundJob.run(refundJob.parse("  ORD-1042 ")));
+</code>
+<option correct>ORD-1042 refund queued (attempt 1)</option>
+<option>  ORD-1042  refund queued (attempt 1)</option>
+<option>ORD-1042 refund queued (attempt 01)</option>
+<option>undefined refund queued (attempt NaN)</option>
+<explain><p><code>parse</code> comes first, so <code>In</code> is inferred as <code>{ orderId: string; attempts: number }</code> before <code>run</code> is checked. <code>trim()</code> removes the spaces and the attempt count is a number, so <code>+ 1</code> adds.</p></explain>
+</question>
+
+<question id="tid-out-count-tree" type="output">
+<q>What does this print?</q>
+<code file="tree.ts">
+interface Category {
+  name: string;
+  products: string[];
+  children: Category[];
+}
+
+function countProducts(category: Category): number {
+  return category.products.length + category.children.reduce((sum, child) => sum + countProducts(child), 0);
+}
+
+const fashion: Category = {
+  name: "Fashion",
+  products: ["Ankara tote"],
+  children: [
+    { name: "Shoes", products: ["Sandals", "Loafers"], children: [] },
+    { name: "Bags", products: [], children: [{ name: "Wallets", products: ["Card wallet"], children: [] }] },
+  ],
+};
+console.log(countProducts(fashion));
+</code>
+<option correct>4</option>
+<option>3</option>
+<option>5</option>
+<option>1</option>
+<explain><p>One product at the top, two in Shoes, none in Bags itself and one in Wallets: 4. The return type annotation is what lets this recursive function compile.</p></explain>
+</question>
+
+<question id="tid-code-pair" type="code" file="pair.ts">
+<q><p><code>pair</code> uses one type parameter for both arguments, so <code>pair(150_000, "NGN")</code> does not compile. Rewrite it with two type parameters, returning a tuple of both. The program should print <code>[ 150000, 'NGN' ] [ 'ORD-7', true ]</code>.</p></q>
+<starter>
+function pair<T>(first: T, second: T): [T, T] {
+  return [first, first];
+}
+
+console.log(pair(150_000, "NGN"), pair("ORD-7", true));
+</starter>
+<solution>
+function pair<A, B>(first: A, second: B): [A, B] {
+  return [first, second];
+}
+
+console.log(pair(150_000, "NGN"), pair("ORD-7", true));
+</solution>
+<expected>[ 150000, 'NGN' ] [ 'ORD-7', true ]</expected>
+<explain><p>Each type parameter now gets one candidate from its own argument, so nothing competes. The result type is <code>[number, string]</code> for the first call.</p></explain>
+</question>
+
+<question id="tid-code-define-routes" type="code" file="define-routes.ts">
+<q><p>Write <code>defineRoutes</code>, a helper that checks a table against <code>Record&lt;string, RouteDef&gt;</code> and returns it unchanged with its precise type (use a <code>const</code> type parameter). The program should print <code>order ORD-9 GET</code>.</p></q>
+<starter>
+interface RouteDef {
+  readonly method: "GET" | "POST";
+  readonly path: `/${string}`;
+  readonly handler: (params: Readonly<Record<string, string>>) => string;
+}
+
+// write defineRoutes here
+function defineRoutes(routes: any) {
+  return {};
+}
+
+const routes = defineRoutes({
+  getOrder: { method: "GET", path: "/orders/:orderId", handler: (params) => `order ${params.orderId}` },
+});
+
+console.log(routes.getOrder.handler({ orderId: "ORD-9" }), routes.getOrder.method);
+</starter>
+<solution>
+interface RouteDef {
+  readonly method: "GET" | "POST";
+  readonly path: `/${string}`;
+  readonly handler: (params: Readonly<Record<string, string>>) => string;
+}
+
+function defineRoutes<const T extends Record<string, RouteDef>>(routes: T): T {
+  return routes;
+}
+
+const routes = defineRoutes({
+  getOrder: { method: "GET", path: "/orders/:orderId", handler: (params) => `order ${params.orderId}` },
+});
+
+console.log(routes.getOrder.handler({ orderId: "ORD-9" }), routes.getOrder.method);
+</solution>
+<expected>order ORD-9 GET</expected>
+<explain><p>The constraint checks the table and gives <code>params</code> its type; <code>const T</code> keeps the literal method and path. It is the function form of <code>as const satisfies</code>.</p></explain>
+</question>
+
+<question id="tid-code-is-role" type="code" file="is-role.ts">
+<q><p>Finish <code>isRole</code>, a type guard backed by the <code>ROLES</code> list, and use it to keep only valid roles from a list loaded from a database. The program should print <code>[ 'customer', 'admin' ]</code>.</p></q>
+<starter>
+const ROLES = ["public", "customer", "admin"] as const;
+type Role = (typeof ROLES)[number];
+
+function isRole(value: string): value is Role {
+  // your code here
+  return true;
+}
+
+const fromDatabase = ["customer", "superuser", "admin", "Admin"];
+const roles: Role[] = fromDatabase.filter(isRole);
+console.log(roles);
+</starter>
+<solution>
+const ROLES = ["public", "customer", "admin"] as const;
+type Role = (typeof ROLES)[number];
+
+function isRole(value: string): value is Role {
+  return (ROLES as readonly string[]).includes(value);
+}
+
+const fromDatabase = ["customer", "superuser", "admin", "Admin"];
+const roles: Role[] = fromDatabase.filter(isRole);
+console.log(roles);
+</solution>
+<expected>[ 'customer', 'admin' ]</expected>
+<explain><p>The union type and the runtime list come from the same <code>as const</code> array, so they cannot drift. The comparison is exact: <code>"Admin"</code> is not a role.</p></explain>
+</question>
+
+<question id="tid-code-count" type="code" file="count.ts">
+<q><p>Finish the recursive <code>totalKobo(category)</code>: the sum of the prices in a category and all its sub-categories. Give it a return type annotation (it is required for recursion). The program should print <code>3250000</code>.</p></q>
+<starter>
+interface Category {
+  prices: number[];
+  children: Category[];
+}
+
+function totalKobo(category: Category) {
+  // your code here
+  return 0;
+}
+
+const shop: Category = {
+  prices: [1_000_000],
+  children: [
+    { prices: [500_000, 250_000], children: [] },
+    { prices: [], children: [{ prices: [1_500_000], children: [] }] },
+  ],
+};
+console.log(totalKobo(shop));
+</starter>
+<solution>
+interface Category {
+  prices: number[];
+  children: Category[];
+}
+
+function totalKobo(category: Category): number {
+  const own = category.prices.reduce((sum, price) => sum + price, 0);
+  return own + category.children.reduce((sum, child) => sum + totalKobo(child), 0);
+}
+
+const shop: Category = {
+  prices: [1_000_000],
+  children: [
+    { prices: [500_000, 250_000], children: [] },
+    { prices: [], children: [{ prices: [1_500_000], children: [] }] },
+  ],
+};
+console.log(totalKobo(shop));
+</solution>
+<expected>3250000</expected>
+<explain><p>Without <code>: number</code>, TypeScript would need the function's own return type to infer it, and would report TS7023. The base case is a category with no children: the second <code>reduce</code> returns 0.</p></explain>
+</question>
+
+<question id="tid-code-link" type="code" file="link.ts">
+<q><p>Finish <code>link(path, params)</code>: replace every <code>:name</code> in the path with the URL-encoded value of <code>params[name]</code>. The program should print <code>/shops/ada%20stores/orders/ORD-9</code>.</p></q>
+<starter>
+function link(path: string, params: Record<string, string>): string {
+  // your code here
+  return path;
+}
+
+console.log(link("/shops/:shopId/orders/:orderId", { shopId: "ada stores", orderId: "ORD-9" }));
+</starter>
+<solution>
+function link(path: string, params: Record<string, string>): string {
+  return path.replace(/:(\w+)/g, (_match, key: string) => encodeURIComponent(params[key]));
+}
+
+console.log(link("/shops/:shopId/orders/:orderId", { shopId: "ada stores", orderId: "ORD-9" }));
+</solution>
+<expected>/shops/ada%20stores/orders/ORD-9</expected>
+<explain><p>A replace callback receives each captured name. Encoding every value keeps spaces and slashes from breaking the URL. The lesson's typed <code>link</code> adds a compile-time check that the params object has exactly the path's parameter names.</p></explain>
+</question>
+
+<question id="tid-code-settings" type="code" file="settings.ts">
+<q><p>Replace the <code>as Settings</code> with <code>as const satisfies Settings</code> and fix the value the check then reports, so the program prints <code>NGN card,transfer 7.5</code>.</p></q>
+<starter>
+interface Settings {
+  readonly currency: "NGN" | "USD";
+  readonly vatPercent: number;
+  readonly paymentMethods: readonly ("card" | "transfer" | "ussd")[];
+}
+
+const settings = {
+  currency: "NGN",
+  vatPercent: "7.5",
+  paymentMethods: ["card", "transfer"],
+} as unknown as Settings;
+
+console.log(settings.currency, settings.paymentMethods.join(","), settings.vatPercent.toFixed(1));
+</starter>
+<solution>
+interface Settings {
+  readonly currency: "NGN" | "USD";
+  readonly vatPercent: number;
+  readonly paymentMethods: readonly ("card" | "transfer" | "ussd")[];
+}
+
+const settings = {
+  currency: "NGN",
+  vatPercent: 7.5,
+  paymentMethods: ["card", "transfer"],
+} as const satisfies Settings;
+
+console.log(settings.currency, settings.paymentMethods.join(","), settings.vatPercent.toFixed(1));
+</solution>
+<expected>NGN card,transfer 7.5</expected>
+<explain><p>The double assertion hid a VAT written as text, which crashes at <code>toFixed</code>. <code>satisfies</code> reports it at compile time, and <code>as const</code> keeps the exact values.</p></explain>
+</question>

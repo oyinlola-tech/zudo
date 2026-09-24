@@ -1,0 +1,779 @@
+<question id="dbt-lost-update" type="choice">
+<q>Two requests each read Ada's balance (₦50,000) into JavaScript, subtract their amount, and write the result back with <code>update … set balance = $1</code>. What is this bug called?</q>
+<option>A dirty read</option>
+<option correct>A lost update: the second write is based on a stale read and erases the first</option>
+<option>A phantom read</option>
+<option>A deadlock</option>
+<explain><p>Read-modify-write in the application is the classic lost update. Each statement is correct; the gap between the read and the write is not protected.</p></explain>
+</question>
+
+<question id="dbt-atomic-update" type="choice">
+<q>Which statement debits safely even when many sessions run it on the same row at once, in the default isolation level?</q>
+<option><code>update accounts set balance_kobo = $1 where id = $2</code> with a balance computed in JavaScript</option>
+<option correct><code>update accounts set balance_kobo = balance_kobo - $1 where id = $2 and balance_kobo &gt;= $1</code></option>
+<option><code>select balance_kobo from accounts where id = $2</code> followed by an <code>if</code> and an update</option>
+<option><code>update accounts set balance_kobo = balance_kobo - $1 where id = $2</code> without a condition, relying on nothing else</option>
+<explain><p>The new value is computed from the current row, and the check is part of the <code>where</code>. A second session waits for the row lock and re-checks the condition against the committed new balance. The unconditional version checks nothing: it overdraws the account unless a <code>check</code> constraint refuses it with an error instead of a clean "not enough money".</p></explain>
+</question>
+
+<question id="dbt-acid-a" type="choice">
+<q>A transfer debits Ada, then the credit to Tunde fails. Which ACID property makes sure Ada's debit is undone?</q>
+<option correct>Atomicity</option>
+<option>Consistency</option>
+<option>Isolation</option>
+<option>Durability</option>
+<explain><p>Atomicity means all or nothing: when any statement in the transaction fails and it rolls back, every change in it is undone.</p></explain>
+</question>
+
+<question id="dbt-acid-d" type="choice">
+<q>What does durability mean in PostgreSQL?</q>
+<option>Data can never be deleted</option>
+<option correct>Once <code>commit</code> returns, the change survives a crash, because it was written to the write-ahead log and flushed to disk first</option>
+<option>Transactions never fail</option>
+<option>Every row keeps all its old versions forever</option>
+<explain><p>PostgreSQL confirms a commit only after its WAL records are safely on disk. After a crash, replaying the WAL restores every committed change.</p></explain>
+</question>
+
+<question id="dbt-tx-not-enough" type="choice">
+<q>You wrap the naive read-then-write transfer in <code>begin</code> … <code>commit</code> on a real server, at the default isolation level. Is the lost update fixed?</q>
+<option>Yes: transactions are isolated, so two of them cannot interfere</option>
+<option correct>No: in read committed both transactions can still read ₦50,000 before either writes, and the second write overwrites the first</option>
+<option>Yes, but only on PostgreSQL 17 or later</option>
+<option>No, because transactions cannot contain <code>select</code></option>
+<explain><p>The lesson's <code>lost-update.js</code> shows it: ₦30,000 appeared in read committed although both sessions used transactions. You need relative conditional writes, row locks, a version check, or a stricter level with retries.</p></explain>
+</question>
+
+<question id="dbt-dirty" type="choice">
+<q>Can a PostgreSQL transaction see another transaction's uncommitted changes (a dirty read)?</q>
+<option>Yes, in read uncommitted</option>
+<option>Yes, in read committed</option>
+<option correct>No: PostgreSQL accepts <code>read uncommitted</code> but behaves as read committed</option>
+<option>Only for <code>insert</code>s, not <code>update</code>s</option>
+<explain><p>MVCC gives every statement a snapshot of committed data only. PostgreSQL has no mode that exposes uncommitted rows.</p></explain>
+</question>
+
+<question id="dbt-rc-snapshot" type="choice">
+<q>In read committed, a transaction reads Ada's balance, another session commits a debit, and the transaction reads again. What does the second read return?</q>
+<option>The same value as the first read</option>
+<option correct>The new, committed value: each statement takes a fresh snapshot</option>
+<option>An error, because the row changed</option>
+<option>Nothing, the row is locked</option>
+<explain><p>That is a non-repeatable read. Repeatable read would keep the first snapshot for the whole transaction and return the same value twice.</p></explain>
+</question>
+
+<question id="dbt-phantom" type="choice">
+<q>A report counts transfers over ₦10,000, then sums them, in two statements. Meanwhile another session inserts a large transfer. The count and the sum disagree. Which anomaly is this, and which level prevents it?</q>
+<option>Dirty read; read committed</option>
+<option correct>Phantom read; repeatable read (or serializable)</option>
+<option>Write skew; read committed</option>
+<option>Deadlock; serializable</option>
+<explain><p>A phantom is a new row appearing in a repeated query with the same condition. Repeatable read gives the whole transaction one snapshot, so both statements describe the same moment.</p></explain>
+</question>
+
+<question id="dbt-write-skew" type="choice">
+<q>Two transactions each check that the family total is at least ₦40,000, then each withdraws ₦40,000 from a <em>different</em> wallet. Both commit in repeatable read, and the total goes negative. Why did repeatable read not stop it?</q>
+<option>Repeatable read does not use snapshots</option>
+<option correct>They wrote different rows, so there was no write conflict to detect; each decided on data the other then changed (write skew)</option>
+<option>The <code>sum</code> function ignores other transactions</option>
+<option>Repeatable read only protects <code>insert</code>s</option>
+<explain><p>Repeatable read detects two transactions updating the same row. Write skew needs serializable, which tracks read/write dependencies, or explicit locks on every row the decision depends on.</p></explain>
+</question>
+
+<question id="dbt-40001" type="choice">
+<q>A repeatable read or serializable transaction fails with SQLSTATE <code>40001</code>. What should the application do?</q>
+<option>Report a bug: the SQL is wrong</option>
+<option>Retry only the statement that failed</option>
+<option correct>Roll back and run the whole transaction again, from its first read, usually after a short backoff</option>
+<option>Switch the connection to read committed and continue</option>
+<explain><p>A serialization failure means "you lost a race, nothing you did was kept". Retrying the whole transaction makes it read fresh data and decide again.</p></explain>
+</question>
+
+<question id="dbt-for-update" type="choice">
+<q>Session A runs <code>select … from accounts where id = 1 for update</code> and keeps its transaction open. What happens when session B runs a plain <code>select balance_kobo from accounts where id = 1</code>?</q>
+<option>B waits until A commits</option>
+<option correct>B returns immediately with the last committed balance</option>
+<option>B fails with a lock error</option>
+<option>B sees A's uncommitted changes</option>
+<explain><p>Row locks block other writers and other lockers (<code>for update</code>, <code>update</code>, <code>delete</code>), never plain readers. That is the benefit of MVCC.</p></explain>
+</question>
+
+<question id="dbt-for-update-why" type="choice">
+<q>When do you need <code>select … for update</code> instead of a single conditional <code>update</code>?</q>
+<option>Never: conditional updates are always enough</option>
+<option correct>When the decision needs several reads or steps (limits, fees, audit rows) and must be based on data nobody can change until you commit</option>
+<option>When you only read data</option>
+<option>When you want other sessions to see your changes early</option>
+<explain><p>Locking first turns a multi-step check into a safe one: every read after the lock sees current data, and nobody else can change those rows in between.</p></explain>
+</question>
+
+<question id="dbt-skip-locked" type="choice">
+<q>Several workers poll a <code>payout_jobs</code> table. Which query lets each worker take a different job without waiting for the others?</q>
+<option><code>select id from payout_jobs where status = 'queued' limit 1</code></option>
+<option><code>select id from payout_jobs where status = 'queued' limit 1 for update</code></option>
+<option correct><code>select id from payout_jobs where status = 'queued' order by id limit 1 for update skip locked</code></option>
+<option><code>select id from payout_jobs where status = 'queued' limit 1 for update nowait</code></option>
+<explain><p>Without a lock, two workers take the same job. With a plain <code>for update</code>, they queue behind each other on the first job. <code>nowait</code> makes them fail. <code>skip locked</code> moves past rows another worker holds.</p></explain>
+</question>
+
+<question id="dbt-deadlock-cause" type="choice">
+<q>Transfer A (Ada → Tunde) and transfer B (Tunde → Ada) run at the same time and one fails with <code>40P01</code>. What caused it?</q>
+<option>Both transfers used the same connection</option>
+<option correct>Each locked its sender's row first and then waited for the other's row, which the other transaction held: a cycle of waits</option>
+<option>The balances were too low</option>
+<option>The isolation level was too strict</option>
+<explain><p>A deadlock is a cycle in the "waits for" relation. PostgreSQL detects it after <code>deadlock_timeout</code> and aborts one transaction so the other can finish.</p></explain>
+</question>
+
+<question id="dbt-deadlock-fix" type="choice">
+<q>What is the standard way to prevent that deadlock?</q>
+<option>Increase <code>deadlock_timeout</code></option>
+<option>Use serializable isolation</option>
+<option correct>Lock both accounts at the start, always in the same order, for example by ascending id</option>
+<option>Run transfers without a transaction</option>
+<option>This deadlock cannot be prevented</option>
+<explain><p>If every transaction takes its locks in the same global order, no cycle can form: whoever gets the first lock goes ahead, the other waits while holding nothing. Retrying on <code>40P01</code> is still wise for the cases you did not foresee.</p></explain>
+</question>
+
+<question id="dbt-optimistic-when" type="choice">
+<q>A support agent opens a customer's settings form, edits for five minutes, and saves. How should you stop them overwriting a change made in the meantime?</q>
+<option>Hold a <code>for update</code> lock while the form is open</option>
+<option>Use serializable isolation for the save</option>
+<option correct>Optimistic concurrency: send the row's version with the form and update only <code>where version = $expected</code>, increasing it</option>
+<option>Nothing: the last save should always win</option>
+<option>Save every field in its own transaction</option>
+<explain><p>No database lock or transaction can span five minutes of user think time. A version check detects the conflict at save time, and the application can show the newer data.</p></explain>
+</question>
+
+<question id="dbt-412" type="choice">
+<q>Over HTTP, how is a version conflict usually expressed?</q>
+<option correct>The client sends <code>If-Match</code> with the version (ETag) it read; the server answers 412 Precondition Failed if it no longer matches</option>
+<option>The server answers 500</option>
+<option>The server silently applies the newer change</option>
+<option>The client sends <code>If-None-Match: *</code> on every request</option>
+<explain><p>ETags are the HTTP form of the version column. 412 (or 409) tells the client to reload and try again with fresh data.</p></explain>
+</question>
+
+<question id="dbt-retry-scope" type="choice">
+<q>A retry helper catches <code>40001</code>. Which code should run again on each attempt?</q>
+<option>Only the final <code>commit</code></option>
+<option>Only the <code>update</code> that failed</option>
+<option correct>The whole transaction function: <code>begin</code>, all reads, the decision, the writes and <code>commit</code></option>
+<option>Nothing: the database retries automatically</option>
+<explain><p>The failed attempt decided on data that has since changed. Only rerunning the reads lets the next attempt decide correctly. It also means the function must not have outside side effects, such as sending an SMS.</p></explain>
+</question>
+
+<question id="dbt-client-retry" type="choice">
+<q>A mobile app's transfer request times out, and the app sends it again. Can the server simply run the transfer a second time?</q>
+<option>Yes: transactions make it safe</option>
+<option correct>No: the first attempt may have committed; the request needs an idempotency key so the server can recognise the repeat</option>
+<option>Yes, if the isolation level is serializable</option>
+<option>No, the server must always refuse a second request</option>
+<explain><p>A database retry after <code>40001</code> is safe because nothing was committed. A client retry after a timeout is different: the outcome is unknown. Idempotency keys (API engineering course) solve that.</p></explain>
+</question>
+
+<question id="dbt-short-tx" type="choice">
+<q>Why should you never call a payment provider's HTTP API inside a database transaction?</q>
+<option>HTTP calls are not allowed by PostgreSQL</option>
+<option correct>The transaction holds its locks and its pooled connection for the whole call, making others wait; and a rollback cannot undo the external call</option>
+<option>It makes the transaction serializable</option>
+<option>The provider would see uncommitted data</option>
+<explain><p>External calls can take seconds or hang. Meanwhile row locks block other transfers and the connection is unavailable. Record intent in the database, commit, call the provider, then record the result in a second transaction.</p></explain>
+</question>
+
+<question id="dbt-idle-in-tx" type="choice">
+<q>In <code>pg_stat_activity</code> you find a session that has been <code>idle in transaction</code> for 40 minutes. Why is that a problem?</q>
+<option>It uses a lot of CPU</option>
+<option correct>It may hold locks others wait for, and while it is open PostgreSQL cannot clean up old row versions, so tables bloat</option>
+<option>It blocks all reads on the server</option>
+<option>It is harmless; idle means doing nothing</option>
+<explain><p>A forgotten open transaction pins old snapshots and locks. <code>idle_in_transaction_session_timeout</code> ends such sessions automatically.</p></explain>
+</question>
+
+<question id="dbt-pool-client" type="choice">
+<q>With the <code>pg</code> pool, why must <code>begin</code>, the queries and <code>commit</code> all go through one client from <code>pool.connect()</code>?</q>
+<option>Because <code>pool.query</code> cannot run <code>begin</code></option>
+<option correct>A transaction belongs to one connection, and separate <code>pool.query</code> calls may use different connections</option>
+<option>Because a pool runs everything serially</option>
+<option>It is only a style convention</option>
+<explain><p>If <code>begin</code> runs on connection 1 and the update on connection 2, the update runs outside the transaction and commits immediately. Take one client, use it for the whole transaction, and release it in <code>finally</code>.</p></explain>
+</question>
+
+<question id="dbt-naive-run" type="output">
+<q>Two read-then-write debits interleave on one PGlite connection. What does this print?</q>
+<code file="naive.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec("create table accounts (id int primary key, balance int not null); insert into accounts values (1, 100000);");
+
+async function debit(amount) {
+  const { rows } = await db.query("select balance from accounts where id = 1");
+  await db.query("update accounts set balance = $1 where id = 1", [rows[0].balance - amount]);
+}
+
+await Promise.all([debit(20000), debit(30000)]);
+console.log((await db.query("select balance from accounts where id = 1")).rows[0].balance);
+await db.close();
+</code>
+<option correct>70000</option>
+<option>50000</option>
+<option>80000</option>
+<option>100000</option>
+<explain><p>Both reads ran before either write, so both saw 100,000. The second write, 100,000 − 30,000, replaced the first, so the 20,000 debit vanished: a lost update.</p></explain>
+</question>
+
+<question id="dbt-relative-run" type="output">
+<q>The same two debits, written as relative updates. What does this print?</q>
+<code file="relative.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec("create table accounts (id int primary key, balance int not null); insert into accounts values (1, 100000);");
+
+const debit = (amount) => db.query("update accounts set balance = balance - $1 where id = 1", [amount]);
+
+await Promise.all([debit(20000), debit(30000)]);
+console.log((await db.query("select balance from accounts where id = 1")).rows[0].balance);
+await db.close();
+</code>
+<option correct>50000</option>
+<option>70000</option>
+<option>80000</option>
+<option>100000</option>
+<explain><p>Each update computes the new value from the row as it is when the update runs, so both debits count. On a real server the second update waits for the first's row lock and then applies to the new value.</p></explain>
+</question>
+
+<question id="dbt-reserve-run" type="output">
+<q>What does this print?</q>
+<code file="reserve.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec("create table seats (flight text primary key, free int not null); insert into seats values ('LOS-ABV', 2);");
+
+const book = async (name) => {
+  const { affectedRows } = await db.query("update seats set free = free - 1 where flight = 'LOS-ABV' and free > 0");
+  return `${name}:${affectedRows}`;
+};
+
+console.log((await Promise.all(["Ada", "Tunde", "Chioma"].map(book))).join(" "));
+await db.close();
+</code>
+<option correct>Ada:1 Tunde:1 Chioma:0</option>
+<option>Ada:1 Tunde:1 Chioma:1</option>
+<option>Ada:1 Tunde:0 Chioma:0</option>
+<option>Ada:0 Tunde:0 Chioma:0</option>
+<explain><p>Two seats, three bookings. The condition <code>free &gt; 0</code> is checked against the current row by each update, so the third finds 0 free seats and changes nothing. <code>affectedRows</code> tells the application who got a seat.</p></explain>
+</question>
+
+<question id="dbt-rollback-run" type="output">
+<q>What does this print?</q>
+<code file="rollback.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table accounts (id int primary key, balance int not null check (balance >= 0));
+  insert into accounts values (1, 50000), (2, 0);
+`);
+try {
+  await db.transaction(async (tx) => {
+    await tx.query("update accounts set balance = balance + 80000 where id = 2");
+    await tx.query("update accounts set balance = balance - 80000 where id = 1");
+  });
+} catch (error) {
+  console.log(error.code);
+}
+console.log((await db.query("select balance from accounts order by id")).rows.map((r) => r.balance));
+await db.close();
+</code>
+<option correct>23514
+[ 50000, 0 ]</option>
+<option>23514
+[ 50000, 80000 ]</option>
+<option>[ -30000, 80000 ]</option>
+<option>23514
+[ 0, 80000 ]</option>
+<explain><p>The credit ran first and succeeded, then the debit broke the check constraint. The transaction rolled back as a whole, so the credit was undone too.</p></explain>
+</question>
+
+<question id="dbt-aborted-run" type="output">
+<q>What does this print?</q>
+<code file="aborted.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec("create table orders (id int primary key)");
+const codes = [];
+try {
+  await db.transaction(async (tx) => {
+    await tx.query("insert into orders values (1)");
+    try {
+      await tx.query("insert into orders values (1)");
+    } catch (error) {
+      codes.push(error.code);
+    }
+    await tx.query("insert into orders values (2)");
+  });
+} catch (error) {
+  codes.push(error.code);
+}
+const { rows } = await db.query("select count(*)::int as n from orders");
+console.log(codes, rows[0].n);
+await db.close();
+</code>
+<option correct>[ '23505', '25P02' ] 0</option>
+<option>[ '23505' ] 2</option>
+<option>[ '23505' ] 1</option>
+<option>[ '23505', '25P02' ] 1</option>
+<explain><p>Catching the duplicate-key error in JavaScript does not repair the transaction. PostgreSQL refuses the next statement with <code>25P02</code>, the transaction rolls back, and even the first insert is gone.</p></explain>
+</question>
+
+<question id="dbt-savepoint-run" type="output">
+<q>The same code with a savepoint. What does this print?</q>
+<code file="savepoint.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec("create table orders (id int primary key)");
+await db.transaction(async (tx) => {
+  await tx.query("insert into orders values (1)");
+  await tx.query("savepoint maybe_duplicate");
+  try {
+    await tx.query("insert into orders values (1)");
+  } catch (error) {
+    await tx.query("rollback to savepoint maybe_duplicate");
+  }
+  await tx.query("insert into orders values (2)");
+});
+const { rows } = await db.query("select id from orders order by id");
+console.log(rows.map((r) => r.id));
+await db.close();
+</code>
+<option correct>[ 1, 2 ]</option>
+<option>[ 2 ]</option>
+<option>[]</option>
+<option>[ 1, 1, 2 ]</option>
+<explain><p>Rolling back to the savepoint undoes only the failed statement and clears the error state, so the transaction continues and commits both good inserts.</p></explain>
+</question>
+
+<question id="dbt-version-run" type="output">
+<q>What does this print?</q>
+<code file="version.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec("create table products (id int primary key, price int not null, version int not null default 1); insert into products values (1, 950000, 1);");
+
+const save = async (price, version) =>
+  (await db.query("update products set price = $1, version = version + 1 where id = 1 and version = $2", [price, version])).affectedRows;
+
+const a = await save(990000, 1);
+const b = await save(900000, 1);
+const c = await save(900000, 2);
+const { rows } = await db.query("select price, version from products");
+console.log(a, b, c, rows[0]);
+await db.close();
+</code>
+<option correct>1 0 1 { price: 900000, version: 3 }</option>
+<option>1 1 1 { price: 900000, version: 4 }</option>
+<option>1 0 0 { price: 990000, version: 2 }</option>
+<option>1 0 1 { price: 900000, version: 2 }</option>
+<explain><p>The first save moved the version to 2, so the second save, still expecting version 1, changed nothing. After reloading (expecting 2) the third save succeeded and moved the version to 3.</p></explain>
+</question>
+
+<question id="dbt-readonly-run" type="output">
+<q>What does this print?</q>
+<code file="readonly.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec("create table accounts (id int primary key, balance int not null); insert into accounts values (1, 500);");
+await db.exec("begin isolation level repeatable read read only");
+const level = (await db.query("show transaction_isolation")).rows[0].transaction_isolation;
+try {
+  await db.query("update accounts set balance = 0 where id = 1");
+} catch (error) {
+  console.log(level, error.code);
+}
+await db.exec("rollback");
+await db.close();
+</code>
+<option correct>repeatable read 25006</option>
+<option>read committed 25006</option>
+<option>repeatable read 40001</option>
+<option>serializable 25006</option>
+<explain><p>A report transaction can declare itself <code>read only</code>; any write is refused with <code>25006</code>. Repeatable read gives the report one consistent snapshot.</p></explain>
+</question>
+
+<question id="dbt-cte-refused" type="output">
+<q>What does this one-statement transfer print?</q>
+<code file="cte.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table accounts (id int primary key, balance int not null);
+  create table transfers (id int generated always as identity primary key, amount int not null);
+  insert into accounts values (1, 30000), (2, 0);
+`);
+const TRANSFER = `
+  with debit as (
+    update accounts set balance = balance - $1 where id = 1 and balance >= $1 returning id
+  ), credit as (
+    update accounts set balance = balance + $1 where id = 2 and exists (select 1 from debit) returning id
+  )
+  insert into transfers (amount) select $1 from debit, credit returning id`;
+
+for (const amount of [20000, 20000]) {
+  const { rows } = await db.query(TRANSFER, [amount]);
+  console.log(rows.length);
+}
+console.log((await db.query("select balance from accounts order by id")).rows.map((r) => r.balance));
+await db.close();
+</code>
+<option correct>1
+0
+[ 10000, 20000 ]</option>
+<option>1
+1
+[ -10000, 40000 ]</option>
+<option>1
+0
+[ 10000, 40000 ]</option>
+<option>0
+0
+[ 30000, 0 ]</option>
+<explain><p>The second debit found only 10,000 left, so <code>debit</code> was empty. The credit's <code>exists</code> was false, and the insert selected from an empty join: no transfer row, no credit, and the application sees 0 rows returned.</p></explain>
+</question>
+
+<question id="dbt-identity-gap" type="output">
+<q>What does this print?</q>
+<code file="gap.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec("create table transfers (id int generated always as identity primary key, amount int not null check (amount > 0))");
+try {
+  await db.transaction(async (tx) => {
+    await tx.query("insert into transfers (amount) values (500)");
+    await tx.query("insert into transfers (amount) values (0)");
+  });
+} catch {}
+await db.query("insert into transfers (amount) values (700)");
+console.log((await db.query("select id, amount from transfers")).rows);
+await db.close();
+</code>
+<option correct>[ { id: 3, amount: 700 } ]</option>
+<option>[ { id: 1, amount: 700 } ]</option>
+<option>[ { id: 1, amount: 500 }, { id: 3, amount: 700 } ]</option>
+<option>[ { id: 2, amount: 700 } ]</option>
+<explain><p>The rolled-back transaction used ids 1 and 2 (the failed insert still drew a number before its check failed). Sequences are never rolled back, so gaps are normal. Never use ids to count transfers or to detect missing ones.</p></explain>
+</question>
+
+<question id="dbt-retry-run" type="output">
+<q>What does this print?</q>
+<code file="retry.js">
+async function withRetry(work, attempts = 4) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await work(attempt);
+    } catch (error) {
+      if (!["40001", "40P01"].includes(error.code) || attempt >= attempts) throw error;
+    }
+  }
+}
+
+const fail = (code) => Object.assign(new Error(code), { code });
+const log = [];
+
+const result = await withRetry(async (attempt) => {
+  log.push(attempt);
+  if (attempt === 1) throw fail("40P01");
+  if (attempt === 2) throw fail("23505");
+  return "ok";
+}).catch((error) => `gave up: ${error.code}`);
+
+console.log(log, result);
+</code>
+<option correct>[ 1, 2 ] gave up: 23505</option>
+<option>[ 1, 2, 3 ] ok</option>
+<option>[ 1 ] gave up: 40P01</option>
+<option>[ 1, 2, 3, 4 ] gave up: 23505</option>
+<explain><p>The deadlock on attempt 1 is retryable. The unique violation on attempt 2 is not: retrying would fail the same way, so the helper rethrows it at once.</p></explain>
+</question>
+
+<question id="dbt-code-lock-order" type="code" file="lock-order.js">
+<q><p>Prevent transfer deadlocks. Write <code>lockOrder(fromId, toId)</code> that returns the two account ids in the order they must be locked (ascending), whatever the direction of the transfer, and refuses a transfer to the same account by throwing an <code>Error</code>.</p></q>
+<starter>
+function lockOrder(fromId, toId) {
+  // your code here
+}
+
+console.log(lockOrder(7, 3), lockOrder(3, 7));
+try {
+  lockOrder(5, 5);
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+function lockOrder(fromId, toId) {
+  if (fromId === toId) throw new Error("cannot transfer to the same account");
+  return fromId < toId ? [fromId, toId] : [toId, fromId];
+}
+
+console.log(lockOrder(7, 3), lockOrder(3, 7));
+try {
+  lockOrder(5, 5);
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>
+[ 3, 7 ] [ 3, 7 ]
+cannot transfer to the same account
+</expected>
+<explain><p>Both directions lock account 3 first, so two opposite transfers can never each hold one row and wait for the other. In SQL: <code>select … where id = any($1) order by id for update</code>.</p></explain>
+</question>
+
+<question id="dbt-code-deadlock-graph" type="code" file="wait-for.js">
+<q><p>PostgreSQL finds deadlocks by looking for a cycle in the "waits for" graph. Write <code>findCycle(waitsFor)</code>, where <code>waitsFor</code> maps each transaction to the one it waits for (or nothing). Return the list of transactions in the first cycle found, starting from the lowest key, or <code>null</code>.</p></q>
+<starter>
+function findCycle(waitsFor) {
+  // your code here
+}
+
+console.log(findCycle({ 101: 102, 102: 103, 103: 101, 104: 101 }));
+console.log(findCycle({ 201: 202, 202: 203 }));
+</starter>
+<solution>
+function findCycle(waitsFor) {
+  for (const start of Object.keys(waitsFor).map(Number).sort((a, b) => a - b)) {
+    const path = [];
+    let current = start;
+    while (current !== undefined && !path.includes(current)) {
+      path.push(current);
+      current = waitsFor[current];
+    }
+    if (current === start) return path;
+  }
+  return null;
+}
+
+console.log(findCycle({ 101: 102, 102: 103, 103: 101, 104: 101 }));
+console.log(findCycle({ 201: 202, 202: 203 }));
+</solution>
+<expected>
+[ 101, 102, 103 ]
+null
+</expected>
+<explain><p>Follow the waits from each transaction; coming back to the start means a cycle. Transaction 104 waits too, but it is not part of the cycle: aborting any one of 101, 102 or 103 unblocks everybody, which is what the deadlock detector does.</p></explain>
+</question>
+
+<question id="dbt-code-optimistic-store" type="code" file="optimistic.js">
+<q><p>Implement optimistic concurrency on an in-memory store. <code>save(store, id, changes, expectedVersion)</code> applies the changes and increases the version only if the stored version equals <code>expectedVersion</code>; it returns <code>"saved v&lt;new version&gt;"</code> or <code>"conflict"</code>.</p></q>
+<starter>
+const store = new Map([[1, { id: 1, dailyLimitKobo: 10000000, version: 1 }]]);
+
+function save(store, id, changes, expectedVersion) {
+  // your code here
+}
+
+console.log(save(store, 1, { dailyLimitKobo: 5000000 }, 1));
+console.log(save(store, 1, { dailyLimitKobo: 20000000 }, 1));
+console.log(save(store, 1, { dailyLimitKobo: 20000000 }, 2));
+console.log(store.get(1));
+</starter>
+<solution>
+const store = new Map([[1, { id: 1, dailyLimitKobo: 10000000, version: 1 }]]);
+
+function save(store, id, changes, expectedVersion) {
+  const current = store.get(id);
+  if (!current || current.version !== expectedVersion) return "conflict";
+  const next = { ...current, ...changes, version: current.version + 1 };
+  store.set(id, next);
+  return `saved v${next.version}`;
+}
+
+console.log(save(store, 1, { dailyLimitKobo: 5000000 }, 1));
+console.log(save(store, 1, { dailyLimitKobo: 20000000 }, 1));
+console.log(save(store, 1, { dailyLimitKobo: 20000000 }, 2));
+console.log(store.get(1));
+</solution>
+<expected>
+saved v2
+conflict
+saved v3
+{ id: 1, dailyLimitKobo: 20000000, version: 3 }
+</expected>
+<explain><p>The compare-and-set must be one step. In SQL that is <code>update … set …, version = version + 1 where id = $1 and version = $2</code>, checked with the number of affected rows.</p></explain>
+</question>
+
+<question id="dbt-code-ledger" type="code" file="ledger.js">
+<q><p>Write the reconciliation check. <code>reconcile(opening, balances, transfers)</code> returns the ids of accounts whose current balance is not opening + incoming − outgoing, and also whether the total of all balances is unchanged.</p></q>
+<starter>
+const opening = { 1: 5000000, 2: 1000000, 3: 0 };
+const balances = { 1: 2000000, 2: 1500000, 3: 3000000 };
+const transfers = [
+  { from: 1, to: 2, amountKobo: 3000000 },
+  { from: 2, to: 3, amountKobo: 2500000 },
+];
+
+function reconcile(opening, balances, transfers) {
+  // your code here
+}
+
+console.log(reconcile(opening, balances, transfers));
+</starter>
+<solution>
+const opening = { 1: 5000000, 2: 1000000, 3: 0 };
+const balances = { 1: 2000000, 2: 1500000, 3: 3000000 };
+const transfers = [
+  { from: 1, to: 2, amountKobo: 3000000 },
+  { from: 2, to: 3, amountKobo: 2500000 },
+];
+
+function reconcile(opening, balances, transfers) {
+  const expected = { ...opening };
+  for (const t of transfers) {
+    expected[t.from] -= t.amountKobo;
+    expected[t.to] += t.amountKobo;
+  }
+  const broken = Object.keys(balances).map(Number).filter((id) => balances[id] !== expected[id]);
+  const sum = (o) => Object.values(o).reduce((a, b) => a + b, 0);
+  return { broken, totalUnchanged: sum(balances) === sum(opening) };
+}
+
+console.log(reconcile(opening, balances, transfers));
+</solution>
+<expected>{ broken: [ 3 ], totalUnchanged: false }</expected>
+<explain><p>Account 3 should hold ₦25,000 but holds ₦30,000, and the total grew by ₦5,000: some code path credited it without a transfer row. Both checks are cheap enough to run every night on the real ledger.</p></explain>
+</question>
+
+<question id="dbt-code-snapshot" type="code" file="snapshot.js">
+<q><p>Model MVCC. Each row version has the transaction number that committed it. Write <code>visible(versions, snapshot)</code> that returns the value of the newest version committed at or before <code>snapshot</code>, or <code>undefined</code> if none. Then show a repeatable-read transaction (snapshot 10) and a read-committed statement run later (snapshot 12) reading the same row.</p></q>
+<starter>
+const adaBalance = [
+  { committedAt: 3, value: 5000000 },
+  { committedAt: 11, value: 2000000 },
+];
+
+function visible(versions, snapshot) {
+  // your code here
+}
+
+console.log("repeatable read (snapshot 10):", visible(adaBalance, 10));
+console.log("read committed, next statement (snapshot 12):", visible(adaBalance, 12));
+console.log("before the account existed (snapshot 2):", visible(adaBalance, 2));
+</starter>
+<solution>
+const adaBalance = [
+  { committedAt: 3, value: 5000000 },
+  { committedAt: 11, value: 2000000 },
+];
+
+function visible(versions, snapshot) {
+  let newest;
+  for (const version of versions) {
+    if (version.committedAt <= snapshot && (!newest || version.committedAt > newest.committedAt)) newest = version;
+  }
+  return newest?.value;
+}
+
+console.log("repeatable read (snapshot 10):", visible(adaBalance, 10));
+console.log("read committed, next statement (snapshot 12):", visible(adaBalance, 12));
+console.log("before the account existed (snapshot 2):", visible(adaBalance, 2));
+</solution>
+<expected>
+repeatable read (snapshot 10): 5000000
+read committed, next statement (snapshot 12): 2000000
+before the account existed (snapshot 2): undefined
+</expected>
+<explain><p>Old versions stay until no snapshot can need them. A repeatable-read transaction keeps its snapshot, so it keeps seeing ₦50,000; read committed takes a new snapshot per statement and sees the debit. It is also why a long-open transaction stops old versions from being cleaned up.</p></explain>
+</question>
+
+<question id="dbt-code-schedule" type="code" file="schedule.js">
+<q><p>Replay an interleaving. Each step is <code>["read", tx]</code> (the transaction reads the balance into its own variable) or <code>["write", tx, amount]</code> (it writes "its read value minus amount"). Write <code>replay(start, steps)</code> that returns the final balance, and compare a safe schedule with an overlapping one.</p></q>
+<starter>
+function replay(start, steps) {
+  // your code here
+}
+
+const serial = [["read", "A"], ["write", "A", 30000], ["read", "B"], ["write", "B", 40000]];
+const overlapping = [["read", "A"], ["read", "B"], ["write", "A", 30000], ["write", "B", 40000]];
+console.log(replay(100000, serial), replay(100000, overlapping));
+</starter>
+<solution>
+function replay(start, steps) {
+  let balance = start;
+  const seen = {};
+  for (const [action, tx, amount] of steps) {
+    if (action === "read") seen[tx] = balance;
+    else balance = seen[tx] - amount;
+  }
+  return balance;
+}
+
+const serial = [["read", "A"], ["write", "A", 30000], ["read", "B"], ["write", "B", 40000]];
+const overlapping = [["read", "A"], ["read", "B"], ["write", "A", 30000], ["write", "B", 40000]];
+console.log(replay(100000, serial), replay(100000, overlapping));
+</solution>
+<expected>30000 60000</expected>
+<explain><p>Same operations, different order, different result: that is what makes a schedule unsafe. In the overlapping one, B's write is based on a read taken before A wrote, so A's debit of 30,000 is lost. Serializable isolation only lets a set of transactions commit if the result matches some serial order.</p></explain>
+</question>
+
+<question id="dbt-code-skip-locked" type="code" file="skip-locked.js">
+<q><p>Simulate <code>for update skip locked</code>. Write <code>claim(jobs, locked)</code> that returns the id of the first queued job (lowest id) that is not in the <code>locked</code> set, or <code>null</code>, and use it to let two workers claim jobs in turns until none are left.</p></q>
+<starter>
+const jobs = [
+  { id: 1, status: "queued" },
+  { id: 2, status: "done" },
+  { id: 3, status: "queued" },
+  { id: 4, status: "queued" },
+];
+
+function claim(jobs, locked) {
+  // your code here
+}
+
+const locked = new Set();
+const taken = { w1: [], w2: [] };
+for (let turn = 0; ; turn++) {
+  const worker = turn % 2 === 0 ? "w1" : "w2";
+  const id = claim(jobs, locked);
+  if (id === null) break;
+  locked.add(id);
+  taken[worker].push(id);
+}
+console.log(taken);
+</starter>
+<solution>
+const jobs = [
+  { id: 1, status: "queued" },
+  { id: 2, status: "done" },
+  { id: 3, status: "queued" },
+  { id: 4, status: "queued" },
+];
+
+function claim(jobs, locked) {
+  const job = jobs
+    .filter((j) => j.status === "queued" && !locked.has(j.id))
+    .sort((a, b) => a.id - b.id)[0];
+  return job ? job.id : null;
+}
+
+const locked = new Set();
+const taken = { w1: [], w2: [] };
+for (let turn = 0; ; turn++) {
+  const worker = turn % 2 === 0 ? "w1" : "w2";
+  const id = claim(jobs, locked);
+  if (id === null) break;
+  locked.add(id);
+  taken[worker].push(id);
+}
+console.log(taken);
+</solution>
+<expected>{ w1: [ 1, 4 ], w2: [ 3 ] }</expected>
+<explain><p>Each worker skips jobs another worker holds instead of waiting on them, so no job is taken twice and nobody blocks. In PostgreSQL the "locked set" is the row locks held by other open transactions.</p></explain>
+</question>

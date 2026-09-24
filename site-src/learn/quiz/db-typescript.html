@@ -1,0 +1,728 @@
+<question id="dbts-query-t" type="choice">
+<q>What does the type argument in <code>db.query&lt;Order&gt;("select * from orders")</code> guarantee?</q>
+<option>That the rows are validated against <code>Order</code> at runtime</option>
+<option>That the SQL is checked against the database schema at compile time</option>
+<option correct>Nothing about the data: it is an unchecked promise, like an <code>as</code> assertion</option>
+<option>That columns are renamed to match <code>Order</code>'s properties</option>
+<explain><p>The driver cannot know what a SQL string returns when TypeScript compiles. The type argument only tells the compiler what to assume; the lesson's first example compiled and then crashed.</p></explain>
+</question>
+
+<question id="dbts-pg-bigint" type="choice">
+<q>With the <code>pg</code> driver, what JavaScript value does a <code>bigint</code> column (or <code>count(*)</code>) arrive as?</q>
+<option>A <code>number</code></option>
+<option>A <code>bigint</code></option>
+<option correct>A <code>string</code></option>
+<option>A <code>number</code> when small and a <code>string</code> when large</option>
+<explain><p>64-bit integers can exceed JavaScript's safe integer range, so <code>pg</code> returns them as text by default. PGlite returns a <code>number</code> when it is safe and a <code>bigint</code> otherwise. The row type must match the driver you use.</p></explain>
+</question>
+
+<question id="dbts-numeric" type="choice">
+<q>Why do both drivers return <code>numeric</code> columns as strings?</q>
+<option>Because PostgreSQL stores them as text</option>
+<option correct>Because a JavaScript <code>number</code> is binary floating point and could silently lose exact decimal digits</option>
+<option>Because strings are faster to transfer</option>
+<option>It is a bug that will be fixed</option>
+<explain><p><code>numeric</code> exists for exact decimals, such as money. Converting to a float would undo that. Keep the string and parse it exactly, or use a decimal library.</p></explain>
+</question>
+
+<question id="dbts-date-trap" type="choice">
+<q>A server in Lagos reads a <code>date</code> column holding <code>2026-09-24</code> with the <code>pg</code> driver and calls <code>toISOString()</code>. It prints <code>2026-09-23T23:00:00.000Z</code>. Why?</q>
+<option>The database stored the wrong date</option>
+<option correct><code>pg</code> turns a <code>date</code> into a <code>Date</code> at local midnight, which in Lagos (UTC+1) is 23:00 UTC the day before</option>
+<option><code>toISOString</code> subtracts one hour</option>
+<option>PostgreSQL dates are always one day behind</option>
+<explain><p>A calendar date has no time zone, but a JavaScript <code>Date</code> is a moment. Keep <code>date</code> columns as <code>"YYYY-MM-DD"</code> strings (a custom type parser) or run servers in UTC, and be deliberate about the conversion.</p></explain>
+</question>
+
+<question id="dbts-nullable" type="choice">
+<q>A column <code>note text</code> allows nulls. How should the row type declare it?</q>
+<option><code>note?: string</code></option>
+<option correct><code>note: string | null</code></option>
+<option><code>note: string</code></option>
+<option><code>note?: string | undefined</code></option>
+<explain><p>Every column is present in every row; a missing value is <code>null</code>. <code>?</code> means "the property may be absent" and says nothing about <code>null</code>, so it would let <code>row.note.trim()</code> compile on a <code>null</code>.</p></explain>
+</question>
+
+<question id="dbts-row-vs-entity" type="choice">
+<q>What is the difference between a row type and an entity in the lesson?</q>
+<option>They are two names for the same thing</option>
+<option correct>The row type mirrors the database exactly (names, nulls, driver value types); the entity is the application's own model, produced by a mapper that renames and converts</option>
+<option>The entity is generated; the row type is written by hand</option>
+<option>The row type is for inserts, the entity for selects</option>
+<explain><p>Keeping them apart puts every awkward conversion (snake_case, bigint strings, money) in one mapper per table, and keeps the rest of the application free of driver details.</p></explain>
+</question>
+
+<question id="dbts-mapper-fail" type="choice">
+<q>Why does the lesson's <code>toKobo</code> throw instead of returning <code>Number(value)</code> for any input?</q>
+<option>Throwing is faster</option>
+<option correct>An unsafe integer would be silently rounded; failing at the mapper points straight at the bad data instead of producing a wrong amount somewhere else</option>
+<option>Because <code>Number</code> cannot parse strings</option>
+<option>TypeScript requires mappers to throw</option>
+<explain><p>For money, a wrong number is worse than an error. The mapper is the boundary where database values become trusted application values, so that is where to refuse bad ones.</p></explain>
+</question>
+
+<question id="dbts-dto" type="choice">
+<q>Which type should a <code>GET /customers/:id</code> handler return?</q>
+<option>The <code>CustomerRow</code>, so the client sees the real data</option>
+<option>The <code>Customer</code> entity</option>
+<option correct>A <code>CustomerResponse</code> DTO built field by field from the entity, without <code>passwordHash</code></option>
+<option><code>Omit&lt;Customer, "passwordHash"&gt;</code>, returning the entity object</option>
+<explain><p>A response DTO is the contract with the client. Building a new object is what actually removes secret fields; a type like <code>Omit</code> only hides them from the compiler.</p></explain>
+</question>
+
+<question id="dbts-structural" type="choice">
+<q><code>function toResponse(c: Customer): CustomerResponse { return c; }</code> compiles although <code>Customer</code> has a <code>passwordHash</code>. Why?</q>
+<option>Because <code>passwordHash</code> is a string</option>
+<option correct>TypeScript is structural: a value with all the required properties fits the type, extra properties included</option>
+<option>Because the function has no body</option>
+<option>Because interfaces cannot be checked</option>
+<explain><p>Assignability asks "does it have at least these properties?". The returned object is still the full entity at runtime, so the hash leaks into the JSON.</p></explain>
+</question>
+
+<question id="dbts-excess" type="choice">
+<q>When does TypeScript's excess property check catch an extra property such as <code>passwordHash</code>?</q>
+<option>Always, whenever a value is assigned to a type</option>
+<option correct>When the property is written directly in a fresh object literal assigned to the target type</option>
+<option>Only with <code>strict: false</code></option>
+<option>When the property comes from a spread <code>{ ...customer }</code></option>
+<explain><p>The check applies to object literals only, and properties that come in through a spread are not checked as excess. That is why mappers list fields one by one.</p></explain>
+</question>
+
+<question id="dbts-update-dto" type="choice">
+<q>What does <code>Partial&lt;Pick&lt;CreateCustomerInput, "fullName" | "phone"&gt;&gt;</code> express for an update endpoint?</q>
+<option>All customer fields are required</option>
+<option correct>Only <code>fullName</code> and <code>phone</code> can be changed, and each is optional in a PATCH</option>
+<option>The fields are read-only</option>
+<option>The password can be updated optionally</option>
+<explain><p><code>Pick</code> selects what may change at all; <code>Partial</code> makes each optional. <code>email</code> and <code>password</code> are not part of the type, so this path cannot change them.</p></explain>
+</question>
+
+<question id="dbts-validate-when" type="choice">
+<q>When is it worth validating rows from your own database at runtime?</q>
+<option>Never: the database has constraints</option>
+<option>For every query, always</option>
+<option correct>Where types can drift from reality and mistakes are costly: tables other systems write, <code>jsonb</code> columns, rows that feed money decisions</option>
+<option>Only in development</option>
+<explain><p>Constraints guarantee some things, not your TypeScript types: a new status value, a column made nullable, or an old <code>jsonb</code> shape all pass the database's checks. Validate at the boundary where drift would hurt.</p></explain>
+</question>
+
+<question id="dbts-unknown-rows" type="choice">
+<q>Why does the validation example query with <code>db.query&lt;unknown&gt;(…)</code>?</q>
+<option>Because zod only accepts <code>any</code></option>
+<option correct>It is the honest type before validation, and it forces the code through the schema before any field can be used</option>
+<option>Because PGlite requires it</option>
+<option>To make the query faster</option>
+<explain><p>With <code>unknown</code>, TypeScript refuses <code>row.status</code> until a check narrows the type. The schema's <code>safeParse</code> then returns typed data or a list of issues.</p></explain>
+</question>
+
+<question id="dbts-z-infer" type="choice">
+<q>What does <code>type OrderRow = z.infer&lt;typeof OrderRowSchema&gt;</code> give you?</q>
+<option>A runtime copy of the schema</option>
+<option correct>A TypeScript type derived from the schema, so the runtime check and the static type cannot disagree</option>
+<option>Generated SQL for the table</option>
+<option>A validation function</option>
+<explain><p>Writing the shape once, as a schema, and deriving the type from it removes the risk of a type saying one thing while the validator checks another.</p></explain>
+</question>
+
+<question id="dbts-find-undefined" type="choice">
+<q>Why does <code>findById</code> return <code>Promise&lt;Order | undefined&gt;</code> instead of <code>Promise&lt;Order&gt;</code>?</q>
+<option>Because TypeScript cannot type promises precisely</option>
+<option correct>"Not found" is a normal outcome, and the union forces every caller to handle it before using the order</option>
+<option>Because the query might fail</option>
+<option>So it can be used with <code>await</code></option>
+<explain><p>With <code>strictNullChecks</code>, <code>(await findById(id)).status</code> does not compile; the caller must check and answer 404 or similar. Failures (a lost connection) are still exceptions.</p></explain>
+</question>
+
+<question id="dbts-brand" type="choice">
+<q>What does a branded <code>OrderId</code> type cost at runtime?</q>
+<option>An extra object per id</option>
+<option>A validation call on every use</option>
+<option correct>Nothing: the brand exists only in types; the value is a plain number</option>
+<option>A symbol property on each id</option>
+<explain><p><code>Brand&lt;number, "OrderId"&gt;</code> intersects <code>number</code> with a phantom property the compiler tracks. At runtime <code>orderId(5)</code> is just <code>5</code>, but a <code>CustomerId</code> can no longer be passed where an <code>OrderId</code> is expected.</p></explain>
+</question>
+
+<question id="dbts-sort" type="choice">
+<q>Why does the repository map an <code>OrderSort</code> union to fixed SQL strings instead of accepting a column name?</q>
+<option>Because <code>order by</code> is slow with parameters</option>
+<option correct>Identifiers cannot be <code>$1</code> parameters, so they are pasted into SQL; mapping a closed set of names to fixed fragments means user input can never become SQL</option>
+<option>Because TypeScript cannot type strings</option>
+<option>To make sorting case-insensitive</option>
+<explain><p>The union makes invalid sorts a compile error, and the <code>Record&lt;OrderSort, string&gt;</code> makes a new sort option without SQL a compile error too. At runtime, input from a query string must still be checked against the same list.</p></explain>
+</question>
+
+<question id="dbts-queryable" type="choice">
+<q>The repository's constructor takes a <code>Queryable</code> instead of a <code>PGlite</code>. What does that enable?</q>
+<option>Faster queries</option>
+<option correct>The same repository can run on the database, inside a transaction (<code>tx</code>), or on a <code>pg</code> pool, so several repositories can share one transaction</option>
+<option>Automatic retries</option>
+<option>Caching of results</option>
+<explain><p>Depending on the smallest interface you need (dependency inversion) lets the caller decide the connection. Inside <code>db.transaction(async (tx) =&gt; …)</code>, repositories built on <code>tx</code> all commit or roll back together.</p></explain>
+</question>
+
+<question id="dbts-generated-drift" type="choice">
+<q>How does the lesson propose to stop generated row types from drifting from the schema?</q>
+<option>Regenerate them by hand every month</option>
+<option correct>Commit the generated file and, in CI, regenerate it from a freshly migrated database and fail the build if it differs</option>
+<option>Never commit them</option>
+<option>Generate them in production at startup</option>
+<explain><p>A drift check turns "someone forgot to update the types" into a failing build, next to the migration that caused it.</p></explain>
+</question>
+
+<question id="dbts-generator-limit" type="choice">
+<q>The generator typed <code>orders.status</code> as <code>string</code>, not <code>"pending" | "paid" | …</code>. Why?</q>
+<option>The generator has a bug</option>
+<option correct><code>information_schema.columns</code> only knows the column is <code>text</code>; the allowed values live in a <code>check</code> constraint the generator does not read</option>
+<option>TypeScript cannot express string unions</option>
+<option>Because status is nullable</option>
+<explain><p>A PostgreSQL enum type or a lookup table with a foreign key carries the allowed values in the schema itself, where tools can see them. With a <code>check</code> constraint, you narrow the type by hand.</p></explain>
+</question>
+
+<question id="dbts-builder-pick" type="choice">
+<q>In the tiny query builder, what is the result type of <code>selectFrom(db, "orders", ["id", "total_kobo"])</code>?</q>
+<option><code>OrderRow[]</code></option>
+<option correct><code>Pick&lt;OrderRow, "id" | "total_kobo"&gt;[]</code></option>
+<option><code>unknown[]</code></option>
+<option><code>{ id: unknown; total_kobo: unknown }[]</code></option>
+<explain><p>The column list is inferred as the literal union <code>"id" | "total_kobo"</code>, constrained to the table's keys, and <code>Pick</code> builds the result type from exactly those columns.</p></explain>
+</question>
+
+<question id="dbts-orm-cost" type="choice">
+<q>Which risk is typical of ORMs and must still be watched for?</q>
+<option>They cannot use transactions</option>
+<option correct>Hidden SQL: loading related records in a loop can run one query per row (N+1), and locking or plan details are less visible</option>
+<option>They do not support PostgreSQL</option>
+<option>They make SQL injection unavoidable</option>
+<explain><p>ORMs save a lot of code, but the database work still happens. Log or inspect the generated SQL, check <code>pg_stat_statements</code>, and drop to raw SQL where you need precise control.</p></explain>
+</question>
+
+<question id="dbts-secret-select" type="choice">
+<q>How should the login code get a customer's <code>password_hash</code>?</q>
+<option>Load it with every customer so it is always available</option>
+<option correct>Select it only in the login query, into its own small type, so ordinary customer entities never carry it</option>
+<option>Store it in the response DTO but hide it in the UI</option>
+<option>Read it from a <code>jsonb</code> column</option>
+<explain><p>Data that is never loaded cannot leak. Keeping secrets out of the widely used entity reduces the places where a mistake could expose them.</p></explain>
+</question>
+
+<question id="dbts-wrong-interface-run" type="output">
+<q>What does this print?</q>
+<code file="wrong-type.ts" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+interface Product {
+  id: number;
+  priceKobo: number;
+}
+
+const db = new PGlite();
+await db.exec("create table products (id int primary key, price_kobo int not null); insert into products values (1, 950000);");
+const { rows } = await db.query<Product>("select * from products");
+console.log(rows[0]!.priceKobo, Object.keys(rows[0]!));
+await db.close();
+</code>
+<option correct>undefined [ 'id', 'price_kobo' ]</option>
+<option>950000 [ 'id', 'priceKobo' ]</option>
+<option>950000 [ 'id', 'price_kobo' ]</option>
+<option>A type error from tsc</option>
+<explain><p>The type argument renames nothing. The row has the database's <code>price_kobo</code>, so <code>priceKobo</code> is <code>undefined</code>, and TypeScript accepted it because it trusted <code>&lt;Product&gt;</code>.</p></explain>
+</question>
+
+<question id="dbts-pglite-int8-run" type="output">
+<q>What does this print with PGlite?</q>
+<code file="int8.ts" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+const { rows } = await db.query<Record<string, unknown>>(
+  "select 5::bigint as small, 9223372036854775807::bigint as big, count(*) as n from generate_series(1, 3)");
+const row = rows[0]!;
+console.log(typeof row.small, typeof row.big, typeof row.n);
+await db.close();
+</code>
+<option correct>number bigint number</option>
+<option>string string string</option>
+<option>number number number</option>
+<option>bigint bigint bigint</option>
+<explain><p>PGlite returns a <code>bigint</code> column as a <code>number</code> when the value is a safe integer and as a JavaScript <code>bigint</code> when it is not. So the honest row type is <code>number | bigint</code>. (<code>pg</code> would print <code>string</code> three times.)</p></explain>
+</question>
+
+<question id="dbts-numeric-plus-run" type="output">
+<q>What does this print?</q>
+<code file="numeric.ts" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+const { rows } = await db.query<{ a: string; b: string }>("select 12.50::numeric as a, 1.25::numeric as b");
+const { a, b } = rows[0]!;
+console.log(a + b, Number(a) + Number(b));
+await db.close();
+</code>
+<option correct>12.501.25 13.75</option>
+<option>13.75 13.75</option>
+<option>13.75 12.501.25</option>
+<option>12.5 1.25</option>
+<explain><p><code>numeric</code> arrives as strings, so <code>+</code> concatenates them. The row type says <code>string</code>, which is exactly what makes this bug visible to anyone reading the code; typing it as <code>number</code> would hide it.</p></explain>
+</question>
+
+<question id="dbts-null-json-run" type="output">
+<q>What does this print?</q>
+<code file="null-json.ts">
+const fromRow: { id: number; phone: string | null } = { id: 1, phone: null };
+const optional: { id: number; phone?: string } = { id: 1 };
+
+console.log(JSON.stringify(fromRow), JSON.stringify(optional), JSON.stringify({ ...optional, phone: undefined }));
+</code>
+<option correct>{"id":1,"phone":null} {"id":1} {"id":1}</option>
+<option>{"id":1,"phone":null} {"id":1,"phone":null} {"id":1,"phone":null}</option>
+<option>{"id":1} {"id":1} {"id":1}</option>
+<option>{"id":1,"phone":null} {"id":1} {"id":1,"phone":undefined}</option>
+<explain><p>JSON has <code>null</code> but no <code>undefined</code>: properties set to <code>undefined</code> are dropped. A nullable column should stay <code>null</code> so clients can tell "no phone" from "phone not included".</p></explain>
+</question>
+
+<question id="dbts-leak-run" type="output">
+<q>What does this print?</q>
+<code file="leak.ts">
+interface Customer {
+  id: number;
+  fullName: string;
+  passwordHash: string;
+}
+interface CustomerSummary {
+  id: number;
+  fullName: string;
+  orderCount: number;
+}
+
+function summary(customer: Customer, orderCount: number): CustomerSummary {
+  return { ...customer, orderCount };
+}
+
+console.log(Object.keys(summary({ id: 1, fullName: "Ada Okafor", passwordHash: "scrypt$..." }, 3)));
+</code>
+<option correct>[ 'id', 'fullName', 'passwordHash', 'orderCount' ]</option>
+<option>[ 'id', 'fullName', 'orderCount' ]</option>
+<option>[ 'orderCount' ]</option>
+<option>A compile error: passwordHash does not exist in CustomerSummary</option>
+<explain><p>The spread copies every property of the entity, and TypeScript does not treat spread properties as excess, so it compiles and the hash goes out. List fields explicitly instead.</p></explain>
+</question>
+
+<question id="dbts-brand-runtime-run" type="output">
+<q>What does this print?</q>
+<code file="brand.ts">
+declare const brand: unique symbol;
+type Brand<T, B extends string> = T & { readonly [brand]: B };
+type OrderId = Brand<number, "OrderId">;
+type CustomerId = Brand<number, "CustomerId">;
+
+const orderId = (n: number) => n as OrderId;
+const customerId = (n: number) => n as CustomerId;
+
+const o = orderId(7);
+const c = customerId(7);
+console.log(typeof o, JSON.stringify({ o }), (o as number) === (c as number));
+</code>
+<option correct>number {"o":7} true</option>
+<option>object {"o":{"value":7}} false</option>
+<option>number {"o":7} false</option>
+<option>symbol {"o":7} true</option>
+<explain><p>Brands vanish when TypeScript is compiled: the ids are plain numbers, serialise as numbers, and compare equal. The protection is entirely at compile time, and it costs nothing at runtime.</p></explain>
+</question>
+
+<question id="dbts-kobo-run" type="output">
+<q>What does this print?</q>
+<code file="kobo.ts">
+function toKobo(value: number | bigint | string): number {
+  const n = Number(value);
+  if (!Number.isSafeInteger(n)) throw new RangeError(`bad amount ${String(value)}`);
+  return n;
+}
+
+const results = ["950000", 950000n, "12.5", 2n ** 60n].map((v) => {
+  try {
+    return toKobo(v);
+  } catch (error) {
+    return (error as Error).message;
+  }
+});
+console.log(results);
+</code>
+<option correct>[ 950000, 950000, 'bad amount 12.5', 'bad amount 1152921504606846976' ]</option>
+<option>[ 950000, 950000, 12, 1152921504606846976 ]</option>
+<option>[ 950000, 'bad amount 950000', 'bad amount 12.5', 'bad amount 1152921504606846976' ]</option>
+<option>[ '950000', 950000, 'bad amount 12.5', 'bad amount 1152921504606846976' ]</option>
+<explain><p>A string or <code>bigint</code> that holds a safe whole number converts exactly. Half a kobo and a number beyond 2<sup>53</sup> are refused rather than rounded.</p></explain>
+</question>
+
+<question id="dbts-zod-run" type="output">
+<q>What does this print?</q>
+<code file="zod-row.ts" browser="no">
+import { z } from "zod";
+
+const CustomerRow = z.object({
+  id: z.number().int(),
+  email: z.string(),
+  phone: z.string().nullable(),
+});
+
+const rows: unknown[] = [
+  { id: 1, email: "ada@example.com", phone: null },
+  { id: 2, email: "tunde@example.com" },
+  { id: "3", email: "chioma@example.com", phone: "0805" },
+];
+console.log(rows.map((row) => {
+  const result = CustomerRow.safeParse(row);
+  return result.success ? "ok" : result.error.issues.map((i) => i.path.join(".")).join(",");
+}));
+</code>
+<option correct>[ 'ok', 'phone', 'id' ]</option>
+<option>[ 'ok', 'ok', 'id' ]</option>
+<option>[ 'ok', 'phone', 'ok' ]</option>
+<option>[ 'ok', 'ok', 'ok' ]</option>
+<explain><p><code>nullable()</code> allows <code>null</code> but not a missing property, so row 2 fails on <code>phone</code>, just as a real row always has every column. Row 3 has the id as a string, as a <code>pg</code> <code>bigint</code> would, and fails on <code>id</code>.</p></explain>
+</question>
+
+<question id="dbts-is-nullable-run" type="output">
+<q>What does this print?</q>
+<code file="columns.ts" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`create table payments (
+  id integer generated always as identity primary key,
+  amount_kobo bigint not null,
+  failure_reason text,
+  paid_at timestamptz
+)`);
+const { rows } = await db.query<{ column_name: string; udt_name: string; is_nullable: string }>(
+  "select column_name, udt_name, is_nullable from information_schema.columns where table_name = 'payments' order by ordinal_position");
+console.log(rows.map((c) => `${c.column_name}:${c.udt_name}:${c.is_nullable}`).join(" "));
+await db.close();
+</code>
+<option correct>id:int4:NO amount_kobo:int8:NO failure_reason:text:YES paid_at:timestamptz:YES</option>
+<option>id:integer:NO amount_kobo:bigint:NO failure_reason:text:YES paid_at:timestamptz:YES</option>
+<option>id:int4:YES amount_kobo:int8:NO failure_reason:text:YES paid_at:timestamptz:YES</option>
+<option>id:int4:NO amount_kobo:int8:NO failure_reason:text:NO paid_at:timestamptz:NO</option>
+<explain><p><code>udt_name</code> uses PostgreSQL's internal type names (<code>int4</code>, <code>int8</code>), which is what a generator maps. A primary key is implicitly <code>not null</code>; columns without <code>not null</code> report <code>YES</code> and become <code>| null</code> in the generated type.</p></explain>
+</question>
+
+<question id="dbts-code-camel" type="code" file="camel.ts">
+<q><p>Write <code>toCamelKeys(row)</code> that returns a new object with every <code>snake_case</code> key turned into <code>camelCase</code>, keeping the values (including <code>null</code>) unchanged.</p></q>
+<starter>
+function toCamelKeys(row: Record<string, unknown>): Record<string, unknown> {
+  // your code here
+  return {};
+}
+
+console.log(toCamelKeys({ id: 1, customer_id: 7, total_kobo: 450000, note: null, placed_at_utc: "2026-09-20" }));
+</starter>
+<solution>
+function toCamelKeys(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    out[key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())] = value;
+  }
+  return out;
+}
+
+console.log(toCamelKeys({ id: 1, customer_id: 7, total_kobo: 450000, note: null, placed_at_utc: "2026-09-20" }));
+</solution>
+<expected>
+{
+  id: 1,
+  customerId: 7,
+  totalKobo: 450000,
+  note: null,
+  placedAtUtc: '2026-09-20'
+}
+</expected>
+<explain><p>A generic renamer is handy, but notice its return type: <code>Record&lt;string, unknown&gt;</code>. It cannot know the entity's type, which is why the lesson writes one typed mapper per table and converts values there too.</p></explain>
+</question>
+
+<question id="dbts-code-naira" type="code" file="naira.ts">
+<q><p><code>numeric(12, 2)</code> amounts arrive as strings such as <code>"1150.15"</code>. Write <code>nairaToKobo(amount)</code> that converts exactly, without floating-point multiplication, accepting 0 to 2 decimals (<code>"12"</code>, <code>"12.5"</code>, <code>"12.50"</code>) and throwing a <code>RangeError</code> for anything else.</p></q>
+<starter>
+function nairaToKobo(amount: string): number {
+  // your code here
+  return 0;
+}
+
+for (const a of ["1150.15", "12", "12.5", "0.07", "12.345", "abc"]) {
+  try {
+    console.log(a, nairaToKobo(a));
+  } catch (error) {
+    console.log(a, (error as Error).name);
+  }
+}
+</starter>
+<solution>
+function nairaToKobo(amount: string): number {
+  const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(amount);
+  if (!match) throw new RangeError(`not a naira amount: ${amount}`);
+  const kobo = Number(match[1]) * 100 + Number((match[2] ?? "").padEnd(2, "0"));
+  if (!Number.isSafeInteger(kobo)) throw new RangeError(`amount too large: ${amount}`);
+  return kobo;
+}
+
+for (const a of ["1150.15", "12", "12.5", "0.07", "12.345", "abc"]) {
+  try {
+    console.log(a, nairaToKobo(a));
+  } catch (error) {
+    console.log(a, (error as Error).name);
+  }
+}
+</solution>
+<expected>
+1150.15 115015
+12 1200
+12.5 1250
+0.07 7
+12.345 RangeError
+abc RangeError
+</expected>
+<explain><p>Working on the digits keeps the arithmetic in whole numbers: <code>Number("1150.15") * 100</code> is <code>115015.00000000001</code>. <code>padEnd</code> turns <code>"5"</code> into <code>"50"</code> kobo.</p></explain>
+</question>
+
+<question id="dbts-code-response" type="code" file="response.ts">
+<q><p>Write <code>toCustomerResponse(customer)</code> that returns only <code>id</code>, <code>email</code>, <code>fullName</code> and <code>phone</code>, building a new object field by field, so the password hash can never leak.</p></q>
+<starter>
+interface Customer {
+  readonly id: number;
+  readonly email: string;
+  readonly fullName: string;
+  readonly phone: string | null;
+  readonly passwordHash: string;
+}
+interface CustomerResponse {
+  readonly id: number;
+  readonly email: string;
+  readonly fullName: string;
+  readonly phone: string | null;
+}
+
+function toCustomerResponse(customer: Customer): CustomerResponse {
+  // your code here
+}
+
+const ada: Customer = { id: 1, email: "ada@example.com", fullName: "Ada Okafor", phone: null, passwordHash: "scrypt$..." };
+console.log(JSON.stringify(toCustomerResponse(ada)));
+</starter>
+<solution>
+interface Customer {
+  readonly id: number;
+  readonly email: string;
+  readonly fullName: string;
+  readonly phone: string | null;
+  readonly passwordHash: string;
+}
+interface CustomerResponse {
+  readonly id: number;
+  readonly email: string;
+  readonly fullName: string;
+  readonly phone: string | null;
+}
+
+function toCustomerResponse(customer: Customer): CustomerResponse {
+  return { id: customer.id, email: customer.email, fullName: customer.fullName, phone: customer.phone };
+}
+
+const ada: Customer = { id: 1, email: "ada@example.com", fullName: "Ada Okafor", phone: null, passwordHash: "scrypt$..." };
+console.log(JSON.stringify(toCustomerResponse(ada)));
+</solution>
+<expected>{"id":1,"email":"ada@example.com","fullName":"Ada Okafor","phone":null}</expected>
+<explain><p>Returning <code>customer</code> itself would compile (structural typing) and leak the hash. A new literal contains only what you list, and adding a property that the response type lacks becomes a compile error.</p></explain>
+</question>
+
+<question id="dbts-code-guard" type="code" file="guard.ts">
+<q><p>Without a library, write a type guard <code>isOrderRow(value: unknown): value is OrderRow</code> for rows with <code>id</code> (integer), <code>status</code> (one of four values) and <code>note</code> (string or <code>null</code>, but present). Then count the valid rows.</p></q>
+<starter>
+type OrderStatus = "pending" | "paid" | "shipped" | "cancelled";
+interface OrderRow {
+  id: number;
+  status: OrderStatus;
+  note: string | null;
+}
+
+function isOrderRow(value: unknown): value is OrderRow {
+  // your code here
+  return false;
+}
+
+const rows: unknown[] = [
+  { id: 1, status: "paid", note: "Leave at the gate" },
+  { id: 2, status: "refunded", note: null },
+  { id: 3, status: "pending" },
+  { id: 4.5, status: "paid", note: null },
+  { id: 5, status: "shipped", note: null },
+];
+console.log(rows.filter(isOrderRow).map((r) => r.id));
+</starter>
+<solution>
+type OrderStatus = "pending" | "paid" | "shipped" | "cancelled";
+interface OrderRow {
+  id: number;
+  status: OrderStatus;
+  note: string | null;
+}
+
+const STATUSES: readonly string[] = ["pending", "paid", "shipped", "cancelled"];
+
+function isOrderRow(value: unknown): value is OrderRow {
+  if (typeof value !== "object" || value === null) return false;
+  const row = value as Record<string, unknown>;
+  return (
+    Number.isInteger(row.id) &&
+    typeof row.status === "string" &&
+    STATUSES.includes(row.status) &&
+    "note" in row &&
+    (row.note === null || typeof row.note === "string")
+  );
+}
+
+const rows: unknown[] = [
+  { id: 1, status: "paid", note: "Leave at the gate" },
+  { id: 2, status: "refunded", note: null },
+  { id: 3, status: "pending" },
+  { id: 4.5, status: "paid", note: null },
+  { id: 5, status: "shipped", note: null },
+];
+console.log(rows.filter(isOrderRow).map((r) => r.id));
+</solution>
+<expected>[ 1, 5 ]</expected>
+<explain><p>Row 2 has a status the type does not allow, row 3 is missing <code>note</code> entirely, and row 4 has a fractional id. <code>filter(isOrderRow)</code> also narrows the array's type to <code>OrderRow[]</code>, so <code>r.id</code> is typed.</p></explain>
+</question>
+
+<question id="dbts-code-generate" type="code" file="generate.ts">
+<q><p>Write <code>toInterface(table, columns)</code> that turns column metadata (as read from <code>information_schema.columns</code>) into the text of a row interface. Map <code>int4</code> to <code>number</code>, <code>int8</code> to <code>string</code> (the <code>pg</code> driver), <code>text</code> to <code>string</code>, <code>timestamptz</code> to <code>Date</code>, anything else to <code>unknown</code>, and add <code>| null</code> for nullable columns.</p></q>
+<starter>
+interface Column {
+  name: string;
+  udt: string;
+  nullable: boolean;
+}
+
+function toInterface(table: string, columns: Column[]): string {
+  // your code here
+  return "";
+}
+
+console.log(toInterface("PaymentRow", [
+  { name: "id", udt: "int4", nullable: false },
+  { name: "amount_kobo", udt: "int8", nullable: false },
+  { name: "failure_reason", udt: "text", nullable: true },
+  { name: "paid_at", udt: "timestamptz", nullable: true },
+  { name: "raw", udt: "jsonb", nullable: false },
+]));
+</starter>
+<solution>
+interface Column {
+  name: string;
+  udt: string;
+  nullable: boolean;
+}
+
+const TYPES: Record<string, string> = { int4: "number", int8: "string", text: "string", timestamptz: "Date" };
+
+function toInterface(table: string, columns: Column[]): string {
+  const lines = columns.map((c) => `  ${c.name}: ${TYPES[c.udt] ?? "unknown"}${c.nullable ? " | null" : ""};`);
+  return [`export interface ${table} {`, ...lines, "}"].join("\n");
+}
+
+console.log(toInterface("PaymentRow", [
+  { name: "id", udt: "int4", nullable: false },
+  { name: "amount_kobo", udt: "int8", nullable: false },
+  { name: "failure_reason", udt: "text", nullable: true },
+  { name: "paid_at", udt: "timestamptz", nullable: true },
+  { name: "raw", udt: "jsonb", nullable: false },
+]));
+</solution>
+<expected>
+export interface PaymentRow {
+  id: number;
+  amount_kobo: string;
+  failure_reason: string | null;
+  paid_at: Date | null;
+  raw: unknown;
+}
+</expected>
+<explain><p>The mapping table is where the driver's behaviour is written down once. <code>jsonb</code> becomes <code>unknown</code> on purpose: its shape must be validated before use.</p></explain>
+</question>
+
+<question id="dbts-code-query" type="code" file="query.ts">
+<q><p>Build a safe list query. Write <code>buildOrderQuery(filter)</code> for <code>{ customerId: number; status?: string; sort: "newest" | "biggest" }</code>: values go into <code>params</code> as <code>$1</code>, <code>$2</code>…, and the sort comes from a fixed map. Return <code>{ sql, params }</code>.</p></q>
+<starter>
+type OrderSort = "newest" | "biggest";
+
+function buildOrderQuery(filter: { customerId: number; status?: string; sort: OrderSort }): { sql: string; params: unknown[] } {
+  // your code here
+  return { sql: "", params: [] };
+}
+
+console.log(buildOrderQuery({ customerId: 7, sort: "newest" }));
+console.log(buildOrderQuery({ customerId: 7, status: "x' or '1'='1", sort: "biggest" }));
+</starter>
+<solution>
+type OrderSort = "newest" | "biggest";
+
+const ORDER_BY: Record<OrderSort, string> = {
+  newest: "placed_at desc, id desc",
+  biggest: "total_kobo desc, id",
+};
+
+function buildOrderQuery(filter: { customerId: number; status?: string; sort: OrderSort }): { sql: string; params: unknown[] } {
+  const params: unknown[] = [filter.customerId];
+  const conditions = ["customer_id = $1"];
+  if (filter.status !== undefined) {
+    params.push(filter.status);
+    conditions.push(`status = $${params.length}`);
+  }
+  return {
+    sql: `select * from orders where ${conditions.join(" and ")} order by ${ORDER_BY[filter.sort]}`,
+    params,
+  };
+}
+
+console.log(buildOrderQuery({ customerId: 7, sort: "newest" }));
+console.log(buildOrderQuery({ customerId: 7, status: "x' or '1'='1", sort: "biggest" }));
+</solution>
+<expected>
+{
+  sql: 'select * from orders where customer_id = $1 order by placed_at desc, id desc',
+  params: [ 7 ]
+}
+{
+  sql: 'select * from orders where customer_id = $1 and status = $2 order by total_kobo desc, id',
+  params: [ 7, "x' or '1'='1" ]
+}
+</expected>
+<explain><p>The injection attempt stays a harmless parameter value. Only text from <code>ORDER_BY</code>, which you wrote, ever becomes SQL, and the union type makes an unknown sort a compile error.</p></explain>
+</question>
+
+<question id="dbts-code-parse-id" type="code" file="parse-id.ts">
+<q><p>Ids arrive from URLs as strings. Write <code>parseOrderId(raw)</code> that returns a branded <code>OrderId</code> for a positive whole number within the <code>integer</code> column's range (up to 2147483647), and <code>null</code> otherwise.</p></q>
+<starter>
+declare const brand: unique symbol;
+type OrderId = number & { readonly [brand]: "OrderId" };
+
+function parseOrderId(raw: string): OrderId | null {
+  // your code here
+  return null;
+}
+
+console.log(JSON.stringify(["42", "0", "-3", "7.5", "2147483648", "12abc", " 9"].map(parseOrderId)));
+</starter>
+<solution>
+declare const brand: unique symbol;
+type OrderId = number & { readonly [brand]: "OrderId" };
+
+function parseOrderId(raw: string): OrderId | null {
+  if (!/^[0-9]+$/.test(raw)) return null;
+  const n = Number(raw);
+  return n >= 1 && n <= 2147483647 ? (n as OrderId) : null;
+}
+
+console.log(JSON.stringify(["42", "0", "-3", "7.5", "2147483648", "12abc", " 9"].map(parseOrderId)));
+</solution>
+<expected>[42,null,null,null,null,null,null]</expected>
+<explain><p>Parsing is the one place where a plain value may become an <code>OrderId</code>. Checking the range too avoids sending PostgreSQL a value that fails with "out of range for type integer" (a 500) instead of a clean 404.</p></explain>
+</question>

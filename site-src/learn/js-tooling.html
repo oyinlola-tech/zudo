@@ -1,0 +1,730 @@
+---
+title: JavaScript tooling
+description: Learn why each JavaScript tool exists, then run Prettier and ESLint for real, see what a bundler does, map a minified stack trace back to source, and validate environment configuration.
+minutes: 50
+youNeed: npm and packages, The npm ecosystem in depth, and What Node.js is
+youBuild: A cart project with a formatter, a linter, a one-command check script, editor settings, a validated configuration loader, and a tiny bundler of your own
+keywords: javascript tooling, prettier, eslint flat config, eslint --fix, linter vs formatter, transpiler, bundler, esbuild, vite, tree shaking, minification, source maps, enable-source-maps, env-file, util.parseEnv, configuration validation, npm scripts check, vscode settings, editorconfig
+objectives: Explain which problem each tool category solves and which bugs each one can and cannot catch | Configure and run Prettier and ESLint, fix what they report and wire them into a check script | Describe what a bundler does, from dependency graph to minified output, and when a Node.js server does not need one | Map a minified stack trace back to source with source maps | Load layered .env files and validate configuration at startup, and know which values must never reach a browser bundle
+---
+<section>
+<h2 id="problem">Five developers, one codebase</h2>
+<p>Look at a week in a small team building an online shop:</p>
+<ul>
+<li>A pull request changes 400 lines. Three of them fix a bug; the other 397 are one developer's editor changing quotes and indentation. Nobody can review it properly.</li>
+<li>A discount check ships with <code>if (code = "SAVE10")</code>: one <code>=</code> instead of three. Every order gets the discount.</li>
+<li>The browser app is one 2 MB file, and customers on mobile data wait eight seconds for the page.</li>
+<li>Production reports <code>RangeError at e (app.js:1:82)</code>. Line 1, column 82 of a file nobody wrote by hand.</li>
+<li>The staging server connects to the <em>production</em> database, because an environment variable was missing and the code fell back to a default.</li>
+</ul>
+<p>None of these is solved by writing more careful code. Each is solved by a <strong>tool</strong>: a program that works on your code instead of being part of it. The JavaScript world has many, and new names appear every year, which makes it look chaotic. It is less so once you see that there are only a few <em>categories</em>, each answering one of the problems above. Learn the categories and you can evaluate any new tool in minutes.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Category</th><th>Problem it solves</th><th>Common tools</th></tr></thead>
+<tbody>
+<tr><td>Formatter</td><td>Style arguments and noisy diffs</td><td>Prettier, Biome, dprint</td></tr>
+<tr><td>Linter</td><td>Likely bugs and banned patterns</td><td>ESLint, Biome, oxlint</td></tr>
+<tr><td>Type checker</td><td>Wrong types, typos in property names</td><td>TypeScript (<code>tsc</code>)</td></tr>
+<tr><td>Test runner</td><td>Wrong behaviour</td><td><code>node --test</code>, Vitest</td></tr>
+<tr><td>Transpiler</td><td>Code in a language or version the runtime does not understand</td><td>TypeScript, esbuild, SWC, Babel</td></tr>
+<tr><td>Bundler</td><td>Many files and packages that must reach a browser quickly</td><td>Vite, esbuild, Rollup, webpack</td></tr>
+<tr><td>Source maps</td><td>Errors pointing at generated code</td><td>Produced by transpilers and bundlers</td></tr>
+<tr><td>Environment configuration</td><td>Settings that differ between machines</td><td><code>--env-file</code>, your own validation</td></tr>
+<tr><td>Task runner</td><td>Remembering how to run all of the above</td><td>npm scripts</td></tr>
+</tbody>
+</table></div>
+<reason title="Which tool catches which bug?">
+<p>Before looking at any tool, sort these problems. For each, which category could catch it automatically, and which could never catch it?</p>
+<ol>
+<li>A file indented with tabs in a project that uses spaces.</li>
+<li><code>if (code = "SAVE10")</code></li>
+<li><code>order.totl</code> instead of <code>order.total</code>.</li>
+<li>A 10% discount applied twice.</li>
+<li>A variable that is declared and never used.</li>
+<li>A secret API key written into browser code.</li>
+</ol>
+<answer>
+<ol>
+<li><strong>Formatter.</strong> Pure layout; no meaning changes.</li>
+<li><strong>Linter</strong> (the <code>no-cond-assign</code> rule). It is valid JavaScript, so neither the runtime nor a formatter objects.</li>
+<li>A <strong>type checker</strong>, if it knows the shape of <code>order</code>. A linter can only catch it when the name is a variable that does not exist (<code>no-undef</code>), not a missing property.</li>
+<li><strong>Only a test.</strong> The code is valid, well formatted and well typed; it just does the wrong thing. No static tool knows your business rules.</li>
+<li><strong>Linter</strong> (<code>no-unused-vars</code>), and TypeScript with <code>noUnusedLocals</code>.</li>
+<li><strong>None reliably.</strong> A secret scanner can match known key formats, but the real defence is a rule: secrets never go into code that reaches a browser. You will see why in the bundler section.</li>
+</ol>
+<p>The pattern: formatters handle layout, linters handle suspicious code patterns, type checkers handle shapes, and tests handle meaning. Each layer is cheap and catches what the others cannot.</p>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="formatter">Formatters: Prettier</h2>
+<p>A <strong>formatter</strong> rewrites code layout (spaces, line breaks, quotes, semicolons) into one consistent style, without changing what the code does. Its real value is social: once a tool decides, nobody argues about style in reviews, and diffs only show real changes.</p>
+<p>Prettier is the most used one, and it is deliberately <strong>opinionated</strong>: it has very few options, so there is little to configure and nothing to debate. Set up a project with it (and with the linter used in the next section):</p>
+<shell>
+$ mkdir cart-app
+$ cd cart-app
+$ npm init -y
+Wrote to ~/cart-app/package.json:
+…
+$ npm pkg set type=module
+$ npm install -D eslint @eslint/js globals prettier
+…
+found 0 vulnerabilities
+$ npx prettier --version
+3.9.9
+</shell>
+<p>A file written in a hurry, <code>src/format.js</code>:</p>
+<file name="src/format.js" project="messy">
+export const formatNaira = (kobo) => "₦" + (kobo/100).toLocaleString("en-NG", {minimumFractionDigits: 2})
+export function describeItem(item){ return `${item.qty} x ${item.name} @ ${formatNaira(item.price)}` }
+</file>
+<shell>
+$ npx prettier --check src
+Checking formatting...
+[warn] src/cart.js
+[warn] src/format.js
+[warn] Code style issues found in 2 files. Run Prettier with --write to fix.
+$ echo $?
+1
+$ npx prettier --write src
+src/cart.js 266ms
+src/format.js 51ms
+$ cat src/format.js
+export const formatNaira = (kobo) =&gt;
+  "₦" + (kobo / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 });
+export function describeItem(item) {
+  return `${item.qty} x ${item.name} @ ${formatNaira(item.price)}`;
+}
+</shell>
+<ul>
+<li><code>--check</code> changes nothing and exits with 1 if any file is not formatted: that is the mode for automated checks. <code>--write</code> fixes the files. (<code>src/cart.js</code> is the cart module from the next section, after its bugs were fixed; only its missing semicolons were left for Prettier.)</li>
+<li>Prettier broke the long line at its default width of 80 characters, added spaces and semicolons, and put each function body on its own lines.</li>
+<li>Configuration goes in <code>.prettierrc.json</code> (for example <code>{ "printWidth": 100 }</code>), and files to skip in <code>.prettierignore</code>. Most teams keep the defaults.</li>
+</ul>
+<tip>Formatting a whole existing project creates one big commit that touches every file. Do it once, alone in its own commit, so later history stays readable. Git can even skip that commit when showing who changed a line: list its id in a <code>.git-blame-ignore-revs</code> file.</tip>
+</section>
+
+<section>
+<h2 id="linter">Linters: ESLint</h2>
+<p>A <strong>linter</strong> reads your code and reports patterns that are probably bugs, or that your team has decided to avoid. The name comes from a 1978 C tool that picked "lint", little bits of fluff, out of programs. Here is a cart module with several mistakes that JavaScript happily runs:</p>
+<file name="src/cart.js" project="lint">
+import { readFile } from "node:fs/promises";
+
+export function cartTotal(items, discountCode) {
+  let total = 0
+  for (const item of items) {
+    total += item.price * item.qty
+  }
+  if (discountCode == "SAVE10") {
+    total = total * 0.9
+  }
+  if (total === NaN) throw new Error("bad price")
+  return totl
+}
+
+export async function loadCart(path) {
+  let text = await readFile(path, "utf8")
+  const backup = structuredClone(text);
+  return JSON.parse(text)
+}
+</file>
+<p>ESLint is configured in <code>eslint.config.js</code>, a JavaScript module that exports a list of configuration objects (the "flat config" format). Later objects override earlier ones. This one starts from ESLint's recommended rules, tells it the code runs in Node.js (so <code>process</code> is a known global), and adds two rules:</p>
+<file name="eslint.config.js" project="lint">
+import js from "@eslint/js";
+import globals from "globals";
+import { defineConfig } from "eslint/config";
+
+export default defineConfig([
+  js.configs.recommended,
+  {
+    languageOptions: { globals: globals.node },
+    rules: {
+      eqeqeq: "error",
+      "prefer-const": "warn",
+    },
+  },
+]);
+</file>
+<shell>
+$ npx eslint src
+~/cart-app/src/cart.js
+   8:20  error    Expected '===' and instead saw '=='              eqeqeq
+  11:7   error    Use the isNaN function to compare with NaN       use-isnan
+  12:10  error    'totl' is not defined                            no-undef
+  16:7   warning  'text' is never reassigned. Use 'const' instead  prefer-const
+  17:9   error    'backup' is assigned a value but never used      no-unused-vars
+
+✖ 5 problems (4 errors, 1 warning)
+  0 errors and 1 warning potentially fixable with the `--fix` option.
+$ npx eslint src --fix
+~/cart-app/src/cart.js
+   8:20  error  Expected '===' and instead saw '=='          eqeqeq
+  11:7   error  Use the isNaN function to compare with NaN   use-isnan
+  12:10  error  'totl' is not defined                        no-undef
+  17:9   error  'backup' is assigned a value but never used  no-unused-vars
+
+✖ 4 problems (4 errors, 0 warnings)
+</shell>
+<p>Every line of the report is a real bug or a trap:</p>
+<ul>
+<li><code>total === NaN</code> is <em>always</em> false, because <code>NaN</code> is not equal to anything, itself included. The price check could never fire. <code>Number.isNaN(total)</code> is the fix.</li>
+<li><code>totl</code> would throw a <code>ReferenceError</code>, but only when that line runs. The linter found it without running anything.</li>
+<li><code>--fix</code> only changes what is safe to change mechanically (<code>let</code> to <code>const</code>). It will not guess whether <code>==</code> should become <code>===</code>, because that can change behaviour.</li>
+<li>Each rule is <code>"off"</code>, <code>"warn"</code> or <code>"error"</code>. Errors make ESLint exit with code 1, so a check script fails.</li>
+</ul>
+<p>After fixing the four errors by hand, <code>npx eslint src</code> prints nothing and exits with 0. Sometimes a rule is wrong for one specific line. Then say so right there, with a reason: <code>// eslint-disable-next-line no-console -- CLI output is the point of this file</code>. A disable comment without a reason is a smell in review.</p>
+
+<h3>Why a linter parses your code</h3>
+<p>Could you write a linter with regular expressions? Try it for two rules:</p>
+<example file="tiny-lint.js">
+const rules = {
+  eqeqeq: (line) => /[^=!<>]==[^=]/.test(line) && "Expected '===' and instead saw '=='",
+  "no-var": (line) => /\bvar\s/.test(line) && "Unexpected var, use let or const instead",
+};
+
+function lint(source) {
+  const problems = [];
+  source.split("\n").forEach((line, index) => {
+    for (const [name, check] of Object.entries(rules)) {
+      const message = check(line);
+      if (message) problems.push(`${index + 1}: ${message} (${name})`);
+    }
+  });
+  return problems;
+}
+
+const source = `var total = 0;
+if (code == "SAVE10") total = 90;
+const hint = "compare with === not ==, see the style guide";
+const note = "keep var names short";`;
+
+console.log(lint(source).join("\n"));
+</example>
+<output>
+1: Unexpected var, use let or const instead (no-var)
+2: Expected '===' and instead saw '==' (eqeqeq)
+3: Expected '===' and instead saw '==' (eqeqeq)
+4: Unexpected var, use let or const instead (no-var)
+</output>
+<p>The first two findings are right. The last two are <strong>false positives</strong>: the <code>==</code> and the word <code>var</code> are inside strings. A regular expression sees characters; it does not know what is a string, a comment or an operator. ESLint first <strong>parses</strong> the code into an <strong>abstract syntax tree</strong> (AST): a tree of objects such as "a binary expression with operator <code>==</code>, whose left side is the identifier <code>code</code>". Rules inspect that tree, so a string is never mistaken for an operator. The same parsing step powers formatters, transpilers and bundlers: almost every tool in this lesson starts by turning your text into a tree.</p>
+<note>ESLint used to have formatting rules too (indentation, quotes), which fought with Prettier. Current ESLint leaves formatting to formatters. Let Prettier own layout and ESLint own correctness. For TypeScript, the <code>typescript-eslint</code> project adds rules that use type information, such as catching a promise you forgot to <code>await</code>.</note>
+</section>
+
+<section>
+<h2 id="transpilers">Transpilers</h2>
+<p>A <strong>transpiler</strong> (source-to-source compiler) turns code written in one form into another form of the same level: TypeScript into JavaScript, JSX into function calls, new syntax into older syntax that an old browser understands. You already know the most important one: <code>tsc</code> removes types, and with a lower <code>target</code> it rewrites <code>??</code> and <code>?.</code> into older code, as shown in <a href="/learn/ts-compiler#target">What the TypeScript compiler does</a>.</p>
+<p>The lower the target, the more a transpiler must rewrite. Private class fields (<code>#balanceKobo</code>) arrived in ES2022. Here is a wallet class:</p>
+<example file="wallet.ts" project="downlevel">
+export class Wallet {
+  #balanceKobo = 0;
+
+  deposit(amountKobo: number): number {
+    this.#balanceKobo += amountKobo;
+    return this.#balanceKobo;
+  }
+}
+
+const wallet = new Wallet();
+console.log(wallet.deposit(4_500_000));
+</example>
+<output>
+4500000
+</output>
+<p>Compiled for ES2024, the output is the same code without the <code>: number</code> annotations. Compiled with <code>--target ES2020</code>, <code>tsc</code> has to fake private fields with a <code>WeakMap</code> and two helper functions:</p>
+<file name="dist/wallet.js" project="downlevel" check="emit" tsc="--target ES2020">
+var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (receiver, state, kind, f) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var __classPrivateFieldSet = (this && this.__classPrivateFieldSet) || function (receiver, state, value, kind, f) {
+    if (kind === "m") throw new TypeError("Private method is not writable");
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a setter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot write private member to an object whose class did not declare it");
+    return (kind === "a" ? f.call(receiver, value) : f ? f.value = value : state.set(receiver, value)), value;
+};
+var _Wallet_balanceKobo;
+export class Wallet {
+    constructor() {
+        _Wallet_balanceKobo.set(this, 0);
+    }
+    deposit(amountKobo) {
+        __classPrivateFieldSet(this, _Wallet_balanceKobo, __classPrivateFieldGet(this, _Wallet_balanceKobo, "f") + amountKobo, "f");
+        return __classPrivateFieldGet(this, _Wallet_balanceKobo, "f");
+    }
+}
+_Wallet_balanceKobo = new WeakMap();
+const wallet = new Wallet();
+console.log(wallet.deposit(4500000));
+</file>
+<p>It behaves the same, but it is three times longer, slower, and much harder to read in a stack trace. That is the price of supporting old runtimes, and the reason to pick the highest target your users' browsers or your Node.js version allow.</p>
+<p>Three things are worth knowing about transpilers in general:</p>
+<ul>
+<li><strong>Checking and transpiling are separate jobs.</strong> esbuild and SWC transpile TypeScript very fast by simply deleting the types, without checking them. Node.js 24 does the same when it runs a <code>.ts</code> file directly. So projects run <code>tsc --noEmit</code> separately as the type checker.</li>
+<li><strong>Syntax can be rewritten, missing functions cannot.</strong> A transpiler can turn <code>a ?? b</code> into older code, but it cannot make <code>Array.prototype.findLast</code> exist in an old browser. That needs a <strong>polyfill</strong>: a script that adds the missing function at run time.</li>
+<li><strong>For Node.js 24 servers, you need little.</strong> Node.js supports all modern syntax, so the only transpiling a backend needs is TypeScript, and a target such as ES2024 keeps the output close to what you wrote.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="bundlers">Bundlers</h2>
+<p>A browser app has the problems a server does not. Your code is spread over dozens of modules, plus packages in <code>node_modules</code>. The browser cannot read <code>node_modules</code> (it has no idea what <code>import "ms"</code> means), every file is a separate network request, and every byte is downloaded by every visitor, often over a slow mobile connection. A <strong>bundler</strong> solves this. Starting from an <strong>entry</strong> file, it:</p>
+<ol>
+<li>follows every <code>import</code> to build the <strong>dependency graph</strong>, including packages;</li>
+<li>transpiles each file if needed (TypeScript, JSX);</li>
+<li>leaves out exports nobody imports (<strong>tree shaking</strong>);</li>
+<li>joins the modules into one or a few output files (<strong>bundles</strong>), optionally splitting rarely used parts into separate files loaded on demand (<strong>code splitting</strong>);</li>
+<li><strong>minifies</strong> the result: removes whitespace and comments and renames local variables to single letters;</li>
+<li>writes a source map for each output file.</li>
+</ol>
+<p>Steps 1 and 4 are the heart of it, and small enough to build yourself. This mini-bundler takes a map of module files, follows the imports from the entry, wraps each module in a function, and produces one script with a tiny <code>require</code> function inside:</p>
+<example file="mini-bundler.js">
+const files = {
+  "./main.js": `import { cartTotal } from "./cart.js";
+import { formatNaira } from "./format.js";
+console.log("Total:", formatNaira(cartTotal([{ priceKobo: 4500000, qty: 1 }, { priceKobo: 250000, qty: 3 }])));`,
+  "./cart.js": `export function cartTotal(items) {
+  return items.reduce((sum, item) => sum + item.priceKobo * item.qty, 0);
+}`,
+  "./format.js": `export function formatNaira(kobo) {
+  return "₦" + (kobo / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 });
+}
+export function formatDate(date) {
+  return date.toISOString().slice(0, 10);
+}`,
+};
+
+const importPattern = /import \{([^}]+)\} from "([^"]+)";/g;
+
+function collect(entry, order = [], used = new Map()) {
+  if (order.includes(entry)) return { order, used };
+  for (const [, names, from] of files[entry].matchAll(importPattern)) {
+    for (const name of names.split(",")) {
+      if (!used.has(from)) used.set(from, new Set());
+      used.get(from).add(name.trim());
+    }
+    collect(from, order, used);
+  }
+  order.push(entry);
+  return { order, used };
+}
+
+function transform(code) {
+  const exported = [...code.matchAll(/export function (\w+)/g)].map((m) => m[1]);
+  const body = code
+    .replace(importPattern, (_, names, from) => `const {${names}} = require("${from}");`)
+    .replaceAll("export function", "function");
+  return `${body}\nreturn { ${exported.join(", ")} };`;
+}
+
+function bundle(entry) {
+  const { order, used } = collect(entry);
+  const modules = order.map((id) => `  "${id}": function (require) {\n${transform(files[id])}\n  }`);
+  const runtime = `const cache = {};
+function require(id) {
+  if (!(id in cache)) cache[id] = modules[id](require);
+  return cache[id];
+}
+require("${entry}");`;
+  return { order, used, code: `const modules = {\n${modules.join(",\n")}\n};\n${runtime}` };
+}
+
+const { order, used, code } = bundle("./main.js");
+console.log("modules in dependency order:", order);
+for (const [file, names] of used) {
+  const all = [...files[file].matchAll(/export function (\w+)/g)].map((m) => m[1]);
+  console.log(`${file} unused exports:`, all.filter((name) => !names.has(name)));
+}
+console.log("bundle size:", code.length, "characters in one file");
+new Function(code)();
+</example>
+<output>
+modules in dependency order: [ './cart.js', './format.js', './main.js' ]
+./cart.js unused exports: []
+./format.js unused exports: [ 'formatDate' ]
+bundle size: 850 characters in one file
+Total: ₦52,500.00
+</output>
+<p>The bundle ran exactly like the three separate modules would. It also found <code>formatDate</code>, which nothing imports: a real bundler would leave it out of the output entirely. Real bundlers use a parser instead of regular expressions, handle every form of <code>import</code> and <code>export</code>, CSS, images and packages from <code>node_modules</code>, and are fast enough to rebuild in milliseconds on every save.</p>
+<p>Here is a real one. esbuild bundles and minifies three small modules of the shop (the cart, the formatter, and a <code>main.js</code> that calls both):</p>
+<shell>
+$ npx esbuild src/main.js --bundle --minify --sourcemap --sources-content=false --platform=node --format=esm --outfile=dist/app.js
+
+  dist/app.js      403b
+  dist/app.js.map  681b
+
+⚡ Done in 18ms
+$ cat dist/app.js
+function e(o){let r=0;for(let t of o){if(!Number.isInteger(t.qty)||t.qty&lt;1)throw new RangeError(`Invalid quantity for ${t.name}: ${t.qty}`);r+=t.priceKobo*t.qty}return r}function n(o){return"\u20A6"+(o/100).toLocaleString("en-NG",{minimumFractionDigits:2})}var a=[{name:"Sneakers",priceKobo:45e5,qty:1},{name:"Socks",priceKobo:25e4,qty:0}];console.log("Total:",n(e(a)));
+//# sourceMappingURL=app.js.map
+</shell>
+<p>One line, no module boundaries left, <code>cartTotal</code> renamed to <code>e</code>, <code>4_500_000</code> shortened to <code>45e5</code>, and <code>formatDate</code> gone (tree shaking). This is what production browser code looks like. The popular tools:</p>
+<ul>
+<li><strong>Vite</strong>: the usual choice for new front-end projects. A development server that serves your modules almost unbundled for instant reloads, and an optimised bundle for production.</li>
+<li><strong>esbuild</strong>: extremely fast bundler and transpiler, often used inside other tools.</li>
+<li><strong>Rollup</strong>: focused on clean output, popular for building libraries.</li>
+<li><strong>webpack</strong>: the older, very configurable standard, still in many existing projects.</li>
+</ul>
+<p>A Node.js server usually needs <strong>no bundler</strong>: Node.js reads <code>node_modules</code> and many files without trouble, and nobody downloads your server code. Some teams bundle servers anyway for faster cold starts in serverless platforms, but it is an optimisation, not a requirement.</p>
+<warn title="EVERYTHING IN A BROWSER BUNDLE IS PUBLIC">Bundlers replace <code>process.env.X</code> with its value at build time, because browsers have no environment variables. Look at what that does to a secret:
+<pre>$ npx esbuild src/pay.js --bundle --minify --define:process.env.PAYMENT_PUBLIC_KEY='"pk_test_public_example"' --define:process.env.PAYMENT_SECRET_KEY='"sk_test_do_not_ship_this"'
+(()=&gt;{var e="pk_test_public_example",c="sk_test_do_not_ship_this";console.log("checkout ready",e.slice(0,8),c.length);})();</pre>
+Both keys are now plain text in a file every visitor downloads. Vite only exposes variables whose names start with <code>VITE_</code> for exactly this reason. Public keys (made to be seen) may go into a browser bundle; secret keys stay on the server, always.</warn>
+</section>
+
+<section>
+<h2 id="source-maps">Source maps: back from the bundle</h2>
+<p>Now run that bundle. The cart contains socks with quantity 0, so <code>cartTotal</code> throws:</p>
+<shell>
+$ node dist/app.js
+file://~/shop-bundle/dist/app.js:1
+…
+RangeError: Invalid quantity for Socks: 0
+    at e (file://~/shop-bundle/dist/app.js:1:82)
+    at file://~/shop-bundle/dist/app.js:1:364
+…
+$ node --enable-source-maps dist/app.js
+~/shop-bundle/src/cart.js:5
+      throw new RangeError(`Invalid quantity for ${item.name}: ${item.qty}`);
+            ^
+
+RangeError: Invalid quantity for Socks: 0
+    at cartTotal (~/shop-bundle/src/cart.js:5:13)
+    at &lt;anonymous&gt; (~/shop-bundle/src/main.js:9:35)
+…
+</shell>
+<p>Without the map, the error is in function <code>e</code> at column 82 of line 1. With <code>--enable-source-maps</code>, Node.js read <code>app.js.map</code> and translated every position: function <code>cartTotal</code>, line 5 of <code>src/cart.js</code>, called from line 9 of <code>main.js</code>. It even printed the original source line. You can do the same from inside a program with <code>process.setSourceMapsEnabled(true)</code>, which affects modules loaded after the call. These are the two real files esbuild wrote:</p>
+<file name="dist/app.js" project="bundle">
+function e(o){let r=0;for(let t of o){if(!Number.isInteger(t.qty)||t.qty<1)throw new RangeError(`Invalid quantity for ${t.name}: ${t.qty}`);r+=t.priceKobo*t.qty}return r}function n(o){return"\u20A6"+(o/100).toLocaleString("en-NG",{minimumFractionDigits:2})}var a=[{name:"Sneakers",priceKobo:45e5,qty:1},{name:"Socks",priceKobo:25e4,qty:0}];console.log("Total:",n(e(a)));
+//# sourceMappingURL=app.js.map
+</file>
+<file name="dist/app.js.map" project="bundle">
+{
+  "version": 3,
+  "sources": ["../src/cart.js", "../src/format.js", "../src/main.js"],
+  "mappings": "AAAO,SAASA,EAAUC,EAAO,CAC/B,IAAIC,EAAQ,EACZ,QAAWC,KAAQF,EAAO,CACxB,GAAI,CAAC,OAAO,UAAUE,EAAK,GAAG,GAAKA,EAAK,IAAM,EAC5C,MAAM,IAAI,WAAW,wBAAwBA,EAAK,IAAI,KAAKA,EAAK,GAAG,EAAE,EAEvED,GAASC,EAAK,UAAYA,EAAK,GACjC,CACA,OAAOD,CACT,CCTO,SAASE,EAAYC,EAAM,CAChC,MAAO,UAAOA,EAAO,KAAK,eAAe,QAAS,CAAE,sBAAuB,CAAE,CAAC,CAChF,CCCA,IAAMC,EAAO,CACX,CAAE,KAAM,WAAY,UAAW,KAAW,IAAK,CAAE,EACjD,CAAE,KAAM,QAAS,UAAW,KAAS,IAAK,CAAE,CAC9C,EAEA,QAAQ,IAAI,SAAUC,EAAYC,EAAUF,CAAI,CAAC,CAAC",
+  "names": ["cartTotal", "items", "total", "item", "formatNaira", "kobo", "cart", "formatNaira", "cartTotal"]
+}
+</file>
+<p>The map lists the original files (<code>sources</code>), the original names that were shortened (<code>names</code>), and <code>mappings</code>: a compact encoding of "this position in the output came from that position in that source file". This program imports the bundle twice, once before and once after turning source maps on, and prints the top of each stack trace:</p>
+<example file="trace.js" project="bundle" browser="no">
+async function topFrames(url) {
+  try {
+    await import(url);
+  } catch (error) {
+    return error.stack
+      .split("\n")
+      .slice(0, 3)
+      .map((line) => line.trim().replaceAll(`file://${import.meta.dirname}/`, "").replaceAll(`${import.meta.dirname}/`, "").replace(/\?\w+/, ""));
+  }
+}
+
+console.log("without source maps:", await topFrames("./dist/app.js?first"));
+
+process.setSourceMapsEnabled(true);
+console.log("with source maps:   ", await topFrames("./dist/app.js?second"));
+</example>
+<output>
+without source maps: [
+  'RangeError: Invalid quantity for Socks: 0',
+  'at e (dist/app.js:1:82)',
+  'at dist/app.js:1:364'
+]
+with source maps:    [
+  'RangeError: Invalid quantity for Socks: 0',
+  'at cartTotal (src/cart.js:5:13)',
+  'at <anonymous> (src/main.js:9:35)'
+]
+</output>
+<p>The <code>?first</code> and <code>?second</code> make Node.js load the bundle as two separate modules, since a module is only loaded once per URL. The source files do not even need to exist for the mapping to work: the positions and names come from the map alone. How <code>mappings</code> is decoded is shown step by step in <a href="/learn/debug-tools#source-maps">Debugging tools</a>.</p>
+<ul>
+<li><strong>Servers:</strong> ship the <code>.map</code> files and start Node.js with <code>--enable-source-maps</code>, so logs show real file names and lines.</li>
+<li><strong>Browsers:</strong> DevTools loads maps automatically. Many teams upload maps to their error-tracking service instead of publishing them, because a map can contain your full original source (the <code>sourcesContent</code> field, left out above with <code>--sources-content=false</code>).</li>
+</ul>
+</section>
+
+<section>
+<h2 id="config">Environment configuration</h2>
+<p><a href="/learn/node-runtime#env">What Node.js is</a> introduced <code>process.env</code> and <code>--env-file</code>. Real projects need a little more: several files, clear precedence, and validation at startup. Take a shared <code>.env</code> and a personal <code>.env.local</code> that is not committed:</p>
+<shell>
+$ cat .env
+PORT=3000
+DATABASE_URL=postgres://localhost:5432/shop
+LOG_LEVEL=info
+$ cat .env.local
+LOG_LEVEL=debug
+$ node --env-file=.env --env-file=.env.local show.js
+3000 debug (NODE_ENV not set)
+$ node --env-file=.env.local --env-file=.env show.js
+3000 info (NODE_ENV not set)
+$ LOG_LEVEL=warn node --env-file=.env --env-file=.env.local show.js
+3000 warn (NODE_ENV not set)
+$ node --env-file-if-exists=.env.production show.js
+.env.production not found. Continuing without it.
+undefined undefined (NODE_ENV not set)
+</shell>
+<p><code>show.js</code> prints <code>PORT</code>, <code>LOG_LEVEL</code> and <code>NODE_ENV</code>. The rules: a later file overrides an earlier one, and a variable already set in the real environment beats every file. That is what lets a hosting platform override anything without touching files. <code>NODE_ENV</code> is a convention, not a Node.js feature: many libraries behave differently when it is <code>"production"</code> (less logging, more caching), so set it on your servers.</p>
+<p>A program can also load a file itself with <code>process.loadEnvFile()</code>, which follows the same rule: variables that are already set are not overwritten.</p>
+<file name=".env" project="envfile">
+PORT=3000
+LOG_LEVEL=info
+</file>
+<example file="load-env.js" project="envfile" browser="no">
+process.env.LOG_LEVEL = "warn";
+process.loadEnvFile(".env");
+
+console.log(process.env.PORT, process.env.LOG_LEVEL, typeof process.env.PORT);
+</example>
+<output>
+3000 warn string
+</output>
+<p>The first line stands in for a hosting platform that set <code>LOG_LEVEL</code>. The file filled in <code>PORT</code> but did not overwrite <code>LOG_LEVEL</code>, and <code>PORT</code> arrived as the string <code>"3000"</code>, not a number.</p>
+<p>Values in <code>process.env</code> are always strings, and a missing value is <code>undefined</code>. Reading them all over the code invites the staging-uses-production-database bug from the start of the lesson. The fix is one module that reads every setting once, converts and checks it, and refuses to start when something is wrong. <code>util.parseEnv</code> parses <code>.env</code> text the same way <code>--env-file</code> does, which makes the loader easy to test:</p>
+<example file="config.js" browser="no">
+import { parseEnv } from "node:util";
+
+const LOG_LEVELS = ["debug", "info", "warn", "error"];
+
+function loadConfig(env) {
+  const errors = [];
+  const port = Number(env.PORT ?? 3000);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) errors.push(`PORT must be a port number, got "${env.PORT}"`);
+  if (!env.DATABASE_URL?.startsWith("postgres://")) errors.push("DATABASE_URL must be a postgres:// URL");
+  const logLevel = env.LOG_LEVEL ?? "info";
+  if (!LOG_LEVELS.includes(logLevel)) errors.push(`LOG_LEVEL must be one of ${LOG_LEVELS.join(", ")}, got "${logLevel}"`);
+  if (!env.PAYMENT_SECRET_KEY) errors.push("PAYMENT_SECRET_KEY is required");
+  if (errors.length > 0) return { ok: false, errors };
+  return { ok: true, config: Object.freeze({ port, databaseUrl: env.DATABASE_URL, logLevel }) };
+}
+
+const staging = parseEnv(`PORT=30O0
+# DATABASE_URL was forgotten
+LOG_LEVEL=verbose
+`);
+console.log(loadConfig(staging));
+
+const good = parseEnv(`PORT=4000
+DATABASE_URL="postgres://staging-db:5432/shop"
+PAYMENT_SECRET_KEY=replace-me
+`);
+console.log(loadConfig(good));
+</example>
+<output>
+{
+  ok: false,
+  errors: [
+    'PORT must be a port number, got "30O0"',
+    'DATABASE_URL must be a postgres:// URL',
+    'LOG_LEVEL must be one of debug, info, warn, error, got "verbose"',
+    'PAYMENT_SECRET_KEY is required'
+  ]
+}
+{
+  ok: true,
+  config: {
+    port: 4000,
+    databaseUrl: 'postgres://staging-db:5432/shop',
+    logLevel: 'info'
+  }
+}
+</output>
+<ul>
+<li>All four problems are reported at once, not one per restart. <code>30O0</code> has a letter O instead of a zero, exactly the kind of typo that otherwise surfaces hours later.</li>
+<li>No default for <code>DATABASE_URL</code> or the secret: a missing database address must stop the server, never fall back to some other database.</li>
+<li>The secret is required but not part of the printed config. Configuration objects end up in logs; keep secrets out of them. <code>Object.freeze</code> stops code elsewhere from changing settings at run time.</li>
+<li>In the real server: <code>const result = loadConfig(process.env); if (!result.ok) { console.error(result.errors.join("\n")); process.exit(1); }</code>. <a href="/learn/zudo-config">ZudoJS config</a> provides this layering and validation as a package.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="scripts">One command for everything: package scripts</h2>
+<p>Each tool has its own command and flags. Nobody should have to remember them. npm scripts (from <a href="/learn/npm-packages#scripts">npm and packages</a>) give them names, and a <code>check</code> script runs them all, in the order that fails fastest:</p>
+<file name="package.json" project="scripts">
+{
+  "name": "cart-app",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "npm run lint && npm run format:check && npm test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.11.0",
+    "globals": "^17.12.0",
+    "prettier": "^3.9.9"
+  }
+}
+</file>
+<shell>
+$ npm run check
+
+&gt; cart-app@1.0.0 check
+&gt; npm run lint &amp;&amp; npm run format:check &amp;&amp; npm test
+
+
+&gt; cart-app@1.0.0 lint
+&gt; eslint .
+
+
+&gt; cart-app@1.0.0 format:check
+&gt; prettier --check .
+
+Checking formatting...
+All matched files use Prettier code style!
+
+&gt; cart-app@1.0.0 test
+&gt; node --test
+
+✔ applies SAVE10 (6.740574ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 594.490732
+</shell>
+<ul>
+<li><code>&amp;&amp;</code> runs the next command only if the previous one succeeded, so the first failure stops the check with a non-zero exit code.</li>
+<li>The tools are <strong>dev dependencies</strong> with versions in the lockfile, so everyone, and the CI server, runs the same ESLint and Prettier. A tool installed globally on one laptop is a different version on the next.</li>
+<li>The same <code>npm run check</code> runs on every pull request in CI (continuous integration). Locally, many teams also run the fast checks before each commit with a Git hook (tools such as <code>husky</code> and <code>lint-staged</code> do this for only the changed files).</li>
+</ul>
+</section>
+
+<section>
+<h2 id="editor">Editor integration</h2>
+<p>The fastest feedback is in the editor, while you type. In VS Code, the ESLint extension underlines problems as you write, and the Prettier extension formats on save. Commit the settings so the whole team gets the same behaviour:</p>
+<file name=".vscode/settings.json" project="editor">
+{
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  }
+}
+</file>
+<file name=".vscode/extensions.json" project="editor">
+{
+  "recommendations": ["dbaeumer.vscode-eslint", "esbenp.prettier-vscode"]
+}
+</file>
+<p><code>extensions.json</code> makes VS Code offer the extensions to anyone who opens the project. An <code>.editorconfig</code> file sets basics such as indentation and line endings for every editor, not only VS Code:</p>
+<file name=".editorconfig" project="editor">
+root = true
+
+[*]
+indent_style = space
+indent_size = 2
+end_of_line = lf
+insert_final_newline = true
+</file>
+<p>The autocompletion and error squiggles you see in JavaScript files come from the TypeScript <strong>language server</strong>, even in plain JavaScript projects. It reads JSDoc comments too, and adding <code>// @ts-check</code> at the top of a <code>.js</code> file turns on real type errors for that file, a gentle first step towards <a href="/learn/ts-setup">TypeScript</a>.</p>
+<p>The editor is a convenience, not the gate. Someone will use a different editor, or have the extension switched off. CI running <code>npm run check</code> is what actually guarantees the rules hold.</p>
+</section>
+
+<section>
+<h2 id="failures">Failure cases and production concerns</h2>
+<ul>
+<li><strong>Tools that fight.</strong> A linter formatting rule and Prettier disagree, and saving the file flips it back and forth. Let one tool own each job.</li>
+<li><strong>Linting generated files.</strong> <code>dist/</code> is full of minified code with thousands of "problems". Ignore build output: <code>{ ignores: ["dist/"] }</code> as the first object in <code>eslint.config.js</code>, and a <code>.prettierignore</code>.</li>
+<li><strong>Different versions in different places.</strong> <code>npx eslint</code> uses the project's copy if there is one, and downloads the latest otherwise. Always install tools as dev dependencies so the lockfile pins them.</li>
+<li><strong>Slow checks get skipped.</strong> If <code>npm run check</code> takes minutes, people stop running it. <code>eslint --cache</code> only re-checks changed files; run the slowest tests in CI only.</li>
+<li><strong>Warnings nobody reads.</strong> Hundreds of warnings hide the one that matters. Either fix a rule's warnings and make it an error, or turn it off.</li>
+<li><strong>Source maps in the wrong place.</strong> Without them, production errors are unreadable; published carelessly, they reveal your source. Decide deliberately where they go.</li>
+<li><strong>Secrets in bundles and config in code.</strong> Anything bundled for the browser is public. Configuration comes from the environment, validated once at startup.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Compare .env with .env.example">
+<p>New developers copy <code>.env.example</code> to <code>.env</code>, and six months later the two have drifted apart. Write <code>compareEnv(envText, exampleText)</code> that uses <code>util.parseEnv</code> and reports which keys are missing from <code>.env</code> and which keys in <code>.env</code> are not documented in the example.</p>
+<solution>
+<example file="compare-env.js" browser="no">
+import { parseEnv } from "node:util";
+
+function compareEnv(envText, exampleText) {
+  const env = Object.keys(parseEnv(envText));
+  const example = Object.keys(parseEnv(exampleText));
+  return {
+    missing: example.filter((key) => !env.includes(key)),
+    undocumented: env.filter((key) => !example.includes(key)),
+  };
+}
+
+const example = "PORT=3000\nDATABASE_URL=\nPAYMENT_SECRET_KEY=\nLOG_LEVEL=info\n";
+const local = "PORT=4000\nDATABASE_URL=postgres://localhost:5432/shop\nLOG_LEVEL=debug\nFEATURE_WALLET=1\n";
+console.log(compareEnv(local, example));
+</example>
+<output>
+{
+  missing: [ 'PAYMENT_SECRET_KEY' ],
+  undocumented: [ 'FEATURE_WALLET' ]
+}
+</output>
+<p>Run a script like this in <code>npm run check</code>, and <code>.env.example</code> stays an accurate list of every setting the program needs. It only compares names, so it never prints a secret value.</p>
+</solution>
+</exercise>
+<exercise title="Detect a circular import in the mini-bundler">
+<p>Real bundlers warn about <strong>circular imports</strong> (a imports b, b imports a), because the order in which such modules run is easy to get wrong. Write <code>findCycle(files, entry)</code> for the mini-bundler's <code>files</code> format that returns the first cycle it finds as a list of module names, or <code>null</code>.</p>
+<solution>
+<example file="find-cycle.js">
+const importPattern = /import \{[^}]+\} from "([^"]+)";/g;
+
+function findCycle(files, entry, path = []) {
+  if (path.includes(entry)) return [...path.slice(path.indexOf(entry)), entry];
+  for (const [, from] of files[entry].matchAll(importPattern)) {
+    const cycle = findCycle(files, from, [...path, entry]);
+    if (cycle) return cycle;
+  }
+  return null;
+}
+
+const shop = {
+  "./main.js": 'import { checkout } from "./checkout.js";',
+  "./checkout.js": 'import { applyCoupon } from "./coupons.js";',
+  "./coupons.js": 'import { cartTotal } from "./checkout.js";',
+};
+console.log(findCycle(shop, "./main.js"));
+
+const clean = { "./main.js": 'import { a } from "./a.js";', "./a.js": "export function a() {}" };
+console.log(findCycle(clean, "./main.js"));
+</example>
+<output>
+[ './checkout.js', './coupons.js', './checkout.js' ]
+null
+</output>
+<p>The <code>path</code> holds the chain of imports currently being followed. Meeting a module that is already on the path means the chain loops. The usual fix is to move the shared code (here, the cart total) into a third module that both import.</p>
+</solution>
+</exercise>
+<exercise title="Choose the tools">
+<p>A two-person team builds a Node.js API in plain JavaScript and a small browser page. Which tools from this lesson would you set up on day one, and which would you leave for later? Give a reason for each.</p>
+<solution>
+<ul>
+<li><strong>Day one:</strong> Prettier and ESLint (cheap, and adding them later means one huge reformatting commit and hundreds of old warnings); a <code>check</code> script and the same check in CI; <code>--env-file</code> with a validated config module and a <code>.env.example</code>; <code>node --test</code> for tests.</li>
+<li><strong>Soon:</strong> <code>// @ts-check</code> or TypeScript, once the code base grows beyond what two people can keep in their heads.</li>
+<li><strong>Only when needed:</strong> a bundler. A small page with a few modules can use native <code>&lt;script type="module"&gt;</code> directly; add Vite when you need npm packages in the browser or the page grows. The API needs no bundler at all.</li>
+</ul>
+<p>Every tool has a cost: configuration, updates, and time in every check. Add a tool when you can name the problem it solves for you.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Tools fall into a few categories: formatters (layout), linters (suspicious patterns), type checkers (shapes), tests (meaning), transpilers, bundlers, source maps, configuration and task runners.</li>
+<li>Prettier ends style debates: <code>--write</code> locally, <code>--check</code> in CI. ESLint parses code into a syntax tree and reports likely bugs; <code>--fix</code> only applies safe changes.</li>
+<li>Transpilers rewrite syntax but cannot add missing functions; checking types is a separate job.</li>
+<li>Bundlers follow imports from an entry, tree-shake, join and minify. Browser apps need them; Node.js servers usually do not. Everything in a browser bundle is public.</li>
+<li>Source maps translate generated positions back to your files: <code>--enable-source-maps</code> for Node.js, automatic in DevTools.</li>
+<li>Layer <code>.env</code> files, let the real environment win, and validate all settings once at startup with no defaults for secrets or database addresses.</li>
+<li>Pin tools as dev dependencies, run them all with <code>npm run check</code>, share editor settings, and let CI be the gate.</li>
+</ul>
+<p>Next, <a href="/learn/debug-method">The debugging method</a>: what to do when the tools pass, the tests pass, and the program is still wrong.</p>
+</section>

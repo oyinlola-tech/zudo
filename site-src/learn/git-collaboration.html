@@ -1,0 +1,796 @@
+---
+title: Professional Git
+description: Work like a professional team: issues, pull requests, code review, merge versus rebase, conflicts during a rebase, tags, releases, changelogs and open-source contributions.
+minutes: 55
+youNeed: Git and GitHub, and The npm ecosystem in depth
+youBuild: A simulated team repository with a reviewed, rebased and squash-merged fix, a tagged release, a generated changelog, and a pull request from a fork
+keywords: pull request, code review, git rebase vs merge, force-with-lease, rebase conflict, zdiff3, squash merge, conventional commits, git tag annotated, git describe, semantic versioning release, changelog, codeowners, github issues fixes keyword, fork upstream remote, contributing to open source
+objectives: Turn an issue into a small, well-described pull request with meaningful commits | Choose between merge, rebase and squash, and rebase a branch safely with --force-with-lease | Resolve a conflict during a rebase and read three-way conflict markers | Give and receive code review that improves the code without hurting the people | Tag a release, derive the next semantic version and a changelog from commit messages | Contribute to an open-source project through a fork
+---
+<section>
+<h2 id="problem">From "my code" to "our code"</h2>
+<p>In <a href="/learn/git">Git and GitHub</a> you worked mostly alone: commits, a branch, one conflict, a push. Now picture the shop's backend three months later, with three developers:</p>
+<ul>
+<li>Someone pushed straight to <code>main</code> on Friday evening, and checkout was broken all weekend. Nobody else had looked at the change.</li>
+<li>A pull request has 40 commits called "fix", "fix again" and "wip". The reviewer gives up and clicks Approve.</li>
+<li>A customer reports a bug. Which version is running on the server? Was the fix in it? Nobody can say.</li>
+<li>Two branches changed the same function, and the developer who merged last "resolved" the conflict by deleting the other person's work.</li>
+</ul>
+<p>None of these are Git problems. Git did exactly what it was told. They are <strong>process</strong> problems, and professional teams solve them with a small set of habits: every change goes through a reviewed pull request, history stays readable, conflicts are resolved with care, and every release is tagged with a version and a changelog. This lesson walks through all of them with real repositories on your computer.</p>
+<figure class="lx-diagram">
+<pre>
+ issue #12          branch                 pull request #13            main
+ "SAVE10 not   -->  fix/save10-discount -> review + CI checks  -->  squash merge
+  applied"          small commits           comments, fixes            |
+                                                                      v
+                                           CHANGELOG.md  &lt;--  tag v1.1.0, release
+</pre>
+<figcaption>The collaboration loop: every change starts as an issue and ends in a tagged release.</figcaption>
+</figure>
+<p>To make it real without a GitHub account, "GitHub" is played by a <strong>bare repository</strong>: a repository with no working files, only history, which is exactly what a server stores. Two clones of it are two developers, Ada and Bola. Every command and output below is from a real session; only the folder path is shortened to <code>~/team</code>.</p>
+<shell>
+$ git init --bare github/shop-api.git
+Initialized empty Git repository in ~/team/github/shop-api.git/
+$ git clone github/shop-api.git ada
+Cloning into 'ada'...
+warning: You appear to have cloned an empty repository.
+done.
+$ cd ada
+$ git add cart.js package.json
+$ git commit -m "feat: add cart total"
+[main (root-commit) 0522a2e] feat: add cart total
+ 2 files changed, 8 insertions(+)
+ create mode 100644 cart.js
+ create mode 100644 package.json
+$ git tag -a v1.0.0 -m "First release"
+$ git push origin main --follow-tags
+To ~/team/github/shop-api.git
+ * [new branch]      main -&gt; main
+ * [new tag]         v1.0.0 -&gt; v1.0.0
+$ cd ..
+$ git clone github/shop-api.git bola
+Cloning into 'bola'...
+done.
+$ cd bola
+$ git config user.name "Bola Adeyemi"
+$ git config user.email "bola@example.com"
+</shell>
+<p><code>git config</code> without <code>--global</code> sets Bola's name for this one repository only. You will meet the tag <code>v1.0.0</code> again in the <a href="#releases">releases</a> section.</p>
+</section>
+
+<section>
+<h2 id="issues">Issues: work starts with a problem statement</h2>
+<p>An <strong>issue</strong> is a tracked problem or request, with a number, a discussion, labels and an owner. GitHub, GitLab and every other forge have them. A good bug report saves hours, because the person fixing it can reproduce the problem without asking questions. Here is issue #12:</p>
+<blockquote>
+<p><strong>SAVE10 discount is accepted but not applied</strong></p>
+<p><strong>What happens:</strong> At checkout, entering <code>SAVE10</code> shows "Code accepted", but the total stays ₦7,500.00.</p>
+<p><strong>What should happen:</strong> The total should be ₦6,750.00 (10% off).</p>
+<p><strong>Steps:</strong> Add 3 pairs of socks at ₦2,500. Enter <code>SAVE10</code>. Look at the total.</p>
+<p><strong>Where:</strong> production, version 1.0.0, since the discount feature launched.</p>
+</blockquote>
+<p>What, expected, steps, where: four short parts. Labels such as <code>bug</code>, <code>good first issue</code> or <code>priority: high</code> help people find work, and many projects ship <strong>issue templates</strong> that ask for exactly these fields.</p>
+<p>Issues also connect to code. A commit message or pull request description that says <code>Fixes #12</code> (or <code>Closes #12</code>, <code>Resolves #12</code>) makes GitHub close the issue automatically when the change reaches the main branch, and links the two forever. Finding those references is simple text processing:</p>
+<example file="closing-keywords.js">
+function closedIssues(text) {
+  const pattern = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
+  return [...text.matchAll(pattern)].map((match) => Number(match[1]));
+}
+
+const description = `Apply the SAVE10 discount in cartTotal.
+
+Fixes #12. Also closes #9, which was the same bug reported from the mobile app.
+Related to #15 (delivery fees), but does not fix it.`;
+
+console.log(closedIssues(description));
+</example>
+<output>
+[ 12, 9 ]
+</output>
+<p>"Related to #15" links without closing. Choose the words deliberately: an issue closed by accident is an issue forgotten.</p>
+</section>
+
+<section>
+<h2 id="commits">A branch with meaningful commits</h2>
+<p>Bola takes issue #12. He creates a branch named after the work, fixes the function and commits:</p>
+<shell>
+$ git switch -c fix/save10-discount
+Switched to a new branch 'fix/save10-discount'
+$ git diff
+diff --git a/cart.js b/cart.js
+index 26eeef5..6095b70 100644
+--- a/cart.js
++++ b/cart.js
+@@ -1,3 +1,4 @@
+-export function cartTotal(items) {
+-  return items.reduce((sum, item) =&gt; sum + item.priceKobo * item.qty, 0);
++export function cartTotal(items, discountCode) {
++  const subtotal = items.reduce((sum, item) =&gt; sum + item.priceKobo * item.qty, 0);
++  return discountCode === "SAVE10" ? Math.round(subtotal * 0.9) : subtotal;
+ }
+$ git commit -am "fix: apply SAVE10 discount to cart total" -m "The discount code was accepted at checkout but never applied." -m "Fixes #12"
+[fix/save10-discount bb6b965] fix: apply SAVE10 discount to cart total
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+$ git push -u origin fix/save10-discount
+To ~/team/github/shop-api.git
+ * [new branch]      fix/save10-discount -&gt; fix/save10-discount
+branch 'fix/save10-discount' set up to track 'origin/fix/save10-discount'.
+</shell>
+<p>Each <code>-m</code> becomes a paragraph. The first is the <strong>subject</strong>, the rest the <strong>body</strong>. Good commit messages follow a few rules that make history useful months later:</p>
+<ul>
+<li>The subject says <em>what</em> the commit does, in the imperative ("apply", not "applied" or "applies"), in about 50 to 72 characters, with no full stop. Read it as "If applied, this commit will <em>apply SAVE10 discount to cart total</em>".</li>
+<li>The body says <em>why</em>. The diff already shows how.</li>
+<li>One logical change per commit. "Fix discount and rename variables and update README" is three commits.</li>
+</ul>
+<p>The subject here also follows <strong>Conventional Commits</strong>, a widely used format: a type, an optional scope in brackets, a colon, and the description. The common types are <code>feat</code> (new feature), <code>fix</code> (bug fix), <code>docs</code>, <code>refactor</code>, <code>test</code> and <code>chore</code>. A <code>!</code> after the type, or a <code>BREAKING CHANGE:</code> line in the body, marks a change that breaks compatibility. The point of the format is that tools can read it, as you will see when you <a href="#releases">compute a version number</a>. A team usually checks messages automatically:</p>
+<example file="commit-lint.js">
+const TYPES = ["feat", "fix", "docs", "refactor", "test", "chore", "perf", "build", "ci"];
+
+function lintSubject(subject) {
+  const problems = [];
+  const match = subject.match(/^(\w+)(\([\w-]+\))?(!)?: (.+)$/);
+  if (!match) return ["not in the form type(scope): description"];
+  const [, type, , , description] = match;
+  if (!TYPES.includes(type)) problems.push(`unknown type "${type}"`);
+  if (subject.length > 72) problems.push(`too long (${subject.length} > 72)`);
+  if (description.endsWith(".")) problems.push("ends with a full stop");
+  if (/^(added|fixed|updated|changed)\b/i.test(description)) problems.push("use the imperative: add, fix, update");
+  return problems;
+}
+
+const subjects = [
+  "fix: apply SAVE10 discount to cart total",
+  "feat(delivery)!: charge delivery by weight instead of state",
+  "fixed the discount bug.",
+  "Fix: added discount",
+  "wip",
+];
+for (const subject of subjects) {
+  const problems = lintSubject(subject);
+  console.log(problems.length ? "FAIL" : "PASS", JSON.stringify(subject), problems.join("; "));
+}
+</example>
+<output>
+PASS "fix: apply SAVE10 discount to cart total"
+PASS "feat(delivery)!: charge delivery by weight instead of state"
+FAIL "fixed the discount bug." not in the form type(scope): description
+FAIL "Fix: added discount" unknown type "Fix"; use the imperative: add, fix, update
+FAIL "wip" not in the form type(scope): description
+</output>
+<p>Tools such as commitlint run this kind of check in a Git hook or in CI. The rules are only useful if they are automatic; nobody enforces them by hand for long.</p>
+</section>
+
+<section>
+<h2 id="merge-rebase">Merge or rebase?</h2>
+<p>While Bola worked, Ada's delivery-fee change was merged into <code>main</code>. Bola fetches and looks at the whole graph:</p>
+<shell>
+$ git fetch
+From ~/team/github/shop-api
+   0522a2e..be838f2  main       -&gt; origin/main
+$ git log --oneline --graph --all
+* be838f2 feat: add delivery fee by state
+| * bb6b965 fix: apply SAVE10 discount to cart total
+|/
+* 0522a2e feat: add cart total
+</shell>
+<p>His branch no longer starts at the tip of <code>main</code>. Before the pull request is merged, the branch should include the latest <code>main</code>, so that CI tests the combination that will actually exist. There are two ways to get there. To compare them, the same branch was copied into a second folder, <code>bola-merge</code>, and each copy uses one way:</p>
+<shell>
+$ cd bola-merge
+$ git merge origin/main -m "Merge branch 'main' into fix/save10-discount"
+Merge made by the 'ort' strategy.
+ delivery.js | 3 +++
+ 1 file changed, 3 insertions(+)
+ create mode 100644 delivery.js
+$ git log --oneline --graph
+*   e6b7328 Merge branch 'main' into fix/save10-discount
+|\
+| * be838f2 feat: add delivery fee by state
+* | bb6b965 fix: apply SAVE10 discount to cart total
+|/
+* 0522a2e feat: add cart total
+$ cd ../bola
+$ git rebase origin/main
+Successfully rebased and updated refs/heads/fix/save10-discount.
+$ git log --oneline --graph
+* 586f4ea fix: apply SAVE10 discount to cart total
+* be838f2 feat: add delivery fee by state
+* 0522a2e feat: add cart total
+</shell>
+<ul>
+<li><strong>Merge</strong> adds a new commit with two parents that joins the lines. Nothing existing changes. History shows exactly what happened, including the fork in the road.</li>
+<li><strong>Rebase</strong> takes your commits and replays them, one by one, on top of the new base, as if you had started your work today. History becomes a straight line. But look at the hash: <code>bb6b965</code> became <code>586f4ea</code>. A rebased commit is a <em>new</em> commit with the same change; the old one is abandoned.</li>
+</ul>
+<p>Because the rebase replaced commits that were already on the server, a normal push is refused:</p>
+<shell>
+$ git push
+To ~/team/github/shop-api.git
+ ! [rejected]        fix/save10-discount -&gt; fix/save10-discount (non-fast-forward)
+error: failed to push some refs to '~/team/github/shop-api.git'
+hint: Updates were rejected because the tip of your current branch is behind
+hint: its remote counterpart. If you want to integrate the remote changes,
+hint: use 'git pull' before pushing again.
+hint: See the 'Note about fast-forwards' in 'git push --help' for details.
+$ git push --force-with-lease
+To ~/team/github/shop-api.git
+ + bb6b965...586f4ea fix/save10-discount -&gt; fix/save10-discount (forced update)
+</shell>
+<p>Ignore the hint here. <code>git pull</code> would merge the <em>old</em> commits back into the rebased ones and give you both copies. After a rebase you <strong>mean</strong> to replace the remote branch, so you force the push, and you use <code>--force-with-lease</code>, never plain <code>--force</code>. You will see why in a moment.</p>
+<reason title="Merge or rebase this branch?">
+<p>Decide for each situation, and say what could go wrong with the other choice:</p>
+<ol>
+<li>Your own feature branch, pushed only so that the pull request exists, is 5 commits behind <code>main</code>.</li>
+<li><code>main</code> itself is behind the server (a teammate merged a pull request).</li>
+<li>A long-running <code>release/2.0</code> branch that four people commit to needs the latest fixes from <code>main</code>.</li>
+<li>Your branch has 12 commits: 3 real steps and 9 called "fix typo" or "wip".</li>
+</ol>
+<answer>
+<ol>
+<li><strong>Rebase</strong> (or merge, if your team prefers). It is your branch; replacing its commits only affects you, and the history reads cleanly.</li>
+<li><strong>Neither by hand: pull.</strong> <code>git pull</code> fast-forwards <code>main</code> when you have no local commits on it, which you should not. Never rebase <code>main</code> itself.</li>
+<li><strong>Merge.</strong> This is the golden rule of rebasing: <em>never rebase commits other people have based work on.</em> Rebasing a shared branch gives everyone else's copy a history that no longer exists on the server, and their next pull duplicates or loses work.</li>
+<li>Clean it up before review: <code>git rebase -i origin/main</code> lets you squash the "wip" commits into the real ones and reword messages. Or let the pull request be <strong>squash-merged</strong> (below), which turns the whole branch into one commit on <code>main</code>.</li>
+</ol>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="rebase-conflict">A conflict during a rebase</h2>
+<p>Meanwhile, Ada refactors the cart on <code>main</code>, changing the very line Bola's fix also changed. Before fetching, Bola switches on a more informative conflict style, <code>zdiff3</code>, which also shows what the lines looked like <em>before</em> either side changed them:</p>
+<shell>
+$ git config merge.conflictStyle zdiff3
+$ git fetch
+From ~/team/github/shop-api
+   be838f2..a7f6522  main       -&gt; origin/main
+$ git rebase origin/main
+Auto-merging cart.js
+CONFLICT (content): Merge conflict in cart.js
+error: could not apply 586f4ea... fix: apply SAVE10 discount to cart total
+hint: Resolve all conflicts manually, mark them as resolved with
+hint: "git add/rm &lt;conflicted_files&gt;", then run "git rebase --continue".
+hint: You can instead skip this commit: run "git rebase --skip".
+hint: To abort and get back to the state before "git rebase", run "git rebase --abort".
+hint: Disable this message with "git config set advice.mergeConflict false"
+Could not apply 586f4ea... # fix: apply SAVE10 discount to cart total
+$ cat cart.js
+&lt;&lt;&lt;&lt;&lt;&lt;&lt; HEAD
+const lineTotal = (item) =&gt; item.priceKobo * item.qty;
+
+export function cartTotal(items) {
+  return items.reduce((sum, item) =&gt; sum + lineTotal(item), 0);
+||||||| parent of 586f4ea (fix: apply SAVE10 discount to cart total)
+export function cartTotal(items) {
+  return items.reduce((sum, item) =&gt; sum + item.priceKobo * item.qty, 0);
+=======
+export function cartTotal(items, discountCode) {
+  const subtotal = items.reduce((sum, item) =&gt; sum + item.priceKobo * item.qty, 0);
+  return discountCode === "SAVE10" ? Math.round(subtotal * 0.9) : subtotal;
+&gt;&gt;&gt;&gt;&gt;&gt;&gt; 586f4ea (fix: apply SAVE10 discount to cart total)
+}
+</shell>
+<p>Three versions of the same lines, and the middle one is the key:</p>
+<ul>
+<li>Between <code>&lt;&lt;&lt;&lt;&lt;&lt;&lt; HEAD</code> and <code>|||||||</code>: the new base, Ada's refactor on <code>main</code>.</li>
+<li>Between <code>|||||||</code> and <code>=======</code>: the <strong>original</strong> lines both sides started from.</li>
+<li>Between <code>=======</code> and <code>&gt;&gt;&gt;&gt;&gt;&gt;&gt;</code>: Bola's commit being replayed.</li>
+</ul>
+<p>Comparing each side with the original shows what each person <em>meant</em>: Ada extracted <code>lineTotal</code>; Bola added a <code>discountCode</code> parameter and a <code>subtotal</code>. A correct resolution keeps <strong>both intentions</strong>, not one side's text. Deleting Ada's side because "mine is newer" is exactly how work gets lost in the opening story.</p>
+<warn title="OURS AND THEIRS ARE SWAPPED IN A REBASE">During a merge, <code>HEAD</code> ("ours") is your branch. During a rebase, Git is replaying your commits onto <code>main</code>, so <code>HEAD</code> is <em>main</em> and your own commit is "theirs". Commands like <code>git checkout --ours cart.js</code> therefore pick the opposite side from what you would expect. Read the labels on the markers instead of trusting the words.</warn>
+<p>A conflict marker is just text, so a program can pull the three versions apart. This one parses the real conflict above:</p>
+<example file="conflict-parts.js">
+const file = `<<<<<<< HEAD
+const lineTotal = (item) => item.priceKobo * item.qty;
+
+export function cartTotal(items) {
+  return items.reduce((sum, item) => sum + lineTotal(item), 0);
+||||||| parent of 586f4ea (fix: apply SAVE10 discount to cart total)
+export function cartTotal(items) {
+  return items.reduce((sum, item) => sum + item.priceKobo * item.qty, 0);
+=======
+export function cartTotal(items, discountCode) {
+  const subtotal = items.reduce((sum, item) => sum + item.priceKobo * item.qty, 0);
+  return discountCode === "SAVE10" ? Math.round(subtotal * 0.9) : subtotal;
+>>>>>>> 586f4ea (fix: apply SAVE10 discount to cart total)
+}`;
+
+function parseConflict(text) {
+  const parts = { head: [], base: [], incoming: [] };
+  let section = null;
+  for (const line of text.split("\n")) {
+    if (line.startsWith("<<<<<<< ")) section = "head";
+    else if (line.startsWith("||||||| ")) section = "base";
+    else if (line === "=======") section = "incoming";
+    else if (line.startsWith(">>>>>>> ")) section = null;
+    else if (section) parts[section].push(line);
+  }
+  return parts;
+}
+
+const { head, base, incoming } = parseConflict(file);
+const added = (side) => side.filter((line) => !base.includes(line));
+console.log("main added:  ", added(head));
+console.log("branch added:", added(incoming));
+</example>
+<output>
+main added:   [
+  'const lineTotal = (item) => item.priceKobo * item.qty;',
+  '',
+  '  return items.reduce((sum, item) => sum + lineTotal(item), 0);'
+]
+branch added: [
+  'export function cartTotal(items, discountCode) {',
+  '  const subtotal = items.reduce((sum, item) => sum + item.priceKobo * item.qty, 0);',
+  '  return discountCode === "SAVE10" ? Math.round(subtotal * 0.9) : subtotal;'
+]
+</output>
+<p>Seen this way, the resolution is clear: keep <code>lineTotal</code>, add the parameter and the discount line, and use <code>lineTotal</code> inside the new <code>reduce</code>. Bola writes that, <strong>runs the code</strong> before continuing, and finishes the rebase:</p>
+<shell>
+$ node -e "import('./cart.js').then(({ cartTotal }) =&gt; console.log(cartTotal([{ priceKobo: 250000, qty: 3 }], 'SAVE10')))"
+675000
+$ git add cart.js
+$ GIT_EDITOR=true git rebase --continue
+[detached HEAD f53e6e8] fix: apply SAVE10 discount to cart total
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+Successfully rebased and updated refs/heads/fix/save10-discount.
+$ git log --oneline --graph
+* f53e6e8 fix: apply SAVE10 discount to cart total
+* a7f6522 refactor: extract lineTotal
+* be838f2 feat: add delivery fee by state
+* 0522a2e feat: add cart total
+$ git push --force-with-lease
+To ~/team/github/shop-api.git
+ + 586f4ea...f53e6e8 fix/save10-discount -&gt; fix/save10-discount (forced update)
+</shell>
+<p>₦2,500 × 3 = ₦7,500, minus 10% is ₦6,750: 675,000 kobo, the value the issue asked for. <code>GIT_EDITOR=true</code> only skips the editor that would open to confirm the commit message; normally you just save and close it. A rebase with several commits can stop at each one that conflicts; you resolve, <code>git add</code> and <code>git rebase --continue</code> each time, or <code>git rebase --abort</code> to go back to where you started.</p>
+<h3>Why --force-with-lease</h3>
+<p>Pull requests are often shared. Ada, reviewing, adds a test directly to Bola's branch and pushes it. Bola has not fetched since. He rewords his own commit (which rewrites it) and tries to force-push:</p>
+<shell>
+$ git commit --amend -m "fix: apply the SAVE10 discount in cartTotal" -m "The discount code was accepted at checkout but never applied." -m "Fixes #12"
+[fix/save10-discount 5f76cb9] fix: apply the SAVE10 discount in cartTotal
+ Date: Tue Sep 22 10:15:00 2026 +0100
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+$ git push --force-with-lease
+To ~/team/github/shop-api.git
+ ! [rejected]        fix/save10-discount -&gt; fix/save10-discount (stale info)
+error: failed to push some refs to '~/team/github/shop-api.git'
+</shell>
+<p><code>--force-with-lease</code> means "overwrite the remote branch <em>only if</em> it is still where I last saw it". It was not: Ada's test commit had arrived. Plain <code>--force</code> would have silently deleted her commit from the server. Bola fetches and rebases onto the remote branch instead:</p>
+<shell>
+$ git pull --rebase
+From ~/team/github/shop-api
+   f53e6e8..010d118  fix/save10-discount -&gt; origin/fix/save10-discount
+warning: skipped previously applied commit 5f76cb9
+hint: use --reapply-cherry-picks to include skipped commits
+hint: Disable this message with "git config set advice.skippedCherryPicks false"
+Successfully rebased and updated refs/heads/fix/save10-discount.
+$ git log --oneline -3
+010d118 test: cover the SAVE10 discount
+f53e6e8 fix: apply SAVE10 discount to cart total
+a7f6522 refactor: extract lineTotal
+</shell>
+<p>Ada's test is safe. Notice one surprise: Git saw that Bola's amended commit makes exactly the same change as a commit already on the remote branch (only the message differed), so it skipped it, and the new message was lost. Rewriting commits on a branch that others also push to keeps producing surprises like this. Agree who owns a branch, and once others work on it, add commits instead of rewriting.</p>
+<tip>Some editors run <code>git fetch</code> in the background, which updates your view of the remote without you looking at it, and then <code>--force-with-lease</code> can no longer protect you. Adding <code>--force-if-includes</code> closes that gap: it also checks that your branch contains what you fetched.</tip>
+</section>
+
+<section>
+<h2 id="pull-requests">Pull requests that get reviewed well</h2>
+<p>A <strong>pull request</strong> (GitLab calls it a <strong>merge request</strong>) asks the team to merge a branch. On GitHub, pushing a branch shows a <strong>Compare &amp; pull request</strong> button. What makes a PR easy to review:</p>
+<ul>
+<li><strong>A clear title</strong>, often the same as the main commit subject.</li>
+<li><strong>A description</strong> that answers: what changed, why, how to test it, and what the reviewer should look at closely. Link the issue with <code>Fixes #12</code>. Add screenshots for visual changes. Many repositories have a <code>.github/pull_request_template.md</code> that pre-fills these headings.</li>
+<li><strong>Small size.</strong> Review quality drops sharply as PRs grow. A few hundred changed lines is a good upper bound; split bigger work into a series of PRs.</li>
+<li><strong>Draft PRs</strong> for work in progress, so people can comment early without anyone merging by accident.</li>
+</ul>
+<p>Size is easy to measure. <code>git diff --numstat</code> prints added and removed lines per file. The first four lines below are the real output between the two releases of the shop; the last line shows what a dependency update would add. The check leaves lockfiles out, since nobody reviews those line by line:</p>
+<example file="pr-size.js">
+const numstat = `5\t2\tcart.js
+7\t0\tcart.test.js
+3\t0\tdelivery.js
+1\t1\tpackage.json
+2204\t1890\tpackage-lock.json`;
+
+const IGNORED = new Set(["package-lock.json", "pnpm-lock.yaml", "yarn.lock"]);
+const LIMIT = 400;
+
+let changed = 0;
+for (const line of numstat.split("\n")) {
+  const [added, removed, file] = line.split("\t");
+  if (IGNORED.has(file)) continue;
+  changed += Number(added) + Number(removed);
+}
+console.log(`${changed} lines changed (lockfiles ignored):`, changed > LIMIT ? "consider splitting this PR" : "reviewable");
+</example>
+<output>
+19 lines changed (lockfiles ignored): reviewable
+</output>
+<h3>What happens on GitHub</h3>
+<p>Once the PR is open, a typical protected repository requires, before the <strong>Merge</strong> button turns green:</p>
+<ul>
+<li><strong>Status checks</strong>: CI runs <code>npm run check</code> (lint, format, tests, from <a href="/learn/js-tooling#scripts">JavaScript tooling</a>) on the PR branch merged with <code>main</code>.</li>
+<li><strong>Approving reviews</strong>, often one or two. A <code>CODEOWNERS</code> file can require a review from specific people for specific paths, such as the payments team for <code>src/payments/</code>.</li>
+<li><strong>An up-to-date branch</strong>, so the tested combination is the one that gets merged.</li>
+</ul>
+<p>These rules are set under <em>Settings → Branches</em> (branch protection rules or rulesets). They are what makes "someone pushed to main on Friday" impossible. <code>CODEOWNERS</code> lines are a path pattern followed by owners, and the <em>last</em> matching line wins:</p>
+<example file="codeowners.js">
+const codeowners = `
+*                 @naija-shop/backend
+src/payments/**   @naija-shop/payments
+*.md              @naija-shop/docs
+src/payments/README.md  @ada
+`;
+
+function toRegex(pattern) {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  const body = escaped.replace(/\*\*/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\u0000/g, ".*");
+  return new RegExp(pattern.includes("/") ? `^${body}$` : `(^|/)${body}$`);
+}
+
+const rules = codeowners.trim().split("\n").map((line) => {
+  const [pattern, ...owners] = line.trim().split(/\s+/);
+  return { regex: toRegex(pattern), owners };
+});
+
+function ownersOf(file) {
+  return rules.filter((rule) => rule.regex.test(file)).at(-1)?.owners ?? [];
+}
+
+for (const file of ["src/cart.js", "src/payments/paystack.js", "docs/setup.md", "src/payments/README.md"]) {
+  console.log(file.padEnd(26), ownersOf(file).join(" "));
+}
+</example>
+<output>
+src/cart.js                @naija-shop/backend
+src/payments/paystack.js   @naija-shop/payments
+docs/setup.md              @naija-shop/docs
+src/payments/README.md     @ada
+</output>
+<h3>Merging: three buttons</h3>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>GitHub option</th><th>What lands on <code>main</code></th><th>Good for</th></tr></thead>
+<tbody>
+<tr><td>Create a merge commit</td><td>All branch commits plus a merge commit</td><td>Keeping every step; long-lived branches</td></tr>
+<tr><td>Squash and merge</td><td>One new commit containing the whole PR</td><td>Most feature PRs: one PR, one commit, easy to revert</td></tr>
+<tr><td>Rebase and merge</td><td>The branch commits, replayed on top, no merge commit</td><td>PRs whose commits are each clean and meaningful</td></tr>
+</tbody>
+</table></div>
+<p>Ada squash-merges the PR. Locally, the same thing looks like this:</p>
+<shell>
+$ git switch main
+Switched to branch 'main'
+Your branch is up to date with 'origin/main'.
+$ git merge --squash fix/save10-discount
+Updating a7f6522..010d118
+Fast-forward
+Squash commit -- not updating HEAD
+ cart.js      | 5 +++--
+ cart.test.js | 7 +++++++
+ 2 files changed, 10 insertions(+), 2 deletions(-)
+ create mode 100644 cart.test.js
+$ git commit -m "fix: apply SAVE10 discount to cart total (#13)" -m "Fixes #12"
+[main c14579f] fix: apply SAVE10 discount to cart total (#13)
+ 2 files changed, 10 insertions(+), 2 deletions(-)
+ create mode 100644 cart.test.js
+$ git push
+To ~/team/github/shop-api.git
+   a7f6522..c14579f  main -&gt; main
+$ git push origin --delete fix/save10-discount
+To ~/team/github/shop-api.git
+ - [deleted]         fix/save10-discount
+$ git branch -D fix/save10-discount
+Deleted branch fix/save10-discount (was 010d118).
+</shell>
+<p>GitHub adds the PR number to the subject, as done by hand here. Two details: the branch had to be deleted with <code>-D</code> (force), because a squash creates a <em>new</em> commit, so Git cannot see that the branch's own commits were merged. And on GitHub the squashed commit is credited to the PR's author, with co-authors listed; in this local simulation Ada, who ran the commands, is the author.</p>
+</section>
+
+<section>
+<h2 id="review">Code review: giving and receiving</h2>
+<p>Code review has two goals: catch problems before users do, and spread knowledge so that more than one person understands every part of the system. It works when reviewers are thorough and kind, and authors are open and responsive.</p>
+<h3>What to look for, in order</h3>
+<ol>
+<li><strong>Does it do what the issue asked, and nothing it should not?</strong> Read the description, then the tests, then the code.</li>
+<li><strong>Correctness and edge cases.</strong> Empty cart, lower-case <code>save10</code>, a discount plus a delivery fee, rounding of kobo. Ask the questions from this course's reasoning blocks.</li>
+<li><strong>Tests</strong> that would fail without the change.</li>
+<li><strong>Security and data.</strong> Input validation, secrets in code or logs, permissions checks, SQL built from strings.</li>
+<li><strong>Design and names</strong> that the next developer will understand.</li>
+<li>Style last, and only what the formatter and linter do not already enforce.</li>
+</ol>
+<h3>How to write comments</h3>
+<p>Compare two comments on Bola's PR:</p>
+<blockquote><p>This is wrong.</p></blockquote>
+<blockquote><p><strong>question (blocking):</strong> What happens when a customer types <code>save10</code> in lower case? The issue's screenshot shows the input is not upper-cased in the form. Could we normalise the code here, and add a test for it?</p></blockquote>
+<p>The second says what, why, and what would fix it, and it marks how important it is. A common convention, <strong>Conventional Comments</strong>, starts each comment with a label: <code>praise:</code>, <code>question:</code>, <code>suggestion:</code>, <code>issue:</code>, <code>nit:</code> (a tiny point the author may ignore), plus <code>(blocking)</code> or <code>(non-blocking)</code>. Comment on the code, never on the person ("this function" rather than "you"), and say what is good too. GitHub's <strong>suggestion</strong> blocks let you propose an exact replacement the author can apply with one click.</p>
+<p>Labels also make the outcome mechanical. If any comment is blocking, the review is "request changes"; otherwise it is "approve", with the remaining comments as optional improvements:</p>
+<example file="review-outcome.js">
+const comments = [
+  "praise: the test names read like the issue, very clear",
+  "question (blocking): what happens with a lower-case save10?",
+  "nit: `subtotal` could be `subtotalKobo` to match priceKobo",
+  "suggestion (non-blocking): extract the discount rules into discounts.js later",
+];
+
+function outcome(comments) {
+  const parsed = comments.map((text) => {
+    const [, label, decoration] = text.match(/^(\w+)(?: \(([\w-]+)\))?:/) ?? [];
+    const blocking = decoration === "blocking" || (decoration === undefined && label === "issue");
+    return { label, blocking };
+  });
+  const blocking = parsed.filter((c) => c.blocking).length;
+  return { decision: blocking > 0 ? "request changes" : "approve", blocking, optional: parsed.length - blocking };
+}
+
+console.log(outcome(comments));
+console.log(outcome(comments.filter((c) => !c.includes("(blocking)"))));
+</example>
+<output>
+{ decision: 'request changes', blocking: 1, optional: 3 }
+{ decision: 'approve', blocking: 0, optional: 3 }
+</output>
+<h3>Receiving a review</h3>
+<ul>
+<li>The review is about the code, not about you. Every senior developer's PRs get comments.</li>
+<li>Answer every comment: fix it and say so ("Done in 010d118"), or explain why not. Disagree with reasons, and if a thread goes back and forth more than twice, talk in person or on a call.</li>
+<li>Push fixes as new commits during review, so reviewers see only what changed since they last looked. Clean up (or squash-merge) at the end.</li>
+<li>Do not merge your own PR past an unresolved blocking comment.</li>
+</ul>
+<p>As a reviewer, respond quickly (within a working day), because a waiting PR blocks its author and goes stale. A review is a conversation, not an exam.</p>
+</section>
+
+<section>
+<h2 id="releases">Tags, versions, releases and changelogs</h2>
+<p>A <strong>tag</strong> is a permanent name for one commit: <code>v1.0.0</code> means "this exact code was version 1.0.0". Branches move; tags do not. An <strong>annotated</strong> tag (<code>git tag -a</code>) is a real object with a message, an author and a date, and is what releases should use; a <strong>lightweight</strong> tag (<code>git tag v1.0.0</code> without <code>-a</code>) is just a name.</p>
+<p>Which version comes next? Semantic versioning (from <a href="/learn/npm-ecosystem#semver">The npm ecosystem in depth</a>) says: a breaking change bumps MAJOR, a new feature MINOR, a fix PATCH. With Conventional Commits, the answer can be computed from the commit subjects since the last tag:</p>
+<shell>
+$ git log --oneline v1.0.0..HEAD
+c14579f fix: apply SAVE10 discount to cart total (#13)
+a7f6522 refactor: extract lineTotal
+be838f2 feat: add delivery fee by state
+</shell>
+<example file="next-version.js">
+function bumpFor(subjects) {
+  let bump = null;
+  for (const subject of subjects) {
+    const [, type, breaking] = subject.match(/^(\w+)(?:\([\w-]+\))?(!)?:/) ?? [];
+    if (breaking || subject.includes("BREAKING CHANGE")) return "major";
+    if (type === "feat") bump = "minor";
+    else if (type === "fix" && bump === null) bump = "patch";
+  }
+  return bump;
+}
+
+function nextVersion(current, bump) {
+  const [major, minor, patch] = current.split(".").map(Number);
+  if (bump === "major") return `${major + 1}.0.0`;
+  if (bump === "minor") return `${major}.${minor + 1}.0`;
+  if (bump === "patch") return `${major}.${minor}.${patch + 1}`;
+  return current;
+}
+
+const sinceV1 = [
+  "fix: apply SAVE10 discount to cart total (#13)",
+  "refactor: extract lineTotal",
+  "feat: add delivery fee by state",
+];
+console.log(bumpFor(sinceV1), "->", nextVersion("1.0.0", bumpFor(sinceV1)));
+console.log(bumpFor(["docs: add README", "test: cover rounding"]), "->", nextVersion("1.1.0", bumpFor(["docs: add README"])));
+console.log(bumpFor(["feat(delivery)!: charge by weight"]), "->", nextVersion("1.1.0", "major"));
+</example>
+<output>
+minor -> 1.1.0
+null -> 1.1.0
+major -> 2.0.0
+</output>
+<p>A feature and a fix mean a minor release: 1.1.0. Documentation and tests alone need no release. <code>npm version</code> (from the npm lesson) does the rest in a Git repository: it updates <code>package.json</code>, commits, and creates an annotated tag. Push the tag with the commit using <code>--follow-tags</code>:</p>
+<shell>
+$ npm version minor -m "chore(release): %s"
+v1.1.0
+$ git log --oneline -2
+b929cb6 chore(release): 1.1.0
+c14579f fix: apply SAVE10 discount to cart total (#13)
+$ git tag -n
+v1.0.0          First release
+v1.1.0          chore(release): 1.1.0
+$ git show v1.1.0 --no-patch
+tag v1.1.0
+Tagger: Ada Lovelace &lt;ada@example.com&gt;
+Date:   Wed Sep 23 16:00:00 2026 +0100
+
+chore(release): 1.1.0
+
+commit b929cb60559365600aea8eb75749546b32189fcb
+Author: Ada Lovelace &lt;ada@example.com&gt;
+Date:   Wed Sep 23 16:00:00 2026 +0100
+
+    chore(release): 1.1.0
+$ git push --follow-tags
+To ~/team/github/shop-api.git
+   c14579f..b929cb6  main -&gt; main
+ * [new tag]         v1.1.0 -&gt; v1.1.0
+</shell>
+<p>Now the question "which version is on the server?" has an answer. <code>git describe</code> names any commit relative to the nearest tag. After one more commit:</p>
+<shell>
+$ git commit -m "docs: add README"
+[main cf3c847] docs: add README
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README.md
+$ git describe
+v1.1.0-1-gcf3c847
+</shell>
+<p>"1 commit after v1.1.0, at commit <code>cf3c847</code>" (the <code>g</code> stands for Git). Build scripts often embed this string in the application so that a health endpoint or the logs can report the exact code that is running.</p>
+<h3>Changelogs</h3>
+<p>A <strong>changelog</strong> is the human-readable list of changes per version, written for the people who <em>use</em> your code, not for its developers. The widely used "Keep a Changelog" format groups changes under headings such as Added, Changed, Fixed and Removed, newest version first. With conventional commits, a first draft can be generated:</p>
+<example file="changelog.js">
+const releases = [
+  {
+    version: "1.1.0",
+    date: "2026-09-23",
+    subjects: [
+      "fix: apply SAVE10 discount to cart total (#13)",
+      "refactor: extract lineTotal",
+      "feat: add delivery fee by state",
+    ],
+  },
+  { version: "1.0.0", date: "2026-09-21", subjects: ["feat: add cart total"] },
+];
+
+const SECTIONS = { feat: "Added", fix: "Fixed" };
+
+function changelog(releases) {
+  const lines = ["# Changelog", ""];
+  for (const { version, date, subjects } of releases) {
+    lines.push(`## [${version}] - ${date}`);
+    for (const [type, heading] of Object.entries(SECTIONS)) {
+      const entries = subjects.filter((s) => s.startsWith(`${type}:`) || s.startsWith(`${type}(`));
+      if (entries.length === 0) continue;
+      lines.push("", `### ${heading}`, ...entries.map((s) => `- ${s.slice(s.indexOf(":") + 2)}`));
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+console.log(changelog(releases));
+</example>
+<output>
+# Changelog
+
+## [1.1.0] - 2026-09-23
+
+### Added
+- add delivery fee by state
+
+### Fixed
+- apply SAVE10 discount to cart total (#13)
+
+## [1.0.0] - 2026-09-21
+
+### Added
+- add cart total
+</output>
+<p>The refactor is left out: users do not care how the code is arranged, only what changed for them. Treat generated text as a draft and edit it for readers ("SAVE10 discount codes now reduce the total" beats a commit subject). Tools such as Changesets, release-please and semantic-release automate the whole chain (version, tag, changelog, npm publish) from commits or small change files; the ZudoJS packages are released with Changesets.</p>
+<p>On GitHub, a <strong>release</strong> is a page attached to a tag, with notes (usually the changelog section) and optional files to download. You create it under <em>Releases → Draft a new release</em> or from CI, and people can subscribe to new releases of a repository.</p>
+</section>
+
+<section>
+<h2 id="open-source">Contributing to open source</h2>
+<p>Everything above works inside one team. Open-source projects add one step, because you cannot push branches to someone else's repository: you work in a <strong>fork</strong>, your own copy of the project on GitHub, and open a pull request from the fork to the original, which is called <strong>upstream</strong>. Here <code>naija-shop/invoice-kit</code> is the project and <code>ada/invoice-kit</code> is Ada's fork (made on GitHub with the <strong>Fork</strong> button; simulated by folders again):</p>
+<shell>
+$ git clone github/ada/invoice-kit.git invoice-kit
+Cloning into 'invoice-kit'...
+done.
+$ cd invoice-kit
+$ git remote add upstream ../github/naija-shop/invoice-kit.git
+$ git remote -v
+origin	~/oss/github/ada/invoice-kit.git (fetch)
+origin	~/oss/github/ada/invoice-kit.git (push)
+upstream	../github/naija-shop/invoice-kit.git (fetch)
+upstream	../github/naija-shop/invoice-kit.git (push)
+$ git fetch upstream
+From ../github/naija-shop/invoice-kit
+ * [new branch]      main       -&gt; upstream/main
+$ git switch -c docs/vat-example upstream/main
+Switched to a new branch 'docs/vat-example'
+branch 'docs/vat-example' set up to track 'upstream/main'.
+$ git commit -am "docs: explain VAT_RATE in the README"
+[docs/vat-example cf4950c] docs: explain VAT_RATE in the README
+ 1 file changed, 2 insertions(+)
+$ git push -u origin docs/vat-example
+To ~/oss/github/ada/invoice-kit.git
+ * [new branch]      docs/vat-example -&gt; docs/vat-example
+branch 'docs/vat-example' set up to track 'origin/docs/vat-example'.
+</shell>
+<ul>
+<li><code>origin</code> is your fork (you can push); <code>upstream</code> is the project (you can only read). On GitHub both would be URLs such as <code>https://github.com/naija-shop/invoice-kit.git</code>.</li>
+<li>The fork was made before upstream added a VAT feature, so the branch starts from <code>upstream/main</code>, not from the fork's out-of-date <code>main</code>. Always base new work on the latest upstream.</li>
+<li>After the push, GitHub offers to open a pull request from <code>ada:docs/vat-example</code> into <code>naija-shop:main</code>.</li>
+</ul>
+<h3>Being a good contributor</h3>
+<ul>
+<li><strong>Read <code>CONTRIBUTING.md</code> first.</strong> It says how the project wants issues, branches, commit messages and tests. Also read the code of conduct.</li>
+<li><strong>Start small.</strong> Documentation fixes and issues labelled <code>good first issue</code> or <code>help wanted</code> are meant for newcomers.</li>
+<li><strong>Ask before big changes.</strong> Open or comment on an issue describing your plan. A large unrequested PR is often closed, however good, because maintainers must support the code for years.</li>
+<li><strong>Keep the PR focused</strong>, follow the project's style, include tests, and run its checks locally.</li>
+<li><strong>Be patient.</strong> Maintainers are often volunteers. A polite reminder after a week or two is fine.</li>
+<li>Some projects ask you to sign a <strong>CLA</strong> (contributor licence agreement) or to add a <code>Signed-off-by</code> line to commits (<code>git commit -s</code>, the Developer Certificate of Origin). These state that you have the right to contribute the code.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="failures">Failure cases and production concerns</h2>
+<ul>
+<li><strong>Force-pushing a shared branch</strong> with plain <code>--force</code> deletes other people's commits from the server. Use <code>--force-with-lease</code> (plus <code>--force-if-includes</code>), and never force-push <code>main</code>; protect it on GitHub so nobody can.</li>
+<li><strong>Rebasing public history.</strong> Only rebase commits that nobody else has built on.</li>
+<li><strong>Resolving conflicts by picking a side</strong> without understanding both. Use <code>zdiff3</code>, compare each side with the base, and run the tests before continuing.</li>
+<li><strong>Lockfile conflicts.</strong> Do not hand-merge <code>package-lock.json</code>: resolve <code>package.json</code>, then run <code>npm install</code> (see <a href="/learn/npm-ecosystem#lockfile">the npm ecosystem lesson</a>).</li>
+<li><strong>Giant PRs</strong> get rubber-stamped. Split them.</li>
+<li><strong>Moving a tag.</strong> Once a tag is pushed, others may have built or deployed from it. If a release is broken, release a new version; do not delete and recreate the tag.</li>
+<li><strong>Secrets in a PR.</strong> A pushed branch is on the server even if the PR is closed. Treat it as leaked and rotate it, as in <a href="/learn/git#secrets">Git and GitHub</a>.</li>
+</ul>
+<p>Testing is part of the loop: CI runs the full check on every PR, and branch protection makes a red check block the merge. The combination of review and automated checks is what lets a team deploy <code>main</code> at any time with confidence.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Practise a rebase conflict yourself">
+<p>Create a bare repository and two clones in a temporary folder, as at the start of this lesson. In clone A, change line 1 of a file on <code>main</code> and push. In clone B, create a branch from the old <code>main</code>, change the same line differently, commit, then <code>git rebase origin/main</code> after fetching. Resolve the conflict keeping both changes, and finish the rebase. Then undo it all with <code>git reflog</code>: find the entry from before the rebase and <code>git reset --hard</code> to it.</p>
+<solution>
+<p>The commands follow the sessions above: <code>git init --bare origin.git</code>, <code>git clone origin.git a</code>, <code>git clone origin.git b</code>; commit and push in <code>a</code>; <code>git switch -c change</code>, commit, <code>git fetch</code>, <code>git rebase origin/main</code> in <code>b</code>. After resolving: <code>git add</code>, <code>git rebase --continue</code>.</p>
+<p><code>git reflog</code> lists every position <code>HEAD</code> has had, including commits that no branch points to any more, such as your branch's commits from before the rebase. Entries look like <code>586f4ea HEAD@{3}: commit: …</code>. <code>git reset --hard HEAD@{3}</code> (or the hash) moves the branch back. This is why a rebase is not as dangerous as it looks: for about 90 days, abandoned commits can still be recovered from the reflog.</p>
+</solution>
+</exercise>
+<exercise title="Next version with a patch-only release">
+<p>Extend <code>next-version.js</code> so that <code>bumpFor</code> also treats <code>perf:</code> as a patch, and returns <code>null</code> when nothing needs a release. Test it on <code>["perf: cache delivery fees", "docs: fix typo"]</code> from version <code>1.1.0</code>.</p>
+<solution>
+<example file="next-version-perf.js">
+const PATCH_TYPES = new Set(["fix", "perf"]);
+
+function bumpFor(subjects) {
+  let bump = null;
+  for (const subject of subjects) {
+    const [, type, breaking] = subject.match(/^(\w+)(?:\([\w-]+\))?(!)?:/) ?? [];
+    if (breaking || subject.includes("BREAKING CHANGE")) return "major";
+    if (type === "feat") bump = "minor";
+    else if (PATCH_TYPES.has(type) && bump === null) bump = "patch";
+  }
+  return bump;
+}
+
+function nextVersion(current, bump) {
+  const [major, minor, patch] = current.split(".").map(Number);
+  return { major: `${major + 1}.0.0`, minor: `${major}.${minor + 1}.0`, patch: `${major}.${minor}.${patch + 1}` }[bump] ?? current;
+}
+
+console.log(nextVersion("1.1.0", bumpFor(["perf: cache delivery fees", "docs: fix typo"])));
+console.log(bumpFor(["docs: fix typo", "chore: update dev tools"]));
+</example>
+<output>
+1.1.1
+null
+</output>
+<p>A lookup object replaces the chain of <code>if</code>s, and <code>?? current</code> handles <code>null</code>. Which types trigger a release is a team decision; writing it as data (<code>PATCH_TYPES</code>) makes it easy to change.</p>
+</solution>
+</exercise>
+<exercise title="Review this pull request">
+<p>A PR titled "update" changes 1,200 lines across 30 files, has no description, and contains the line <code>const API_KEY = "sk_live_...";</code> in <code>src/payments/client.js</code>. Write the review you would leave: which comments, which labels, and what outcome.</p>
+<solution>
+<blockquote>
+<p><strong>issue (blocking):</strong> <code>src/payments/client.js</code> contains a live secret key. Please remove it and read it from <code>process.env</code> instead. Because it has been pushed, the key must be treated as leaked: please ask the payments owner to rotate it today.</p>
+<p><strong>issue (blocking):</strong> Could you add a description (what, why, how to test) and link the issue? At 1,200 lines across 30 files I cannot review this safely. Could it be split, for example the refactor first and the new behaviour second?</p>
+<p><strong>suggestion (non-blocking):</strong> A title like <code>feat(payments): add refunds</code> would tell us what this is at a glance.</p>
+</blockquote>
+<p>Outcome: <strong>request changes</strong>. The secret comes first because it is urgent and outlives the PR. The tone stays about the code and offers a way forward, so the author knows exactly what to do next.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Work flows issue → branch → small, well-described commits → pull request → review and CI → merge → tag → release notes. <code>Fixes #12</code> links and closes issues.</li>
+<li>Merge preserves history with a merge commit; rebase replays commits as new ones for a straight line. Rebase only your own unshared commits, and push rebased branches with <code>--force-with-lease</code>.</li>
+<li>In a conflict, compare each side with the base (<code>zdiff3</code>), keep both intentions, run the code, then continue. In a rebase, "ours" and "theirs" are swapped.</li>
+<li>Protected branches require checks and reviews. Squash-merge makes one PR one commit.</li>
+<li>Review for correctness, tests and security before style; label comments and mark what blocks. Receive reviews as help, and answer every comment.</li>
+<li>Annotated tags mark releases; Conventional Commits let tools compute the next semantic version and draft a changelog; <code>git describe</code> identifies running code.</li>
+<li>Open source: fork, add <code>upstream</code>, branch from <code>upstream/main</code>, follow <code>CONTRIBUTING.md</code>, start small.</li>
+</ul>
+<p>This completes the JavaScript platforms course. Next, <a href="/learn/ts-setup">Why TypeScript exists</a> starts the TypeScript course, where the type checker from the tooling lesson becomes your everyday companion.</p>
+</section>

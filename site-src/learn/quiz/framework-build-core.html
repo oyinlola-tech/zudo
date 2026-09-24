@@ -1,0 +1,859 @@
+<question id="fbc-nan-port" type="choice">
+<q>The opening script did <code>Number(env.PORT ?? "3000")</code> with <code>PORT=80x</code>. Why is this worse than it looks?</q>
+<option>It throws a <code>SyntaxError</code> at startup</option>
+<option correct>It produces <code>NaN</code> silently, and the failure shows up later, far from the typo, after connections are already open</option>
+<option>It uses port 80</option>
+<option>It uses the fallback 3000</option>
+<explain><p><code>Number("80x")</code> is <code>NaN</code>, not an error. The config loader parses with a pattern and reports <code>PORT must be a whole number…</code> before anything connects.</p></explain>
+</question>
+
+<question id="fbc-all-problems" type="choice">
+<q>Why does <code>loadConfig</code> collect every problem instead of throwing at the first one?</q>
+<option>Throwing is slower</option>
+<option correct>A deploy with three bad settings should fail once with three messages, not three times with one each</option>
+<option>TypeScript does not allow throwing inside a loop</option>
+<option>So the app can start with partial configuration</option>
+<explain><p>Every failed deploy costs time. Reporting all problems at once turns three round trips into one. The app still does not start: the error is thrown after the loop.</p></explain>
+</question>
+
+<question id="fbc-configof" type="choice">
+<q>What does <code>ConfigOf&lt;typeof schema&gt;</code> give you?</q>
+<option>A runtime check of the environment</option>
+<option correct>The config's TypeScript type, computed from the schema, so the two cannot drift apart</option>
+<option>A copy of the schema with defaults filled in</option>
+<option>A list of the environment variable names</option>
+<explain><p>It is a mapped type: each key of the schema becomes a readonly property of the type inside its <code>Setting</code>. The runtime check is <code>loadConfig</code>; the type follows from the same object.</p></explain>
+</question>
+
+<question id="fbc-layers" type="choice">
+<q><code>loadConfig(schema, envFile, processEnv)</code>: the <code>.env</code> file says <code>LOG_LEVEL=debug</code>, the real environment says <code>LOG_LEVEL=warn</code>. What is the result, and why is that order right?</q>
+<option><code>debug</code>, because files are more reliable</option>
+<option correct><code>warn</code>: later layers win, and the real environment of a deployed process must be able to override a developer's file</option>
+<option>An error, because the two sources disagree</option>
+<option><code>info</code>, the fallback</option>
+<explain><p>Defaults, then files, then the environment: each layer is more specific to where the process runs. An operator must be able to change a setting without editing files in the image.</p></explain>
+</question>
+
+<question id="fbc-safe-view" type="choice">
+<q>Why log <code>safeView(schema, config)</code> instead of <code>config</code>?</q>
+<option>It is shorter</option>
+<option correct>Secret settings (database URL with a password, session secret) are replaced, so they never reach the log store</option>
+<option>It converts numbers to strings</option>
+<option>Logging a frozen object throws</option>
+<explain><p>Logs are copied, shipped, searched and kept for months by many people and systems. A secret that reaches them is effectively leaked.</p></explain>
+</question>
+
+<question id="fbc-dispose-order" type="choice">
+<q>Why does the container dispose instances in <strong>reverse creation order</strong>?</q>
+<option>Because arrays are faster to read backwards</option>
+<option correct>An object created later may depend on one created earlier (a repository on a pool), so the dependent must be closed first</option>
+<option>To match alphabetical order</option>
+<option>It does not matter; any order is fine</option>
+<explain><p>Dependencies are always created before their dependents, so reverse creation order closes dependents first. Closing the pool first would break the repository's last operations.</p></explain>
+</question>
+
+<question id="fbc-transient-tracking" type="choice">
+<q>The mini container does not track transient instances for disposal. Why?</q>
+<option>Transients cannot have a <code>dispose</code> method</option>
+<option correct>A transient belongs to whoever asked for it; tracking every one at the root would keep them all alive for the life of the process</option>
+<option>Transients are disposed by the garbage collector automatically, including closing their connections</option>
+<option>It is a bug</option>
+<explain><p>A transient resolved a million times would mean a million references held forever: a memory leak. The garbage collector frees memory, but it never calls <code>dispose</code>, so a transient that holds a connection must be closed by its owner.</p></explain>
+</question>
+
+<question id="fbc-captive" type="choice">
+<q>A singleton <code>ReportService</code> depends on the scoped <code>Cart</code>. Why does the container refuse?</q>
+<option>Singletons cannot have dependencies</option>
+<option correct>The singleton would keep the first request's cart forever and show it to every later request</option>
+<option>Scoped objects cannot be created from a factory</option>
+<option>It would create a circular dependency</option>
+<explain><p>That is a captive dependency: a longer-lived object capturing a shorter-lived one. The container catches it at resolve time and names the chain.</p></explain>
+</question>
+
+<question id="fbc-child-logger" type="choice">
+<q>What does <code>logger.child({ requestId: "req-7" })</code> give you?</q>
+<option>A logger with a lower level</option>
+<option correct>A logger that adds <code>requestId</code> to every entry it writes, so one request's entries can be found together</option>
+<option>A copy of the parent's entries</option>
+<option>A logger that writes to a separate file</option>
+<explain><p>Bound fields save every call site from repeating them, and they cannot be forgotten. The framework creates one child per request and per module.</p></explain>
+</question>
+
+<question id="fbc-sink-throws" type="choice">
+<q>The logger's sink throws "disk full". What should happen to the request that called <code>logger.info</code>?</q>
+<option>It should fail with a 500</option>
+<option correct>It should continue; a logging failure must not break the business operation</option>
+<option>It should retry the log line until it succeeds</option>
+<option>The process should exit</option>
+<explain><p>Logging observes the work; it is not the work. A real logger also counts dropped entries so the outage is visible in metrics.</p></explain>
+</question>
+
+<question id="fbc-rollback" type="choice">
+<q>Components start in the order database, queue, http, and http fails. What does the mini lifecycle do?</q>
+<option>Leaves database and queue running and throws</option>
+<option>Stops database, then queue</option>
+<option correct>Stops queue, then database, sets the state to <code>failed</code>, and throws a <code>StartupError</code> naming http with the original error as its cause</option>
+<option>Retries http forever</option>
+<explain><p>Rollback stops what already started, in reverse order, so nothing stays half-open, and the error tells you which component failed and why.</p></explain>
+</question>
+
+<question id="fbc-zudo-rollback-diff" type="choice">
+<q>On the same failure, <code>@zudojs/lifecycle</code> also calls <code>stop</code> on http, the component that failed. What does that ask of component authors?</q>
+<option>Nothing</option>
+<option correct>Every <code>stop</code> must work even when its <code>start</code> did not finish, for example check whether the server is actually listening</option>
+<option>Components must never throw from <code>start</code></option>
+<option>Components must be registered in order</option>
+<explain><p>Stopping a half-started component frees what it did manage to open (a bound port, a file). The price is that <code>stop</code> must be safe in any state.</p></explain>
+</question>
+
+<question id="fbc-timeout" type="choice">
+<q>Why wrap every <code>start</code> in a timeout?</q>
+<option>To make startup faster</option>
+<option correct>A dependency that accepts a connection and never answers would otherwise leave the process starting forever, with no error that names it</option>
+<option>Node.js requires timeouts on promises</option>
+<option>To limit memory use</option>
+<explain><p>A named timeout turns "the deploy is stuck" into "search-index start timed out after 5000 ms", and the rollback still runs.</p></explain>
+</question>
+
+<question id="fbc-clear-timer" type="choice">
+<q><code>withTimeout</code> calls <code>clearTimeout</code> in a <code>finally</code> block. What goes wrong without it?</q>
+<option>The work is cancelled</option>
+<option correct>After a successful start, a pending timer keeps the Node process alive (and later rejects a promise nobody is waiting for)</option>
+<option>The timeout fires immediately</option>
+<option>Nothing</option>
+<explain><p>An active timer keeps the event loop busy, so a process that should exit after <code>stop</code> hangs until every forgotten timer fires.</p></explain>
+</question>
+
+<question id="fbc-idempotent-stop" type="choice">
+<q>Two signals arrive at once and <code>stop()</code> is called twice. What does the mini lifecycle do?</q>
+<option>Stops every component twice</option>
+<option>Throws on the second call</option>
+<option correct>The second call gets the same promise as the first, so each component stops once and both callers wait for the end</option>
+<option>Ignores the first call</option>
+<explain><p>Storing the in-progress promise makes <code>stop</code> idempotent. Stopping a database pool twice would throw or hang in many drivers.</p></explain>
+</question>
+
+<question id="fbc-stop-continues" type="choice">
+<q>During shutdown, the queue's <code>stop</code> throws. What should happen to the database's <code>stop</code>, which comes after it?</q>
+<option>It is skipped, because shutdown failed</option>
+<option correct>It still runs; the queue's error is logged</option>
+<option>The whole shutdown restarts</option>
+<option>The process exits immediately</option>
+<explain><p>Leaving the database open because the queue misbehaved is worse than a noisy log. Shutdown is best-effort for every component.</p></explain>
+</question>
+
+<question id="fbc-sigterm" type="choice">
+<q>What is <code>SIGTERM</code>, and what does Node do with it when no handler is installed?</q>
+<option>A request to reload configuration; Node ignores it</option>
+<option correct>The polite "please stop" an orchestrator sends before killing a process; without a handler Node exits at once, cutting off in-flight work</option>
+<option>A crash report; Node prints a stack trace</option>
+<option>A signal that only exists on Windows</option>
+<explain><p>Kubernetes and systemd send <code>SIGTERM</code>, wait a grace period, then kill the process. The handler turns that window into a graceful stop.</p></explain>
+</question>
+
+<question id="fbc-zudo-default-lifetime" type="choice">
+<q>What happens if you register a service with <code>@zudojs/container</code>'s <code>registerFactory</code> and no <code>scope</code> option?</q>
+<option>It is a singleton</option>
+<option>It is scoped</option>
+<option correct>It is transient: a new instance on every resolve</option>
+<option>Registration fails</option>
+<explain><p>The default is transient. A connection pool registered without a scope would be created again for every resolve; pass <code>ContainerScope.SINGLETON</code> for shared resources.</p></explain>
+</question>
+
+<question id="fbc-zudo-redact-value" type="choice">
+<q><code>@zudojs/config</code>'s <code>toSafeObject</code> redacted <code>database_url</code> although it was never marked secret. Why?</q>
+<option>All strings are redacted</option>
+<option correct>It detects sensitive entries by key name and by value, and a URL with a password in it looks sensitive</option>
+<option>Every key containing "url" is redacted</option>
+<option>It was marked secret by the environment source</option>
+<explain><p>Value-based detection catches secrets hidden in settings with harmless names. Your mini loader only knows what the schema marks secret.</p></explain>
+</question>
+
+<question id="fbc-zudo-nested-error" type="choice">
+<q>With <code>@zudojs/logger</code>, <code>logger.error("payment failed", { cause: new Error("card declined") })</code> logged <code>"cause":{}</code>. Why?</q>
+<option>The logger redacts errors</option>
+<option correct>An error's <code>message</code> and <code>stack</code> are not enumerable properties, so serialising the nested object finds nothing</option>
+<option>The error was garbage collected</option>
+<option>Errors cannot be logged</option>
+<explain><p><code>JSON.stringify(new Error("x"))</code> is <code>{}</code>. Your mini logger converted <code>Error</code> fields to name and message; with the package, log the message explicitly.</p></explain>
+</question>
+
+<question id="fbc-out-nan" type="output">
+<q>What does this print?</q>
+<code file="nan.ts">
+const env: Record<string, string | undefined> = { PORT: "80x" };
+const port = Number(env.PORT ?? "3000");
+const secret = env.SESSION_SECRET ?? "";
+console.log(JSON.stringify({ port, secret, ok: Number.isInteger(port) }));
+</code>
+<option correct>{"port":null,"secret":"","ok":false}</option>
+<option>{"port":NaN,"secret":"","ok":false}</option>
+<option>{"port":3000,"secret":"","ok":true}</option>
+<option>{"port":80,"secret":undefined,"ok":true}</option>
+<explain><p><code>Number("80x")</code> is <code>NaN</code>, which JSON writes as <code>null</code>. The missing secret became an empty string without complaint. Both are why configuration needs parsing and checking.</p></explain>
+</question>
+
+<question id="fbc-out-layers" type="output">
+<q>What does this print?</q>
+<code file="layers.ts">
+type Env = Record<string, string | undefined>;
+function pick(name: string, ...sources: Env[]): string | undefined {
+  return sources.reduce<string | undefined>((found, source) => source[name] ?? found, undefined);
+}
+
+const defaults = { PORT: "3000", LOG_LEVEL: "info" };
+const file = { PORT: "8080", LOG_LEVEL: "debug" };
+const env = { LOG_LEVEL: "warn" };
+console.log(pick("PORT", defaults, file, env), pick("LOG_LEVEL", defaults, file, env), pick("HOST", defaults, file, env));
+</code>
+<option correct>8080 warn undefined</option>
+<option>3000 info undefined</option>
+<option>8080 debug undefined</option>
+<option>3000 warn localhost</option>
+<explain><p>Each later source that has the name replaces what was found before. The environment has no <code>PORT</code>, so the file's value stays; no source has <code>HOST</code>.</p></explain>
+</question>
+
+<question id="fbc-out-lifetimes" type="output">
+<q>What does this print?</q>
+<code file="lifetimes.ts">
+let made = 0;
+const cache = new Map<string, number>();
+function resolve(lifetime: "singleton" | "transient", key: string): number {
+  if (lifetime === "singleton" && cache.has(key)) return cache.get(key)!;
+  const instance = ++made;
+  if (lifetime === "singleton") cache.set(key, instance);
+  return instance;
+}
+
+const a = [resolve("singleton", "pool"), resolve("singleton", "pool"), resolve("transient", "hasher"), resolve("transient", "hasher")];
+console.log(a.join(" "), "made:", made);
+</code>
+<option correct>1 1 2 3 made: 3</option>
+<option>1 2 3 4 made: 4</option>
+<option>1 1 2 2 made: 2</option>
+<option>1 1 1 1 made: 1</option>
+<explain><p>The singleton is created once and then served from the cache; each transient resolve creates a new instance.</p></explain>
+</question>
+
+<question id="fbc-out-dispose" type="output">
+<q>What does this print?</q>
+<code file="dispose.ts">
+const created: { name: string; dispose(): void }[] = [];
+function make(name: string) {
+  const instance = { name, dispose: () => console.log(`close ${name}`) };
+  created.push(instance);
+  return instance;
+}
+
+make("pool");
+make("orders-repository");
+make("mailer");
+for (const instance of created.reverse()) instance.dispose();
+</code>
+<option correct>close mailer
+close orders-repository
+close pool</option>
+<option>close pool
+close orders-repository
+close mailer</option>
+<option>close mailer</option>
+<option>close pool</option>
+<explain><p>Disposal walks the created instances newest first, so the repository is closed before the pool it uses.</p></explain>
+</question>
+
+<question id="fbc-out-topo" type="output">
+<q>What does this print?</q>
+<code file="order.ts">
+const deps: Record<string, string[]> = { http: ["orders", "catalog"], orders: ["database"], catalog: ["database", "cache"], database: [], cache: [] };
+const ordered: string[] = [];
+function visit(name: string): void {
+  if (ordered.includes(name)) return;
+  for (const dep of deps[name] ?? []) visit(dep);
+  ordered.push(name);
+}
+Object.keys(deps).forEach(visit);
+console.log(ordered.join(" -> "));
+</code>
+<option correct>database -> orders -> cache -> catalog -> http</option>
+<option>http -> orders -> catalog -> database -> cache</option>
+<option>database -> cache -> orders -> catalog -> http</option>
+<option>cache -> database -> catalog -> orders -> http</option>
+<explain><p>Visiting <code>http</code> first visits <code>orders</code>, which needs <code>database</code>; then <code>catalog</code>, which needs <code>database</code> (already there) and <code>cache</code>. Every name lands after its dependencies.</p></explain>
+</question>
+
+<question id="fbc-out-rollback" type="output">
+<q>What does this print?</q>
+<code file="rollback.ts">
+const log: string[] = [];
+const parts = [
+  { name: "database", start: () => log.push("start database"), stop: () => log.push("stop database") },
+  { name: "cache", start: () => log.push("start cache"), stop: () => log.push("stop cache") },
+  { name: "http", start: () => { throw new Error("EADDRINUSE"); }, stop: () => log.push("stop http") },
+];
+
+const started: typeof parts = [];
+try {
+  for (const part of parts) {
+    part.start();
+    started.push(part);
+  }
+} catch (error) {
+  for (const part of started.reverse()) part.stop();
+  log.push(`failed: ${(error as Error).message}`);
+}
+console.log(log.join(", "));
+</code>
+<option correct>start database, start cache, stop cache, stop database, failed: EADDRINUSE</option>
+<option>start database, start cache, stop http, stop cache, stop database, failed: EADDRINUSE</option>
+<option>start database, start cache, stop database, stop cache, failed: EADDRINUSE</option>
+<option>start database, start cache, failed: EADDRINUSE</option>
+<explain><p>Only started components are in <code>started</code>, so <code>http</code>'s stop does not run (the ZudoJS lifecycle would call it too). The two that started are stopped newest first.</p></explain>
+</question>
+
+<question id="fbc-out-idempotent" type="output">
+<q>What does this print?</q>
+<code file="stop.ts">
+let stops = 0;
+let stopping: Promise<void> | undefined;
+
+function stop(): Promise<void> {
+  stopping ??= (async () => {
+    stops++;
+  })();
+  return stopping;
+}
+
+await Promise.all([stop(), stop(), stop()]);
+console.log("stops:", stops, "same promise:", stop() === stop());
+</code>
+<option correct>stops: 1 same promise: true</option>
+<option>stops: 3 same promise: false</option>
+<option>stops: 1 same promise: false</option>
+<option>stops: 3 same promise: true</option>
+<explain><p><code>??=</code> creates the stopping promise only once; every caller gets it. The work runs once however many signals arrive.</p></explain>
+</question>
+
+<question id="fbc-out-redact" type="output">
+<q>What does this print?</q>
+<code file="redact.ts">
+const SECRET_KEY = /pass(word)?|secret|token|authorization/i;
+function clean(fields: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, SECRET_KEY.test(k) ? "[redacted]" : v]));
+}
+
+console.log(JSON.stringify(clean({ user: "ada", password: "pa55word", apiToken: "t-123", passport: "A123" })));
+</code>
+<option correct>{"user":"ada","password":"[redacted]","apiToken":"[redacted]","passport":"[redacted]"}</option>
+<option>{"user":"ada","password":"[redacted]","apiToken":"[redacted]","passport":"A123"}</option>
+<option>{"user":"ada","password":"[redacted]","apiToken":"t-123","passport":"A123"}</option>
+<option>{"user":"[redacted]","password":"[redacted]","apiToken":"[redacted]","passport":"[redacted]"}</option>
+<explain><p><code>pass(word)?</code> matches "pass" inside "passport" too, and the <code>i</code> flag matches "Token". Redacting by name errs on the side of hiding, sometimes more than you meant.</p></explain>
+</question>
+
+<question id="fbc-out-error-json" type="output">
+<q>What does this print?</q>
+<code file="errors.ts">
+const error = new Error("card declined");
+console.log(JSON.stringify({ error }));
+console.log(JSON.stringify({ error: { name: error.name, message: error.message } }));
+console.log(Object.keys(error).length);
+</code>
+<option correct>{"error":{}}
+{"error":{"name":"Error","message":"card declined"}}
+0</option>
+<option>{"error":{"message":"card declined"}}
+{"error":{"name":"Error","message":"card declined"}}
+1</option>
+<option>{"error":"card declined"}
+{"error":{"name":"Error","message":"card declined"}}
+0</option>
+<option>{}
+{"error":{"name":"Error","message":"card declined"}}
+2</option>
+<explain><p>An error's <code>message</code> and <code>stack</code> are own properties but not enumerable, and <code>name</code> is inherited, so <code>JSON.stringify</code> and <code>Object.keys</code> see nothing. A logger must copy them out by name.</p></explain>
+</question>
+
+<question id="fbc-out-cause" type="output">
+<q>What does this print?</q>
+<code file="cause.ts">
+class StartupError extends Error {
+  constructor(readonly component: string, options: { cause: unknown }) {
+    super(`${component} failed to start`, options);
+    this.name = "StartupError";
+  }
+}
+
+try {
+  throw new StartupError("database", { cause: new Error("ECONNREFUSED") });
+} catch (error) {
+  const e = error as StartupError;
+  console.log(`${e.name}: ${e.message} (${(e.cause as Error).message})`);
+}
+</code>
+<option correct>StartupError: database failed to start (ECONNREFUSED)</option>
+<option>Error: database failed to start (ECONNREFUSED)</option>
+<option>StartupError: ECONNREFUSED (database failed to start)</option>
+<option>StartupError: database failed to start (undefined)</option>
+<explain><p>The wrapper says which component failed; <code>cause</code> keeps the original error, which says why. Both are needed at 3 a.m.</p></explain>
+</question>
+
+<question id="fbc-code-token" type="code" file="token.ts">
+<q><p>Write a tiny container with <code>register(token, factory)</code> (singletons only) and <code>resolve(token)</code>. <code>resolve</code> must throw <code>nothing registered for &lt;name&gt;</code> for an unknown token. The program should print <code>same: true</code> and <code>nothing registered for Mailer</code>.</p></q>
+<starter>
+class Token<T> {
+  declare readonly __type: T;
+  constructor(readonly name: string) {}
+}
+
+// write class Container with register and resolve
+
+const POOL = new Token<{ size: number }>("Pool");
+const MAILER = new Token<{ send(to: string): void }>("Mailer");
+const container = new Container();
+container.register(POOL, () => ({ size: 10 }));
+console.log("same:", container.resolve(POOL) === container.resolve(POOL));
+try {
+  container.resolve(MAILER);
+} catch (error) {
+  console.log((error as Error).message);
+}
+</starter>
+<solution>
+class Token<T> {
+  declare readonly __type: T;
+  constructor(readonly name: string) {}
+}
+
+class Container {
+  readonly #factories = new Map<Token<unknown>, () => unknown>();
+  readonly #instances = new Map<Token<unknown>, unknown>();
+
+  register<T>(token: Token<T>, factory: () => T): void {
+    this.#factories.set(token, factory);
+  }
+
+  resolve<T>(token: Token<T>): T {
+    if (this.#instances.has(token)) return this.#instances.get(token) as T;
+    const factory = this.#factories.get(token);
+    if (factory === undefined) throw new Error(`nothing registered for ${token.name}`);
+    const instance = factory() as T;
+    this.#instances.set(token, instance);
+    return instance;
+  }
+}
+
+const POOL = new Token<{ size: number }>("Pool");
+const MAILER = new Token<{ send(to: string): void }>("Mailer");
+const container = new Container();
+container.register(POOL, () => ({ size: 10 }));
+console.log("same:", container.resolve(POOL) === container.resolve(POOL));
+try {
+  container.resolve(MAILER);
+} catch (error) {
+  console.log((error as Error).message);
+}
+</solution>
+<expected>
+same: true
+nothing registered for Mailer
+</expected>
+<explain><p>The token object is the key and carries the type, so <code>resolve(POOL)</code> is typed without a cast at the call site. The one cast lives inside the container, where the invariant "stored under a <code>Token&lt;T&gt;</code>, so it is a <code>T</code>" holds.</p></explain>
+</question>
+
+<question id="fbc-code-config" type="code" file="config.ts">
+<q><p>Write <code>loadPort(env)</code>: it returns <code>3000</code> when <code>PORT</code> is missing, the number when <code>PORT</code> is 1 to 65535 digits-only, and otherwise throws <code>PORT must be a whole number from 1 to 65535, got "&lt;value&gt;"</code>. The program should print <code>3000</code>, <code>8080</code>, and the error for <code>"80x"</code>.</p></q>
+<starter>
+// write loadPort(env)
+
+console.log(loadPort({}));
+console.log(loadPort({ PORT: "8080" }));
+try {
+  loadPort({ PORT: "80x" });
+} catch (error) {
+  console.log((error as Error).message);
+}
+</starter>
+<solution>
+function loadPort(env: Record<string, string | undefined>): number {
+  const raw = env.PORT;
+  if (raw === undefined) return 3000;
+  const value = Number(raw);
+  if (!/^\d+$/.test(raw) || value < 1 || value > 65535) {
+    throw new Error(`PORT must be a whole number from 1 to 65535, got "${raw}"`);
+  }
+  return value;
+}
+
+console.log(loadPort({}));
+console.log(loadPort({ PORT: "8080" }));
+try {
+  loadPort({ PORT: "80x" });
+} catch (error) {
+  console.log((error as Error).message);
+}
+</solution>
+<expected>
+3000
+8080
+PORT must be a whole number from 1 to 65535, got "80x"
+</expected>
+<explain><p>Checking the text with a pattern before converting catches <code>"80x"</code>, <code>"8.5"</code> and <code>" "</code>, which <code>Number</code> would turn into <code>NaN</code>, <code>8.5</code> and <code>0</code>. The error names the variable and the bad value.</p></explain>
+</question>
+
+<question id="fbc-code-logger" type="code" file="logger.ts">
+<q><p>Write <code>createLogger(level, fields = {})</code> returning <code>{ info, warn, child }</code>. It prints one JSON line per entry, <code>{"level":…,"message":…, …fields}</code>, drops entries below the level (<code>info</code> &lt; <code>warn</code>), and <code>child(extra)</code> adds fields. The program should print exactly the two lines shown in the expected output.</p></q>
+<starter>
+// write createLogger(level, fields)
+
+const root = createLogger("warn", { service: "bookstore" });
+root.info("not shown");
+const request = root.child({ requestId: "req-7" });
+request.warn("slow query", { ms: 840 });
+request.info("also not shown");
+createLogger("info").info("started");
+</starter>
+<solution>
+type Level = "info" | "warn";
+const RANK: Record<Level, number> = { info: 1, warn: 2 };
+
+interface Logger {
+  info(message: string, extra?: Record<string, unknown>): void;
+  warn(message: string, extra?: Record<string, unknown>): void;
+  child(extra: Record<string, unknown>): Logger;
+}
+
+function createLogger(level: Level, fields: Record<string, unknown> = {}): Logger {
+  const write = (entryLevel: Level) => (message: string, extra: Record<string, unknown> = {}) => {
+    if (RANK[entryLevel] < RANK[level]) return;
+    console.log(JSON.stringify({ level: entryLevel, message, ...fields, ...extra }));
+  };
+  return { info: write("info"), warn: write("warn"), child: (extra) => createLogger(level, { ...fields, ...extra }) };
+}
+
+const root = createLogger("warn", { service: "bookstore" });
+root.info("not shown");
+const request = root.child({ requestId: "req-7" });
+request.warn("slow query", { ms: 840 });
+request.info("also not shown");
+createLogger("info").info("started");
+</solution>
+<expected>
+{"level":"warn","message":"slow query","service":"bookstore","requestId":"req-7","ms":840}
+{"level":"info","message":"started"}
+</expected>
+<explain><p>The child keeps the parent's level and fields and adds its own, so every entry of the request carries <code>requestId</code>. Filtering happens before any string is built, which keeps disabled debug logging cheap.</p></explain>
+</question>
+
+<question id="fbc-code-lifecycle" type="code" file="lifecycle.ts">
+<q><p>Write <code>startAll(parts)</code>: start each part in order; if one throws, stop the started ones in reverse and rethrow. The program should print the lines shown in the expected output.</p></q>
+<starter>
+interface Part {
+  name: string;
+  start(): void;
+  stop(): void;
+}
+
+const part = (name: string, fails = false): Part => ({
+  name,
+  start: () => {
+    if (fails) throw new Error(`${name} failed`);
+    console.log(`start ${name}`);
+  },
+  stop: () => console.log(`stop ${name}`),
+});
+
+// write startAll(parts)
+
+try {
+  startAll([part("database"), part("queue"), part("http", true), part("metrics")]);
+} catch (error) {
+  console.log((error as Error).message);
+}
+</starter>
+<solution>
+interface Part {
+  name: string;
+  start(): void;
+  stop(): void;
+}
+
+const part = (name: string, fails = false): Part => ({
+  name,
+  start: () => {
+    if (fails) throw new Error(`${name} failed`);
+    console.log(`start ${name}`);
+  },
+  stop: () => console.log(`stop ${name}`),
+});
+
+function startAll(parts: Part[]): void {
+  const started: Part[] = [];
+  try {
+    for (const p of parts) {
+      p.start();
+      started.push(p);
+    }
+  } catch (error) {
+    for (const p of started.reverse()) p.stop();
+    throw error;
+  }
+}
+
+try {
+  startAll([part("database"), part("queue"), part("http", true), part("metrics")]);
+} catch (error) {
+  console.log((error as Error).message);
+}
+</solution>
+<expected>
+start database
+start queue
+stop queue
+stop database
+http failed
+</expected>
+<explain><p><code>metrics</code> never starts, <code>http</code> failed, and the two that started are stopped newest first. Rethrowing keeps the original error for the caller.</p></explain>
+</question>
+
+<question id="fbc-code-scope" type="code" file="scope.ts">
+<q><p>Write <code>createScope()</code> that returns <code>{ resolveCart(), dispose() }</code>: <code>resolveCart</code> returns the same cart within one scope, and <code>dispose</code> calls the cart's <code>dispose</code> once if one was created. The program should print the three lines shown in the expected output.</p></q>
+<starter>
+class Cart {
+  items: string[] = [];
+  dispose(): void {
+    console.log(`released cart with ${this.items.length} items`);
+  }
+}
+
+// write createScope()
+
+const ada = createScope();
+ada.resolveCart().items.push("RICE-50KG");
+ada.resolveCart().items.push("OIL-5L");
+const tunde = createScope();
+console.log("separate carts:", ada.resolveCart() !== tunde.resolveCart());
+await ada.dispose();
+await createScope().dispose();
+console.log("done");
+</starter>
+<solution>
+class Cart {
+  items: string[] = [];
+  dispose(): void {
+    console.log(`released cart with ${this.items.length} items`);
+  }
+}
+
+function createScope() {
+  let cart: Cart | undefined;
+  return {
+    resolveCart(): Cart {
+      cart ??= new Cart();
+      return cart;
+    },
+    async dispose(): Promise<void> {
+      cart?.dispose();
+      cart = undefined;
+    },
+  };
+}
+
+const ada = createScope();
+ada.resolveCart().items.push("RICE-50KG");
+ada.resolveCart().items.push("OIL-5L");
+const tunde = createScope();
+console.log("separate carts:", ada.resolveCart() !== tunde.resolveCart());
+await ada.dispose();
+await createScope().dispose();
+console.log("done");
+</solution>
+<expected>
+separate carts: true
+released cart with 2 items
+done
+</expected>
+<explain><p>Each scope caches its own cart, so one request's items never reach another. Disposing a scope that never created a cart does nothing: disposal only closes what was actually created.</p></explain>
+</question>
+
+<question id="fbc-code-levels" type="code" file="levels.ts">
+<q><p>Write <code>levels(deps)</code>: group the names so that each group depends only on earlier groups. Each name's level is 0 without dependencies, otherwise one more than its highest dependency. The program should print <code>[ [ 'database', 'cache' ], [ 'catalog', 'orders' ], [ 'http' ] ]</code>.</p></q>
+<starter>
+const deps: Record<string, string[]> = {
+  http: ["catalog", "orders"],
+  catalog: ["database", "cache"],
+  orders: ["database"],
+  database: [],
+  cache: [],
+};
+
+// write levels(deps)
+
+console.log(levels(deps));
+</starter>
+<solution>
+const deps: Record<string, string[]> = {
+  http: ["catalog", "orders"],
+  catalog: ["database", "cache"],
+  orders: ["database"],
+  database: [],
+  cache: [],
+};
+
+function levels(graph: Record<string, string[]>): string[][] {
+  const level = new Map<string, number>();
+  const levelOf = (name: string): number => {
+    const known = level.get(name);
+    if (known !== undefined) return known;
+    const parents = graph[name] ?? [];
+    const value = parents.length === 0 ? 0 : Math.max(...parents.map(levelOf)) + 1;
+    level.set(name, value);
+    return value;
+  };
+  const groups: string[][] = [];
+  for (const name of Object.keys(graph).sort((a, b) => levelOf(a) - levelOf(b))) {
+    (groups[levelOf(name)] ??= []).push(name);
+  }
+  return groups;
+}
+
+console.log(levels(deps));
+</solution>
+<expected>
+[ [ 'database', 'cache' ], [ 'catalog', 'orders' ], [ 'http' ] ]
+</expected>
+<explain><p>Everything in one group can start at the same time with <code>Promise.all</code>; the groups run one after another. The stable sort keeps names of the same level in their original order.</p></explain>
+</question>
+
+<question id="fbc-out-timeout" type="output">
+<q>What does this print?</q>
+<code file="timeout.ts">
+async function withTimeout<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms} ms`)), ms);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+console.log(await withTimeout(Promise.resolve("connected"), 20, "database"));
+try {
+  await withTimeout(new Promise<string>(() => {}), 20, "search-index");
+} catch (error) {
+  console.log((error as Error).message);
+}
+</code>
+<option correct>connected
+search-index timed out after 20 ms</option>
+<option>connected
+database timed out after 20 ms</option>
+<option>search-index timed out after 20 ms</option>
+<option>connected</option>
+<explain><p>The first promise wins the race at once. The second never settles, so the timer rejects. <code>finally</code> clears the timer in both cases so it cannot keep the process alive.</p></explain>
+</question>
+
+<question id="fbc-out-frozen" type="output">
+<q>This file is an ES module, so it runs in strict mode. What does this print?</q>
+<code file="frozen.ts">
+const config = Object.freeze({ port: 8080, logLevel: "info" });
+try {
+  (config as { port: number }).port = 9000;
+} catch (error) {
+  console.log((error as Error).name);
+}
+console.log(config.port, Object.isFrozen(config));
+</code>
+<option correct>TypeError
+8080 true</option>
+<option>9000 true</option>
+<option>8080 true</option>
+<option>TypeError
+9000 false</option>
+<explain><p>In strict mode, writing to a frozen object's property throws a <code>TypeError</code>; in sloppy scripts it would fail silently. Either way the value stays 8080. The cast only silenced the compiler, which would otherwise refuse the write because of <code>readonly</code>.</p></explain>
+</question>
+
+<question id="fbc-code-timeout" type="code" file="timeout.ts">
+<q><p>Write <code>withTimeout(work, ms, what)</code>: resolve with the work's result, or reject with <code>&lt;what&gt; timed out after &lt;ms&gt; ms</code> if it takes longer, and always clear the timer. The program should print <code>ready</code> and <code>queue start timed out after 30 ms</code>.</p></q>
+<starter>
+// write withTimeout(work, ms, what)
+
+const fast = new Promise<string>((resolve) => setTimeout(() => resolve("ready"), 5));
+console.log(await withTimeout(fast, 30, "database start"));
+try {
+  await withTimeout(new Promise<string>(() => {}), 30, "queue start");
+} catch (error) {
+  console.log((error as Error).message);
+}
+</starter>
+<solution>
+async function withTimeout<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms} ms`)), ms);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const fast = new Promise<string>((resolve) => setTimeout(() => resolve("ready"), 5));
+console.log(await withTimeout(fast, 30, "database start"));
+try {
+  await withTimeout(new Promise<string>(() => {}), 30, "queue start");
+} catch (error) {
+  console.log((error as Error).message);
+}
+</solution>
+<expected>
+ready
+queue start timed out after 30 ms
+</expected>
+<explain><p><code>Promise.race</code> settles with whichever promise settles first. The timeout does not cancel the slow work; it only stops waiting for it, which is why a lifecycle rolls back after a timeout.</p></explain>
+</question>
+
+<question id="fbc-code-stop-all" type="code" file="stop.ts">
+<q><p>Write <code>stopAll(parts)</code>: stop the parts in the given order; when one throws, record <code>"&lt;name&gt;: &lt;message&gt;"</code> in a list and continue. Return the list of failures. The program should print the lines shown in the expected output.</p></q>
+<starter>
+const parts = [
+  { name: "http", stop: async () => console.log("http stopped") },
+  { name: "queue", stop: async () => { throw new Error("broker unreachable"); } },
+  { name: "database", stop: async () => console.log("database stopped") },
+];
+
+// write stopAll(parts)
+
+console.log(await stopAll(parts));
+</starter>
+<solution>
+const parts = [
+  { name: "http", stop: async () => console.log("http stopped") },
+  { name: "queue", stop: async () => { throw new Error("broker unreachable"); } },
+  { name: "database", stop: async () => console.log("database stopped") },
+];
+
+async function stopAll(list: { name: string; stop(): Promise<void> }[]): Promise<string[]> {
+  const failures: string[] = [];
+  for (const part of list) {
+    try {
+      await part.stop();
+    } catch (error) {
+      failures.push(`${part.name}: ${(error as Error).message}`);
+    }
+  }
+  return failures;
+}
+
+console.log(await stopAll(parts));
+</solution>
+<expected>
+http stopped
+database stopped
+[ 'queue: broker unreachable' ]
+</expected>
+<explain><p>Shutdown is best effort: one component's failure is reported, and the database still closes. Returning the failures lets the caller log them and choose a non-zero exit code.</p></explain>
+</question>

@@ -1,6 +1,6 @@
 ---
 title: How JavaScript runs
-description: Follow your code through the engine, from text to tokens, syntax tree, bytecode and optimized machine code, then read call stacks and async stack traces with confidence.
+description: Follow your code through the engine, from text to tokens, syntax tree, bytecode and machine code, and read sync and async stack traces with confidence.
 minutes: 50
 youNeed: Scope and the call stack, The event loop and Recursion
 youBuild: A pricing-rule engine for a shop, with a tokenizer, a parser, an interpreter and a compiler, the same stages a JavaScript engine uses
@@ -290,7 +290,7 @@ with .then: []
 <h3>Shaping traces: captureStackTrace and stackTraceLimit</h3>
 <p>V8 (so Node.js and Chromium-based browsers) has two extras on <code>Error</code>:</p>
 <ul>
-<li><code>Error.stackTraceLimit</code> is how many frames are recorded, 10 by default. Deep call chains (frameworks, middleware) can push your own frames past the cut-off; raising it helps when debugging, at a small cost for every error created.</li>
+<li><code>Error.stackTraceLimit</code> is how many frames are recorded: 10 by default in Node.js. Deep call chains (frameworks, middleware) can push your own frames past the cut-off; raising it helps when debugging, at a small cost for every error created.</li>
 <li><code>Error.captureStackTrace(target, fn)</code> puts a <code>stack</code> on any object, leaving out <code>fn</code> and everything above it. Helper functions that create errors use it so the trace starts at the caller, where the mistake is, instead of inside the helper.</li>
 </ul>
 <example file="capture-stack.js">
@@ -319,18 +319,19 @@ function depth(n) {
   if (n === 0) return new Error("deep");
   return depth(n - 1);
 }
-console.log("default limit:", Error.stackTraceLimit, "frames:", framesOf(depth(50), ["depth"]).length);
 const saved = Error.stackTraceLimit;
-Error.stackTraceLimit = 100;
-console.log("raised limit:", Error.stackTraceLimit, "frames:", framesOf(depth(50), ["depth"]).length);
+for (const limit of [10, 100]) {
+  Error.stackTraceLimit = limit;
+  console.log(`limit ${limit}: recorded ${framesOf(depth(50), ["depth"]).length} of the 51 depth frames`);
+}
 Error.stackTraceLimit = saved;
 </example>
 <output>
 stock cannot be negative: -3 [ 'assertStock' ]
-default limit: 10 frames: 10
-raised limit: 100 frames: 51
+limit 10: recorded 10 of the 51 depth frames
+limit 100: recorded 51 of the 51 depth frames
 </output>
-<p>The trace for the negative stock starts at <code>assertStock</code>, the function that received the bad value; the helper <code>fail</code> is hidden. The recursion was 51 calls deep, but with the default limit only the top 10 frames were recorded; raising the limit recorded all 51.</p>
+<p>The trace for the negative stock starts at <code>assertStock</code>, the function that received the bad value; the helper <code>fail</code> is hidden. The recursion was 51 calls deep; with a limit of 10 (the default in Node.js; browsers may use another) only the top 10 frames were recorded, and raising the limit recorded all 51. The example restores the old limit at the end, because the setting is global.</p>
 <h3>Source maps</h3>
 <p>The code that runs is often not the code you wrote: TypeScript is compiled to JavaScript, and front-end code is bundled and minified. The line numbers in a trace then point at the generated file. A <strong>source map</strong> is a file that maps positions in the generated code back to your source. Node.js uses them when started with <code>--enable-source-maps</code>, and browsers' developer tools use them automatically. <a href="/learn/js-tooling">Tooling</a> covers how to generate them.</p>
 </section>

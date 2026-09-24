@@ -1,0 +1,772 @@
+<question id="da-n-plus-one-name" type="choice">
+<q>A dashboard loads 40 projects with one query, then runs one more query per project to count its open tasks. What is this called, and how many queries does one page view send?</q>
+<option>A cartesian join; 40 queries</option>
+<option correct>The N+1 query problem; 41 queries</option>
+<option>A lost update; 2 queries</option>
+<option>Offset drift; 40 queries</option>
+<explain><p>One query for the list plus one per item is the N+1 problem. It grows with the data: 5,000 projects would mean 5,001 queries for one screen.</p></explain>
+</question>
+
+<question id="da-n-plus-one-fix" type="choice">
+<q>The dashboard only needs, for each project, its name and how many open tasks it has. Which design sends the fewest queries and copies the least data into your process?</q>
+<option>Load every task with <code>tasks.findMany()</code> and count them in JavaScript</option>
+<option>Keep the loop, but run the counts with <code>Promise.all</code></option>
+<option correct>A query service method with one <code>LEFT JOIN … GROUP BY</code> query that returns the counts</option>
+<option>Cache each project's count for five minutes</option>
+<explain><p>A grouped query lets the database do the counting and return only the numbers: one query, however many projects. <code>Promise.all</code> sends the same N+1 queries, just at the same time; loading every task copies rows you never show.</p></explain>
+</question>
+
+<question id="da-batch-when" type="choice">
+<q>When is "collect the ids, then load all related rows with one <code>IN</code> query" the right fix for an N+1, rather than a grouped SQL query?</q>
+<option>When you only need counts</option>
+<option correct>When you need the related entities themselves, for example to show each project's open tasks</option>
+<option>Never; <code>IN</code> queries cannot use indexes</option>
+<option>Only inside a transaction</option>
+<explain><p>Batch loading gives you the rows in 2 queries, which you then group in memory. When all you need is an aggregate, a <code>GROUP BY</code> query is cheaper still.</p></explain>
+</question>
+
+<question id="da-count-queries" type="output">
+<q>This fake database counts calls. What does the program print?</q>
+<code file="count-calls.js">
+let calls = 0;
+const db = {
+  async projects() { calls++; return [{ id: 1 }, { id: 2 }, { id: 3 }]; },
+  async openCount(projectId) { calls++; return projectId * 2; },
+  async openCounts(ids) { calls++; return new Map(ids.map((id) => [id, id * 2])); },
+};
+
+const list = await db.projects();
+for (const p of list) await db.openCount(p.id);
+console.log("loop:", calls);
+
+calls = 0;
+const again = await db.projects();
+const counts = await db.openCounts(again.map((p) => p.id));
+console.log("batched:", calls, [...counts.values()]);
+</code>
+<option correct>loop: 4
+batched: 2 [ 2, 4, 6 ]</option>
+<option>loop: 3
+batched: 2 [ 2, 4, 6 ]</option>
+<option>loop: 4
+batched: 4 [ 2, 4, 6 ]</option>
+<option>loop: 1
+batched: 1 [ 1, 2, 3 ]</option>
+<explain><p>The loop makes 1 call for the list and 1 per project: 4. The batched version makes one call for the list and one for all the counts, however many projects there are.</p></explain>
+</question>
+
+<question id="da-shapes" type="choice">
+<q>Which statement about entities and DTOs is right?</q>
+<option>The entity should be sent to the client as it is, so the API always shows all the data</option>
+<option correct>The repository returns entities; a mapper turns an entity into a response DTO that contains only what a client may see</option>
+<option>A request DTO should include the <code>id</code> and <code>version</code>, so the client can choose them</option>
+<option>DTOs are only needed when you use GraphQL</option>
+<explain><p>The entity is the full record your code works with. The response DTO is a separate shape for the network, produced by one mapper. That is why adding a private column to the entity never leaks it.</p></explain>
+</question>
+
+<question id="da-mapper-names" type="output">
+<q>A column <code>costEstimate</code> was added to the entity. What do the two mappers send?</q>
+<code file="mappers.js">
+const task = { id: 4, title: "Test on phones", status: "open", costEstimate: 120000, deletedAt: null };
+
+const spreadMapper = ({ deletedAt, ...rest }) => rest;
+const namedMapper = (t) => ({ id: t.id, title: t.title, status: t.status });
+
+console.log(JSON.stringify(spreadMapper(task)));
+console.log(JSON.stringify(namedMapper(task)));
+</code>
+<option correct>{"id":4,"title":"Test on phones","status":"open","costEstimate":120000}
+{"id":4,"title":"Test on phones","status":"open"}</option>
+<option>{"id":4,"title":"Test on phones","status":"open"}
+{"id":4,"title":"Test on phones","status":"open"}</option>
+<option>{"id":4,"title":"Test on phones","status":"open","costEstimate":120000,"deletedAt":null}
+{"id":4,"title":"Test on phones","status":"open"}</option>
+<option>{"id":4,"title":"Test on phones","status":"open","costEstimate":120000}
+{"id":4,"title":"Test on phones","status":"open","costEstimate":120000}</option>
+<explain><p>The spread mapper removes the fields it knows about and publishes everything else, including any column added later. The mapper that names every field stays private by default.</p></explain>
+</question>
+
+<question id="da-soft-entity" type="choice">
+<q>Your tasks use <code>serial</code> number ids. Why does <code>interface Task extends SoftDeletableEntity { readonly id: number }</code> fail to compile with <code>@zudojs/database</code>?</q>
+<option>Interfaces cannot extend types from packages</option>
+<option correct><code>SoftDeletableEntity</code> has no type parameter, so its <code>id</code> is a <code>string</code>, and <code>number</code> is not assignable to it</option>
+<option><code>SoftDeletableEntity</code> requires a <code>version</code> field</option>
+<option>A readonly property cannot be overridden</option>
+<explain><p><code>SoftDeletableEntity</code> extends <code>DatabaseEntity</code> with its default <code>string</code> id. For number ids, extend <code>DatabaseEntity&lt;number&gt;</code> and add <code>deletedAt: Date | null</code> yourself.</p></explain>
+</question>
+
+<question id="da-repo-methods" type="choice">
+<q>Which repository method is the best design for the Task API?</q>
+<option><code>find(where: unknown)</code>, so the route can pass the query string straight in</option>
+<option><code>runSql(sql: string)</code>, so services can write any query</option>
+<option correct><code>findOpenInProject(projectId: number)</code></option>
+<option><code>findAndMapToJson(projectId: number)</code>, returning the response DTO</option>
+<explain><p>Methods named after questions keep the query boundary in one place: nobody above the repository builds filters, and certainly not from request input. Repositories return entities; mapping to JSON happens at the edge.</p></explain>
+</question>
+
+<question id="da-unique-where" type="choice">
+<q>"Two live tasks in one project cannot have the same title." Where must this rule be enforced so that it holds even when two requests arrive at the same moment?</q>
+<option>In the route, by searching for the title before inserting</option>
+<option>In the client, by disabling the button after one click</option>
+<option correct>In the database, as a unique index; the service may still check first for a friendlier message</option>
+<option>In the response mapper</option>
+<explain><p>"Check, then insert" has a gap: both requests can pass the check before either inserts. Only a unique index makes the rule true. The repository then turns the violation into a 409.</p></explain>
+</question>
+
+<question id="da-partial-unique" type="choice">
+<q>Tasks are soft-deleted. Why is the index <code>UNIQUE (project_id, lower(title)) WHERE deleted_at IS NULL</code> better than a plain <code>UNIQUE (project_id, title)</code>?</q>
+<option>It is faster to build</option>
+<option correct>Deleted tasks are not covered, so a user can create a task with the title of one they deleted, and the <code>lower()</code> makes "Buy Milk" and "buy milk" collide</option>
+<option>It allows two live tasks with the same title</option>
+<option>It makes restoring a deleted task always succeed</option>
+<explain><p>A partial index only covers the rows that match its <code>WHERE</code>. Soft-deleted rows step aside, and restoring one whose title is now taken is refused with 409, which is right.</p></explain>
+</question>
+
+<question id="da-check-500" type="choice">
+<q>With <code>@zudojs/database</code> 1.4.0, a repository update breaks a <code>CHECK (open_tasks &gt;= 0)</code> constraint and the error arrives as a 500. What is the best reading of that?</q>
+<option>The database is down</option>
+<option>The client sent a bad value, so the API should answer 400 automatically</option>
+<option correct>Your own code or validation let through a value the database refuses; the constraint caught a bug, so fix the code path and validate earlier</option>
+<option>CHECK constraints should be removed because they cause 500s</option>
+<explain><p>Constraints are the last line of defence. Validation at the edge answers 400 for bad input; a constraint firing after that means a code path the validation did not cover.</p></explain>
+</question>
+
+<question id="da-strict-schema" type="output">
+<q>What does this print?</q>
+<code file="strict-body.ts">
+import { schema } from "@zudojs/schema";
+
+const CreateTaskBody = schema.object({
+  title: schema.string().trim().min(1).max(200),
+}).strict();
+
+const result = CreateTaskBody.safeParse({ title: " Pack boxes ", projectId: 2 });
+console.log(result.success ? result.data : result.issues.map((i) => i.message));
+console.log(CreateTaskBody.parse({ title: " Pack boxes " }));
+</code>
+<option correct>[ 'Unknown key: projectId' ]
+{ title: 'Pack boxes' }</option>
+<option>{ title: 'Pack boxes' }
+{ title: 'Pack boxes' }</option>
+<option>{ title: 'Pack boxes', projectId: 2 }
+{ title: 'Pack boxes' }</option>
+<option>[ 'Unknown key: projectId' ]
+{ title: ' Pack boxes ' }</option>
+<explain><p><code>.strict()</code> refuses keys the schema does not know, so a client cannot choose its project through the body. <code>.trim()</code> removes the spaces from the valid title.</p></explain>
+</question>
+
+<question id="da-limit-clamp" type="output">
+<q>What does <code>normalizeLimit</code> from <code>@zudojs/database</code> return for these limits?</q>
+<code file="limits.js" browser="no">
+import { normalizeLimit } from "@zudojs/database";
+
+console.log([undefined, 0, 7.9, 250].map((limit) => normalizeLimit(limit)));
+</code>
+<option correct>[ 20, 1, 7, 100 ]</option>
+<option>[ 20, 0, 8, 250 ]</option>
+<option>[ undefined, 1, 7, 100 ]</option>
+<option>[ 20, 20, 7, 100 ]</option>
+<explain><p>A missing limit becomes the default, 20. Other values are cut to a whole number and kept between 1 and <code>MAX_LIMIT</code> (100). The clamp protects the database; a schema that answers 400 tells the client what it did wrong. Use both.</p></explain>
+</question>
+
+<question id="da-query-service" type="choice">
+<q>What is the job of a <strong>query service</strong> such as <code>ProjectQueries</code>, compared with a repository?</q>
+<option>It replaces repositories for writes</option>
+<option correct>It owns reads shaped for one screen: it may join and group across tables and returns DTOs, while repositories keep loading and saving entities</option>
+<option>It caches every repository call</option>
+<option>It is the only place allowed to open transactions</option>
+<explain><p>Screen-shaped reads (cards, dashboards, reports) do not fit one table's repository. A query service answers them in one query and returns exactly what the screen needs.</p></explain>
+</question>
+
+<question id="da-include-cycle" type="choice">
+<q>A client may choose related data to include. Why does <code>@zudojs/database</code> refuse an include of project → tasks → project → tasks?</q>
+<option>Prisma cannot load two levels</option>
+<option correct>It is a cycle: it could nest again and again and turn one request into an enormous response, so the relation registry rejects it (and depth is capped)</option>
+<option>Tasks do not belong to projects</option>
+<option>Includes are only allowed inside transactions</option>
+<explain><p>Includes are a way for a request to make the database do more work. Checking them against a registry of real relations, refusing cycles and capping depth keeps that work bounded.</p></explain>
+</question>
+
+<question id="da-include-depth" type="output">
+<q>What does this print?</q>
+<code file="depth.js" browser="no">
+import { includeRelation, toPrismaInclude } from "@zudojs/database";
+
+const nested = [includeRelation("tasks", { include: [includeRelation("comments", { include: [includeRelation("author")] })] })];
+try {
+  toPrismaInclude(nested, { depth: 2 });
+  console.log("allowed");
+} catch (error) {
+  console.log(error.name, "-", error.message);
+}
+</code>
+<option correct>RangeError - Relation include depth exceeds the maximum of 2.</option>
+<option>allowed</option>
+<option>TypeError - Relation include "tasks" is cyclic.</option>
+<option>RangeError - Relation include depth exceeds the maximum of 5.</option>
+<explain><p>tasks → comments → author is three levels, and this call allows 2. Without the option the cap is <code>DEFAULT_INCLUDE_DEPTH</code>, 5.</p></explain>
+</question>
+
+<question id="da-offset-drift" type="output">
+<q>A list shows tasks newest first, 2 per page, by offset. A task is added between the two requests. What do the two pages show?</q>
+<code file="drift.js">
+let tasks = ["D", "C", "B", "A"];
+const page = (n) => tasks.slice((n - 1) * 2, n * 2);
+
+const first = page(1);
+tasks = ["E", ...tasks];
+const second = page(2);
+console.log(first, second);
+</code>
+<option correct>[ 'D', 'C' ] [ 'C', 'B' ]</option>
+<option>[ 'D', 'C' ] [ 'B', 'A' ]</option>
+<option>[ 'E', 'D' ] [ 'C', 'B' ]</option>
+<option>[ 'D', 'C' ] [ 'E', 'B' ]</option>
+<explain><p>"Page 2" means "skip 2 rows". The new row pushed everything down one place, so C is shown twice. A deletion between the requests would make a row disappear instead.</p></explain>
+</question>
+
+<question id="da-keyset-after" type="output">
+<q>The same list, but page 2 means "the tasks after the last one I saw". What is printed?</q>
+<code file="keyset.js">
+let tasks = [{ id: 4, t: "D" }, { id: 3, t: "C" }, { id: 2, t: "B" }, { id: 1, t: "A" }];
+const after = (lastId) => tasks.filter((x) => x.id < lastId).slice(0, 2).map((x) => x.t);
+
+const first = tasks.slice(0, 2);
+tasks = [{ id: 5, t: "E" }, ...tasks];
+console.log(first.map((x) => x.t), after(first.at(-1).id));
+</code>
+<option correct>[ 'D', 'C' ] [ 'B', 'A' ]</option>
+<option>[ 'D', 'C' ] [ 'C', 'B' ]</option>
+<option>[ 'D', 'C' ] [ 'E', 'D' ]</option>
+<option>[ 'E', 'D' ] [ 'B', 'A' ]</option>
+<explain><p>A keyset page starts after a <em>row</em>, not after a count of rows. The new task E sorts before the cursor, so it does not shift the second page.</p></explain>
+</question>
+
+<question id="da-tiebreaker" type="choice">
+<q>Why does <code>paginateCursor</code> append the id field to your sort when it is missing?</q>
+<option>So the response includes the id</option>
+<option correct>Two rows can share a timestamp; without a unique last sort key, "the rows after this one" is not well defined and rows can be skipped or repeated</option>
+<option>Ids are always indexed, so the query is faster</option>
+<option>To make the cursor shorter</option>
+<explain><p>A keyset cursor needs a total order. Appending the primary key as a tiebreaker makes every position unique.</p></explain>
+</question>
+
+<question id="da-keyset-where" type="output">
+<q>What condition does <code>buildKeysetWhere</code> produce for a cursor at priority 2, id 40, sorted by priority then id, both ascending?</q>
+<code file="keyset-where.js" browser="no">
+import { buildKeysetWhere } from "@zudojs/database";
+
+const sort = [{ field: "priority", direction: "asc" }, { field: "id", direction: "asc" }];
+console.log(JSON.stringify(buildKeysetWhere({ priority: 2, id: 40 }, sort)));
+</code>
+<option correct>{"OR":[{"priority":{"gt":2}},{"AND":[{"priority":{"equals":2}},{"id":{"gt":40}}]}]}</option>
+<option>{"OR":[{"priority":{"lt":2}},{"AND":[{"priority":{"equals":2}},{"id":{"lt":40}}]}]}</option>
+<option>{"AND":[{"priority":{"gt":2}},{"id":{"gt":40}}]}</option>
+<option>{"priority":{"gte":2},"id":{"gt":40}}</option>
+<explain><p>"After" in an ascending sort means a bigger priority, or the same priority and a bigger id. An <code>AND</code> of both "greater than" conditions would wrongly skip every row with a bigger priority but a smaller id, such as priority 3, id 7.</p></explain>
+</question>
+
+<question id="da-cursor-fields" type="output">
+<q>What does the decoded cursor contain?</q>
+<code file="cursor-fields.js" browser="no">
+import { createKeysetCursor, decodeKeysetCursor } from "@zudojs/database";
+
+const sort = [{ field: "dueOn", direction: "asc" }, { field: "id", direction: "asc" }];
+const cursor = createKeysetCursor({ id: 9, title: "Pay rent", dueOn: "2026-10-01", ownerId: "ada" }, sort);
+console.log(decodeKeysetCursor(cursor, sort));
+</code>
+<option correct>{ dueOn: '2026-10-01', id: 9 }</option>
+<option>{ id: 9, title: 'Pay rent', dueOn: '2026-10-01', ownerId: 'ada' }</option>
+<option>{ id: 9 }</option>
+<option>{ dueOn: '2026-10-01', id: 9, title: 'Pay rent' }</option>
+<explain><p>A keyset cursor holds only the values of the sort fields: that is all it needs to find the position, and it keeps titles and owners out of URLs. Decoding also refuses any extra field.</p></explain>
+</question>
+
+<question id="da-cursor-extra" type="output">
+<q>An attacker hand-writes a cursor with an extra field. What happens?</q>
+<code file="cursor-extra.js" browser="no">
+import { decodeKeysetCursor } from "@zudojs/database";
+
+const forged = Buffer.from('{"id":1,"isAdmin":true}').toString("base64url");
+try {
+  decodeKeysetCursor(forged, [{ field: "id", direction: "asc" }]);
+} catch (error) {
+  console.log(error.name, error.statusCode, error.message);
+}
+</code>
+<option correct>ValidationError 400 Pagination cursor contains an unexpected field.</option>
+<option>ValidationError 400 Invalid pagination cursor signature.</option>
+<option>DatabaseError 500 Unknown field "isAdmin"</option>
+<option>nothing is printed; the extra field is ignored</option>
+<explain><p>The payload may only contain the sort fields. A bad cursor is the client's mistake, so it is a 400, and the message never repeats the cursor's contents. With a <code>cursorSecret</code>, an edited cursor fails the signature check first.</p></explain>
+</question>
+
+<question id="da-precision" type="output">
+<q>PostgreSQL stored a task's <code>created_at</code> as <code>10:00:00.000300</code>. What does the cursor carry after it goes through a JavaScript <code>Date</code>?</q>
+<code file="precision.js">
+const createdAt = new Date("2026-09-01T10:00:00.000300Z");
+console.log(createdAt.toISOString());
+</code>
+<option correct>2026-09-01T10:00:00.000Z</option>
+<option>2026-09-01T10:00:00.000300Z</option>
+<option>2026-09-01T10:00:00.300Z</option>
+<option>Invalid Date</option>
+<explain><p>A <code>Date</code> has millisecond precision, so the microseconds are lost. Rows created within the same millisecond then compare as "newer" than the cursor and are skipped. Store <code>timestamptz(3)</code>, or sort by the id.</p></explain>
+</question>
+
+<question id="da-precision-fix" type="choice">
+<q>Keyset pagination sorted by <code>created_at</code> skips rows during a bulk import. Which change fixes it?</q>
+<option>Increase the page size</option>
+<option>Remove the id tiebreaker</option>
+<option correct>Declare the column <code>timestamptz(3)</code> so the database stores only what a JavaScript <code>Date</code> can carry, or sort by the id instead</option>
+<option>Switch the cursor secret</option>
+<explain><p>The cursor's value and the stored value must be comparable exactly. Millisecond columns match a <code>Date</code>; an id has no precision problem at all.</p></explain>
+</question>
+
+<question id="da-index-order" type="choice">
+<q>The busiest query is "tasks of project X, not deleted, ordered by <code>created_at DESC, id DESC</code>, after a cursor, 21 rows". Which index serves it best?</q>
+<option><code>(created_at)</code></option>
+<option><code>(id, project_id)</code></option>
+<option correct><code>(project_id, created_at DESC, id DESC)</code></option>
+<option>One separate index on each of the three columns</option>
+<explain><p>Equality columns first, then the sort columns in the same order and direction. PostgreSQL can then jump to the project and cursor position and read 21 rows in order, with no sort step.</p></explain>
+</question>
+
+<question id="da-plan-read" type="choice">
+<q>An <code>EXPLAIN</code> of the task list shows <code>Limit → Sort → Seq Scan on tasks</code>. What does that tell you?</q>
+<option>The index is being used</option>
+<option correct>No suitable index: PostgreSQL reads the whole table and sorts it before it can return the first 21 rows</option>
+<option>The query is wrong and returns too many rows</option>
+<option>The table is empty</option>
+<explain><p>A <code>Seq Scan</code> reads every row, and the <code>Sort</code> must finish before <code>Limit</code> can return anything. With the right index the plan becomes <code>Limit → Index Scan</code>.</p></explain>
+</question>
+
+<question id="da-offset-cost" type="choice">
+<q>Page 500 of a list, 20 per page, by <code>LIMIT 20 OFFSET 9980</code>, with a perfect index. About how many index entries does PostgreSQL read?</q>
+<option>20</option>
+<option correct>About 10,000: it must walk past every skipped row</option>
+<option>500</option>
+<option>The whole table</option>
+<explain><p>An offset cannot jump; it counts rows as it walks. The keyset version of the same page reads about 20, which is why deep pages and full exports should use cursors.</p></explain>
+</question>
+
+<question id="da-transaction-why" type="choice">
+<q><code>createTask</code> inserts a task and then increments <code>projects.open_tasks</code>. What goes wrong without a transaction?</q>
+<option>Nothing, as long as both statements use parameters</option>
+<option correct>If the second statement fails (or the process dies between them), the task exists but the counter was never increased, and nothing corrects it</option>
+<option>The insert is slower</option>
+<option>The foreign key stops working</option>
+<explain><p>Related writes must be all-or-nothing. <code>withTransaction</code> rolls back the insert if anything after it fails, and every repository joins with <code>withTransaction(tx)</code>.</p></explain>
+</question>
+
+<question id="da-repo-outside-tx" type="choice">
+<q>Inside <code>withTransaction(client, async (tx) =&gt; { … })</code> a developer calls <code>this.tasks.create(…)</code> instead of <code>this.tasks.withTransaction(tx).create(…)</code>. What happens?</q>
+<option>ZudoJS notices and joins the transaction automatically</option>
+<option correct>The insert runs outside the transaction, so a later failure rolls back everything except that insert</option>
+<option>The insert is refused</option>
+<option>Nothing changes; both forms are identical</option>
+<explain><p><code>@zudojs/database</code> passes the transaction explicitly. A repository built from the root client knows nothing about <code>tx</code>. (The <code>@zudojs/transactions</code> package tracks the current transaction for you with <code>AsyncLocalStorage</code>.)</p></explain>
+</question>
+
+<question id="da-lost-update" type="output">
+<q>Two requests each complete one task and adjust a counter by reading and writing it. What is printed?</q>
+<code file="lost-update.js">
+const db = { openTasks: 3 };
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+async function readModifyWrite() {
+  const value = db.openTasks;
+  await tick();
+  db.openTasks = value - 1;
+}
+
+await Promise.all([readModifyWrite(), readModifyWrite()]);
+console.log("read-modify-write:", db.openTasks);
+
+db.openTasks = 3;
+async function atomic() {
+  await tick();
+  db.openTasks -= 1;
+}
+await Promise.all([atomic(), atomic()]);
+console.log("atomic:", db.openTasks);
+</code>
+<option correct>read-modify-write: 2
+atomic: 1</option>
+<option>read-modify-write: 1
+atomic: 1</option>
+<option>read-modify-write: 2
+atomic: 2</option>
+<option>read-modify-write: 1
+atomic: 2</option>
+<explain><p>Both read-modify-write calls read 3 before either wrote, so both wrote 2: one decrement was lost. The atomic version reads and writes in one step, like <code>SET open_tasks = open_tasks - 1</code> in SQL.</p></explain>
+</question>
+
+<question id="da-increment-api" type="choice">
+<q>Which repository call decreases a project's counter without a lost update, given the lesson's adapter?</q>
+<option><code>projects.update(id, { openTasks: project.openTasks - 1 })</code></option>
+<option correct><code>projects.update(id, { openTasks: { decrement: 1 } })</code></option>
+<option><code>projects.upsert({ id }, …)</code></option>
+<option><code>projects.findById(id)</code> twice, then compare</option>
+<explain><p><code>{ decrement: 1 }</code> becomes <code>open_tasks = open_tasks - 1</code>, computed by PostgreSQL from the current value. Passing a number you computed from an earlier read is the read-modify-write bug.</p></explain>
+</question>
+
+<question id="da-read-committed" type="choice">
+<q>On a real PostgreSQL server at the default <code>READ COMMITTED</code> level, a developer wraps read-modify-write of the counter in <code>withTransaction</code>. Is the lost update fixed?</q>
+<option>Yes, a transaction makes other transactions wait</option>
+<option correct>No: two transactions can both read the old value before either commits. Use an atomic update, a version check or a row lock</option>
+<option>Yes, but only with PGlite</option>
+<option>No, transactions make it worse</option>
+<explain><p>A transaction makes one request all-or-nothing; it does not isolate two requests from each other at <code>READ COMMITTED</code>. (PGlite runs one transaction at a time, which hides the bug while you test.)</p></explain>
+</question>
+
+<question id="da-optimistic" type="choice">
+<q>How does optimistic concurrency with a <code>version</code> column stop a silent overwrite?</q>
+<option>It locks the row while the user edits</option>
+<option correct>Each write includes the version it was based on in its <code>WHERE</code> and increments it; if someone changed the row since, nothing matches and the API answers 409</option>
+<option>It retries the write until it succeeds</option>
+<option>It stores every version and merges them</option>
+<explain><p>The check and the write are one statement, so there is no gap. The client that gets 409 reloads, sees the other change, and decides what to do.</p></explain>
+</question>
+
+<question id="da-pessimistic" type="choice">
+<q>When is a row lock (<code>createLockManager(client).withRowLock(…)</code>, which uses <code>SELECT … FOR UPDATE</code>) a better choice than a version check?</q>
+<option>For an edit form a person keeps open for ten minutes</option>
+<option correct>For a short, heavily contended step inside one request, such as taking the last seat of a booking</option>
+<option>Never; locks are always slower</option>
+<option>For reads that must be fast</option>
+<explain><p>A row lock makes the others wait, so it only suits work that takes milliseconds. You cannot hold a database lock while a person is typing; use a version for that.</p></explain>
+</question>
+
+<question id="da-idempotent" type="choice">
+<q>A client times out and sends "complete task 5" again. The first request had already succeeded. What should <code>completeTask</code> do, and why?</q>
+<option>Decrease the counter again, because the client asked twice</option>
+<option>Answer 500, because this should never happen</option>
+<option correct>Return the task unchanged without touching the counter: a repeated request must be harmless (idempotent)</option>
+<option>Delete the task</option>
+<explain><p>Clients, proxies and users retry. Checking "already done" inside the transaction and returning early keeps the counter right however many times the request arrives.</p></explain>
+</question>
+
+<question id="da-invariant" type="choice">
+<q>Which test is the most valuable for the projects and tasks data layer?</q>
+<option>That <code>createTask</code> calls <code>repository.create</code> exactly once, with a mock</option>
+<option correct>After each sequence of service calls against a real database, a query confirms <code>open_tasks</code> equals the real number of open, not-deleted tasks</option>
+<option>That the SQL string contains <code>INSERT</code></option>
+<option>That the adapter file has no more than 150 lines</option>
+<explain><p>An invariant check catches any code path that breaks the rule, including ones you did not think of; in the lesson it found that a soft delete bypassed the counter. The same query works as a production health check.</p></explain>
+</question>
+
+<question id="da-concurrently" type="choice">
+<q>You need an index on a table with 40 million rows that takes writes all day. Why not add <code>CREATE INDEX CONCURRENTLY</code> as a normal migration?</q>
+<option>PostgreSQL does not support concurrent index builds</option>
+<option correct>It cannot run inside a transaction, and the migration runner runs every migration in one; run it from a deploy step outside the runner</option>
+<option>It locks the table for longer than a normal index</option>
+<option>Migrations cannot create indexes</option>
+<option>It only works on empty tables</option>
+<explain><p>A plain <code>CREATE INDEX</code> blocks writes while it builds. <code>CONCURRENTLY</code> does not, but PostgreSQL refuses it inside a transaction block, where every <code>@zudojs/database</code> migration runs.</p></explain>
+</question>
+
+<question id="da-text-sort" type="output">
+<q>Priorities are stored as text and the list is sorted by that column. In what order do they come out?</q>
+<code file="text-sort.js">
+console.log(["normal", "high", "low"].sort());
+</code>
+<option correct>[ 'high', 'low', 'normal' ]</option>
+<option>[ 'high', 'normal', 'low' ]</option>
+<option>[ 'low', 'normal', 'high' ]</option>
+<option>[ 'normal', 'high', 'low' ]</option>
+<explain><p>Text sorts alphabetically, so "low" lands before "normal". Store a number or a PostgreSQL <code>enum</code>, whose order is the order you declare, and map it to words in the DTO.</p></explain>
+</question>
+
+<question id="da-code-mapper" type="code" file="card-mapper.ts">
+<q><p>Finish <code>toProjectCard(row)</code>. It turns a database row into the response DTO <code>{ id, name, openTasks, highPriority }</code>, taking <code>open</code> and <code>high</code> from the row. Name every field; nothing else from the row may appear.</p></q>
+<starter>
+interface CardRow { id: number; name: string; open: number; high: number; owner_id: string; internal_notes: string | null }
+interface ProjectCard { readonly id: number; readonly name: string; readonly openTasks: number; readonly highPriority: number }
+
+function toProjectCard(row: CardRow): ProjectCard {
+  // your code here
+  return row as unknown as ProjectCard;
+}
+
+const row: CardRow = { id: 1, name: "Website relaunch", open: 3, high: 2, owner_id: "ada", internal_notes: "margin 40%" };
+console.log(JSON.stringify(toProjectCard(row)));
+</starter>
+<solution>
+interface CardRow { id: number; name: string; open: number; high: number; owner_id: string; internal_notes: string | null }
+interface ProjectCard { readonly id: number; readonly name: string; readonly openTasks: number; readonly highPriority: number }
+
+function toProjectCard(row: CardRow): ProjectCard {
+  return { id: row.id, name: row.name, openTasks: row.open, highPriority: row.high };
+}
+
+const row: CardRow = { id: 1, name: "Website relaunch", open: 3, high: 2, owner_id: "ada", internal_notes: "margin 40%" };
+console.log(JSON.stringify(toProjectCard(row)));
+</solution>
+<expected>
+{"id":1,"name":"Website relaunch","openTasks":3,"highPriority":2}
+</expected>
+<explain><p>Naming each field is what keeps <code>owner_id</code> and <code>internal_notes</code> private. The <code>as unknown as ProjectCard</code> in the starter is exactly the kind of assertion that hides a leak from the compiler.</p></explain>
+</question>
+
+<question id="da-code-batch" type="code" file="batch-counts.js">
+<q><p>Finish <code>openCountsByProject(projectIds, openTasks)</code>. <code>openTasks</code> is the result of one <code>IN</code> query: every open task of those projects. Return a <code>Map</code> from each project id to its count, including projects with 0, in one pass over the tasks.</p></q>
+<starter>
+function openCountsByProject(projectIds, openTasks) {
+  const counts = new Map();
+  // your code here
+  return counts;
+}
+
+const openTasks = [{ projectId: 1 }, { projectId: 3 }, { projectId: 1 }];
+console.log(openCountsByProject([1, 2, 3], openTasks));
+</starter>
+<solution>
+function openCountsByProject(projectIds, openTasks) {
+  const counts = new Map();
+  for (const id of projectIds) counts.set(id, 0);
+  for (const task of openTasks) counts.set(task.projectId, (counts.get(task.projectId) ?? 0) + 1);
+  return counts;
+}
+
+const openTasks = [{ projectId: 1 }, { projectId: 3 }, { projectId: 1 }];
+console.log(openCountsByProject([1, 2, 3], openTasks));
+</solution>
+<expected>
+Map(3) { 1 => 2, 2 => 0, 3 => 1 }
+</expected>
+<explain><p>Start every id at 0, so projects without open tasks still appear, then count in one loop. This is the "group in memory" half of batch loading; the database part is a single <code>projectId IN (…)</code> query.</p></explain>
+</question>
+
+<question id="da-code-keyset" type="code" file="keyset-page.js">
+<q><p>Finish <code>pageAfter(rows, cursor, limit)</code>. <code>rows</code> are sorted by <code>createdAt</code> descending, then <code>id</code> descending (ISO strings compare correctly as text). Return the first <code>limit</code> rows that come strictly after <code>cursor</code> (<code>{ createdAt, id }</code>), or from the start when <code>cursor</code> is <code>null</code>.</p></q>
+<starter>
+function pageAfter(rows, cursor, limit) {
+  // your code here
+}
+
+const rows = [
+  { id: 5, createdAt: "2026-09-03" },
+  { id: 4, createdAt: "2026-09-02" },
+  { id: 3, createdAt: "2026-09-02" },
+  { id: 2, createdAt: "2026-09-01" },
+];
+console.log(pageAfter(rows, null, 2).map((r) => r.id));
+console.log(pageAfter(rows, { createdAt: "2026-09-02", id: 4 }, 2).map((r) => r.id));
+</starter>
+<solution>
+function pageAfter(rows, cursor, limit) {
+  const isAfter = (row) =>
+    cursor === null ||
+    row.createdAt < cursor.createdAt ||
+    (row.createdAt === cursor.createdAt && row.id < cursor.id);
+  return rows.filter(isAfter).slice(0, limit);
+}
+
+const rows = [
+  { id: 5, createdAt: "2026-09-03" },
+  { id: 4, createdAt: "2026-09-02" },
+  { id: 3, createdAt: "2026-09-02" },
+  { id: 2, createdAt: "2026-09-01" },
+];
+console.log(pageAfter(rows, null, 2).map((r) => r.id));
+console.log(pageAfter(rows, { createdAt: "2026-09-02", id: 4 }, 2).map((r) => r.id));
+</solution>
+<expected>
+[ 5, 4 ]
+[ 3, 2 ]
+</expected>
+<explain><p>For a descending sort, "after" means an earlier date, or the same date and a smaller id. Task 3 shares a date with the cursor, and only the id tiebreaker puts it on the second page instead of losing it.</p></explain>
+</question>
+
+<question id="da-code-version" type="code" file="version-check.ts">
+<q><p>Finish <code>saveTitle(id, expectedVersion, title)</code> for an in-memory store. Throw <code>NotFoundError</code> for a missing task and <code>ConflictError</code> (both from <code>@zudojs/errors</code>) when the version does not match. Otherwise change the title, add 1 to the version and return the task.</p></q>
+<starter>
+import { ConflictError, NotFoundError } from "@zudojs/errors";
+
+const store = new Map([[3, { id: 3, title: "Compress the images", version: 1 }]]);
+
+function saveTitle(id: number, expectedVersion: number, title: string) {
+  // your code here
+}
+
+for (const [id, version, title] of [[3, 1, "Compress images"], [3, 1, "Shrink images"], [9, 1, "Nothing"]] as const) {
+  try {
+    console.log(saveTitle(id, version, title));
+  } catch (error) {
+    if (error instanceof ConflictError || error instanceof NotFoundError) console.log(error.statusCode, error.message);
+  }
+}
+</starter>
+<solution>
+import { ConflictError, NotFoundError } from "@zudojs/errors";
+
+const store = new Map([[3, { id: 3, title: "Compress the images", version: 1 }]]);
+
+function saveTitle(id: number, expectedVersion: number, title: string) {
+  const task = store.get(id);
+  if (!task) throw new NotFoundError(`Task ${id} not found`);
+  if (task.version !== expectedVersion) throw new ConflictError(`Task ${id} was changed by someone else`);
+  const saved = { ...task, title, version: task.version + 1 };
+  store.set(id, saved);
+  return saved;
+}
+
+for (const [id, version, title] of [[3, 1, "Compress images"], [3, 1, "Shrink images"], [9, 1, "Nothing"]] as const) {
+  try {
+    console.log(saveTitle(id, version, title));
+  } catch (error) {
+    if (error instanceof ConflictError || error instanceof NotFoundError) console.log(error.statusCode, error.message);
+  }
+}
+</solution>
+<expected>
+{ id: 3, title: 'Compress images', version: 2 }
+409 Task 3 was changed by someone else
+404 Task 9 not found
+</expected>
+<explain><p>The second save was based on version 1, but the first save moved the task to version 2, so it is refused with 409 instead of silently overwriting. In SQL the check and the write are one statement: <code>UPDATE … SET version = version + 1 WHERE id = $1 AND version = $2</code>.</p></explain>
+</question>
+
+<question id="da-code-drift" type="code" file="drift-check.js">
+<q><p>Finish <code>findDrift(projects, tasks)</code>. Return the ids of projects whose stored <code>openTasks</code> differs from the number of their tasks with <code>status</code> <code>"open"</code> and <code>deletedAt</code> <code>null</code>.</p></q>
+<starter>
+function findDrift(projects, tasks) {
+  // your code here
+}
+
+const projects = [{ id: 1, openTasks: 2 }, { id: 2, openTasks: 1 }];
+const tasks = [
+  { projectId: 1, status: "open", deletedAt: null },
+  { projectId: 1, status: "open", deletedAt: "2026-09-20" },
+  { projectId: 2, status: "open", deletedAt: null },
+  { projectId: 2, status: "done", deletedAt: null },
+];
+console.log(findDrift(projects, tasks));
+</starter>
+<solution>
+function findDrift(projects, tasks) {
+  return projects
+    .filter((p) => p.openTasks !== tasks.filter((t) => t.projectId === p.id && t.status === "open" && t.deletedAt === null).length)
+    .map((p) => p.id);
+}
+
+const projects = [{ id: 1, openTasks: 2 }, { id: 2, openTasks: 1 }];
+const tasks = [
+  { projectId: 1, status: "open", deletedAt: null },
+  { projectId: 1, status: "open", deletedAt: "2026-09-20" },
+  { projectId: 2, status: "open", deletedAt: null },
+  { projectId: 2, status: "done", deletedAt: null },
+];
+console.log(findDrift(projects, tasks));
+</solution>
+<expected>
+[ 1 ]
+</expected>
+<explain><p>Project 1 stores 2, but one of its open tasks was soft-deleted, so the truth is 1. This is the invariant from the lesson's tests; in SQL it is one query you can also run nightly in production.</p></explain>
+</question>
+
+<question id="da-code-query-schema" type="code" file="list-query.ts">
+<q><p>Write <code>ListTasksQuery</code> with <code>@zudojs/schema</code>: <code>limit</code> is coerced from a string to a whole number between 1 and 50, default 20; <code>status</code> is optional and must be <code>"open"</code> or <code>"done"</code>; unknown keys are refused. Print the parsed value, or <code>400</code> and the error message.</p></q>
+<starter>
+import { schema } from "@zudojs/schema";
+import { SchemaError } from "@zudojs/errors";
+
+const ListTasksQuery = schema.object({
+  // your code here
+});
+
+for (const query of [{ limit: "10", status: "open" }, {}, { limit: "5000" }, { sort: "title" }]) {
+  try {
+    console.log(ListTasksQuery.parse(query));
+  } catch (error) {
+    if (error instanceof SchemaError) console.log(error.statusCode, error.message);
+  }
+}
+</starter>
+<solution>
+import { schema } from "@zudojs/schema";
+import { SchemaError } from "@zudojs/errors";
+
+const ListTasksQuery = schema.object({
+  limit: schema.coerce.number().int().min(1).max(50).default(20),
+  status: schema.optional(schema.enum(["open", "done"] as const)),
+}).strict();
+
+for (const query of [{ limit: "10", status: "open" }, {}, { limit: "5000" }, { sort: "title" }]) {
+  try {
+    console.log(ListTasksQuery.parse(query));
+  } catch (error) {
+    if (error instanceof SchemaError) console.log(error.statusCode, error.message);
+  }
+}
+</solution>
+<expected>
+{ limit: 10, status: 'open' }
+{ limit: 20 }
+400 Validation failed
+400 Validation failed
+</expected>
+<explain><p>Query strings are always strings, so <code>coerce</code> turns <code>"10"</code> into 10 before the checks. An unbounded limit and an unknown <code>sort</code> key are both refused with 400 before any query is built.</p></explain>
+</question>
+
+<question id="da-code-idempotent" type="code" file="complete-twice.js">
+<q><p>Finish <code>completeTask(state, id)</code>. If the task is open, mark it done and decrease <code>state.openTasks</code> by 1. If it is already done, change nothing. Return the task either way.</p></q>
+<starter>
+const state = { openTasks: 2, tasks: new Map([[5, { id: 5, status: "open" }], [6, { id: 6, status: "open" }]]) };
+
+function completeTask(state, id) {
+  const task = state.tasks.get(id);
+  // your code here
+  return task;
+}
+
+completeTask(state, 5);
+completeTask(state, 5);
+completeTask(state, 5);
+console.log(state.openTasks, state.tasks.get(5).status);
+</starter>
+<solution>
+const state = { openTasks: 2, tasks: new Map([[5, { id: 5, status: "open" }], [6, { id: 6, status: "open" }]]) };
+
+function completeTask(state, id) {
+  const task = state.tasks.get(id);
+  if (task.status === "done") return task;
+  task.status = "done";
+  state.openTasks -= 1;
+  return task;
+}
+
+completeTask(state, 5);
+completeTask(state, 5);
+completeTask(state, 5);
+console.log(state.openTasks, state.tasks.get(5).status);
+</solution>
+<expected>
+1 done
+</expected>
+<explain><p>Three requests for the same completion must have the effect of one. The early return for an already-done task is what makes retries and double clicks harmless.</p></explain>
+</question>
+
+<question id="da-code-clamp" type="code" file="clamp-limit.js">
+<q><p>Write <code>clampLimit(limit)</code> that behaves like <code>normalizeLimit</code>: <code>undefined</code> becomes 20; any other value is cut to a whole number with <code>Math.trunc</code> and kept between 1 and 100.</p></q>
+<starter>
+function clampLimit(limit) {
+  // your code here
+}
+
+console.log([undefined, 0, 7.9, 250, -4].map(clampLimit));
+</starter>
+<solution>
+function clampLimit(limit) {
+  if (limit === undefined) return 20;
+  return Math.min(100, Math.max(1, Math.trunc(limit)));
+}
+
+console.log([undefined, 0, 7.9, 250, -4].map(clampLimit));
+</solution>
+<expected>
+[ 20, 1, 7, 100, 1 ]
+</expected>
+<explain><p>A clamp guarantees the database never gets an unbounded or negative limit, whatever reaches the repository. It is a safety net under the schema, not a replacement for telling the client its limit was invalid.</p></explain>
+</question>

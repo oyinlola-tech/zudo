@@ -1,0 +1,861 @@
+---
+title: Testing TypeScript
+description: Test TypeScript code with Vitest, including generics, error paths and typed mocks, then test the types themselves with expectTypeOf, @ts-expect-error and vitest --typecheck.
+minutes: 55
+youNeed: Testing fundamentals, Declaration files and Publishing TypeScript packages
+youBuild: A Vitest suite for a shop's cart, split-payment, grouping and currency-conversion code, with typed mocks, table tests, a custom matcher and type-level tests that catch a loosened signature
+keywords: vitest typescript, expect toEqual toStrictEqual, toThrow error class, rejects resolves, vi.fn typed mock, it.each table tests, testing generics, expectTypeOf, toEqualTypeOf, assertType, ts-expect-error type tests, vitest typecheck test-d.ts, custom matcher typescript, Matchers interface augmentation
+objectives: Write and run Vitest unit tests for TypeScript modules, and explain why vitest run does not check types | Test error paths, including thrown error classes, error codes, causes and rejected promises | Build typed test doubles with vi.fn and keep them in step with the interfaces they replace | Write type-level tests with expectTypeOf and @ts-expect-error, and run them with tsc or vitest --typecheck | Decide what to test at runtime and what to test at the type level for a generic function
+---
+<section>
+<h2 id="problem">Eleven green tests, and the types got worse</h2>
+<p>The shop's utilities package has a generic <code>groupBy</code>. The reporting team uses it to bucket orders by status, and relies on its types: <code>groups.paid</code> is an array of <code>Order</code>, and <code>groups.shipped</code> is a compile error because there is no such status. During a refactor, a developer who found the generics hard to read "simplified" it:</p>
+<example file="src/group.ts" project="loose">
+export function groupBy(items: any[], keyOf: (item: any) => string): Record<string, any[]> {
+  const groups: Record<string, any[]> = {};
+  for (const item of items) {
+    const key = keyOf(item);
+    (groups[key] ??= []).push(item);
+  }
+  return groups;
+}
+</example>
+<p>The behaviour is identical, so every runtime test still passes. Here are the same checks the test suite makes, run with Vitest's <code>expect</code>:</p>
+<example file="check.ts" project="loose" browser="no">
+import { expect } from "vitest";
+import { groupBy } from "./src/group.js";
+
+interface Order {
+  id: string;
+  status: "pending" | "paid";
+}
+
+const orders: Order[] = [
+  { id: "ord_1", status: "paid" },
+  { id: "ord_2", status: "pending" },
+  { id: "ord_3", status: "paid" },
+];
+
+expect(groupBy(orders, (o) => o.status)).toEqual({ paid: [orders[0], orders[2]], pending: [orders[1]] });
+expect(groupBy([], (o: Order) => o.status)).toEqual({});
+
+const groups = groupBy(orders, (o) => o.status);
+console.log("runtime checks passed");
+console.log(groups.shipped?.length ?? "no shipped group, and the compiler did not object");
+</example>
+<output>
+runtime checks passed
+no shipped group, and the compiler did not object
+</output>
+<p>The last line is the damage. <code>groups</code> is now <code>Record&lt;string, any[]&gt;</code>: a typo like <code>groups.shipped</code> compiles, and <code>groups.paid[0].totl</code> would too, because the elements are <code>any</code>. The reporting team's type safety disappeared, and no test noticed, because no test was about types. One line of type-level testing would have caught it:</p>
+<example file="group.test-d.ts" project="loose" check="tsc-error" browser="no">
+import { expectTypeOf } from "vitest";
+import { groupBy } from "./src/group.js";
+
+interface Order {
+  id: string;
+  status: "pending" | "paid";
+}
+declare const orders: Order[];
+
+expectTypeOf(groupBy(orders, (o) => o.status)).toEqualTypeOf<Partial<Record<"pending" | "paid", Order[]>>>();
+</example>
+<output kind="tsc">
+group.test-d.ts:10:62 - error TS2344: Type 'Partial<Record<"paid" | "pending", Order[]>>' does not satisfy the constraint '{ [x: string]: { [x: number]: undefined; }; }'.
+  Property 'paid' is incompatible with index signature.
+    Type 'Order[]' is not assignable to type '{ [x: number]: undefined; }'.
+      'number' index signatures are incompatible.
+        Type 'Order' is not assignable to type 'undefined'.
+
+10 expectTypeOf(groupBy(orders, (o) => o.status)).toEqualTypeOf<Partial<Record<"pending" | "paid", Order[]>>>();
+                                                                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 1 error in group.test-d.ts:10
+</output>
+<p>In TypeScript, a function has two contracts: what it <em>does</em> and what its <em>types promise</em>. This lesson tests both. You will use <strong>Vitest</strong>, the test runner you met in <a href="/learn/testing-basics#vitest">Testing fundamentals</a>, for runtime tests of plain functions, generics, error paths and code with dependencies, and then write tests whose only job is to pin down types.</p>
+</section>
+
+<section>
+<h2 id="setup">Vitest and TypeScript</h2>
+<p>Install it as a dev dependency. Vitest runs <code>.ts</code> test files directly, with no build step:</p>
+<shell>
+$ npm install -D vitest typescript @types/node
+$ npx vitest --version
+vitest/5.0.1 linux-x64 node-v24.19.0
+</shell>
+<p>The project under test has three small modules. A cart module with an error class:</p>
+<example file="src/cart.ts" project="cart">
+export interface CartItem {
+  readonly sku: string;
+  readonly kobo: number;
+  readonly quantity: number;
+}
+
+export class CartError extends Error {
+  readonly code: "EMPTY_CART" | "BAD_QUANTITY";
+
+  constructor(code: CartError["code"], message: string) {
+    super(message);
+    this.name = "CartError";
+    this.code = code;
+  }
+}
+
+export function subtotal(items: readonly CartItem[]): number {
+  if (items.length === 0) throw new CartError("EMPTY_CART", "Cart is empty");
+  let total = 0;
+  for (const item of items) {
+    if (!Number.isInteger(item.quantity) || item.quantity < 1) {
+      throw new CartError("BAD_QUANTITY", `Bad quantity for ${item.sku}: ${item.quantity}`);
+    }
+    total += item.kobo * item.quantity;
+  }
+  return total;
+}
+
+/** Splits kobo into equal parts; the first parts get one extra kobo each until the remainder is used up. */
+export function splitKobo(totalKobo: number, parts: number): number[] {
+  const base = Math.floor(totalKobo / parts);
+  const remainder = totalKobo - base * parts;
+  return Array.from({ length: parts }, (_, i) => base + (i < remainder ? 1 : 0));
+}
+</example>
+<p>the correctly typed <code>groupBy</code>:</p>
+<example file="src/group.ts" project="cart">
+export function groupBy<T, K extends PropertyKey>(items: readonly T[], keyOf: (item: T) => K): Partial<Record<K, T[]>> {
+  const groups: Partial<Record<K, T[]>> = {};
+  for (const item of items) {
+    const key = keyOf(item);
+    (groups[key] ??= []).push(item);
+  }
+  return groups;
+}
+</example>
+<p>and a currency converter that depends on an outside service, reached through an interface:</p>
+<example file="src/rates.ts" project="cart">
+export interface RateClient {
+  fetchRate(currency: "USD" | "GBP"): Promise<number>;
+}
+
+export class RateError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "RateError";
+  }
+}
+
+/** Converts a foreign amount (in whole units) to kobo at today's rate. */
+export async function toKobo(amount: number, currency: "USD" | "GBP", client: RateClient): Promise<number> {
+  let rate: number;
+  try {
+    rate = await client.fetchRate(currency);
+  } catch (cause) {
+    throw new RateError(`No ${currency} rate available`, { cause });
+  }
+  if (!Number.isFinite(rate) || rate <= 0) throw new RateError(`Nonsense ${currency} rate: ${rate}`);
+  return Math.round(amount * rate * 100);
+}
+</example>
+<p>The first test file checks the cart. <code>describe</code> groups tests, <code>it</code> (or <code>test</code>) defines one, and <code>expect</code> makes assertions. Test files import from the source with the same <code>.js</code> paths as any other TypeScript module:</p>
+<file name="tests/cart.test.ts" project="cart">
+import { describe, expect, it } from "vitest";
+import { CartError, splitKobo, subtotal, type CartItem } from "../src/cart.js";
+
+const rice: CartItem = { sku: "RICE-5KG", kobo: 1_250_000, quantity: 2 };
+const oil: CartItem = { sku: "OIL-1L", kobo: 350_000, quantity: 1 };
+
+describe("subtotal", () => {
+  it("adds price times quantity for every item", () => {
+    expect(subtotal([rice, oil])).toBe(2_850_000);
+  });
+
+  it("refuses an empty cart", () => {
+    expect(() => subtotal([])).toThrow(CartError);
+    expect(() => subtotal([])).toThrow("Cart is empty");
+  });
+
+  it("reports which item has a bad quantity", () => {
+    const error = catchError(() => subtotal([rice, { ...oil, quantity: 0 }]));
+    expect(error).toBeInstanceOf(CartError);
+    expect(error).toMatchObject({ code: "BAD_QUANTITY", message: "Bad quantity for OIL-1L: 0" });
+  });
+});
+
+describe("splitKobo", () => {
+  it.each([
+    { total: 10_000, parts: 4, expected: [2500, 2500, 2500, 2500] },
+    { total: 10_000, parts: 3, expected: [3334, 3333, 3333] },
+    { total: 2, parts: 3, expected: [1, 1, 0] },
+  ])("splits $total kobo into $parts parts", ({ total, parts, expected }) => {
+    const shares = splitKobo(total, parts);
+    expect(shares).toEqual(expected);
+    expect(shares.reduce((a, b) => a + b, 0)).toBe(total);
+  });
+});
+
+function catchError(run: () => unknown): unknown {
+  try {
+    run();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("expected the function to throw");
+}
+</file>
+<p><code>it.each</code> runs one test per row of a table, and the <code>$total</code> placeholders put each row's values into its name. The rows are typed: TypeScript infers <code>{ total: number; parts: number; expected: number[] }</code> for the callback's argument, so a row with a misspelled key makes the destructuring in the callback a compile error. Run everything with <code>vitest run</code> (plain <code>vitest</code> stays in watch mode):</p>
+<shell>
+$ npx vitest run --reporter=verbose
+
+ RUN  v5.0.1 ~/shop-tests
+
+ ✓ tests/cart.test.ts > subtotal > adds price times quantity for every item 2ms
+ ✓ tests/cart.test.ts > subtotal > refuses an empty cart 1ms
+ ✓ tests/cart.test.ts > subtotal > reports which item has a bad quantity 1ms
+ ✓ tests/cart.test.ts > splitKobo > splits 10000 kobo into 4 parts 1ms
+ ✓ tests/cart.test.ts > splitKobo > splits 10000 kobo into 3 parts 0ms
+ ✓ tests/cart.test.ts > splitKobo > splits 2 kobo into 3 parts 0ms
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  23:27:01
+   Duration  217ms (transform 53%, import 27%, tests 12%, worker 7%)
+</shell>
+
+<h3>Vitest does not check types</h3>
+<p>Vitest makes <code>.ts</code> files runnable the same way <code>tsx</code> does: it strips the types and runs the JavaScript. It never runs the type checker on a normal test run. Here is a test with a type error in it:</p>
+<file name="tests/typo.test.ts" project="cart-typo">
+import { expect, it } from "vitest";
+import { subtotal } from "../src/cart.js";
+
+it("totals a single item", () => {
+  const kobo: number = "1250000";
+  expect(subtotal([{ sku: "RICE-5KG", kobo, quantity: 2 }])).toBe(2_500_000);
+});
+</file>
+<shell>
+$ npx vitest run tests/typo.test.ts
+
+ RUN  v5.0.1 ~/shop-tests
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  23:29:32
+   Duration  257ms (transform 58%, setup 17%, tests 9%, worker 8%, import 8%)
+
+$ npx tsc --noEmit
+tests/typo.test.ts:5:9 - error TS2322: Type 'string' is not assignable to type 'number'.
+
+5   const kobo: number = "1250000";
+          ~~~~
+
+
+Found 1 error in tests/typo.test.ts:5
+</shell>
+<p>The test passed, because <code>"1250000" * 2</code> happens to be <code>2500000</code> in JavaScript. Only <code>tsc</code> saw the problem. So a TypeScript project runs <strong>both</strong>, and its <code>tsconfig.json</code> must include the test files, so that tests are type-checked like any other code:</p>
+<file name="package.json" project="cart-scripts">
+{
+  "name": "shop-tests",
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:types": "vitest run --typecheck",
+    "verify": "npm run check && npm test"
+  }
+}
+</file>
+</section>
+
+<section>
+<h2 id="matchers">Choosing the right assertion</h2>
+<p>Vitest's <code>expect</code> works outside a test file too, which makes it easy to see exactly what each matcher accepts. Every failed assertion throws an <code>AssertionError</code>; this script catches them to print the messages:</p>
+<example file="matchers.ts" project="cart" browser="no">
+import { expect } from "vitest";
+
+function attempt(label: string, assertion: () => void): void {
+  try {
+    assertion();
+    console.log(`pass  ${label}`);
+  } catch (error) {
+    console.log(`FAIL  ${label}: ${(error as Error).message}`);
+  }
+}
+
+const order = { id: "ord_1", totalKobo: 250_000, coupon: undefined };
+
+attempt("toBe compares identity", () => expect(order).toBe({ ...order }));
+attempt("toEqual compares contents", () => expect(order).toEqual({ id: "ord_1", totalKobo: 250_000 }));
+attempt("toStrictEqual also compares undefined keys", () => expect(order).toStrictEqual({ id: "ord_1", totalKobo: 250_000 }));
+attempt("toMatchObject checks a subset", () => expect(order).toMatchObject({ totalKobo: 250_000 }));
+attempt("floats need toBeCloseTo", () => expect(0.1 + 0.2).toBe(0.3));
+attempt("toBeCloseTo", () => expect(0.1 + 0.2).toBeCloseTo(0.3));
+</example>
+<output>
+FAIL  toBe compares identity: expected { Object (id, totalKobo, ...) } to be { Object (id, totalKobo, ...) } // Object.is equality
+
+If it should pass with deep equality, replace "toBe" with "toStrictEqual"
+
+Expected: { Object (id, totalKobo, ...) }
+Received: serializes to the same string
+
+pass  toEqual compares contents
+FAIL  toStrictEqual also compares undefined keys: expected { Object (id, totalKobo, ...) } to strictly equal { id: 'ord_1', totalKobo: 250000 }
+pass  toMatchObject checks a subset
+FAIL  floats need toBeCloseTo: expected 0.30000000000000004 to be 0.3 // Object.is equality
+pass  toBeCloseTo
+</output>
+<ul>
+<li><code>toBe</code> uses <code>Object.is</code>: right for numbers, strings and booleans, wrong for objects, which are equal only if they are the same object.</li>
+<li><code>toEqual</code> compares contents recursively and ignores properties whose value is <code>undefined</code>. <code>toStrictEqual</code> does not ignore them, and also checks that classes match. Use <code>toStrictEqual</code> when an explicit <code>undefined</code> would matter, for example in JSON sent to another service.</li>
+<li><code>toMatchObject</code> checks only the properties you list, which keeps tests about one concern from breaking when unrelated fields are added.</li>
+<li>Money in this course is whole kobo, so exact <code>toBe</code> is right. <code>toBeCloseTo</code> is for real measurements, never for currency.</li>
+</ul>
+<p>The matchers are typed, but loosely: <code>expect(x).toEqual(y)</code> accepts any <code>y</code>, because comparing different shapes is a legitimate test. The type safety of a test comes from the code it calls, not from <code>expect</code>.</p>
+</section>
+
+<section>
+<h2 id="error-paths">Testing error paths</h2>
+<reason title="What should an error test prove?">
+<p><code>subtotal</code> can fail in two ways and <code>toKobo</code> in two more. Before writing the tests, decide:</p>
+<ol>
+<li>Is "it throws" enough? What would still pass if the function threw the wrong error, for example a <code>TypeError</code> from a typo inside it?</li>
+<li>Callers switch on <code>error.code</code>. How do you test that the code is right, when a <code>catch</code> gives you <code>unknown</code>?</li>
+<li><code>toKobo</code> wraps a network failure in a <code>RateError</code>. What must the test check so that the original failure is not lost?</li>
+<li>What happens to a test of an <code>async</code> function if you forget to <code>await</code> the assertion?</li>
+</ol>
+<answer>
+<ol>
+<li>No. <code>expect(fn).toThrow()</code> passes for <em>any</em> error, including a bug inside the function. Assert the class (<code>toThrow(CartError)</code>) or the message, or both.</li>
+<li>Catch the error, then assert on it as data: <code>toBeInstanceOf(CartError)</code> and <code>toMatchObject({ code: "BAD_QUANTITY" })</code>. Neither needs you to narrow <code>unknown</code> by hand.</li>
+<li>That the thrown error is a <code>RateError</code> <em>and</em> that its <code>cause</code> is the original error object.</li>
+<li>The test function returns before the promise settles. The assertion runs after the test has already passed, or not at all. Always <code>await expect(promise).rejects…</code> (or <code>.resolves</code>).</li>
+</ol>
+</answer>
+</reason>
+<p>Here is the first point in action. A bug in a function throws a <code>TypeError</code>; a vague assertion accepts it, a precise one does not:</p>
+<example file="errors.ts" project="cart" browser="no">
+import { expect } from "vitest";
+import { CartError, subtotal, type CartItem } from "./src/cart.js";
+
+const broken = [{ sku: "RICE-5KG", kobo: 1_250_000 }] as unknown as CartItem[];
+const buggySubtotal = (items: CartItem[]) => items.reduce((sum, i) => sum + i.kobo * i.quantity.valueOf(), 0);
+
+for (const [label, check] of [
+  ["vague", () => expect(() => buggySubtotal(broken)).toThrow()],
+  ["precise", () => expect(() => buggySubtotal(broken)).toThrow(CartError)],
+  ["real function", () => expect(() => subtotal(broken)).toThrow(CartError)],
+] as const) {
+  try {
+    check();
+    console.log(`${label}: passed`);
+  } catch (error) {
+    console.log(`${label}: ${(error as Error).message}`);
+  }
+}
+</example>
+<output>
+vague: passed
+precise: expected error to be instance of CartError
+real function: passed
+</output>
+<p><code>buggySubtotal</code> is a version without the validation: it calls a method on the missing quantity and crashes with a <code>TypeError</code>. The vague assertion is satisfied by that crash; the precise one is not. The real <code>subtotal</code> checks the quantity first and throws the right <code>CartError</code>. The <code>as unknown as CartItem[]</code> is deliberate: the broken item has no <code>quantity</code>, which the type forbids, so the test has to force it past the compiler. Tests of defensive code often do this, because they check what happens when data breaks the rules the types assume.</p>
+<p>When a test needs the error's properties, remember that a caught value is <code>unknown</code>. Reaching into it directly is a compile error, which is one more reason to assert with matchers instead:</p>
+<example file="narrow.test.ts" project="cart" check="tsc-error" browser="no">
+import { subtotal } from "./src/cart.js";
+
+try {
+  subtotal([]);
+} catch (error) {
+  console.log(error.code);
+}
+</example>
+<output kind="tsc">
+narrow.test.ts:6:15 - error TS18046: 'error' is of type 'unknown'.
+
+6   console.log(error.code);
+                ~~~~~
+
+
+Found 1 error in narrow.test.ts:6
+</output>
+<h3>Async errors and causes</h3>
+<p><code>toKobo</code> needs a <code>RateClient</code>. The test supplies a <strong>test double</strong>, an object that stands in for the real dependency, built with <code>vi.fn</code>. The type argument ties the fake to the interface: <code>vi.fn&lt;RateClient["fetchRate"]&gt;()</code> is a mock function with exactly the real method's parameters and return type.</p>
+<example file="rates-check.ts" project="cart" browser="no">
+import { expect, vi } from "vitest";
+import { RateError, toKobo, type RateClient } from "./src/rates.js";
+
+const fetchRate = vi.fn<RateClient["fetchRate"]>();
+const client: RateClient = { fetchRate };
+
+fetchRate.mockResolvedValueOnce(1530);
+await expect(toKobo(20, "USD", client)).resolves.toBe(3_060_000);
+
+const outage = new Error("connect ETIMEDOUT");
+fetchRate.mockRejectedValueOnce(outage);
+const error = await toKobo(5, "GBP", client).catch((e: unknown) => e);
+expect(error).toBeInstanceOf(RateError);
+expect(error).toMatchObject({ message: "No GBP rate available", cause: outage });
+
+fetchRate.mockResolvedValueOnce(0);
+await expect(toKobo(5, "GBP", client)).rejects.toThrow("Nonsense GBP rate: 0");
+
+console.log(fetchRate.mock.calls);
+console.log("all rate checks passed");
+</example>
+<output>
+[ [ 'USD' ], [ 'GBP' ], [ 'GBP' ] ]
+all rate checks passed
+</output>
+<p><code>mock.calls</code> records every call's arguments, typed as <code>["USD" | "GBP"][]</code>. The typed mock also refuses fakes that the real service could never produce, such as a rate that arrives as text:</p>
+<example file="bad-mock.test.ts" project="cart" check="tsc-error" browser="no">
+import { vi } from "vitest";
+import type { RateClient } from "./src/rates.js";
+
+const fetchRate = vi.fn<RateClient["fetchRate"]>();
+fetchRate.mockResolvedValue("1530");
+</example>
+<output kind="tsc">
+bad-mock.test.ts:5:29 - error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+
+5 fetchRate.mockResolvedValue("1530");
+                              ~~~~~~
+
+
+Found 1 error in bad-mock.test.ts:5
+</output>
+<p>This matters more than it looks. A mock is a second, hand-written implementation of an interface, and nothing forces it to behave like the real one. When <code>RateClient</code> changes (say <code>fetchRate</code> starts returning <code>{ rate, fetchedAt }</code>), a typed mock breaks at compile time, and you update the tests together with the code. An untyped mock (<code>vi.fn()</code> with no type argument, or <code>as any</code>) keeps returning a bare number and keeps passing, testing a service that no longer exists.</p>
+<p>In a test file the same checks look like this:</p>
+<file name="tests/rates.test.ts" project="cart">
+import { describe, expect, it, vi } from "vitest";
+import { RateError, toKobo, type RateClient } from "../src/rates.js";
+
+function fakeClient(fetchRate: RateClient["fetchRate"]): RateClient {
+  return { fetchRate };
+}
+
+describe("toKobo", () => {
+  it("converts at the rate the client returns", async () => {
+    const fetchRate = vi.fn<RateClient["fetchRate"]>().mockResolvedValue(1530);
+    await expect(toKobo(20, "USD", fakeClient(fetchRate))).resolves.toBe(3_060_000);
+    expect(fetchRate).toHaveBeenCalledExactlyOnceWith("USD");
+  });
+
+  it("wraps a failing client in a RateError with the cause", async () => {
+    const outage = new Error("connect ETIMEDOUT");
+    const client = fakeClient(vi.fn<RateClient["fetchRate"]>().mockRejectedValue(outage));
+    const error = await toKobo(5, "GBP", client).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(RateError);
+    expect(error).toMatchObject({ message: "No GBP rate available", cause: outage });
+  });
+
+  it("refuses a nonsense rate instead of charging ₦0", async () => {
+    const client = fakeClient(vi.fn<RateClient["fetchRate"]>().mockResolvedValue(0));
+    await expect(toKobo(5, "GBP", client)).rejects.toThrow("Nonsense GBP rate: 0");
+  });
+});
+</file>
+<p>Notice that the dependency comes in as a parameter. Code that creates its own <code>RateClient</code> internally can only be tested by replacing modules (<code>vi.mock</code>), which is slower to write and easier to get wrong. Designing for injected dependencies, as in <a href="/learn/ts-typed-di">Type-safe dependency injection</a>, is what makes TypeScript code easy to test.</p>
+</section>
+
+<section>
+<h2 id="failures">Reading a failing test</h2>
+<p>Suppose someone changes <code>splitKobo</code> to give the leftover kobo to the <em>last</em> parts instead of the first (<code>i &gt;= parts - remainder</code>). The sum is still right, so the second assertion in each row passes, but the table catches it:</p>
+<shell>
+$ npx vitest run tests/cart.test.ts
+
+ RUN  v5.0.1 ~/shop-tests
+
+ ❯ tests/cart.test.ts (6 tests | 2 failed) 15ms
+   ❯ splitKobo (3)
+     × splits 10000 kobo into 3 parts 7ms
+     × splits 2 kobo into 3 parts 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/cart.test.ts > splitKobo > splits 10000 kobo into 3 parts
+AssertionError: expected [ 3333, 3333, 3334 ] to deeply equal [ 3334, 3333, 3333 ]
+
+- Expected
++ Received
+
+  [
+-   3334,
+    3333,
+    3333,
++   3334,
+  ]
+
+ ❯ tests/cart.test.ts:31:20
+     29|   ])("splits $total kobo into $parts parts", ({ total, parts, expected…
+     30|     const shares = splitKobo(total, parts);
+     31|     expect(shares).toEqual(expected);
+       |                    ^
+     32|     expect(shares.reduce((a, b) => a + b, 0)).toBe(total);
+     33|   });
+…
+ Test Files  1 failed (1)
+      Tests  2 failed | 4 passed (6)
+</shell>
+<p>Read it from the top: which test (file, <code>describe</code>, row name), which assertion (the message and the diff, where <code>-</code> lines are expected and <code>+</code> lines are what the code returned), and where (the source line with a caret). Whether this change is a bug is a product question: if the rule is "the first customers pay the extra kobo", the test is right; if nobody cares, the test is too strict and should only check that each share is within one kobo of the others. Tests encode decisions, so write down the decision in the test's name.</p>
+</section>
+
+<section>
+<h2 id="generics">Testing generic code</h2>
+<p>A generic function makes promises for <em>every</em> type argument, and you cannot test them all. Test the behaviour with a few representative types, and test the typing separately:</p>
+<ul>
+<li><strong>Runtime tests</strong> with realistic data: an array of <code>Order</code>, an empty array, keys that are numbers as well as strings. The behaviour does not depend on the types (they are erased), so one element type is usually enough.</li>
+<li><strong>Type tests</strong> for inference: what does a caller get back, what does the callback receive, and what must be refused? That is where generic functions break in practice, as the opening example showed.</li>
+</ul>
+<file name="tests/group.test.ts" project="cart">
+import { expect, it } from "vitest";
+import { groupBy } from "../src/group.js";
+
+interface Order {
+  id: string;
+  status: "pending" | "paid";
+}
+
+const orders: Order[] = [
+  { id: "ord_1", status: "paid" },
+  { id: "ord_2", status: "pending" },
+  { id: "ord_3", status: "paid" },
+];
+
+it("groups orders by status, keeping their order", () => {
+  expect(groupBy(orders, (o) => o.status)).toEqual({
+    paid: [orders[0], orders[2]],
+    pending: [orders[1]],
+  });
+});
+
+it("returns an empty object for no items", () => {
+  expect(groupBy([], (o: Order) => o.status)).toEqual({});
+});
+</file>
+</section>
+
+<section>
+<h2 id="type-tests">Type-level tests</h2>
+<p>A <strong>type-level test</strong> is code that must compile (or must fail to compile) for the types to be right. It never needs to run: the type checker is the test runner. There are two tools.</p>
+<h3>expectTypeOf and assertType</h3>
+<p>Vitest re-exports <code>expectTypeOf</code> from the <code>expect-type</code> library. At runtime it does nothing; its methods are typed so that a wrong expectation is a compile error:</p>
+<example file="tests/group.types.ts" project="cart" browser="no">
+import { assertType, expectTypeOf } from "vitest";
+import { groupBy } from "../src/group.js";
+
+interface Order {
+  id: string;
+  status: "pending" | "paid";
+}
+declare const orders: Order[];
+
+const byStatus = groupBy(orders, (o) => o.status);
+expectTypeOf(byStatus).toEqualTypeOf<Partial<Record<"pending" | "paid", Order[]>>>();
+expectTypeOf(byStatus.paid).toEqualTypeOf<Order[] | undefined>();
+
+expectTypeOf(groupBy<Order, string>).parameter(1).toEqualTypeOf<(item: Order) => string>();
+expectTypeOf(groupBy(orders, (o) => o.id.length)).toExtend<Partial<Record<number, Order[]>>>();
+
+assertType<Partial<Record<string, Order[]>>>(byStatus);
+</example>
+<ul>
+<li><code>toEqualTypeOf&lt;X&gt;()</code> demands the <em>exact</em> type: not wider, not narrower. This is what catches <code>any</code> creeping in, since <code>any</code> is not equal to <code>Order[]</code>.</li>
+<li><code>.parameter(n)</code>, <code>.parameters</code> and <code>.returns</code> reach into function types. <code>groupBy&lt;Order, string&gt;</code> without parentheses is an <strong>instantiation expression</strong>: the function with its type arguments filled in, not a call.</li>
+<li><code>toExtend&lt;X&gt;()</code> only asks "is it assignable to <code>X</code>?". (Older code uses <code>toMatchTypeOf</code>, which <code>expect-type</code> has deprecated in favour of <code>toExtend</code> and <code>toMatchObjectType</code>.)</li>
+<li><code>assertType&lt;X&gt;(value)</code> is the simplest form: the value must be assignable to <code>X</code>.</li>
+</ul>
+<p>When a type test fails, the message is the weak point. Here is a wrong expectation (the test claims <code>paid</code> is always present):</p>
+<example file="tests/group.wrong.ts" project="cart" check="tsc-error" browser="no">
+import { expectTypeOf } from "vitest";
+import { groupBy } from "../src/group.js";
+
+interface Order {
+  id: string;
+  status: "pending" | "paid";
+}
+declare const orders: Order[];
+
+expectTypeOf(groupBy(orders, (o) => o.status).paid).toEqualTypeOf<Order[]>();
+</example>
+<output kind="tsc">
+tests/group.wrong.ts:10:67 - error TS2344: Type 'Order[]' does not satisfy the constraint '"Expected: ..., Actual: undefined"'.
+
+10 expectTypeOf(groupBy(orders, (o) => o.status).paid).toEqualTypeOf<Order[]>();
+                                                                     ~~~~~~~
+
+
+Found 1 error in tests/group.wrong.ts:10
+</output>
+<p>The library reports a mismatch through a generic constraint, so the message says the expected type "does not satisfy the constraint", and the useful part is hidden inside that constraint: <code>Actual: undefined</code>. The expected type <code>Order[]</code> leaves out the <code>undefined</code> that <code>Partial</code> adds, so the test, not the function, is wrong here. For bigger types the message can be long and roundabout, like the one in the first section; read it from the position (which assertion) and the types it names. <a href="/learn/ts-debugging">Debugging TypeScript</a> has a method for long messages like this.</p>
+
+<h3>@ts-expect-error: "should not compile"</h3>
+<p>Some promises are refusals: <code>groupBy</code> must reject a key function that returns a <code>Date</code>, because a <code>Date</code> cannot be an object key. <code>// @ts-expect-error</code>, from <a href="/learn/ts-compiler#testing">What the TypeScript compiler does</a>, turns that into a test: the next line must have a type error, and if it ever compiles, the directive itself is reported as unused.</p>
+<example file="tests/group.refusals.ts" project="cart" browser="no">
+import { groupBy } from "../src/group.js";
+
+interface Order {
+  id: string;
+  status: "pending" | "paid";
+}
+declare const orders: Order[];
+
+export function refusals(): void {
+  // @ts-expect-error: a Date cannot be an object key
+  groupBy(orders, () => new Date());
+  // @ts-expect-error: the key function receives an Order, which has no price
+  groupBy(orders, (o) => o.price);
+  // @ts-expect-error: there is no "shipped" status
+  groupBy(orders, (o) => o.status).shipped;
+}
+</example>
+<p>This file compiles, which means all three lines really are errors. As in <a href="/learn/ts-declarations#testing">Declaration files</a>, the lines sit inside a function that nothing calls, because a line under <code>@ts-expect-error</code> would still run. Keep each directive to one reason, and write the reason after the colon: a directive that is satisfied by the <em>wrong</em> error (a typo in the test, say) is a test that proves nothing.</p>
+
+<h3>Running type tests with Vitest</h3>
+<p>You can simply let <code>tsc --noEmit</code> check type-test files. Vitest can also run them as tests, which gives them names and puts them in the same report. By convention they end in <code>.test-d.ts</code>, and <code>vitest --typecheck</code> type-checks them with <code>tsc</code> instead of running them:</p>
+<file name="tests/group.test-d.ts" project="cart">
+import { expectTypeOf, test } from "vitest";
+import { groupBy } from "../src/group.js";
+
+interface Order {
+  id: string;
+  status: "pending" | "paid";
+}
+declare const orders: Order[];
+
+test("keys are the literal statuses, values are Order arrays", () => {
+  expectTypeOf(groupBy(orders, (o) => o.status)).toEqualTypeOf<Partial<Record<"pending" | "paid", Order[]>>>();
+});
+
+test("the key function receives an Order", () => {
+  expectTypeOf(groupBy<Order, string>).parameter(1).toEqualTypeOf<(item: Order) => string>();
+});
+
+test("a key function must return a property key", () => {
+  // @ts-expect-error: a Date cannot be an object key
+  groupBy(orders, () => new Date());
+});
+</file>
+<p>With the correct <code>groupBy</code> everything passes. With the "simplified" version from the first section, the runtime tests still pass and the type tests do not:</p>
+<shell>
+$ npx vitest run
+…
+ Test Files  3 passed (3)
+      Tests  11 passed (11)
+$ npx vitest run --typecheck
+Testing types with tsc and vue-tsc is an experimental feature.
+Breaking changes might not follow SemVer, please pin Vitest's version when using it.
+
+ RUN  v5.0.1 ~/shop-tests
+
+ ❯  TS  tests/group.test-d.ts (3 tests | 2 failed)
+   × keys are the literal statuses, values are Order arrays
+   × the key function receives an Order
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/group.test-d.ts:10 > keys are the literal statuses, values are Order arrays
+TypeCheckError: Type 'Partial<Record<"paid" | "pending", Order[]>>' does not satisfy the constraint '{ [x string] { [x number] undefined; }; }'.
+  Property 'paid' is incompatible with index signature.
+…
+ FAIL  tests/group.test-d.ts:14 > the key function receives an Order
+TypeCheckError: Type '(items any[], keyOf (item any) => string) => Record<string, any[]>' has no signatures for which the type argument list is applicable.
+…
+ Test Files  1 failed | 3 passed (4)
+      Tests  2 failed | 12 passed (14)
+Type Errors  no errors
+</shell>
+<p>Two things to notice. Vitest warns that type checking is experimental, so pin its version in <code>package.json</code>. And this Vitest version prints TypeScript 7's messages with the colons missing (<code>{ [x string] … }</code> where <code>tsc</code> itself prints <code>{ [x: string]: … }</code>); when a message is hard to read, run <code>npx tsc --noEmit</code> for the original. The third test, the refusal, still passed: the loose version also refuses a <code>Date</code>, because it wants a <code>string</code>. Refusal tests and "exact type" tests catch different regressions, so write both.</p>
+</section>
+
+<section>
+<h2 id="custom-matchers">A custom matcher, typed</h2>
+<p>Many shop tests assert "this is a valid amount of kobo". A <strong>custom matcher</strong> says it once. <code>expect.extend</code> adds it at runtime, in a setup file that Vitest loads before every test file; a module augmentation (from <a href="/learn/ts-declarations#augmentation">Declaration files</a>) adds it to the types:</p>
+<file name="tests/setup.ts" project="cart">
+import { expect } from "vitest";
+
+expect.extend({
+  toBeWholeKobo(received: unknown) {
+    const pass = typeof received === "number" && Number.isSafeInteger(received) && received >= 0;
+    return {
+      pass,
+      message: () => `expected ${String(received)} ${pass ? "not " : ""}to be a whole, non-negative number of kobo`,
+    };
+  },
+});
+
+declare module "vitest" {
+  interface Matchers<R, T> {
+    toBeWholeKobo(): R;
+  }
+}
+</file>
+<file name="vitest.config.ts" project="cart">
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    setupFiles: ["tests/setup.ts"],
+  },
+});
+</file>
+<p>The augmentation must repeat the interface's type parameters exactly (<code>Matchers&lt;R, T&gt;</code> in Vitest 5), and the matcher returns <code>R</code>, which is <code>void</code> for <code>expect(x)</code> and a promise for <code>expect(promise).resolves</code>. Without the augmentation, using the matcher is a compile error even though it works at runtime:</p>
+<example file="kobo.test.ts" project="cart-nomatcher" check="tsc-error" browser="no">
+import { expect } from "vitest";
+
+expect(2500).toBeWholeKobo();
+</example>
+<output kind="tsc">
+kobo.test.ts:3:14 - error TS2339: Property 'toBeWholeKobo' does not exist on type 'Assertion<void, number>'.
+
+3 expect(2500).toBeWholeKobo();
+               ~~~~~~~~~~~~~
+
+
+Found 1 error in kobo.test.ts:3
+</output>
+<p>With the setup file in place, the matcher reads like a built-in one, including <code>.not</code> and its own failure message:</p>
+<file name="tests/money.test.ts" project="cart">
+import { expect, it } from "vitest";
+import { splitKobo } from "../src/cart.js";
+
+it("every share of a split is whole kobo", () => {
+  for (const share of splitKobo(10_000, 3)) expect(share).toBeWholeKobo();
+});
+
+it("a naive split is not", () => {
+  expect(10_000 / 3).not.toBeWholeKobo();
+  expect(10_000 / 3).toBeWholeKobo();
+});
+</file>
+<shell>
+$ npx vitest run tests/money.test.ts
+
+ RUN  v5.0.1 ~/shop-tests
+
+ ❯ tests/money.test.ts (2 tests | 1 failed) 18ms
+   × a naive split is not 8ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/money.test.ts > a naive split is not
+Error: expected 3333.3333333333335 to be a whole, non-negative number of kobo
+ ❯ tests/money.test.ts:10:22
+      8| it("a naive split is not", () => {
+      9|   expect(10_000 / 3).not.toBeWholeKobo();
+     10|   expect(10_000 / 3).toBeWholeKobo();
+       |                      ^
+…
+</shell>
+<p>The second assertion fails on purpose, to show the message. Keep matchers like this few and domain-specific; each one is code your whole team has to learn.</p>
+</section>
+
+<section>
+<h2 id="what-to-test">What to test where</h2>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Concern</th><th>Tool</th><th>Example from this lesson</th></tr></thead>
+<tbody>
+<tr><td>What a function returns for given inputs</td><td>Vitest runtime test</td><td><code>subtotal</code>, <code>splitKobo</code> rows</td></tr>
+<tr><td>Which error, with which code and cause</td><td><code>toThrow(Class)</code>, <code>toMatchObject</code>, <code>rejects</code></td><td><code>CartError</code>, <code>RateError</code> with <code>cause</code></td></tr>
+<tr><td>Behaviour with a dependency</td><td>Typed test doubles (<code>vi.fn&lt;T&gt;()</code>)</td><td><code>RateClient</code></td></tr>
+<tr><td>What callers get from inference</td><td><code>expectTypeOf(…).toEqualTypeOf&lt;…&gt;()</code></td><td><code>groupBy</code> keys and values</td></tr>
+<tr><td>What must be refused</td><td><code>// @ts-expect-error</code></td><td>a <code>Date</code> key, a missing status</td></tr>
+<tr><td>That test code itself is type-correct</td><td><code>tsc --noEmit</code> including test files</td><td>the <code>"1250000"</code> typo</td></tr>
+<tr><td>That the published package's types work</td><td>Type tests against the built <code>.d.ts</code>, plus attw</td><td><a href="/learn/ts-publishing#testing">Publishing TypeScript packages</a></td></tr>
+</tbody>
+</table></div>
+<p>Integration tests follow the same rules with bigger pieces: build the real service with in-memory or test-database dependencies instead of mocks, and test a whole request. <a href="/learn/testing-strategies">Testing strategies</a> covers when to choose which, and <a href="/learn/zudo-testing">Testing a ZudoJS app</a> does it for a full application.</p>
+</section>
+
+<section>
+<h2 id="production">In production</h2>
+<ul>
+<li><strong>CI runs three things</strong>: <code>tsc --noEmit</code> (including tests), <code>vitest run</code>, and the type tests (<code>vitest run --typecheck</code> or <code>tsc</code> over <code>*.test-d.ts</code>). Any one alone misses bugs the others catch.</li>
+<li><strong>Type every test double</strong> from the interface it replaces. Ban <code>as any</code> in tests the same way you would in source; an untyped mock tests a world that may no longer exist.</li>
+<li><strong>Test error paths as carefully as happy paths</strong>: class, code, message and cause. Error handling is where production bugs hide, and it runs least often.</li>
+<li><strong>Write type tests for public generic APIs</strong>, especially in libraries. They are cheap, run in the type checker, and turn "the types got worse" into a red build.</li>
+<li><strong>Pin the test runner version</strong> (Vitest says so itself for type checking), and upgrade deliberately.</li>
+<li><strong>Keep tests fast and isolated</strong>: no shared mutable state between tests, fresh doubles in each test, and real time or network only in tests that are marked as integration tests.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Test the refusal of bad amounts">
+<p>Add a check to <code>splitKobo</code> that throws a <code>RangeError</code> for a non-integer total, a negative total, or a number of parts below 1. Then write assertions that each bad input throws a <code>RangeError</code>, and that a good input still splits correctly.</p>
+<solution>
+<example file="split.ts" project="ex-split" browser="no">
+import { expect } from "vitest";
+
+function splitKobo(totalKobo: number, parts: number): number[] {
+  if (!Number.isSafeInteger(totalKobo) || totalKobo < 0) throw new RangeError(`Bad total: ${totalKobo}`);
+  if (!Number.isInteger(parts) || parts < 1) throw new RangeError(`Bad number of parts: ${parts}`);
+  const base = Math.floor(totalKobo / parts);
+  const remainder = totalKobo - base * parts;
+  return Array.from({ length: parts }, (_, i) => base + (i < remainder ? 1 : 0));
+}
+
+for (const [total, parts] of [[10.5, 2], [-100, 2], [100, 0], [100, 1.5]]) {
+  expect(() => splitKobo(total, parts)).toThrow(RangeError);
+}
+expect(splitKobo(10_000, 3)).toEqual([3334, 3333, 3333]);
+console.log("all split checks passed");
+</example>
+<output>
+all split checks passed
+</output>
+<p>Each bad row asserts the class, not just "throws", so a <code>TypeError</code> from a bug inside the function would fail the test. In a test file this loop becomes an <code>it.each</code> table, one named test per bad input.</p>
+</solution>
+</exercise>
+<exercise title="Pin a generic's types">
+<p>Here is a typed <code>indexBy</code>, which builds a lookup table from a list. Write type tests: the result for orders keyed by <code>id</code> is <code>Record&lt;string, Order&gt;</code>; the key function receives an <code>Order</code>; and a key function returning an object must not compile.</p>
+<pre><code>export function indexBy&lt;T, K extends PropertyKey&gt;(items: readonly T[], keyOf: (item: T) =&gt; K): Record&lt;K, T&gt;</code></pre>
+<solution>
+<example file="index-by.types.ts" project="ex-index" browser="no">
+import { expectTypeOf } from "vitest";
+
+export function indexBy<T, K extends PropertyKey>(items: readonly T[], keyOf: (item: T) => K): Record<K, T> {
+  const index = {} as Record<K, T>;
+  for (const item of items) index[keyOf(item)] = item;
+  return index;
+}
+
+interface Order {
+  id: string;
+  status: "pending" | "paid";
+}
+declare const orders: Order[];
+
+expectTypeOf(indexBy(orders, (o) => o.id)).toEqualTypeOf<Record<string, Order>>();
+expectTypeOf(indexBy<Order, string>).parameter(1).parameter(0).toEqualTypeOf<Order>();
+
+export function refusals(): void {
+  // @ts-expect-error: an object cannot be a key
+  indexBy(orders, (o) => ({ id: o.id }));
+}
+</example>
+<p>This file only needs to compile. <code>.parameter(1).parameter(0)</code> walks into the second parameter (the key function) and then into its first parameter. Notice a design question the tests raise: keyed by <code>status</code>, <code>indexBy</code> returns <code>Record&lt;"pending" | "paid", Order&gt;</code>, which claims both keys always exist. A <code>Partial</code> return type would be more honest, and a type test is the place to decide.</p>
+</solution>
+</exercise>
+<exercise title="Catch the untyped mock">
+<p><code>RateClient.fetchRate</code> changes to return <code>Promise&lt;{ rate: number; fetchedAt: string }&gt;</code>, and <code>toKobo</code> is updated to read <code>.rate</code>. A test still has <code>const fetchRate = vi.fn().mockResolvedValue(1530)</code>. What happens when the test runs, what happens under <code>tsc</code>, and how do you make the compiler find this test?</p>
+<solution>
+<p>At runtime the mock resolves to <code>1530</code>, so <code>(1530).rate</code> is <code>undefined</code>. <code>toKobo</code> then refuses it as a nonsense rate, and the "converts at the rate" test fails with a confusing message, far from the real cause. <code>tsc</code> says nothing, because <code>vi.fn()</code> without a type argument accepts any implementation and any resolved value.</p>
+<p>Give the mock its type from the interface: <code>vi.fn&lt;RateClient["fetchRate"]&gt;()</code>. Now <code>mockResolvedValue(1530)</code> is a compile error (<code>number</code> is not assignable to <code>{ rate: number; fetchedAt: string }</code>), the moment the interface changes, pointing at the exact line to update. Typed doubles turn interface changes into compile errors in the tests, which is where you want to find them.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A TypeScript function has a runtime contract and a type contract. Vitest tests the first; type-level tests test the second. Neither replaces the other.</li>
+<li><code>vitest run</code> strips types without checking them. Run <code>tsc --noEmit</code> over the tests too.</li>
+<li>Choose matchers deliberately: <code>toBe</code> for primitives, <code>toEqual</code>/<code>toStrictEqual</code> for contents, <code>toMatchObject</code> for subsets, <code>toThrow(Class)</code> and <code>rejects</code> for errors. Always <code>await</code> async assertions.</li>
+<li>Build test doubles with <code>vi.fn&lt;Interface["method"]&gt;()</code> so that they break when the interface changes.</li>
+<li><code>expectTypeOf(…).toEqualTypeOf&lt;…&gt;()</code> pins exact types; <code>// @ts-expect-error</code> pins refusals. Put them in <code>*.test-d.ts</code> files and run <code>vitest --typecheck</code>, or let <code>tsc</code> check them.</li>
+<li>Custom matchers need <code>expect.extend</code> at runtime and an augmentation of Vitest's <code>Matchers</code> interface for the types.</li>
+</ul>
+<p>Next: <a href="/learn/ts-debugging">Debugging TypeScript</a>, where you learn to read the long error messages you met here, and to find out why the compiler resolved, inferred or included what it did.</p>
+</section>

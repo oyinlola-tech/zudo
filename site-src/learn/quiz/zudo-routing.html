@@ -1,0 +1,767 @@
+<question id="rt-static-wins" type="output">
+<q>What does this print?</q>
+<code file="static.ts" browser="no">
+import { createRequestContext, createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/tasks/:id", () => "one task");
+router.get("/tasks/stats", () => "stats");
+
+const { route } = await router.dispatch(createRequestContext({ method: "GET", url: "/tasks/stats" }));
+console.log(route?.path);
+</code>
+<option correct>/tasks/stats</option>
+<option>/tasks/:id</option>
+<option>undefined</option>
+<option>A RouteConflictError</option>
+<explain><p>The router sorts by specificity, not registration order. A literal segment beats a parameter, so <code>/tasks/stats</code> wins even though it was registered second.</p></explain>
+</question>
+
+<question id="rt-tie" type="output">
+<q>What does this print?</q>
+<code file="tie.ts" browser="no">
+import { createRequestContext, createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/orders/:ref", () => "by reference");
+router.get("/orders/:id(\\d+)", () => "by id");
+
+const { route } = await router.dispatch(createRequestContext({ method: "GET", url: "/orders/17" }));
+console.log(route?.path);
+</code>
+<option correct>/orders/:ref</option>
+<option>/orders/:id(\d+)</option>
+<option>A RouteConflictError at registration</option>
+<option>undefined</option>
+<explain><p>A constraint does not make a parameter more specific. Both routes are "one parameter segment", so the tie goes to the first registered route, and the constrained route is dead for every input.</p></explain>
+</question>
+
+<question id="rt-shadow-detect" type="choice">
+<q>You register <code>GET /tasks/:slug</code> and then <code>GET /tasks/:taskId</code>. What does the router do?</q>
+<option>Throws <code>RouteConflictError</code>, because both match the same paths</option>
+<option correct>Accepts both; the second can never answer a request</option>
+<option>Replaces the first route with the second</option>
+<option>Merges them so both names are set in <code>ctx.params</code></option>
+<explain><p>Only a second route with the <em>same</em> method and pattern is a conflict. A route that is shadowed by an equally specific earlier one is accepted silently, which is why a route-table test with <code>router.match</code> is worth writing.</p></explain>
+</question>
+
+<question id="rt-conflict" type="output">
+<q>What does this print?</q>
+<code file="conflict.ts" browser="no">
+import { createRouter, isRouteConflictError } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/tasks", () => []);
+router.post("/tasks", () => ({}));
+try {
+  router.get("/tasks", () => []);
+  console.log("registered");
+} catch (error) {
+  console.log(isRouteConflictError(error));
+}
+console.log(router.count());
+</code>
+<option correct>true
+2</option>
+<option>registered
+3</option>
+<option>true
+1</option>
+<option>registered
+2</option>
+<explain><p>GET and POST on <code>/tasks</code> are different routes. The second GET is an exact duplicate, so it throws a <code>RouteConflictError</code> and is not added; two routes remain.</p></explain>
+</question>
+
+<question id="rt-wildcard-empty" type="output">
+<q>Only this route is registered. What does this print?</q>
+<code file="wildcard.ts" browser="no">
+import { createRequestContext, createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/files/*path", (ctx) => ({ path: ctx.params.path }));
+
+for (const url of ["/files/2026/report.pdf", "/files"]) {
+  const { response } = await router.dispatch(createRequestContext({ method: "GET", url }));
+  console.log(response.status, response.body);
+}
+</code>
+<option correct>200 {"path":"2026/report.pdf"}
+200 {"path":""}</option>
+<option>200 {"path":"2026/report.pdf"}
+404 {"error":"Not Found"}</option>
+<option>200 {"path":"2026"}
+200 {"path":""}</option>
+<option>200 {"path":"/2026/report.pdf"}
+404 {"error":"Not Found"}</option>
+<explain><p>A wildcard captures the whole rest of the path, slashes included, and it also matches an empty rest. So <code>/files</code> itself reaches the route with an empty <code>path</code>.</p></explain>
+</question>
+
+<question id="rt-optional" type="output">
+<q>What does this print?</q>
+<code file="optional.ts" browser="no">
+import { createRequestContext, createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/reports/:year/:month?", (ctx) => ({ month: ctx.params.month ?? "whole year", keys: Object.keys(ctx.params) }));
+
+const { response } = await router.dispatch(createRequestContext({ method: "GET", url: "/reports/2026" }));
+console.log(response.body);
+</code>
+<option correct>{"month":"whole year","keys":["year"]}</option>
+<option>{"month":"","keys":["year","month"]}</option>
+<option>{"month":"whole year","keys":["year","month"]}</option>
+<option>404</option>
+<explain><p>A missing optional parameter is absent from <code>ctx.params</code>, not an empty string, so <code>??</code> supplies the fallback and only <code>year</code> is a key.</p></explain>
+</question>
+
+<question id="rt-param-type" type="choice">
+<q>For the route <code>/tasks/:id</code> and the request <code>/tasks/042</code>, what is <code>ctx.params.id</code>?</q>
+<option>The number 42</option>
+<option>The number 42, or <code>NaN</code> for non-digits</option>
+<option correct>The string <code>"042"</code></option>
+<option><code>undefined</code> until a schema parses it</option>
+<explain><p>Route parameters are always decoded strings. Turning <code>"042"</code> into a number, and deciding whether leading zeros are allowed, is your code's job.</p></explain>
+</question>
+
+<question id="rt-encoded-slash" type="output">
+<q>What does this print?</q>
+<code file="encoded.ts" browser="no">
+import { createRequestContext, createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/tasks/:id", (ctx) => ctx.params.id);
+
+for (const url of ["/tasks/caf%C3%A9", "/tasks/a%2Fb"]) {
+  const { response } = await router.dispatch(createRequestContext({ method: "GET", url }));
+  console.log(response.status);
+}
+</code>
+<option correct>200
+404</option>
+<option>200
+200</option>
+<option>404
+404</option>
+<option>400
+404</option>
+<explain><p><code>caf%C3%A9</code> decodes to <code>café</code> and matches. An encoded slash would smuggle a <code>/</code> into one parameter, so that segment never matches and the request finds no route.</p></explain>
+</question>
+
+<question id="rt-why-refuse-slash" type="choice">
+<q>Why does the router refuse a segment such as <code>a%2Fb</code> instead of passing <code>"a/b"</code> to <code>:id</code>?</q>
+<option>Because percent-encoding is not allowed in URLs</option>
+<option>Because parameters may not contain letters and slashes together</option>
+<option correct>A handler that puts the value into a file path or another URL could be led somewhere the route was never meant to reach</option>
+<option>Because <code>%2F</code> is a query-string character</option>
+<explain><p>One parameter should be one path segment. Letting an encoded slash through turns <code>:id</code> into a multi-segment value, which is the start of many path traversal bugs.</p></explain>
+</question>
+
+<question id="rt-build-path" type="output">
+<q>What does this print?</q>
+<code file="build.ts" browser="no">
+import { buildRoutePath } from "@zudojs/http";
+
+console.log(buildRoutePath("/customers/:id/orders/:ref", { id: 7, ref: "INV 2026/09" }));
+</code>
+<option correct>/customers/7/orders/INV%202026%2F09</option>
+<option>/customers/7/orders/INV 2026/09</option>
+<option>/customers/:id/orders/:ref</option>
+<option>/customers/7/orders/INV+2026/09</option>
+<explain><p><code>buildRoutePath</code> encodes every value, so a space becomes <code>%20</code> and a slash <code>%2F</code>. The value stays one segment and cannot change the shape of the path.</p></explain>
+</question>
+
+<question id="rt-head" type="choice">
+<q>You registered only <code>GET /tasks/:id</code>. A client sends <code>HEAD /tasks/1</code>. What happens by default?</q>
+<option>404, because no HEAD route exists</option>
+<option>405 with <code>Allow: GET</code></option>
+<option correct>The GET route runs, and the server sends the headers without the body</option>
+<option>The router answers 204 with an <code>Allow</code> header</option>
+<explain><p>HEAD is automatic: it runs the GET route and the response body is dropped. Switch it off with <code>createRouter({ automaticHead: false })</code> if you need your own HEAD handling.</p></explain>
+</question>
+
+<question id="rt-405" type="output">
+<q>What does this print?</q>
+<code file="methods.ts" browser="no">
+import { createRequestContext, createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/tasks/:id", () => ({}));
+router.delete("/tasks/:id", () => undefined);
+
+for (const method of ["OPTIONS", "POST"]) {
+  const { response } = await router.dispatch(createRequestContext({ method, url: "/tasks/3" }));
+  console.log(method, response.status, response.headers["allow"]);
+}
+</code>
+<option correct>OPTIONS 204 GET, DELETE, HEAD, OPTIONS
+POST 405 GET, DELETE</option>
+<option>OPTIONS 404 undefined
+POST 405 GET, DELETE</option>
+<option>OPTIONS 204 GET, DELETE
+POST 404 undefined</option>
+<option>OPTIONS 405 GET, DELETE
+POST 405 GET, DELETE</option>
+<explain><p>OPTIONS is answered automatically with 204 and every supported method, including the automatic HEAD and OPTIONS. A method the path does not support gets 405; its <code>Allow</code> header lists the registered methods only.</p></explain>
+</question>
+
+<question id="rt-route-mw-params" type="choice">
+<q>Why can a <strong>route</strong> middleware read <code>context.request.getParam("id")</code>, while a <strong>pipeline</strong> middleware cannot?</q>
+<option>Pipeline middleware has no access to the request</option>
+<option correct>Route middleware runs after the router has matched the route and copied its parameters onto the request; pipeline middleware runs before any route has matched</option>
+<option>Parameters are only parsed when a route has middleware</option>
+<option>Pipeline middleware must use <code>ctx.params</code> instead</option>
+<explain><p>The order is: pipeline middleware, then matching, then route middleware, then the handler. Parameters only exist once a pattern has matched.</p></explain>
+</question>
+
+<question id="rt-state" type="output">
+<q>What does this print?</q>
+<code file="state.ts" browser="no">
+import { createRequestContext, createResponseContext, createRouter } from "@zudojs/http";
+import type { HttpMiddleware } from "@zudojs/http";
+
+const balances = new Map([["acc-1", 250000]]);
+
+const loadAccount: HttpMiddleware = async (context, next) => {
+  const id = context.request.getParam("id") ?? "";
+  if (!balances.has(id)) return createResponseContext({ status: 404 }).json({ error: "No such account" });
+  context.state.set("balance", balances.get(id));
+  return next();
+};
+
+const router = createRouter();
+router.get("/accounts/:id", (ctx) => ({ kobo: ctx.state.get("balance") }), { middleware: [loadAccount] });
+
+for (const url of ["/accounts/acc-1", "/accounts/acc-9"]) {
+  const { response } = await router.dispatch(createRequestContext({ method: "GET", url }));
+  console.log(response.status, response.body);
+}
+</code>
+<option correct>200 {"kobo":250000}
+404 {"error":"No such account"}</option>
+<option>200 {}
+404 {"error":"No such account"}</option>
+<option>200 {"kobo":250000}
+200 {}</option>
+<option>404 {"error":"No such account"}
+404 {"error":"No such account"}</option>
+<explain><p>The middleware reads the parameter, short-circuits with 404 for an unknown account, and otherwise hands the balance to the handler through the shared <code>state</code>.</p></explain>
+</question>
+
+<question id="rt-mw-order" type="choice">
+<q>A route <code>/tasks/:id</code> is registered inside <code>router.group("/api/v1", …, { middleware: [a] })</code>, inside a nested group <code>"/tasks"</code> with <code>{ middleware: [b] }</code>, and has its own <code>{ middleware: [c] }</code>. In what order do they run?</q>
+<option>c, b, a</option>
+<option correct>a, b, c</option>
+<option>b, a, c</option>
+<option>Only c, because route options replace group options</option>
+<explain><p>Group middleware lists add up from the outside in: the outer group's, then the inner group's, then the route's own.</p></explain>
+</question>
+
+<question id="rt-group-path" type="output">
+<q>What does this print?</q>
+<code file="group.ts" browser="no">
+import { createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.group("/api/v1", (v1) => {
+  v1.group("/bookings", (bookings) => {
+    bookings.get("/", () => []);
+    bookings.get("/:id", () => ({}));
+  });
+});
+console.log(router.list().map((route) => route.path).sort());
+</code>
+<option correct>[ '/api/v1/bookings', '/api/v1/bookings/:id' ]</option>
+<option>[ '/api/v1/bookings/', '/api/v1/bookings/:id' ]</option>
+<option>[ '/', '/:id' ]</option>
+<option>[ '/bookings', '/bookings/:id' ]</option>
+<explain><p>A group is only a registration helper: routes get the full prefixed path. <code>"/"</code> inside the group becomes the prefix itself.</p></explain>
+</question>
+
+<question id="rt-group-why" type="choice">
+<q>What is the main safety benefit of putting an API-key check on a group instead of on each route?</q>
+<option>It makes requests faster</option>
+<option correct>A new route added to the group cannot forget the check</option>
+<option>Groups hide their routes from 404 responses</option>
+<option>Group middleware runs before the CORS middleware</option>
+<explain><p>Repeating the same middleware on every route means one omission is an open door. A group applies it to every route registered inside it.</p></explain>
+</question>
+
+<question id="rt-versioning" type="choice">
+<q>Why does the generated example resource live under <code>/api/v1/examples</code>?</q>
+<option>The router requires a version prefix</option>
+<option correct>So an incompatible v2 can be added as its own group while v1 keeps serving old clients</option>
+<option>So CORS applies only to versioned routes</option>
+<option>Because <code>/examples</code> is a reserved path</option>
+<explain><p>A version in the path lets you change the API without breaking existing clients: <code>/api/v2</code> gets its own group of routes.</p></explain>
+</question>
+
+<question id="rt-query-repeat" type="output">
+<q>What does this print?</q>
+<code file="repeat.ts" browser="no">
+import { createRequestContext, createRouter, toRouterContext } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/tasks", (ctx) => {
+  const q = toRouterContext(ctx);
+  return { raw: ctx.query.status, first: q.queryString("status"), all: q.queryArray("status") };
+});
+
+const { response } = await router.dispatch(createRequestContext({ method: "GET", url: "/tasks?status=open&status=done" }));
+console.log(response.body);
+</code>
+<option correct>{"raw":["open","done"],"first":"open","all":["open","done"]}</option>
+<option>{"raw":"done","first":"done","all":["done"]}</option>
+<option>{"raw":"open,done","first":"open,done","all":["open,done"]}</option>
+<option>{"raw":["open","done"],"first":"done","all":["open","done"]}</option>
+<explain><p>A repeated key becomes an array. <code>queryString</code> silently returns the first value; <code>queryArray</code> always returns an array. Silent choices like the first one are how parameter pollution slips through.</p></explain>
+</question>
+
+<question id="rt-pollution" type="choice">
+<q>A permission check reads the <em>last</em> <code>role</code> query value and your handler reads the <em>first</em>. A client sends <code>?role=viewer&amp;role=admin</code>. What is this attack called, and what is the safest fix?</q>
+<option>Cross-site scripting; escape the values</option>
+<option>Prototype pollution; use a null-prototype object</option>
+<option correct>HTTP parameter pollution; refuse a repeated key for any parameter that must have one value</option>
+<option>Path traversal; normalise the path</option>
+<explain><p>Two layers picking different values from the same request is the bug. Refusing repeats with 400 for single-value parameters means every layer sees the same, single value.</p></explain>
+</question>
+
+<question id="rt-proto" type="output">
+<q>What does this print?</q>
+<code file="proto.ts" browser="no">
+import { createRequestContext, createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/search", (ctx) => ({ keys: Object.keys(ctx.query), q: ctx.query.q }));
+
+const { response } = await router.dispatch(
+  createRequestContext({ method: "GET", url: "/search?q=rice+5kg&__proto__=admin&constructor=x" }),
+);
+console.log(response.body);
+</code>
+<option correct>{"keys":["q"],"q":"rice 5kg"}</option>
+<option>{"keys":["q","__proto__","constructor"],"q":"rice+5kg"}</option>
+<option>{"keys":["q","constructor"],"q":"rice 5kg"}</option>
+<option>{"keys":["q"],"q":"rice+5kg"}</option>
+<explain><p><code>+</code> is decoded as a space, and the keys <code>__proto__</code>, <code>constructor</code> and <code>prototype</code> are dropped, so a query can never pollute object prototypes.</p></explain>
+</question>
+
+<question id="rt-comma" type="choice">
+<q>A client sends <code>?tag=home,urgent</code>. What is <code>ctx.query.tag</code>?</q>
+<option><code>["home", "urgent"]</code></option>
+<option correct><code>"home,urgent"</code></option>
+<option><code>"home"</code></option>
+<option><code>undefined</code>, because commas are not allowed</option>
+<explain><p>Only a repeated key makes an array. A comma is an ordinary character; if you want comma lists, split them yourself and document it.</p></explain>
+</question>
+
+<question id="rt-defaults-norm" type="output">
+<q>With a default <code>createRouter()</code> and one route <code>GET /tasks/:id</code>, how many of these four requests find the route?</q>
+<code file="normalise.ts" browser="no">
+import { createRequestContext, createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/tasks/:id", () => ({}));
+
+let found = 0;
+for (const url of ["/tasks/7", "/TASKS/7", "/tasks/7/", "//tasks//7"]) {
+  const { route } = await router.dispatch(createRequestContext({ method: "GET", url }));
+  if (route) found += 1;
+}
+console.log(found);
+</code>
+<option correct>4</option>
+<option>1</option>
+<option>2</option>
+<option>3</option>
+<explain><p>By default the router ignores the case of literal segments and a trailing slash, and it always collapses repeated slashes. All four spellings reach the same route.</p></explain>
+</question>
+
+<question id="rt-strict-options" type="output">
+<q>What does this print?</q>
+<code file="strict.ts" browser="no">
+import { createRequestContext, createRouter } from "@zudojs/http";
+
+const router = createRouter({ caseSensitive: true, strictTrailingSlash: true });
+router.get("/tasks/:id", () => ({}));
+
+for (const url of ["/tasks/7", "/TASKS/7", "/tasks/7/", "//tasks//7"]) {
+  const { response } = await router.dispatch(createRequestContext({ method: "GET", url }));
+  console.log(url, response.status);
+}
+</code>
+<option correct>/tasks/7 200
+/TASKS/7 404
+/tasks/7/ 404
+//tasks//7 200</option>
+<option>/tasks/7 200
+/TASKS/7 404
+/tasks/7/ 404
+//tasks//7 404</option>
+<option>/tasks/7 200
+/TASKS/7 200
+/tasks/7/ 404
+//tasks//7 200</option>
+<option>/tasks/7 200
+/TASKS/7 404
+/tasks/7/ 200
+//tasks//7 200</option>
+<explain><p>The two options make case and the trailing slash significant. Repeated slashes are still collapsed: <code>//tasks//7</code> is the same path in every mode.</p></explain>
+</question>
+
+<question id="rt-strict-why" type="choice">
+<q>What is the strongest reason to choose <code>caseSensitive: true</code> and <code>strictTrailingSlash: true</code>?</q>
+<option>They make matching faster</option>
+<option>They are required for route parameters</option>
+<option correct>Every resource then has exactly one URL, so caches and rules written in other layers (a CDN, a proxy) agree with the server</option>
+<option>They block dot-segment attacks</option>
+<explain><p>A forgiving router answers many spellings of one resource. Other layers that match on the raw text do not know that, so strict routing keeps everyone looking at the same URL.</p></explain>
+</question>
+
+<question id="rt-dot-segment" type="choice">
+<q>Why does the Node adapter refuse <code>GET /tasks/../admin</code> with 400 instead of resolving it to <code>/admin</code>?</q>
+<option>Because <code>..</code> is not valid in any URL</option>
+<option correct>A proxy that blocks <code>/admin*</code> on the raw text would let it through while a resolving server served <code>/admin</code>; refusing it means every layer agrees</option>
+<option>Because the router cannot match paths with dots</option>
+<option>To save the cost of resolving the path</option>
+<explain><p>Attacks often live in the gap between two layers that interpret the same request differently. Refusing ambiguous targets closes the gap instead of picking one interpretation.</p></explain>
+</question>
+
+<question id="rt-canonical-helpers" type="output">
+<q>What does this print?</q>
+<code file="canonical.ts" browser="no">
+import { findRequestTargetViolation, getCanonicalPath } from "@zudojs/http";
+
+for (const target of ["//orders//17?x=1", "/orders/%2E%2E/admin"]) {
+  console.log(getCanonicalPath(target), findRequestTargetViolation(target) ?? "ok");
+}
+</code>
+<option correct>/orders/17 ok
+/admin Request target contains a dot segment.</option>
+<option>//orders//17 ok
+/orders/%2E%2E/admin ok</option>
+<option>/orders/17 ok
+/orders/../admin Request target contains a dot segment.</option>
+<option>/orders/17?x=1 ok
+/admin ok</option>
+<explain><p>The canonical path collapses slashes and drops the query. An encoded <code>..</code> is still a dot segment: it would resolve to <code>/admin</code>, so the target is reported as a violation.</p></explain>
+</question>
+
+<question id="rt-evil-authority" type="choice">
+<q>A raw request arrives with the target <code>//evil.example/admin</code>. What does the Task API's server do?</q>
+<option>Forwards it to <code>evil.example</code></option>
+<option>Serves <code>/admin</code>, because <code>new URL</code> treats <code>evil.example</code> as the host</option>
+<option correct>Treats it as the path <code>/evil.example/admin</code>, which finds no route: 404</option>
+<option>Refuses it with 400 as a dot segment</option>
+<explain><p>An origin-form target is never parsed as an authority. The repeated slash is collapsed and the rest stays a path, so no other host is ever involved.</p></explain>
+</question>
+
+<question id="rt-adapter-only" type="choice">
+<q>You test path handling by calling <code>router.dispatch(createRequestContext({ method: "GET", url: "/tasks/%2e%2e" }))</code>. Why can this test miss a bug?</q>
+<option><code>createRequestContext</code> refuses encoded URLs</option>
+<option correct>The canonical-target check lives in the Node adapter; dispatch trusts the request, whose dots are already resolved away</option>
+<option>dispatch always returns 404 for encoded paths</option>
+<option>The router only normalises paths when a server is running</option>
+<explain><p>Go through a real server, sending raw targets with <code>node:http</code>, when you test how hostile paths are handled. <code>fetch</code> also cleans up the URL before sending, so it cannot send these either.</p></explain>
+</question>
+
+<question id="rt-query-limit" type="choice">
+<q>A client sends a query string with 1001 parameters to the Task API. What happens?</q>
+<option>Only the first 1000 are kept</option>
+<option>The route runs and <code>ctx.query</code> is empty</option>
+<option correct>The request is refused with 400 before any route runs</option>
+<option>The server crashes with a stack overflow</option>
+<explain><p>The query parser enforces limits (1000 keys, 4096-character names, 16,384-character values, 1 MiB in total). A request over a limit never reaches your handlers.</p></explain>
+</question>
+
+<question id="rt-match-use" type="choice">
+<q>What does <code>router.match("GET", "/tasks/42")</code> give a test that dispatching does not?</q>
+<option>It runs the route middleware without the handler</option>
+<option correct>It reports which route <em>would</em> answer, and the allowed methods, without running anything</option>
+<option>It checks the request target for dot segments</option>
+<option>It registers the route if it is missing</option>
+<explain><p>Matching is side-effect free, so a route-table test can check every expected route, including routes whose handlers need a database, in milliseconds.</p></explain>
+</question>
+
+<question id="rt-remove" type="output">
+<q>What does this print?</q>
+<code file="remove.ts" browser="no">
+import { createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/tasks", () => []);
+const removeDebug = router.all("/debug", () => "ok");
+console.log(router.count());
+removeDebug();
+console.log(router.count(), router.match("GET", "/debug").matched);
+</code>
+<option correct>2
+1 false</option>
+<option>2
+2 true</option>
+<option>10
+1 false</option>
+<option>2
+1 true</option>
+<explain><p>Every registration returns a function that removes the route. <code>all</code> registers one route with method <code>*</code>, so the count goes from 2 to 1 and <code>/debug</code> no longer matches.</p></explain>
+</question>
+
+<question id="rt-stats-order" type="choice">
+<q>In the Task API, does it matter whether <code>registerTaskStatsRoutes</code> is called before or after <code>registerTaskRoutes</code>?</q>
+<option>Yes: the stats route must come first or <code>/tasks/:id</code> catches <code>/tasks/stats</code></option>
+<option correct>No: <code>/tasks/stats</code> is a literal and beats <code>/tasks/:id</code> in either order</option>
+<option>Yes: the second call throws a <code>RouteConflictError</code></option>
+<option>No, because the router tries both and picks the one that does not throw</option>
+<explain><p>Specificity, not registration order, decides between a literal and a parameter. Registration order only breaks ties between equally specific routes.</p></explain>
+</question>
+
+<question id="rt-stats-error" type="choice">
+<q>The stats route answers an unknown priority with <code>"priority must be low, normal or high"</code> instead of <code>"Unknown priority: " + value</code>. Why?</q>
+<option>Because the value is not available in the handler</option>
+<option correct>It tells the client what is allowed without echoing attacker-controlled input back in the response</option>
+<option>Because <code>badRequest</code> cannot contain user input</option>
+<option>To keep the message under the length limit</option>
+<explain><p>Reflecting input in error messages invites injection into logs, pages or tools that display them. Listing the allowed values is more useful and safer.</p></explain>
+</question>
+
+<question id="rt-code-specificity" type="code" file="specificity.ts">
+<q><p>Write <code>specificity(pattern)</code>: return one character per segment, <code>"3"</code> for a literal, <code>"2"</code> for a parameter (starts with <code>:</code>), <code>"1"</code> for a wildcard (starts with <code>*</code>). Then sort the patterns so the most specific comes first, comparing the strings from the left, and keep registration order for ties.</p></q>
+<starter>
+function specificity(pattern: string): string {
+  // your code here
+  return "";
+}
+
+const routes = ["/tasks/*rest", "/tasks/:id", "/tasks/stats", "/tasks/:id/notes"];
+console.log(routes.map(specificity));
+</starter>
+<solution>
+function specificity(pattern: string): string {
+  return pattern
+    .split("/")
+    .filter((segment) => segment.length > 0)
+    .map((segment) => (segment.startsWith(":") ? "2" : segment.startsWith("*") ? "1" : "3"))
+    .join("");
+}
+
+const routes = ["/tasks/*rest", "/tasks/:id", "/tasks/stats", "/tasks/:id/notes"];
+const sorted = [...routes].sort((a, b) => {
+  const x = specificity(a);
+  const y = specificity(b);
+  return x === y ? 0 : x > y ? -1 : 1;
+});
+console.log(sorted);
+</solution>
+<expected>[ '/tasks/stats', '/tasks/:id/notes', '/tasks/:id', '/tasks/*rest' ]</expected>
+<explain><p>Comparing segment by segment from the left puts literals before parameters before wildcards. <code>sort</code> is stable, so equal routes keep their registration order, which is exactly the tie rule of the router.</p></explain>
+</question>
+
+<question id="rt-code-match" type="code" file="match.ts">
+<q><p>Write <code>matchPattern(pattern, path)</code> for patterns made of literals and <code>:name</code> parameters only. Return the parameters as an object, or <code>undefined</code> when the path does not match. Literals compare case-insensitively, parameter values are decoded with <code>decodeURIComponent</code>, and a decoded value containing <code>/</code> must fail the match.</p></q>
+<starter>
+function matchPattern(pattern: string, path: string): Record<string, string> | undefined {
+  // your code here
+  return undefined;
+}
+
+console.log(matchPattern("/tasks/:id", "/tasks/42"));
+</starter>
+<solution>
+function matchPattern(pattern: string, path: string): Record<string, string> | undefined {
+  const want = pattern.split("/").filter(Boolean);
+  const got = path.split("/").filter(Boolean);
+  if (want.length !== got.length) return undefined;
+  const params: Record<string, string> = {};
+  for (let i = 0; i < want.length; i++) {
+    const segment = want[i]!;
+    const actual = got[i]!;
+    if (segment.startsWith(":")) {
+      const value = decodeURIComponent(actual);
+      if (value.includes("/")) return undefined;
+      params[segment.slice(1)] = value;
+    } else if (segment.toLowerCase() !== actual.toLowerCase()) {
+      return undefined;
+    }
+  }
+  return params;
+}
+
+console.log(matchPattern("/tasks/:id", "/tasks/42"));
+console.log(matchPattern("/TASKS/:id", "/tasks/caf%C3%A9"));
+console.log(matchPattern("/tasks/:id", "/tasks/a%2Fb"));
+console.log(matchPattern("/tasks/:id", "/tasks/42/notes"));
+</solution>
+<expected>{ id: '42' }
+{ id: 'café' }
+undefined
+undefined</expected>
+<explain><p>Splitting on <code>/</code> before decoding is what keeps an encoded slash from creating a new segment; checking the decoded value refuses it as a parameter. Real routers add optional parameters, constraints and wildcards on top of this core.</p></explain>
+</question>
+
+<question id="rt-code-array" type="code" file="query-array.ts">
+<q><p>Write <code>asArray(value)</code> that turns a query value of type <code>string | string[] | undefined</code> into a <code>string[]</code> (like <code>queryArray</code>), and <code>single(query, name)</code> that returns the one value or <code>undefined</code>, and throws <code>Error('Send "name" at most once')</code> for a repeated key.</p></q>
+<starter>
+type Query = Record<string, string | string[] | undefined>;
+
+function asArray(value: string | string[] | undefined): string[] {
+  // your code here
+  return [];
+}
+
+function single(query: Query, name: string): string | undefined {
+  // your code here
+  return undefined;
+}
+
+console.log(asArray("home"));
+</starter>
+<solution>
+type Query = Record<string, string | string[] | undefined>;
+
+function asArray(value: string | string[] | undefined): string[] {
+  if (value === undefined) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function single(query: Query, name: string): string | undefined {
+  const values = asArray(query[name]);
+  if (values.length > 1) throw new Error(`Send "${name}" at most once`);
+  return values[0];
+}
+
+const query: Query = { tag: ["home", "urgent"], status: "open", sort: ["title", "date"] };
+console.log(asArray(query.tag), asArray(query.status), asArray(query.page));
+console.log(single(query, "status"), single(query, "page"));
+try {
+  single(query, "sort");
+} catch (error) {
+  console.log((error as Error).message);
+}
+</solution>
+<expected>[ 'home', 'urgent' ] [ 'open' ] []
+open undefined
+Send "sort" at most once</expected>
+<explain><p>Normalising to an array once removes every <code>typeof</code> check from the code that uses lists, and refusing repeats for single values closes the parameter-pollution gap.</p></explain>
+</question>
+
+<question id="rt-code-dots" type="code" file="dots.ts">
+<q><p>Write <code>hasDotSegment(target)</code>: take the part before <code>?</code>, split it on <code>/</code> and on <code>\</code>, decode each segment with <code>decodeURIComponent</code> (a segment that fails to decode counts as bad), and return <code>true</code> if any decoded segment is <code>.</code> or <code>..</code>.</p></q>
+<starter>
+function hasDotSegment(target: string): boolean {
+  // your code here
+  return false;
+}
+
+console.log(hasDotSegment("/tasks/7"));
+</starter>
+<solution>
+function hasDotSegment(target: string): boolean {
+  const path = target.split("?")[0] ?? "";
+  for (const segment of path.split(/[\/\\]/)) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      return true;
+    }
+    if (decoded === "." || decoded === "..") return true;
+  }
+  return false;
+}
+
+for (const target of ["/tasks/7", "/tasks/../admin", "/tasks/%2E%2e/admin", "/tasks\\..\\admin", "/v1.2/tasks", "/tasks/7?next=../x"]) {
+  console.log(target, hasDotSegment(target));
+}
+</solution>
+<expected>/tasks/7 false
+/tasks/../admin true
+/tasks/%2E%2e/admin true
+/tasks\..\admin true
+/v1.2/tasks false
+/tasks/7?next=../x false</expected>
+<explain><p>Decoding before comparing catches the encoded forms, and splitting on backslashes catches the Windows spelling. Dots inside a segment (<code>v1.2</code>) and dots in the query are harmless.</p></explain>
+</question>
+
+<question id="rt-code-build" type="code" file="build-path.ts">
+<q><p>Write <code>buildPath(pattern, params)</code>: replace every <code>:name</code> segment with <code>encodeURIComponent(String(value))</code>, and throw <code>Error('Missing route parameter "name".')</code> when a value is missing.</p></q>
+<starter>
+function buildPath(pattern: string, params: Record<string, string | number>): string {
+  // your code here
+  return pattern;
+}
+
+console.log(buildPath("/tasks/:id", { id: 7 }));
+</starter>
+<solution>
+function buildPath(pattern: string, params: Record<string, string | number>): string {
+  return pattern
+    .split("/")
+    .map((segment) => {
+      if (!segment.startsWith(":")) return segment;
+      const name = segment.slice(1);
+      const value = params[name];
+      if (value === undefined) throw new Error(`Missing route parameter "${name}".`);
+      return encodeURIComponent(String(value));
+    })
+    .join("/");
+}
+
+console.log(buildPath("/tasks/:id", { id: 7 }));
+console.log(buildPath("/users/:user/files/:name", { user: "ada", name: "Q3 report/final.pdf" }));
+try {
+  buildPath("/tasks/:id", {});
+} catch (error) {
+  console.log((error as Error).message);
+}
+</solution>
+<expected>/tasks/7
+/users/ada/files/Q3%20report%2Ffinal.pdf
+Missing route parameter "id".</expected>
+<explain><p>Encoding each value keeps it inside its own segment, so user data cannot change the shape of the path. This is what <code>buildRoutePath</code> from <code>@zudojs/http</code> does for you.</p></explain>
+</question>
+
+<question id="rt-code-route-table" type="code" file="route-table.ts">
+<q><p>Given a list of registered patterns (already sorted most specific first) and a <code>match(path)</code> function that returns the first pattern whose regular expression matches, write <code>deadRoutes(samples)</code>: for each <code>[pattern, samplePath]</code> pair, report the pattern when the sample is answered by a different pattern.</p></q>
+<starter>
+const table: [pattern: string, regex: RegExp][] = [
+  ["/orders/latest", /^\/orders\/latest$/],
+  ["/orders/:ref", /^\/orders\/[^/]+$/],
+  ["/orders/:id(\\d+)", /^\/orders\/\d+$/],
+];
+
+function match(path: string): string | undefined {
+  return table.find(([, regex]) => regex.test(path))?.[0];
+}
+
+function deadRoutes(samples: [pattern: string, sample: string][]): string[] {
+  // your code here
+  return [];
+}
+
+console.log(match("/orders/17"));
+</starter>
+<solution>
+const table: [pattern: string, regex: RegExp][] = [
+  ["/orders/latest", /^\/orders\/latest$/],
+  ["/orders/:ref", /^\/orders\/[^/]+$/],
+  ["/orders/:id(\\d+)", /^\/orders\/\d+$/],
+];
+
+function match(path: string): string | undefined {
+  return table.find(([, regex]) => regex.test(path))?.[0];
+}
+
+function deadRoutes(samples: [pattern: string, sample: string][]): string[] {
+  return samples.filter(([pattern, sample]) => match(sample) !== pattern).map(([pattern]) => pattern);
+}
+
+console.log(
+  deadRoutes([
+    ["/orders/latest", "/orders/latest"],
+    ["/orders/:ref", "/orders/INV-7"],
+    ["/orders/:id(\\d+)", "/orders/17"],
+  ]),
+);
+</solution>
+<expected>[ '/orders/:id(\\d+)' ]</expected>
+<explain><p>This is the idea behind the route-table test: give every route one sample request and check that the route itself answers it. A shadowed route fails immediately, instead of in production.</p></explain>
+</question>

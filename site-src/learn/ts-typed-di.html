@@ -1,0 +1,734 @@
+---
+title: A type-safe dependency injection container
+description: Build a DI container with typed tokens, factories and singleton, scoped and transient lifetimes, and learn exactly which wiring errors types cannot catch.
+minutes: 55
+youNeed: Classes (dependency injection by hand), Type-safe CQRS, Mapped and conditional types
+youBuild: A typed dependency injection container with tokens, factory and class providers, three lifetimes, request scopes, cycle and captive-dependency detection, and a compile-time service builder, compared with @zudojs/container
+keywords: typescript dependency injection, di container, injection token, typed token, provider factory, singleton scoped transient, request scope, captive dependency, circular dependency, composition root, zudojs container, inversion of control
+objectives: Explain what a DI container does that hand wiring does not, and when a container is worth it | Use typed tokens so that resolve returns the right type, and explain why interfaces cannot be tokens | Check a provider's dependency list against the constructor or factory it feeds | Implement singleton, scoped and transient lifetimes and detect cycles and captive dependencies | List the wiring errors that compile-time types cannot catch, and move some of them to startup or to compile time | Use @zudojs/container's typed APIs and recognise the one that is not checked
+---
+<section>
+<h2 id="problem">The cart two customers shared</h2>
+<p>In <a href="/learn/ts-classes#injection">Classes</a> you wired services by hand: create the dependencies, pass them into constructors, all in one entry file called the <strong>composition root</strong>. A shop's checkout was written that way. Everything is created once, when the server starts:</p>
+<example file="problem.ts" project="problem">
+class Cart {
+  readonly items: string[] = [];
+  add(sku: string): void {
+    this.items.push(sku);
+  }
+}
+
+class CheckoutService {
+  constructor(private readonly cart: Cart) {}
+  checkout(customer: string): string {
+    return `${customer} pays for ${this.cart.items.join(", ")}`;
+  }
+}
+
+// main.ts: everything is created once, when the server starts
+const cart = new Cart();
+const checkout = new CheckoutService(cart);
+
+function handleRequest(customer: string, skus: string[]): string {
+  for (const sku of skus) cart.add(sku);
+  return checkout.checkout(customer);
+}
+
+console.log(handleRequest("Ada", ["RICE-50KG"]));
+console.log(handleRequest("Tunde", ["OIL-5L"]));
+</example>
+<output>
+Ada pays for RICE-50KG
+Tunde pays for RICE-50KG, OIL-5L
+</output>
+<p>Tunde is charged for Ada's rice. The types are all correct. The bug is about <strong>lifetime</strong>, how long an object lives and who shares it: a cart must live for one customer's request, a logger for the whole process, and the checkout service in between depends on both. Fixing it by hand means creating the cart, and every service that holds it, inside <code>handleRequest</code>, while still sharing the long-lived ones. With thirty services that wiring code becomes the most fragile file in the project.</p>
+<p>A <strong>dependency injection container</strong> does this wiring for you. You tell it, once, how to build each dependency and how long it lives; then you ask it for a service, and it builds the service and everything the service needs. In this lesson you build a typed container from scratch, then look at <code>@zudojs/container</code>, which <a href="/learn/zudo-container">The container in ZudoJS</a> teaches in full. You will also see the honest limit: the most common container error, "nothing is registered for this", cannot be a type error in an ordinary container, and you will see what it costs to make it one.</p>
+</section>
+
+<section>
+<h2 id="vocabulary">What a container does</h2>
+<ul>
+<li>A <strong>dependency</strong> is an object a service needs: <code>CheckoutService</code> depends on a <code>Cart</code>, a <code>Clock</code> and a <code>Logger</code>.</li>
+<li>A <strong>token</strong> is the key you register and resolve by. It names one dependency.</li>
+<li>A <strong>provider</strong> says how to build the dependency: a ready value, a factory function, or a class and the tokens for its constructor arguments.</li>
+<li>A <strong>lifetime</strong> says how long a built instance is reused. <strong>Singleton</strong>: one per container, for the whole process. <strong>Scoped</strong>: one per scope, usually one HTTP request. <strong>Transient</strong>: a new one every time it is asked for.</li>
+<li><strong>Resolving</strong> a token means building (or reusing) its instance, which first resolves the tokens it depends on, recursively.</li>
+</ul>
+<p>The container is itself a small graph algorithm: services are nodes, "needs" are edges, and resolving is a depth-first walk (<a href="/learn/dsa-graphs">Graphs</a>). That is why it can also find cycles.</p>
+</section>
+
+<section>
+<h2 id="tokens">Tokens: a runtime key that carries a type</h2>
+<p>The obvious key is the interface: "give me a <code>Clock</code>". That cannot work, because interfaces are erased when TypeScript compiles (<a href="/learn/ts-compiler#erasure">The compiler</a>). There is nothing left at runtime to look up:</p>
+<example file="interface-key.ts" project="keys" check="tsc-error">
+interface Clock {
+  now(): Date;
+}
+
+declare function resolve<T>(key: unknown): T;
+
+const clock = resolve(Clock);
+</example>
+<output kind="tsc">
+interface-key.ts:7:23 - error TS2693: 'Clock' only refers to a type, but is being used as a value here.
+
+7 const clock = resolve(Clock);
+                        ~~~~~
+
+
+Found 1 error in interface-key.ts:7
+</output>
+<p>Other runtime keys each lose something. A <strong>string</strong> such as <code>"clock"</code> exists at runtime, but it carries no type, so <code>resolve&lt;Clock&gt;("clock")</code> is a claim, and two modules can pick the same string by accident. A <strong>symbol</strong> is unique but just as untyped. A <strong>class</strong> is both a runtime value and a type, so it works for classes, but not for interfaces, functions or configuration values.</p>
+<p>The answer is a small object that <em>is</em> the runtime key and <em>carries</em> the type:</p>
+<example file="token.ts" project="di">
+export class Token<T> {
+  declare readonly __type: T;
+  constructor(readonly name: string) {}
+}
+
+export type TypesOf<D extends readonly Token<unknown>[]> = { -readonly [I in keyof D]: D[I] extends Token<infer U> ? U : never };
+
+export type Lifetime = "singleton" | "scoped" | "transient";
+</example>
+<p>The shop's services for the rest of the lesson, with one token per dependency, exported next to its interface:</p>
+<file name="services.ts" project="di">
+import { Token } from "./token.js";
+
+export interface Clock {
+  now(): Date;
+}
+
+export interface Logger {
+  info(message: string): void;
+}
+
+export class Cart {
+  readonly items: string[] = [];
+  add(sku: string): void {
+    this.items.push(sku);
+  }
+}
+
+export class CheckoutService {
+  constructor(
+    private readonly cart: Cart,
+    private readonly clock: Clock,
+    private readonly log: Logger,
+  ) {}
+
+  checkout(customer: string): string {
+    const receipt = `${customer} paid for ${this.cart.items.join(", ")} on ${this.clock.now().toISOString().slice(0, 10)}`;
+    this.log.info(receipt);
+    return receipt;
+  }
+}
+
+export const CLOCK = new Token<Clock>("Clock");
+export const LOGGER = new Token<Logger>("Logger");
+export const CART = new Token<Cart>("Cart");
+export const CHECKOUT = new Token<CheckoutService>("CheckoutService");
+</file>
+<ul>
+<li><code>declare readonly __type: T</code> is a <strong>phantom property</strong>, the same trick as the request classes in <a href="/learn/ts-typed-cqrs#classes">Type-safe CQRS</a>: it emits no JavaScript, but it makes <code>Token&lt;Clock&gt;</code> and <code>Token&lt;Logger&gt;</code> different types, so <code>resolve(CLOCK)</code> can infer <code>Clock</code>.</li>
+<li>The token object's <strong>identity</strong> is the key. Two tokens with the same name are different keys. The <code>name</code> is only for error messages.</li>
+<li><code>TypesOf</code> is a mapped type over a tuple: it turns <code>[Token&lt;Cart&gt;, Token&lt;Clock&gt;]</code> into <code>[Cart, Clock]</code>. It is how a list of dependency tokens becomes the parameter list of a factory. <code>-readonly</code> removes <code>readonly</code> so the result can be used as a parameter list.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="container">Building the container</h2>
+<reason title="Before you write resolve">
+<p>You are about to write <code>resolve(token)</code>. Think through the cases first:</p>
+<ul>
+<li>Two services both need the <code>Clock</code>. Should they get one clock or two? Who decides?</li>
+<li>A singleton service needs the <code>Cart</code>, which is scoped. What would go wrong if the container allowed it?</li>
+<li><code>OrderService</code> needs <code>InvoiceService</code>, which needs <code>OrderService</code>. What does a naive recursive <code>resolve</code> do?</li>
+<li>Nothing is registered for <code>PaymentGateway</code>. When is the earliest moment the program could know? What should the error message contain?</li>
+</ul>
+<answer>
+<p>The registration decides, through its lifetime: a singleton clock is shared, a transient one is not. A singleton holding a scoped cart would keep the <em>first</em> request's cart forever and hand it to every later request: the opening bug, reintroduced by the container. That is called a <strong>captive dependency</strong>, and the container must refuse it. A cycle makes naive recursion run until the stack overflows, so <code>resolve</code> carries the path it is on and fails when a token appears twice. A missing registration can only be known when someone resolves the token, or earlier if you check the whole graph at startup, because registrations are ordinary runtime calls. The error must name the missing token <em>and</em> the chain that needed it, or nobody can find the service that asked.</p>
+</answer>
+</reason>
+<example file="container.ts" project="di">
+import type { Lifetime, Token, TypesOf } from "./token.js";
+
+interface Registration {
+  readonly lifetime: Lifetime;
+  readonly deps: readonly Token<unknown>[];
+  readonly create: (...deps: never[]) => unknown;
+}
+
+type Cache = Map<Token<unknown>, unknown>;
+
+export interface Resolver {
+  resolve<T>(token: Token<T>): T;
+}
+
+export class Container implements Resolver {
+  readonly #registrations = new Map<Token<unknown>, Registration>();
+  readonly #singletons: Cache = new Map();
+
+  register<T, const D extends readonly Token<unknown>[]>(
+    token: Token<T>,
+    lifetime: Lifetime,
+    deps: D,
+    factory: (...deps: TypesOf<D>) => T,
+  ): this {
+    this.#registrations.set(token, { lifetime, deps, create: factory as (...deps: never[]) => unknown });
+    return this;
+  }
+
+  registerClass<T, const D extends readonly Token<unknown>[]>(
+    token: Token<T>,
+    lifetime: Lifetime,
+    deps: D,
+    type: new (...deps: TypesOf<D>) => T,
+  ): this {
+    return this.register(token, lifetime, deps, (...args) => new type(...args));
+  }
+
+  registerValue<T>(token: Token<T>, value: T): this {
+    return this.register(token, "singleton", [], () => value);
+  }
+
+  resolve<T>(token: Token<T>): T {
+    return this.#resolve(token, undefined, []);
+  }
+
+  createScope(): Resolver {
+    const cache: Cache = new Map();
+    return { resolve: (token) => this.#resolve(token, cache, []) };
+  }
+
+  #resolve<T>(token: Token<T>, scopeCache: Cache | undefined, path: readonly Token<unknown>[]): T {
+    const chain = [...path, token].map((t) => t.name).join(" -> ");
+    if (path.includes(token)) throw new Error(`circular dependency: ${chain}`);
+    const registration = this.#registrations.get(token);
+    if (!registration) throw new Error(`nothing registered for ${token.name} (${chain})`);
+
+    let cache: Cache | undefined;
+    if (registration.lifetime === "singleton") cache = this.#singletons;
+    if (registration.lifetime === "scoped") {
+      const holder = path.find((t) => this.#registrations.get(t)?.lifetime === "singleton");
+      if (holder) throw new Error(`captive dependency: singleton ${holder.name} would keep scoped ${token.name} forever (${chain})`);
+      if (!scopeCache) throw new Error(`${token.name} is scoped: resolve it from a scope (${chain})`);
+      cache = scopeCache;
+    }
+    if (cache?.has(token)) return cache.get(token) as T;
+
+    const args = registration.deps.map((dep) => this.#resolve(dep, scopeCache, [...path, token]));
+    const instance = (registration.create as (...deps: unknown[]) => unknown)(...args) as T;
+    cache?.set(token, instance);
+    return instance;
+  }
+}
+</example>
+<p>The structure is the one you have used for two lessons now: precise public signatures over loosely typed storage. <code>register</code> is generic in the token's type <code>T</code> and in the dependency tuple <code>D</code>; the <code>const</code> modifier on <code>D</code> makes TypeScript infer <code>[CART, CLOCK, LOGGER]</code> as a tuple, not as an array of a union. The factory's parameters are <code>TypesOf&lt;D&gt;</code>, so they are checked against the tokens. The storage forgets all of that, and <code>#resolve</code> needs two casts: the cached value is a <code>T</code> because it was stored under a <code>Token&lt;T&gt;</code>, and the factory is called with values resolved from its own token list. Neither can be proven by the compiler; both follow from how <code>register</code> stored them.</p>
+<p>The rest of <code>#resolve</code> is the reasoning above, in order: cycle check on the path, missing-registration error with the chain, the captive check (any singleton on the path, even with a transient in between, makes a scoped dependency captive), then the cache for the lifetime, then building the dependencies depth-first.</p>
+
+<h3 id="lifetimes">Lifetimes and scopes fix the cart</h3>
+<example file="app.ts" project="di">
+import { Container } from "./container.js";
+import { CART, CHECKOUT, CLOCK, Cart, CheckoutService, LOGGER } from "./services.js";
+
+let carts = 0;
+const container = new Container()
+  .registerValue(CLOCK, { now: () => new Date("2026-09-24T09:00:00Z") })
+  .register(LOGGER, "singleton", [], () => ({ info: (message: string) => console.log(`[log] ${message}`) }))
+  .register(CART, "scoped", [], () => {
+    carts++;
+    return new Cart();
+  })
+  .registerClass(CHECKOUT, "transient", [CART, CLOCK, LOGGER], CheckoutService);
+
+const ada = container.createScope();
+const tunde = container.createScope();
+ada.resolve(CART).add("RICE-50KG");
+tunde.resolve(CART).add("OIL-5L");
+ada.resolve(CART).add("GARRI-5KG");
+
+console.log(ada.resolve(CHECKOUT).checkout("Ada"));
+console.log(tunde.resolve(CHECKOUT).checkout("Tunde"));
+console.log("carts created:", carts, "same logger:", container.resolve(LOGGER) === ada.resolve(LOGGER));
+</example>
+<output>
+[log] Ada paid for RICE-50KG, GARRI-5KG on 2026-09-24
+Ada paid for RICE-50KG, GARRI-5KG on 2026-09-24
+[log] Tunde paid for OIL-5L on 2026-09-24
+Tunde paid for OIL-5L on 2026-09-24
+carts created: 2 same logger: true
+</output>
+<p>Each request gets a <strong>scope</strong>, and inside one scope the scoped <code>Cart</code> is built once and reused: Ada's two <code>add</code> calls went to the same cart, and Tunde got his own. The checkout service is transient, so each request builds a fresh one around its own cart. The logger is a singleton shared by everyone. In a web server, the framework creates the scope when a request arrives and throws it away when the response is sent.</p>
+<p>Which lifetime to choose? Singleton for things that are expensive to create and safe to share (connection pools, configuration, loggers, clients); scoped for anything that belongs to one request (the current user, a database transaction, a cart); transient for small, cheap, stateless helpers. When unsure, a service that holds no state of its own can be a singleton only if everything it depends on can be too.</p>
+</section>
+
+<section>
+<h2 id="checked-wiring">Wiring the compiler can check</h2>
+<p>Because <code>registerClass</code> types the constructor as <code>new (...deps: TypesOf&lt;D&gt;) =&gt; T</code>, the dependency list is checked against the constructor's real parameter list: order, count and types. So is a factory's return value, and so is the variable you resolve into:</p>
+<example file="wiring-misuse.ts" project="di" check="tsc-error">
+import { Container } from "./container.js";
+import { CART, CHECKOUT, CLOCK, CheckoutService, LOGGER } from "./services.js";
+
+const container = new Container();
+container.registerClass(CHECKOUT, "transient", [CLOCK, CART, LOGGER], CheckoutService);
+container.registerClass(CHECKOUT, "transient", [CART, CLOCK], CheckoutService);
+container.register(CLOCK, "singleton", [], () => new Date());
+const clock: Date = container.resolve(CLOCK);
+</example>
+<output kind="tsc">
+wiring-misuse.ts:5:71 - error TS2345: Argument of type 'typeof CheckoutService' is not assignable to parameter of type 'new (deps_0: Clock, deps_1: Cart, deps_2: Logger) => CheckoutService'.
+  Types of parameters 'cart' and 'deps_0' are incompatible.
+    Type 'Clock' is missing the following properties from type 'Cart': items, add
+
+5 container.registerClass(CHECKOUT, "transient", [CLOCK, CART, LOGGER], CheckoutService);
+                                                                        ~~~~~~~~~~~~~~~
+
+wiring-misuse.ts:6:63 - error TS2345: Argument of type 'typeof CheckoutService' is not assignable to parameter of type 'new (deps_0: Cart, deps_1: Clock) => CheckoutService'.
+  Target signature provides too few arguments. Expected 3 or more, but got 2.
+
+6 container.registerClass(CHECKOUT, "transient", [CART, CLOCK], CheckoutService);
+                                                                ~~~~~~~~~~~~~~~
+
+wiring-misuse.ts:7:50 - error TS2741: Property 'now' is missing in type 'Date' but required in type 'Clock'.
+
+7 container.register(CLOCK, "singleton", [], () => new Date());
+                                                   ~~~~~~~~~~
+
+  services.ts:4:3 - 'now' is declared here.
+    4   now(): Date;
+        ~~~~~~~~~~~~
+
+  container.ts:23:14 - The expected type comes from the return type of this signature.
+    23     factory: (...deps: TypesOf<D>) => T,
+                    ~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+wiring-misuse.ts:8:7 - error TS2740: Type 'Clock' is missing the following properties from type 'Date': toDateString, toTimeString, toLocaleDateString, toLocaleTimeString, and 38 more.
+
+8 const clock: Date = container.resolve(CLOCK);
+        ~~~~~
+
+
+Found 4 errors in the same file, starting at: wiring-misuse.ts:5
+</output>
+<p>Tokens in the wrong order, a missing constructor argument, a factory that builds the wrong thing, and a wrong assumption about what a token gives you: all compile errors. This is where types pay off in a container. The next section is where they stop.</p>
+</section>
+
+<section>
+<h2 id="limits">What compile-time types cannot guarantee</h2>
+<p>Here is a container with four wiring mistakes. Every line compiles:</p>
+<example file="failures.ts" project="di">
+import { Container } from "./container.js";
+import { Token } from "./token.js";
+import { CART, CHECKOUT, CLOCK, Cart, CheckoutService, LOGGER } from "./services.js";
+
+interface PaymentGateway {
+  charge(kobo: number): string;
+}
+const PAYMENTS = new Token<PaymentGateway>("PaymentGateway");
+const RECEIPTS = new Token<{ print(): string }>("ReceiptPrinter");
+const ORDERS = new Token<{ place(): string }>("OrderService");
+const INVOICES = new Token<{ total(): number }>("InvoiceService");
+const REPORTS = new Token<{ run(): string }>("DailyReport");
+
+const container = new Container()
+  .registerValue(CLOCK, { now: () => new Date("2026-09-24T09:00:00Z") })
+  .registerValue(LOGGER, { info: () => {} })
+  .register(CART, "scoped", [], () => new Cart())
+  .registerClass(CHECKOUT, "transient", [CART, CLOCK, LOGGER], CheckoutService)
+  .register(RECEIPTS, "transient", [PAYMENTS], (payments) => ({ print: () => payments.charge(100) }))
+  .register(ORDERS, "singleton", [INVOICES], (invoices) => ({ place: () => `total ${invoices.total()}` }))
+  .register(INVOICES, "singleton", [ORDERS], (orders) => ({ total: () => orders.place().length }))
+  .register(REPORTS, "singleton", [CHECKOUT], (checkout) => ({ run: () => checkout.checkout("report") }));
+
+function attempt(label: string, run: () => unknown): void {
+  try {
+    run();
+    console.log(`${label}: ok`);
+  } catch (error) {
+    console.log(`${label}: ${(error as Error).message}`);
+  }
+}
+
+attempt("receipts", () => container.resolve(RECEIPTS));
+attempt("orders", () => container.resolve(ORDERS));
+attempt("checkout at the root", () => container.resolve(CHECKOUT));
+attempt("report in a scope", () => container.createScope().resolve(REPORTS));
+attempt("checkout in a scope", () => container.createScope().resolve(CHECKOUT));
+</example>
+<output>
+receipts: nothing registered for PaymentGateway (ReceiptPrinter -> PaymentGateway)
+orders: circular dependency: OrderService -> InvoiceService -> OrderService
+checkout at the root: Cart is scoped: resolve it from a scope (CheckoutService -> Cart)
+report in a scope: captive dependency: singleton DailyReport would keep scoped Cart forever (DailyReport -> CheckoutService -> Cart)
+checkout in a scope: ok
+</output>
+<p>Why can none of these be a type error?</p>
+<ul>
+<li><strong>A missing registration.</strong> <code>container.resolve(RECEIPTS)</code> type-checks because <code>resolve</code> accepts any <code>Token&lt;T&gt;</code>. Whether a token was registered depends on which <code>register</code> calls ran, in which order, maybe inside an <code>if</code>, maybe in a plugin loaded from a folder. The type of <code>container</code> is the same before and after each call. (The next section changes exactly that, at a price.)</li>
+<li><strong>A cycle.</strong> Each registration is fine on its own; the cycle only exists in the graph that the calls build together, at runtime.</li>
+<li><strong>Lifetimes.</strong> <code>"scoped"</code> and <code>"singleton"</code> are values passed at runtime. The types know <code>CheckoutService</code> needs a <code>Cart</code>, not how long either lives.</li>
+</ul>
+<p>Two more mistakes are invisible even at runtime unless you look closely:</p>
+<example file="same-type.ts" project="di">
+import { Container } from "./container.js";
+import { Token } from "./token.js";
+import type { Clock } from "./services.js";
+
+const SYSTEM_CLOCK = new Token<Clock>("SystemClock");
+const FIXED_CLOCK = new Token<Clock>("FixedClock");
+const INVOICE_DATE = new Token<string>("InvoiceDate");
+
+const container = new Container()
+  .registerValue(SYSTEM_CLOCK, { now: () => new Date("2026-09-24T09:00:00Z") })
+  .registerValue(FIXED_CLOCK, { now: () => new Date("2020-01-01T00:00:00Z") })
+  .register(INVOICE_DATE, "transient", [FIXED_CLOCK], (clock) => clock.now().toISOString().slice(0, 10));
+
+console.log("invoice dated", container.resolve(INVOICE_DATE));
+
+const CLOCK_FROM_ANOTHER_FILE = new Token<Clock>("SystemClock");
+try {
+  container.resolve(CLOCK_FROM_ANOTHER_FILE);
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+invoice dated 2020-01-01
+Error: nothing registered for SystemClock (SystemClock)
+</output>
+<ul>
+<li><strong>Two tokens of the same type are interchangeable to the compiler.</strong> The invoice was meant to use the system clock; it got the test clock and is dated 2020. Types compare shapes, and both tokens are <code>Token&lt;Clock&gt;</code>. Only a distinct name in code review, or a test, catches it.</li>
+<li><strong>A token recreated in another file is a different key.</strong> It has the same name and type, and it finds nothing. Export each token from exactly one module, next to its interface, and import it everywhere.</li>
+</ul>
+<p>So what can you do? Three honest answers:</p>
+<ol>
+<li><strong>Fail at startup, not at the first request.</strong> Resolve every singleton (and one instance of every scoped service in a throwaway scope) when the app boots. A missing registration, a cycle or a captive dependency then stops the deployment instead of a customer's checkout. The third exercise builds a graph check that does not even need to construct anything.</li>
+<li><strong>Test the composition root.</strong> A single test that builds the real container and resolves the top-level services catches every wiring error the types miss.</li>
+<li><strong>Trade flexibility for compile-time checking</strong>, as the next section shows.</li>
+</ol>
+</section>
+
+<section>
+<h2 id="builder">Moving missing registrations to compile time, and the cost</h2>
+<p>The container's type did not change when you registered something, so the compiler could not know what was registered. A <strong>builder</strong> whose type grows with every registration can. Each <code>add</code> returns a new builder whose type parameter <code>S</code> has one more property, and each factory receives only the services added <em>before</em> it:</p>
+<example file="builder.ts" project="di">
+type Factory = (services: never) => unknown;
+
+export class ServiceBuilder<S extends object = {}> {
+  constructor(private readonly factories: ReadonlyMap<string, Factory> = new Map()) {}
+
+  add<K extends string, T>(name: K extends keyof S ? never : K, factory: (services: S) => T): ServiceBuilder<S & { readonly [P in K]: T }> {
+    return new ServiceBuilder(new Map([...this.factories, [name, factory as Factory]]));
+  }
+
+  build(): S {
+    const services = {} as S;
+    const instances = new Map<string, unknown>();
+    for (const [name, factory] of this.factories) {
+      Object.defineProperty(services, name, {
+        enumerable: true,
+        get: () => {
+          if (!instances.has(name)) instances.set(name, (factory as (services: S) => unknown)(services));
+          return instances.get(name);
+        },
+      });
+    }
+    return services;
+  }
+}
+</example>
+<example file="builder-demo.ts" project="di">
+import { ServiceBuilder } from "./builder.js";
+
+const services = new ServiceBuilder()
+  .add("clock", () => ({ now: () => new Date("2026-09-24T09:00:00Z") }))
+  .add("payments", () => ({ charge: (kobo: number) => `PSK_${kobo}` }))
+  .add("orders", ({ clock, payments }) => ({
+    place: (kobo: number) => `${payments.charge(kobo)} at ${clock.now().toISOString().slice(11, 16)}`,
+  }))
+  .build();
+
+console.log(services.orders.place(1_850_000));
+console.log(services.orders === services.orders, Object.keys(services).join(","));
+</example>
+<output>
+PSK_1850000 at 09:00
+true clock,payments,orders
+</output>
+<p>The finished container is a plain object with one typed property per service, created lazily on first access and then reused. There is no <code>resolve</code> call that could name a missing service, and every mistake from the previous section that is about <em>presence</em> is now a compile error:</p>
+<example file="builder-misuse.ts" project="di" check="tsc-error">
+import { ServiceBuilder } from "./builder.js";
+
+const services = new ServiceBuilder()
+  .add("orders", ({ payments }) => ({ place: (kobo: number) => payments.charge(kobo) }))
+  .add("payments", () => ({ charge: (kobo: number) => `PSK_${kobo}` }))
+  .add("payments", () => ({ charge: (kobo: number) => `FLW_${kobo}` }))
+  .build();
+
+services.invoices.total();
+</example>
+<output kind="tsc">
+builder-misuse.ts:4:21 - error TS2339: Property 'payments' does not exist on type '{}'.
+
+4   .add("orders", ({ payments }) => ({ place: (kobo: number) => payments.charge(kobo) }))
+                      ~~~~~~~~
+
+builder-misuse.ts:6:8 - error TS2345: Argument of type '"payments"' is not assignable to parameter of type 'never'.
+
+6   .add("payments", () => ({ charge: (kobo: number) => `FLW_${kobo}` }))
+         ~~~~~~~~~~
+
+builder-misuse.ts:9:10 - error TS2339: Property 'invoices' does not exist on type '{ readonly orders: { place: (kobo: number) => any; }; } & { readonly payments: { charge: (kobo: number) => string; }; } & { readonly payments: { charge: (kobo: number) => string; }; }'.
+
+9 services.invoices.total();
+           ~~~~~~~~
+
+
+Found 3 errors in the same file, starting at: builder-misuse.ts:4
+</output>
+<p>A dependency used before it is added, a duplicate name (<code>K extends keyof S ? never : K</code> turns a repeated name into <code>never</code>) and a service that was never added are all refused. Cycles are impossible, because a factory can only see services added before it. Now the price:</p>
+<ul>
+<li><strong>Registration order is fixed</strong> by the dependency graph; you must add dependencies first. In a large app that ordering is real work.</li>
+<li><strong>Everything is one expression.</strong> Modules cannot each register their own services in their own files without passing builders around and merging their types.</li>
+<li><strong>No plugins discovered at runtime,</strong> because their services cannot be part of a type that was computed at compile time.</li>
+<li><strong>Every service here is a singleton.</strong> Scopes and transients need more machinery (for example a second builder for per-request services that receives the singletons).</li>
+<li><strong>Compile time grows</strong> with a long chain of intersections; hundreds of services make the editor noticeably slower.</li>
+</ul>
+<p>Small applications and libraries often choose this style (some call it "manual DI with a typed record"). Frameworks with modules and plugins choose the runtime container plus startup checks. Neither is wrong; know which guarantee you are buying.</p>
+</section>
+
+<section>
+<h2 id="zudo">The same ideas in @zudojs/container</h2>
+<p><code>@zudojs/container</code> uses the ideas you just built. <code>createToken&lt;T&gt;(name)</code> is your <code>Token</code>. <code>registerFactory(token, factory, inject, options)</code> types the factory's parameters from the <code>inject</code> tokens, exactly like your <code>TypesOf</code>. Lifetimes are <code>ContainerScope.SINGLETON</code>, <code>SCOPED</code> and <code>TRANSIENT</code>, and <code>resolveMany</code> returns a typed tuple:</p>
+<example file="zudo.ts" project="di">
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+import { Cart, CheckoutService } from "./services.js";
+import type { Clock, Logger } from "./services.js";
+
+const CLOCK = createToken<Clock>("Clock");
+const LOGGER = createToken<Logger>("Logger");
+const CART = createToken<Cart>("Cart");
+const CHECKOUT = createToken<CheckoutService>("CheckoutService");
+
+const container = createContainer();
+container.registerValue(CLOCK, { now: () => new Date("2026-09-24T09:00:00Z") });
+container.registerValue(LOGGER, { info: (message: string) => console.log(`[log] ${message}`) });
+container.registerFactory(CART, () => new Cart(), [], { scope: ContainerScope.SCOPED });
+container.registerFactory(CHECKOUT, (cart, clock, log) => new CheckoutService(cart, clock, log), [CART, CLOCK, LOGGER]);
+
+const request = container.createScope({ name: "request-ada" });
+request.resolve(CART).add("RICE-50KG");
+console.log(request.resolve(CHECKOUT).checkout("Ada"));
+
+const [clock, log] = container.resolveMany([CLOCK, LOGGER]);
+log.info(`resolved together at ${clock.now().toISOString().slice(0, 10)}`);
+</example>
+<output>
+[log] Ada paid for RICE-50KG on 2026-09-24
+Ada paid for RICE-50KG on 2026-09-24
+[log] resolved together at 2026-09-24
+</output>
+<p>Swap two tokens in <code>registerFactory</code>'s <code>inject</code> list and the factory's parameters no longer match: a compile error, as in your container. The package's <code>registerClass</code>, however, types the class as <code>Constructor&lt;T&gt;</code>, whose parameter list is <code>any[]</code>, so its <code>inject</code> list is <em>not</em> checked against the constructor:</p>
+<example file="zudo-class.ts" project="di">
+import { ContainerScope, createContainer, createToken } from "@zudojs/container";
+import { Cart, CheckoutService } from "./services.js";
+import type { Clock, Logger } from "./services.js";
+
+const CLOCK = createToken<Clock>("Clock");
+const LOGGER = createToken<Logger>("Logger");
+const CART = createToken<Cart>("Cart");
+const CHECKOUT = createToken<CheckoutService>("CheckoutService");
+
+const container = createContainer();
+container.registerValue(CLOCK, { now: () => new Date("2026-09-24T09:00:00Z") });
+container.registerValue(LOGGER, { info: () => {} });
+container.registerFactory(CART, () => new Cart(), [], { scope: ContainerScope.SCOPED });
+container.registerClass(CHECKOUT, CheckoutService, { inject: [CLOCK, CART, LOGGER] });
+
+try {
+  console.log(container.createScope().resolve(CHECKOUT).checkout("Ada"));
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+TypeError: Cannot read properties of undefined (reading 'join')
+</output>
+<p>The clock was passed where the cart belongs, and the error surfaces deep inside <code>checkout</code>, far from the wiring mistake. Prefer <code>registerFactory</code> with a small arrow function that calls the constructor: it costs one line and turns this into a compile error. The package also enforces the runtime rules you implemented: resolving a scoped token at the root throws a <code>ScopedResolutionError</code>, a singleton that depends on a scoped token throws a <code>CaptiveDependencyError</code>, a cycle throws a <code>CircularDependencyError</code> naming the chain, and an unknown token throws a <code>RegistrationNotFoundError</code>. Two differences from your container are worth remembering: the default lifetime is <strong>transient</strong> when you pass no <code>scope</code>, and a class used as a token is registered automatically on first resolve, but only when its constructor takes no parameters.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing wiring and swapping in fakes</h2>
+<p>A container makes the testing trick from <a href="/learn/ts-classes#fakes">Classes</a> cheap: build the container your tests need with fake values under the real tokens. The type of each token still checks the fake, so a fake clock must really have a <code>now()</code> method:</p>
+<example file="container.test.ts" project="di">
+import { Container } from "./container.js";
+import { CART, CHECKOUT, CLOCK, Cart, CheckoutService, LOGGER } from "./services.js";
+
+function check(label: string, actual: unknown, expected: unknown): void {
+  console.log(`${Object.is(actual, expected) ? "PASS" : "FAIL"} ${label}`);
+}
+
+const logged: string[] = [];
+function testContainer(): Container {
+  return new Container()
+    .registerValue(CLOCK, { now: () => new Date("2026-01-15T12:00:00Z") })
+    .registerValue(LOGGER, { info: (message) => void logged.push(message) })
+    .register(CART, "scoped", [], () => new Cart())
+    .registerClass(CHECKOUT, "transient", [CART, CLOCK, LOGGER], CheckoutService);
+}
+
+// @ts-expect-error: a fake must have the real shape
+testContainer().registerValue(CLOCK, { today: () => "2026-01-15" });
+
+const scope = testContainer().createScope();
+scope.resolve(CART).add("YAM-TUBER");
+check("checkout uses the scoped cart and the fake clock", scope.resolve(CHECKOUT).checkout("Chiamaka"), "Chiamaka paid for YAM-TUBER on 2026-01-15");
+check("the fake logger saw it", logged.length, 1);
+
+const root = testContainer();
+check("scoped cart per scope", root.createScope().resolve(CART) === root.createScope().resolve(CART), false);
+check("singleton shared", root.resolve(CLOCK) === root.createScope().resolve(CLOCK), true);
+</example>
+<output>
+PASS checkout uses the scoped cart and the fake clock
+PASS the fake logger saw it
+PASS scoped cart per scope
+PASS singleton shared
+</output>
+<p>The most valuable single test in a project with a container is the one that builds the <em>production</em> composition root and resolves every top-level service. It is the test that catches missing registrations, cycles and captive dependencies, the three errors types cannot.</p>
+</section>
+
+<section>
+<h2 id="production">Containers in production</h2>
+<ul>
+<li><strong>One composition root.</strong> Only the entry point (and tests) touch the container. Services receive dependencies through constructors and never call <code>resolve</code> themselves; a service that pulls from the container (the "service locator" style) hides its dependencies and cannot be checked.</li>
+<li><strong>Validate at startup.</strong> Resolve everything once while booting, or run a graph check, so wiring errors fail the deployment rather than a request.</li>
+<li><strong>One module owns each token.</strong> Export it next to its interface. Never recreate a token by name.</li>
+<li><strong>Scoped means "per request", and nothing longer-lived may hold it.</strong> The captive-dependency check is the container's defence; code review of lifetimes is yours.</li>
+<li><strong>Dispose what the container created.</strong> Singletons such as database pools must be closed on shutdown, in reverse order of creation. <code>@zudojs/container</code> and <a href="/learn/zudo-lifecycle">the lifecycle package</a> do this for you.</li>
+<li><strong>Do not add a container too early.</strong> Ten services wired by hand in one file are clearer than a container. Reach for one when lifetimes and scopes make hand wiring error-prone.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A typed resolveAll">
+<p>Write <code>resolveAll(resolver, tokens)</code> that resolves several tokens at once and returns a tuple typed per token, like <code>@zudojs/container</code>'s <code>resolveMany</code>. Use <code>TypesOf</code>.</p>
+<solution>
+<example file="resolve-all.ts" project="di">
+import { Container } from "./container.js";
+import type { Resolver } from "./container.js";
+import { CLOCK, LOGGER } from "./services.js";
+import type { Token, TypesOf } from "./token.js";
+
+function resolveAll<const D extends readonly Token<unknown>[]>(resolver: Resolver, tokens: D): TypesOf<D> {
+  return tokens.map((token) => resolver.resolve(token)) as TypesOf<D>;
+}
+
+const container = new Container()
+  .registerValue(CLOCK, { now: () => new Date("2026-09-24T09:00:00Z") })
+  .registerValue(LOGGER, { info: (message: string) => console.log(`[log] ${message}`) });
+
+const [clock, log] = resolveAll(container, [CLOCK, LOGGER]);
+log.info(`it is ${clock.now().toISOString().slice(0, 10)}`);
+</example>
+<output>
+[log] it is 2026-09-24
+</output>
+<p><code>const D</code> keeps the argument a tuple, and <code>TypesOf&lt;D&gt;</code> maps each position to its token's type, so <code>clock</code> is a <code>Clock</code> and <code>log</code> a <code>Logger</code>. <code>Array.prototype.map</code> returns <code>unknown[]</code>, so one cast connects it to the tuple type; it is safe because the array has one resolved value per token, in the same order.</p>
+</solution>
+</exercise>
+<exercise title="A container per test">
+<p>Write <code>buildContainer(overrides)</code>, the production composition root, where <code>overrides</code> may replace the clock. Show that production and a test get different dates from the same code, and that the override is type-checked.</p>
+<solution>
+<example file="composition-root.ts" project="di">
+import { Container } from "./container.js";
+import { CART, CHECKOUT, CLOCK, Cart, CheckoutService, LOGGER } from "./services.js";
+import type { Clock } from "./services.js";
+
+interface Overrides {
+  clock?: Clock;
+}
+
+function buildContainer(overrides: Overrides = {}): Container {
+  return new Container()
+    .registerValue(CLOCK, overrides.clock ?? { now: () => new Date("2026-09-24T09:00:00Z") })
+    .registerValue(LOGGER, { info: () => {} })
+    .register(CART, "scoped", [], () => new Cart())
+    .registerClass(CHECKOUT, "transient", [CART, CLOCK, LOGGER], CheckoutService);
+}
+
+for (const container of [buildContainer(), buildContainer({ clock: { now: () => new Date("2025-12-31T23:59:00Z") } })]) {
+  const request = container.createScope();
+  request.resolve(CART).add("RICE-50KG");
+  console.log(request.resolve(CHECKOUT).checkout("Ada"));
+}
+</example>
+<output>
+Ada paid for RICE-50KG on 2026-09-24
+Ada paid for RICE-50KG on 2025-12-31
+</output>
+<p>Tests use the same wiring as production and replace only what must be controlled. Because <code>Overrides</code> is typed from the service interfaces, a fake with the wrong shape does not compile.</p>
+</solution>
+</exercise>
+<exercise title="Check the graph at startup without building anything">
+<p>Given the dependency graph as a map from service name to the names it needs, write <code>checkGraph</code> that returns every missing dependency and every cycle, using depth-first search. Run it on a graph with one of each.</p>
+<solution>
+<example file="check-graph.ts" project="di">
+function checkGraph(graph: ReadonlyMap<string, readonly string[]>): string[] {
+  const problems: string[] = [];
+  const done = new Set<string>();
+
+  function visit(name: string, path: readonly string[]): void {
+    if (path.includes(name)) {
+      problems.push(`cycle: ${[...path.slice(path.indexOf(name)), name].join(" -> ")}`);
+      return;
+    }
+    if (done.has(name)) return;
+    const deps = graph.get(name);
+    if (!deps) {
+      problems.push(`missing: ${name} (needed by ${path.at(-1)})`);
+      return;
+    }
+    for (const dep of deps) visit(dep, [...path, name]);
+    done.add(name);
+  }
+
+  for (const name of graph.keys()) visit(name, []);
+  return problems;
+}
+
+const graph = new Map<string, readonly string[]>([
+  ["CheckoutService", ["Cart", "Clock", "Logger"]],
+  ["Cart", []],
+  ["Clock", []],
+  ["Logger", []],
+  ["ReceiptPrinter", ["PaymentGateway"]],
+  ["OrderService", ["InvoiceService"]],
+  ["InvoiceService", ["OrderService"]],
+]);
+
+console.log(checkGraph(graph).join("\n"));
+</example>
+<output>
+missing: PaymentGateway (needed by ReceiptPrinter)
+cycle: OrderService -> InvoiceService -> OrderService
+</output>
+<p>This is the check a container can run over its registrations before anything is constructed, so no factory with side effects (opening a database connection) runs during validation. <code>done</code> makes each service be checked once, which keeps the walk linear in the size of the graph. <a href="/learn/dsa-graphs">Graphs</a> covers the same search for topological sorting, which is also how a container can decide the order in which to dispose singletons.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A container builds services and their dependencies from registrations: a token, a provider and a lifetime. Scopes give each request its own scoped instances.</li>
+<li>Interfaces cannot be tokens because they are erased. A <code>Token&lt;T&gt;</code> object is the runtime key, and its phantom <code>T</code> makes <code>resolve</code> return the right type. Its identity, not its name, is the key.</li>
+<li>Typing the dependency list as a tuple (<code>const D</code>, <code>TypesOf&lt;D&gt;</code>) checks it against the factory or constructor: order, count and types.</li>
+<li><code>resolve</code> detects cycles with the path it is on and refuses captive dependencies: nothing under a singleton may be scoped.</li>
+<li>Missing registrations, cycles, lifetime mistakes and two tokens of the same type are not type errors in a runtime container. Catch them at startup and with a test of the real composition root.</li>
+<li>A builder whose type grows with each <code>add</code> moves missing registrations and cycles to compile time, at the cost of fixed order, one big expression and no runtime plugins.</li>
+<li><code>@zudojs/container</code>'s <code>registerFactory</code> checks its <code>inject</code> list; its <code>registerClass</code> does not, so prefer a factory that calls the constructor.</li>
+</ul>
+<p>Next: <a href="/learn/ts-decorators">Decorators</a>, the syntax many frameworks use to register handlers and injectable classes, and what it really does at runtime.</p>
+</section>

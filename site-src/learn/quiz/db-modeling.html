@@ -1,0 +1,880 @@
+<question id="dbm-anomaly-name" type="choice">
+<q>A flat <code>order_sheet</code> table repeats each customer's phone on every order row. Support changes Ada's phone on one of her orders only. Which problem is this?</q>
+<option correct>An update anomaly: one fact stored in several rows, and the update missed some of them</option>
+<option>An insertion anomaly: a new fact cannot be stored without another one</option>
+<option>A deletion anomaly: deleting one fact removes another</option>
+<option>A lost update: two sessions overwrote each other</option>
+<explain><p>The phone is one fact stored once per order row. Changing some copies and not others leaves the data contradicting itself. Normalising moves the phone into <code>customers</code>, where it is stored once.</p></explain>
+</question>
+
+<question id="dbm-insert-anomaly" type="choice">
+<q>In the flat sheet keyed by <code>(order_id, sku)</code>, why can't the shop record a new product that nobody has ordered yet?</q>
+<option>Because <code>sku</code> is not unique in the sheet</option>
+<option correct>Because a product only exists as part of an order row, and <code>order_id</code> is part of the primary key, so it cannot be null</option>
+<option>Because PostgreSQL forbids tables with more than seven columns in a primary key</option>
+<option>Because the price column has no default</option>
+<explain><p>That is an insertion anomaly. The product's facts depend on <code>sku</code> alone, but they are stored in a table whose key also needs an order. Giving products their own table removes it.</p></explain>
+</question>
+
+<question id="dbm-2nf" type="choice">
+<q>A table <code>order_lines (order_id, product_id, quantity, product_name)</code> has the key <code>(order_id, product_id)</code>. Which normal form does it break, and why?</q>
+<option>1NF, because <code>product_name</code> is text</option>
+<option correct>2NF, because <code>product_name</code> depends on only part of the key (<code>product_id</code>)</option>
+<option>3NF, because <code>quantity</code> depends on <code>product_name</code></option>
+<option>None: every column is atomic, so it is fully normalised</option>
+<explain><p>A partial dependency on part of a composite key breaks 2NF. The fix is to drop <code>product_name</code> and join to <code>products</code>.</p></explain>
+</question>
+
+<question id="dbm-3nf" type="choice">
+<q><code>products (id, name, supplier_id, supplier_phone)</code> has the key <code>id</code>. What is wrong with it?</q>
+<option>It breaks 1NF because a phone is not atomic</option>
+<option>It breaks 2NF because the key is composite</option>
+<option correct>It breaks 3NF: <code>supplier_phone</code> depends on <code>supplier_id</code>, a non-key column, not on the product</option>
+<option>Nothing, as long as <code>supplier_id</code> is a foreign key</option>
+<explain><p>That is a transitive dependency: id → supplier_id → supplier_phone. The supplier's phone would be repeated on every one of their products, with the same update anomaly as Ada's phone. Move it into <code>suppliers</code>.</p></explain>
+</question>
+
+<question id="dbm-1nf" type="choice">
+<q>Which design breaks first normal form?</q>
+<option><code>order_lines (order_id, product_id, quantity)</code></option>
+<option correct><code>customers (id, name, phone1, phone2, phone3)</code></option>
+<option><code>categories (id, parent_id, name)</code></option>
+<option><code>payments (id, order_id, amount_kobo)</code></option>
+<explain><p><code>phone1</code>, <code>phone2</code>, <code>phone3</code> is a repeating group. It also caps customers at three phones and makes "find the customer with this phone" check three columns. A <code>customer_phones</code> table fixes both.</p></explain>
+</question>
+
+<question id="dbm-snapshot-price" type="choice">
+<q>Order lines store <code>unit_price_kobo</code>, although <code>products.price_kobo</code> exists. Is this a normalisation mistake?</q>
+<option>Yes: the price must be read from <code>products</code> with a join</option>
+<option>Yes, but it is needed for speed</option>
+<option correct>No: it is a different fact, the price at the moment of sale, which must not change when the product price changes later</option>
+<option>No, because generated columns can copy it automatically</option>
+<explain><p>If the rice price goes up next month, last month's orders must keep their totals. The line's price depends on the whole line (this order, this product, at that time), so it is correctly stored there.</p></explain>
+</question>
+
+<question id="dbm-cardinality" type="choice">
+<q>A product can be in several categories and a category holds many products. Where does the relationship live?</q>
+<option>A <code>category_id</code> column on <code>products</code></option>
+<option>A <code>product_ids</code> text column on <code>categories</code></option>
+<option correct>A join table <code>product_categories (product_id, category_id)</code> with both columns as the primary key</option>
+<option>A <code>jsonb</code> column on both tables</option>
+<explain><p>Many-to-many needs a third table with one row per link. The composite primary key stops the same link being stored twice, and both columns can be foreign keys.</p></explain>
+</question>
+
+<question id="dbm-surrogate" type="choice">
+<q>Why does the shop use <code>id integer generated always as identity</code> as the primary key of <code>products</code>, plus <code>unique</code> on <code>sku</code>, instead of making <code>sku</code> the primary key?</q>
+<option>Because text columns cannot be primary keys</option>
+<option correct>Because SKUs can change, and a changing primary key must be changed in every table that references it</option>
+<option>Because <code>unique</code> is faster than <code>primary key</code></option>
+<option>Because identity columns are required for foreign keys</option>
+<explain><p>Natural keys change more often than expected. A meaningless surrogate key never needs to change, and the unique constraint on <code>sku</code> still prevents duplicates.</p></explain>
+</question>
+
+<question id="dbm-on-delete" type="choice">
+<q>Which <code>on delete</code> rule fits the foreign key from <code>order_lines.product_id</code> to <code>products</code>?</q>
+<option><code>on delete cascade</code>, so no orphan lines remain</option>
+<option><code>on delete set null</code>, so the line stays but forgets the product</option>
+<option correct><code>on delete restrict</code>, so a product that appears in sales history cannot be deleted</option>
+<option>No foreign key at all, so products can be deleted freely</option>
+<explain><p>Cascading would silently delete sales history, and set null would leave lines that cannot say what was sold. Restrict refuses the delete; the shop marks such products as discontinued instead.</p></explain>
+</question>
+
+<question id="dbm-lossless" type="choice">
+<q>You split a table into three and want to prove the split lost nothing. What does the lesson's check do?</q>
+<option>Compares the number of columns before and after</option>
+<option>Runs <code>analyze</code> on the new tables</option>
+<option correct>Joins the new tables back together and uses <code>except</code> in both directions; both results must be empty</option>
+<option>Checks that every new table has a primary key</option>
+<explain><p>A lossless decomposition gives back exactly the original rows when joined. <code>A except B</code> lists rows only in A; empty in both directions means no row was lost and none was invented.</p></explain>
+</question>
+
+<question id="dbm-fanout" type="choice">
+<q>An order has two lines and two payments. A report joins <code>orders</code> to <code>order_lines</code> and <code>payments</code> in one query and sums <code>line_total_kobo</code>. What goes wrong?</q>
+<option>Nothing, joins never change sums</option>
+<option correct>Each line is paired with each payment, giving four rows, so the line total is counted twice</option>
+<option>The query fails because two tables cannot be joined to one</option>
+<option>Only the first payment is used</option>
+<explain><p>This is fan-out: joining two independent child tables multiplies their rows. Aggregate each child table separately (a subquery or a grouped CTE per table), then combine the results.</p></explain>
+</question>
+
+<question id="dbm-fanout-run" type="output">
+<q>What does this print?</q>
+<code file="fanout.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table order_lines (order_id int, total int);
+  create table payments (order_id int, amount int);
+  insert into order_lines values (1, 3000), (1, 2000);
+  insert into payments values (1, 1000), (1, 4000);
+`);
+const { rows } = await db.query(`
+  select sum(l.total)::int as lines, sum(p.amount)::int as paid
+  from order_lines l join payments p on p.order_id = l.order_id`);
+console.log(rows[0]);
+await db.close();
+</code>
+<option correct>{ lines: 10000, paid: 10000 }</option>
+<option>{ lines: 5000, paid: 5000 }</option>
+<option>{ lines: 5000, paid: 10000 }</option>
+<option>{ lines: 10000, paid: 5000 }</option>
+<explain><p>Two lines times two payments is four joined rows. Each line total appears twice and each payment appears twice, so both sums are doubled: 2 × 5,000 = 10,000.</p></explain>
+</question>
+
+<question id="dbm-lower-email" type="output">
+<q>What does this print?</q>
+<code file="email.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table customers (id int generated always as identity primary key, email text not null unique);
+  insert into customers (email) values ('ada@example.com');
+`);
+for (const email of ["Ada@Example.com", "ada@example.com"]) {
+  try {
+    await db.query("insert into customers (email) values ($1)", [email]);
+    console.log("saved", email);
+  } catch (error) {
+    console.log(error.code, email);
+  }
+}
+await db.close();
+</code>
+<option correct>saved Ada@Example.com
+23505 ada@example.com</option>
+<option>23505 Ada@Example.com
+23505 ada@example.com</option>
+<option>saved Ada@Example.com
+saved ada@example.com</option>
+<option>23514 Ada@Example.com
+23505 ada@example.com</option>
+<explain><p>A plain <code>unique</code> compares text exactly, so a different capitalisation is a different value and Ada gets a second account. A unique index on <code>lower(email)</code> would have refused both.</p></explain>
+</question>
+
+<question id="dbm-null-unique" type="output">
+<q>The phone column is <code>unique</code> but nullable. What does this print?</q>
+<code file="null-unique.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table customers (name text not null, phone text unique);
+  insert into customers values ('Ada', null), ('Tunde', null), ('Chioma', '0803');
+`);
+const { rows } = await db.query("select count(*)::int as n from customers where phone is null");
+console.log(rows[0].n);
+await db.close();
+</code>
+<option correct>2</option>
+<option>1</option>
+<option>0</option>
+<option>The insert fails with 23505</option>
+<explain><p>By default, nulls are not equal to each other, so a unique constraint allows any number of them. If "at most one missing phone" were the rule, PostgreSQL 15+ supports <code>unique nulls not distinct</code>.</p></explain>
+</question>
+
+<question id="dbm-generated" type="output">
+<q>What does this print?</q>
+<code file="generated.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table order_lines (
+    quantity int not null,
+    unit_price_kobo int not null,
+    line_total_kobo int generated always as (quantity * unit_price_kobo) stored
+  );
+  insert into order_lines (quantity, unit_price_kobo) values (2, 950000);
+  update order_lines set quantity = 3;
+`);
+const { rows } = await db.query("select line_total_kobo from order_lines");
+console.log(rows[0].line_total_kobo);
+await db.close();
+</code>
+<option correct>2850000</option>
+<option>1900000</option>
+<option>null</option>
+<option>950000</option>
+<explain><p>A stored generated column is recomputed on every insert and update of its row, so after the update it is 3 × 950,000. It can never drift from the columns it is computed from.</p></explain>
+</question>
+
+<question id="dbm-cascade" type="output">
+<q>What does this print?</q>
+<code file="cascade.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table products (id int primary key);
+  create table categories (id int primary key);
+  create table product_categories (
+    product_id int references products (id) on delete cascade,
+    category_id int references categories (id) on delete cascade,
+    primary key (product_id, category_id)
+  );
+  insert into products values (1), (2);
+  insert into categories values (10), (20);
+  insert into product_categories values (1, 10), (1, 20), (2, 10);
+  delete from categories where id = 10;
+`);
+const { rows } = await db.query("select product_id, category_id from product_categories");
+console.log(rows);
+await db.close();
+</code>
+<option correct>[ { product_id: 1, category_id: 20 } ]</option>
+<option>[]</option>
+<option>[ { product_id: 1, category_id: 20 }, { product_id: 2, category_id: 10 } ]</option>
+<option>The delete fails with 23503</option>
+<explain><p>Deleting category 10 cascades to its two links, (1, 10) and (2, 10). Products are untouched; only the link rows go. A link without its category means nothing, so cascade is right here.</p></explain>
+</question>
+
+<question id="dbm-restrict" type="output">
+<q>What does this print?</q>
+<code file="restrict.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table customers (id int primary key);
+  create table orders (id int primary key, customer_id int not null references customers (id) on delete restrict);
+  insert into customers values (1), (2);
+  insert into orders values (100, 1);
+`);
+for (const id of [2, 1]) {
+  try {
+    const { affectedRows } = await db.query("delete from customers where id = $1", [id]);
+    console.log("deleted", id, affectedRows);
+  } catch (error) {
+    console.log("refused", id, error.code);
+  }
+}
+await db.close();
+</code>
+<option correct>deleted 2 1
+refused 1 23001</option>
+<option>deleted 2 1
+deleted 1 1</option>
+<option>refused 2 23001
+refused 1 23001</option>
+<option>deleted 2 1
+deleted 1 0</option>
+<explain><p>Customer 2 has no orders, so nothing stops the delete. Customer 1 has order 100, and <code>on delete restrict</code> refuses with SQLSTATE <code>23001</code> (restrict violation). Financial records keep their customer.</p></explain>
+</question>
+
+<question id="dbm-recursive-count" type="output">
+<q>What does this recursive query print?</q>
+<code file="series.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+const { rows } = await db.query(`
+  with recursive n as (
+    select 1 as i
+    union all
+    select i + 1 from n where i < 4
+  )
+  select count(*)::int as rows, sum(i)::int as total from n`);
+console.log(rows[0]);
+await db.close();
+</code>
+<option correct>{ rows: 4, total: 10 }</option>
+<option>{ rows: 3, total: 6 }</option>
+<option>{ rows: 5, total: 15 }</option>
+<option>{ rows: 1, total: 1 }</option>
+<explain><p>The anchor gives 1. Each round adds <code>i + 1</code> for the rows of the previous round while <code>i &lt; 4</code>: 2, 3, 4. When <code>i</code> is 4 the recursive part returns nothing and the recursion stops. Four rows, 1 + 2 + 3 + 4 = 10.</p></explain>
+</question>
+
+<question id="dbm-tree-depth" type="output">
+<q>What does this print?</q>
+<code file="depth.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table categories (id int primary key, parent_id int references categories (id), name text);
+  insert into categories values
+    (1, null, 'Electronics'), (2, 1, 'Accessories'), (3, 2, 'Chargers'),
+    (4, 1, 'Audio'), (5, null, 'Groceries');
+`);
+const { rows } = await db.query(`
+  with recursive tree as (
+    select id, 0 as depth from categories where id = 1
+    union all
+    select c.id, t.depth + 1 from categories c join tree t on c.parent_id = t.id
+  )
+  select count(*)::int as nodes, max(depth) as deepest from tree`);
+console.log(rows[0]);
+await db.close();
+</code>
+<option correct>{ nodes: 4, deepest: 2 }</option>
+<option>{ nodes: 5, deepest: 2 }</option>
+<option>{ nodes: 3, deepest: 1 }</option>
+<option>{ nodes: 4, deepest: 3 }</option>
+<explain><p>The anchor starts at Electronics (depth 0). Its children are Accessories and Audio (depth 1), and Chargers is below Accessories (depth 2). Groceries is a separate root, so it is not in this subtree.</p></explain>
+</question>
+
+<question id="dbm-self-parent" type="output">
+<q>What does this print?</q>
+<code file="self-parent.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table categories (id int primary key, parent_id int references categories (id), check (parent_id <> id));
+  insert into categories values (1, null), (2, 1), (3, 2);
+`);
+for (const [id, parent] of [[3, 3], [1, 3]]) {
+  try {
+    await db.query("update categories set parent_id = $2 where id = $1", [id, parent]);
+    console.log(`moved ${id} under ${parent}`);
+  } catch (error) {
+    console.log(`refused ${id} under ${parent}: ${error.code}`);
+  }
+}
+await db.close();
+</code>
+<option correct>refused 3 under 3: 23514
+moved 1 under 3</option>
+<option>refused 3 under 3: 23514
+refused 1 under 3: 23514</option>
+<option>moved 3 under 3
+moved 1 under 3</option>
+<option>refused 3 under 3: 23503
+moved 1 under 3</option>
+<explain><p>The check only compares a row with itself, so it stops a category being its own parent. Moving 1 under 3 creates the longer loop 1 → 3 → 2 → 1, which no single-row check can see. That needs a check in the code that moves categories, or a trigger.</p></explain>
+</question>
+
+<question id="dbm-matview-stale" type="output">
+<q>What does this print?</q>
+<code file="matview.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table order_lines (product text, quantity int);
+  insert into order_lines values ('rice', 2);
+  create materialized view sales as select product, sum(quantity)::int as units from order_lines group by product;
+  insert into order_lines values ('rice', 5);
+`);
+const before = (await db.query("select units from sales")).rows[0].units;
+await db.exec("refresh materialized view sales");
+const after = (await db.query("select units from sales")).rows[0].units;
+console.log(before, after);
+await db.close();
+</code>
+<option correct>2 7</option>
+<option>7 7</option>
+<option>2 2</option>
+<option>5 7</option>
+<explain><p>A materialized view stores the result from when it was created or last refreshed. The second insert is invisible until <code>refresh materialized view</code> runs the query again.</p></explain>
+</question>
+
+<question id="dbm-float-money" type="output">
+<q>What does this print?</q>
+<code file="float.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+const { rows } = await db.query(`
+  select 0.1::double precision + 0.2::double precision = 0.3::double precision as float_ok,
+         0.1::numeric + 0.2::numeric = 0.3::numeric as numeric_ok,
+         10 + 20 = 30 as kobo_ok`);
+console.log(rows[0]);
+await db.close();
+</code>
+<option correct>{ float_ok: false, numeric_ok: true, kobo_ok: true }</option>
+<option>{ float_ok: true, numeric_ok: true, kobo_ok: true }</option>
+<option>{ float_ok: false, numeric_ok: false, kobo_ok: true }</option>
+<option>{ float_ok: true, numeric_ok: false, kobo_ok: true }</option>
+<explain><p>Binary floating point cannot represent 0.1 exactly, in PostgreSQL just as in JavaScript. <code>numeric</code> is exact decimal arithmetic, and integer kobo is exact too. Money belongs in one of the last two.</p></explain>
+</question>
+
+<question id="dbm-string-agg" type="output">
+<q>What does this print?</q>
+<code file="agg.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table product_categories (sku text, category text);
+  insert into product_categories values ('BUDS-01', 'Audio'), ('BUDS-01', 'Accessories'), ('CHG-20W', 'Chargers');
+`);
+const { rows } = await db.query(`
+  select sku, count(*)::int as n, string_agg(category, '|' order by category) as cats
+  from product_categories group by sku order by sku`);
+console.log(rows.map((r) => `${r.sku} ${r.n} ${r.cats}`).join("\n"));
+await db.close();
+</code>
+<option correct>BUDS-01 2 Accessories|Audio
+CHG-20W 1 Chargers</option>
+<option>BUDS-01 2 Audio|Accessories
+CHG-20W 1 Chargers</option>
+<option>BUDS-01 1 Audio
+BUDS-01 1 Accessories
+CHG-20W 1 Chargers</option>
+<option>BUDS-01 2 Accessories,Audio
+CHG-20W 1 Chargers</option>
+<explain><p><code>group by sku</code> folds the two earbud links into one row, and <code>string_agg</code> joins their categories with the separator you give, in the order you ask for inside the call.</p></explain>
+</question>
+
+<question id="dbm-denorm-when" type="choice">
+<q>The order list page is slow. When is adding a cached <code>orders.total_kobo</code> column the right move?</q>
+<option>Always: cached totals are best practice</option>
+<option>Before launch, to be safe</option>
+<option correct>After measuring that computing totals is the slow part, an index did not fix it, and you have a plan to keep the copy correct and detect drift</option>
+<option>Never: denormalisation is always a mistake</option>
+<explain><p>Denormalisation trades write complexity and drift risk for faster reads. Do it deliberately: measure first, try an index, then write the value in the same transaction as the lines and run a reconciliation query.</p></explain>
+</question>
+
+<question id="dbm-reconcile" type="choice">
+<q>What is a reconciliation check?</q>
+<option>A constraint that refuses writes which would make a cached value wrong</option>
+<option correct>A query, run regularly, that lists rows whose cached value disagrees with the data it was derived from</option>
+<option>A command that refreshes a materialized view</option>
+<option>A foreign key between the cache and the source</option>
+<explain><p>Caches derived from other rows can drift when some code path forgets to update them. A query that compares cache and source, with an alert when it returns rows, catches that drift.</p></explain>
+</question>
+
+<question id="dbm-cycle-clause" type="choice">
+<q>What does <code>cycle id set is_cycle using visited</code> add to a recursive CTE?</q>
+<option>It makes the query run the recursion in parallel</option>
+<option>It forbids <code>parent_id</code> from ever pointing at a descendant</option>
+<option correct>It tracks the ids seen on each path, marks a row whose id repeats with <code>is_cycle = true</code>, and stops expanding it</option>
+<option>It limits recursion to one level</option>
+<explain><p>The clause protects the <em>read</em> from looping forever. It does not stop bad data being written; the code that moves categories must still refuse loops.</p></explain>
+</question>
+
+<question id="dbm-adjacency" type="choice">
+<q>What is the main trade-off of storing a category tree as an adjacency list (<code>parent_id</code> on each row)?</q>
+<option>Moving a subtree requires updating every descendant</option>
+<option correct>Moving a subtree is one update, but reading a whole subtree needs a recursive query</option>
+<option>It cannot represent more than two levels</option>
+<option>It needs a separate table for every level</option>
+<explain><p>Only the moved node's <code>parent_id</code> changes, which makes writes simple. Reading all descendants needs <code>with recursive</code>. Materialised paths and closure tables flip that trade-off.</p></explain>
+</question>
+
+<question id="dbm-json-rule" type="choice">
+<q>When is it reasonable to keep data in a <code>jsonb</code> column instead of rows in a table?</q>
+<option>When you need foreign keys to the values</option>
+<option>When you will count and filter by the values in most reports</option>
+<option correct>When the data is free-form or kept as received, and you will not join, constrain or aggregate by its parts</option>
+<option>Whenever it saves creating a table</option>
+<explain><p>The lesson's rule of thumb: if you will filter by it, join on it, count it or constrain it, it deserves rows. A provider's raw webhook payload, stored for auditing, is a good fit for <code>jsonb</code>.</p></explain>
+</question>
+
+<question id="dbm-polymorphic" type="choice">
+<q>A <code>comments (target_type, target_id)</code> table points at orders <em>or</em> products. What is the main problem?</q>
+<option>It breaks 1NF</option>
+<option correct>No foreign key can check <code>target_id</code>, so comments can point at rows that do not exist</option>
+<option>PostgreSQL cannot index two columns together</option>
+<option>It needs <code>with recursive</code> to read</option>
+<explain><p>A foreign key references one table. With a type column, the database cannot enforce the link, and deleting an order leaves orphan comments. Use one nullable foreign key column per target with a check that exactly one is set, or one table per target.</p></explain>
+</question>
+
+<question id="dbm-eav" type="choice">
+<q>A developer proposes <code>attributes (product_id, key, value text)</code> "so we never need to change the schema". What does the shop lose?</q>
+<option>Nothing, it is the most flexible design</option>
+<option correct>Types and constraints on every value, and simple queries: each read becomes a pivot over key/value rows</option>
+<option>Only some disk space</option>
+<option>The ability to delete products</option>
+<explain><p>Entity-attribute-value moves the schema into data, where the database cannot check it: every value is text, and "products under ₦5,000 in stock" becomes several self-joins. Add real columns with migrations, or a <code>jsonb</code> column for truly free-form extras.</p></explain>
+</question>
+
+<question id="dbm-check-vs-app" type="choice">
+<q>Which rule can a single-row <code>check</code> constraint enforce?</q>
+<option>An order has at least one line when it is paid</option>
+<option>A customer may only review products they bought</option>
+<option correct>Reserved stock never exceeds stock on hand in the same inventory row</option>
+<option>The sum of succeeded payments never exceeds the order total</option>
+<explain><p>A <code>check</code> sees only the row being written. <code>reserved &lt;= on_hand</code> is inside one row. The others span several rows or tables, so they need transactions and application code, triggers, or invariant queries in tests.</p></explain>
+</question>
+
+<question id="dbm-sqlstate" type="choice">
+<q>Why does the lesson's schema test assert the SQLSTATE code (such as <code>23514</code>) rather than just "an error happened"?</q>
+<option>Because error messages are translated</option>
+<option correct>Because the code says which rule refused the data; any error, even a typo in the test SQL, would pass an "any error" test</option>
+<option>Because PostgreSQL does not always throw</option>
+<option>Because the code is shorter to print</option>
+<explain><p>A test that accepts any error passes when the SQL itself is broken. Pinning the code proves the <em>intended</em> constraint did the refusing, and it pins the codes your HTTP error mapping depends on.</p></explain>
+</question>
+
+<question id="dbm-timestamptz" type="choice">
+<q>Which type should <code>orders.placed_at</code> use?</q>
+<option><code>text</code>, formatted as ISO 8601</option>
+<option><code>timestamp</code> (without time zone)</option>
+<option correct><code>timestamptz</code></option>
+<option><code>integer</code> seconds, always</option>
+<explain><p><code>timestamptz</code> stores an absolute moment and converts correctly for any time zone. <code>timestamp</code> without a zone stores a wall-clock reading whose meaning depends on where it was written.</p></explain>
+</question>
+
+<question id="dbm-uuidv7" type="choice">
+<q>If you choose UUIDs for primary keys, why prefer a time-ordered kind such as UUIDv7?</q>
+<option>They are shorter than random UUIDs</option>
+<option correct>New keys sort after old ones, so inserts land at the end of the index instead of at random places</option>
+<option>They are guaranteed never to collide, unlike random UUIDs</option>
+<option>They can be used as foreign keys, unlike random UUIDs</option>
+<explain><p>A B-tree index stays compact and cache-friendly when new keys arrive in order. Random UUIDs scatter inserts across the whole index. The next lesson looks inside B-trees.</p></explain>
+</question>
+
+<question id="dbm-code-parse-items" type="code" file="items.js">
+<q><p>Bring a packed column into first normal form. Write <code>toLines(orderId, items)</code> that turns <code>"RICE-5KG x2, OIL-1L x1"</code> into one object per item: <code>{ orderId, sku, quantity }</code> with a number quantity. Accept any amount of space around the commas.</p></q>
+<starter>
+function toLines(orderId, items) {
+  // split the text into items, then each item into sku and quantity
+}
+
+console.log(toLines(1, "RICE-5KG x2, OIL-1L x1"));
+console.log(toLines(2, "CHG-20W x1 ,CABLE-C x3"));
+</starter>
+<solution>
+function toLines(orderId, items) {
+  return items
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item !== "")
+    .map((item) => {
+      const [sku, quantity] = item.split(" x");
+      return { orderId, sku, quantity: Number(quantity) };
+    });
+}
+
+console.log(toLines(1, "RICE-5KG x2, OIL-1L x1"));
+console.log(toLines(2, "CHG-20W x1 ,CABLE-C x3"));
+</solution>
+<expected>
+[
+  { orderId: 1, sku: 'RICE-5KG', quantity: 2 },
+  { orderId: 1, sku: 'OIL-1L', quantity: 1 }
+]
+[
+  { orderId: 2, sku: 'CHG-20W', quantity: 1 },
+  { orderId: 2, sku: 'CABLE-C', quantity: 3 }
+]
+</expected>
+<explain><p>Split on the comma alone and trim each piece, so the spacing does not matter. Each item becomes its own row, which is what an <code>order_lines</code> table stores.</p></explain>
+</question>
+
+<question id="dbm-code-conflicts" type="code" file="conflicts.js">
+<q><p>Before moving the sheet into a <code>customers</code> table, find contradictions. Write <code>phoneConflicts(rows)</code> that returns the emails that appear with more than one different phone, sorted.</p></q>
+<starter>
+const rows = [
+  { email: "ada@example.com", phone: "0803 000 0001" },
+  { email: "ada@example.com", phone: "0803 000 0001" },
+  { email: "ada@example.com", phone: "0809 111 2222" },
+  { email: "tunde@example.com", phone: "0805 000 0002" },
+  { email: "tunde@example.com", phone: "0805 000 0002" },
+];
+
+function phoneConflicts(rows) {
+  // your code here
+}
+
+console.log(phoneConflicts(rows));
+</starter>
+<solution>
+const rows = [
+  { email: "ada@example.com", phone: "0803 000 0001" },
+  { email: "ada@example.com", phone: "0803 000 0001" },
+  { email: "ada@example.com", phone: "0809 111 2222" },
+  { email: "tunde@example.com", phone: "0805 000 0002" },
+  { email: "tunde@example.com", phone: "0805 000 0002" },
+];
+
+function phoneConflicts(rows) {
+  const phones = new Map();
+  for (const { email, phone } of rows) {
+    if (!phones.has(email)) phones.set(email, new Set());
+    phones.get(email).add(phone);
+  }
+  return [...phones].filter(([, set]) => set.size > 1).map(([email]) => email).sort();
+}
+
+console.log(phoneConflicts(rows));
+</solution>
+<expected>[ 'ada@example.com' ]</expected>
+<explain><p>Group phones by email in a <code>Set</code>, so repeats of the same phone count once. Any email with more than one distinct phone is a contradiction the normalised table would refuse; in SQL: <code>group by email having count(distinct phone) &gt; 1</code>.</p></explain>
+</question>
+
+<question id="dbm-code-breadcrumb" type="code" file="breadcrumb.js">
+<q><p>Write <code>breadcrumb(categories, id)</code> that follows <code>parentId</code> upwards and returns the names from the root down, joined with <code>" / "</code>. It is the JavaScript version of the "up" recursive CTE.</p></q>
+<starter>
+const categories = [
+  { id: 1, parentId: null, name: "Groceries" },
+  { id: 2, parentId: null, name: "Electronics" },
+  { id: 5, parentId: 2, name: "Accessories" },
+  { id: 7, parentId: 5, name: "Chargers" },
+];
+
+function breadcrumb(categories, id) {
+  // your code here
+}
+
+console.log(breadcrumb(categories, 7));
+console.log(breadcrumb(categories, 1));
+</starter>
+<solution>
+const categories = [
+  { id: 1, parentId: null, name: "Groceries" },
+  { id: 2, parentId: null, name: "Electronics" },
+  { id: 5, parentId: 2, name: "Accessories" },
+  { id: 7, parentId: 5, name: "Chargers" },
+];
+
+function breadcrumb(categories, id) {
+  const byId = new Map(categories.map((c) => [c.id, c]));
+  const names = [];
+  let current = byId.get(id);
+  while (current) {
+    names.unshift(current.name);
+    current = current.parentId === null ? undefined : byId.get(current.parentId);
+  }
+  return names.join(" / ");
+}
+
+console.log(breadcrumb(categories, 7));
+console.log(breadcrumb(categories, 1));
+</solution>
+<expected>
+Electronics / Accessories / Chargers
+Groceries
+</expected>
+<explain><p>A <code>Map</code> by id makes each step up a constant-time lookup. <code>unshift</code> puts each parent in front, so the root ends up first, like <code>string_agg(name, ' / ' order by level desc)</code>.</p></explain>
+</question>
+
+<question id="dbm-code-can-move" type="code" file="can-move.js">
+<q><p>Stop loops before they are written. Write <code>canMove(categories, id, newParentId)</code>: it returns <code>false</code> if <code>newParentId</code> is the category itself or any of its descendants, otherwise <code>true</code>. Walk up from the new parent.</p></q>
+<starter>
+const categories = [
+  { id: 2, parentId: null },
+  { id: 5, parentId: 2 },
+  { id: 6, parentId: 2 },
+  { id: 7, parentId: 5 },
+  { id: 1, parentId: null },
+];
+
+function canMove(categories, id, newParentId) {
+  // your code here
+}
+
+console.log(canMove(categories, 2, 7), canMove(categories, 7, 6), canMove(categories, 5, 5), canMove(categories, 5, 1));
+</starter>
+<solution>
+const categories = [
+  { id: 2, parentId: null },
+  { id: 5, parentId: 2 },
+  { id: 6, parentId: 2 },
+  { id: 7, parentId: 5 },
+  { id: 1, parentId: null },
+];
+
+function canMove(categories, id, newParentId) {
+  const parentOf = new Map(categories.map((c) => [c.id, c.parentId]));
+  let current = newParentId;
+  while (current !== null && current !== undefined) {
+    if (current === id) return false;
+    current = parentOf.get(current);
+  }
+  return true;
+}
+
+console.log(canMove(categories, 2, 7), canMove(categories, 7, 6), canMove(categories, 5, 5), canMove(categories, 5, 1));
+</solution>
+<expected>false true false true</expected>
+<explain><p>If walking up from the new parent ever reaches the category being moved, the new parent is inside its subtree and the move would create a loop. Walking up is cheap: one step per level.</p></explain>
+</question>
+
+<question id="dbm-code-totals" type="code" file="totals.js">
+<q><p>Compute each order's total and paid amount without fan-out. Write <code>summary(lines, payments)</code> returning <code>{ orderId, totalKobo, paidKobo }</code> per order that has lines, sorted by order id. Only payments with status <code>"succeeded"</code> count.</p></q>
+<starter>
+const lines = [
+  { orderId: 1, quantity: 2, unitPriceKobo: 950000 },
+  { orderId: 1, quantity: 1, unitPriceKobo: 280000 },
+  { orderId: 2, quantity: 1, unitPriceKobo: 450000 },
+];
+const payments = [
+  { orderId: 1, amountKobo: 2180000, status: "failed" },
+  { orderId: 1, amountKobo: 2180000, status: "succeeded" },
+];
+
+function summary(lines, payments) {
+  // your code here
+}
+
+console.log(summary(lines, payments));
+</starter>
+<solution>
+const lines = [
+  { orderId: 1, quantity: 2, unitPriceKobo: 950000 },
+  { orderId: 1, quantity: 1, unitPriceKobo: 280000 },
+  { orderId: 2, quantity: 1, unitPriceKobo: 450000 },
+];
+const payments = [
+  { orderId: 1, amountKobo: 2180000, status: "failed" },
+  { orderId: 1, amountKobo: 2180000, status: "succeeded" },
+];
+
+function summary(lines, payments) {
+  const totals = new Map();
+  for (const l of lines) totals.set(l.orderId, (totals.get(l.orderId) ?? 0) + l.quantity * l.unitPriceKobo);
+  const paid = new Map();
+  for (const p of payments) {
+    if (p.status === "succeeded") paid.set(p.orderId, (paid.get(p.orderId) ?? 0) + p.amountKobo);
+  }
+  return [...totals.keys()].sort((a, b) => a - b).map((orderId) => ({
+    orderId,
+    totalKobo: totals.get(orderId),
+    paidKobo: paid.get(orderId) ?? 0,
+  }));
+}
+
+console.log(summary(lines, payments));
+</solution>
+<expected>
+[
+  { orderId: 1, totalKobo: 2180000, paidKobo: 2180000 },
+  { orderId: 2, totalKobo: 450000, paidKobo: 0 }
+]
+</expected>
+<explain><p>Aggregate each child collection on its own, then combine per order. Pairing every line with every payment first would double both sums, which is the fan-out bug from the lesson.</p></explain>
+</question>
+
+<question id="dbm-code-drift" type="code" file="drift.js">
+<q><p>Write the reconciliation check in JavaScript: <code>drift(orders, lines)</code> returns the ids of orders whose cached <code>totalKobo</code> differs from the sum of their lines' <code>lineTotalKobo</code> (an order with no lines should total 0).</p></q>
+<starter>
+const orders = [
+  { id: 1, totalKobo: 2180000 },
+  { id: 2, totalKobo: 450000 },
+  { id: 3, totalKobo: 1450000 },
+  { id: 4, totalKobo: 500 },
+];
+const lines = [
+  { orderId: 1, lineTotalKobo: 1900000 },
+  { orderId: 1, lineTotalKobo: 280000 },
+  { orderId: 2, lineTotalKobo: 450000 },
+  { orderId: 3, lineTotalKobo: 2850000 },
+  { orderId: 3, lineTotalKobo: 500000 },
+];
+
+function drift(orders, lines) {
+  // your code here
+}
+
+console.log(drift(orders, lines));
+</starter>
+<solution>
+const orders = [
+  { id: 1, totalKobo: 2180000 },
+  { id: 2, totalKobo: 450000 },
+  { id: 3, totalKobo: 1450000 },
+  { id: 4, totalKobo: 500 },
+];
+const lines = [
+  { orderId: 1, lineTotalKobo: 1900000 },
+  { orderId: 1, lineTotalKobo: 280000 },
+  { orderId: 2, lineTotalKobo: 450000 },
+  { orderId: 3, lineTotalKobo: 2850000 },
+  { orderId: 3, lineTotalKobo: 500000 },
+];
+
+function drift(orders, lines) {
+  const actual = new Map();
+  for (const l of lines) actual.set(l.orderId, (actual.get(l.orderId) ?? 0) + l.lineTotalKobo);
+  return orders.filter((o) => o.totalKobo !== (actual.get(o.id) ?? 0)).map((o) => o.id);
+}
+
+console.log(drift(orders, lines));
+</solution>
+<expected>[ 3, 4 ]</expected>
+<explain><p>Order 3's lines add up to 3,350,000, not the cached 1,450,000, and order 4 has no lines at all but a cached 500. The SQL version needs a <code>left join</code> (or a subquery with <code>coalesce</code>) for the same reason: orders without lines must be checked too.</p></explain>
+</question>
+
+<question id="dbm-code-email-dupes" type="code" file="dupes.js">
+<q><p>Before adding a unique index on <code>lower(email)</code>, find the rows that would break it. Write <code>caseDuplicates(emails)</code> that returns groups (arrays) of emails that are equal when lower-cased, only groups with more than one entry.</p></q>
+<starter>
+const emails = ["ada@example.com", "tunde@example.com", "Ada@Example.com", "chioma@example.com", "TUNDE@example.com", "ADA@EXAMPLE.COM"];
+
+function caseDuplicates(emails) {
+  // your code here
+}
+
+console.log(caseDuplicates(emails));
+</starter>
+<solution>
+const emails = ["ada@example.com", "tunde@example.com", "Ada@Example.com", "chioma@example.com", "TUNDE@example.com", "ADA@EXAMPLE.COM"];
+
+function caseDuplicates(emails) {
+  const groups = new Map();
+  for (const email of emails) {
+    const key = email.toLowerCase();
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(email);
+  }
+  return [...groups.values()].filter((group) => group.length > 1);
+}
+
+console.log(caseDuplicates(emails));
+</solution>
+<expected>
+[
+  [ 'ada@example.com', 'Ada@Example.com', 'ADA@EXAMPLE.COM' ],
+  [ 'tunde@example.com', 'TUNDE@example.com' ]
+]
+</expected>
+<explain><p>Group by the same expression the index will use. Creating the unique index on dirty data fails with 23505, so real migrations find and merge these accounts first. In SQL: <code>group by lower(email) having count(*) &gt; 1</code>.</p></explain>
+</question>
+
+<question id="dbm-code-tree-print" type="code" file="tree.js">
+<q><p>Print a category tree from an adjacency list: roots first, each child indented two spaces per level, siblings sorted by name. Use recursion.</p></q>
+<starter>
+const categories = [
+  { id: 1, parentId: null, name: "Groceries" },
+  { id: 2, parentId: null, name: "Electronics" },
+  { id: 3, parentId: 1, name: "Oils" },
+  { id: 4, parentId: 1, name: "Grains" },
+  { id: 5, parentId: 2, name: "Audio" },
+  { id: 6, parentId: 2, name: "Accessories" },
+  { id: 7, parentId: 6, name: "Chargers" },
+];
+
+function printTree(categories, parentId = null, depth = 0) {
+  // your code here
+}
+
+printTree(categories);
+</starter>
+<solution>
+const categories = [
+  { id: 1, parentId: null, name: "Groceries" },
+  { id: 2, parentId: null, name: "Electronics" },
+  { id: 3, parentId: 1, name: "Oils" },
+  { id: 4, parentId: 1, name: "Grains" },
+  { id: 5, parentId: 2, name: "Audio" },
+  { id: 6, parentId: 2, name: "Accessories" },
+  { id: 7, parentId: 6, name: "Chargers" },
+];
+
+function printTree(categories, parentId = null, depth = 0) {
+  const children = categories
+    .filter((c) => c.parentId === parentId)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  for (const child of children) {
+    console.log("  ".repeat(depth) + child.name);
+    printTree(categories, child.id, depth + 1);
+  }
+}
+
+printTree(categories);
+</solution>
+<expected>
+Electronics
+  Accessories
+    Chargers
+  Audio
+Groceries
+  Grains
+  Oils
+</expected>
+<explain><p>The recursion is depth-first: print a node, then its whole subtree, then the next sibling. The recursive CTE got the same order by sorting on the built-up path.</p></explain>
+</question>

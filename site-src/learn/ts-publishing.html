@@ -1,0 +1,730 @@
+---
+title: Publishing TypeScript packages
+description: Build a TypeScript library into JavaScript plus declarations, write package.json exports and files, check the tarball like a user, handle ESM and CommonJS, and version types.
+minutes: 55
+youNeed: Declaration files, Modules in TypeScript, npm and packages, The npm ecosystem in depth and Module systems in depth
+youBuild: A naira formatting package, @naija-shop/naira, with a separate build config, declaration and source maps, a checked exports map, a CommonJS consumer, a dual ESM and CommonJS build that shows the dual-package hazard, and a release checklist
+keywords: publish typescript package, package.json exports types condition, files field, npm pack dry-run, tsconfig.build.json, declarationMap, esm only package, dual package esm commonjs, dual package hazard, require esm, publint, arethetypeswrong attw, semver breaking type changes, prepublishOnly
+objectives: Build a library with a separate build tsconfig that emits JavaScript, declarations and maps from src to dist | Write an exports map with types first, and a files allow-list, then prove the result with npm pack, publint and attw | Consume the package as a user would, from ESM, from CommonJS and from a tarball | Explain the dual-package hazard and choose between an ESM-only and a dual build | Decide whether a change to a package's types is a patch, minor or major release
+---
+<section>
+<h2 id="problem">It worked in our repository</h2>
+<p>The shop team turned the formatter from <a href="/learn/ts-declarations">Declaration files</a> into a proper TypeScript package, <code>@naija-shop/naira</code>, so that the checkout, the admin dashboard and the invoicing service could share it. In their monorepo it was perfect: every app imported it and got full types. They published version 1.0.0. The first message from another team read:</p>
+<shell title="The other team's terminal">
+$ npm install ../naira/naija-shop-naira-1.0.0.tgz
+…
+$ npx tsc --noEmit
+checkout.ts:1:29 - error TS7016: Could not find a declaration file for module '@naija-shop/naira'. '/home/you/shop-app/node_modules/@naija-shop/naira/dist/index.js' implicitly has an 'any' type.
+  Try `npm i --save-dev @types/naija-shop__naira` if it exists or add a new declaration (.d.ts) file containing `declare module '@naija-shop/naira';`
+
+1 import { formatNaira } from "@naija-shop/naira";
+                              ~~~~~~~~~~~~~~~~~~~
+
+
+Found 1 error in checkout.ts:1
+</shell>
+<p>(Throughout this lesson the package is installed from the tarball that <code>npm pack</code> produces, which is byte for byte what the registry would serve, so nothing has to be published for real.) A TypeScript library, published by a TypeScript team, arrived without types. The team looked at what they had actually uploaded:</p>
+<shell>
+$ npm pack --dry-run
+npm notice Tarball Contents
+npm notice 850B dist/index.js
+npm notice 489B package.json
+…
+npm notice total files: 2
+</shell>
+<p>Only the JavaScript. Their <code>package.json</code> said <code>"files": ["dist/*.js"]</code>, which left out <code>dist/index.d.ts</code>. Inside the monorepo nobody noticed, because a workspace links the whole folder and the <code>.d.ts</code> file was right there on disk. The registry only ever sees the tarball.</p>
+<p>Publishing a TypeScript package means shipping two products at once: JavaScript that runs, and declarations that describe it. This lesson builds <code>@naija-shop/naira</code> properly, checks it the way a user would receive it, and deals with the questions every library author meets: ES modules or CommonJS, what goes in <code>exports</code>, and when a type change needs a new major version.</p>
+</section>
+
+<section>
+<h2 id="shape">What a published TypeScript package contains</h2>
+<p>Nobody runs your <code>.ts</code> files. Node.js refuses to strip types inside <code>node_modules</code> (you saw that in <a href="/learn/ts-compiler#type-stripping">What the TypeScript compiler does</a>), bundlers expect JavaScript there, and the user's <code>tsc</code> should not type-check your source with their settings. So a package ships the compiler's <em>output</em>:</p>
+<figure class="lx-diagram">
+<pre>
+  src/index.ts ──tsc -p tsconfig.build.json──▶ dist/index.js        code that runs
+                                               dist/index.d.ts      types for users
+                                               dist/index.js.map    stack traces → src/index.ts
+                                               dist/index.d.ts.map  "go to definition" → src/index.ts
+  package.json   "exports" points users at dist/index.js and dist/index.d.ts
+               "files" decides which of these reach the registry
+</pre>
+<figcaption>A TypeScript package is compiled JavaScript plus declarations, described by package.json.</figcaption>
+</figure>
+<p>Every <code>@zudojs/*</code> package has exactly this shape: a <code>dist</code> folder of <code>.js</code> and <code>.d.ts</code> files, and an <code>exports</code> map pointing at them.</p>
+</section>
+
+<section>
+<h2 id="build">A separate build configuration</h2>
+<p>Here is the library. It is small on purpose: one file with two functions and one interface. Real packages have many files and a barrel <code>index.ts</code>, as you built in <a href="/learn/ts-modules#barrel">Modules in TypeScript</a>; everything below works the same.</p>
+<example file="src/index.ts" project="pkg">
+export interface FormatOptions {
+  /** Put the ₦ sign in front. Default: true. */
+  symbol?: boolean;
+}
+
+/** Formats whole kobo as naira text: 125050 becomes "₦1,250.50". */
+export function formatNaira(kobo: number, options: FormatOptions = {}): string {
+  if (!Number.isSafeInteger(kobo)) throw new RangeError(`kobo must be a whole number, got ${kobo}`);
+  const sign = kobo < 0 ? "-" : "";
+  const abs = Math.abs(kobo);
+  const naira = Math.floor(abs / 100).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const rest = String(abs % 100).padStart(2, "0");
+  return `${sign}${options.symbol === false ? "" : "₦"}${naira}.${rest}`;
+}
+
+/** Reads text such as "₦1,250.50" into kobo, or returns null if it is not an amount. */
+export function parseNaira(text: string): number | null {
+  const cleaned = text.replace(/[₦,\s]/g, "");
+  if (!/^-?\d+(\.\d{1,2})?$/.test(cleaned)) return null;
+  return Math.round(Number(cleaned) * 100);
+}
+</example>
+<p>A library usually has <strong>two</strong> TypeScript configurations. <code>tsconfig.json</code> is what your editor and <code>npm run check</code> use: it covers everything, tests and scripts included, and never emits. <code>tsconfig.build.json</code> extends it and produces the package, from <code>src</code> only, without the tests:</p>
+<file name="tsconfig.json" project="pkg">
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "noEmit": true,
+    "verbatimModuleSyntax": true
+  }
+}
+</file>
+<file name="tsconfig.build.json" project="pkg">
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "noEmitOnError": true
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
+}
+</file>
+<ul>
+<li><code>extends</code> copies every setting from the main file, so <code>strict</code> and the module settings cannot drift apart between checking and building.</li>
+<li><code>rootDir</code>/<code>outDir</code>: <code>src/index.ts</code> becomes <code>dist/index.js</code>, not <code>dist/src/index.js</code>.</li>
+<li><code>declaration</code> writes the <code>.d.ts</code> files; <code>declarationMap</code> and <code>sourceMap</code> write the two kinds of <code>.map</code> file.</li>
+<li><code>noEmitOnError</code>: a type error means no <code>dist</code> at all, so a broken build can never be published.</li>
+<li><code>exclude</code> keeps test files out of the package.</li>
+</ul>
+<shell>
+$ npx tsc -p tsconfig.build.json
+$ ls dist
+index.d.ts  index.d.ts.map  index.js  index.js.map
+</shell>
+<file name="dist/index.js" project="pkg" check="emit" tsc="--rootDir src --declaration --declarationMap --sourceMap">
+/** Formats whole kobo as naira text: 125050 becomes "₦1,250.50". */
+export function formatNaira(kobo, options = {}) {
+    if (!Number.isSafeInteger(kobo))
+        throw new RangeError(`kobo must be a whole number, got ${kobo}`);
+    const sign = kobo < 0 ? "-" : "";
+    const abs = Math.abs(kobo);
+    const naira = Math.floor(abs / 100).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    const rest = String(abs % 100).padStart(2, "0");
+    return `${sign}${options.symbol === false ? "" : "₦"}${naira}.${rest}`;
+}
+/** Reads text such as "₦1,250.50" into kobo, or returns null if it is not an amount. */
+export function parseNaira(text) {
+    const cleaned = text.replace(/[₦,\s]/g, "");
+    if (!/^-?\d+(\.\d{1,2})?$/.test(cleaned))
+        return null;
+    return Math.round(Number(cleaned) * 100);
+}
+//# sourceMappingURL=index.js.map
+</file>
+<file name="dist/index.d.ts" project="pkg" check="emit" tsc="--rootDir src --declaration --declarationMap --sourceMap">
+export interface FormatOptions {
+    /** Put the ₦ sign in front. Default: true. */
+    symbol?: boolean;
+}
+/** Formats whole kobo as naira text: 125050 becomes "₦1,250.50". */
+export declare function formatNaira(kobo: number, options?: FormatOptions): string;
+/** Reads text such as "₦1,250.50" into kobo, or returns null if it is not an amount. */
+export declare function parseNaira(text: string): number | null;
+//# sourceMappingURL=index.d.ts.map
+</file>
+<p>Three details are worth noticing. The JSDoc comments survive in both files, so users see them on hover. The default value <code>options = {}</code> became <code>options?</code> in the declaration: callers only need to know the argument is optional. And each file ends with a <code>sourceMappingURL</code> comment naming its map. The declaration map is a small JSON file whose <code>sources</code> field points back at your TypeScript:</p>
+<shell>
+$ cat dist/index.d.ts.map
+{"version":3,"file":"index.d.ts","sourceRoot":"","sources":["../src/index.ts"],"names":[],"mappings":"AAAA,MAAM,WAAW,aAAa;IAC5B,8CAA8C;…"}
+</shell>
+<p>When a user presses "go to definition" on <code>formatNaira</code>, their editor follows that map to <code>../src/index.ts</code>, but only if that file is in the package. That is why the <code>files</code> list below includes <code>src</code>.</p>
+</section>
+
+<section>
+<h2 id="reason">Before you write package.json</h2>
+<reason title="What will a user of @naija-shop/naira actually get?">
+<p>You are about to describe the package to npm, to Node.js and to TypeScript. Before writing any field, answer:</p>
+<ol>
+<li>Which files must be in the tarball for an <code>import</code> to run? For the types to work? For "go to definition" to reach the source? Which files must never be in it?</li>
+<li>Which import paths do you promise to keep working? What happens to a user who imports <code>@naija-shop/naira/dist/index.js</code> directly, if you later rename that file?</li>
+<li>Who might load the package with <code>require</code> instead of <code>import</code>? What Node.js versions do they run?</li>
+<li>When TypeScript and Node.js both read the same <code>exports</code> map, can they disagree about which file an import means?</li>
+</ol>
+<answer>
+<ol>
+<li>Running needs <code>dist/index.js</code>. Types need <code>dist/index.d.ts</code>. "Go to definition" needs the <code>.d.ts.map</code> plus <code>src/index.ts</code>; stack traces through the package need the <code>.js.map</code>. Tests, <code>tsconfig</code> files, <code>.env</code> files and build caches must stay out. An allow-list in <code>files</code> is the only safe way to get this right.</li>
+<li>Only the paths you list in <code>exports</code>. If deep imports are possible, someone will use them, and your internal file names become public API. An <code>exports</code> map makes every unlisted path fail, in Node.js and in TypeScript.</li>
+<li>Older services written in CommonJS, and tools that still <code>require</code> their plugins. On Node.js 24 (and 22.12+, 20.19+), <code>require</code> can load an ES module without top-level <code>await</code>. The package should say which Node.js versions it supports.</li>
+<li>Yes. TypeScript follows the <code>"types"</code> condition, Node.js ignores it and follows <code>"import"</code>, <code>"require"</code> or <code>"default"</code>. If the conditions are in the wrong order, or point at mismatched files, the types can describe one file while Node runs another. You must check both.</li>
+</ol>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="package-json">package.json for a TypeScript library</h2>
+<file name="package.json" project="pkg">
+{
+  "name": "@naija-shop/naira",
+  "version": "1.0.1",
+  "description": "Format and parse naira amounts stored in kobo",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "src", "!src/**/*.test.ts"],
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run check && npm run build"
+  }
+}
+</file>
+<ul>
+<li><code>"type": "module"</code>: the <code>.js</code> files in <code>dist</code> are ES modules, and the <code>.d.ts</code> files describe ES modules.</li>
+<li><code>"exports"</code> is the package's front door, as you learned in <a href="/learn/js-module-systems#resolution">Module systems in depth</a>. Each entry is an object of <strong>conditions</strong>, checked <em>in the order written</em>. <code>"types"</code> is a condition only TypeScript uses, and it must come <strong>first</strong>: TypeScript also matches <code>"import"</code> and <code>"default"</code>, so if one of those came first it would stop there. <code>"default"</code> matches everything and must come <strong>last</strong>.</li>
+<li>Using <code>"default"</code> rather than <code>"import"</code> for the JavaScript means both <code>import</code> and <code>require</code> reach the same file. You will see why that matters <a href="#esm-cjs">below</a>.</li>
+<li><code>"./package.json"</code> is exported because some tools read a package's version through it; without this line they get <code>ERR_PACKAGE_PATH_NOT_EXPORTED</code>.</li>
+<li><code>"files"</code> is the allow-list. A <code>!</code> pattern removes matches again, here the tests. npm always adds <code>package.json</code>, the README and the licence file.</li>
+<li><code>"prepublishOnly"</code> runs automatically before <code>npm publish</code>: the check and a fresh build, so what you upload is never an old or broken <code>dist</code>.</li>
+</ul>
+<p>Older guides also add top-level <code>"main"</code> and <code>"types"</code> fields. Tools that understand <code>exports</code> ignore them; they are only a fallback for very old resolvers. If you keep them, they must point at the same files as <code>exports</code>.</p>
+
+<h3>Use the package as a user would</h3>
+<p>A package may import itself by its own name, through its own <code>exports</code> map. That lets you test the published entry points from inside the project, with no install:</p>
+<example file="consumer.ts" project="pkg" browser="no">
+import { formatNaira, parseNaira, type FormatOptions } from "@naija-shop/naira";
+
+const plain: FormatOptions = { symbol: false };
+const kobo = parseNaira("₦1,250,000.50");
+console.log(kobo === null ? "invalid" : formatNaira(kobo));
+console.log(formatNaira(99, plain));
+</example>
+<output>
+₦1,250,000.50
+0.99
+</output>
+<p>TypeScript resolved <code>"@naija-shop/naira"</code> through the <code>"types"</code> condition to <code>dist/index.d.ts</code>, and Node.js through <code>"default"</code> to <code>dist/index.js</code>. Now try what a curious user might do: reach past the front door.</p>
+<example file="deep.ts" project="pkg" check="tsc-error">
+import { parseNaira } from "@naija-shop/naira/dist/index.js";
+
+console.log(parseNaira("₦5"));
+</example>
+<output kind="tsc">
+deep.ts:1:28 - error TS2307: Cannot find module '@naija-shop/naira/dist/index.js' or its corresponding type declarations.
+
+1 import { parseNaira } from "@naija-shop/naira/dist/index.js";
+                             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 1 error in deep.ts:1
+</output>
+<p>Refused, because <code>./dist/index.js</code> is not a key in <code>exports</code>. You are free to rename and reorganise everything inside <code>dist</code> in a minor release, since nobody can depend on it. Anything you do list becomes a promise; a <strong>subpath export</strong> such as <code>"./parse"</code> gets its own <code>types</code> and <code>default</code> pair (exercise 1).</p>
+</section>
+
+<section>
+<h2 id="check-tarball">Check the tarball, not the folder</h2>
+<p>The mistake in the first section survived because everyone tested the <em>folder</em>. Three checks look at the <em>tarball</em> instead, and each catches things the others miss.</p>
+<h3>1. npm pack --dry-run: what is in it?</h3>
+<shell>
+$ npm pack --dry-run
+npm notice Tarball Contents
+npm notice 456B dist/index.d.ts
+npm notice 336B dist/index.d.ts.map
+npm notice 850B dist/index.js
+npm notice 1.0kB dist/index.js.map
+npm notice 561B package.json
+npm notice 945B src/index.ts
+npm notice Tarball Details
+npm notice name: @naija-shop/naira
+npm notice version: 1.0.1
+…
+npm notice total files: 6
+</shell>
+<p>Code, declarations, both maps and the source, and no test file. Read this list before every release; it takes ten seconds.</p>
+<h3>2. publint: is package.json consistent?</h3>
+<p><strong>publint</strong> is a linter for package metadata. It packs the package and checks every path and condition in <code>package.json</code> against the files that would really be published. Run on the broken 1.0.0 from the first section (the one with <code>default</code> before <code>types</code> and <code>"files": ["dist/*.js"]</code>), it finds all three mistakes:</p>
+<shell>
+$ npx publint
+Running publint v0.3.24 for @naija-shop/naira...
+Packing files with `npm pack`...
+Linting...
+Errors:
+1. pkg.exports["."].types should be the first in the object as conditions are order-sensitive so it can be resolved by TypeScript.
+2. pkg.exports["."].default should be the last in the object so it doesn't take precedence over the keys following it.
+3. pkg.exports["."].types is ./dist/index.d.ts but the file is not published. Is it specified in pkg.files?
+</shell>
+<p>On the fixed package it prints <code>All good!</code>.</p>
+<h3>3. Are the types wrong? (attw)</h3>
+<p><strong>attw</strong> ("Are the Types Wrong?", run as <code>npx @arethetypeswrong/cli</code>) resolves the package the way each TypeScript module setting would, and compares the declaration file it finds with the JavaScript that would run. Here is the fixed package:</p>
+<shell>
+$ npx @arethetypeswrong/cli --pack --no-emoji --no-color
+
+@naija-shop/naira v1.0.1
+
+Import failed to resolve to type declarations or JavaScript files. https://github.com/arethetypeswrong/arethetypeswrong.github.io/blob/main/docs/problems/NoResolution.md
+
+A require call resolved to an ESM JavaScript file, which is an error in Node and some bundlers. CommonJS consumers will need to use a dynamic import. https://github.com/arethetypeswrong/arethetypeswrong.github.io/blob/main/docs/problems/CJSResolvesToESM.md
+
+
+┌───────────────────┬───────────────────────────┬──────────────────────────────────┐
+│                   │ "@naija-shop/naira"       │ "@naija-shop/naira/package.json" │
+├───────────────────┼───────────────────────────┼──────────────────────────────────┤
+│ node10            │ Resolution failed         │ OK (JSON)                        │
+├───────────────────┼───────────────────────────┼──────────────────────────────────┤
+│ node16 (from CJS) │ ESM (dynamic import only) │ OK (JSON)                        │
+├───────────────────┼───────────────────────────┼──────────────────────────────────┤
+│ node16 (from ESM) │ OK (ESM)                  │ OK (JSON)                        │
+├───────────────────┼───────────────────────────┼──────────────────────────────────┤
+│ bundler           │ OK                        │ OK (JSON)                        │
+└───────────────────┴───────────────────────────┴──────────────────────────────────┘
+</shell>
+<p>Each row is a kind of consumer, and each column an entry point (the exported <code>package.json</code> is JSON, so it always resolves). ESM code on Node.js and bundlers get the right types. The two complaints need interpreting rather than obeying:</p>
+<ul>
+<li><strong>node10</strong> is the resolver of old tools that do not understand <code>exports</code> at all. TypeScript 7 has removed that mode. If you must support such tools, add top-level <code>"types"</code> and <code>"main"</code> fields; otherwise ignore the row.</li>
+<li><strong>node16 (from CJS)</strong> says CommonJS code must use <code>import()</code>. That was true before Node.js could <code>require</code> ES modules. attw 0.18.5 bundles TypeScript 5.6, which predates that change, so the warning is out of date for a package that requires Node.js 24 (which the <code>engines</code> field says). The next section proves it.</li>
+</ul>
+<p>For an ESM-only package, <code>--profile esm-only</code> ignores both rows and exits with <code>0</code>. One more trap: run on the broken 1.0.0, attw printed <code>This package does not contain types.</code> and still exited with <code>0</code>. In CI, publint's non-zero exit code is what stops that release.</p>
+<note>publint and attw are not part of npm. <code>npx</code> downloads them on first use (publint 0.3.24 and attw 0.18.5 here); in a real project, add them as dev dependencies so CI uses fixed versions.</note>
+
+<h3>4. Install the tarball in a real project</h3>
+<p>The final proof is the one from <a href="/learn/npm-ecosystem#local">The npm ecosystem in depth</a>: install the packed file into a separate project and use it.</p>
+<shell>
+$ npm pack --silent
+naija-shop-naira-1.0.1.tgz
+$ cd ../shop-app
+$ npm install ../naira/naija-shop-naira-1.0.1.tgz
+…
+$ npx tsc --noEmit
+checkout.ts:4:35 - error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+
+4 console.log(`Total: ${formatNaira(priceFromForm)}`);
+                                    ~~~~~~~~~~~~~
+
+
+Found 1 error in checkout.ts:4
+</shell>
+<p>The same <code>checkout.ts</code> that got TS7016 from version 1.0.0 now gets a real type error: the types arrived. After fixing the call with <code>parseNaira</code>, it runs:</p>
+<shell>
+$ node checkout.ts
+Total: ₦2,500.00
+</shell>
+</section>
+
+<section>
+<h2 id="esm-cjs">ES modules, CommonJS and dual packages</h2>
+<p>The package is <strong>ESM-only</strong>: it ships only ES modules. For years, that shut out every CommonJS user, and libraries shipped two builds instead. Node.js 24 changes the calculation. A CommonJS file can <code>require</code> an ES module, and TypeScript understands it with <code>module: "NodeNext"</code>. In a <code>.cts</code> file (always CommonJS), write a plain <code>require</code> call and borrow the types with <code>typeof import(…)</code>:</p>
+<example file="legacy.cts" project="pkg" browser="no">
+const naira: typeof import("@naija-shop/naira") = require("@naija-shop/naira");
+
+console.log(naira.formatNaira(125050), naira.parseNaira("₦99.99"));
+</example>
+<shell>
+$ npx tsc --noEmit
+$ node legacy.cts
+₦1,250.50 9999
+</shell>
+<p>A CommonJS module loaded the ES module package, with full types. (TypeScript also has the form <code>import naira = require("@naija-shop/naira")</code>, which <code>verbatimModuleSyntax</code> accepts in <code>.cts</code> files. It is not erasable syntax, though: <code>node legacy.cts</code> rejects it with <code>ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX</code>, so prefer the <code>require</code> call.)</p>
+<p>This works because the <code>exports</code> entry uses <code>"default"</code>, which matches <code>require</code> as well as <code>import</code>. Many packages write <code>"import"</code> instead. Watch what that does:</p>
+<file name="package.json" project="pkg">
+{
+  "name": "@naija-shop/naira",
+  "version": "1.0.1",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  }
+}
+</file>
+<shell>
+$ npx tsc --noEmit
+$ node legacy.cts
+node:internal/modules/cjs/loader:679
+    throw e;
+    ^
+
+Error [ERR_PACKAGE_PATH_NOT_EXPORTED]: No "exports" main defined in /home/you/naira/package.json imported from /home/you/naira/legacy.cts
+…
+</shell>
+<p>The type check still passes, because the <code>"types"</code> condition matches every kind of import, <code>require</code> included. Node.js finds no condition for <code>require</code> and refuses. Any CommonJS loader behaves the same way, including <code>createRequire</code> inside an ES module:</p>
+<example file="probe.ts" project="pkg" browser="no">
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+try {
+  const naira = require("@naija-shop/naira") as typeof import("@naija-shop/naira");
+  console.log(naira.formatNaira(125050));
+} catch (error) {
+  console.log((error as NodeJS.ErrnoException).code);
+}
+</example>
+<output>
+ERR_PACKAGE_PATH_NOT_EXPORTED
+</output>
+<p>TypeScript was satisfied and Node.js was not: exactly the "types and runtime disagree" problem that attw exists to catch. Use <code>"default"</code> for the JavaScript in an ESM-only package.</p>
+
+<h3>Dual packages and the dual-package hazard</h3>
+<p>If you must support Node.js versions that cannot <code>require</code> ES modules, or tools that insist on CommonJS, you publish a <strong>dual package</strong>: two builds of the same code, one ESM and one CommonJS, selected by the <code>"import"</code> and <code>"require"</code> conditions. Here is a payments package with one error class:</p>
+<example file="src/errors.ts" project="dual">
+export class PaymentError extends Error {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "PaymentError";
+    this.code = code;
+  }
+}
+
+export function isPaymentError(error: unknown): error is PaymentError {
+  return error instanceof PaymentError;
+}
+</example>
+<p>The CommonJS build needs its own settings. In TypeScript 7 that means <code>"module": "CommonJS"</code> with <code>"moduleResolution": "bundler"</code> (the old <code>node10</code> resolution was removed), and <code>verbatimModuleSyntax</code> off, because it would refuse <code>export</code> in a CommonJS output:</p>
+<file name="tsconfig.cjs.json" project="dual">
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "cjs",
+    "declaration": true,
+    "module": "CommonJS",
+    "moduleResolution": "bundler",
+    "verbatimModuleSyntax": false
+  },
+  "include": ["src"]
+}
+</file>
+<p>Building twice, once with the normal build settings into <code>esm/</code> and once with <code>tsc -p tsconfig.cjs.json</code> into <code>cjs/</code>, gives two different JavaScript files:</p>
+<file name="esm/errors.js" project="dual" check="emit" tsc="--rootDir src">
+export class PaymentError extends Error {
+    code;
+    constructor(code, message) {
+        super(message);
+        this.name = "PaymentError";
+        this.code = code;
+    }
+}
+export function isPaymentError(error) {
+    return error instanceof PaymentError;
+}
+</file>
+<file name="cjs/errors.js" project="dual" check="emit" tsc="--rootDir src --module commonjs --moduleResolution bundler --verbatimModuleSyntax false">
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PaymentError = void 0;
+exports.isPaymentError = isPaymentError;
+class PaymentError extends Error {
+    code;
+    constructor(code, message) {
+        super(message);
+        this.name = "PaymentError";
+        this.code = code;
+    }
+}
+exports.PaymentError = PaymentError;
+function isPaymentError(error) {
+    return error instanceof PaymentError;
+}
+</file>
+<p>and two declaration files with the same text:</p>
+<file name="esm/errors.d.ts" project="dual" check="emit" tsc="--rootDir src">
+export declare class PaymentError extends Error {
+    readonly code: string;
+    constructor(code: string, message: string);
+}
+export declare function isPaymentError(error: unknown): error is PaymentError;
+</file>
+<file name="cjs/errors.d.ts" project="dual" check="emit" tsc="--rootDir src --module commonjs --moduleResolution bundler --verbatimModuleSyntax false">
+export declare class PaymentError extends Error {
+    readonly code: string;
+    constructor(code: string, message: string);
+}
+export declare function isPaymentError(error: unknown): error is PaymentError;
+</file>
+<p>The package is <code>"type": "module"</code>, so a tiny <code>cjs/package.json</code> tells Node.js and TypeScript that everything in <code>cjs/</code> is CommonJS, and the <code>exports</code> map gives each condition its own types and JavaScript:</p>
+<file name="cjs/package.json" project="dual">
+{ "type": "commonjs" }
+</file>
+<file name="package.json" project="dual">
+{
+  "name": "@naija-shop/payments",
+  "version": "2.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": { "types": "./esm/errors.d.ts", "default": "./esm/errors.js" },
+      "require": { "types": "./cjs/errors.d.ts", "default": "./cjs/errors.js" }
+    }
+  },
+  "files": ["esm", "cjs"]
+}
+</file>
+<p>Now imagine an application that imports the package, while one of its older dependencies <code>require</code>s it. Both builds get loaded, and there are two <code>PaymentError</code> classes in memory:</p>
+<example file="hazard.ts" project="dual" browser="no">
+import { createRequire } from "node:module";
+import { PaymentError, isPaymentError } from "@naija-shop/payments";
+
+const require = createRequire(import.meta.url);
+const legacy = require("@naija-shop/payments") as typeof import("@naija-shop/payments");
+
+const declined = new legacy.PaymentError("card_declined", "Card declined");
+
+console.log(declined instanceof PaymentError, isPaymentError(declined));
+console.log(legacy.isPaymentError(declined), declined.name, declined.code);
+</example>
+<output>
+false false
+true PaymentError card_declined
+</output>
+<p>This is the <strong>dual-package hazard</strong>. The error was created by the CommonJS copy, so the ESM copy's <code>instanceof</code> and type guard both say no, and a <code>catch</code> block that handles <code>PaymentError</code> lets a declined card through as an unknown error. TypeScript cannot help: both copies have identical declarations, so to the compiler they are the same class. Anything stateful is affected the same way: a registry, a cache, a singleton, a <code>Symbol</code> created with <code>Symbol()</code>.</p>
+<p>The defences, in order of preference:</p>
+<ol>
+<li><strong>Ship ESM only</strong>, with a <code>"default"</code> condition, and require Node.js 20.19 or later. One copy, no hazard. This is what the ZudoJS packages do.</li>
+<li>If you need a CommonJS entry, make it a thin wrapper that <code>require</code>s the ESM build, so both conditions share one copy.</li>
+<li>If two copies are unavoidable, keep state in one of them, and check errors by a stable property (<code>error.name</code>, a <code>code</code>, or a <code>Symbol.for</code> brand) rather than by <code>instanceof</code>.</li>
+</ol>
+<p>attw checks that each condition gets matching declarations. Give both conditions the ESM declarations (a common shortcut, with one top-level <code>"types"</code>) and it reports the CommonJS side as "Masquerading as ESM":</p>
+<shell>
+$ npx @arethetypeswrong/cli --pack --no-emoji --no-color
+…
+Import resolved to an ESM type declaration file, but a CommonJS JavaScript file. https://github.com/arethetypeswrong/arethetypeswrong.github.io/blob/main/docs/problems/FalseESM.md
+…
+│ node16 (from CJS) │ Masquerading as ESM    │
+├───────────────────┼────────────────────────┤
+│ node16 (from ESM) │ OK (ESM)               │
+</shell>
+<p>With the nested map above, that row reads <code>OK (CJS)</code>.</p>
+</section>
+
+<section>
+<h2 id="declarations-api">Your declarations are part of your API</h2>
+<p>A user's code compiles against your <code>.d.ts</code> files. Three consequences follow.</p>
+<h3>Types your declarations mention must be installable</h3>
+<p>If <code>dist/index.d.ts</code> says <code>import type { Logger } from "@zudojs/logger"</code>, every user's compiler must be able to find <code>@zudojs/logger</code>. A package mentioned in your published declarations belongs in <code>dependencies</code> (or <code>peerDependencies</code>), even if your JavaScript only uses it as a type. If it sits in <code>devDependencies</code>, your tests pass and your users get "Cannot find module". The same goes for <code>@types/node</code> when your declarations mention <code>Buffer</code> or <code>IncomingMessage</code>.</p>
+<h3>Internal types leak</h3>
+<p>Every exported function's parameter and return types appear in the <code>.d.ts</code>, including helper types you never meant to publish. Name them deliberately, export the ones users need (so they can write <code>const options: FormatOptions</code>), and keep everything else unexported.</p>
+<h3>Type changes follow semantic versioning</h3>
+<p>Semantic versioning (<a href="/learn/npm-ecosystem#semver">The npm ecosystem in depth</a>) says a major version is needed when existing users' code can break. For a TypeScript package, "break" includes "no longer compiles". Suppose version 1.1.0 adds a <code>locale</code> option and, to make users choose, makes it required:</p>
+<file name="naira.d.ts" project="semver">
+export interface FormatOptions {
+  symbol?: boolean;
+  locale: "en-NG" | "en-US";
+}
+export declare function formatNaira(kobo: number, options?: FormatOptions): string;
+export declare function parseNaira(text: string): number | null;
+</file>
+<example file="dashboard.ts" project="semver" check="tsc-error">
+import { formatNaira, type FormatOptions } from "./naira.js";
+
+const noSymbol: FormatOptions = { symbol: false };
+console.log(formatNaira(250_000, noSymbol));
+</example>
+<output kind="tsc">
+dashboard.ts:3:7 - error TS2741: Property 'locale' is missing in type '{ symbol: false; }' but required in type 'FormatOptions'.
+
+3 const noSymbol: FormatOptions = { symbol: false };
+        ~~~~~~~~
+
+  naira.d.ts:3:3 - 'locale' is declared here.
+    3   locale: "en-NG" | "en-US";
+        ~~~~~~
+
+
+Found 1 error in dashboard.ts:3
+</output>
+<p>No JavaScript behaviour changed for this user, yet their build is red after a minor update. That is a breaking change, and it needs version 2.0.0, or better, a design that keeps <code>locale</code> optional with a default. A few rules of thumb:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Change to the published types</th><th>Release</th></tr></thead>
+<tbody>
+<tr><td>Fix a declaration that was plainly wrong, with no working code affected</td><td>Patch</td></tr>
+<tr><td>Add an export, an overload, or an <em>optional</em> property to an options object</td><td>Minor</td></tr>
+<tr><td>Accept a wider parameter type (<code>number</code> becomes <code>number | bigint</code>, backed by code)</td><td>Minor</td></tr>
+<tr><td>Add a required property to an input type, narrow a parameter, remove or rename an export</td><td>Major</td></tr>
+<tr><td>Widen a return type (<code>string</code> becomes <code>string | null</code>): every caller must now handle the new case</td><td>Major</td></tr>
+<tr><td>Raise the minimum TypeScript version your declarations need (newer syntax in the <code>.d.ts</code>)</td><td>Major for most libraries; say it in the changelog</td></tr>
+</tbody>
+</table></div>
+<p>Adding a property to an <em>output</em> type is safe for callers, but breaks users who <em>implement</em> your interface (for example a fake in their tests), because their object now lacks the property. Think about both directions whenever an exported interface changes.</p>
+</section>
+
+<section>
+<h2 id="releasing">Releasing</h2>
+<p>With the checks in place, a release is short. <code>npm publish --dry-run</code> runs the <code>prepublishOnly</code> script and shows what would be sent, without sending it:</p>
+<shell>
+$ npm publish --dry-run
+
+> @naija-shop/naira@1.0.1 prepublishOnly
+> npm run check && npm run build
+
+
+> @naija-shop/naira@1.0.1 check
+> tsc --noEmit
+
+
+> @naija-shop/naira@1.0.1 build
+> tsc -p tsconfig.build.json
+
+npm notice Tarball Contents
+…
+npm notice total files: 6
+npm notice
+npm notice Publishing to https://registry.npmjs.org/ with tag latest and default access (dry-run)
++ @naija-shop/naira@1.0.1
+</shell>
+<p>For the first real publish of a scoped public package, add <code>--access public</code>. In CI, publish with provenance, as described in <a href="/learn/npm-ecosystem#publishing">The npm ecosystem in depth</a>. For many packages in one repository, Changesets automates version numbers and changelogs; the ZudoJS packages are released that way, with <code>pnpm publish</code> so that <code>"workspace:*"</code> dependencies are rewritten to real version ranges (the subject of <a href="/learn/ts-monorepos">TypeScript monorepos</a>).</p>
+</section>
+
+<section>
+<h2 id="testing">Testing a package</h2>
+<ul>
+<li><strong>Unit tests</strong> run against <code>src</code>, like any other code (<a href="/learn/ts-testing">Testing TypeScript</a>).</li>
+<li><strong>Entry-point tests</strong> import the package by its own name, as <code>consumer.ts</code> did above, so that the <code>exports</code> map and the built <code>dist</code> are exercised. Run them after the build.</li>
+<li><strong>Type tests</strong> pin the public types: <code>@ts-expect-error</code> lines, or <code>expectTypeOf</code>, that fail if an export's type changes by accident. They are your early warning for an unplanned major version.</li>
+<li><strong>A tarball smoke test</strong> in CI: <code>npm pack</code>, install the <code>.tgz</code> into a scratch project, run <code>tsc --noEmit</code> and one small script there. Add <code>publint</code> and <code>attw --profile esm-only</code> (or the profile that matches what you support) to the same job.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="production">In production</h2>
+<ul>
+<li><strong>Ship ESM only</strong> unless you have a named consumer who cannot use it. Set <code>engines.node</code> to what you test.</li>
+<li><strong>Put <code>"types"</code> first and <code>"default"</code> last</strong> in every <code>exports</code> entry, and list only the subpaths you will support for a whole major version.</li>
+<li><strong>Use a <code>files</code> allow-list</strong>, and read <code>npm pack --dry-run</code> before each release. Never rely on <code>.npmignore</code> alone.</li>
+<li><strong>Build from clean</strong> in <code>prepublishOnly</code> or CI, with <code>noEmitOnError</code>, so stale files in <code>dist</code> are never uploaded. (Deleting <code>dist</code> first also removes files for sources you have deleted.)</li>
+<li><strong>Publish declaration maps and the source</strong> if you want "go to definition" to be useful; publish <code>.js.map</code> files so users' stack traces can point into your code.</li>
+<li><strong>Treat type changes as API changes.</strong> A red build after <code>npm update</code> is a broken promise, whatever the JavaScript does.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Add a subpath export">
+<p>Users of the invoicing service only need the parser. Move <code>parseNaira</code> into <code>src/parse.ts</code>, export it as the subpath <code>@naija-shop/naira/parse</code> with its own types, and show that importing the subpath works.</p>
+<solution>
+<example file="src/parse.ts" project="ex-subpath">
+/** Reads text such as "₦1,250.50" into kobo, or returns null if it is not an amount. */
+export function parseNaira(text: string): number | null {
+  const cleaned = text.replace(/[₦,\s]/g, "");
+  if (!/^-?\d+(\.\d{1,2})?$/.test(cleaned)) return null;
+  return Math.round(Number(cleaned) * 100);
+}
+</example>
+<file name="dist/parse.js" project="ex-subpath" check="emit" tsc="--rootDir src">
+/** Reads text such as "₦1,250.50" into kobo, or returns null if it is not an amount. */
+export function parseNaira(text) {
+    const cleaned = text.replace(/[₦,\s]/g, "");
+    if (!/^-?\d+(\.\d{1,2})?$/.test(cleaned))
+        return null;
+    return Math.round(Number(cleaned) * 100);
+}
+</file>
+<file name="dist/parse.d.ts" project="ex-subpath" check="emit" tsc="--rootDir src">
+/** Reads text such as "₦1,250.50" into kobo, or returns null if it is not an amount. */
+export declare function parseNaira(text: string): number | null;
+</file>
+<file name="package.json" project="ex-subpath">
+{
+  "name": "@naija-shop/naira",
+  "version": "1.1.0",
+  "type": "module",
+  "exports": {
+    "./parse": {
+      "types": "./dist/parse.d.ts",
+      "default": "./dist/parse.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "src"]
+}
+</file>
+<example file="invoice.ts" project="ex-subpath" browser="no">
+import { parseNaira } from "@naija-shop/naira/parse";
+
+console.log(parseNaira("₦45,000"), parseNaira("forty-five"));
+</example>
+<output>
+4500000 null
+</output>
+<p>Each subpath has its own <code>types</code>/<code>default</code> pair, in that order. (This solution shows only the new entry; in the real package, keep <code>"."</code> as well, with <code>src/index.ts</code> re-exporting <code>parseNaira</code> from <code>./parse.js</code>.) Adding a subpath is a minor release; removing one later would be a major one.</p>
+</solution>
+</exercise>
+<exercise title="Review a package.json">
+<p>A colleague asks you to review this before the first publish. List every problem, and say how a user would notice each one.</p>
+<pre><code>{
+  "name": "@naija-shop/receipts",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" }
+  },
+  "devDependencies": { "@zudojs/logger": "^1.0.0", "typescript": "^7.0.0" }
+}</code></pre>
+<solution>
+<ul>
+<li><strong>No <code>files</code> field</strong>: everything in the folder is published, including tests and any <code>.env</code>. Users would not notice; attackers might. Add <code>"files": ["dist", "src"]</code>.</li>
+<li><strong><code>"types"</code> after <code>"import"</code></strong>: TypeScript matches <code>"import"</code> first and never reads <code>"types"</code>. It works by luck while <code>index.d.ts</code> sits beside <code>index.js</code>; publint reports it. Put <code>"types"</code> first.</li>
+<li><strong><code>"import"</code> instead of <code>"default"</code></strong>: CommonJS users get <code>ERR_PACKAGE_PATH_NOT_EXPORTED</code>, while their type check passes.</li>
+<li><strong><code>"main": "src/index.ts"</code></strong>: tools that read <code>main</code> would try to load TypeScript from <code>node_modules</code>. Remove it or point it at <code>dist/index.js</code>.</li>
+<li><strong><code>@zudojs/logger</code> in <code>devDependencies</code></strong>: if the published declarations mention its types (or the code imports it), users get "Cannot find module '@zudojs/logger'". It belongs in <code>dependencies</code>.</li>
+<li><strong>No build step before publishing</strong>: add <code>build</code> and <code>prepublishOnly</code> scripts, and <code>engines</code>, <code>license</code> and <code>description</code> while you are there.</li>
+</ul>
+</solution>
+</exercise>
+<exercise title="Patch, minor or major?">
+<p>For each change to <code>@naija-shop/naira</code>'s published types, choose the release type: (a) add an optional <code>decimals?: 0 | 2</code> to <code>FormatOptions</code>; (b) change <code>parseNaira</code>'s return type from <code>number | null</code> to <code>number | null | undefined</code>; (c) rename the exported interface <code>FormatOptions</code> to <code>NairaFormatOptions</code>; (d) fix a JSDoc comment; (e) let <code>formatNaira</code> accept <code>number | bigint</code>, with code that handles both.</p>
+<solution>
+<ul>
+<li>(a) <strong>Minor</strong>: existing calls still compile; new callers get a new ability.</li>
+<li>(b) <strong>Major</strong>: the return type got wider, so code that checked <code>=== null</code> and then used the number now fails to compile (<code>'kobo' is possibly 'undefined'</code>).</li>
+<li>(c) <strong>Major</strong>, because users who wrote <code>import type { FormatOptions }</code> break. Or keep both names for a while (<code>export type FormatOptions = NairaFormatOptions</code>, marked <code>@deprecated</code>) and make it minor.</li>
+<li>(d) <strong>Patch</strong>: documentation only.</li>
+<li>(e) <strong>Minor</strong>: a wider parameter accepts everything it accepted before. It is only safe because the JavaScript really handles <code>bigint</code>, the lesson from <a href="/learn/ts-declarations#trust">Declaration files</a>.</li>
+</ul>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A TypeScript package ships compiled JavaScript, <code>.d.ts</code> files, and optionally maps and source. Build it with a separate <code>tsconfig.build.json</code> that extends the checking config and turns on <code>declaration</code>, maps and <code>noEmitOnError</code>.</li>
+<li>In <code>exports</code>, conditions are read in order: <code>"types"</code> first, <code>"default"</code> last. Unlisted paths are private, in Node.js and in TypeScript.</li>
+<li><code>files</code> is an allow-list. Check the tarball, not the folder: <code>npm pack --dry-run</code>, publint, attw, and a real install of the <code>.tgz</code>.</li>
+<li>On Node.js 24, <code>require</code> can load ES modules, so ESM-only with a <code>"default"</code> condition serves both. Dual builds create two copies of every class and every piece of state: the dual-package hazard.</li>
+<li>Published declarations are API. Types they mention must be real dependencies, and type changes follow semver: a new required input field or a wider return type is a major release.</li>
+</ul>
+<p>Next: <a href="/learn/ts-monorepos">TypeScript monorepos</a>, where several packages like this one live and build together in one repository.</p>
+</section>

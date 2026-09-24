@@ -1,0 +1,992 @@
+---
+title: TypeScript monorepos
+description: Split a shop backend into core, logger, database, auth and http packages in one repository, link them with workspaces, build them with project references, and enforce dependency direction.
+minutes: 60
+youNeed: Publishing TypeScript packages, npm and packages, The npm ecosystem in depth, and Graphs (for build order)
+youBuild: A five-package shop monorepo (core, logger, database, auth, http) built with tsc -b, plus build-order, affected-package and boundary-check tools like the ones the ZudoJS repository uses
+keywords: typescript monorepo, npm workspaces, pnpm workspaces, workspace protocol, internal packages, project references, composite, tsc -b, tsc --build verbose, tsbuildinfo, build graph, topological order, dependency direction, phantom dependency, circular project references TS6202, TS6307, affected packages
+objectives: Set up npm or pnpm workspaces so that internal packages import each other by name | Configure composite projects, references and a solution tsconfig, and read what tsc -b decides to rebuild | Keep shared types in one owning package and control dependency direction with tiers | Diagnose missing references, reference cycles, cross-package relative imports and phantom dependencies | Build small tools that compute build order, affected packages and boundary violations from package.json files
+---
+<section>
+<h2 id="problem">Three copies of one type</h2>
+<p>A shop runs three codebases in three repositories: the orders API, the admin dashboard and the checkout. All three need to know what an order status is, so each has its own copy of the type. Last month the API team added refunds. Their copy became <code>"pending" | "paid" | "refunded"</code>, their compiler was happy, and they deployed. The checkout's copy was never touched:</p>
+<example file="checkout.ts" project="drift">
+// The orders API's copy, updated last month:
+type ApiOrderStatus = "pending" | "paid" | "refunded";
+// The checkout repository's copy, from last year:
+type CheckoutOrderStatus = "pending" | "paid";
+
+const labels: Record<CheckoutOrderStatus, string> = {
+  pending: "Awaiting payment",
+  paid: "Paid",
+};
+
+const reply = '{"id": "ord_7", "status": "refunded"}';
+const order = JSON.parse(reply) as { id: string; status: CheckoutOrderStatus };
+const apiSide: ApiOrderStatus = "refunded";
+console.log(`${order.id}: ${labels[order.status]} (API sent "${apiSide}")`);
+</example>
+<output>
+ord_7: undefined (API sent "refunded")
+</output>
+<p>Each repository compiled cleanly against its own copy, and a customer saw "undefined" on their order page. Types only protect you where the compiler can see both sides of a contract. Put the type in one place that every part of the system imports, and adding <code>"refunded"</code> breaks every <code>Record&lt;OrderStatus, string&gt;</code> in the same commit, before anything ships:</p>
+<example file="labels.ts" project="drift-fixed" check="tsc-error">
+// @shop/core, the one owner of the type:
+type OrderStatus = "pending" | "paid" | "refunded";
+
+// the checkout, which imports it:
+const labels: Record<OrderStatus, string> = {
+  pending: "Awaiting payment",
+  paid: "Paid",
+};
+</example>
+<output kind="tsc">
+labels.ts:5:7 - error TS2741: Property 'refunded' is missing in type '{ pending: string; paid: string; }' but required in type 'Record<OrderStatus, string>'.
+
+5 const labels: Record<OrderStatus, string> = {
+        ~~~~~~
+
+
+Found 1 error in labels.ts:5
+</output>
+<p>A <strong>monorepo</strong> is one repository that holds several packages, which import each other by name and are changed, checked and released together. It turns "keep three copies in sync" into "there is one copy". It also brings new problems: which package may depend on which, what to rebuild when one changes, and how to stop a build from working only on your laptop. This lesson builds a small monorepo for the shop, with five packages, and then looks at how the ZudoJS repository, which has forty, handles the same problems.</p>
+</section>
+
+<section>
+<h2 id="layout">The shop, split into packages</h2>
+<p>The backend is split by responsibility. Each box is a package; each arrow means "imports from":</p>
+<figure class="lx-diagram">
+<pre>
+                    @shop/http          routes: turns requests into calls
+                   /    |     \
+                  ▼     ▼      ▼
+        @shop/auth   @shop/database     sessions / order storage
+              \   \    /    /
+               ▼   ▼  ▼    ▼
+            @shop/core   @shop/logger   domain types and errors / log lines
+
+  Arrows point one way: down. Nothing below may import anything above it.
+</pre>
+<figcaption>The dependency graph of the shop monorepo: http at the top, core and logger at the bottom.</figcaption>
+</figure>
+<p>On disk:</p>
+<pre>
+naija-shop/
+├── package.json            workspaces: ["packages/*"]
+├── tsconfig.base.json      compiler settings every package shares
+├── tsconfig.json           the "solution": lists every package
+└── packages/
+    ├── core/      package.json  tsconfig.json  src/index.ts
+    ├── logger/    package.json  tsconfig.json  src/index.ts
+    ├── database/  package.json  tsconfig.json  src/index.ts
+    ├── auth/      package.json  tsconfig.json  src/index.ts
+    └── http/      package.json  tsconfig.json  src/app.ts, src/main.ts, src/index.ts
+</pre>
+<p>The two packages at the bottom have no internal dependencies. <code>@shop/core</code> owns the domain types, so <code>OrderStatus</code> exists exactly once:</p>
+<file name="packages/core/src/index.ts" project="shop">
+export type OrderStatus = "pending" | "paid" | "cancelled";
+
+export interface Order {
+  readonly id: string;
+  readonly customerId: string;
+  readonly totalKobo: number;
+  status: OrderStatus;
+}
+
+export class DomainError extends Error {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "DomainError";
+    this.code = code;
+  }
+}
+
+export function formatKobo(kobo: number): string {
+  return `₦${(kobo / 100).toFixed(2)}`;
+}
+</file>
+<file name="packages/logger/src/index.ts" project="shop">
+/** Structured logging for every @shop package. */
+export interface Logger {
+  info(message: string, fields?: Record<string, unknown>): void;
+}
+
+export function createLogger(scope: string): Logger {
+  return {
+    info(message, fields) {
+      const suffix = fields ? ` ${JSON.stringify(fields)}` : "";
+      console.log(`[${scope}] ${message}${suffix}`);
+    },
+  };
+}
+</file>
+<p>The middle layer imports from the bottom by <strong>package name</strong>, exactly as if the packages came from npm. Notice <code>import type</code> for the logger: the database only needs the <code>Logger</code> interface, and whoever creates the repository passes a real logger in.</p>
+<file name="packages/database/src/index.ts" project="shop">
+import { DomainError, type Order } from "@shop/core";
+import type { Logger } from "@shop/logger";
+
+export interface OrderRepository {
+  save(order: Order): void;
+  find(id: string): Order;
+}
+
+export function createOrderRepository(logger: Logger): OrderRepository {
+  const rows = new Map<string, Order>();
+  return {
+    save(order) {
+      rows.set(order.id, { ...order });
+      logger.info("order saved", { id: order.id });
+    },
+    find(id) {
+      const row = rows.get(id);
+      if (!row) throw new DomainError("ORDER_NOT_FOUND", `No order ${id}`);
+      return { ...row };
+    },
+  };
+}
+</file>
+<file name="packages/auth/src/index.ts" project="shop">
+import { DomainError } from "@shop/core";
+import type { Logger } from "@shop/logger";
+
+export interface Session {
+  readonly userId: string;
+  readonly role: "customer" | "admin";
+}
+
+const sessions = new Map<string, Session>([
+  ["tok_ada", { userId: "u_ada", role: "customer" }],
+  ["tok_bola", { userId: "u_bola", role: "admin" }],
+]);
+
+export function authenticate(token: string | undefined, logger: Logger): Session {
+  const session = token ? sessions.get(token) : undefined;
+  if (!session) throw new DomainError("UNAUTHENTICATED", "Unknown or missing token");
+  logger.info("authenticated", { userId: session.userId });
+  return session;
+}
+</file>
+<p>And the top package wires everything together. To keep the lesson about the repository rather than about HTTP, <code>handle</code> takes a plain request object instead of a real socket; <a href="/learn/node-http">the Node.js HTTP lesson</a> shows how to put a server in front of a function like this.</p>
+<file name="packages/http/src/app.ts" project="shop">
+import { authenticate } from "@shop/auth";
+import { DomainError, formatKobo, type Order } from "@shop/core";
+import type { OrderRepository } from "@shop/database";
+import type { Logger } from "@shop/logger";
+
+export interface Request {
+  method: "GET" | "POST";
+  path: string;
+  token?: string;
+  body?: { totalKobo: number };
+}
+
+export function createApp(orders: OrderRepository, logger: Logger) {
+  let nextId = 1;
+  return function handle(req: Request): string {
+    try {
+      const session = authenticate(req.token, logger);
+      if (req.method === "POST" && req.path === "/orders" && req.body) {
+        const order: Order = { id: `ord_${nextId++}`, customerId: session.userId, totalKobo: req.body.totalKobo, status: "pending" };
+        orders.save(order);
+        return `201 ${order.id} ${formatKobo(order.totalKobo)}`;
+      }
+      const match = /^\/orders\/(\w+)$/.exec(req.path);
+      if (req.method === "GET" && match) {
+        const order = orders.find(match[1]!);
+        return `200 ${order.id} ${order.status} ${formatKobo(order.totalKobo)}`;
+      }
+      return "404 Not Found";
+    } catch (error) {
+      if (error instanceof DomainError) return `${error.code === "UNAUTHENTICATED" ? 401 : 404} ${error.code}`;
+      throw error;
+    }
+  };
+}
+</file>
+<file name="packages/http/src/main.ts" project="shop">
+import { createOrderRepository } from "@shop/database";
+import { createLogger } from "@shop/logger";
+import { createApp } from "./app.js";
+
+const logger = createLogger("http");
+const handle = createApp(createOrderRepository(createLogger("database")), logger);
+
+console.log(handle({ method: "POST", path: "/orders", token: "tok_ada", body: { totalKobo: 1_250_000 } }));
+console.log(handle({ method: "GET", path: "/orders/ord_1", token: "tok_ada" }));
+console.log(handle({ method: "GET", path: "/orders/ord_9", token: "tok_ada" }));
+console.log(handle({ method: "GET", path: "/orders/ord_1" }));
+</file>
+<file name="packages/http/src/index.ts" project="shop">
+export { createApp, type Request } from "./app.js";
+</file>
+</section>
+
+<section>
+<h2 id="reason">Before you connect anything</h2>
+<reason title="What may depend on what?">
+<p>The code is written. Before you wire up the build, think about the graph:</p>
+<ol>
+<li>A developer in the auth team wants to log the request path when a login fails, and imports <code>Request</code> from <code>@shop/http</code>. What does that do to the graph? What can no longer be built first?</li>
+<li>The database code starts using <code>Session</code> from <code>@shop/auth</code>, but nobody adds <code>@shop/auth</code> to the database's <code>package.json</code>. Could it still work? Where would it stop working?</li>
+<li>You change a line inside <code>createLogger</code>. Which packages need to be compiled again? Which need to be <em>re-checked</em>? Does the answer change if you change the <code>Logger</code> interface instead?</li>
+<li>Where should a type that both <code>auth</code> and <code>database</code> need live?</li>
+</ol>
+<answer>
+<ol>
+<li>It creates a cycle: http needs auth, and auth now needs http. Neither can be built first, because each needs the other's declarations. Cycles are also a design smell: auth now knows about HTTP requests, so it cannot be reused by a queue worker or a CLI. The fix is to pass auth only what it needs (the path, as a string) or to move the shared type down to <code>core</code>.</li>
+<li>It might work, by accident: npm puts links to all workspace packages in the root <code>node_modules</code>, so the import resolves. It breaks when the build order changes (a clean checkout in CI builds <code>database</code> before <code>auth</code>), when a stricter package manager is used, or when the package is published and installed somewhere without <code>@shop/auth</code>. Every import must be declared.</li>
+<li>Only <code>logger</code> must be compiled again: its JavaScript changed. Dependents only need re-checking if logger's <em>declarations</em> changed, and a line inside a function body does not change them. Changing the <code>Logger</code> interface does, so <code>database</code>, <code>auth</code> and <code>http</code> must be checked again.</li>
+<li>In a package that both already depend on, and that sits below both: <code>core</code>. Shared types flow downward to an owner; they are never copied sideways.</li>
+</ol>
+</answer>
+</reason>
+</section>
+
+<section>
+<h2 id="workspaces">Linking packages with workspaces</h2>
+<p>The root <code>package.json</code> declares which folders hold packages, and holds the tools every package shares:</p>
+<file name="package.json" project="shop">
+{
+  "name": "naija-shop",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "start": "node packages/http/dist/main.js"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "typescript": "^7.0.2"
+  }
+}
+</file>
+<p>Each package has its own <code>package.json</code>, shaped exactly like the published package from <a href="/learn/ts-publishing#package-json">Publishing TypeScript packages</a>: a name, an <code>exports</code> map that points at <code>dist</code>, and its dependencies. Internal packages are marked <code>"private": true</code> so that they can never be published by mistake:</p>
+<file name="packages/core/package.json" project="shop">
+{
+  "name": "@shop/core",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "dependencies": {}
+}
+</file>
+<file name="packages/logger/package.json" project="shop">
+{
+  "name": "@shop/logger",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "dependencies": {}
+}
+</file>
+<file name="packages/database/package.json" project="shop">
+{
+  "name": "@shop/database",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "dependencies": { "@shop/core": "1.0.0", "@shop/logger": "1.0.0" }
+}
+</file>
+<file name="packages/auth/package.json" project="shop">
+{
+  "name": "@shop/auth",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "dependencies": { "@shop/core": "1.0.0", "@shop/logger": "1.0.0" }
+}
+</file>
+<file name="packages/http/package.json" project="shop">
+{
+  "name": "@shop/http",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "dependencies": {
+    "@shop/auth": "1.0.0",
+    "@shop/core": "1.0.0",
+    "@shop/database": "1.0.0",
+    "@shop/logger": "1.0.0"
+  }
+}
+</file>
+<p>One <code>npm install</code> at the root installs the shared tools and links every workspace package into <code>node_modules</code>:</p>
+<shell>
+$ npm install
+
+added 9 packages, and audited 15 packages in 10s
+
+found 0 vulnerabilities
+$ npm ls
+naija-shop@ ~/naija-shop
+├─┬ @shop/auth@1.0.0 -> ./packages/auth
+│ ├── @shop/core@1.0.0 deduped -> ./packages/core
+│ └── @shop/logger@1.0.0 deduped -> ./packages/logger
+├── @shop/core@1.0.0 -> ./packages/core
+├─┬ @shop/database@1.0.0 -> ./packages/database
+│ ├── @shop/core@1.0.0 deduped -> ./packages/core
+│ └── @shop/logger@1.0.0 deduped -> ./packages/logger
+├─┬ @shop/http@1.0.0 -> ./packages/http
+│ ├── @shop/auth@1.0.0 deduped -> ./packages/auth
+│ ├── @shop/core@1.0.0 deduped -> ./packages/core
+│ ├── @shop/database@1.0.0 deduped -> ./packages/database
+│ └── @shop/logger@1.0.0 deduped -> ./packages/logger
+├── @shop/logger@1.0.0 -> ./packages/logger
+├── @types/node@26.6.2
+└── typescript@7.0.2
+</shell>
+<p>Every arrow is a symbolic link: <code>node_modules/@shop/core</code> <em>is</em> <code>packages/core</code>. When <code>database</code> imports <code>"@shop/core"</code>, Node.js and TypeScript walk up to that link, read <code>packages/core/package.json</code>, and follow its <code>exports</code> to <code>dist/index.js</code> and <code>dist/index.d.ts</code>. That means a package's dependents see its <strong>built output</strong>, not its source: <code>core</code> must be compiled before <code>database</code> can be checked. Deciding that order is the job of project references.</p>
+<note>With npm, an internal dependency is written as a version (<code>"1.0.0"</code>) or <code>"*"</code>; npm links the workspace when the version matches. pnpm and Yarn use the <strong>workspace protocol</strong>, <code>"workspace:*"</code>, which can only ever mean the local folder. You will switch to pnpm <a href="#pnpm">below</a>.</note>
+</section>
+
+<section>
+<h2 id="references">Project references and tsc -b</h2>
+<p>Every package is its own TypeScript project with its own <code>tsconfig.json</code>. The settings they share live once in a base file:</p>
+<file name="tsconfig.base.json" project="shop">
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "verbatimModuleSyntax": true,
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  }
+}
+</file>
+<p><code>composite: true</code> marks a project that other projects can reference. It requires <code>declaration</code> (dependents read your <code>.d.ts</code> files, not your source), requires every source file to be matched by <code>include</code> or <code>files</code>, and turns on incremental builds, which store what the compiler learned in a <code>.tsbuildinfo</code> file. Each package extends the base and lists the packages it depends on as <strong>references</strong>:</p>
+<file name="packages/http/tsconfig.json" project="shop">
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/.tsbuildinfo"
+  },
+  "include": ["src"],
+  "references": [{ "path": "../core" }, { "path": "../logger" }, { "path": "../database" }, { "path": "../auth" }]
+}
+</file>
+<p>The others differ only in their references, which mirror their <code>package.json</code> dependencies:</p>
+<file name="packages/database/tsconfig.json" project="shop">
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "src", "outDir": "dist", "tsBuildInfoFile": "dist/.tsbuildinfo" },
+  "include": ["src"],
+  "references": [{ "path": "../core" }, { "path": "../logger" }]
+}
+</file>
+<file name="packages/auth/tsconfig.json" project="shop">
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "src", "outDir": "dist", "tsBuildInfoFile": "dist/.tsbuildinfo" },
+  "include": ["src"],
+  "references": [{ "path": "../core" }, { "path": "../logger" }]
+}
+</file>
+<file name="packages/core/tsconfig.json" project="shop">
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "src", "outDir": "dist", "tsBuildInfoFile": "dist/.tsbuildinfo" },
+  "include": ["src"],
+  "references": []
+}
+</file>
+<file name="packages/logger/tsconfig.json" project="shop">
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "src", "outDir": "dist", "tsBuildInfoFile": "dist/.tsbuildinfo" },
+  "include": ["src"],
+  "references": []
+}
+</file>
+<p>Putting <code>tsBuildInfoFile</code> inside <code>dist</code> means that deleting <code>dist</code> also deletes the build information. <a href="/learn/ts-performance">Compiler performance</a> shows the silent, empty build you get when those two are separated. The root <code>tsconfig.json</code> is a <strong>solution file</strong>: it compiles nothing itself (<code>"files": []</code>) and only lists the projects:</p>
+<file name="tsconfig.json" project="shop">
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/logger" },
+    { "path": "packages/database" },
+    { "path": "packages/auth" },
+    { "path": "packages/http" }
+  ]
+}
+</file>
+<p><code>tsc -b</code> (short for <code>--build</code>) is <code>tsc</code> in build-orchestrator mode. It reads the references, sorts the projects so that every project comes after the ones it references, and builds each one that is out of date. <code>--verbose</code> makes it explain every decision:</p>
+<shell>
+$ npx tsc -b --verbose
+11:07:12 PM - Projects in this build:
+    * packages/core/tsconfig.json
+    * packages/logger/tsconfig.json
+    * packages/database/tsconfig.json
+    * packages/auth/tsconfig.json
+    * packages/http/tsconfig.json
+    * tsconfig.json
+
+11:07:12 PM - Project 'packages/core/tsconfig.json' is out of date because output file 'packages/core/dist/.tsbuildinfo' does not exist
+
+11:07:12 PM - Building project 'packages/core/tsconfig.json'...
+
+11:07:12 PM - Project 'packages/logger/tsconfig.json' is out of date because output file 'packages/logger/dist/.tsbuildinfo' does not exist
+
+11:07:12 PM - Building project 'packages/logger/tsconfig.json'...
+
+11:07:12 PM - Project 'packages/database/tsconfig.json' is out of date because output file 'packages/database/dist/.tsbuildinfo' does not exist
+
+11:07:12 PM - Building project 'packages/database/tsconfig.json'...
+
+11:07:12 PM - Project 'packages/auth/tsconfig.json' is out of date because output file 'packages/auth/dist/.tsbuildinfo' does not exist
+
+11:07:12 PM - Building project 'packages/auth/tsconfig.json'...
+
+11:07:12 PM - Project 'packages/http/tsconfig.json' is out of date because output file 'packages/http/dist/.tsbuildinfo' does not exist
+
+11:07:12 PM - Building project 'packages/http/tsconfig.json'...
+$ npm start
+
+> start
+> node packages/http/dist/main.js
+
+[http] authenticated {"userId":"u_ada"}
+[database] order saved {"id":"ord_1"}
+201 ord_1 ₦12500.00
+[http] authenticated {"userId":"u_ada"}
+200 ord_1 pending ₦12500.00
+[http] authenticated {"userId":"u_ada"}
+404 ORDER_NOT_FOUND
+401 UNAUTHENTICATED
+</shell>
+<p>Five packages, built in dependency order, running as one program. Run <code>tsc -b</code> again and nothing is rebuilt; every project reports <code>is up to date because newest input … is older than output …</code>.</p>
+
+<h3>What gets rebuilt, and why</h3>
+<p>The interesting part is what happens after a change. First, rename a local variable inside <code>createLogger</code> (the <code>suffix</code> above was once called <code>extra</code>). Only a function body changed:</p>
+<shell>
+$ npx tsc -b --verbose
+…
+11:08:21 PM - Project 'packages/logger/tsconfig.json' is out of date because output 'packages/logger/dist/.tsbuildinfo' is older than input 'packages/logger/src/index.ts'
+11:08:21 PM - Building project 'packages/logger/tsconfig.json'...
+11:08:21 PM - Project 'packages/database/tsconfig.json' is up to date with .d.ts files from its dependencies
+11:08:21 PM - Updating output timestamps of project 'packages/database/tsconfig.json'...
+11:08:21 PM - Project 'packages/auth/tsconfig.json' is up to date with .d.ts files from its dependencies
+11:08:21 PM - Updating output timestamps of project 'packages/auth/tsconfig.json'...
+11:08:21 PM - Project 'packages/http/tsconfig.json' is up to date with .d.ts files from its dependencies
+11:08:21 PM - Updating output timestamps of project 'packages/http/tsconfig.json'...
+</shell>
+<p><code>logger</code> was rebuilt; its declaration file came out identical, so the three dependents were not checked again at all, only marked as current. Now add the doc comment <code>/** Structured logging for every @shop package. */</code> above the <code>Logger</code> interface. Comments are copied into <code>.d.ts</code> files, so this time the declarations change:</p>
+<shell>
+$ npx tsc -b --verbose
+…
+11:07:50 PM - Project 'packages/database/tsconfig.json' is out of date because output 'packages/database/dist/.tsbuildinfo' is older than input 'packages/logger/dist/index.d.ts'
+11:07:50 PM - Building project 'packages/database/tsconfig.json'...
+11:07:50 PM - Project 'packages/auth/tsconfig.json' is out of date because output 'packages/auth/dist/.tsbuildinfo' is older than input 'packages/logger/dist/index.d.ts'
+11:07:50 PM - Building project 'packages/auth/tsconfig.json'...
+11:07:50 PM - Project 'packages/http/tsconfig.json' is out of date because output 'packages/http/dist/.tsbuildinfo' is older than input 'packages/logger/dist/index.d.ts'
+11:07:50 PM - Building project 'packages/http/tsconfig.json'...
+</shell>
+<p>The <code>.d.ts</code> files are the contract between projects. A change that stays inside a package is cheap; a change to what a package exports ripples to everything above it. That is one more reason to keep exported types small and stable.</p>
+</section>
+
+<section>
+<h2 id="graph">The build graph as data</h2>
+<p><code>tsc -b</code> computed an order from the references. The same graph lives in the <code>package.json</code> files, and a monorepo's own tools read it from there: to build in the right order, to run only the tests that a change can affect, and to refuse dependencies that break the rules. These tools are short programs; here is the shared part, which reads every package's dependencies and references:</p>
+<example file="tools/workspace.ts" project="shop" browser="no">
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+
+export interface WorkspacePackage {
+  name: string;
+  folder: string;
+  dependencies: string[];
+  references: string[];
+}
+
+interface PackageJson {
+  name: string;
+  dependencies?: Record<string, string>;
+}
+
+interface TsConfig {
+  references?: { path: string }[];
+}
+
+function readJson<T>(path: string): T {
+  return JSON.parse(readFileSync(path, "utf8")) as T;
+}
+
+export function readWorkspace(dir = "packages"): Map<string, WorkspacePackage> {
+  const packages = new Map<string, WorkspacePackage>();
+  for (const folder of readdirSync(dir).sort()) {
+    const pkg = readJson<PackageJson>(`${dir}/${folder}/package.json`);
+    const tsconfigPath = `${dir}/${folder}/tsconfig.json`;
+    const refs = existsSync(tsconfigPath) ? (readJson<TsConfig>(tsconfigPath).references ?? []) : [];
+    packages.set(pkg.name, {
+      name: pkg.name,
+      folder: `${dir}/${folder}`,
+      dependencies: Object.keys(pkg.dependencies ?? {}).filter((name) => name.startsWith("@shop/")),
+      references: refs.map((ref) => `@shop/${ref.path.replace("../", "")}`),
+    });
+  }
+  return packages;
+}
+
+export function buildLevels(packages: Map<string, WorkspacePackage>): string[][] {
+  const levels: string[][] = [];
+  const done = new Set<string>();
+  while (done.size < packages.size) {
+    const ready = [...packages.values()]
+      .filter((p) => !done.has(p.name) && p.dependencies.every((dep) => done.has(dep)))
+      .map((p) => p.name);
+    if (ready.length === 0) {
+      const stuck = [...packages.keys()].filter((name) => !done.has(name));
+      throw new Error(`cycle among: ${stuck.join(", ")}`);
+    }
+    levels.push(ready);
+    for (const name of ready) done.add(name);
+  }
+  return levels;
+}
+</example>
+<p><code>buildLevels</code> is a <strong>topological sort</strong>, from <a href="/learn/dsa-graphs">Graphs</a>, done in rounds: each round takes every package whose dependencies are all built. Packages in the same round do not depend on each other, so they can be built at the same time. If a round finds nothing to build while packages remain, those packages depend on each other in a circle.</p>
+<example file="tools/graph.ts" project="shop" browser="no">
+import { buildLevels, readWorkspace } from "./workspace.js";
+
+const packages = readWorkspace();
+for (const p of packages.values()) console.log(`${p.name} -> ${p.dependencies.join(", ") || "(nothing)"}`);
+buildLevels(packages).forEach((level, i) => console.log(`step ${i + 1}: ${level.join(", ")}`));
+</example>
+<output>
+@shop/auth -> @shop/core, @shop/logger
+@shop/core -> (nothing)
+@shop/database -> @shop/core, @shop/logger
+@shop/http -> @shop/auth, @shop/core, @shop/database, @shop/logger
+@shop/logger -> (nothing)
+step 1: @shop/core, @shop/logger
+step 2: @shop/auth, @shop/database
+step 3: @shop/http
+</output>
+<p>Three steps for five packages. pnpm uses this same idea when it runs a script in every package: <a href="#pnpm">below</a> you will see it start <code>core</code> and <code>logger</code> together, then <code>auth</code> and <code>database</code>, then <code>http</code>. The second tool answers the question CI asks on every pull request: "this package changed; what could it have broken?"</p>
+<example file="tools/affected.ts" project="shop" browser="no">
+import { readWorkspace } from "./workspace.js";
+
+const packages = readWorkspace();
+
+function affectedBy(changed: string): string[] {
+  const result = new Set([changed]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const p of packages.values()) {
+      if (!result.has(p.name) && p.dependencies.some((dep) => result.has(dep))) {
+        result.add(p.name);
+        grew = true;
+      }
+    }
+  }
+  return [...result];
+}
+
+for (const changed of ["@shop/logger", "@shop/auth", "@shop/http"]) {
+  console.log(`${changed} changed: rebuild and test ${affectedBy(changed).join(", ")}`);
+}
+</example>
+<output>
+@shop/logger changed: rebuild and test @shop/logger, @shop/auth, @shop/database, @shop/http
+@shop/auth changed: rebuild and test @shop/auth, @shop/http
+@shop/http changed: rebuild and test @shop/http
+</output>
+<p>A change at the bottom affects everything; a change at the top affects only itself. Tools such as Nx and Turborepo do this (plus caching of results) for large repositories. The idea is exactly these few lines.</p>
+</section>
+
+<section>
+<h2 id="failures">When the graph is wrong</h2>
+<p>Most monorepo build problems are a mismatch between three descriptions of the same graph: the imports in the code, the dependencies in <code>package.json</code>, and the references in <code>tsconfig.json</code>. Here is what each mismatch looks like. All of these outputs are from real runs on the shop repository.</p>
+
+<h3>A missing reference: works from the root, fails alone</h3>
+<p>Remove <code>{ "path": "../auth" }</code> from <code>http</code>'s references, leaving everything else. Build from the root and it succeeds, because the solution file happens to list <code>auth</code> before <code>http</code>. Build <code>http</code> on its own, from clean, as a developer or a CI job for one package would:</p>
+<shell>
+$ npx tsc -b --clean
+$ npx tsc -b packages/http --verbose
+11:08:36 PM - Projects in this build:
+    * packages/core/tsconfig.json
+    * packages/logger/tsconfig.json
+    * packages/database/tsconfig.json
+    * packages/http/tsconfig.json
+…
+11:08:36 PM - Building project 'packages/http/tsconfig.json'...
+packages/http/src/app.ts(1,30): error TS2307: Cannot find module '@shop/auth' or its corresponding type declarations.
+</shell>
+<p><code>auth</code> is not even in the list of projects, so it was never built, so its <code>dist/index.d.ts</code> does not exist. The error message talks about a missing module, not about a missing reference; when you see TS2307 for an internal package, check the references first.</p>
+
+<h3>A cycle</h3>
+<p>Now do what the auth developer wanted, and make <code>auth</code> reference <code>http</code>:</p>
+<shell>
+$ npx tsc -b
+error TS6202: Project references may not form a circular graph. Cycle detected: /home/you/naija-shop/tsconfig.json
+/home/you/naija-shop/packages/auth/tsconfig.json
+/home/you/naija-shop/packages/http/tsconfig.json
+</shell>
+<p>The compiler refuses outright. Note that it only sees cycles in <em>references</em>; a cycle that exists only in imports or in <code>package.json</code> shows up later as a confusing TS2307 instead. The fix is never to make the cycle "work"; move the shared piece down to a lower package, or pass plain data across the boundary.</p>
+
+<h3>A relative import into another package</h3>
+<p>A developer wants <code>formatKobo</code> in the database package and, instead of importing <code>"@shop/core"</code>, reaches across with a relative path: <code>import { formatKobo } from "../../core/src/index.js"</code>. Because <code>database</code> references <code>core</code>, TypeScript quietly maps that source file to core's declarations, and the build passes. The program does not:</p>
+<shell>
+$ npx tsc -b
+$ node -e 'import("./packages/database/dist/money.js").then((m) => console.log(m.describeTotal(5000)))'
+…
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/home/you/naija-shop/packages/core/src/index.js' imported from /home/you/naija-shop/packages/database/dist/money.js
+</shell>
+<p>The compiled file still says <code>../../core/src/index.js</code>, and <code>src</code> only contains <code>.ts</code> files. Without the reference, the compiler does complain, with two errors that describe the real rule: every source file of a composite project must be inside its <code>rootDir</code> and matched by its <code>include</code>:</p>
+<shell>
+$ npx tsc -b
+packages/database/src/money.ts:1:28 - error TS6059: File '/home/you/naija-shop/packages/core/src/index.ts' is not under 'rootDir' '/home/you/naija-shop/packages/database/src'. 'rootDir' is expected to contain all source files.
+…
+packages/database/src/money.ts:1:28 - error TS6307: File '/home/you/naija-shop/packages/core/src/index.ts' is not listed within the file list of project '/home/you/naija-shop/packages/database/tsconfig.json'. Projects must list all files or use an 'include' pattern.
+…
+</shell>
+<p>Worse, that failing build still wrote a compiled <code>index.js</code> into <code>packages/core/src</code>, right beside the source. Leave it there and the relative import starts to "work" at runtime, against a stale copy of core that no build will ever update. Delete stray output like this, and across package boundaries, import by package name only.</p>
+
+<h3>A phantom dependency</h3>
+<p>Finally, the second question from the reasoning section: <code>database</code> starts importing <code>Session</code> from <code>@shop/auth</code> in a new file, without declaring the dependency:</p>
+<file name="packages/database/src/audit.ts" project="shop">
+import type { Session } from "@shop/auth";
+
+export function auditLine(session: Session, action: string): string {
+  return `${session.userId} (${session.role}) ${action}`;
+}
+</file>
+<p>On the developer's laptop, <code>npx tsc -b</code> passes: <code>auth</code> was built earlier, and npm's root <code>node_modules/@shop/auth</code> link makes the import resolve. On a clean checkout, like CI's:</p>
+<shell>
+$ npx tsc -b --clean
+$ npx tsc -b
+packages/database/src/audit.ts:1:30 - error TS2307: Cannot find module '@shop/auth' or its corresponding type declarations.
+
+1 import type { Session } from "@shop/auth";
+                               ~~~~~~~~~~~~
+
+packages/http/src/app.ts:1:30 - error TS2307: Cannot find module '@shop/auth' or its corresponding type declarations.
+
+1 import { authenticate } from "@shop/auth";
+                               ~~~~~~~~~~~~
+
+$ npx tsc -b
+$ echo $?
+0
+</shell>
+<p><code>database</code> was built before <code>auth</code>, so the import failed, and the failure spread to <code>http</code> in the same run. Run the build a second time and it passes, because <code>auth</code>'s output now exists. A build that fails once and then passes is the worst kind: it wastes an afternoon in CI and never reproduces on a laptop. A dependency that code uses without declaring it is called a <strong>phantom dependency</strong>.</p>
+</section>
+
+<section>
+<h2 id="boundaries">Enforcing dependency direction</h2>
+<p>Every one of those failures is a rule that a person could break without noticing. So write the rules down as a program. Give each package a <strong>tier</strong>, a number for its layer, and allow dependencies only on the same or a lower tier. Then check, for every package, that its dependencies respect the tiers, that each dependency has a matching reference, that every <code>@shop/</code> import in its source is declared, and that there is no cycle:</p>
+<example file="tools/rules.ts" project="shop" browser="no">
+import { readFileSync, readdirSync } from "node:fs";
+import { buildLevels, readWorkspace } from "./workspace.js";
+
+export const TIERS: Record<string, number> = {
+  "@shop/core": 0,
+  "@shop/logger": 0,
+  "@shop/database": 1,
+  "@shop/auth": 1,
+  "@shop/http": 2,
+};
+
+export function checkWorkspace(): string[] {
+  const packages = readWorkspace();
+  const problems: string[] = [];
+
+  for (const p of packages.values()) {
+    for (const dep of p.dependencies) {
+      if ((TIERS[dep] ?? 0) > (TIERS[p.name] ?? 0)) {
+        problems.push(`${p.name} (tier ${TIERS[p.name]}) must not depend on ${dep} (tier ${TIERS[dep]})`);
+      }
+      if (!p.references.includes(dep)) {
+        problems.push(`${p.name} depends on ${dep} but its tsconfig.json has no reference to it`);
+      }
+    }
+    for (const file of readdirSync(`${p.folder}/src`).filter((f) => f.endsWith(".ts"))) {
+      const source = readFileSync(`${p.folder}/src/${file}`, "utf8");
+      for (const [, imported] of source.matchAll(/from "(@shop\/[\w-]+)"/g)) {
+        if (imported !== p.name && !p.dependencies.includes(imported!)) {
+          problems.push(`${p.folder}/src/${file} imports ${imported} but package.json does not list it`);
+        }
+      }
+    }
+  }
+
+  try {
+    buildLevels(packages);
+  } catch (error) {
+    problems.push((error as Error).message);
+  }
+  return problems;
+}
+</example>
+<p>A small runner prints the result and sets a failing exit code, so that CI stops on any problem:</p>
+<example file="tools/check.ts" project="shop" browser="no">
+import { checkWorkspace } from "./rules.js";
+
+const problems = checkWorkspace();
+console.log(problems.length ? problems.join("\n") : "all checks passed");
+process.exitCode = problems.length > 0 ? 1 : 0;
+</example>
+<output>
+packages/database/src/audit.ts imports @shop/auth but package.json does not list it
+</output>
+<p>It found the phantom dependency from the last section, since <code>audit.ts</code> is still in the database package. Now let the auth developer declare the dependency on <code>http</code> that caused the cycle, and run the check again:</p>
+<file name="packages/auth/package.json" project="shop">
+{
+  "name": "@shop/auth",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "dependencies": { "@shop/core": "1.0.0", "@shop/logger": "1.0.0", "@shop/http": "1.0.0" }
+}
+</file>
+<example file="tools/check.ts" project="shop" browser="no">
+import { checkWorkspace } from "./rules.js";
+
+const problems = checkWorkspace();
+console.log(problems.length ? problems.join("\n") : "all checks passed");
+process.exitCode = problems.length > 0 ? 1 : 0;
+</example>
+<output>
+@shop/auth (tier 1) must not depend on @shop/http (tier 2)
+@shop/auth depends on @shop/http but its tsconfig.json has no reference to it
+packages/database/src/audit.ts imports @shop/auth but package.json does not list it
+cycle among: @shop/auth, @shop/http
+</output>
+<p>One bad line in <code>package.json</code>, three separate reports: the direction is wrong, the reference is missing, and the graph now has a cycle. Each message says what to fix. Run this script in CI next to <code>tsc -b</code> and the tests, and the architecture stops depending on everyone remembering it.</p>
+<tip>Regular expressions over source text are a rough way to find imports: they miss <code>import("…")</code> and <code>export … from</code>, and would match an import written inside a string. Real tools use the TypeScript compiler API or a linter rule for this. For a first version, a strict pattern that your code style follows is enough.</tip>
+</section>
+
+<section>
+<h2 id="pnpm">pnpm workspaces</h2>
+<p>npm's workspaces made the phantom dependency possible, because every package can see every link in the root <code>node_modules</code>. <strong>pnpm</strong> is a package manager that installs differently: each package's own <code>node_modules</code> contains only the dependencies it declares, as links into one shared store on disk. Converting the shop takes two changes. The list of package folders moves to <code>pnpm-workspace.yaml</code>:</p>
+<file name="pnpm-workspace.yaml" project="shop-pnpm">
+packages:
+  - "packages/*"
+</file>
+<p>and internal dependencies use the workspace protocol:</p>
+<file name="packages/database/package.json" project="shop-pnpm">
+{
+  "name": "@shop/database",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "dependencies": {
+    "@shop/core": "workspace:*",
+    "@shop/logger": "workspace:*"
+  }
+}
+</file>
+<p>Install, and look at what the database package can see. Then build, with the undeclared <code>audit.ts</code> import still in place:</p>
+<shell>
+$ pnpm install
+…
+Done in 34.2s using pnpm v11.24.0
+$ ls packages/database/node_modules/@shop
+core
+logger
+$ ls node_modules/@shop
+ls: cannot access 'node_modules/@shop': No such file or directory
+$ npx tsc -b
+packages/database/src/audit.ts:1:30 - error TS2307: Cannot find module '@shop/auth' or its corresponding type declarations.
+
+1 import type { Session } from "@shop/auth";
+                               ~~~~~~~~~~~~
+
+
+Found 1 error in packages/database/src/audit.ts:1
+</shell>
+<p>The phantom dependency is now an error on every machine, every time. pnpm can also run a script in every package, in dependency order, running independent packages in parallel. With a <code>"build": "tsc -p tsconfig.json"</code> script in each package:</p>
+<shell>
+$ pnpm -r run build
+Scope: 5 of 6 workspace projects
+packages/core build$ tsc -p tsconfig.json
+packages/logger build$ tsc -p tsconfig.json
+packages/core build: Done
+packages/logger build: Done
+packages/database build$ tsc -p tsconfig.json
+packages/auth build$ tsc -p tsconfig.json
+packages/auth build: Done
+packages/database build: Done
+packages/http build$ tsc -p tsconfig.json
+packages/http build: Done
+</shell>
+<p>Exactly the three steps your <code>buildLevels</code> printed. Filters select part of the graph: <code>pnpm --filter "...@shop/auth" run build</code> builds <code>auth</code> and every package that depends on it (the same answer as <code>affected.ts</code>), and <code>pnpm --filter "@shop/http..."</code> selects <code>http</code> and everything it depends on.</p>
+<ul>
+<li><strong><code>workspace:*</code></strong> can only resolve to the local folder. A version range like <code>"^1.0.0"</code> could silently resolve to a copy from the registry instead, and then your packages compile against an old published version while you edit the source next to it.</li>
+<li>When you <strong>publish</strong>, <code>pnpm publish</code> rewrites <code>workspace:*</code> to the real version number. Plain <code>npm publish</code> does not understand the protocol and would upload the literal text <code>workspace:*</code>, which nobody can install.</li>
+<li>Build order: <code>tsc -b</code> orders by <code>references</code>; <code>pnpm -r</code> orders by <code>package.json</code> dependencies. If you use both, keep them in sync, which is what the check above enforces.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="zudojs">A real monorepo: ZudoJS</h2>
+<p>The ZudoJS framework you will use later in this course is developed in exactly this kind of repository: about forty <code>@zudojs/*</code> packages in one pnpm workspace. Its conventions are the lessons of this page, applied at scale:</p>
+<ul>
+<li><strong>One owner per type.</strong> The repository's conventions file, <code>AGENTS.md</code>, has a type ownership table: error classes live only in <code>@zudojs/errors</code>, ID types such as <code>UserId</code> only in <code>@zudojs/constants</code>, logger types only in <code>@zudojs/logger</code>, and so on. A package that needs one imports it; it never redefines it. This is the fix for the three copies of <code>OrderStatus</code> at the start of this lesson.</li>
+<li><strong>A tier map in one file.</strong> <code>scripts/package-tiers.js</code> gives every package a tier from 0 (leaf packages such as <code>errors</code> and <code>types</code>) to 4 (developer tooling such as <code>testing</code>), with the rule "a package may depend only on packages of the same or a lower tier". Two separate checks, a script and a test file, import that one map. Its header comment explains why there is only one copy: an earlier duplicated map had drifted, and a package passed one check while failing the other.</li>
+<li><strong>An architecture check</strong> in the style of your <code>check.ts</code>: tier violations, circular dependencies, and the rule that every internal dependency uses <code>workspace:*</code>. Its summary on the current repository reads:</li>
+</ul>
+<shell>
+$ node scripts/architect-check.js
+Running Zudojs architecture boundary check...
+
+Found 40 packages.
+…
+   - All internal dependencies use workspace:*
+   - No tier violations
+   - No circular dependencies
+</shell>
+<ul>
+<li><strong>Why <code>workspace:*</code> is enforced.</strong> The repository once pinned every internal dependency to an exact published version, <code>"0.1.0"</code>. Each package therefore compiled against an old tarball from the registry rather than its siblings' source. That hid a build break in <code>@zudojs/lifecycle</code>, two failing <code>@zudojs/cqrs</code> tests and a timer leak in <code>@zudojs/logger</code>, all of which appeared the moment the packages were linked to the workspace. A monorepo only protects you if the packages really use each other's current code.</li>
+<li><strong>Each package is a composite project</strong> with <code>"tsBuildInfoFile": "./dist/.tsbuildinfo"</code>, built by <code>pnpm -r run build</code> in dependency order, and the packages import each other's <code>dist</code> output, exactly like the shop.</li>
+</ul>
+<p>Notice that ZudoJS's <code>@zudojs/core</code> sits in tier 2, above most packages, because it wires them together, while the shop's <code>@shop/core</code> is at the bottom. A package's name says nothing about its place in the graph; the tier map does.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing a monorepo</h2>
+<ul>
+<li><strong>Unit tests live with their package</strong> and test it through its own source. Each package can have its own <code>test</code> script.</li>
+<li><strong>Integration tests</strong> that span packages (for example <code>http</code> with a real <code>database</code>) live in the highest package involved, or in a separate test folder at the root, and run after a build.</li>
+<li><strong>Test only what a change affects</strong>, using the same graph as <code>affected.ts</code> (<code>pnpm --filter "...[origin/main]"</code> selects packages changed since a Git reference, plus their dependents). Always run everything before a release.</li>
+<li><strong>Architecture tests</strong>: run the boundary check in CI. ZudoJS has both a script and a Vitest test (<code>tests/architect/boundaries.test.ts</code>) over the same tier map.</li>
+<li><strong>Build from clean in CI.</strong> The phantom dependency only failed on a clean build. A CI job that reuses old <code>dist</code> folders hides exactly the problems CI exists to find.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="production">In production</h2>
+<ul>
+<li><strong>Keep the graph pointing one way</strong>, and write the direction down as tiers that a script enforces. Cycles and upward imports get harder to remove every week they exist.</li>
+<li><strong>Every import declared, every dependency referenced.</strong> <code>package.json</code> dependencies, <code>tsconfig.json</code> references and the actual imports must agree. Prefer pnpm (or another strict installer) so undeclared imports fail immediately.</li>
+<li><strong>Share types through an owner package</strong>, never by copying. Keep exported types stable, because a <code>.d.ts</code> change ripples to every dependent.</li>
+<li><strong>One lockfile, one version of each tool</strong> (TypeScript, <code>@types/node</code>, test runner) at the root, so every package is checked by the same compiler.</li>
+<li><strong>Release with tooling</strong> that understands the graph, such as Changesets: it bumps dependents when a package they use changes, and <code>pnpm publish</code> rewrites <code>workspace:*</code>.</li>
+<li><strong>Avoid path aliases as a substitute for packages.</strong> Some repositories map <code>"@shop/*"</code> to source folders with the <code>paths</code> compiler option. It skips builds, but it also skips every boundary on this page: no <code>exports</code>, no declared dependencies, no references, and Node.js itself ignores <code>paths</code>, so the runtime needs extra tooling.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Add a payments package">
+<p>The shop needs <code>@shop/payments</code>: it charges an order through a payment provider, uses <code>Order</code> and <code>DomainError</code> from <code>core</code> and a <code>Logger</code>, and <code>http</code> will call it. List every file you must create or change, choose its tier, and say what <code>buildLevels</code> will print afterwards.</p>
+<solution>
+<ul>
+<li><code>packages/payments/package.json</code>: name <code>@shop/payments</code>, the same <code>exports</code> shape, dependencies on <code>@shop/core</code> and <code>@shop/logger</code>.</li>
+<li><code>packages/payments/tsconfig.json</code>: extends the base, <code>rootDir</code>/<code>outDir</code>/<code>tsBuildInfoFile</code> as the others, references to <code>../core</code> and <code>../logger</code>.</li>
+<li><code>packages/payments/src/index.ts</code>: the code.</li>
+<li><code>packages/http/package.json</code> and <code>packages/http/tsconfig.json</code>: add the dependency and the reference.</li>
+<li>Root <code>tsconfig.json</code>: add <code>{ "path": "packages/payments" }</code> to the solution. Then run <code>npm install</code> (or <code>pnpm install</code>) so that the new link exists.</li>
+<li><code>tools/rules.ts</code>: add <code>"@shop/payments": 1</code> to <code>TIERS</code>. It is a domain service like <code>auth</code> and <code>database</code>, used by <code>http</code>.</li>
+</ul>
+<p><code>buildLevels</code> then prints three steps: <code>core</code> and <code>logger</code>; then <code>auth</code>, <code>database</code> and <code>payments</code>; then <code>http</code>. Forget the reference in <code>http</code> and <code>check.ts</code> reports it before any build fails.</p>
+</solution>
+</exercise>
+<exercise title="Name the cycle">
+<p><code>buildLevels</code> reports "cycle among: @shop/auth, @shop/http", which lists every package it could not build, including ones that are only stuck <em>behind</em> a cycle. Write <code>findCycle(graph)</code> that returns the actual loop, such as <code>@shop/auth -> @shop/http -> @shop/auth</code>, using depth-first search.</p>
+<solution>
+<example file="cycle.ts" project="ex-cycle">
+type Graph = Map<string, string[]>;
+
+function findCycle(graph: Graph): string[] | null {
+  const state = new Map<string, "visiting" | "done">();
+  const path: string[] = [];
+
+  function visit(node: string): string[] | null {
+    if (state.get(node) === "done") return null;
+    if (state.get(node) === "visiting") return [...path.slice(path.indexOf(node)), node];
+    state.set(node, "visiting");
+    path.push(node);
+    for (const dep of graph.get(node) ?? []) {
+      const cycle = visit(dep);
+      if (cycle) return cycle;
+    }
+    path.pop();
+    state.set(node, "done");
+    return null;
+  }
+
+  for (const node of graph.keys()) {
+    const cycle = visit(node);
+    if (cycle) return cycle;
+  }
+  return null;
+}
+
+const shop: Graph = new Map([
+  ["@shop/core", []],
+  ["@shop/logger", []],
+  ["@shop/auth", ["@shop/core", "@shop/logger", "@shop/http"]],
+  ["@shop/database", ["@shop/core", "@shop/logger"]],
+  ["@shop/http", ["@shop/auth", "@shop/core", "@shop/database"]],
+  ["@shop/reports", ["@shop/http"]],
+]);
+console.log(findCycle(shop)?.join(" -> ") ?? "no cycle");
+
+shop.set("@shop/auth", ["@shop/core", "@shop/logger"]);
+console.log(findCycle(shop)?.join(" -> ") ?? "no cycle");
+</example>
+<output>
+@shop/auth -> @shop/http -> @shop/auth
+no cycle
+</output>
+<p>A node is "visiting" while the search is inside it. Reaching a visiting node again means the path has looped back, and the loop is the part of the path from that node onwards. <code>@shop/reports</code> is stuck behind the cycle, but it is not part of it, so it does not appear. This is the same depth-first search as cycle detection in <a href="/learn/dsa-graph-search">Graph search</a>.</p>
+</solution>
+</exercise>
+<exercise title="Where does the type go?">
+<p>Three new types are needed: (a) <code>Money</code> (an amount in kobo plus a currency), used by <code>database</code>, <code>auth</code> (for spending limits) and <code>http</code>; (b) <code>RouteParams</code>, used only inside <code>http</code>; (c) <code>AuditEvent</code>, produced by <code>auth</code> and stored by <code>database</code>. Which package should own each?</p>
+<solution>
+<ul>
+<li>(a) <code>@shop/core</code>. Several packages across layers need it, and <code>core</code> is below all of them.</li>
+<li>(b) <code>@shop/http</code>, unexported or exported only from <code>http</code>. A type used by one package belongs to that package; moving it down "just in case" makes <code>core</code> a dumping ground.</li>
+<li>(c) Not <code>auth</code> (then <code>database</code> would depend on <code>auth</code>, a sideways dependency within tier 1) and not <code>database</code> (the same problem reversed). It is a shared contract between two peers, so it goes down to <code>core</code>. If there were many such event types, a new tier-0 package such as <code>@shop/events</code> would own them.</li>
+</ul>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A monorepo keeps packages that depend on each other in one repository, so a shared type has one owner and a breaking change fails everywhere in the same commit.</li>
+<li>Workspaces (npm <code>workspaces</code>, <code>pnpm-workspace.yaml</code>) link internal packages into <code>node_modules</code>; dependents import each other's built <code>dist</code> through normal <code>exports</code> maps.</li>
+<li>Composite projects with references, and a solution <code>tsconfig.json</code>, let <code>tsc -b</code> build in dependency order and skip work: an unchanged <code>.d.ts</code> means dependents are only re-stamped, not re-checked.</li>
+<li>Imports, <code>package.json</code> dependencies and <code>tsconfig.json</code> references must agree. Missing references, reference cycles (TS6202), relative imports into other packages and phantom dependencies each fail in their own confusing way.</li>
+<li>Write the architecture down as tiers and check it with a script in CI, as ZudoJS does, and use a strict installer such as pnpm with <code>workspace:*</code>.</li>
+</ul>
+<p>Next: <a href="/learn/ts-testing">Testing TypeScript</a>, where you test runtime behaviour and types with Vitest.</p>
+</section>

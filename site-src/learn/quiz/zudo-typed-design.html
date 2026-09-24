@@ -1,0 +1,858 @@
+<question id="td-contract" type="choice">
+<q>In this lesson, what is a "contract" between two pieces of code?</q>
+<option>A legal agreement with the payment provider</option>
+<option correct>The shape and meaning of data one piece hands to another (an id, an event payload, a command result), which should be written once as a type and checked everywhere it is used</option>
+<option>A unit test</option>
+<option>A database migration</option>
+<explain><p>Bugs like "payment of ₦undefined" happen when the publisher and the listener each have their own idea of the payload. Writing the contract as one type lets the compiler check both sides.</p></explain>
+</question>
+
+<question id="td-swapped-ids" type="choice">
+<q>Why did <code>placeOrder("u-ada", "prd_pro-monthly")</code> compile when the parameters were <code>(productId: string, userId: string)</code>?</q>
+<option>TypeScript does not check function arguments</option>
+<option correct>TypeScript compares types by structure, and both ids are plain <code>string</code>s, so any string fits either parameter</option>
+<option>The strings were too short to check</option>
+<option>Because <code>strict</code> was off</option>
+<explain><p>Structural typing only sees "string". A brand (<code>Brand&lt;string, "ProductId"&gt;</code>) gives each kind of id a different type that exists only at compile time.</p></explain>
+</question>
+
+<question id="td-brand-runtime" type="output">
+<q>Branded ids exist only for the compiler. What does this print?</q>
+<code file="brand-runtime.ts">
+import type { Brand } from "@zudojs/constants";
+
+type OrderId = Brand<string, "OrderId">;
+const id = "ord_000000000001" as OrderId;
+
+console.log(typeof id, id.length, JSON.stringify({ id }));
+</code>
+<option correct>string 16 {"id":"ord_000000000001"}</option>
+<option>object 16 {"id":{"__brand":"OrderId"}}</option>
+<option>string 16 {"id":"ord_000000000001","__brand":"OrderId"}</option>
+<option>OrderId 16 {"id":"ord_000000000001"}</option>
+<explain><p>The <code>__brand</code> property is a fiction for the type checker. At runtime the id is the same string, so brands cost nothing and serialise normally.</p></explain>
+</question>
+
+<question id="td-kobo" type="choice">
+<q>Why store money as a branded whole number of kobo instead of a <code>number</code> of naira?</q>
+<option>Kobo values are shorter</option>
+<option correct>Floats cannot represent most decimal amounts exactly (3 × 1.1 is 3.3000000000000003), and the brand stops plain numbers and naira values from being passed where kobo are expected</option>
+<option>PostgreSQL cannot store decimals</option>
+<option>Because JSON has no numbers</option>
+<explain><p>Whole kobo are exact integers. The brand adds a second guarantee: an amount only exists if it went through the checked <code>kobo()</code> function.</p></explain>
+</question>
+
+<question id="td-float" type="output">
+<q>What does this print?</q>
+<code file="float.js">
+const naira = 1.1 * 3;
+const kobo = 110 * 3;
+console.log(naira, naira === 3.3, kobo, kobo === 330);
+</code>
+<option correct>3.3000000000000003 false 330 true</option>
+<option>3.3 true 330 true</option>
+<option>3.3 false 330 true</option>
+<option>3.3000000000000003 true 330 true</option>
+<explain><p>1.1 has no exact binary representation, so the product is slightly off and a payment of exactly 3.3 does not match. Integer kobo have no such problem.</p></explain>
+</question>
+
+<question id="td-parse-fn" type="choice">
+<q>In the lesson, where is <code>value as ProductId</code> allowed to appear?</q>
+<option>Anywhere a string needs to be passed as a product id</option>
+<option correct>Only inside the parse function, right after the check that makes it true</option>
+<option>Only in tests</option>
+<option>Nowhere; brands are created with <code>new</code></option>
+<explain><p>An <code>as</code> is a promise the compiler cannot verify. Keeping the only one behind a check turns the type <code>ProductId</code> into "a value that was checked", everywhere else in the code.</p></explain>
+</question>
+
+<question id="td-kobo-fn" type="output">
+<q>What does this <code>kobo()</code> helper return or throw?</q>
+<code file="kobo.ts">
+import type { Brand } from "@zudojs/constants";
+
+type Kobo = Brand<number, "Kobo">;
+function kobo(amount: number): Kobo {
+  if (!Number.isSafeInteger(amount) || amount < 0) throw new RangeError(`Not an amount in kobo: ${amount}`);
+  return amount as Kobo;
+}
+
+for (const value of [500_000, 3.3, -100, 0]) {
+  try {
+    console.log("ok", kobo(value));
+  } catch (error) {
+    console.log((error as Error).message);
+  }
+}
+</code>
+<option correct>ok 500000
+Not an amount in kobo: 3.3
+Not an amount in kobo: -100
+ok 0</option>
+<option>ok 500000
+ok 3
+Not an amount in kobo: -100
+ok 0</option>
+<option>ok 500000
+Not an amount in kobo: 3.3
+Not an amount in kobo: -100
+Not an amount in kobo: 0</option>
+<option>ok 500000
+ok 3.3
+ok -100
+ok 0</option>
+<explain><p>Only whole, non-negative safe integers pass. Zero is a valid amount (a free plan); a fraction or a negative number is refused where it enters.</p></explain>
+</question>
+
+<question id="td-union-state" type="choice">
+<q>Why model an order as <code>PendingOrder | PaidOrder | CancelledOrder</code> instead of one interface with optional <code>paidAt?</code> and <code>reason?</code> fields?</q>
+<option>Unions use less memory</option>
+<option correct>Each state has exactly its own fields, a <code>status</code> typo is impossible, and a transition like <code>markPaid</code> can require a <code>PendingOrder</code>, so paying a paid order does not compile</option>
+<option>Interfaces cannot have optional fields</option>
+<option>Because JSON cannot store optional fields</option>
+<explain><p>With optional fields every combination is allowed, including "paid without paidAt". A discriminated union lists only the legal states, and <code>status</code> tells TypeScript which one you have.</p></explain>
+</question>
+
+<question id="td-narrowing" type="choice">
+<q>In <code>RecordPayment</code>, why does <code>markPaid(order, …)</code> compile only after <code>if (order.status !== "pending") throw …</code>?</q>
+<option>Because <code>throw</code> converts the order</option>
+<option correct>Before the check <code>order</code> is an <code>Order</code> (any state); after it, TypeScript has narrowed it to <code>PendingOrder</code>, the type <code>markPaid</code> requires</option>
+<option>Because <code>markPaid</code> is async</option>
+<option>It would compile anywhere</option>
+<explain><p>Narrowing is how the runtime check and the type meet: the <code>if</code> proves the state, and the compiler remembers the proof for the rest of the block.</p></explain>
+</question>
+
+<question id="td-assert-never" type="output">
+<q>A new status reaches <code>label</code> at runtime through data the compiler never saw. What happens?</q>
+<code file="assert-never.ts">
+type Status = "pending" | "paid" | "cancelled";
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled status: ${JSON.stringify(value)}`);
+}
+
+function label(status: Status): string {
+  switch (status) {
+    case "pending": return "Waiting";
+    case "paid": return "Paid";
+    case "cancelled": return "Cancelled";
+    default: return assertNever(status);
+  }
+}
+
+const fromDatabase = JSON.parse('["paid", "refunded"]') as Status[];
+for (const status of fromDatabase) {
+  try {
+    console.log(label(status));
+  } catch (error) {
+    console.log((error as Error).message);
+  }
+}
+</code>
+<option correct>Paid
+Unhandled status: "refunded"</option>
+<option>Paid
+undefined</option>
+<option>Paid
+Refunded</option>
+<option>It does not compile</option>
+<explain><p><code>assertNever</code> gives you a compile error while a state is unhandled in your types, and a loud runtime error if an unexpected value slips in anyway, here through an unchecked <code>as</code> on parsed JSON.</p></explain>
+</question>
+
+<question id="td-record-exhaustive" type="choice">
+<q>What does <code>const badge: Record&lt;Order["status"], string&gt; = { … }</code> give you when a new status is added?</q>
+<option>Nothing; records accept missing keys</option>
+<option correct>A compile error until the new status has a badge, because the record needs a key for every member of the union</option>
+<option>A runtime error on the first request</option>
+<option>The new status gets a default badge</option>
+<explain><p>A <code>Record</code> over a union of literals is a lookup table the compiler checks for completeness, a lighter alternative to a <code>switch</code> with <code>assertNever</code>.</p></explain>
+</question>
+
+<question id="td-infer" type="choice">
+<q>Why is <code>type PlaceOrderBody = Infer&lt;typeof PlaceOrderBody&gt;</code> better than writing the DTO interface by hand?</q>
+<option>It is shorter to type</option>
+<option correct>The type is derived from the schema that checks the data at runtime, so the two can never disagree</option>
+<option>Interfaces are not allowed in contract files</option>
+<option>It makes parsing faster</option>
+<explain><p>A hand-written interface and a schema are two sources of truth that drift apart. With <code>Infer</code>, changing the schema changes the type, and every use is re-checked.</p></explain>
+</question>
+
+<question id="td-strict-dto" type="output">
+<q>What does the strict body schema do with an extra <code>total</code> field?</q>
+<code file="strict-dto.ts">
+import { schema } from "@zudojs/schema";
+
+const PlaceOrderBody = schema.object({ productId: schema.string().min(1).max(64) }).strict();
+
+const good = PlaceOrderBody.safeParse({ productId: "prd_pro-monthly" });
+const sneaky = PlaceOrderBody.safeParse({ productId: "prd_pro-monthly", total: 1 });
+console.log(good.success, sneaky.success, sneaky.success ? "" : sneaky.issues[0]?.message);
+</code>
+<option correct>true false Unknown key: total</option>
+<option>true true</option>
+<option>true false Expected number</option>
+<option>false false Unknown key: total</option>
+<explain><p>A client must not choose its own price. The strict schema refuses unknown keys with a 400, so the attempt is visible instead of silently dropped.</p></explain>
+</question>
+
+<question id="td-dto-vs-request" type="choice">
+<q>The DTO has <code>productId: string</code>, the command request has <code>productId: ProductId</code>. What happens between them?</q>
+<option>Nothing; TypeScript converts it automatically</option>
+<option correct>The route calls <code>parseProductId</code>, which checks the string and brands it, so handlers only ever receive checked ids</option>
+<option>The database converts it</option>
+<option>The schema brands it</option>
+<explain><p>The route is the boundary. A schema checks the shape; a parse function checks the meaning and produces the branded type the rest of the module relies on.</p></explain>
+</question>
+
+<question id="td-satisfies" type="choice">
+<q>What does <code>as const satisfies Record&lt;BillingErrorCode, number&gt;</code> on the status table do?</q>
+<option>It converts every status to a string</option>
+<option correct>It checks that every error code has a numeric status (a missing code is a compile error) while keeping each exact literal, so <code>BILLING_STATUS.AMOUNT_MISMATCH</code> has type <code>422</code></option>
+<option>It makes the table editable at runtime</option>
+<option>It is the same as a type annotation</option>
+<explain><p>An annotation would widen the values to <code>number</code>; <code>satisfies</code> checks without widening, and <code>as const</code> keeps the literals.</p></explain>
+</question>
+
+<question id="td-satisfies-output" type="output">
+<q>What does this print?</q>
+<code file="status-table.ts">
+type Code = "PRODUCT_NOT_FOUND" | "AMOUNT_MISMATCH";
+
+const STATUS = { PRODUCT_NOT_FOUND: 404, AMOUNT_MISMATCH: 422 } as const satisfies Record<Code, number>;
+
+function status(code: Code): 404 | 422 {
+  return STATUS[code];
+}
+
+console.log(status("AMOUNT_MISMATCH"), Object.keys(STATUS).length, Object.isFrozen(STATUS));
+</code>
+<option correct>422 2 false</option>
+<option>422 2 true</option>
+<option>"422" 2 false</option>
+<option>undefined 2 false</option>
+<explain><p><code>as const</code> makes the object readonly <em>for the compiler</em> only; at runtime it is an ordinary, unfrozen object. Use <code>Object.freeze</code> as well when runtime immutability matters.</p></explain>
+</question>
+
+<question id="td-billing-error" type="output">
+<q>What does this custom error carry?</q>
+<code file="billing-error.ts">
+import { BaseError, ErrorCategory } from "@zudojs/errors";
+
+type BillingErrorCode = "ORDER_NOT_PENDING" | "AMOUNT_MISMATCH";
+const STATUS = { ORDER_NOT_PENDING: 409, AMOUNT_MISMATCH: 422 } as const satisfies Record<BillingErrorCode, number>;
+
+class BillingError extends BaseError {
+  readonly reason: BillingErrorCode;
+  constructor(reason: BillingErrorCode, message: string) {
+    super(message, { code: `ERR_${reason}`, category: ErrorCategory.BUSINESS, statusCode: STATUS[reason], expose: true });
+    this.reason = reason;
+  }
+}
+
+const error = new BillingError("AMOUNT_MISMATCH", "Paid ₦200.00, expected ₦2,000.00");
+console.log(error.name, error.statusCode, error.code, error.reason, error instanceof BaseError);
+</code>
+<option correct>BillingError 422 ERR_AMOUNT_MISMATCH AMOUNT_MISMATCH true</option>
+<option>Error 422 ERR_AMOUNT_MISMATCH AMOUNT_MISMATCH true</option>
+<option>BillingError 500 ERR_AMOUNT_MISMATCH AMOUNT_MISMATCH true</option>
+<option>BillingError 422 AMOUNT_MISMATCH AMOUNT_MISMATCH false</option>
+<explain><p>The status comes from the checked table, the <code>name</code> is set from the class, and <code>reason</code> is a typed union that client code can switch on exhaustively.</p></explain>
+</question>
+
+<question id="td-map-alias" type="choice">
+<q>Why are <code>BillingCommands</code> and the payload types written as <code>type</code> aliases rather than <code>interface</code>s?</q>
+<option>Interfaces cannot have string keys</option>
+<option correct>Helpers such as <code>CommandOf</code> in <code>@zudojs/cqrs</code> and <code>EventUnion</code> in <code>@zudojs/events</code> require <code>Record&lt;string, unknown&gt;</code>, which an interface does not satisfy because it has no index signature</option>
+<option>Type aliases are faster at runtime</option>
+<option>Interfaces cannot be exported</option>
+<explain><p>An object type alias is assignable to <code>Record&lt;string, unknown&gt;</code>; an interface is not, since it could be extended with more properties later. It is a small rule that saves a confusing error.</p></explain>
+</question>
+
+<question id="td-execute-claim" type="output">
+<q>The raw <code>@zudojs/cqrs</code> bus takes the result type as a type argument. What does this print?</q>
+<code file="claim.ts">
+import { createCommandBus } from "@zudojs/cqrs";
+import type { CommandOf } from "@zudojs/cqrs";
+
+type PlaceOrder = CommandOf<"PlaceOrder", { productId: string }>;
+const bus = createCommandBus();
+bus.register<PlaceOrder, { orderId: string }>("PlaceOrder", (command) => ({ orderId: `ord_for_${command.productId}` }));
+
+const claimed = await bus.execute<PlaceOrder, number>({ type: "PlaceOrder", productId: "prd_pro-monthly" });
+console.log(typeof claimed, claimed);
+</code>
+<option correct>object { orderId: 'ord_for_prd_pro-monthly' }</option>
+<option>number NaN</option>
+<option>It does not compile</option>
+<option>number 0</option>
+<explain><p>The <code>number</code> in <code>execute&lt;PlaceOrder, number&gt;</code> is a claim nothing checks, so TypeScript believes <code>claimed</code> is a number while it is an object. The lesson's typed layer takes the result type from the command map instead.</p></explain>
+</question>
+
+<question id="td-typed-bus-why" type="choice">
+<q>What does the lesson's <code>Handlers&lt;BillingCommands&gt;</code> mapped type turn into a compile error that the raw bus only reports at runtime?</q>
+<option>A slow handler</option>
+<option correct>A command in the map without a handler (the raw bus throws <code>CommandHandlerNotFoundError</code> when it is executed)</option>
+<option>A handler that throws</option>
+<option>A duplicate event subscription</option>
+<explain><p>A mapped type over the command map has one required key per command. Leave one out, or return the wrong result, and the handler table does not compile.</p></explain>
+</question>
+
+<question id="td-send-output" type="output">
+<q>This is a miniature of the lesson's typed layer. What does it print?</q>
+<code file="typed-send.ts">
+import { createCommandBus } from "@zudojs/cqrs";
+
+type Commands = {
+  PlaceOrder: { request: { productId: string }; result: { orderId: string } };
+  CancelOrder: { request: { orderId: string }; result: { cancelled: true } };
+};
+type Handlers = { [K in keyof Commands]: (request: { type: K } & Commands[K]["request"]) => Promise<Commands[K]["result"]> };
+
+function typedCommands(handlers: Handlers) {
+  const raw = createCommandBus();
+  for (const type of Object.keys(handlers) as (keyof Commands)[]) raw.register(type, handlers[type] as never);
+  return {
+    send: <K extends keyof Commands>(type: K, request: Commands[K]["request"]): Promise<Commands[K]["result"]> =>
+      raw.execute({ ...request, type }),
+  };
+}
+
+const commands = typedCommands({
+  PlaceOrder: async ({ productId }) => ({ orderId: `ord_${productId.length}` }),
+  CancelOrder: async () => ({ cancelled: true }),
+});
+console.log(await commands.send("PlaceOrder", { productId: "prd_pro" }), await commands.send("CancelOrder", { orderId: "ord_7" }));
+</code>
+<option correct>{ orderId: 'ord_7' } { cancelled: true }</option>
+<option>{ orderId: 'ord_prd_pro' } { cancelled: true }</option>
+<option>undefined undefined</option>
+<option>{ orderId: 'ord_7' } undefined</option>
+<explain><p><code>"prd_pro"</code> has 7 characters. <code>send</code>'s name chooses both the request type and the result type from the map, and the raw bus still does the routing at runtime.</p></explain>
+</question>
+
+<question id="td-events-claim" type="choice">
+<q>With raw <code>@zudojs/events</code>, <code>bus.on&lt;Event&lt;OrderPaid&gt;&gt;("stock.low", handler)</code> compiles. Why, and what does the lesson's <code>typedEvents</code> change?</q>
+<option>It does not compile</option>
+<option correct>The type argument is not connected to the name, so it is only a claim; <code>typedEvents&lt;BillingEvents&gt;</code> takes the payload type from the map entry for the name you pass</option>
+<option>The bus checks payloads at runtime</option>
+<option>Event names are types in <code>@zudojs/events</code></option>
+<explain><p>A bus whose names are runtime strings (so wildcards and plugins work) cannot know every payload. A thin layer over a type-level map restores the connection without giving up the runtime features.</p></explain>
+</question>
+
+<question id="td-typed-events-output" type="output">
+<q>What does this typed event layer print?</q>
+<code file="typed-events.ts">
+import { createEventBus } from "@zudojs/events";
+import type { Event } from "@zudojs/events";
+
+type BillingEvents = {
+  "order.paid": { orderId: string; total: number };
+  "order.placed": { orderId: string };
+};
+
+const raw = createEventBus();
+const events = {
+  on<K extends keyof BillingEvents & string>(type: K, handler: (event: Event<BillingEvents[K]>) => void) {
+    raw.on<Event<BillingEvents[K]>>(type, handler);
+  },
+  publish<K extends keyof BillingEvents & string>(type: K, payload: BillingEvents[K]) {
+    return raw.publishEvent({ type, payload });
+  },
+};
+
+events.on("order.paid", (event) => console.log(`paid ${event.payload.orderId}: ${event.payload.total / 100} naira`));
+events.on("order.placed", (event) => console.log(`placed ${event.payload.orderId}`));
+await events.publish("order.placed", { orderId: "ord_1" });
+const result = await events.publish("order.paid", { orderId: "ord_1", total: 500000 });
+console.log(result.handlerCount);
+</code>
+<option correct>placed ord_1
+paid ord_1: 5000 naira
+1</option>
+<option>placed ord_1
+paid ord_1: 500000 naira
+2</option>
+<option>paid ord_1: 5000 naira
+placed ord_1
+1</option>
+<option>placed ord_1
+paid ord_1: 5000 naira
+2</option>
+<explain><p>Each publish reaches only the handlers for its name, so the <code>order.paid</code> publish ran one handler. Inside the handler, <code>event.payload.total</code> is typed from the map; reading <code>event.payload.amount</code> would not compile.</p></explain>
+</question>
+
+<question id="td-ports" type="choice">
+<q>Why do the handlers depend on <code>OrderRepository</code> (an interface) instead of <code>MemoryOrders</code> or a PostgreSQL class?</q>
+<option>Interfaces are faster</option>
+<option correct>So the handlers work unchanged with the in-memory store in tests and the database in production; only the composition root decides which one is used</option>
+<option>Classes cannot be imported into handlers</option>
+<option>Because the container only accepts interfaces</option>
+<explain><p>A port says what the handler needs, not how it is done. The token for the port is what ties a concrete implementation to it at one place.</p></explain>
+</question>
+
+<question id="td-token" type="output">
+<q>What does this print?</q>
+<code file="token.ts">
+import { createContainer, createToken } from "@zudojs/container";
+
+interface Clock {
+  now(): string;
+}
+const CLOCK = createToken<Clock>("Clock");
+
+const container = createContainer();
+container.registerValue(CLOCK, { now: () => "2026-09-24T09:00:00.000Z" });
+const clock = container.resolve(CLOCK);
+console.log(clock.now().slice(0, 10), container.has(createToken<Clock>("Clock")));
+</code>
+<option correct>2026-09-24 false</option>
+<option>2026-09-24 true</option>
+<option>undefined false</option>
+<option>It throws RegistrationNotFoundError</option>
+<explain><p><code>createToken&lt;Clock&gt;</code> makes <code>resolve(CLOCK)</code> return a <code>Clock</code>. Every <code>createToken</code> call makes a new, unique token, even with the same name, which is why the lesson creates all tokens once in <code>ports.ts</code>.</p></explain>
+</question>
+
+<question id="td-register-factory" type="choice">
+<q>What does <code>registerFactory(TOKEN, (orders, clock) =&gt; …, [ORDERS, CLOCK])</code> check at compile time?</q>
+<option>Nothing; the inject list is only used at runtime</option>
+<option correct>The factory's parameter types come from the tokens in the inject list, in order, so tokens in the wrong order or of the wrong type are a compile error</option>
+<option>That every token is registered</option>
+<option>That the factory is only called once</option>
+<explain><p>Whether each token is <em>registered</em> is still a runtime question. <code>registerClass</code> with an <code>inject</code> option is not checked against the constructor, which is why the lesson uses factories.</p></explain>
+</question>
+
+<question id="td-config" type="output">
+<q>Environment values are strings. What does this config schema produce?</q>
+<code file="config.ts">
+import { schema } from "@zudojs/schema";
+
+const BillingConfig = schema.object({
+  currency: schema.enum(["NGN"] as const),
+  pro_plan_price: schema.coerce.number().int().min(100),
+});
+
+console.log(BillingConfig.parse({ currency: "NGN", pro_plan_price: "500000" }));
+const bad = BillingConfig.safeParse({ currency: "NGN", pro_plan_price: "5000.50" });
+console.log(bad.success ? "ok" : bad.issues.map((i) => `${i.path.join(".")}: ${i.message}`));
+</code>
+<option correct>{ currency: 'NGN', pro_plan_price: 500000 }
+[ 'pro_plan_price: Expected integer, received 5000.5' ]</option>
+<option>{ currency: 'NGN', pro_plan_price: '500000' }
+ok</option>
+<option>{ currency: 'NGN', pro_plan_price: 500000 }
+ok</option>
+<option>{ currency: 'NGN', pro_plan_price: 500000 }
+[ 'pro_plan_price: Cannot coerce string to number' ]</option>
+<explain><p><code>coerce</code> turns the string into a number, and <code>int()</code> refuses a fraction, so a price with kobo in the wrong unit stops the app at start-up. <code>Infer</code> then types the config for the code that reads it.</p></explain>
+</question>
+
+<question id="td-composition-root" type="choice">
+<q>What is the composition root in the billing module?</q>
+<option>The <code>contracts.ts</code> file</option>
+<option correct><code>createBillingContainer</code>: the one function that chooses implementations for every port and wires the buses, so no handler builds its own dependencies</option>
+<option>The first handler that runs</option>
+<option>The database's root user</option>
+<explain><p>One place builds everything. Swapping the clock for the real one, or the memory stores for PostgreSQL, changes only this function.</p></explain>
+</question>
+
+<question id="td-idempotent-webhook" type="choice">
+<q>The provider sends the same "charge.success" webhook twice. What does <code>RecordPayment</code> do the second time, and why?</q>
+<option>Throws <code>ORDER_NOT_PENDING</code>, because the order is already paid</option>
+<option correct>Returns the already-paid order: the provider reference matches the recorded payment, so a retry is harmless and the provider gets a 200</option>
+<option>Records a second payment</option>
+<option>Refunds the first payment</option>
+<explain><p>Providers retry until they get a success. Answering a genuine retry with an error would make them retry forever; a different payment for the same paid order is still refused with 409.</p></explain>
+</question>
+
+<question id="td-not-your-order" type="choice">
+<q>Why does <code>GetOrder</code> answer <code>ORDER_NOT_FOUND</code> (404) when Bola asks for Ada's order, instead of 403?</q>
+<option>403 does not exist</option>
+<option correct>A 403 would confirm the order exists; answering "not found" reveals nothing about other users' orders</option>
+<option>Because Bola is not logged in</option>
+<option>Because orders cannot be shared</option>
+<explain><p>For resources identified by id, "not found" for anything the caller may not see avoids leaking existence. The rule is enforced in the query handler, where the user id is known.</p></explain>
+</question>
+
+<question id="td-api-result" type="choice">
+<q>The routes return <code>ApiResult&lt;T&gt;</code>, a union of <code>{ ok: true; status: 200 | 201; body: T }</code> and <code>{ ok: false; status: number; body: { error } }</code>. What does that prevent?</q>
+<option>Slow responses</option>
+<option correct>Returning a success without a body of the right type, or an error without a code and message</option>
+<option>All runtime errors</option>
+<option>Unauthorised requests</option>
+<explain><p>A union of the two response shapes lets the compiler check each branch of a route, and <code>ok</code> lets callers narrow to the right one.</p></explain>
+</question>
+
+<question id="td-expose" type="choice">
+<q>In the lesson's <code>failure()</code> helper, which errors are sent to the client with their own message?</q>
+<option>Every error, so clients can debug</option>
+<option correct>Only <code>BaseError</code>s marked <code>expose</code> with a status below 500; everything else becomes a generic 500</option>
+<option>Only <code>TypeError</code>s</option>
+<option>None; every error is a 500</option>
+<explain><p>Expected failures (bad input, not found, conflicts) are meant for the client. Anything else is a bug whose message may contain internals, so the client gets a generic message and your logs get the details.</p></explain>
+</question>
+
+<question id="td-ts-expect-error" type="choice">
+<q>What happens to a <code>// @ts-expect-error</code> type test when a refactor accidentally makes the line below it compile?</q>
+<option>Nothing, the comment is ignored</option>
+<option correct>TypeScript reports "Unused '@ts-expect-error' directive" as an error, so the build fails and you learn the guarantee disappeared</option>
+<option>The line is deleted automatically</option>
+<option>The test passes silently</option>
+<explain><p>That is what makes it a test: it passes while the error exists and fails when it stops existing.</p></explain>
+</question>
+
+<question id="td-types-erased" type="choice">
+<q>Which statement about types at runtime is true?</q>
+<option>TypeScript checks JSON request bodies against their types</option>
+<option correct>Types are erased; data from requests, rows, the environment and messages is unchecked until a schema or parse function checks it</option>
+<option>Branded ids are validated automatically when they are created with <code>as</code></option>
+<option>A <code>switch</code> with <code>assertNever</code> cannot fail at runtime</option>
+<explain><p>Compile-time and runtime checks cover different ground. Every boundary with the outside world needs a runtime check that produces the typed value.</p></explain>
+</question>
+
+<question id="td-event-versioning" type="choice">
+<q><code>order.paid</code> events are stored and replayed by another service. You need to rename <code>total</code> to <code>amount</code>. What is the safe way?</q>
+<option>Rename the field in <code>BillingEvents</code>; the compiler updates everything</option>
+<option correct>Keep <code>order.paid</code> as it is and publish a new event name (for example <code>order.paid.v2</code>) with the new shape alongside it until every consumer has moved</option>
+<option>Change the field and ask consumers to redeploy at the same second</option>
+<option>Delete old events from the store</option>
+<option>Make every field <code>any</code></option>
+<explain><p>The compiler only sees the code of this build. Stored events and other services are outside it, so a contract that leaves your process must evolve compatibly.</p></explain>
+</question>
+
+<question id="td-as-audit" type="choice">
+<q>In a code review of a typed module, where is an <code>as</code> acceptable?</q>
+<option>Wherever the compiler complains</option>
+<option>In every repository, to turn rows into entities</option>
+<option correct>In a small number of places, each directly after the check or registration that makes it true, with the reason visible</option>
+<option>Never, not even in parse functions</option>
+<explain><p>Every <code>as</code> is a claim the compiler accepts without proof. Keeping them few and next to their proof is what keeps the rest of the types honest.</p></explain>
+</question>
+
+<question id="td-code-brand" type="code" file="order-id.ts">
+<q><p>Write <code>parseOrderId(value: unknown): OrderId</code>, where <code>OrderId</code> is <code>Brand&lt;string, "OrderId"&gt;</code> from <code>@zudojs/constants</code>. Accept only strings that match <code>/^ord_[0-9a-f]{12}$/</code>; otherwise throw <code>ValidationError("Not an order id")</code> from <code>@zudojs/errors</code>.</p></q>
+<starter>
+import type { Brand } from "@zudojs/constants";
+import { ValidationError } from "@zudojs/errors";
+
+type OrderId = Brand<string, "OrderId">;
+
+function parseOrderId(value: unknown): OrderId {
+  // your code here
+  return value as OrderId;
+}
+
+for (const raw of ["ord_000000000001", "ord_1", 42, "ORD_000000000001"]) {
+  try {
+    console.log("ok", parseOrderId(raw));
+  } catch (error) {
+    if (error instanceof ValidationError) console.log(error.statusCode, error.message);
+  }
+}
+</starter>
+<solution>
+import type { Brand } from "@zudojs/constants";
+import { ValidationError } from "@zudojs/errors";
+
+type OrderId = Brand<string, "OrderId">;
+
+function parseOrderId(value: unknown): OrderId {
+  if (typeof value !== "string" || !/^ord_[0-9a-f]{12}$/.test(value)) {
+    throw new ValidationError("Not an order id");
+  }
+  return value as OrderId;
+}
+
+for (const raw of ["ord_000000000001", "ord_1", 42, "ORD_000000000001"]) {
+  try {
+    console.log("ok", parseOrderId(raw));
+  } catch (error) {
+    if (error instanceof ValidationError) console.log(error.statusCode, error.message);
+  }
+}
+</solution>
+<expected>
+ok ord_000000000001
+400 Not an order id
+400 Not an order id
+400 Not an order id
+</expected>
+<explain><p>The check comes first and the <code>as</code> second, in one function that is the only way to make an <code>OrderId</code>. A <code>ValidationError</code> carries 400, so a route can pass it straight to the client.</p></explain>
+</question>
+
+<question id="td-code-format" type="code" file="naira.ts">
+<q><p>Write <code>formatNaira(kobo)</code> for a whole number of kobo: <code>₦</code>, the naira with commas every three digits, a dot and two digits of kobo. Do it with integer arithmetic, without dividing into a float for the kobo part.</p></q>
+<starter>
+function formatNaira(kobo: number): string {
+  // your code here
+  return "";
+}
+
+console.log(formatNaira(500000), formatNaira(330), formatNaira(123456789), formatNaira(5));
+</starter>
+<solution>
+function formatNaira(kobo: number): string {
+  const naira = Math.floor(kobo / 100).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `₦${naira}.${String(kobo % 100).padStart(2, "0")}`;
+}
+
+console.log(formatNaira(500000), formatNaira(330), formatNaira(123456789), formatNaira(5));
+</solution>
+<expected>
+₦5,000.00 ₦3.30 ₦1,234,567.89 ₦0.05
+</expected>
+<explain><p><code>Math.floor(kobo / 100)</code> gives the naira and <code>kobo % 100</code> the rest, both exact integers. The regular expression inserts a comma before every group of three digits that is followed only by complete groups.</p></explain>
+</question>
+
+<question id="td-code-transition" type="code" file="cancel.ts">
+<q><p>Finish <code>cancel(order: PendingOrder, reason: string): CancelledOrder</code>, then make <code>cancelIfPending(order: Order, reason)</code> call it only for a pending order and return the order unchanged otherwise. Print the resulting statuses.</p></q>
+<starter>
+type PendingOrder = { readonly id: string; readonly status: "pending" };
+type PaidOrder = { readonly id: string; readonly status: "paid"; readonly paidAt: string };
+type CancelledOrder = { readonly id: string; readonly status: "cancelled"; readonly reason: string };
+type Order = PendingOrder | PaidOrder | CancelledOrder;
+
+function cancel(order: PendingOrder, reason: string): CancelledOrder {
+  // your code here
+  return { id: order.id, status: "cancelled", reason: "" };
+}
+
+function cancelIfPending(order: Order, reason: string): Order {
+  // your code here
+  return order;
+}
+
+const orders: Order[] = [{ id: "ord_1", status: "pending" }, { id: "ord_2", status: "paid", paidAt: "2026-09-24" }];
+for (const order of orders) {
+  const result = cancelIfPending(order, "Changed my mind");
+  console.log(result.id, result.status, result.status === "cancelled" ? result.reason : "-");
+}
+</starter>
+<solution>
+type PendingOrder = { readonly id: string; readonly status: "pending" };
+type PaidOrder = { readonly id: string; readonly status: "paid"; readonly paidAt: string };
+type CancelledOrder = { readonly id: string; readonly status: "cancelled"; readonly reason: string };
+type Order = PendingOrder | PaidOrder | CancelledOrder;
+
+function cancel(order: PendingOrder, reason: string): CancelledOrder {
+  return { ...order, status: "cancelled", reason };
+}
+
+function cancelIfPending(order: Order, reason: string): Order {
+  if (order.status !== "pending") return order;
+  return cancel(order, reason);
+}
+
+const orders: Order[] = [{ id: "ord_1", status: "pending" }, { id: "ord_2", status: "paid", paidAt: "2026-09-24" }];
+for (const order of orders) {
+  const result = cancelIfPending(order, "Changed my mind");
+  console.log(result.id, result.status, result.status === "cancelled" ? result.reason : "-");
+}
+</solution>
+<expected>
+ord_1 cancelled Changed my mind
+ord_2 paid -
+</expected>
+<explain><p>After <code>if (order.status !== "pending") return order;</code>, TypeScript has narrowed <code>order</code> to <code>PendingOrder</code>, so <code>cancel(order, …)</code> compiles there and nowhere else. Calling it with the paid order would be a compile error.</p></explain>
+</question>
+
+<question id="td-code-exhaustive" type="code" file="badge.ts">
+<q><p>Write <code>badge</code> as a <code>Record&lt;Status, string&gt;</code> with <code>grey</code> for pending, <code>green</code> for paid, <code>red</code> for cancelled and <code>blue</code> for refunded, and print the badge of each status in <code>all</code>.</p></q>
+<starter>
+type Status = "pending" | "paid" | "cancelled" | "refunded";
+const all: Status[] = ["pending", "paid", "cancelled", "refunded"];
+
+// your code here
+
+console.log("replace this line");
+</starter>
+<solution>
+type Status = "pending" | "paid" | "cancelled" | "refunded";
+const all: Status[] = ["pending", "paid", "cancelled", "refunded"];
+
+const badge: Record<Status, string> = { pending: "grey", paid: "green", cancelled: "red", refunded: "blue" };
+
+console.log(all.map((status) => `${status}=${badge[status]}`).join(" "));
+</solution>
+<expected>
+pending=grey paid=green cancelled=red refunded=blue
+</expected>
+<explain><p>Leave out <code>refunded</code> and the record does not compile. That is the lookup-table form of an exhaustive check.</p></explain>
+</question>
+
+<question id="td-code-handlers" type="code" file="query-bus.ts">
+<q><p>Register a <code>GetOrder</code> handler on a <code>@zudojs/cqrs</code> query bus that returns <code>{ id, status }</code> from the <code>orders</code> map, and throw <code>NotFoundError</code> from <code>@zudojs/errors</code> for an unknown id. Execute it for <code>ord_1</code> and <code>ord_9</code>.</p></q>
+<starter>
+import { createQueryBus } from "@zudojs/cqrs";
+import type { QueryOf } from "@zudojs/cqrs";
+import { NotFoundError } from "@zudojs/errors";
+
+type GetOrder = QueryOf<"GetOrder", { orderId: string }>;
+type OrderView = { id: string; status: string };
+const orders = new Map([["ord_1", { id: "ord_1", status: "paid", internalNote: "VIP" }]]);
+
+const queries = createQueryBus();
+// your code here
+
+for (const orderId of ["ord_1", "ord_9"]) {
+  try {
+    console.log(await queries.execute<GetOrder, OrderView>({ type: "GetOrder", orderId }));
+  } catch (error) {
+    if (error instanceof NotFoundError) console.log(error.statusCode, error.message);
+  }
+}
+</starter>
+<solution>
+import { createQueryBus } from "@zudojs/cqrs";
+import type { QueryOf } from "@zudojs/cqrs";
+import { NotFoundError } from "@zudojs/errors";
+
+type GetOrder = QueryOf<"GetOrder", { orderId: string }>;
+type OrderView = { id: string; status: string };
+const orders = new Map([["ord_1", { id: "ord_1", status: "paid", internalNote: "VIP" }]]);
+
+const queries = createQueryBus();
+queries.register<GetOrder, OrderView>("GetOrder", (query) => {
+  const order = orders.get(query.orderId);
+  if (!order) throw new NotFoundError(`Order ${query.orderId} not found`);
+  return { id: order.id, status: order.status };
+});
+
+for (const orderId of ["ord_1", "ord_9"]) {
+  try {
+    console.log(await queries.execute<GetOrder, OrderView>({ type: "GetOrder", orderId }));
+  } catch (error) {
+    if (error instanceof NotFoundError) console.log(error.statusCode, error.message);
+  }
+}
+</solution>
+<expected>
+{ id: 'ord_1', status: 'paid' }
+404 Order ord_9 not found
+</expected>
+<explain><p>The handler returns a view with named fields, so <code>internalNote</code> stays private, and the <code>NotFoundError</code> comes out of <code>execute</code> unchanged with its 404. Here the result type argument on <code>execute</code> is still a claim; the lesson's typed layer takes it from the query map.</p></explain>
+</question>
+
+<question id="td-code-failure" type="code" file="failure.ts">
+<q><p>Finish <code>failure(error)</code>. A <code>BaseError</code> from <code>@zudojs/errors</code> whose <code>expose</code> is true and whose <code>statusCode</code> is below 500 becomes <code>{ status, code, message }</code> from the error; anything else becomes <code>{ status: 500, code: "ERR_INTERNAL", message: "Something went wrong" }</code>.</p></q>
+<starter>
+import { BaseError, ConflictError, ValidationError } from "@zudojs/errors";
+
+function failure(error: unknown): { status: number; code: string; message: string } {
+  // your code here
+  return { status: 0, code: "", message: "" };
+}
+
+console.log(failure(new ValidationError("Not a product id")));
+console.log(failure(new ConflictError("Order ord_1 is paid")));
+console.log(failure(new Error("connect ECONNREFUSED 10.0.0.5:5432")));
+console.log(failure("a string was thrown"));
+</starter>
+<solution>
+import { BaseError, ConflictError, ValidationError } from "@zudojs/errors";
+
+function failure(error: unknown): { status: number; code: string; message: string } {
+  if (error instanceof BaseError && error.expose && error.statusCode < 500) {
+    return { status: error.statusCode, code: error.code, message: error.message };
+  }
+  return { status: 500, code: "ERR_INTERNAL", message: "Something went wrong" };
+}
+
+console.log(failure(new ValidationError("Not a product id")));
+console.log(failure(new ConflictError("Order ord_1 is paid")));
+console.log(failure(new Error("connect ECONNREFUSED 10.0.0.5:5432")));
+console.log(failure("a string was thrown"));
+</solution>
+<expected>
+{
+  status: 400,
+  code: 'ERR_VALIDATION_FAILED',
+  message: 'Not a product id'
+}
+{ status: 409, code: 'ERR_CONFLICT', message: 'Order ord_1 is paid' }
+{ status: 500, code: 'ERR_INTERNAL', message: 'Something went wrong' }
+{ status: 500, code: 'ERR_INTERNAL', message: 'Something went wrong' }
+</expected>
+<explain><p>The database error's message contains an internal address, which must not reach a client. Only errors designed for clients (<code>expose</code>, a 4xx status) pass through; the rest belong in your logs.</p></explain>
+</question>
+
+<question id="td-code-event-map" type="code" file="event-map.ts">
+<q><p>Finish a tiny typed event bus over the map <code>Events</code>. <code>on(type, handler)</code> stores the handler under its type; <code>emit(type, payload)</code> calls every handler of that type with the payload and returns how many ran.</p></q>
+<starter>
+type Events = {
+  "order.paid": { orderId: string; total: number };
+  "order.placed": { orderId: string };
+};
+
+const handlers = new Map<string, ((payload: never) => void)[]>();
+
+function on<K extends keyof Events>(type: K, handler: (payload: Events[K]) => void): void {
+  // your code here
+}
+
+function emit<K extends keyof Events>(type: K, payload: Events[K]): number {
+  // your code here
+  return 0;
+}
+
+on("order.paid", (payload) => console.log(`e-mail: ₦${payload.total / 100} received for ${payload.orderId}`));
+on("order.paid", (payload) => console.log(`in-app: ${payload.orderId} is paid`));
+console.log(emit("order.paid", { orderId: "ord_1", total: 500000 }), emit("order.placed", { orderId: "ord_2" }));
+</starter>
+<solution>
+type Events = {
+  "order.paid": { orderId: string; total: number };
+  "order.placed": { orderId: string };
+};
+
+const handlers = new Map<string, ((payload: never) => void)[]>();
+
+function on<K extends keyof Events>(type: K, handler: (payload: Events[K]) => void): void {
+  const list = handlers.get(type) ?? [];
+  list.push(handler as (payload: never) => void);
+  handlers.set(type, list);
+}
+
+function emit<K extends keyof Events>(type: K, payload: Events[K]): number {
+  const list = (handlers.get(type) ?? []) as ((payload: Events[K]) => void)[];
+  for (const handler of list) handler(payload);
+  return list.length;
+}
+
+on("order.paid", (payload) => console.log(`e-mail: ₦${payload.total / 100} received for ${payload.orderId}`));
+on("order.paid", (payload) => console.log(`in-app: ${payload.orderId} is paid`));
+console.log(emit("order.paid", { orderId: "ord_1", total: 500000 }), emit("order.placed", { orderId: "ord_2" }));
+</solution>
+<expected>
+e-mail: ₦5000 received for ord_1
+in-app: ord_1 is paid
+2 0
+</expected>
+<explain><p>The map decides the payload type for each name, so <code>payload.amount</code> or <code>emit("order.paid", { orderId: "ord_1" })</code> would not compile. The two casts sit inside the bus, where storing handlers of different types in one map makes them unavoidable; callers never see them.</p></explain>
+</question>
+
+<question id="td-code-status-table" type="code" file="status-table.ts">
+<q><p>Write <code>STATUS</code> for the codes in <code>Code</code> with <code>as const satisfies Record&lt;Code, number&gt;</code>: 404 for <code>ORDER_NOT_FOUND</code>, 409 for <code>ORDER_NOT_PENDING</code>, 422 for <code>AMOUNT_MISMATCH</code>. Then print the status of every code in <code>codes</code>.</p></q>
+<starter>
+type Code = "ORDER_NOT_FOUND" | "ORDER_NOT_PENDING" | "AMOUNT_MISMATCH";
+const codes: Code[] = ["ORDER_NOT_FOUND", "ORDER_NOT_PENDING", "AMOUNT_MISMATCH"];
+
+// your code here
+
+console.log("replace this line");
+</starter>
+<solution>
+type Code = "ORDER_NOT_FOUND" | "ORDER_NOT_PENDING" | "AMOUNT_MISMATCH";
+const codes: Code[] = ["ORDER_NOT_FOUND", "ORDER_NOT_PENDING", "AMOUNT_MISMATCH"];
+
+const STATUS = {
+  ORDER_NOT_FOUND: 404,
+  ORDER_NOT_PENDING: 409,
+  AMOUNT_MISMATCH: 422,
+} as const satisfies Record<Code, number>;
+
+console.log(codes.map((code) => `${code}:${STATUS[code]}`).join(" "));
+</solution>
+<expected>
+ORDER_NOT_FOUND:404 ORDER_NOT_PENDING:409 AMOUNT_MISMATCH:422
+</expected>
+<explain><p>Remove a line from the table and <code>satisfies</code> reports the missing code; add a code to the union and the table must follow. The values keep their literal types, so a function can promise to return <code>404 | 409 | 422</code>.</p></explain>
+</question>

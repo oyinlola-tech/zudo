@@ -1,0 +1,746 @@
+<question id="dbi-read-order" type="choice">
+<q>In which order should you read an <code>explain</code> plan?</q>
+<option>Top to bottom: the first line runs first</option>
+<option correct>From the most indented node outwards: inner nodes produce rows for the nodes above them</option>
+<option>Bottom to top, ignoring indentation</option>
+<option>Only the first line matters</option>
+<explain><p>A plan is a tree. Leaves such as scans produce rows, and each parent (Sort, Limit, Join) consumes its children's rows. The top line is the last step, which returns the result.</p></explain>
+</question>
+
+<question id="dbi-rows-removed" type="choice">
+<q>A plan shows <code>Seq Scan on orders (actual rows=10 loops=1)</code> with <code>Rows Removed by Filter: 99990</code>. What does it tell you?</q>
+<option>The query deleted 99,990 rows</option>
+<option correct>PostgreSQL read 100,000 rows to return 10: a selective condition with no usable index</option>
+<option>The table has 10 rows</option>
+<option>The index was used 10 times</option>
+<explain><p>The scan checked every row against the filter and threw almost all of them away. Work proportional to the table, for an answer of 10 rows, is the classic sign of a missing index.</p></explain>
+</question>
+
+<question id="dbi-btree-shape" type="choice">
+<q>Why does a lookup in a B-tree index on 100,000 rows read only two or three index pages?</q>
+<option>Because the index is cached in JavaScript memory</option>
+<option correct>Because each page holds hundreds of sorted keys, so the tree is very shallow and a lookup follows one page per level</option>
+<option>Because B-trees store only the first 1,000 values</option>
+<option>Because PostgreSQL reads the index backwards</option>
+<explain><p>With hundreds of entries per page, one level narrows the search by a factor of hundreds. The depth grows with the logarithm of the row count, so even billions of rows need only a few levels.</p></explain>
+</question>
+
+<question id="dbi-leftmost" type="choice">
+<q>You have an index on <code>(customer_id, placed_at)</code>. Which query can use it efficiently?</q>
+<option><code>where placed_at &gt;= '2026-02-01'</code></option>
+<option correct><code>where customer_id = 42 and placed_at &gt;= '2026-02-01'</code></option>
+<option><code>where status = 'pending'</code></option>
+<option><code>where total_kobo &gt; 500000</code></option>
+<explain><p>A composite index is sorted by its first column, then by the second within each first value. Conditions on a leftmost prefix (customer_id, or customer_id plus placed_at) use it; a condition on placed_at alone finds matches scattered through the whole index.</p></explain>
+</question>
+
+<question id="dbi-column-order" type="choice">
+<q>The query is <code>where customer_id = $1 and placed_at &gt;= $2 order by placed_at</code>. Which index fits best?</q>
+<option><code>(placed_at, customer_id)</code></option>
+<option correct><code>(customer_id, placed_at)</code></option>
+<option><code>(placed_at)</code> and <code>(customer_id)</code> as two separate indexes</option>
+<option>No index: ranges cannot use indexes</option>
+<explain><p>Equality columns first, then the range or sort column. Inside the entries for one customer, the index is ordered by placed_at, so the range is one contiguous stretch and already sorted.</p></explain>
+</question>
+
+<question id="dbi-no-sort" type="choice">
+<q>After adding an index on <code>(customer_id, placed_at desc)</code>, the "My orders" plan loses its Sort node. Why does that matter with <code>limit 5</code>?</q>
+<option>It does not matter: sorting 10 rows is free</option>
+<option correct>The Index Scan returns rows already in order, so the Limit stops after 5 rows instead of fetching and sorting all of the customer's orders</option>
+<option>Without a Sort node, the results are not ordered</option>
+<option>Sort nodes cannot be combined with Limit</option>
+<explain><p>For a customer with 5,000 orders, a Sort must fetch all 5,000 first. An index in the right order lets the query stop after the first 5, so the cost no longer depends on how many orders the customer has.</p></explain>
+</question>
+
+<question id="dbi-selectivity" type="choice">
+<q>90% of orders have <code>status = 'paid'</code>. There is an index on <code>status</code>, yet <code>where status = 'paid'</code> uses a Seq Scan. Why?</q>
+<option>The index is broken and needs <code>reindex</code></option>
+<option>Text columns cannot use B-tree indexes</option>
+<option correct>Fetching 90% of the rows through the index would jump between index and heap for almost every row; reading the table straight through is cheaper</option>
+<option>The planner only uses indexes on integer columns</option>
+<explain><p>Indexes help selective conditions. The planner estimates the matching fraction from statistics and chooses the cheaper plan. For a rare value such as 'cancelled', the same index is used.</p></explain>
+</question>
+
+<question id="dbi-stats" type="choice">
+<q>After a nightly import doubled a table, a query's plan shows <code>rows=120</code> estimated but <code>actual rows=250000</code>. What should you do first?</q>
+<option>Add another index</option>
+<option correct>Run <code>analyze</code> on the table so the planner has current statistics</option>
+<option>Increase the server's memory</option>
+<option>Rewrite the query as a subquery</option>
+<explain><p>Estimates that far from reality mean the statistics are stale, and a plan built on them is probably wrong. Autovacuum analyzes eventually, but after a bulk load you run <code>analyze</code> yourself.</p></explain>
+</question>
+
+<question id="dbi-sargable" type="choice">
+<q>There is a B-tree index on <code>placed_at</code>. Which condition can use it?</q>
+<option><code>where placed_at::date = '2026-02-01'</code></option>
+<option><code>where extract(month from placed_at) = 2</code></option>
+<option correct><code>where placed_at &gt;= '2026-02-01' and placed_at &lt; '2026-02-02'</code></option>
+<option><code>where to_char(placed_at, 'YYYY-MM-DD') = '2026-02-01'</code></option>
+<explain><p>Only the half-open range compares the bare column. The others compute something from the column for every row first, so the index on the column does not match; they would need an index on exactly that expression.</p></explain>
+</question>
+
+<question id="dbi-expression" type="choice">
+<q>A unique index exists on <code>lower(email)</code>. Which lookup uses it?</q>
+<option><code>where email = $1</code></option>
+<option correct><code>where lower(email) = lower($1)</code></option>
+<option><code>where email ilike $1</code></option>
+<option><code>where upper(email) = upper($1)</code></option>
+<explain><p>An expression index serves queries that use exactly the same expression. Write lookups the way the index is defined, or the planner falls back to a Seq Scan.</p></explain>
+</question>
+
+<question id="dbi-partial-use" type="choice">
+<q>An index is defined as <code>on orders (placed_at) where status = 'pending'</code>. When can the planner use it?</q>
+<option>For any query on <code>placed_at</code></option>
+<option correct>Only when the query's conditions imply <code>status = 'pending'</code></option>
+<option>Only for <code>update</code> statements</option>
+<option>Only after <code>vacuum</code></option>
+<explain><p>A partial index contains only the rows matching its condition. A query that might need other rows cannot use it, so the query must include that condition (or one that implies it).</p></explain>
+</question>
+
+<question id="dbi-partial-unique" type="choice">
+<q>Which rule does <code>create unique index on carts (customer_id) where status = 'open'</code> enforce?</q>
+<option>Every customer has exactly one cart</option>
+<option correct>A customer has at most one open cart, but may have any number of checked-out carts</option>
+<option>Carts cannot change status</option>
+<option>Only one customer may have an open cart at a time</option>
+<explain><p>Uniqueness applies only among the rows in the partial index, the open carts. It is also how you keep a value unique among non-deleted rows with soft deletes.</p></explain>
+</question>
+
+<question id="dbi-include" type="choice">
+<q>What does <code>include (total_kobo)</code> add to an index on <code>(customer_id)</code>?</q>
+<option>It sorts the index by total_kobo within each customer</option>
+<option correct>It stores total_kobo in the leaf entries, so queries needing only customer_id and total_kobo can be answered by an index-only scan</option>
+<option>It makes total_kobo unique per customer</option>
+<option>It creates a second index on total_kobo</option>
+<explain><p>Included columns are payload, not part of the key: they do not affect sorting or searching, but they let the index "cover" the query without visiting the heap.</p></explain>
+</question>
+
+<question id="dbi-visibility" type="choice">
+<q>An Index Only Scan shows <code>Heap Fetches: 1440</code> for 1,440 rows. What is going on?</q>
+<option>The index is corrupt</option>
+<option correct>The visibility map does not yet mark those pages as all-visible, so PostgreSQL had to check each row in the heap; vacuum fixes it</option>
+<option>The query returned duplicate rows</option>
+<option>The index does not contain the needed columns</option>
+<explain><p>An index cannot tell whether a row is visible to your transaction. For pages the visibility map marks all-visible, the heap visit is skipped. Right after a bulk load nothing is marked yet; <code>vacuum</code> (or autovacuum) sets the bits.</p></explain>
+</question>
+
+<question id="dbi-fk-index" type="choice">
+<q>Which index does PostgreSQL <em>not</em> create automatically?</q>
+<option>The index behind a primary key</option>
+<option>The index behind a <code>unique</code> constraint</option>
+<option correct>An index on the referencing column of a foreign key, such as <code>order_lines.order_id</code></option>
+<option>None: PostgreSQL indexes every constrained column</option>
+<explain><p>Primary keys and unique constraints need an index to work. A foreign key only needs one on the referenced side, which already has it. The referencing column, the one you join and delete through, is up to you.</p></explain>
+</question>
+
+<question id="dbi-write-cost" type="choice">
+<q>A table gets four extra indexes. What happens to inserts?</q>
+<option>Nothing: indexes only affect reads</option>
+<option correct>Every insert also updates four more B-trees and writes more WAL, so inserts get slower and the database grows</option>
+<option>Inserts get faster because rows are found faster</option>
+<option>Inserts are refused until the indexes are rebuilt</option>
+<explain><p>In the lesson, four indexes roughly tripled the WAL records for the same 20,000 rows, and the indexes were larger than the table. Every index is paid for on every write.</p></explain>
+</question>
+
+<question id="dbi-hot" type="choice">
+<q>Why can indexing a column like <code>last_seen_at</code>, updated on every request, slow down updates more than you expect?</q>
+<option>Timestamps cannot be indexed</option>
+<option correct>PostgreSQL can often update a row without touching any index (a HOT update), but only when no indexed column changes</option>
+<option>It makes the table read-only</option>
+<option>Each update rebuilds the whole index</option>
+<explain><p>Heap-only tuple (HOT) updates keep the new row version on the same page and skip every index. Changing an indexed column rules that out, so each update now writes to every index on the table.</p></explain>
+</question>
+
+<question id="dbi-concurrently" type="choice">
+<q>Why do migrations on big tables use <code>create index concurrently</code>?</q>
+<option>It builds the index faster</option>
+<option correct>A plain <code>create index</code> blocks writes to the table until it finishes; <code>concurrently</code> builds it without blocking writes, more slowly</option>
+<option>It creates the index on all replicas at once</option>
+<option>It lets the index be created inside a transaction</option>
+<explain><p>The trade is time for availability. It cannot run inside a transaction block, and if it fails it leaves an invalid index to drop and retry.</p></explain>
+</question>
+
+<question id="dbi-total-vs-mean" type="choice">
+<q>In <code>pg_stat_statements</code>, what is the difference between sorting by <code>total_exec_time</code> and by <code>mean_exec_time</code>?</q>
+<option>They always give the same order</option>
+<option correct>Total finds what costs the database most overall (including cheap queries run millions of times); mean finds what makes single requests slow</option>
+<option>Mean includes planning time, total does not</option>
+<option>Total is in seconds, mean in milliseconds, otherwise identical</option>
+<explain><p>A 2 ms query called ten million times a day can cost more than a 3-second report run once. Look at both lists: one for capacity, one for user-facing latency.</p></explain>
+</question>
+
+<question id="dbi-n-plus-one" type="choice">
+<q>In <code>pg_stat_statements</code>, <code>select * from order_lines where order_id = $1</code> is cheap per call but has 2,000,000 calls a day, 50 per page view of the order list. What is the fix?</q>
+<option>An index on <code>order_lines.order_id</code></option>
+<option>A bigger connection pool</option>
+<option correct>Fetch the lines for all orders on the page in one query, with a join or <code>where order_id = any($1)</code></option>
+<option>Cache each query result for one second</option>
+<explain><p>This is the N+1 query problem: one query for the list, then one per row. Each call may already use an index; the cost is the round trips. One set-based query replaces fifty.</p></explain>
+</question>
+
+<question id="dbi-tiny-table" type="choice">
+<q>A plan test runs against a test database with 12 orders, and it fails because the plan uses a Seq Scan although the index exists. What is wrong?</q>
+<option>The index was not created</option>
+<option correct>On a tiny table a Seq Scan really is the fastest plan; plan tests need data of realistic size and shape</option>
+<option>Plan tests can never work</option>
+<option><code>explain (format json)</code> ignores indexes</option>
+<explain><p>Reading one page is cheaper than reading an index page and then a heap page. The planner is right; the test data is unrealistic. Seed the test table with production-like volumes and distributions.</p></explain>
+</question>
+
+<question id="dbi-gin" type="choice">
+<q>Which index type fits "find products whose <code>jsonb</code> attributes contain <code>{"colour": "black"}</code>"?</q>
+<option>B-tree</option>
+<option correct>GIN</option>
+<option>A partial B-tree on <code>colour</code></option>
+<option>Hash</option>
+<explain><p>GIN indexes the elements inside composite values (jsonb keys and values, array elements, words in a document), which is what containment queries (<code>@&gt;</code>) need. B-tree is for ordered scalar values.</p></explain>
+</question>
+
+<question id="dbi-seq-tiny" type="output">
+<q>The table has 3 rows and an index on <code>customer_id</code>. What does this print?</q>
+<code file="tiny.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table orders (id int primary key, customer_id int not null);
+  insert into orders values (1, 7), (2, 8), (3, 7);
+  create index orders_customer_idx on orders (customer_id);
+  analyze orders;
+`);
+const { rows } = await db.query("explain (costs off) select id from orders where customer_id = 7");
+console.log(rows.map((r) => r["QUERY PLAN"]).join("\n"));
+await db.close();
+</code>
+<option correct>Seq Scan on orders
+  Filter: (customer_id = 7)</option>
+<option>Index Scan using orders_customer_idx on orders
+  Index Cond: (customer_id = 7)</option>
+<option>Bitmap Heap Scan on orders
+  Recheck Cond: (customer_id = 7)</option>
+<option>Index Only Scan using orders_customer_idx on orders
+  Index Cond: (customer_id = 7)</option>
+<explain><p>The whole table fits on one page. Reading it directly is cheaper than reading an index page and then that same heap page, so the planner, correctly, ignores the index.</p></explain>
+</question>
+
+<question id="dbi-backward" type="output">
+<q>The index is sorted ascending but the query asks for newest first. What does this print?</q>
+<code file="backward.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table orders (id int primary key, placed_at int not null);
+  insert into orders select n, n from generate_series(1, 50000) as n;
+  create index orders_placed_idx on orders (placed_at);
+  analyze orders;
+`);
+const { rows } = await db.query("explain (costs off) select id from orders order by placed_at desc limit 3");
+console.log(rows.map((r) => r["QUERY PLAN"]).join("\n"));
+await db.close();
+</code>
+<option correct>Limit
+  ->  Index Scan Backward using orders_placed_idx on orders</option>
+<option>Limit
+  ->  Sort
+        Sort Key: placed_at DESC
+        ->  Seq Scan on orders</option>
+<option>Limit
+  ->  Index Scan using orders_placed_idx on orders</option>
+<option>Sort
+  ->  Index Scan Backward using orders_placed_idx on orders</option>
+<explain><p>B-tree leaves are linked in both directions, so a single-column index can be read backwards for <code>desc</code>. The direction only matters in composite indexes with mixed orders, such as <code>(customer_id, placed_at desc)</code> for <code>order by customer_id, placed_at desc</code>.</p></explain>
+</question>
+
+<question id="dbi-second-column" type="output">
+<q>The only index is on <code>(customer_id, placed_at)</code> and there are 5,000 customers. What does this print?</q>
+<code file="second-column.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table orders (id int primary key, customer_id int not null, placed_at int not null);
+  insert into orders select n, n % 5000, n from generate_series(1, 50000) as n;
+  create index orders_customer_placed_idx on orders (customer_id, placed_at);
+  analyze orders;
+`);
+const { rows } = await db.query("explain (costs off) select count(*) from orders where placed_at between 100 and 200");
+console.log(rows.map((r) => r["QUERY PLAN"]).join("\n"));
+await db.close();
+</code>
+<option correct>Aggregate
+  ->  Seq Scan on orders
+        Filter: ((placed_at &gt;= 100) AND (placed_at &lt;= 200))</option>
+<option>Aggregate
+  ->  Index Only Scan using orders_customer_placed_idx on orders
+        Index Cond: ((placed_at &gt;= 100) AND (placed_at &lt;= 200))</option>
+<option>Aggregate
+  ->  Index Scan using orders_pkey on orders</option>
+<option>Aggregate
+  ->  Bitmap Heap Scan on orders
+        Recheck Cond: ((placed_at &gt;= 100) AND (placed_at &lt;= 200))</option>
+<explain><p><code>placed_at</code> is the second column. Its values are spread through the sections of all 5,000 customers, so the index cannot find the range in one place. With so many distinct leading values, even PostgreSQL 18's skip scan is not worth it, and the planner reads the table.</p></explain>
+</question>
+
+<question id="dbi-expression-run" type="output">
+<q>What does this print?</q>
+<code file="expr.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table customers (id int primary key, email text not null);
+  insert into customers select n, 'Customer' || n || '@Example.com' from generate_series(1, 20000) as n;
+  create index customers_email_lower_idx on customers (lower(email));
+  analyze customers;
+`);
+for (const where of ["lower(email) = 'customer7@example.com'", "email = 'Customer7@Example.com'"]) {
+  const { rows } = await db.query(`explain (costs off) select id from customers where ${where}`);
+  console.log(rows[0]["QUERY PLAN"]);
+}
+await db.close();
+</code>
+<option correct>Index Scan using customers_email_lower_idx on customers
+Seq Scan on customers</option>
+<option>Seq Scan on customers
+Seq Scan on customers</option>
+<option>Index Scan using customers_email_lower_idx on customers
+Index Scan using customers_email_lower_idx on customers</option>
+<option>Seq Scan on customers
+Index Scan using customers_email_lower_idx on customers</option>
+<explain><p>The index stores <code>lower(email)</code>, so only a condition on exactly that expression can use it. The bare <code>email</code> condition has no index and scans the table.</p></explain>
+</question>
+
+<question id="dbi-partial-ignored" type="output">
+<q>What does this print?</q>
+<code file="partial.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table orders (id int primary key, status text not null, placed_at int not null);
+  insert into orders select n, case when n % 20 = 0 then 'pending' else 'paid' end, n from generate_series(1, 40000) as n;
+  create index orders_pending_idx on orders (placed_at) where status = 'pending';
+  analyze orders;
+`);
+for (const where of ["status = 'pending' and placed_at < 100", "placed_at < 100"]) {
+  const { rows } = await db.query(`explain (costs off) select id from orders where ${where}`);
+  console.log(rows[0]["QUERY PLAN"]);
+}
+await db.close();
+</code>
+<option correct>Index Scan using orders_pending_idx on orders
+Seq Scan on orders</option>
+<option>Index Scan using orders_pending_idx on orders
+Index Scan using orders_pending_idx on orders</option>
+<option>Seq Scan on orders
+Seq Scan on orders</option>
+<option>Seq Scan on orders
+Index Scan using orders_pending_idx on orders</option>
+<explain><p>The partial index only holds pending orders. The second query also wants paid orders below 100, which are not in the index, so it cannot be used.</p></explain>
+</question>
+
+<question id="dbi-explain-analyze-delete" type="output">
+<q>What does this print?</q>
+<code file="explain-delete.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table carts (id int primary key, abandoned boolean not null);
+  insert into carts select n, n % 4 = 0 from generate_series(1, 100) as n;
+`);
+const count = async () => (await db.query("select count(*)::int as n from carts")).rows[0].n;
+
+await db.exec("explain delete from carts where abandoned");
+const a = await count();
+await db.exec("explain analyze delete from carts where abandoned");
+const b = await count();
+console.log(a, b);
+await db.close();
+</code>
+<option correct>100 75</option>
+<option>100 100</option>
+<option>75 75</option>
+<option>75 50</option>
+<explain><p>Plain <code>explain</code> only plans. <code>explain analyze</code> executes the statement to measure it, so the 25 abandoned carts really were deleted. Wrap it in <code>begin</code> … <code>rollback</code> when you analyze writes.</p></explain>
+</question>
+
+<question id="dbi-index-only-run" type="output">
+<q>What does this print?</q>
+<code file="index-only.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table orders (id int primary key, customer_id int not null, total_kobo int not null);
+  insert into orders select n, n % 1000, n from generate_series(1, 50000) as n;
+  create index orders_customer_total_idx on orders (customer_id) include (total_kobo);
+`);
+await db.exec("vacuum analyze orders");
+const { rows } = await db.query(
+  "explain (analyze, costs off, timing off, summary off, buffers off) select sum(total_kobo) from orders where customer_id = 7");
+console.log(rows.map((r) => r["QUERY PLAN"].trim()).filter((l) => /Scan|Heap Fetches/.test(l)).join("\n"));
+await db.close();
+</code>
+<option correct>->  Index Only Scan using orders_customer_total_idx on orders (actual rows=50.00 loops=1)
+Heap Fetches: 0</option>
+<option>->  Index Scan using orders_customer_total_idx on orders (actual rows=50.00 loops=1)</option>
+<option>->  Index Only Scan using orders_customer_total_idx on orders (actual rows=50.00 loops=1)
+Heap Fetches: 50</option>
+<option>->  Seq Scan on orders (actual rows=50.00 loops=1)</option>
+<explain><p>Both columns the query needs are in the index (one as key, one included), and <code>vacuum</code> marked every page all-visible, so no heap page was read at all.</p></explain>
+</question>
+
+<question id="dbi-idx-scan-count" type="output">
+<q>What does this print?</q>
+<code file="usage.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table orders (id int primary key, customer_id int not null, total_kobo int not null);
+  insert into orders select n, n % 1000, n from generate_series(1, 20000) as n;
+  create index orders_customer_idx on orders (customer_id);
+  create index orders_total_idx on orders (total_kobo);
+  analyze orders;
+`);
+for (let c = 1; c <= 3; c++) await db.query("select id from orders where customer_id = $1", [c]);
+await db.query("select id from orders where id = 5");
+await db.query("select pg_stat_force_next_flush()");
+const { rows } = await db.query("select indexrelname, idx_scan from pg_stat_user_indexes order by 1");
+console.log(rows.map((r) => `${r.indexrelname}=${r.idx_scan}`).join(" "));
+await db.close();
+</code>
+<option correct>orders_customer_idx=3 orders_pkey=1 orders_total_idx=0</option>
+<option>orders_customer_idx=1 orders_pkey=1 orders_total_idx=0</option>
+<option>orders_customer_idx=3 orders_pkey=0 orders_total_idx=0</option>
+<option>orders_customer_idx=0 orders_pkey=0 orders_total_idx=0</option>
+<explain><p>Each query that used an index adds one scan to it. Three customer lookups, one primary-key lookup, and nothing touched the total index, which makes it a candidate to drop.</p></explain>
+</question>
+
+<question id="dbi-json-plan" type="output">
+<q>What does this print?</q>
+<code file="json-plan.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table orders (id int primary key, customer_id int not null, placed_at int not null);
+  insert into orders select n, n % 2000, n from generate_series(1, 40000) as n;
+  create index on orders (customer_id, placed_at desc);
+  analyze orders;
+`);
+const { rows } = await db.query("explain (format json) select id from orders where customer_id = 5 order by placed_at desc limit 2");
+const nodes = (p) => [p["Node Type"], ...(p.Plans ?? []).flatMap(nodes)];
+console.log(nodes(rows[0]["QUERY PLAN"][0].Plan));
+await db.close();
+</code>
+<option correct>[ 'Limit', 'Index Scan' ]</option>
+<option>[ 'Limit', 'Sort', 'Index Scan' ]</option>
+<option>[ 'Index Scan', 'Limit' ]</option>
+<option>[ 'Limit', 'Sort', 'Seq Scan' ]</option>
+<explain><p>The JSON plan is a tree: the Limit's <code>Plans</code> array holds the Index Scan. The index matches the filter and the sort order, so there is no Sort node.</p></explain>
+</question>
+
+<question id="dbi-bitmap-or" type="output">
+<q>Two separate single-column indexes, and a condition with <code>or</code>. What is the top node of the plan?</q>
+<code file="bitmap-or.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table orders (id int primary key, customer_id int not null, coupon text);
+  insert into orders select n, n % 5000, case when n % 997 = 0 then 'LAGOS10' end from generate_series(1, 60000) as n;
+  create index on orders (customer_id);
+  create index on orders (coupon);
+  analyze orders;
+`);
+const { rows } = await db.query("explain (costs off) select id from orders where customer_id = 42 or coupon = 'LAGOS10'");
+console.log(rows.map((r) => r["QUERY PLAN"]).filter((l) => !l.includes("Cond")).join("\n"));
+await db.close();
+</code>
+<option correct>Bitmap Heap Scan on orders
+  ->  BitmapOr
+        ->  Bitmap Index Scan on orders_customer_id_idx
+        ->  Bitmap Index Scan on orders_coupon_idx</option>
+<option>Seq Scan on orders</option>
+<option>Index Scan using orders_customer_id_idx on orders</option>
+<option>Append
+  ->  Index Scan using orders_customer_id_idx on orders
+  ->  Index Scan using orders_coupon_idx on orders</option>
+<explain><p>Each index produces a bitmap of matching row locations, <code>BitmapOr</code> combines them, and the heap is read once. That is how PostgreSQL uses two single-column indexes for one <code>or</code> condition.</p></explain>
+</question>
+
+<question id="dbi-code-levels" type="code" file="levels.js">
+<q><p>Estimate B-tree depth. Write <code>levels(rows, perPage)</code> returning how many levels a B-tree needs when each page holds <code>perPage</code> entries: one leaf level for up to <code>perPage</code> rows, and one more level each time the number of pages exceeds one page's worth.</p></q>
+<starter>
+function levels(rows, perPage) {
+  // your code here
+}
+
+console.log(levels(500, 500), levels(100000, 500), levels(1e9, 500));
+</starter>
+<solution>
+function levels(rows, perPage) {
+  let count = 1;
+  let pages = Math.ceil(rows / perPage);
+  while (pages > 1) {
+    pages = Math.ceil(pages / perPage);
+    count++;
+  }
+  return count;
+}
+
+console.log(levels(500, 500), levels(100000, 500), levels(1e9, 500));
+</solution>
+<expected>1 2 4</expected>
+<explain><p>Each level divides the number of pages by the fan-out. 100,000 rows need 200 leaf pages, which fit under one root: two levels. A billion rows need only four, which is why B-tree lookups stay fast as tables grow.</p></explain>
+</question>
+
+<question id="dbi-code-lower-bound" type="code" file="lower-bound.js">
+<q><p>Inside a leaf page, a B-tree finds the first key <code>&gt;=</code> the search value by binary search. Write <code>lowerBound(keys, value)</code> returning that position (or <code>keys.length</code> if none), and use it to count how many keys fall in <code>[from, to)</code>.</p></q>
+<starter>
+const keys = [3, 7, 7, 7, 12, 15, 20, 20, 31];
+
+function lowerBound(keys, value) {
+  // your code here
+}
+
+console.log(lowerBound(keys, 7), lowerBound(keys, 8), lowerBound(keys, 99));
+console.log("in [7, 20):", lowerBound(keys, 20) - lowerBound(keys, 7));
+</starter>
+<solution>
+const keys = [3, 7, 7, 7, 12, 15, 20, 20, 31];
+
+function lowerBound(keys, value) {
+  let lo = 0;
+  let hi = keys.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (keys[mid] < value) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+console.log(lowerBound(keys, 7), lowerBound(keys, 8), lowerBound(keys, 99));
+console.log("in [7, 20):", lowerBound(keys, 20) - lowerBound(keys, 7));
+</solution>
+<expected>
+1 4 9
+in [7, 20): 5
+</expected>
+<explain><p>A range scan is two lower-bound searches and a walk between them: exactly what an Index Scan with <code>placed_at &gt;= $1 and placed_at &lt; $2</code> does, across linked leaf pages.</p></explain>
+</question>
+
+<question id="dbi-code-prefix" type="code" file="prefix.js">
+<q><p>Write <code>usableColumns(index, equalities, range)</code>: given an index's column list, the columns a query compares with <code>=</code>, and one optional range column, return how many leading index columns the search can use. Walk the index columns: equality columns continue the prefix; a range column is used and then stops it; anything else stops it.</p></q>
+<starter>
+function usableColumns(index, equalities, range) {
+  // your code here
+}
+
+const idx = ["customer_id", "status", "placed_at"];
+console.log(usableColumns(idx, ["customer_id", "status"], "placed_at"));
+console.log(usableColumns(idx, ["customer_id"], "placed_at"));
+console.log(usableColumns(idx, ["status"], null));
+console.log(usableColumns(idx, ["customer_id"], null));
+</starter>
+<solution>
+function usableColumns(index, equalities, range) {
+  let used = 0;
+  for (const column of index) {
+    if (equalities.includes(column)) {
+      used++;
+    } else if (column === range) {
+      used++;
+      break;
+    } else {
+      break;
+    }
+  }
+  return used;
+}
+
+const idx = ["customer_id", "status", "placed_at"];
+console.log(usableColumns(idx, ["customer_id", "status"], "placed_at"));
+console.log(usableColumns(idx, ["customer_id"], "placed_at"));
+console.log(usableColumns(idx, ["status"], null));
+console.log(usableColumns(idx, ["customer_id"], null));
+</solution>
+<expected>
+3
+1
+0
+1
+</expected>
+<explain><p>With <code>customer_id =</code> and a <code>placed_at</code> range but no condition on <code>status</code>, only the first column narrows the search; placed_at is then checked entry by entry. That is why equality columns go first and the column order must match your queries.</p></explain>
+</question>
+
+<question id="dbi-code-seq-scans" type="code" file="seq-scans.js">
+<q><p>Write <code>findSeqScans(planText)</code> that returns, for each <code>Seq Scan</code> line in a text plan, the table name and the number from the following <code>Rows Removed by Filter</code> line (0 if there is none before the next node).</p></q>
+<starter>
+const plan = `Hash Join (actual rows=20.00 loops=1)
+  Hash Cond: (l.order_id = o.id)
+  ->  Seq Scan on order_lines l (actual rows=150000.00 loops=1)
+  ->  Hash (actual rows=10.00 loops=1)
+        ->  Seq Scan on orders o (actual rows=10.00 loops=1)
+              Filter: (customer_id = 42)
+              Rows Removed by Filter: 99990`;
+
+function findSeqScans(planText) {
+  // your code here
+}
+
+console.log(findSeqScans(plan));
+</starter>
+<solution>
+const plan = `Hash Join (actual rows=20.00 loops=1)
+  Hash Cond: (l.order_id = o.id)
+  ->  Seq Scan on order_lines l (actual rows=150000.00 loops=1)
+  ->  Hash (actual rows=10.00 loops=1)
+        ->  Seq Scan on orders o (actual rows=10.00 loops=1)
+              Filter: (customer_id = 42)
+              Rows Removed by Filter: 99990`;
+
+function findSeqScans(planText) {
+  const result = [];
+  let current = null;
+  for (const line of planText.split("\n")) {
+    const scan = line.match(/Seq Scan on (\w+)/);
+    if (scan) {
+      current = { table: scan[1], removed: 0 };
+      result.push(current);
+    } else if (line.includes("->")) {
+      current = null;
+    } else if (current) {
+      const removed = line.match(/Rows Removed by Filter: (\d+)/);
+      if (removed) current.removed = Number(removed[1]);
+    }
+  }
+  return result;
+}
+
+console.log(findSeqScans(plan));
+</solution>
+<expected>
+[
+  { table: 'order_lines', removed: 0 },
+  { table: 'orders', removed: 99990 }
+]
+</expected>
+<explain><p>The <code>orders</code> scan removed 99,990 rows to keep 10: a missing index. The <code>order_lines</code> scan removed nothing because it kept every row for the hash join, which is a different problem: a missing index on the join column. Tools that parse plans for you (for example explain visualisers) do exactly this.</p></explain>
+</question>
+
+<question id="dbi-code-normalise" type="code" file="normalise.js">
+<q><p><code>pg_stat_statements</code> groups queries that differ only in their constants. Write <code>normalise(sql)</code> that replaces each quoted string and each standalone number with <code>$1</code>, <code>$2</code>, … in order, then count calls per normalised query.</p></q>
+<starter>
+const log = [
+  "select id from orders where customer_id = 42",
+  "select id from orders where customer_id = 7",
+  "select id from customers where email = 'ada@example.com'",
+  "select id from orders where customer_id = 42",
+];
+
+function normalise(sql) {
+  // your code here
+}
+
+const calls = new Map();
+for (const sql of log) {
+  const key = normalise(sql);
+  calls.set(key, (calls.get(key) ?? 0) + 1);
+}
+console.log(calls);
+</starter>
+<solution>
+const log = [
+  "select id from orders where customer_id = 42",
+  "select id from orders where customer_id = 7",
+  "select id from customers where email = 'ada@example.com'",
+  "select id from orders where customer_id = 42",
+];
+
+function normalise(sql) {
+  let n = 0;
+  return sql.replace(/'(?:[^']|'')*'|\b\d+\b/g, () => `$${++n}`);
+}
+
+const calls = new Map();
+for (const sql of log) {
+  const key = normalise(sql);
+  calls.set(key, (calls.get(key) ?? 0) + 1);
+}
+console.log(calls);
+</solution>
+<expected>
+Map(2) {
+  'select id from orders where customer_id = $1' => 3,
+  'select id from customers where email = $1' => 1
+}
+</expected>
+<explain><p>Grouping by shape, not by values, is what makes the statistics useful: a million lookups with different ids become one line with <code>calls: 1000000</code>. It is also why queries built by pasting values into text are harder to monitor, besides being unsafe.</p></explain>
+</question>
+
+<question id="dbi-code-day-range" type="code" file="day-range.js">
+<q><p>Make date filters sargable. Write <code>dayRange(day)</code> that turns <code>"2026-02-28"</code> into the half-open UTC range <code>["2026-02-28T00:00:00.000Z", "2026-03-01T00:00:00.000Z"]</code>, to be used as <code>placed_at &gt;= $1 and placed_at &lt; $2</code>.</p></q>
+<starter>
+function dayRange(day) {
+  // your code here
+}
+
+console.log(dayRange("2026-02-28"));
+console.log(dayRange("2026-12-31"));
+</starter>
+<solution>
+function dayRange(day) {
+  const start = new Date(`${day}T00:00:00.000Z`);
+  const end = new Date(start.getTime());
+  end.setUTCDate(end.getUTCDate() + 1);
+  return [start.toISOString(), end.toISOString()];
+}
+
+console.log(dayRange("2026-02-28"));
+console.log(dayRange("2026-12-31"));
+</solution>
+<expected>
+[ '2026-02-28T00:00:00.000Z', '2026-03-01T00:00:00.000Z' ]
+[ '2026-12-31T00:00:00.000Z', '2027-01-01T00:00:00.000Z' ]
+</expected>
+<explain><p>Computing the bounds in the application keeps the column bare in SQL, so an index on <code>placed_at</code> serves the query. <code>setUTCDate</code> handles month and year ends; the upper bound is exclusive, so no timestamp is counted twice or missed.</p></explain>
+</question>
+
+<question id="dbi-code-choose" type="code" file="choose.js">
+<q><p>Imitate the planner's first decision. Write <code>choosePlan(frequencies, value)</code>: look up the fraction of rows with that value (use 0.001 for values not in the table), and return <code>"Seq Scan"</code> when it is above 0.2, otherwise <code>"Index Scan"</code>.</p></q>
+<starter>
+const statusFrequencies = { paid: 0.9, pending: 0.09, cancelled: 0.01 };
+
+function choosePlan(frequencies, value) {
+  // your code here
+}
+
+for (const status of ["paid", "pending", "cancelled", "refunded"]) {
+  console.log(status, choosePlan(statusFrequencies, status));
+}
+</starter>
+<solution>
+const statusFrequencies = { paid: 0.9, pending: 0.09, cancelled: 0.01 };
+
+function choosePlan(frequencies, value) {
+  const fraction = frequencies[value] ?? 0.001;
+  return fraction > 0.2 ? "Seq Scan" : "Index Scan";
+}
+
+for (const status of ["paid", "pending", "cancelled", "refunded"]) {
+  console.log(status, choosePlan(statusFrequencies, status));
+}
+</solution>
+<expected>
+paid Seq Scan
+pending Index Scan
+cancelled Index Scan
+refunded Index Scan
+</expected>
+<explain><p>The real planner compares estimated costs rather than using a fixed threshold, and it also weighs how the rows are spread over pages. But the input is the same: the value's frequency from the statistics, which is why stale statistics lead to bad plans.</p></explain>
+</question>

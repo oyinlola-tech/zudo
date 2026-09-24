@@ -1,0 +1,744 @@
+<question id="cp-factory-problem" type="choice">
+<q>The code that picks a payment provider by country is copied in the checkout, the refund handler and the webhook. What problem does a factory solve here?</q>
+<option>It makes payments faster</option>
+<option correct>It puts the knowledge "which provider, and how to build it" in one place, so the copies cannot drift apart</option>
+<option>It removes the need for configuration</option>
+<option>It lets you use inheritance instead of interfaces</option>
+<explain><p>The Kenyan refunds went to the wrong provider because one copy was not updated. With one factory, adding a country is one change that every caller sees.</p></explain>
+</question>
+
+<question id="cp-unknown-input" type="choice">
+<q>What should a provider factory do for a country it does not know?</q>
+<option>Return a default provider so checkout keeps working</option>
+<option>Return <code>undefined</code> and let the caller decide</option>
+<option correct>Throw a clear error, and a startup check should build every configured country so the error appears at deploy time</option>
+<option>Log a warning and use the first provider in the table</option>
+<explain><p>A silent default is exactly how refunds ended up at Stripe. Unknown input is a configuration or programming error and should fail loudly and early.</p></explain>
+</question>
+
+<question id="cp-refund-provider" type="choice">
+<q>A customer paid in Kenya through M-Pesa and later moved to Ghana. Which provider must refund them, and how does the code know?</q>
+<option>Flutterwave, because refunds follow the customer's current country</option>
+<option correct>M-Pesa, because the charge record stores the name of the provider that took the payment and the refund builds that provider</option>
+<option>Whichever provider is cheapest</option>
+<option>The default provider</option>
+<explain><p>Money can only be refunded by the provider that took it. Routing (country to provider) can change; the recorded provider of a past charge cannot.</p></explain>
+</question>
+
+<question id="cp-routing-vs-construction" type="choice">
+<q>Why does the lesson keep <code>routes</code> (country to provider name) separate from <code>builders</code> (provider name to object)?</q>
+<option>Because TypeScript cannot put functions and strings in one object</option>
+<option correct>They are two different facts that change for different reasons; if Kenya moves to Flutterwave, old M-Pesa charges must still be refunded through M-Pesa</option>
+<option>To make the code longer and easier to read</option>
+<option>Because <code>Record</code> can only have string values</option>
+<explain><p>Changing the routing table affects new payments only. Refunds and webhooks look up the builder by the recorded provider name.</p></explain>
+</question>
+
+<question id="cp-record-union" type="choice">
+<q>Why are the factory's tables typed as <code>Record&lt;Country, ProviderName&gt;</code> instead of <code>Record&lt;string, ProviderName&gt;</code>?</q>
+<option>It makes lookups faster</option>
+<option correct>A Record over a union requires a key for every member, so adding a country to the union without a route is a compile error</option>
+<option>It lets the table be changed at run time</option>
+<option>It prevents the table from being exported</option>
+<explain><p>The compiler becomes the checklist that the copied <code>if</code> chains never had. A <code>Record&lt;string, …&gt;</code> accepts any subset of keys.</p></explain>
+</question>
+
+<question id="cp-startup-check" type="choice">
+<q>What does building every routed provider once at application start achieve?</q>
+<option>It warms up the providers' caches</option>
+<option correct>A missing key or a broken route fails the deploy, instead of failing the first real customer's payment</option>
+<option>It makes every provider a singleton</option>
+<option>Nothing, the providers are built again later anyway</option>
+<explain><p>The compiler checks that the tables are complete; only running the factory checks that the environment actually has every secret key.</p></explain>
+</question>
+
+<question id="cp-static-factory" type="choice">
+<q>When is a static factory method such as <code>Money.fromNaira(12.5)</code> better than a public constructor?</q>
+<option>Never; constructors are always clearer</option>
+<option correct>When construction must validate or convert, or when there are several ways to create the object that need clear names (<code>fromNaira</code>, <code>fromKobo</code>)</option>
+<option>Only when the class has no fields</option>
+<option>When you want a singleton</option>
+<explain><p>A named constructor says what its argument means and can refuse bad input before an object exists. A private constructor makes it the only door.</p></explain>
+</question>
+
+<question id="cp-injected-factory" type="choice">
+<q>A service calls <code>createPaymentProvider(...)</code> directly inside its methods. What is the problem, and the fix?</q>
+<option>No problem; factories are always safe to call anywhere</option>
+<option correct>The service is coupled to the real providers again, so tests move money. Inject the factory (<code>makeProvider: (name) =&gt; PaymentProvider</code>) so a test can pass one that builds fakes</option>
+<option>The fix is to make the factory a singleton</option>
+<option>The fix is to call <code>new</code> instead</option>
+<explain><p>A factory hides <em>which class</em>, but calling it directly still fixes <em>which factory</em>. Receiving it as a dependency moves that choice to the composition root.</p></explain>
+</question>
+
+<question id="cp-factory-env" type="choice">
+<q>A factory reads <code>process.env.PAYSTACK_KEY</code> inside itself. Why does the lesson advise against this?</q>
+<option>Environment variables are slow to read</option>
+<option correct>It is a hidden dependency on global state: tests cannot pass other keys without changing the process environment, and the signature does not show what the factory needs</option>
+<option>Factories may not use strings</option>
+<option>Because <code>process</code> does not exist in Node</option>
+<explain><p>Pass configuration in, as <code>createPaymentProvider(name, keys)</code> does. The composition root reads the environment once.</p></explain>
+</question>
+
+<question id="cp-family-bug" type="choice">
+<q>Staging used <code>STORAGE=disk</code> and <code>QUEUE=redis</code>. The worker on another machine could not find uploaded files. What kind of problem is this?</q>
+<option>A bug in the Redis client</option>
+<option correct>Two parts that must come from the same family (single machine, or shared cloud) were configured independently and mixed</option>
+<option>The worker is too slow</option>
+<option>The files were too large</option>
+<explain><p>Each setting was valid alone; the combination was not. An abstract factory makes the family the unit of choice, so a mix cannot be configured.</p></explain>
+</question>
+
+<question id="cp-abstract-factory" type="choice">
+<q>What does an abstract factory give you that two separate factories do not?</q>
+<option>Faster object creation</option>
+<option correct>Picking one factory picks every part of a family together, so related parts always match</option>
+<option>Inheritance between storage and queue</option>
+<option>The ability to create objects without interfaces</option>
+<explain><p><code>localInfrastructure()</code> returns disk storage <em>and</em> an in-process queue; <code>cloudInfrastructure()</code> returns shared storage <em>and</em> a shared queue. There is no way to ask for disk plus Redis.</p></explain>
+</question>
+
+<question id="cp-abstract-too-early" type="choice">
+<q>A project has one environment and one kind of storage and queue. Should it introduce an abstract factory now?</q>
+<option>Yes, every project needs one</option>
+<option correct>No. With one family there is nothing to mix; add it when a second family exists and mixing becomes a real risk</option>
+<option>Yes, but only for tests</option>
+<option>No, abstract factories are deprecated</option>
+<explain><p>Patterns earn their place by solving a problem you have. With one family, the pattern adds names and indirection and hides nothing (YAGNI).</p></explain>
+</question>
+
+<question id="cp-options-first" type="choice">
+<q>A function takes eight positional parameters and two of them were swapped in a call. What should you reach for first in TypeScript?</q>
+<option>A builder class with one method per parameter</option>
+<option correct>An options object with named properties, so each value is labelled at the call site</option>
+<option>A singleton that stores the parameters</option>
+<option>An abstract factory</option>
+<explain><p>An options object fixes the swap with the least code. A builder is for step-by-step construction with rules, such as a query.</p></explain>
+</question>
+
+<question id="cp-builder-when" type="choice">
+<q>Which situation calls for a builder rather than an options object?</q>
+<option>Creating a user with a name and an e-mail</option>
+<option correct>Building a search query from any combination of optional filters, with numbered placeholders, validated limits and a final assembly step</option>
+<option>Passing three booleans to a function</option>
+<option>Reading a configuration file</option>
+<explain><p>The query is built in steps, has rules that span steps (placeholder numbering), and is assembled at the end: exactly what a builder is for.</p></explain>
+</question>
+
+<question id="cp-fluent" type="choice">
+<q>What is a <strong>fluent interface</strong>?</q>
+<option>An interface with only optional properties</option>
+<option correct>An API whose methods return an object you can call the next method on, so calls chain like a sentence: <code>OrderQuery.all().status("paid").limit(10)</code></option>
+<option>An interface that changes at run time</option>
+<option>A TypeScript feature for async code</option>
+<explain><p>Fluent style is common for builders. Whether each method returns <code>this</code> or a new object is a separate choice, and it matters.</p></explain>
+</question>
+
+<question id="cp-mutable-builder" type="choice">
+<q>Why does the lesson's <code>OrderQuery</code> return a new builder from every method instead of changing itself and returning <code>this</code>?</q>
+<option>Returning <code>this</code> is not allowed in TypeScript</option>
+<option correct>So a partly built query can be shared: deriving two queries from one base query must not add each other's filters</option>
+<option>New objects are faster</option>
+<option>To make the builder a singleton</option>
+<explain><p>With a mutable builder, <code>paid.where(a)</code> and <code>paid.where(b)</code> change the same object, so both "derived" queries contain both filters.</p></explain>
+</question>
+
+<question id="cp-values-separate" type="choice">
+<q>Why does the query builder keep user input in <code>values</code> and put only <code>$1</code>, <code>$2</code> in the SQL text?</q>
+<option>PostgreSQL requires every query to have at least one value</option>
+<option correct>The database treats values as data, never as SQL, so input such as <code>x' OR '1'='1</code> cannot change the query: no SQL injection</option>
+<option>It makes the SQL shorter</option>
+<option>It sorts the values</option>
+<explain><p>Placeholders are how parameterised queries work. The builder's job is to make the safe way the easy way, including the placeholder numbering.</p></explain>
+</question>
+
+<question id="cp-union-columns" type="choice">
+<q><code>sortBy(column: "placed_at" | "total_kobo", direction: "ASC" | "DESC")</code> goes directly into the SQL text, not into <code>values</code>. Why is that safe?</q>
+<option>Because sort columns cannot be injected</option>
+<option correct>Column names cannot be placeholders, so the builder only accepts a fixed set of values; any value from outside must be checked against that set before it reaches the builder</option>
+<option>Because PostgreSQL escapes ORDER BY automatically</option>
+<option>It is not safe at all</option>
+<explain><p>Identifiers and keywords cannot be parameters. The union narrows them to known-safe literals in code; at run time, input from a URL must be validated against the same list first, since types do not exist at run time.</p></explain>
+</question>
+
+<question id="cp-singleton-problems" type="choice">
+<q>Which two problems did the <code>AppConfig.getInstance()</code> singleton cause?</q>
+<option>It was slow and used too much memory</option>
+<option correct>A hidden dependency (the signature of <code>maxQuantity()</code> does not show it reads configuration) and global mutable state shared by every test</option>
+<option>It could not be imported and could not be exported</option>
+<option>It forced the use of inheritance and interfaces</option>
+<explain><p>Tests became order-dependent because one test's setting stayed in the shared instance, and no test could hand the function a configuration of its own.</p></explain>
+</question>
+
+<question id="cp-module-singleton" type="choice">
+<q><code>export const pool = createPool(process.env.DATABASE_URL)</code> at the top of a module is also a singleton. What extra problem does it add?</q>
+<option>Modules cannot export constants</option>
+<option correct>The work runs at import time, so merely importing the file (for example in a unit test) reads the environment and opens connections</option>
+<option>Each importer gets a different pool</option>
+<option>It cannot be used with TypeScript</option>
+<explain><p>ES modules are evaluated once and cached, so every importer shares the object, and the side effect happens as soon as anything imports it. Create it in the composition root instead.</p></explain>
+</question>
+
+<question id="cp-lifetime-owner" type="choice">
+<q>What is the key difference between the singleton <em>pattern</em> and a singleton <em>lifetime</em> in a DI container?</q>
+<option>There is none</option>
+<option correct>In the pattern the class decides and gives global access; with a lifetime the composition root or container decides, and users receive the instance as a dependency</option>
+<option>The lifetime creates one instance per method call</option>
+<option>The pattern supports tests better</option>
+<explain><p>"There is one of these" is a wiring decision. Made in the composition root, it is visible, and tests can make their own instance.</p></explain>
+</question>
+
+<question id="cp-request-data" type="choice">
+<q>A singleton service stores <code>currentUser</code> in a field, set at the start of each request. What goes wrong under load?</q>
+<option>Nothing, JavaScript is single-threaded</option>
+<option correct>Two overlapping async requests share the one field, so one request can read the other user's identity after an <code>await</code></option>
+<option>The field is reset to <code>undefined</code> by the garbage collector</option>
+<option>The service becomes transient</option>
+<explain><p>Single-threaded does not mean one request at a time: requests interleave at every <code>await</code>. Per-request data needs a per-request (scoped) lifetime or explicit parameters.</p></explain>
+</question>
+
+<question id="cp-container-scope" type="choice">
+<q>With <code>@zudojs/container</code>, a factory registered with <code>ContainerScope.SINGLETON</code> runs how often?</q>
+<option>Once per process, no matter how many containers exist</option>
+<option correct>Once per container: the first <code>resolve</code> builds it, later resolves return the same object, and a test's own container builds its own</option>
+<option>On every <code>resolve</code></option>
+<option>Once per request</option>
+<explain><p>That is what makes the container lifetime test-friendly: each test creates a fresh container and gets a fresh "singleton", with nothing shared with the application.</p></explain>
+</question>
+
+<question id="cp-frozen-config" type="choice">
+<q>The lesson's <code>loadConfig</code> returns <code>Object.freeze({ ... })</code> and the one object is shared by the whole app. Why is this sharing harmless?</q>
+<option>Frozen objects are copied on every read</option>
+<option correct>Shared <em>immutable</em> state cannot be changed by one user and observed by another, so it has none of the singleton's order-dependence</option>
+<option>Freezing makes the object a singleton</option>
+<option>Freezing hides the object from tests</option>
+<explain><p>The singleton's problems come from shared <em>mutable</em> state and global access. Frozen and passed in, the configuration has neither.</p></explain>
+</question>
+
+<question id="cp-test-data" type="choice">
+<q>For test data, when does <code>makeOrder({ status: "paid" })</code> (defaults plus a <code>Partial</code> of overrides) replace a full test data builder?</q>
+<option>Never; tests always need builders</option>
+<option correct>Usually: most tests only override a few fields, and one function with defaults does that with less code</option>
+<option>Only when the order has no nested objects</option>
+<option>Only in JavaScript, not TypeScript</option>
+<explain><p>Test data builders shine when construction has steps or rules (<code>.paid()</code> also sets a charge id and paid date). For plain overrides, the function is simpler.</p></explain>
+</question>
+
+<question id="cp-out-default" type="output">
+<q>What does this print?</q>
+<code file="default.ts">
+function providerFor(country: string): string {
+  if (country === "NG") return "paystack";
+  if (country === "GH") return "flutterwave";
+  return "stripe";
+}
+
+console.log(["NG", "KE", "ng"].map(providerFor).join(" "));
+</code>
+<option>paystack mpesa paystack</option>
+<option correct>paystack stripe stripe</option>
+<option>paystack stripe paystack</option>
+<option>An error for KE</option>
+<explain><p>Every unknown value, including the lower-case <code>"ng"</code>, silently falls to the default. A factory should throw for unknown input instead.</p></explain>
+</question>
+
+<question id="cp-out-hasown" type="output">
+<q>Why does the factory use <code>Object.hasOwn</code>? What does this print?</q>
+<code file="hasown.ts">
+const routes: Record<string, string> = { NG: "paystack", GH: "flutterwave" };
+
+console.log(typeof routes["toString"], "toString" in routes, Object.hasOwn(routes, "toString"));
+</code>
+<option>undefined false false</option>
+<option correct>function true false</option>
+<option>function false false</option>
+<option>string true true</option>
+<explain><p>Plain objects inherit <code>toString</code> from <code>Object.prototype</code>. A lookup or an <code>in</code> check would treat <code>"toString"</code> as a known country. <code>Object.hasOwn</code> only accepts the table's own keys.</p></explain>
+</question>
+
+<question id="cp-out-new-each-time" type="output">
+<q>What does this print?</q>
+<code file="counter.ts">
+function createProvider(prefix: string) {
+  let next = 1;
+  return { charge: () => `${prefix}-${next++}` };
+}
+
+const a = createProvider("MP");
+console.log(a.charge(), a.charge(), createProvider("MP").charge());
+</code>
+<option>MP-1 MP-2 MP-3</option>
+<option correct>MP-1 MP-2 MP-1</option>
+<option>MP-1 MP-1 MP-1</option>
+<option>MP-1 MP-2 MP-2</option>
+<explain><p>Each call to the factory creates a new object with its own <code>next</code> counter (a closure). Whether callers should share one instance or get new ones is a lifetime decision.</p></explain>
+</question>
+
+<question id="cp-out-mutable" type="output">
+<q>What does this print?</q>
+<code file="mutable.ts">
+class Query {
+  parts: string[] = [];
+  where(p: string): this {
+    this.parts.push(p);
+    return this;
+  }
+}
+
+const base = new Query().where("paid");
+const big = base.where("big");
+const ada = base.where("ada");
+console.log(big.parts.join("+"), ada === big);
+</code>
+<option>paid+big false</option>
+<option correct>paid+big+ada true</option>
+<option>paid+big+ada false</option>
+<option>paid+ada true</option>
+<explain><p><code>where</code> changes the builder and returns the same object, so <code>base</code>, <code>big</code> and <code>ada</code> are one object with all three filters.</p></explain>
+</question>
+
+<question id="cp-out-immutable" type="output">
+<q>What does this print?</q>
+<code file="immutable.ts">
+class Query {
+  constructor(readonly parts: readonly string[] = []) {}
+  where(p: string): Query {
+    return new Query([...this.parts, p]);
+  }
+}
+
+const base = new Query().where("paid");
+const big = base.where("big");
+const ada = base.where("ada");
+console.log(base.parts.join("+"), big.parts.join("+"), ada.parts.join("+"));
+</code>
+<option>paid+big+ada paid+big+ada paid+big+ada</option>
+<option>paid paid+big paid+big+ada</option>
+<option correct>paid paid+big paid+ada</option>
+<option>paid+big paid+big paid+ada</option>
+<explain><p>Each call copies the list and returns a new query, so the base stays as it was and each derived query has only its own extra filter.</p></explain>
+</question>
+
+<question id="cp-out-placeholders" type="output">
+<q>What does this print?</q>
+<code file="placeholders.ts">
+const filters = [
+  { sql: "status = ?", value: "paid" },
+  { sql: "total_kobo >= ?", value: 1000000 },
+  { sql: "email = ?", value: "ada@shop.ng" },
+];
+
+const where = filters.map((f, i) => f.sql.replace("?", `$${i + 1}`)).join(" AND ");
+console.log(where);
+</code>
+<option>status = ? AND total_kobo >= ? AND email = ?</option>
+<option>status = $0 AND total_kobo >= $1 AND email = $2</option>
+<option correct>status = $1 AND total_kobo >= $2 AND email = $3</option>
+<option>status = paid AND total_kobo >= 1000000 AND email = ada@shop.ng</option>
+<explain><p>PostgreSQL placeholders start at <code>$1</code>, so the index is shifted by one. <code>`$${…}`</code> is a literal dollar sign followed by an interpolation.</p></explain>
+</question>
+
+<question id="cp-out-singleton-leak" type="output">
+<q>What does this print?</q>
+<code file="leak.ts">
+class Settings {
+  static #instance: Settings | undefined;
+  currency = "NGN";
+  static get(): Settings {
+    return (this.#instance ??= new Settings());
+  }
+}
+
+function testGhana() {
+  Settings.get().currency = "GHS";
+  return Settings.get().currency === "GHS" ? "PASS" : "FAIL";
+}
+function testDefault() {
+  return Settings.get().currency === "NGN" ? "PASS" : "FAIL";
+}
+
+console.log(testDefault(), testGhana(), testDefault());
+</code>
+<option>PASS PASS PASS</option>
+<option correct>PASS PASS FAIL</option>
+<option>FAIL PASS FAIL</option>
+<option>PASS FAIL PASS</option>
+<explain><p>The same <code>testDefault</code> passes before <code>testGhana</code> runs and fails after it, because both use the one shared instance. The result depends on test order.</p></explain>
+</question>
+
+<question id="cp-out-frozen" type="output">
+<q>What does this print?</q>
+<code file="frozen-config.ts">
+const config = Object.freeze({ maxQuantity: 5 });
+
+try {
+  (config as { maxQuantity: number }).maxQuantity = 99;
+} catch (error) {
+  console.log(error instanceof TypeError);
+}
+console.log(config.maxQuantity, Object.isFrozen(config));
+</code>
+<option>99 true</option>
+<option>false
+99 true</option>
+<option correct>true
+5 true</option>
+<option>5 false</option>
+<explain><p>Assigning to a frozen object's property throws a <code>TypeError</code> in strict-mode code (modules are strict), and the value stays 5. Shared and frozen is safe to share.</p></explain>
+</question>
+
+<question id="cp-out-lifetimes" type="output">
+<q>A tiny hand-written container supports two lifetimes. What does this print?</q>
+<code file="lifetimes.ts">
+function singleton<T>(make: () => T): () => T {
+  let instance: T | undefined;
+  return () => (instance ??= make());
+}
+function transient<T>(make: () => T): () => T {
+  return make;
+}
+
+let built = 0;
+const pool = singleton(() => ({ id: ++built }));
+const request = transient(() => ({ id: ++built }));
+
+console.log(pool() === pool(), request() === request(), built);
+</code>
+<option>true true 2</option>
+<option correct>true false 3</option>
+<option>false false 4</option>
+<option>true false 4</option>
+<explain><p>The singleton builds once (built = 1) and returns the same object. Each transient call builds a new object (built = 2, then 3), so they are not identical.</p></explain>
+</question>
+
+<question id="cp-out-family" type="output">
+<q>What does this print?</q>
+<code file="family.ts">
+type Infra = { storage: () => string; queue: () => string };
+
+const families: Record<"local" | "cloud", Infra> = {
+  local: { storage: () => "disk", queue: () => "memory" },
+  cloud: { storage: () => "s3", queue: () => "redis" },
+};
+
+for (const env of ["cloud", "local"] as const) {
+  const infra = families[env];
+  console.log(`${env}: ${infra.storage()} + ${infra.queue()}`);
+}
+</code>
+<option>cloud: s3 + memory
+local: disk + redis</option>
+<option correct>cloud: s3 + redis
+local: disk + memory</option>
+<option>local: disk + memory
+cloud: s3 + redis</option>
+<option>cloud: disk + memory
+local: s3 + redis</option>
+<explain><p>Each environment picks one family, so storage and queue always match. The loop visits <code>cloud</code> first because that is the order of the array.</p></explain>
+</question>
+
+<question id="cp-code-notifier-factory" type="code" file="notifier-factory.ts">
+<q><p>Write <code>createNotifier(channel)</code>: a factory that returns <code>{ send(to) }</code> objects for <code>"email"</code> (returns <code>"email to " + to</code>) and <code>"sms"</code> (returns <code>"sms to " + to</code>), using a table typed as <code>Record&lt;Channel, …&gt;</code>. For any other string it must throw <code>new Error("unknown channel: " + channel)</code>. The program should print <code>sms to 0803</code> then <code>unknown channel: fax</code>.</p></q>
+<starter>
+type Channel = "email" | "sms";
+type Notifier = { send(to: string): string };
+
+// write createNotifier here
+
+console.log(createNotifier("sms").send("0803"));
+try {
+  createNotifier("fax");
+} catch (error) {
+  console.log((error as Error).message);
+}
+</starter>
+<solution>
+type Channel = "email" | "sms";
+type Notifier = { send(to: string): string };
+
+const builders: Record<Channel, () => Notifier> = {
+  email: () => ({ send: (to) => `email to ${to}` }),
+  sms: () => ({ send: (to) => `sms to ${to}` }),
+};
+
+function createNotifier(channel: string): Notifier {
+  if (!Object.hasOwn(builders, channel)) throw new Error(`unknown channel: ${channel}`);
+  return builders[channel as Channel]();
+}
+
+console.log(createNotifier("sms").send("0803"));
+try {
+  createNotifier("fax");
+} catch (error) {
+  console.log((error as Error).message);
+}
+</solution>
+<expected>
+sms to 0803
+unknown channel: fax
+</expected>
+<explain><p>One table knows every channel, the <code>Record</code> type keeps it complete when <code>Channel</code> grows, and unknown input fails loudly.</p></explain>
+</question>
+
+<question id="cp-code-startup-check" type="code" file="startup-check.ts">
+<q><p>Write <code>startupCheck(routes, keys)</code>: for every country in <code>routes</code>, check that the routed provider has a non-empty key, and return a list of messages like <code>"KE: missing key for mpesa"</code>. The program should print <code>[ 'KE: missing key for mpesa' ]</code>.</p></q>
+<starter>
+const routes: Record<string, string> = { NG: "paystack", GH: "flutterwave", KE: "mpesa" };
+const keys: Record<string, string | undefined> = { paystack: "sk_1", flutterwave: "sk_2", mpesa: "" };
+
+// write startupCheck here
+
+console.log(startupCheck(routes, keys));
+</starter>
+<solution>
+const routes: Record<string, string> = { NG: "paystack", GH: "flutterwave", KE: "mpesa" };
+const keys: Record<string, string | undefined> = { paystack: "sk_1", flutterwave: "sk_2", mpesa: "" };
+
+function startupCheck(table: Record<string, string>, secrets: Record<string, string | undefined>): string[] {
+  const problems: string[] = [];
+  for (const [country, provider] of Object.entries(table)) {
+    if (!secrets[provider]) problems.push(`${country}: missing key for ${provider}`);
+  }
+  return problems;
+}
+
+console.log(startupCheck(routes, keys));
+</solution>
+<expected>[ 'KE: missing key for mpesa' ]</expected>
+<explain><p>Run at startup, this turns an empty secret into a failed deploy with a precise message, instead of a failed payment for the first Kenyan customer.</p></explain>
+</question>
+
+<question id="cp-code-money" type="code" file="money.ts">
+<q><p>Write a class <code>Money</code> with a private constructor, a readonly <code>kobo</code> field, and two static factory methods: <code>fromKobo(n)</code> (must be a safe integer) and <code>fromNaira(n)</code> (converts with <code>Math.round(n * 100)</code>). Both throw <code>new Error("invalid amount")</code> for negative or non-finite input. The program should print <code>1250 1250</code> then <code>invalid amount</code>.</p></q>
+<starter>
+// write Money here
+
+console.log(Money.fromNaira(12.5).kobo, Money.fromKobo(1250).kobo);
+try {
+  Money.fromNaira(-3);
+} catch (error) {
+  console.log((error as Error).message);
+}
+</starter>
+<solution>
+class Money {
+  private constructor(readonly kobo: number) {}
+
+  static fromKobo(kobo: number): Money {
+    if (!Number.isSafeInteger(kobo) || kobo < 0) throw new Error("invalid amount");
+    return new Money(kobo);
+  }
+
+  static fromNaira(naira: number): Money {
+    if (!Number.isFinite(naira) || naira < 0) throw new Error("invalid amount");
+    return Money.fromKobo(Math.round(naira * 100));
+  }
+}
+
+console.log(Money.fromNaira(12.5).kobo, Money.fromKobo(1250).kobo);
+try {
+  Money.fromNaira(-3);
+} catch (error) {
+  console.log((error as Error).message);
+}
+</solution>
+<expected>
+1250 1250
+invalid amount
+</expected>
+<explain><p>The names say what the number means, and the private constructor makes these checked methods the only way to create a <code>Money</code>.</p></explain>
+</question>
+
+<question id="cp-code-immutable-builder" type="code" file="builder.ts">
+<q><p>Finish the immutable builder: <code>where(sql, value)</code> must return a <em>new</em> <code>TaskQuery</code> with the extra filter, and <code>build()</code> must number the placeholders <code>$1</code>, <code>$2</code>… The program should print <code>SELECT * FROM tasks WHERE done = $1 AND owner = $2</code>, then <code>[ false, 'ada' ]</code>, then <code>SELECT * FROM tasks WHERE done = $1</code>.</p></q>
+<starter>
+type Filter = { sql: string; value: string | boolean };
+
+class TaskQuery {
+  constructor(private readonly filters: readonly Filter[] = []) {}
+
+  where(sql: string, value: string | boolean): TaskQuery {
+    // return a new TaskQuery here
+    return this;
+  }
+
+  build(): { text: string; values: (string | boolean)[] } {
+    // number the ? placeholders here
+    return { text: "", values: [] };
+  }
+}
+
+const open = new TaskQuery().where("done = ?", false);
+const adas = open.where("owner = ?", "ada").build();
+console.log(adas.text);
+console.log(adas.values);
+console.log(open.build().text);
+</starter>
+<solution>
+type Filter = { sql: string; value: string | boolean };
+
+class TaskQuery {
+  constructor(private readonly filters: readonly Filter[] = []) {}
+
+  where(sql: string, value: string | boolean): TaskQuery {
+    return new TaskQuery([...this.filters, { sql, value }]);
+  }
+
+  build(): { text: string; values: (string | boolean)[] } {
+    const where = this.filters.map((f, i) => f.sql.replace("?", `$${i + 1}`)).join(" AND ");
+    return { text: `SELECT * FROM tasks${where ? ` WHERE ${where}` : ""}`, values: this.filters.map((f) => f.value) };
+  }
+}
+
+const open = new TaskQuery().where("done = ?", false);
+const adas = open.where("owner = ?", "ada").build();
+console.log(adas.text);
+console.log(adas.values);
+console.log(open.build().text);
+</solution>
+<expected>
+SELECT * FROM tasks WHERE done = $1 AND owner = $2
+[ false, 'ada' ]
+SELECT * FROM tasks WHERE done = $1
+</expected>
+<explain><p>Because <code>where</code> copies instead of mutating, the shared base query <code>open</code> keeps its single filter after Ada's query is derived from it.</p></explain>
+</question>
+
+<question id="cp-code-options" type="code" file="options.ts">
+<q><p>Replace the positional parameters with an options object: <code>createBooking({ guest, room, nights, breakfast })</code> where <code>breakfast</code> is optional and defaults to <code>false</code>. It returns <code>"&lt;guest&gt;: room &lt;room&gt;, &lt;nights&gt; nights"</code> plus <code>", breakfast"</code> when chosen. The program should print <code>Ngozi: room 204, 3 nights, breakfast</code> then <code>Musa: room 101, 1 nights</code>.</p></q>
+<starter>
+function createBooking(guest: string, room: number, nights: number, breakfast: boolean): string {
+  return `${guest}: room ${room}, ${nights} nights${breakfast ? ", breakfast" : ""}`;
+}
+
+// rewrite createBooking to take one options object, then call it for:
+// Ngozi, room 204, 3 nights, breakfast
+// Musa, room 101, 1 night, no breakfast given
+</starter>
+<solution>
+interface BookingRequest {
+  readonly guest: string;
+  readonly room: number;
+  readonly nights: number;
+  readonly breakfast?: boolean;
+}
+
+function createBooking({ guest, room, nights, breakfast = false }: BookingRequest): string {
+  return `${guest}: room ${room}, ${nights} nights${breakfast ? ", breakfast" : ""}`;
+}
+
+console.log(createBooking({ guest: "Ngozi", room: 204, nights: 3, breakfast: true }));
+console.log(createBooking({ guest: "Musa", room: 101, nights: 1 }));
+</solution>
+<expected>
+Ngozi: room 204, 3 nights, breakfast
+Musa: room 101, 1 nights
+</expected>
+<explain><p>Every value is named at the call site, so <code>room</code> and <code>nights</code> can no longer be swapped unnoticed, and the optional flag has a default. No builder needed.</p></explain>
+</question>
+
+<question id="cp-code-inject-config" type="code" file="inject-config.ts">
+<q><p><code>canOrder</code> reads a global settings object. Change it to take the configuration as a second parameter, and run two "tests" that each pass their own frozen configuration. The program should print <code>PASS</code> twice.</p></q>
+<starter>
+const settings = { maxQuantity: 10 };
+
+function canOrder(quantity: number): boolean {
+  return quantity <= settings.maxQuantity;
+}
+
+// change canOrder to take the config, then:
+// test 1: with maxQuantity 2, ordering 3 is refused -> print PASS
+// test 2: with maxQuantity 10, ordering 10 is allowed -> print PASS
+</starter>
+<solution>
+interface Config {
+  readonly maxQuantity: number;
+}
+
+function canOrder(quantity: number, config: Config): boolean {
+  return quantity <= config.maxQuantity;
+}
+
+console.log(canOrder(3, Object.freeze({ maxQuantity: 2 })) === false ? "PASS" : "FAIL");
+console.log(canOrder(10, Object.freeze({ maxQuantity: 10 })) === true ? "PASS" : "FAIL");
+</solution>
+<expected>
+PASS
+PASS
+</expected>
+<explain><p>The dependency is visible in the signature and each test controls its own configuration, so no test can leak settings into another.</p></explain>
+</question>
+
+<question id="cp-code-once" type="code" file="once.ts">
+<q><p>Write <code>once(make)</code>, a singleton lifetime helper: it returns a function that calls <code>make</code> the first time and returns the same object on every later call. The program should print <code>true 1</code>.</p></q>
+<starter>
+// write once here
+
+let opened = 0;
+const getPool = once(() => ({ id: ++opened }));
+console.log(getPool() === getPool(), opened);
+</starter>
+<solution>
+function once<T>(make: () => T): () => T {
+  let created = false;
+  let instance: T;
+  return () => {
+    if (!created) {
+      instance = make();
+      created = true;
+    }
+    return instance;
+  };
+}
+
+let opened = 0;
+const getPool = once(() => ({ id: ++opened }));
+console.log(getPool() === getPool(), opened);
+</solution>
+<expected>true 1</expected>
+<explain><p>This is what a container's singleton lifetime does per registration. The class being created knows nothing about it, and a test can call <code>once</code> again to get a fresh instance.</p></explain>
+</question>
+
+<question id="cp-code-test-family" type="code" file="test-family.ts">
+<q><p>Write <code>testInfrastructure(log)</code>, a third family for the <code>Infrastructure</code> interface whose storage and queue record every call in <code>log</code> (<code>"put uploads/1.jpg"</code>, <code>"enqueue thumbnail uploads/1.jpg"</code>). The program should print <code>[ 'put uploads/1.jpg', 'enqueue thumbnail uploads/1.jpg' ]</code>.</p></q>
+<starter>
+interface Infrastructure {
+  createStorage(): { put(key: string): void };
+  createQueue(): { enqueue(job: string, key: string): void };
+}
+
+function upload(infra: Infrastructure, key: string): void {
+  infra.createStorage().put(key);
+  infra.createQueue().enqueue("thumbnail", key);
+}
+
+// write testInfrastructure here
+
+const log: string[] = [];
+upload(testInfrastructure(log), "uploads/1.jpg");
+console.log(log);
+</starter>
+<solution>
+interface Infrastructure {
+  createStorage(): { put(key: string): void };
+  createQueue(): { enqueue(job: string, key: string): void };
+}
+
+function upload(infra: Infrastructure, key: string): void {
+  infra.createStorage().put(key);
+  infra.createQueue().enqueue("thumbnail", key);
+}
+
+function testInfrastructure(log: string[]): Infrastructure {
+  return {
+    createStorage: () => ({ put: (key) => void log.push(`put ${key}`) }),
+    createQueue: () => ({ enqueue: (job, key) => void log.push(`enqueue ${job} ${key}`) }),
+  };
+}
+
+const log: string[] = [];
+upload(testInfrastructure(log), "uploads/1.jpg");
+console.log(log);
+</solution>
+<expected>[ 'put uploads/1.jpg', 'enqueue thumbnail uploads/1.jpg' ]</expected>
+<explain><p>A test environment is just one more family. <code>upload</code> did not change; the composition root of the test picked a different factory.</p></explain>
+</question>

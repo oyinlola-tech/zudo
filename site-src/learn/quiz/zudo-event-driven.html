@@ -1,0 +1,910 @@
+<question id="ed-continue-default" type="choice">
+<q>An <code>order.created</code> handler throws. What does <code>await bus.publishEvent(...)</code> do with <code>@zudojs/events</code> in its default settings?</q>
+<option>It rejects with the handler's error, so the caller's <code>try</code>/<code>catch</code> sees it</option>
+<option correct>It resolves; the other handlers still run and the failure is only in <code>result.errors</code> (and the bus's <code>onError</code> hook)</option>
+<option>It retries the failing handler three times, then rejects</option>
+<option>It stops at the failing handler and resolves with <code>handled: false</code></option>
+<explain><p>The default error mode is <code>CONTINUE</code>: every handler runs, failures are collected, and the promise resolves. That is why code that only awaits <code>publishEvent</code>, such as a naive relay, never notices a failed delivery. Check <code>result.failed</code>, or log in <code>onError</code>.</p></explain>
+</question>
+
+<question id="ed-double-revenue" type="choice">
+<q>In the first example, publishing <code>order.created</code> a second time fixed the missing receipt but doubled the revenue. What is the root cause?</q>
+<option>The event bus delivered the second event twice</option>
+<option>The revenue handler used <code>+=</code> on a number instead of a <code>BigInt</code></option>
+<option correct>A retry was done by re-publishing the whole event, and the audit and analytics handlers were not idempotent</option>
+<option>The email handler changed the payload before analytics read it</option>
+<explain><p>Re-publishing runs every subscriber again. Handlers that apply their effect every time they run (append a row, add to a total) double it. The fix has two parts: retry per consumer, and make each consumer ignore events it already handled.</p></explain>
+</question>
+
+<question id="ed-crash-before-publish" type="choice">
+<q>ShopFlow commits the order row, then the process is killed before <code>publishEvent</code> runs. With only an in-memory event bus, what happens to the receipt, audit and analytics work?</q>
+<option>The bus replays the event when the process restarts</option>
+<option correct>It is lost: nothing recorded that the event still has to be published</option>
+<option>The database rolls back the order, so nothing is inconsistent</option>
+<option>The handlers run anyway, because they were subscribed before the crash</option>
+<explain><p>The event only existed in memory. The order is committed, and nothing anywhere says "announce this order". The outbox fixes this by writing the event in the same transaction as the order.</p></explain>
+</question>
+
+<question id="ed-not-duplicate-source" type="choice">
+<q>Which of these is <strong>not</strong> a way the same event can reach a consumer twice?</q>
+<option>The relay publishes a row, then crashes before marking it as published</option>
+<option>The queue retries a job that was slow, while the first try is still running</option>
+<option>A broker redelivers a message whose acknowledgement was lost</option>
+<option correct>A <code>UNIQUE</code> constraint on the <code>processed_events</code> table</option>
+<explain><p>The first three are everyday causes of duplicates, which is why delivery is "at least once". A unique constraint is part of the <em>defence</em>: it lets the database decide which delivery claimed the event first.</p></explain>
+</question>
+
+<question id="ed-claim-type-arg" type="choice">
+<q>Why does <code>bus.on&lt;Event&lt;OrderCreated&gt;&gt;("payment.failed", handler)</code> compile?</q>
+<option>Because <code>payment.failed</code> and <code>order.created</code> share a namespace</option>
+<option correct>Because the type argument of <code>on</code> is not connected to the event name; it only describes what the handler claims to receive</option>
+<option>Because TypeScript checks event names only when <code>strict</code> is off</option>
+<option>Because <code>@zudojs/events</code> converts the payload to the requested type at runtime</option>
+<explain><p>The name is a plain string at runtime and the type argument is chosen by the caller, so nothing ties them together. The handler then reads fields that do not exist. Let a contract choose both the name and the type, and parse the payload before the handler runs.</p></explain>
+</question>
+
+<question id="ed-contract-owner" type="choice">
+<q>Who should own and change the <code>order.created</code> contract module?</q>
+<option>Each consumer keeps its own copy and changes it when it needs a new field</option>
+<option correct>The orders module, which publishes the event; consumers import the contract, and changes are reviewed with the consumer teams</option>
+<option>Nobody: contracts are generated from whatever the producer happens to send</option>
+<option>The analytics team, because it reads the most fields</option>
+<explain><p>The producer owns the event, just as a module owns its public API. Consumers import the same contract instead of redeclaring it, so a change shows up in their code review and their compiler.</p></explain>
+</question>
+
+<question id="ed-breaking-change" type="choice">
+<q>Which change to <code>order.created</code> needs a new version?</q>
+<option>Adding an optional <code>couponCode</code> field that consumers may ignore</option>
+<option correct>Moving <code>email</code> into a nested <code>customer</code> object</option>
+<option>Adding a new consumer that subscribes to the event</option>
+<option>Fixing a typo in the documentation comment of the contract</option>
+<explain><p>A consumer written for the old shape reads <code>payload.email</code> and gets <code>undefined</code>. Adding an optional field is not breaking: tolerant readers ignore fields they do not know.</p></explain>
+</question>
+
+<question id="ed-unit-change" type="choice">
+<q>A developer wants to change <code>totalKobo</code> to hold naira instead of kobo, keeping the name and type (<code>number</code>). Why is this the most dangerous kind of change?</q>
+<option>Numbers cannot be stored in <code>jsonb</code></option>
+<option>The parser will reject every new event</option>
+<option correct>The type and field are unchanged, so neither the compiler nor the parser notices, and every consumer silently computes amounts 100 times too small</option>
+<option>Naira values need <code>BigInt</code>, which JSON cannot represent</option>
+<explain><p>A change of meaning is invisible to every check that only looks at shape. Give it a new version or, better, a new field name such as <code>totalNaira</code>, so old code cannot mistake one for the other.</p></explain>
+</question>
+
+<question id="ed-upcast-where" type="choice">
+<q>Why does the lesson upcast v1 events when a consumer <strong>reads</strong> them, instead of converting them once when v2 is deployed?</q>
+<option>Upcasting is faster when it runs many times</option>
+<option correct>Old events are already in flight (in the outbox, queues and dead letters) and may be read long after the deploy; you cannot rewrite all of them</option>
+<option>PostgreSQL cannot update <code>jsonb</code> columns</option>
+<option>The event bus refuses to deliver events whose version changed</option>
+<explain><p>Events live in many places: unrelayed outbox rows, jobs waiting for a retry, dead letters replayed next week, a broker's log. Converting at read time handles all of them the same way, and the stored events stay a true record of what was published.</p></explain>
+</question>
+
+<question id="ed-upcast-null" type="choice">
+<q>The v1 → v2 upcaster sets <code>customer.name</code> to <code>null</code>. Why not a friendly default such as <code>"Customer"</code>?</q>
+<option>Because <code>null</code> is shorter in JSON</option>
+<option>Because TypeScript does not allow string defaults in upcasters</option>
+<option correct>Because v1 never recorded the name; an invented value would look like real data in every email and report built on these events</option>
+<option>Because the email consumer crashes on strings it did not expect</option>
+<explain><p>An upcaster may only add what it can derive. Unknown data becomes an explicit "unknown" (<code>null</code> here), and the v2 contract allows it, so consumers are forced to handle it, as the email consumer does with "Hello".</p></explain>
+</question>
+
+<question id="ed-newer-version" type="choice">
+<q>A consumer that knows up to v2 receives a v3 <code>order.created</code>. What does the lesson's <code>readOrderCreated</code> do, and why?</q>
+<option>It parses the payload as v2 and ignores unknown fields</option>
+<option>It downcasts v3 to v2 with a reverse upcaster</option>
+<option correct>It throws, so the job fails and is retried; once the consumer with v3 support is deployed, the retry succeeds</option>
+<option>It drops the event, because a newer version is always a mistake</option>
+<explain><p>Parsing a newer version as an older one might work by luck, or silently lose a field that matters. Refusing makes the problem loud and recoverable. The usual order of deployment is: consumers first, producers last.</p></explain>
+</question>
+
+<question id="ed-upcast-chain" type="choice">
+<q>ShopFlow adds <code>order.created</code> v3. Which upcasters exist afterwards?</q>
+<option>One function from v1 to v3, replacing the v1 → v2 one</option>
+<option correct>The existing v1 → v2 and a new v2 → v3; a v1 event goes through both</option>
+<option>Only v2 → v3, because v1 events are too old to matter</option>
+<option>None: v3 consumers read every version natively</option>
+<explain><p>Upcasters form a chain, one version step each. Every new version adds exactly one function, and all older versions reach the latest by running the steps in order.</p></explain>
+</question>
+
+<question id="ed-outbox-tx" type="choice">
+<q>Why must the <code>INSERT INTO outbox</code> run in the same database transaction as <code>INSERT INTO orders</code>?</q>
+<option>Because PGlite allows only one statement per transaction</option>
+<option>So the relay can read the order row</option>
+<option correct>So they commit together or not at all: there is never an order without its event, or an event about an order that was rolled back</option>
+<option>So the event id can be generated by the database</option>
+<explain><p>Two separate commits leave a gap where a crash creates exactly the inconsistency the outbox exists to prevent. One transaction closes the gap.</p></explain>
+</question>
+
+<question id="ed-relay-bug" type="choice">
+<q>A relay publishes each outbox row with <code>await bus.publishEvent(...)</code> and then marks it published, without looking at the result. What goes wrong?</q>
+<option>Nothing: <code>publishEvent</code> rejects when a subscriber fails, so the <code>UPDATE</code> is skipped</option>
+<option correct>A row is marked published even when a subscriber failed to accept it, so that delivery is lost for good</option>
+<option>Every row is published twice</option>
+<option>Rows are published in the wrong order</option>
+<explain><p>In <code>CONTINUE</code> mode <code>publishEvent</code> resolves even when a handler threw. The relay must check <code>result.failed</code> and leave the row unpublished (and stop, to keep the order) when it is greater than zero.</p></explain>
+</question>
+
+<question id="ed-check-then-act" type="choice">
+<q>A consumer does <code>SELECT</code> from <code>processed_events</code>, then the work, then <code>INSERT</code> into <code>processed_events</code>. Two deliveries of the same event arrive together. Why can the work happen twice?</q>
+<option>Because <code>SELECT</code> does not see rows in <code>jsonb</code> columns</option>
+<option correct>Both deliveries can run their <code>SELECT</code> before either inserts, so both see "not processed" and both do the work</option>
+<option>Because the primary key is on <code>event_id</code> only</option>
+<option>Because PGlite runs queries in parallel threads</option>
+<explain><p>That is the check-then-act race. The primary key stops the second <code>INSERT</code>, but only after the work was done. Claim first with <code>INSERT … ON CONFLICT DO NOTHING RETURNING</code>, so the database decides the winner.</p></explain>
+</question>
+
+<question id="ed-claim-same-tx" type="choice">
+<q>In <code>handleOnce</code>, why is the claim row inserted in the same transaction as the work?</q>
+<option>To make the query faster</option>
+<option correct>If the work fails, the claim is rolled back too, so a retry may try again; if both commit, later deliveries are duplicates</option>
+<option>So that other consumers can see the claim before the work finishes</option>
+<option>Because <code>ON CONFLICT</code> only works inside a transaction</option>
+<explain><p>A claim committed without its work would make the event look done when it is not, and the retry would skip it forever. Work committed without its claim would be repeated by the next delivery. Only committing them together is correct.</p></explain>
+</question>
+
+<question id="ed-email-outside-db" type="choice">
+<q>Sending an email cannot be part of a database transaction. What is the best protection against a duplicate email when the consumer crashes between sending and recording?</q>
+<option>Send the email twice on purpose, so the customer always gets at least one</option>
+<option>Record the claim before sending, and never retry</option>
+<option correct>Pass the event id as an idempotency key to the mail provider, so it drops the repeat send</option>
+<option>Put the email in an <code>afterRollback</code> hook</option>
+<explain><p>The event id is the same on every delivery, which makes it a perfect idempotency key. Recording the claim first and never retrying turns a crash into a lost email instead.</p></explain>
+</question>
+
+<question id="ed-queue-per-consumer" type="choice">
+<q>Why does each consumer get its own queue, instead of the relay re-publishing the event until every handler succeeds?</q>
+<option>Queues are faster than the event bus</option>
+<option correct>Each consumer then has its own retries, backoff and dead letters: a failing email is retried alone, without running audit and analytics again</option>
+<option>Because <code>@zudojs/events</code> cannot have more than one handler per event</option>
+<option>So that consumers can change the event payload</option>
+<explain><p>Retry state belongs to a consumer, not to an event. The bus handler only enqueues, which is fast and rarely fails; the queue does the slow, unreliable work with retries for that consumer alone.</p></explain>
+</question>
+
+<question id="ed-park-which" type="choice">
+<q>Which failure should the email consumer park in the dead-letter table at once, instead of throwing for a retry?</q>
+<option>The mail provider timed out</option>
+<option>The provider answered 429 Too Many Requests</option>
+<option correct>The provider says the mailbox does not exist</option>
+<option>The database connection was reset while recording the claim</option>
+<explain><p>A mailbox that does not exist will not start existing after a backoff. Retrying only delays the alert. Timeouts, 429s and reset connections are transient, and the queue's retries are the right answer.</p></explain>
+</question>
+
+<question id="ed-replay-path" type="choice">
+<q>The replay in the lesson clears <code>published_at</code> on the outbox row instead of calling the email handler directly. What is the main benefit?</q>
+<option>It is the only way to delete a dead letter</option>
+<option correct>The event goes through exactly the same path as the first time (relay, queue, upcaster, parser, idempotency), and idempotent consumers ignore what they already did</option>
+<option>It sends the email faster</option>
+<option>It gives the event a new id, so it is not treated as a duplicate</option>
+<explain><p>A replay tool that skips the normal path skips the checks you rely on. Because every consumer is idempotent, re-publishing is safe: audit and analytics answer <code>duplicate</code>, and email does its job.</p></explain>
+</question>
+
+<question id="ed-event-or-query" type="choice">
+<q>Before accepting an order, the orders module needs to know whether a product is in stock. Which tool fits?</q>
+<option>Publish <code>stock.check-requested</code> and wait for an event back</option>
+<option correct>A query (or a direct call) to the catalog, because orders needs an answer now</option>
+<option>A dead-letter table</option>
+<option>An upcaster</option>
+<explain><p>Events announce facts to whoever cares; they do not return answers. When one module needs an answer to continue, it asks: a query, an RPC call or a function call.</p></explain>
+</question>
+
+<question id="ed-out-continue" type="output">
+<q>What does this print?</q>
+<code file="continue.ts">
+import { createEventBus } from "@zudojs/events";
+
+const bus = createEventBus();
+bus.on("order.created", () => {
+  throw new Error("mail provider timed out");
+}, { id: "email" });
+bus.on("order.created", () => console.log("audit row written"), { id: "audit" });
+
+const result = await bus.publishEvent({ type: "order.created", payload: { orderId: "ORD-1" } });
+console.log(result.handled, result.succeeded, result.failed, result.errors[0]?.handlerId);
+</code>
+<option correct>audit row written
+true 1 1 email</option>
+<option>Error: mail provider timed out</option>
+<option>true 0 1 email</option>
+<option>audit row written
+false 1 1 email</option>
+<explain><p>In the default <code>CONTINUE</code> mode the second handler still runs, and the publish resolves. The result counts one success and one failure, and each error carries the <code>handlerId</code> you gave the handler.</p></explain>
+</question>
+
+<question id="ed-out-throw-mode" type="output">
+<q>The same bus, published in the <code>THROW</code> error mode. What does this print?</q>
+<code file="throw-mode.ts">
+import { createEventBus, EventErrorMode } from "@zudojs/events";
+
+const bus = createEventBus();
+const ran: string[] = [];
+bus.on("order.created", () => {
+  throw new Error("mail provider timed out");
+}, { id: "email" });
+bus.on("order.created", () => void ran.push("audit"), { id: "audit" });
+
+try {
+  await bus.publishEvent({ type: "order.created", payload: {} }, { errorMode: EventErrorMode.THROW });
+} catch (error) {
+  console.log("rejected:", (error as Error).name);
+}
+console.log("ran:", ran);
+</code>
+<option correct>rejected: EventHandlerError
+ran: []</option>
+<option>rejected: Error
+ran: [ 'audit' ]</option>
+<option>ran: [ 'audit' ]</option>
+<option>rejected: EventHandlerError
+ran: [ 'audit' ]</option>
+<explain><p>In <code>THROW</code> mode the first failing handler rejects the publish, wrapped in an <code>EventHandlerError</code>, and the handlers after it do not run. It suits tests and places where every handler must succeed, not a fan-out to independent consumers.</p></explain>
+</question>
+
+<question id="ed-out-claim-undefined" type="output">
+<q>What does this print?</q>
+<code file="claim.ts">
+import { createEventBus } from "@zudojs/events";
+import type { Event } from "@zudojs/events";
+
+const bus = createEventBus();
+bus.on<Event<{ totalKobo: number }>>("payment.refunded", (event) => {
+  console.log("refund:", event.payload.totalKobo);
+});
+
+await bus.publishEvent({ type: "payment.refunded", payload: { amountKobo: 500_000 } });
+</code>
+<option correct>refund: undefined</option>
+<option>refund: 500000</option>
+<option>TypeError: Cannot read properties of undefined</option>
+<option>Nothing, because the payload does not match the type</option>
+<explain><p>The type argument is a claim that nothing checks. The payload has <code>amountKobo</code>, not <code>totalKobo</code>, so the handler reads <code>undefined</code>, and no error is raised. A parser at the edge would have refused the payload with a clear message.</p></explain>
+</question>
+
+<question id="ed-out-idempotent-set" type="output">
+<q>Deliveries arrive with duplicates. What does this print?</q>
+<code file="dedupe.js">
+const processed = new Set();
+let revenueKobo = 0;
+
+function onOrderCreated(event) {
+  if (processed.has(event.id)) return "duplicate";
+  processed.add(event.id);
+  revenueKobo += event.totalKobo;
+  return "done";
+}
+
+const deliveries = [
+  { id: "evt-1", totalKobo: 100_000 },
+  { id: "evt-2", totalKobo: 250_000 },
+  { id: "evt-1", totalKobo: 100_000 },
+  { id: "evt-3", totalKobo: 50_000 },
+  { id: "evt-2", totalKobo: 250_000 },
+];
+const outcomes = deliveries.map(onOrderCreated);
+console.log(outcomes.filter((o) => o === "duplicate").length, revenueKobo);
+</code>
+<option correct>2 400000</option>
+<option>0 750000</option>
+<option>2 750000</option>
+<option>3 400000</option>
+<option>2 350000</option>
+<explain><p>Two deliveries repeat an id already seen, so they are skipped. The three distinct events add up to 400,000 kobo. In a real consumer the <code>Set</code> is the <code>processed_events</code> table, written in the same transaction as the revenue.</p></explain>
+</question>
+
+<question id="ed-out-race" type="output">
+<q>This consumer checks, then waits (as a database call would), then marks. Two deliveries of the same event arrive together. What does it print?</q>
+<code file="race.js">
+const processed = new Set();
+let emailsSent = 0;
+const dbCall = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+async function onOrderCreated(eventId) {
+  await dbCall();
+  if (processed.has(eventId)) return "duplicate";
+  await dbCall();
+  emailsSent++;
+  processed.add(eventId);
+  return "done";
+}
+
+const outcomes = await Promise.all([onOrderCreated("evt-1"), onOrderCreated("evt-1")]);
+console.log(outcomes, emailsSent);
+</code>
+<option correct>[ 'done', 'done' ] 2</option>
+<option>[ 'done', 'duplicate' ] 1</option>
+<option>[ 'duplicate', 'duplicate' ] 0</option>
+<option>[ 'done', 'duplicate' ] 2</option>
+<explain><p>Both calls pass the check before either has marked the event, because the mark happens after an <code>await</code>. That is the check-then-act race. The cure is an atomic claim, such as <code>INSERT … ON CONFLICT DO NOTHING RETURNING</code>, before the work.</p></explain>
+</question>
+
+<question id="ed-out-upcast-chain" type="output">
+<q>What does this print?</q>
+<code file="chain.js">
+const upcasters = {
+  1: (p) => ({ orderId: p.orderId, customer: { email: p.email, name: null }, totalKobo: p.totalKobo }),
+  2: (p) => ({ ...p, channel: "unknown" }),
+};
+const LATEST = 3;
+
+function read(envelope) {
+  if (envelope.version > LATEST) throw new RangeError(`v${envelope.version} is newer than v${LATEST}`);
+  let payload = envelope.payload;
+  for (let v = envelope.version; v < LATEST; v++) payload = upcasters[v](payload);
+  return payload;
+}
+
+const v1 = { version: 1, payload: { orderId: "ORD-7", email: "ada@shop.ng", totalKobo: 900_000 } };
+const out = read(v1);
+console.log(out.customer.email, out.customer.name, out.channel);
+try {
+  read({ version: 4, payload: {} });
+} catch (error) {
+  console.log(error.message);
+}
+</code>
+<option correct>ada@shop.ng null unknown
+v4 is newer than v3</option>
+<option>ada@shop.ng null undefined
+v4 is newer than v3</option>
+<option>undefined null unknown
+v4 is newer than v3</option>
+<option>ada@shop.ng null unknown
+TypeError: upcasters[v] is not a function</option>
+<explain><p>A v1 payload runs through both steps: 1 → 2 moves the email into <code>customer</code>, 2 → 3 adds the channel. A v4 event is refused before the loop starts, instead of being guessed at.</p></explain>
+</question>
+
+<question id="ed-out-relay-stop" type="output">
+<q>A relay stops at the first row a subscriber refuses. What does this print?</q>
+<code file="relay.js">
+const outbox = [
+  { seq: 1, id: "evt-ORD-1", published: false },
+  { seq: 2, id: "evt-ORD-2", published: false },
+  { seq: 3, id: "evt-ORD-3", published: false },
+];
+let subscriberDownFor = "evt-ORD-2";
+
+function publish(row) {
+  return row.id === subscriberDownFor ? { failed: 1 } : { failed: 0 };
+}
+
+function relay() {
+  let published = 0;
+  for (const row of outbox.filter((r) => !r.published)) {
+    if (publish(row).failed > 0) break;
+    row.published = true;
+    published++;
+  }
+  return published;
+}
+
+console.log(relay(), outbox.filter((r) => !r.published).map((r) => r.id));
+subscriberDownFor = null;
+console.log(relay(), outbox.filter((r) => !r.published).map((r) => r.id));
+</code>
+<option correct>1 [ 'evt-ORD-2', 'evt-ORD-3' ]
+2 []</option>
+<option>2 [ 'evt-ORD-2' ]
+1 []</option>
+<option>1 [ 'evt-ORD-2' ]
+1 []</option>
+<option>0 [ 'evt-ORD-1', 'evt-ORD-2', 'evt-ORD-3' ]
+3 []</option>
+<explain><p>Row 1 is published, row 2 fails and the loop stops, so row 3 is not attempted even though it would have worked. That keeps events in their original order. The next run publishes rows 2 and 3.</p></explain>
+</question>
+
+<question id="ed-out-claim-key" type="output">
+<q>Claims are keyed by consumer and event id. What does this print?</q>
+<code file="claims.js">
+const claims = new Set();
+
+function claim(consumer, eventId) {
+  const key = `${consumer}:${eventId}`;
+  if (claims.has(key)) return false;
+  claims.add(key);
+  return true;
+}
+
+console.log(claim("audit", "evt-1"), claim("analytics", "evt-1"), claim("audit", "evt-1"), claims.size);
+</code>
+<option correct>true true false 2</option>
+<option>true false false 1</option>
+<option>true true true 3</option>
+<option>false true false 2</option>
+<explain><p>Audit having handled <code>evt-1</code> says nothing about analytics, so the key includes the consumer. Only the repeat for audit is refused.</p></explain>
+</question>
+
+<question id="ed-out-frozen-payload" type="output">
+<q>A handler tries to "fix" the payload before the next handler sees it. What does this print?</q>
+<code file="frozen.ts">
+import { createEventBus } from "@zudojs/events";
+
+const bus = createEventBus();
+bus.on("order.created", (event) => {
+  (event.payload as { totalKobo: number }).totalKobo = 0;
+}, { id: "discount-hack", priority: 10 });
+bus.on("order.created", (event) => {
+  console.log("analytics sees", (event.payload as { totalKobo: number }).totalKobo);
+}, { id: "analytics" });
+
+const result = await bus.publishEvent({ type: "order.created", payload: { totalKobo: 2_500_000 } });
+console.log("failed:", result.failed);
+</code>
+<option correct>analytics sees 2500000
+failed: 1</option>
+<option>analytics sees 0
+failed: 0</option>
+<option>analytics sees 2500000
+failed: 0</option>
+<option>TypeError: Cannot assign to read only property 'totalKobo' of object</option>
+<explain><p>Handlers receive a frozen copy of the payload. The assignment throws in the higher-priority handler (modules are strict), the bus records the failure and carries on, and analytics sees the original total. One handler cannot change what the next one sees.</p></explain>
+</question>
+
+<question id="ed-out-classify" type="output">
+<q>What does this print?</q>
+<code file="classify.js">
+const PERMANENT = new Set(["MAILBOX_NOT_FOUND", "INVALID_PHONE"]);
+
+function decide(error) {
+  return PERMANENT.has(error.serviceCode) ? "park" : "retry";
+}
+
+const failures = [
+  { serviceCode: "TIMEOUT" },
+  { serviceCode: "MAILBOX_NOT_FOUND" },
+  { serviceCode: "RATE_LIMITED" },
+  {},
+];
+console.log(failures.map(decide).join(" "));
+</code>
+<option correct>retry park retry retry</option>
+<option>retry park retry park</option>
+<option>park park retry retry</option>
+<option>retry park park retry</option>
+<explain><p>Only failures known to be permanent are parked. Everything else, including an error without a code, is retried: an unknown error might be temporary, and after the last attempt the queue dead-letters it anyway.</p></explain>
+</question>
+
+<question id="ed-out-queue-dead" type="output">
+<q>A job fails on every attempt. What does this print?</q>
+<code file="dead.ts">
+import { createFixedBackoff, createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const queue = createInMemoryQueue<{ eventId: string }>(createQueueName("order-events.email"));
+const tries: number[] = [];
+queue.process("deliver", async (_job, context) => {
+  tries.push(context.attemptNumber);
+  throw new Error("mail provider timed out");
+});
+
+await queue.add("deliver", { eventId: "evt-ORD-1" }, { attempts: 3, backoff: createFixedBackoff(5, { jitter: "none" }) });
+while ((await queue.getStats()).deadLettered === 0) await new Promise((resolve) => setTimeout(resolve, 10));
+
+const [dead] = await queue.getDeadLetterJobs();
+console.log(tries, dead?.attempts, dead?.reason);
+await queue.close();
+</code>
+<option correct>[ 1, 2, 3 ] 3 mail provider timed out</option>
+<option>[ 1 ] 1 mail provider timed out</option>
+<option>[ 0, 1, 2 ] 3 mail provider timed out</option>
+<option>[ 1, 2, 3, 4 ] 4 mail provider timed out</option>
+<explain><p><code>attempts: 3</code> means three tries in total, and <code>context.attemptNumber</code> counts from 1. After the third failure the job moves to the dead-letter store, which keeps the number of attempts and the last error's message as the reason.</p></explain>
+</question>
+
+<question id="ed-out-per-consumer" type="output">
+<q>Only the email consumer fails at first. With one retry loop per consumer, what does this print?</q>
+<code file="per-consumer.js">
+let emailFailures = 2;
+const consumers = {
+  email: () => {
+    if (emailFailures-- > 0) throw new Error("timeout");
+  },
+  audit: () => {},
+  analytics: () => {},
+};
+
+const runs = {};
+for (const [name, handle] of Object.entries(consumers)) {
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    runs[name] = attempt;
+    try {
+      handle();
+      break;
+    } catch {}
+  }
+}
+console.log(runs);
+</code>
+<option correct>{ email: 3, audit: 1, analytics: 1 }</option>
+<option>{ email: 3, audit: 3, analytics: 3 }</option>
+<option>{ email: 2, audit: 1, analytics: 1 }</option>
+<option>{ email: 4, audit: 1, analytics: 1 }</option>
+<explain><p>Each consumer has its own retry state, so only email is tried again, and it succeeds on the third try. Re-publishing the whole event three times would have run audit and analytics three times too.</p></explain>
+</question>
+
+<question id="ed-code-handle-once" type="code" file="handle-once.js">
+<q><p>Finish <code>handleOnce(consumer, eventId, work)</code>. It must run <code>work()</code> only the first time a given <strong>consumer</strong> sees a given event id, returning <code>"done"</code>, and return <code>"duplicate"</code> afterwards. Different consumers are independent. If <code>work()</code> throws, the event must not count as processed, so a retry can run it again (rethrow the error).</p></q>
+<starter>
+const processed = new Set();
+
+async function handleOnce(consumer, eventId, work) {
+  // your code here
+}
+
+let audit = 0;
+let revenue = 0;
+const log = [];
+log.push(await handleOnce("audit", "evt-1", async () => { audit++; }));
+log.push(await handleOnce("audit", "evt-1", async () => { audit++; }));
+log.push(await handleOnce("analytics", "evt-1", async () => { revenue += 5; }));
+try {
+  await handleOnce("analytics", "evt-2", async () => { throw new Error("db down"); });
+} catch (error) {
+  log.push(error.message);
+}
+log.push(await handleOnce("analytics", "evt-2", async () => { revenue += 7; }));
+console.log(log.join(", "));
+console.log(audit, revenue);
+</starter>
+<solution>
+const processed = new Set();
+
+async function handleOnce(consumer, eventId, work) {
+  const key = `${consumer}:${eventId}`;
+  if (processed.has(key)) return "duplicate";
+  processed.add(key);
+  try {
+    await work();
+  } catch (error) {
+    processed.delete(key);
+    throw error;
+  }
+  return "done";
+}
+
+let audit = 0;
+let revenue = 0;
+const log = [];
+log.push(await handleOnce("audit", "evt-1", async () => { audit++; }));
+log.push(await handleOnce("audit", "evt-1", async () => { audit++; }));
+log.push(await handleOnce("analytics", "evt-1", async () => { revenue += 5; }));
+try {
+  await handleOnce("analytics", "evt-2", async () => { throw new Error("db down"); });
+} catch (error) {
+  log.push(error.message);
+}
+log.push(await handleOnce("analytics", "evt-2", async () => { revenue += 7; }));
+console.log(log.join(", "));
+console.log(audit, revenue);
+</solution>
+<expected>
+done, duplicate, done, db down, done
+1 12
+</expected>
+<explain><p>Claim before the work (so a concurrent duplicate sees the claim), and release the claim when the work fails. That is what one database transaction gives you for free: the claim row and the work commit or roll back together.</p></explain>
+</question>
+
+<question id="ed-code-upcaster" type="code" file="upcaster.js">
+<q><p><code>payment.received</code> v1 had <code>{ orderId, amountNaira }</code> (a number of naira). Version 2 is <code>{ orderId, amount: { kobo, currency } }</code>. Write <code>upcastV1(payload)</code> that returns the v2 shape: kobo is naira × 100 rounded to a whole number, and the currency is <code>"NGN"</code>.</p></q>
+<starter>
+function upcastV1(payload) {
+  // your code here
+}
+
+console.log(JSON.stringify(upcastV1({ orderId: "ORD-5", amountNaira: 12500.5 })));
+console.log(JSON.stringify(upcastV1({ orderId: "ORD-6", amountNaira: 0.29 })));
+</starter>
+<solution>
+function upcastV1(payload) {
+  return {
+    orderId: payload.orderId,
+    amount: { kobo: Math.round(payload.amountNaira * 100), currency: "NGN" },
+  };
+}
+
+console.log(JSON.stringify(upcastV1({ orderId: "ORD-5", amountNaira: 12500.5 })));
+console.log(JSON.stringify(upcastV1({ orderId: "ORD-6", amountNaira: 0.29 })));
+</solution>
+<expected>
+{"orderId":"ORD-5","amount":{"kobo":1250050,"currency":"NGN"}}
+{"orderId":"ORD-6","amount":{"kobo":29,"currency":"NGN"}}
+</expected>
+<explain><p><code>0.29 * 100</code> is <code>28.999999999999996</code> in floating point, so <code>Math.round</code> is required, not <code>Math.floor</code>. An upcaster is a pure function from one shape to the next; it only uses data the old payload really has.</p></explain>
+</question>
+
+<question id="ed-code-parse" type="code" file="parse.js">
+<q><p>Write the contract parser <code>parseOrderCreated(payload)</code>. It returns the payload when <code>orderId</code> is a string starting with <code>"ORD-"</code>, <code>email</code> is a string containing <code>"@"</code>, and <code>totalKobo</code> is a positive safe integer. Otherwise it throws a <code>TypeError</code> whose message is <code>order.created: invalid FIELD</code> for the <strong>first</strong> invalid field in that order.</p></q>
+<starter>
+function parseOrderCreated(payload) {
+  // your code here
+}
+
+const inputs = [
+  { orderId: "ORD-1", email: "ada@shop.ng", totalKobo: 2500000 },
+  { orderId: "1", email: "ada@shop.ng", totalKobo: 2500000 },
+  { orderId: "ORD-2", email: "tunde", totalKobo: -5 },
+  { orderId: "ORD-3", email: "bola@shop.ng", totalKobo: 12.5 },
+  null,
+];
+for (const input of inputs) {
+  try {
+    console.log("ok", parseOrderCreated(input).orderId);
+  } catch (error) {
+    console.log(error.name, error.message);
+  }
+}
+</starter>
+<solution>
+function parseOrderCreated(payload) {
+  const fail = (field) => {
+    throw new TypeError(`order.created: invalid ${field}`);
+  };
+  if (typeof payload?.orderId !== "string" || !payload.orderId.startsWith("ORD-")) fail("orderId");
+  if (typeof payload.email !== "string" || !payload.email.includes("@")) fail("email");
+  if (!Number.isSafeInteger(payload.totalKobo) || payload.totalKobo <= 0) fail("totalKobo");
+  return payload;
+}
+
+const inputs = [
+  { orderId: "ORD-1", email: "ada@shop.ng", totalKobo: 2500000 },
+  { orderId: "1", email: "ada@shop.ng", totalKobo: 2500000 },
+  { orderId: "ORD-2", email: "tunde", totalKobo: -5 },
+  { orderId: "ORD-3", email: "bola@shop.ng", totalKobo: 12.5 },
+  null,
+];
+for (const input of inputs) {
+  try {
+    console.log("ok", parseOrderCreated(input).orderId);
+  } catch (error) {
+    console.log(error.name, error.message);
+  }
+}
+</solution>
+<expected>
+ok ORD-1
+TypeError order.created: invalid orderId
+TypeError order.created: invalid email
+TypeError order.created: invalid totalKobo
+TypeError order.created: invalid orderId
+</expected>
+<explain><p>Optional chaining (<code>payload?.orderId</code>) makes <code>null</code> fail on the first field instead of crashing with a different error. <code>Number.isSafeInteger</code> rejects fractions of a kobo, which a money field must never hold.</p></explain>
+</question>
+
+<question id="ed-code-relay" type="code" file="relay.js">
+<q><p>Finish <code>relay(outbox, publish)</code>. It walks the rows whose <code>published</code> is false in <code>seq</code> order, calls <code>publish(row)</code> (which returns <code>{ failed }</code>), marks the row published only when <code>failed</code> is 0, and <strong>stops</strong> at the first failure to keep the order. It returns how many rows it published.</p></q>
+<starter>
+function relay(outbox, publish) {
+  // your code here
+}
+
+const outbox = [
+  { seq: 3, id: "evt-3", published: false },
+  { seq: 1, id: "evt-1", published: true },
+  { seq: 2, id: "evt-2", published: false },
+  { seq: 4, id: "evt-4", published: false },
+];
+const seen = [];
+const flaky = (row) => {
+  seen.push(row.id);
+  return { failed: row.id === "evt-3" && seen.length < 3 ? 1 : 0 };
+};
+console.log(relay(outbox, flaky), seen.join(","));
+console.log(relay(outbox, flaky), seen.join(","));
+</starter>
+<solution>
+function relay(outbox, publish) {
+  const pending = outbox.filter((row) => !row.published).sort((a, b) => a.seq - b.seq);
+  let published = 0;
+  for (const row of pending) {
+    if (publish(row).failed > 0) break;
+    row.published = true;
+    published++;
+  }
+  return published;
+}
+
+const outbox = [
+  { seq: 3, id: "evt-3", published: false },
+  { seq: 1, id: "evt-1", published: true },
+  { seq: 2, id: "evt-2", published: false },
+  { seq: 4, id: "evt-4", published: false },
+];
+const seen = [];
+const flaky = (row) => {
+  seen.push(row.id);
+  return { failed: row.id === "evt-3" && seen.length < 3 ? 1 : 0 };
+};
+console.log(relay(outbox, flaky), seen.join(","));
+console.log(relay(outbox, flaky), seen.join(","));
+</solution>
+<expected>
+1 evt-2,evt-3
+2 evt-2,evt-3,evt-3,evt-4
+</expected>
+<explain><p>Sort by <code>seq</code>, because the array order is not the order the events were written. The first run publishes <code>evt-2</code>, fails on <code>evt-3</code> and never tries <code>evt-4</code>. The second run picks up exactly where the first stopped.</p></explain>
+</question>
+
+<question id="ed-code-classify" type="code" file="retry-or-park.js">
+<q><p>Write <code>handleFailure(error, attempt, maxAttempts)</code>. Return <code>"park"</code> when <code>error.serviceCode</code> is one of <code>MAILBOX_NOT_FOUND</code> or <code>INVALID_PHONE</code> (permanent, whatever the attempt). Otherwise return <code>"retry"</code> while <code>attempt</code> is below <code>maxAttempts</code>, and <code>"dead-letter"</code> on the last attempt.</p></q>
+<starter>
+function handleFailure(error, attempt, maxAttempts) {
+  // your code here
+}
+
+console.log(
+  handleFailure({ serviceCode: "TIMEOUT" }, 1, 4),
+  handleFailure({ serviceCode: "TIMEOUT" }, 4, 4),
+  handleFailure({ serviceCode: "MAILBOX_NOT_FOUND" }, 1, 4),
+  handleFailure(new Error("socket hang up"), 3, 4),
+);
+</starter>
+<solution>
+const PERMANENT = new Set(["MAILBOX_NOT_FOUND", "INVALID_PHONE"]);
+
+function handleFailure(error, attempt, maxAttempts) {
+  if (PERMANENT.has(error.serviceCode)) return "park";
+  return attempt < maxAttempts ? "retry" : "dead-letter";
+}
+
+console.log(
+  handleFailure({ serviceCode: "TIMEOUT" }, 1, 4),
+  handleFailure({ serviceCode: "TIMEOUT" }, 4, 4),
+  handleFailure({ serviceCode: "MAILBOX_NOT_FOUND" }, 1, 4),
+  handleFailure(new Error("socket hang up"), 3, 4),
+);
+</solution>
+<expected>retry dead-letter park retry</expected>
+<explain><p>Permanent failures skip the retries and go straight to a person. Transient ones are retried until the attempts run out and then dead-lettered. Both end in the same visible place; only the time it takes to get there differs.</p></explain>
+</question>
+
+<question id="ed-code-subscribe" type="code" file="subscribe.ts">
+<q><p>Write <code>subscribe(bus, contract, handler)</code> for <code>@zudojs/events</code>. It subscribes to <code>contract.type</code> and calls <code>handler</code> with the payload after <code>contract.parse(payload)</code>. A payload that fails the parser must not reach the handler.</p></q>
+<starter>
+import { createEventBus } from "@zudojs/events";
+import type { EventBus } from "@zudojs/events";
+
+interface Contract<P> {
+  readonly type: string;
+  parse(payload: unknown): P;
+}
+
+function subscribe<P>(bus: EventBus, contract: Contract<P>, handler: (payload: P) => void): void {
+  // your code here
+}
+
+const StockLow: Contract<{ sku: string; left: number }> = {
+  type: "stock.low",
+  parse(payload) {
+    const p = payload as { sku?: unknown; left?: unknown };
+    if (typeof p.sku !== "string" || typeof p.left !== "number") throw new TypeError("stock.low: invalid payload");
+    return { sku: p.sku, left: p.left };
+  },
+};
+
+const bus = createEventBus();
+subscribe(bus, StockLow, (stock) => console.log(`reorder ${stock.sku}, ${stock.left} left`));
+await bus.publishEvent({ type: "stock.low", payload: { sku: "RICE-50KG", left: 3 } });
+const bad = await bus.publishEvent({ type: "stock.low", payload: { sku: "RICE-50KG" } });
+console.log("failed:", bad.failed, (bad.errors[0]?.cause as Error | undefined)?.message);
+</starter>
+<solution>
+import { createEventBus } from "@zudojs/events";
+import type { EventBus } from "@zudojs/events";
+
+interface Contract<P> {
+  readonly type: string;
+  parse(payload: unknown): P;
+}
+
+function subscribe<P>(bus: EventBus, contract: Contract<P>, handler: (payload: P) => void): void {
+  bus.on(contract.type, (event) => handler(contract.parse(event.payload)));
+}
+
+const StockLow: Contract<{ sku: string; left: number }> = {
+  type: "stock.low",
+  parse(payload) {
+    const p = payload as { sku?: unknown; left?: unknown };
+    if (typeof p.sku !== "string" || typeof p.left !== "number") throw new TypeError("stock.low: invalid payload");
+    return { sku: p.sku, left: p.left };
+  },
+};
+
+const bus = createEventBus();
+subscribe(bus, StockLow, (stock) => console.log(`reorder ${stock.sku}, ${stock.left} left`));
+await bus.publishEvent({ type: "stock.low", payload: { sku: "RICE-50KG", left: 3 } });
+const bad = await bus.publishEvent({ type: "stock.low", payload: { sku: "RICE-50KG" } });
+console.log("failed:", bad.failed, (bad.errors[0]?.cause as Error | undefined)?.message);
+</solution>
+<expected>
+reorder RICE-50KG, 3 left
+failed: 1 stock.low: invalid payload
+</expected>
+<explain><p>The contract chooses both the event name and the payload type, so the handler's parameter type is derived, not claimed. The parser throws inside the bus handler, so a bad payload is recorded as a failed delivery with a clear cause, and your handler never sees it.</p></explain>
+</question>
+
+<question id="ed-code-read-event" type="code" file="read-event.js">
+<q><p>Write <code>readEvent(envelope, upcasters, latest)</code>. It throws a <code>RangeError</code> with the message <code>vN is newer than this code</code> when <code>envelope.version</code> is above <code>latest</code>. Otherwise it applies <code>upcasters[v]</code> for every version from <code>envelope.version</code> up to <code>latest - 1</code>, in order, and returns the resulting payload.</p></q>
+<starter>
+function readEvent(envelope, upcasters, latest) {
+  // your code here
+}
+
+const upcasters = {
+  1: (p) => ({ ...p, currency: "NGN" }),
+  2: (p) => ({ ...p, channel: "unknown" }),
+};
+console.log(readEvent({ version: 1, payload: { orderId: "ORD-1" } }, upcasters, 3));
+console.log(readEvent({ version: 3, payload: { orderId: "ORD-2", currency: "NGN", channel: "app" } }, upcasters, 3));
+try {
+  readEvent({ version: 5, payload: {} }, upcasters, 3);
+} catch (error) {
+  console.log(error.name, error.message);
+}
+</starter>
+<solution>
+function readEvent(envelope, upcasters, latest) {
+  if (envelope.version > latest) throw new RangeError(`v${envelope.version} is newer than this code`);
+  let payload = envelope.payload;
+  for (let version = envelope.version; version < latest; version++) {
+    payload = upcasters[version](payload);
+  }
+  return payload;
+}
+
+const upcasters = {
+  1: (p) => ({ ...p, currency: "NGN" }),
+  2: (p) => ({ ...p, channel: "unknown" }),
+};
+console.log(readEvent({ version: 1, payload: { orderId: "ORD-1" } }, upcasters, 3));
+console.log(readEvent({ version: 3, payload: { orderId: "ORD-2", currency: "NGN", channel: "app" } }, upcasters, 3));
+try {
+  readEvent({ version: 5, payload: {} }, upcasters, 3);
+} catch (error) {
+  console.log(error.name, error.message);
+}
+</solution>
+<expected>
+{ orderId: 'ORD-1', currency: 'NGN', channel: 'unknown' }
+{ orderId: 'ORD-2', currency: 'NGN', channel: 'app' }
+RangeError v5 is newer than this code
+</expected>
+<explain><p>An event already at the latest version passes through untouched, because the loop runs zero times. Refusing newer versions keeps old code from guessing at a shape it does not know.</p></explain>
+</question>
+
+<question id="ed-code-projection" type="code" file="revenue.js">
+<q><p>Write <code>revenueByDay(deliveries)</code>. Each delivery is <code>{ id, day, totalKobo }</code>, and the list contains duplicate deliveries (same <code>id</code>). Count each event once and return an object mapping each day to its total in kobo.</p></q>
+<starter>
+function revenueByDay(deliveries) {
+  // your code here
+}
+
+const deliveries = [
+  { id: "evt-1", day: "2026-09-23", totalKobo: 2500000 },
+  { id: "evt-2", day: "2026-09-24", totalKobo: 450000 },
+  { id: "evt-1", day: "2026-09-23", totalKobo: 2500000 },
+  { id: "evt-3", day: "2026-09-24", totalKobo: 900000 },
+  { id: "evt-2", day: "2026-09-24", totalKobo: 450000 },
+];
+console.log(revenueByDay(deliveries));
+</starter>
+<solution>
+function revenueByDay(deliveries) {
+  const seen = new Set();
+  const totals = {};
+  for (const delivery of deliveries) {
+    if (seen.has(delivery.id)) continue;
+    seen.add(delivery.id);
+    totals[delivery.day] = (totals[delivery.day] ?? 0) + delivery.totalKobo;
+  }
+  return totals;
+}
+
+const deliveries = [
+  { id: "evt-1", day: "2026-09-23", totalKobo: 2500000 },
+  { id: "evt-2", day: "2026-09-24", totalKobo: 450000 },
+  { id: "evt-1", day: "2026-09-23", totalKobo: 2500000 },
+  { id: "evt-3", day: "2026-09-24", totalKobo: 900000 },
+  { id: "evt-2", day: "2026-09-24", totalKobo: 450000 },
+];
+console.log(revenueByDay(deliveries));
+</solution>
+<expected>{ '2026-09-23': 2500000, '2026-09-24': 1350000 }</expected>
+<explain><p>Deduplicate by event id, not by the values: two different orders can have the same day and the same total. This is the analytics consumer in miniature; in the database the <code>Set</code> is the <code>processed_events</code> table.</p></explain>
+</question>

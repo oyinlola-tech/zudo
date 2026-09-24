@@ -533,6 +533,18 @@ server.close();
 <output>
 SyntaxError: Unexpected token '<', "<!doctype "... is not valid JSON
 </output>
+<reason title="Before you touch the parsing code">
+<ul>
+<li>The error comes from <code>res.json()</code>. Is the bug more likely in the JSON parser, in your client, or in what the server sent? What would each one predict?</li>
+<li>What kind of document starts with <code>&lt;!doctype</code>? When does a server send one to a client that asked for JSON?</li>
+<li>Which three facts about the response would separate those explanations, and which one would you look at first?</li>
+</ul>
+<answer>
+<p><strong>Where:</strong> <code>JSON.parse</code> is one of the most tested functions in the world; when it fails, the input is wrong. So the question becomes: why is the body not JSON?</p>
+<p><strong>What:</strong> <code>&lt;!doctype html&gt;</code> starts an HTML page. Servers send HTML to API clients mostly by accident: an error page (404, 500), a login page after a redirect, or a proxy's "bad gateway" page.</p>
+<p><strong>The facts:</strong> the status code (was it even a success?), the <code>content-type</code> header (what did the server claim to send?), and the start of the body. The status first, because a non-2xx status explains the rest by itself.</p>
+</answer>
+</reason>
 <p>"Unexpected token '&lt;'" means the body starts with <code>&lt;</code>, so it is HTML, not JSON. The error is thrown by <code>res.json()</code>, but the cause is the request. Look at the whole response instead of just the body:</p>
 <example file="products-inspect.js" browser="no">
 import { createServer } from "node:http";
@@ -787,7 +799,7 @@ Customer { name: 'Chidi', email: 'chidi@example.com', card: '**** 4242' }
 <p>A page shows "SyntaxError: Unexpected end of JSON input" when it saves a task. In the Network panel the <code>POST /api/tasks</code> request has status <code>204 No Content</code>. What is the bug, and how should the client code change?</p>
 <solution>
 <p>204 means "success, and there is no body". The client calls <code>res.json()</code> on an empty body, which throws "Unexpected end of JSON input". The request worked; the client's assumption did not. Check the status (and <code>content-type</code>) before parsing:</p>
-<example file="no-content.js">
+<example file="no-content.js" browser="no">
 async function readJson(res) {
   if (!res.ok) throw new Error(`Request failed: ${res.status}`);
   if (res.status === 204) return null;

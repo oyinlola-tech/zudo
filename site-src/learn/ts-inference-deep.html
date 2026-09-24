@@ -1,0 +1,719 @@
+---
+title: Advanced inference
+description: Learn how TypeScript infers type arguments, contextual types and return types, use const type parameters, and choose between satisfies, as and as const on a route table.
+minutes: 55
+youNeed: Type inference in depth, Type assertions, Designing generic APIs and Template literal types
+youBuild: A typed route table for a shop API, checked with satisfies, whose route names, roles, paths and link parameters are all inferred from the table itself
+keywords: typescript generic inference, type argument inference, inference candidates, contextual typing, context sensitive functions, return type inference, TS7023, const type parameters, satisfies vs as, as const, as const satisfies, deriving unions from arrays, typeof roles number, route table typing
+objectives: Predict the type arguments TypeScript infers, including when literals are kept or widened | Explain contextual typing of callbacks and why the order of properties can matter | Use const type parameters, and know which arguments they affect | Choose between an annotation, satisfies, as and as const for a table of data, and justify the choice | Derive unions and helper types from a table checked with satisfies
+---
+<section>
+<h2 id="problem">A route with no handler</h2>
+<p>A shop's API keeps its routes in a table: method, path, who may call it, and the function that handles it. A developer adds a refund route in a hurry, forgets the handler, and the compiler says nothing, because the table ends in <code>as RouteDef[]</code>:</p>
+<example file="routes.ts" project="problem">
+type Method = "GET" | "POST" | "PATCH" | "DELETE";
+
+interface RouteDef {
+  method: Method;
+  path: string;
+  auth: "public" | "customer" | "admin";
+  handler: (params: Record<string, string>) => { status: number; body: unknown };
+}
+
+const ROUTES = [
+  { method: "GET", path: "/products", auth: "public", handler: () => ({ status: 200, body: ["Ankara tote", "Enamel mug"] }) },
+  { method: "POST", path: "/orders/:orderId/refunds", auth: "admin" },
+] as RouteDef[];
+
+function dispatch(method: Method, path: string): string {
+  const route = ROUTES.find((r) => r.method === method && r.path === path);
+  if (!route) return "404";
+  try {
+    return JSON.stringify(route.handler({}));
+  } catch (error) {
+    return String(error);
+  }
+}
+
+console.log(dispatch("GET", "/products"));
+console.log(dispatch("POST", "/orders/:orderId/refunds"));
+</example>
+<output>
+{"status":200,"body":["Ankara tote","Enamel mug"]}
+TypeError: route.handler is not a function
+</output>
+<p>The <code>as</code> told the compiler "trust me, these are routes". An assertion only checks that the two types <em>overlap</em>, and a list that contains at least one complete route overlaps with <code>RouteDef[]</code>, so the incomplete one rode along. If the author had written <code>const ROUTES: RouteDef[] = …</code> instead, the missing handler would have been an error, but then every route would be typed as the general <code>RouteDef</code>: the compiler would forget that <code>/products</code> is a <code>GET</code> route, and could not derive route names or link parameters from the table.</p>
+<p>Choosing well between an annotation, <code>as</code>, <code>as const</code> and <code>satisfies</code> requires knowing how TypeScript infers types in the first place. <a href="/learn/ts-inference">Type inference in depth</a> covered variables, widening and the basics of contextual typing; <a href="/learn/ts-generic-design#inference">Designing generic APIs</a> covered designing functions for inference. This lesson goes into the rules behind generic calls, callbacks, return types and <code>const</code> type parameters, then builds a route table that is checked <em>and</em> keeps every detail.</p>
+</section>
+
+<section>
+<h2 id="type-arguments">How type arguments are inferred</h2>
+<p>When you call a generic function without writing type arguments, TypeScript <strong>infers</strong> them: it walks each argument alongside its parameter type and collects <strong>candidates</strong> for each type parameter wherever the parameter type mentions it. Then it picks one type per parameter from its candidates. Two questions decide the result: which candidate wins, and whether literal types survive. Here are the rules as checked facts, using the <code>Equal</code> and <code>Expect</code> helpers from <a href="/learn/ts-type-operators#typeof">Type operators</a>:</p>
+<file name="type-tests.ts" project="infer">
+export type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+export type Expect<T extends true> = T;
+</file>
+<example file="literals.ts" project="infer">
+import type { Equal, Expect } from "./type-tests.js";
+
+function same<T>(value: T): T {
+  return value;
+}
+function boxed<T>(value: T): { value: T } {
+  return { value };
+}
+function boxedCode<T extends string>(value: T): { value: T } {
+  return { value };
+}
+function listOf<T>(...values: T[]): T[] {
+  return values;
+}
+
+const a = same("NGN");
+let b = same("NGN");
+const c = boxed("NGN");
+const d = boxedCode("NGN");
+const e = listOf("NGN", "USD");
+
+type L1 = Expect<Equal<typeof a, "NGN">>;
+type L2 = Expect<Equal<typeof b, string>>;
+type L3 = Expect<Equal<typeof c, { value: string }>>;
+type L4 = Expect<Equal<typeof d, { value: "NGN" }>>;
+type L5 = Expect<Equal<typeof e, string[]>>;
+
+console.log(a, b, c.value, d.value, e.length);
+</example>
+<output>
+NGN NGN NGN NGN 2
+</output>
+<p>The candidate is always the literal type <code>"NGN"</code>. What happens next depends on where <code>T</code> ends up:</p>
+<ul>
+<li>If <code>T</code> is the whole return type, the literal is kept (<code>L1</code>), and the usual variable rule then applies: a <code>let</code> widens it (<code>L2</code>).</li>
+<li>If <code>T</code> is only <em>inside</em> something, such as a property or an array, TypeScript widens the inferred literal to <code>string</code> (<code>L3</code>, <code>L5</code>), because an object or array that holds it is usually meant to hold other values later.</li>
+<li>If the constraint mentions a primitive type (<code>T extends string</code>), the literal is kept even inside (<code>L4</code>). A constraint like that is a signal that the exact value matters.</li>
+</ul>
+<h3>Competing candidates</h3>
+<p>When one type parameter gets candidates from several arguments, TypeScript does not simply union them. It widens them and tries to find one candidate that all the others fit into. If there is none, the first one wins and the rest become errors:</p>
+<example file="candidates.ts" project="infer" check="tsc-error">
+function pair<T>(first: T, second: T): [T, T] {
+  return [first, second];
+}
+
+const prices = pair(150_000, 99_900);
+const mixed = pair(150_000, "NGN");
+</example>
+<output kind="tsc">
+candidates.ts:6:29 - error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+
+6 const mixed = pair(150_000, "NGN");
+                              ~~~~~
+
+
+Found 1 error in candidates.ts:6
+</output>
+<p><code>prices</code> is <code>[number, number]</code>. For <code>mixed</code>, the candidates <code>number</code> and <code>string</code> have no common supertype among them, so <code>T</code> became <code>number</code> from the first argument, and the second argument is reported. That is usually what you want: two arguments of "the same type" that are not the same type is a mistake. If mixing is intended, say so: <code>pair&lt;number | string&gt;(…)</code>, or give each argument its own type parameter.</p>
+</section>
+
+<section>
+<h2 id="contextual">Contextual typing in depth</h2>
+<p><strong>Contextual typing</strong> is inference in the other direction: an expression gets its type from the place where it is written. Callbacks are the main case. In <code>orders.map((order) =&gt; …)</code>, <code>order</code> has no annotation, and gets its type from <code>map</code>'s parameter type. Inside generic calls this creates a puzzle: the callback's parameter type may depend on a type parameter that other arguments have not determined yet.</p>
+<p>TypeScript solves it in passes. Arguments whose types need context (for example an arrow function with unannotated parameters) are called <strong>context sensitive</strong>. They are skipped in the first pass; the other arguments fix the type parameters; then the callbacks are checked with those types. Inside an object literal, properties are processed in order, so the order you write them in can matter:</p>
+<example file="jobs.ts" project="infer" check="tsc-error">
+function defineJob<In, Out>(job: { parse: (raw: string) => In; run: (input: In) => Out }) {
+  return job;
+}
+
+const good = defineJob({
+  parse: (raw) => ({ orderId: raw }),
+  run: (input) => input.orderId.length,
+});
+
+const bad = defineJob({
+  run: (input) => input.orderId.length,
+  parse: (raw) => ({ orderId: raw }),
+});
+</example>
+<output kind="tsc">
+jobs.ts:11:19 - error TS18046: 'input' is of type 'unknown'.
+
+11   run: (input) => input.orderId.length,
+                     ~~~~~
+
+
+Found 1 error in jobs.ts:11
+</output>
+<p>In <code>good</code>, <code>parse</code> comes first: its result fixes <code>In</code> as <code>{ orderId: string }</code>, and <code>run</code> is then checked with that type. In <code>bad</code>, <code>run</code> is reached while <code>In</code> is still unknown, so <code>input</code> is <code>unknown</code>. The fix is to write the producer before the consumer, or to annotate one parameter (<code>run: (input: { orderId: string }) =&gt; …</code>). When you design an API like this, put the property that <em>produces</em> a type first in your documentation and examples.</p>
+<h3>What provides a context</h3>
+<p>A contextual type comes from: a parameter type in a call, an annotated variable, a function's declared return type (for the <code>return</code> expression), an array or object literal inside another contextually typed literal, a type assertion, and <code>satisfies</code>. It does not travel backwards from a later use: a callback stored in its own variable and passed later has no context, and its parameters are implicitly <code>any</code>, as <a href="/learn/ts-inference#contextual">Type inference in depth</a> showed. <code>satisfies</code> being on that list turns out to matter a lot, as you will see below.</p>
+</section>
+
+<section>
+<h2 id="return-types">Return type inference and its limits</h2>
+<p>A function without a return type annotation gets the union of the types of all its <code>return</code> expressions, widened like a <code>let</code>. That works until the function calls itself. A shop's category tree counts the products in a category and all its sub-categories:</p>
+<example file="tree.ts" project="infer" check="tsc-error">
+interface Category {
+  name: string;
+  products: string[];
+  children: Category[];
+}
+
+function countProducts(category: Category) {
+  return category.products.length + category.children.reduce((sum, child) => sum + countProducts(child), 0);
+}
+</example>
+<output kind="tsc">
+tree.ts:7:10 - error TS7023: 'countProducts' implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+
+7 function countProducts(category: Category) {
+           ~~~~~~~~~~~~~
+
+tree.ts:8:62 - error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+
+8   return category.products.length + category.children.reduce((sum, child) => sum + countProducts(child), 0);
+                                                               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 2 errors in the same file, starting at: tree.ts:7
+</output>
+<p>To infer the return type of <code>countProducts</code>, TypeScript must know the type of <code>countProducts(child)</code>, which is the return type it is trying to infer. It gives up and reports it. A return type annotation, <code>countProducts(category: Category): number</code>, breaks the circle. Recursive functions are one of the places where an annotation is not a style choice but a requirement; exported functions, whose return type is part of a public contract, are another (see <a href="/learn/ts-inference#when-to-annotate">Deciding what to annotate</a>).</p>
+<p>TypeScript never infers <em>parameter</em> types from how a function body uses them. A parameter without an annotation and without a context is <code>any</code>, which <code>strict</code> reports as TS7006. Parameters are the boundary where you tell the compiler what you accept.</p>
+</section>
+
+<section>
+<h2 id="const-type-parameters">const type parameters</h2>
+<p>You saw in the first section that literals inside objects and arrays are widened when a type argument is inferred. A <strong>const type parameter</strong>, written <code>&lt;const T&gt;</code> (TypeScript 5.0 and later), asks for the opposite: infer <code>T</code> as if the caller had written <code>as const</code> on the argument. <a href="/learn/ts-tuples#inference">Tuples</a> introduced it; here are its exact rules:</p>
+<example file="const-params.ts" project="infer">
+import type { Equal, Expect } from "./type-tests.js";
+
+function plain<T>(value: T): T {
+  return value;
+}
+function exact<const T>(value: T): T {
+  return value;
+}
+function exactList<const T extends readonly string[]>(values: T): T {
+  return values;
+}
+
+const p = plain({ currency: "NGN", methods: ["card", "transfer"] });
+const x = exact({ currency: "NGN", methods: ["card", "transfer"] });
+const list = exactList(["customer", "admin"]);
+
+const roles = ["customer", "admin"];
+const fromVariable = exactList(roles);
+
+type C1 = Expect<Equal<typeof p, { currency: string; methods: string[] }>>;
+type C2 = Expect<Equal<typeof x, { readonly currency: "NGN"; readonly methods: readonly ["card", "transfer"] }>>;
+type C3 = Expect<Equal<typeof list, readonly ["customer", "admin"]>>;
+type C4 = Expect<Equal<typeof fromVariable, string[]>>;
+
+console.log(x.methods.length, list[1], fromVariable.length);
+</example>
+<output>
+2 admin 2
+</output>
+<ul>
+<li><code>const T</code> keeps every literal, makes arrays readonly tuples and properties readonly (<code>C2</code>, <code>C3</code>).</li>
+<li>It only affects literals written <strong>in the call</strong>. A variable already has its type; <code>roles</code> was widened to <code>string[]</code> when it was declared, and nothing at the call can bring the literals back (<code>C4</code>).</li>
+<li>Give array-shaped const parameters a <code>readonly</code> constraint, as <code>exactList</code> does. A <code>readonly</code> tuple is what <code>const</code> produces, and a mutable constraint such as <code>string[]</code> can make older TypeScript versions fall back to a plain array.</li>
+</ul>
+<p>A const type parameter is the function form of <code>as const</code>. Library authors use it so their callers do not have to remember <code>as const</code>. You will use one at the end of this lesson.</p>
+</section>
+
+<section>
+<h2 id="as-const">as const in depth</h2>
+<p><code>as const</code> is a <strong>const assertion</strong>: it turns off widening for the whole literal, at every level. It can only make a type narrower and read-only, never different, which is why <a href="/learn/ts-assertions#alternatives">Type assertions</a> called it the safe assertion. Three details are easy to miss.</p>
+<p>First, it only applies to literals. Second, the <code>readonly</code> it adds exists only for the compiler; the object is an ordinary, mutable object at runtime. Third, it checks nothing: a typo inside an <code>as const</code> table is kept, precisely and read-only:</p>
+<example file="as-const.ts" project="infer" check="tsc-error">
+const METHODS = ["GET", "POST", "GTE"] as const;
+const settings = { currency: "NGN", vatPercent: 7.5 } as const;
+
+METHODS.push("PUT");
+settings.vatPercent = 10;
+
+const current = "NGN";
+const wrong = current.toUpperCase() as const;
+</example>
+<output kind="tsc">
+as-const.ts:4:9 - error TS2339: Property 'push' does not exist on type 'readonly ["GET", "POST", "GTE"]'.
+
+4 METHODS.push("PUT");
+          ~~~~
+
+as-const.ts:5:10 - error TS2540: Cannot assign to 'vatPercent' because it is a read-only property.
+
+5 settings.vatPercent = 10;
+           ~~~~~~~~~~
+
+as-const.ts:8:15 - error TS1355: A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals.
+
+8 const wrong = current.toUpperCase() as const;
+                ~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 3 errors in the same file, starting at: as-const.ts:4
+</output>
+<example file="as-const-runtime.ts" project="infer">
+const settings = { currency: "NGN", vatPercent: 7.5 } as const;
+
+console.log(Object.isFrozen(settings));
+Object.assign(settings, { vatPercent: 10 });
+console.log(settings.vatPercent);
+
+const frozen = Object.freeze({ currency: "NGN", vatPercent: 7.5 });
+try {
+  Object.assign(frozen, { vatPercent: 10 });
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+false
+10
+TypeError: Cannot assign to read only property 'vatPercent' of object '#<Object>'
+</output>
+<p>The compiler stops <code>push</code> and the assignment, but <code>Object.assign</code> (typed loosely) and plain JavaScript code can still change the object. When the value must not change at runtime, add <code>Object.freeze</code>, whose return type is already read-only. And notice what the first example did <em>not</em> report: <code>"GTE"</code>. <code>as const</code> preserves; it does not check. For checking, you need an annotation or <code>satisfies</code>.</p>
+</section>
+
+<section>
+<h2 id="satisfies">satisfies in depth</h2>
+<p><code>expression satisfies T</code> checks that the expression is assignable to <code>T</code>, including excess property checks on object literals, and then leaves the expression's own inferred type in place. <a href="/learn/ts-assertions#alternatives">Type assertions</a> introduced it as "check, but keep the precise type". What is less known is that <code>satisfies</code> also gives the expression a <strong>contextual type</strong>, and that changes what is inferred inside it:</p>
+<example file="satisfies-context.ts" project="infer">
+import type { Equal, Expect } from "./type-tests.js";
+
+type Method = "GET" | "POST";
+
+const r1 = { method: "GET", path: "/products" };
+const r2 = { method: "GET", path: "/products" } satisfies { method: Method; path: string };
+const r3 = { method: "GET", path: "/products" } satisfies { method: string; path: string };
+
+type S1 = Expect<Equal<typeof r1.method, string>>;
+type S2 = Expect<Equal<typeof r2.method, "GET">>;
+type S3 = Expect<Equal<typeof r3.method, string>>;
+
+const handlers = {
+  refund: (orderId) => `refunding ${orderId.toUpperCase()}`,
+  cancel: (orderId) => `cancelling ${orderId}`,
+} satisfies Record<string, (orderId: string) => string>;
+
+console.log(handlers.refund("ord-7"), r2.method);
+</example>
+<output>
+refunding ORD-7 GET
+</output>
+<ul>
+<li>On its own, <code>method</code> widens to <code>string</code> (<code>S1</code>). Under <code>satisfies</code> with a literal union, the literal <code>"GET"</code> is checked against that union and <strong>kept</strong> (<code>S2</code>). With <code>method: string</code> in the target, it is widened as usual (<code>S3</code>). You get literal types exactly where the target type asks for them, without <code>as const</code>.</li>
+<li>The callbacks in <code>handlers</code> have no annotations, yet <code>orderId</code> is a <code>string</code>: <code>satisfies</code> provided the context. With <code>as const</code> alone, they would be implicit <code>any</code> errors.</li>
+</ul>
+<h3>Combining as const and satisfies</h3>
+<p>You need both when you want literal types that the target type does not ask for (for example exact numbers or an exact tuple of names) and a check. The order is fixed: <code>as const</code> applies to the literal, then <code>satisfies</code> checks the result.</p>
+<example file="combine.ts" project="infer" check="tsc-error">
+type Currency = "NGN" | "USD" | "GHS";
+
+const good = ["NGN", "USD"] as const satisfies readonly Currency[];
+const typo = ["NGN", "UDS"] as const satisfies readonly Currency[];
+const swapped = ["NGN", "USD"] satisfies readonly Currency[] as const;
+</example>
+<output kind="tsc">
+combine.ts:4:22 - error TS2322: Type '"UDS"' is not assignable to type 'Currency'.
+
+4 const typo = ["NGN", "UDS"] as const satisfies readonly Currency[];
+                       ~~~~~
+
+combine.ts:5:32 - error TS1355: A 'const' assertion can only be applied to references to enum members, or string, number, boolean, array, or object literals.
+
+5 const swapped = ["NGN", "USD"] satisfies readonly Currency[] as const;
+                                 ~~~~~~~~~
+
+
+Found 2 errors in the same file, starting at: combine.ts:4
+</output>
+<p><code>good</code> is <code>readonly ["NGN", "USD"]</code> and checked. The typo is caught. <code>satisfies … as const</code> is refused because <code>as const</code> must be applied directly to a literal. Write <code>readonly</code> in the target (<code>readonly Currency[]</code>) when you want the result read-only; against a mutable array type, current TypeScript quietly gives you a mutable tuple instead.</p>
+</section>
+
+<section>
+<h2 id="choosing">Annotation, satisfies, as or as const?</h2>
+<reason title="Before you choose a tool for the route table">
+<p>You are about to write the shop's route table: about twenty routes, each with a method, a path, a role and a handler. Before reading the comparison, answer for each tool:</p>
+<ul>
+<li>Does it reject a missing handler, and a method spelt <code>"GTE"</code>?</li>
+<li>After it, does <code>typeof routes</code> still know the route names, so <code>routes.getOrdr</code> is an error?</li>
+<li>Does it know that <code>getOrder</code>'s path is <code>"/orders/:orderId"</code>, so link parameters can be derived?</li>
+<li>Do the handlers' <code>req</code> parameters get a type without annotations?</li>
+<li>Which of these properties would you give up, and for what?</li>
+</ul>
+<answer>
+<p>An <strong>annotation</strong> (<code>const routes: Record&lt;string, RouteDef&gt;</code>) checks everything and types the handlers, but the variable's type becomes the annotation: every name is a valid key (<code>routes.getOrdr</code> compiles and is <code>undefined</code>), and every path is just <code>`/${string}`</code>. <strong><code>as</code></strong> types the handlers but only checks that the two types overlap, which sometimes catches an incomplete route and sometimes, as in the opening example, does not; and the type is again the general one. <strong><code>as const</code></strong> keeps every detail and checks nothing: <code>"GTE"</code> passes and the handler parameters are implicit <code>any</code>. <strong><code>satisfies</code></strong> checks everything, types the handlers through context, keeps the names, and keeps the literal methods, roles and paths because the target type asks for literal unions and a path pattern. For a table you own and derive types from, <code>satisfies</code> gives up nothing. An annotation is still right when you <em>want</em> the general type: a variable that will be reassigned, or a public export whose details you do not want callers to depend on.</p>
+</answer>
+</reason>
+<div class="lx-table-wrap"><table>
+<thead><tr><th></th><th>Checks the value</th><th>Keeps names and literals</th><th>Types callbacks inside</th><th>Use it for</th></tr></thead>
+<tbody>
+<tr><td><code>const x: T = …</code></td><td>Yes</td><td>No: <code>x</code> is <code>T</code></td><td>Yes</td><td>Values that should have exactly the general type (reassigned, exported as a contract)</td></tr>
+<tr><td><code>… satisfies T</code></td><td>Yes</td><td>Yes (literals kept where <code>T</code> has literal types)</td><td>Yes</td><td>Tables and config you own and derive types from</td></tr>
+<tr><td><code>… as const</code></td><td>No</td><td>Yes, all of them, read-only</td><td>No</td><td>Lists and constants; combine with <code>satisfies</code> to check them</td></tr>
+<tr><td><code>… as T</code></td><td>Barely: only "not unrelated"</td><td>No: the result is <code>T</code></td><td>Yes</td><td>Telling the compiler something it cannot know; never for data you are writing</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="build">Build: a typed route table</h2>
+<p>The table lives in one module. The roles and methods are written once as <code>as const</code> lists, because the router also needs them at runtime; their unions are derived with <code>(typeof LIST)[number]</code> from <a href="/learn/ts-type-operators#values-to-unions">Type operators</a>. The table is checked with <code>satisfies</code>, and everything else is derived from it:</p>
+<example file="routes.ts" project="routes">
+export const ROLES = ["public", "customer", "admin"] as const;
+export type Role = (typeof ROLES)[number];
+
+export const METHODS = ["GET", "POST", "PATCH", "DELETE"] as const;
+export type Method = (typeof METHODS)[number];
+
+export interface Request {
+  readonly params: Readonly<Record<string, string>>;
+  readonly role: Role;
+}
+export interface Response {
+  readonly status: number;
+  readonly body: unknown;
+}
+
+export interface RouteDef {
+  readonly method: Method;
+  readonly path: `/${string}`;
+  readonly auth: Role;
+  readonly handler: (req: Request) => Response;
+}
+
+export const routes = {
+  listProducts: {
+    method: "GET", path: "/products", auth: "public",
+    handler: () => ({ status: 200, body: ["Ankara tote", "Enamel mug"] }),
+  },
+  getOrder: {
+    method: "GET", path: "/orders/:orderId", auth: "customer",
+    handler: (req) => ({ status: 200, body: { orderId: req.params.orderId, totalKobo: 1_250_000 } }),
+  },
+  refundOrder: {
+    method: "POST", path: "/orders/:orderId/refunds", auth: "admin",
+    handler: (req) => ({ status: 202, body: { refunding: req.params.orderId } }),
+  },
+} satisfies Record<string, RouteDef>;
+
+export type RouteName = keyof typeof routes;
+export type RoutePath<N extends RouteName> = (typeof routes)[N]["path"];
+export type AdminRoute = { [N in RouteName]: (typeof routes)[N]["auth"] extends "admin" ? N : never }[RouteName];
+</example>
+<p>No route repeats a type, no handler annotates <code>req</code>, and yet: <code>RouteName</code> is <code>"listProducts" | "getOrder" | "refundOrder"</code>; <code>RoutePath&lt;"getOrder"&gt;</code> is <code>"/orders/:orderId"</code>, a literal, because the target's <code>`/${string}`</code> pattern made <code>satisfies</code> keep it; and <code>AdminRoute</code>, a mapped type indexed by its own keys, is the union of the route names whose <code>auth</code> is <code>"admin"</code>, which here is <code>"refundOrder"</code>. Add a route and all three follow.</p>
+<p>Now two functions that use what was inferred. <code>link</code> builds a URL for a route, and takes a params object only when the path has parameters, reusing the <code>ParamNames</code> type from <a href="/learn/ts-template-literals#parsing">Template literal types</a>. <code>dispatch</code> is the runtime router:</p>
+<example file="router.ts" project="routes">
+import { routes } from "./routes.js";
+import type { Response, Role, RouteName, RoutePath } from "./routes.js";
+
+type ParamNames<Path extends string> =
+  Path extends `${string}:${infer Param}/${infer Rest}` ? Param | ParamNames<`/${Rest}`>
+  : Path extends `${string}:${infer Param}` ? Param
+  : never;
+
+type LinkArgs<N extends RouteName> =
+  [ParamNames<RoutePath<N>>] extends [never] ? [] : [params: Record<ParamNames<RoutePath<N>>, string>];
+
+export function link<N extends RouteName>(name: N, ...args: LinkArgs<N>): string {
+  const [values = {}] = args as [Record<string, string>?];
+  return routes[name].path.replace(/:(\w+)/g, (_match, key: string) => encodeURIComponent(values[key]));
+}
+
+const RANK: Record<Role, number> = { public: 0, customer: 1, admin: 2 };
+
+export function dispatch(method: string, url: string, role: Role): Response {
+  for (const route of Object.values(routes)) {
+    if (route.method !== method) continue;
+    const pattern = route.path.split("/");
+    const parts = url.split("/");
+    if (pattern.length !== parts.length) continue;
+    const params: Record<string, string> = {};
+    const same = pattern.every((segment, i) => {
+      if (!segment.startsWith(":")) return segment === parts[i];
+      params[segment.slice(1)] = decodeURIComponent(parts[i]);
+      return true;
+    });
+    if (!same) continue;
+    if (RANK[role] < RANK[route.auth]) return { status: 403, body: "forbidden" };
+    return route.handler({ params, role });
+  }
+  return { status: 404, body: "not found" };
+}
+</example>
+<ul>
+<li><code>LinkArgs</code> is a conditional type producing a <em>parameter list</em>: an empty tuple when the path has no parameters, and a one-element tuple otherwise. Spread as <code>...args</code>, it makes the second argument exist only when needed. <a href="/learn/ts-advanced-functions#variadic">Advanced functions</a> covers this technique.</li>
+<li><code>RANK</code> is annotated, not <code>satisfies</code>: the code indexes it with any <code>Role</code> and only needs a number back, so the general type is exactly right.</li>
+<li><code>Object.values(routes)</code> loops over the same table the types come from, so the runtime and the types cannot disagree about which routes exist.</li>
+</ul>
+<example file="app.ts" project="routes">
+import { dispatch, link } from "./router.js";
+import type { AdminRoute } from "./routes.js";
+
+const orderUrl = link("getOrder", { orderId: "ORD-1042" });
+console.log(orderUrl, link("listProducts"));
+console.log(dispatch("GET", orderUrl, "customer"));
+console.log(dispatch("POST", link("refundOrder", { orderId: "ORD-1042" }), "customer"));
+console.log(dispatch("POST", "/orders/ORD-1042/refunds", "admin"));
+console.log(dispatch("DELETE", "/products", "admin"));
+
+const needsAudit: AdminRoute[] = ["refundOrder"];
+console.log("audited routes:", needsAudit.join(", "));
+</example>
+<output>
+/orders/ORD-1042 /products
+{ status: 200, body: { orderId: 'ORD-1042', totalKobo: 1250000 } }
+{ status: 403, body: 'forbidden' }
+{ status: 202, body: { refunding: 'ORD-1042' } }
+{ status: 404, body: 'not found' }
+audited routes: refundOrder
+</output>
+<p>And the compiler now rejects the mistakes that <code>string</code> keys and <code>as</code> let through:</p>
+<example file="app-mistakes.ts" project="routes" check="tsc-error">
+import { link } from "./router.js";
+
+link("getOrdr", { orderId: "ORD-1" });
+link("getOrder", { orderID: "ORD-1" });
+link("getOrder");
+link("listProducts", { orderId: "ORD-1" });
+</example>
+<output kind="tsc">
+app-mistakes.ts:3:6 - error TS2345: Argument of type '"getOrdr"' is not assignable to parameter of type '"getOrder" | "listProducts" | "refundOrder"'.
+
+3 link("getOrdr", { orderId: "ORD-1" });
+       ~~~~~~~~~
+
+app-mistakes.ts:4:20 - error TS2561: Object literal may only specify known properties, but 'orderID' does not exist in type 'Record<"orderId", string>'. Did you mean to write 'orderId'?
+
+4 link("getOrder", { orderID: "ORD-1" });
+                     ~~~~~~~
+
+app-mistakes.ts:5:1 - error TS2554: Expected 2 arguments, but got 1.
+
+5 link("getOrder");
+  ~~~~
+
+  router.ts:12:52 - Arguments for the rest parameter 'args' were not provided.
+    12 export function link<N extends RouteName>(name: N, ...args: LinkArgs<N>): string {
+                                                          ~~~~~~~~~~~~~~~~~~~~
+
+app-mistakes.ts:6:22 - error TS2554: Expected 1 arguments, but got 2.
+
+6 link("listProducts", { orderId: "ORD-1" });
+                       ~~~~~~~~~~~~~~~~~~~~
+
+
+Found 4 errors in the same file, starting at: app-mistakes.ts:3
+</output>
+<h3>The other three versions, side by side</h3>
+<p>For comparison, here is the same kind of table with each of the other tools. The annotated version compiles, including the typo in the lookup, and fails at runtime:</p>
+<example file="annotated.ts" project="routes">
+import type { RouteDef } from "./routes.js";
+
+const routes: Record<string, RouteDef> = {
+  listProducts: { method: "GET", path: "/products", auth: "public", handler: () => ({ status: 200, body: [] }) },
+};
+
+try {
+  console.log(routes.listProdcts.handler({ params: {}, role: "public" }));
+} catch (error) {
+  console.log(String(error));
+}
+</example>
+<output>
+TypeError: Cannot read properties of undefined (reading 'handler')
+</output>
+<p>The <code>as const</code> version keeps the typo <code>"GTE"</code>, and the compiler only complains about the handler's untyped parameter. The missing method check is not in the output below, because there is none:</p>
+<example file="as-const-table.ts" project="routes" check="tsc-error">
+const routes = {
+  listProducts: { method: "GTE", path: "/products", auth: "public", handler: (req) => ({ status: 200, body: req }) },
+} as const;
+</example>
+<output kind="tsc">
+as-const-table.ts:2:79 - error TS7006: Parameter 'req' implicitly has an 'any' type.
+
+2   listProducts: { method: "GTE", path: "/products", auth: "public", handler: (req) => ({ status: 200, body: req }) },
+                                                                                ~~~
+
+
+Found 1 error in as-const-table.ts:2
+</output>
+<p>And <code>as</code>? On this table, TypeScript does reject an incomplete route:</p>
+<example file="asserted.ts" project="routes" check="tsc-error">
+import type { RouteDef } from "./routes.js";
+
+const refundOrder = { method: "POST", path: "/orders/:orderId/refunds", auth: "admin" } as RouteDef;
+</example>
+<output kind="tsc">
+asserted.ts:3:21 - error TS2352: Conversion of type '{ method: "POST"; path: "/orders/:orderId/refunds"; auth: "admin"; }' to type 'RouteDef' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Property 'handler' is missing in type '{ method: "POST"; path: "/orders/:orderId/refunds"; auth: "admin"; }' but required in type 'RouteDef'.
+
+3 const refundOrder = { method: "POST", path: "/orders/:orderId/refunds", auth: "admin" } as RouteDef;
+                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  routes.ts:20:12 - 'handler' is declared here.
+    20   readonly handler: (req: Request) => Response;
+                  ~~~~~~~
+
+
+Found 1 error in asserted.ts:3
+</output>
+<p>But look at why. The assertion gives the literal a context, so <code>method</code> is inferred as the literal <code>"POST"</code>, and then neither type is assignable to the other: the object lacks a handler, and a general <code>RouteDef</code>, whose method could be <code>"GET"</code>, is not a <code>{ method: "POST" }</code> either. That protection is accidental. In the opening example, the array held one complete route, the element type became a union that overlapped with <code>RouteDef</code>, and the incomplete route passed. A check you cannot predict is not a check. <code>satisfies</code> and annotations check every entry, every time.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing what is inferred</h2>
+<p>Inferred types change silently when the code they come from changes. That is the point, and also the risk: replacing <code>satisfies</code> with an annotation during a refactor compiles fine and quietly turns <code>RouteName</code> into <code>string</code>, which switches off every check in <code>link</code>. Type tests pin the inferred facts you depend on:</p>
+<example file="routes.test.ts" project="routes">
+import { dispatch, link } from "./router.js";
+import type { AdminRoute, Role, RouteName, RoutePath } from "./routes.js";
+
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+type R1 = Expect<Equal<RouteName, "listProducts" | "getOrder" | "refundOrder">>;
+type R2 = Expect<Equal<RoutePath<"getOrder">, "/orders/:orderId">>;
+type R3 = Expect<Equal<AdminRoute, "refundOrder">>;
+type R4 = Expect<Equal<Role, "public" | "customer" | "admin">>;
+
+// @ts-expect-error: routes without parameters take no params object
+link("listProducts", {});
+
+const cases: [string, string, Role, number][] = [
+  ["GET", "/products", "public", 200],
+  ["GET", "/orders/ORD-1", "public", 403],
+  ["GET", "/orders/ORD-1", "customer", 200],
+  ["POST", "/orders/ORD-1/refunds", "admin", 202],
+  ["PATCH", "/orders/ORD-1", "admin", 404],
+];
+for (const [method, url, role, want] of cases) {
+  const got = dispatch(method, url, role).status;
+  console.log(got === want ? "PASS" : "FAIL", method, url, role, got);
+}
+console.log(link("getOrder", { orderId: "ORD 1/2" }));
+</example>
+<output>
+PASS GET /products public 200
+PASS GET /orders/ORD-1 public 403
+PASS GET /orders/ORD-1 customer 200
+PASS POST /orders/ORD-1/refunds admin 202
+PASS PATCH /orders/ORD-1 admin 404
+/orders/ORD%201%2F2
+</output>
+<p><code>R1</code> to <code>R3</code> would fail the moment someone annotated the table; <code>R2</code> in particular guards the literal path that <code>link</code> relies on. The runtime table checks the router's decisions, including the 403 that protects customer data, and the last line checks that <code>link</code> encodes values, so an ID containing <code>/</code> cannot change the route.</p>
+</section>
+
+<section>
+<h2 id="production">Inference in production</h2>
+<ul>
+<li><strong>Let inference flow from one checked source.</strong> A table written once with <code>satisfies</code>, with names and unions derived from it, has one place to change and one place to review.</li>
+<li><strong>Annotate the boundaries.</strong> Exported functions, recursive functions and public class members get explicit types; inference works inside them. The exception is a table like <code>routes</code>, whose inferred type <em>is</em> the contract; pin that with type tests instead.</li>
+<li><strong>Prefer const type parameters in helpers</strong> such as <code>defineRoutes</code> and <code>defineConfig</code>, so callers get literal types without remembering <code>as const</code>.</li>
+<li><strong>Put producers before consumers</strong> in configuration objects that generic functions infer from, and document that order.</li>
+<li><strong>Treat <code>as</code> on data you write as a code smell.</strong> If you find one, try <code>satisfies</code> first; the compiler will usually show you what the <code>as</code> was hiding.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Fix the pair">
+<p><code>pair(150_000, "NGN")</code> fails because both arguments share one type parameter. Rewrite <code>pair</code> so it accepts two different types and returns a tuple of exactly those types, then check that <code>pair(150_000, "NGN")</code> is <code>[number, string]</code>.</p>
+<solution>
+<example file="pair.ts" project="ex-pair">
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+function pair<A, B>(first: A, second: B): [A, B] {
+  return [first, second];
+}
+
+const price = pair(150_000, "NGN");
+type P1 = Expect<Equal<typeof price, [number, string]>>;
+console.log(price);
+</example>
+<output>
+[ 150000, 'NGN' ]
+</output>
+<p>Each type parameter now has one candidate. The literals are widened because they sit inside a tuple, which is usually what you want for a value you might change; with <code>&lt;const A, const B&gt;</code> you would get <code>[150000, "NGN"]</code>.</p>
+</solution>
+</exercise>
+<exercise title="A checked settings table">
+<p>Write the shop's settings as one object: <code>currency</code> (one of <code>"NGN" | "USD"</code>), <code>vatPercent</code> (a number), and <code>paymentMethods</code> (a list of <code>"card" | "transfer" | "ussd"</code>). Make it checked, deeply read-only, and precise enough that <code>(typeof settings)["paymentMethods"][number]</code> is exactly the methods you listed.</p>
+<solution>
+<example file="settings.ts" project="ex-settings">
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+interface Settings {
+  readonly currency: "NGN" | "USD";
+  readonly vatPercent: number;
+  readonly paymentMethods: readonly ("card" | "transfer" | "ussd")[];
+}
+
+const settings = {
+  currency: "NGN",
+  vatPercent: 7.5,
+  paymentMethods: ["card", "transfer"],
+} as const satisfies Settings;
+
+type Enabled = (typeof settings)["paymentMethods"][number];
+type S1 = Expect<Equal<Enabled, "card" | "transfer">>;
+type S2 = Expect<Equal<typeof settings.vatPercent, 7.5>>;
+
+console.log(settings.paymentMethods.join(" and "), settings.currency);
+</example>
+<output>
+card and transfer NGN
+</output>
+<p><code>satisfies Settings</code> rejects a wrong currency, a VAT written as text, or an unknown method; <code>as const</code> keeps <code>["card", "transfer"]</code> as a tuple, so <code>Enabled</code> knows USSD is off. <code>paymentMethods</code> in the interface is a <code>readonly</code> array, because <code>as const</code> produces one.</p>
+</solution>
+</exercise>
+<exercise title="defineRoutes">
+<p>Callers of the route module keep forgetting <code>satisfies Record&lt;string, RouteDef&gt;</code>. Write a helper <code>defineRoutes</code> that checks a table and returns it with its precise type, so that <code>const routes = defineRoutes({ … })</code> has the same inferred type as the <code>satisfies</code> version. Prove it with a type test on one path.</p>
+<solution>
+<example file="define-routes.ts" project="ex-define">
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+type Expect<T extends true> = T;
+
+interface RouteDef {
+  readonly method: "GET" | "POST";
+  readonly path: `/${string}`;
+  readonly handler: (params: Readonly<Record<string, string>>) => string;
+}
+
+function defineRoutes<const T extends Record<string, RouteDef>>(routes: T): T {
+  return routes;
+}
+
+const routes = defineRoutes({
+  listProducts: { method: "GET", path: "/products", handler: () => "2 products" },
+  getOrder: { method: "GET", path: "/orders/:orderId", handler: (params) => `order ${params.orderId}` },
+});
+
+type D1 = Expect<Equal<(typeof routes)["getOrder"]["path"], "/orders/:orderId">>;
+type D2 = Expect<Equal<keyof typeof routes, "listProducts" | "getOrder">>;
+
+console.log(routes.getOrder.handler({ orderId: "ORD-9" }));
+</example>
+<output>
+order ORD-9
+</output>
+<p>The constraint does the checking, like the target of <code>satisfies</code>, and also provides the context that types <code>params</code>. <code>const T</code> keeps the literals. A generic identity function with a constraint is how libraries offered "satisfies" before the operator existed, and it is still the nicest API when a table is written by other people.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Type arguments are inferred from candidates. Literals survive when <code>T</code> is the whole result or constrained by a primitive, and are widened inside objects and arrays. With competing candidates, the first wins and the rest are errors.</li>
+<li>Context-sensitive callbacks are checked after the other arguments, and object properties in order: put producers before consumers.</li>
+<li>Recursive functions need a return type annotation (TS7023); parameters are never inferred from use.</li>
+<li><code>&lt;const T&gt;</code> infers as if the caller wrote <code>as const</code>, but only for literals written in the call.</li>
+<li><code>as const</code> keeps every literal read-only and checks nothing; it does not freeze at runtime.</li>
+<li><code>satisfies</code> checks, provides context (so callbacks are typed and literal unions stay literal) and keeps the inferred type. <code>as const satisfies T</code> combines both, in that order.</li>
+<li>For tables you own: <code>satisfies</code>, and derive everything else. Annotate when you want the general type; avoid <code>as</code> on data you write.</li>
+</ul>
+<p>Next: <a href="/learn/ts-advanced-functions">Advanced functions</a>, where overloads, <code>this</code> parameters and variadic tuple types turn this kind of table into a type-safe command router.</p>
+</section>

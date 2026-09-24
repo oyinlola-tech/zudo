@@ -134,18 +134,17 @@ async function chargeCard() {
   throw new Error("card declined");
 }
 
-const start = Date.now();
 try {
   await Promise.all([chargeCard(), sendEmail("ada@example.com", 60)]);
 } catch (error) {
-  console.log("all rejected after about 20 ms:", error.message, Date.now() - start < 50);
+  console.log("all rejected:", error.message);
 }
 console.log("log right after the failure:", log);
 await wait(80);
 console.log("log a little later:", log);
 </example>
 <output>
-all rejected after about 20 ms: card declined true
+all rejected: card declined
 log right after the failure: []
 log a little later: [ 'email sent to ada@example.com' ]
 </output>
@@ -465,22 +464,22 @@ async function sendEmail(to) {
 
 const customers = ["ada", "bola", "chidi", "dayo", "emeka", "funke", "gozie"];
 
-for (const [name, run] of [
-  ["sequential", () => mapSeries(customers, sendEmail)],
-  ["batches of 3", () => inBatches(customers, 3, sendEmail)],
-  ["all at once", () => Promise.all(customers.map(sendEmail))],
+for (const [name, run, rounds] of [
+  ["sequential", () => mapSeries(customers, sendEmail), 7],
+  ["batches of 3", () => inBatches(customers, 3, sendEmail), 3],
+  ["all at once", () => Promise.all(customers.map(sendEmail)), 1],
 ]) {
   peak = 0;
   const start = Date.now();
   const results = await run();
   const ms = Date.now() - start;
-  console.log(`${name.padEnd(12)} results: ${results.length}, at most ${peak} at once, about ${Math.round(ms / 20)} x 20 ms`);
+  console.log(`${name.padEnd(12)} results: ${results.length}, at most ${peak} at once, took at least ${rounds} x 20 ms: ${ms >= rounds * 20 - 3}`);
 }
 </example>
 <output>
-sequential   results: 7, at most 1 at once, about 7 x 20 ms
-batches of 3 results: 7, at most 3 at once, about 3 x 20 ms
-all at once  results: 7, at most 7 at once, about 1 x 20 ms
+sequential   results: 7, at most 1 at once, took at least 7 x 20 ms: true
+batches of 3 results: 7, at most 3 at once, took at least 3 x 20 ms: true
+all at once  results: 7, at most 7 at once, took at least 1 x 20 ms: true
 </output>
 <p>Sequential took seven rounds with one email in flight; all-at-once took one round with seven in flight; batches of 3 took three rounds (3 + 3 + 1) with never more than 3 in flight. Batching has one weakness: each batch waits for its slowest item. If one email in a batch takes 5 seconds, the other two slots sit empty for those 5 seconds. A <strong>pool</strong> fixes that by starting the next job as soon as <em>any</em> slot frees up. You will build one in <a href="/learn/js-concurrency">Concurrency and cancellation</a>, to send 1,000 emails 5 at a time.</p>
 </section>
@@ -555,7 +554,7 @@ await test("a broken widget is reported", async () => {
 await test("a slow widget does not hold the page", async () => {
   const start = Date.now();
   const d = await loadDashboard(fakeServices({ widgets: { sales: () => wait(2_000, "late") } }));
-  return `missing ${d.missing}; finished within 200 ms: ${Date.now() - start < 200}`;
+  return `missing ${d.missing}; finished long before the 2-second service: ${Date.now() - start < 1_000}`;
 });
 
 await test("a failed account fails the page", async () => {
@@ -570,7 +569,7 @@ await test("a failed account fails the page", async () => {
 <output>
 PASS everything works: Mama Put Stores, widgets sales,lowStock,refunds, missing 0
 PASS a broken widget is reported: widgets sales,refunds; missing lowStock: HTTP 503
-PASS a slow widget does not hold the page: missing sales: sales timed out after 100 ms; finished within 200 ms: true
+PASS a slow widget does not hold the page: missing sales: sales timed out after 100 ms; finished long before the 2-second service: true
 PASS a failed account fails the page: account service down
 </output>
 <p>The slow-widget test is the one that matters most in production, and it passed in about 100 ms although the fake sales service takes 2 seconds. One thing to notice: the program still ends properly. <code>withTimeout</code> cleared its own timers, but the fake 2-second <code>sales</code> timer kept running until it fired. That is the "loser keeps running" rule again. For a read-only widget it is harmless; for something that writes, you need real cancellation.</p>
@@ -591,37 +590,49 @@ PASS a failed account fails the page: account service down
 <section>
 <h2 id="practice">Practice</h2>
 <exercise title="Fix the waterfall">
-<p>This order page loads the order, then the customer and the shipping quote. The customer and the quote both need the order, but not each other. Make it as fast as possible without changing the services, and print how many 30 ms rounds it takes.</p>
+<p>This order page loads the order, then the customer and the shipping quote. The customer and the quote both need the order, but not each other. Make it as fast as possible without changing the services. The services count how many requests are in flight at once, so you can see the difference.</p>
 <example file="order-page.js">
-const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+let inFlight = 0;
+let peak = 0;
+const wait = async (ms, value) => {
+  peak = Math.max(peak, ++inFlight);
+  await new Promise((resolve) => setTimeout(resolve, ms));
+  inFlight--;
+  return value;
+};
 const getOrder = (id) => wait(30, { id, customerId: 4, city: "Ibadan" });
 const getCustomer = (id) => wait(30, { id, name: "Bola" });
 const getShippingQuote = (city) => wait(30, { city, kobo: 250_000 });
 
-const start = Date.now();
 const order = await getOrder(7);
 const customer = await getCustomer(order.customerId);
 const quote = await getShippingQuote(order.city);
-console.log(customer.name, quote.kobo, "rounds:", Math.round((Date.now() - start) / 30));
+console.log(customer.name, quote.kobo, "| most requests in flight at once:", peak);
 </example>
 <output>
-Bola 250000 rounds: 3
+Bola 250000 | most requests in flight at once: 1
 </output>
 <solution>
-<p>The order must come first. After that, the customer and the quote are independent, so start them together:</p>
+<p>The order must come first. After that, the customer and the quote are independent, so start them together. The page now takes two rounds of 30 ms instead of three:</p>
 <example file="order-page-fast.js">
-const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+let inFlight = 0;
+let peak = 0;
+const wait = async (ms, value) => {
+  peak = Math.max(peak, ++inFlight);
+  await new Promise((resolve) => setTimeout(resolve, ms));
+  inFlight--;
+  return value;
+};
 const getOrder = (id) => wait(30, { id, customerId: 4, city: "Ibadan" });
 const getCustomer = (id) => wait(30, { id, name: "Bola" });
 const getShippingQuote = (city) => wait(30, { city, kobo: 250_000 });
 
-const start = Date.now();
 const order = await getOrder(7);
 const [customer, quote] = await Promise.all([getCustomer(order.customerId), getShippingQuote(order.city)]);
-console.log(customer.name, quote.kobo, "rounds:", Math.round((Date.now() - start) / 30));
+console.log(customer.name, quote.kobo, "| most requests in flight at once:", peak);
 </example>
 <output>
-Bola 250000 rounds: 2
+Bola 250000 | most requests in flight at once: 2
 </output>
 <p>Dependencies decide the shape: work that needs a result must wait for it; work that does not should not.</p>
 </solution>
@@ -656,7 +667,7 @@ const reports = await allWithin(
   50,
 );
 console.log(reports);
-console.log("finished within 100 ms:", Date.now() - start < 100);
+console.log("finished long before the 300 ms promise:", Date.now() - start < 250);
 </example>
 <output>
 [
@@ -664,7 +675,7 @@ console.log("finished within 100 ms:", Date.now() - start < 100);
   { status: 'rejected', reason: '503' },
   { status: 'timeout' }
 ]
-finished within 100 ms: true
+finished long before the 300 ms promise: true
 </output>
 <p>One shared deadline promise is raced against each input, so all of them time out at the same moment. Each input is first turned into a report that never rejects, which is why <code>Promise.all</code> is safe here. The symbol <code>TIMEOUT</code> cannot be confused with any real value (<a href="/learn/js-symbols">Symbols</a>).</p>
 </solution>

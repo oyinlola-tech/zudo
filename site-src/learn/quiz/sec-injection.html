@@ -1,0 +1,890 @@
+<question id="sqi-why-strings" type="choice">
+<q>Why is building a SQL statement by gluing user text into a string unsafe?</q>
+<option>String concatenation is slow for long queries</option>
+<option correct>The database receives one piece of text and uses quote characters to find where the data ends; data containing those characters can move that boundary, so part of it is parsed as SQL</option>
+<option>Databases cannot store text that came from users</option>
+<option>It only matters for numbers, not for text</option>
+<explain><p>The statement and the data share one channel, so the data can change the statement's structure. Parameterized queries put them in separate channels.</p></explain>
+</question>
+
+<question id="sqi-params-how" type="choice">
+<q>What does a parameterized query (<code>db.query("… WHERE name = $1", [name])</code>) actually do differently?</q>
+<option>It escapes the quotes in <code>name</code> before inserting it into the text</option>
+<option>It checks <code>name</code> for SQL keywords and rejects it if any are found</option>
+<option correct>It sends the statement with a placeholder and the value separately; the statement is parsed before the value arrives, so the value can never change its structure</option>
+<option>It encrypts the value</option>
+<explain><p>No escaping or filtering is involved: the value is simply never parsed as SQL. That is why it also works for names with apostrophes and notes containing SQL words.</p></explain>
+</question>
+
+<question id="sqi-filter" type="choice">
+<q>A colleague suggests rejecting any product name that contains <code>'</code>, <code>;</code> or the word <code>drop</code>, "to stop SQL injection". What is the best answer?</q>
+<option>Good idea, and add <code>--</code> to the list</option>
+<option correct>It would reject real data like "Mama's Kitchen" and still not be a complete defence; use parameterized queries so every character is harmless</option>
+<option>It is enough if you also lower-case the input</option>
+<option>It is only needed for admin users</option>
+<explain><p>Blocklists of "dangerous characters" corrupt legitimate data and always miss something. Keep data in the data channel instead of trying to guess which data is dangerous.</p></explain>
+</question>
+
+<question id="sqi-identifier" type="choice">
+<q>The product list can be sorted by a column the user chooses in the URL (<code>?sort=price</code>). How should the column get into the SQL?</q>
+<option>As a parameter: <code>ORDER BY $1</code></option>
+<option>Glued in after checking that it contains only letters</option>
+<option correct>Through an allow-list that maps each supported sort key to a column name you wrote, with a default for anything else</option>
+<option>Base64-encoded</option>
+<explain><p>Placeholders stand for values, not identifiers, so <code>ORDER BY $1</code> sorts by a constant. The user's input should only choose between strings you wrote. Use <code>Object.hasOwn</code> so keys like <code>constructor</code> do not find inherited properties.</p></explain>
+</question>
+
+<question id="sqi-like" type="choice">
+<q>A search uses <code>name ILIKE $1</code> with <code>`%${term}%`</code> as the value. The query is parameterized. What is still wrong when a user searches for <code>50%</code>?</q>
+<option>Nothing</option>
+<option>The query can be injected</option>
+<option correct>Inside the LIKE pattern, <code>%</code> and <code>_</code> are wildcards, so <code>50%</code> also matches "500g"; escape them in the term</option>
+<option>ILIKE cannot use parameters</option>
+<explain><p>The parameter keeps the value out of the SQL, but LIKE interprets the value's contents as a pattern. That second, smaller language needs its own escaping: replace <code>\</code>, <code>%</code> and <code>_</code> with escaped versions and add <code>ESCAPE '\'</code>.</p></explain>
+</question>
+
+<question id="sqi-tagged" type="choice">
+<q>Which of these PGlite calls is safe with a user-supplied <code>sku</code>?</q>
+<code file="calls.js">
+// A
+await db.query(`SELECT * FROM products WHERE sku = '${sku}'`);
+
+// B
+await db.sql`SELECT * FROM products WHERE sku = ${sku}`;
+</code>
+<option>A</option>
+<option correct>B</option>
+<option>Both</option>
+<option>Neither</option>
+<explain><p>B is a <em>tagged</em> template: the tag function receives the fixed text and the values separately and turns each value into a placeholder. A is an ordinary template string, which glues the value into the text before the database sees it.</p></explain>
+</question>
+
+<question id="sqi-exec" type="choice">
+<q>Why should <code>db.exec(…)</code> (which runs several statements and takes no parameters) never receive user data?</q>
+<option>It is slower than <code>db.query</code></option>
+<option correct>It has no parameter channel, so data would have to be glued into the text, and it runs every statement in that text</option>
+<option>It only works in migrations</option>
+<option>It cannot return rows</option>
+<explain><p>Multi-statement "simple query" functions are fine for fixed scripts such as creating tables. Anything involving data goes through a parameterized call, which also refuses multiple statements.</p></explain>
+</question>
+
+<question id="sqi-least-privilege" type="choice">
+<q>What limits the damage if one query in the importer has an injection bug despite every precaution?</q>
+<option>A longer password for the database</option>
+<option correct>A database user that can only read and write the tables the importer needs, with no rights to drop tables or read other tables</option>
+<option>Running the database on the same machine</option>
+<option>Using an ORM</option>
+<explain><p>Least privilege does not prevent the bug, but it bounds what the bug can do. Migrations and admin tasks run under a different, more powerful user.</p></explain>
+</question>
+
+<question id="cmd-exec-vs-execfile" type="choice">
+<q>Why is <code>execFile(program, [arg1, arg2])</code> safe with a file name from outside, when <code>exec(`program ${name}`)</code> is not?</q>
+<option><code>execFile</code> escapes shell characters for you</option>
+<option correct><code>execFile</code> starts the program with an argument array and no shell, so nothing parses the name; each array element arrives as exactly one argument</option>
+<option><code>execFile</code> refuses names with special characters</option>
+<option>They are equally safe</option>
+<explain><p><code>exec</code> hands one string to a shell, which interprets spaces, quotes, <code>;</code>, <code>$</code> and more. Without a shell there is no second language to inject into.</p></explain>
+</question>
+
+<question id="cmd-dash" type="choice">
+<q>With an argument array and no shell, a file name that begins with <code>-</code> can still cause trouble. Why, and what helps?</q>
+<option>The operating system rejects such names; nothing helps</option>
+<option correct>The program may read it as one of its own options; put <code>"--"</code> (end of options) before data, or make sure names cannot start with <code>-</code></option>
+<option>A shell is started automatically for such names</option>
+<option>It is only a problem on Windows</option>
+<explain><p>This is argument injection: the name is one argument, but the program itself decides what arguments mean. <code>--</code> tells most programs that everything after it is an operand, not an option.</p></explain>
+</question>
+
+<question id="cmd-env" type="choice">
+<q>Why does the lesson pass <code>env: { PATH: process.env.PATH }</code> to <code>execFile</code>?</q>
+<option>The child process cannot start without it</option>
+<option correct>By default the child inherits every environment variable, including your secrets; a minimal environment gives a third-party tool only what it needs</option>
+<option>It makes the child process faster</option>
+<option>It stops the child from reading files</option>
+<explain><p>Least privilege applies to processes too. A tool that crashes and dumps its environment, or logs it, cannot leak secrets it never received.</p></explain>
+</question>
+
+<question id="path-separator" type="choice">
+<q>Why does the confinement check use <code>full.startsWith(base + sep)</code> rather than <code>full.startsWith(base)</code>?</q>
+<option>To support Windows only</option>
+<option correct>Without the separator, a base of <code>/srv/uploads</code> would also accept paths in a sibling folder such as <code>/srv/uploads-old</code></option>
+<option>Because <code>path.resolve</code> removes the trailing separator from files</option>
+<option>It is only for readability</option>
+<explain><p>A prefix check on text compares letters, not folders. Adding the separator makes it mean "inside this folder".</p></explain>
+</question>
+
+<question id="path-dotdot" type="choice">
+<q>Why is "refuse any name that contains <code>..</code>" a poor path-traversal defence?</q>
+<option>It is too slow</option>
+<option correct>It refuses harmless names such as <code>2026/../RICE-5.jpg</code> and does not look at where the path actually ends up (absolute paths, links); resolve the path and check where it lands</option>
+<option><code>..</code> is not special in Node.js</option>
+<option>It is a perfect defence</option>
+<explain><p>Confinement is about the final location. <code>path.resolve</code> applies every rule of the path language, then one prefix check answers the real question.</p></explain>
+</question>
+
+<question id="path-symlink" type="choice">
+<q>A name passes the resolve-and-prefix check, but the file is a symbolic link pointing outside the folder. What catches it?</q>
+<option>Nothing can catch it</option>
+<option>Checking the name for the word <code>link</code></option>
+<option correct>Taking the <code>realpath</code> of the file and of the base folder (following every link) and checking the prefix again</option>
+<option>Opening the file in read-only mode</option>
+<explain><p>The text check only sees the name; <code>realpath</code> asks the file system where the path really leads. For folders other people can write to, also consider that a link can be swapped between check and open.</p></explain>
+</question>
+
+<question id="path-best" type="choice">
+<q>What is the strongest defence against path traversal for uploaded images?</q>
+<option>A long list of forbidden characters</option>
+<option correct>Do not use outside names as file names: the server generates the name (an id) and stores the original name in the database as a label</option>
+<option>Storing uploads in the project root</option>
+<option>Making the uploads folder read-only</option>
+<explain><p>If no outside text reaches the file system's path rules, there is nothing to traverse with. Confinement checks are for the cases where the name must come from outside.</p></explain>
+</question>
+
+<question id="ssrf-allow" type="choice">
+<q>For outbound URLs, why does the lesson prefer an allow-list of hosts over a deny-list of dangerous hosts?</q>
+<option>Allow-lists are shorter to write</option>
+<option correct>You know exactly which suppliers you need to reach, but you cannot list every internal or dangerous destination (and every way of writing it)</option>
+<option>Deny-lists do not work with HTTPS</option>
+<option>Allow-lists make requests faster</option>
+<explain><p>An allow-list fails closed: anything unexpected is refused. A deny-list fails open: anything you forgot is allowed. The private-address check is a second layer on top, not a replacement.</p></explain>
+</question>
+
+<question id="ssrf-rebinding" type="choice">
+<q>An importer looks up a host name, checks that every address is public, and then calls <code>fetch(url)</code>, which looks the name up again. What is DNS rebinding, and what closes the gap?</q>
+<option>A slow DNS server; add a cache</option>
+<option correct>The DNS server answers "public" to the check and "internal" to the second lookup; do the check inside the lookup the connection itself uses, so the checked address is the one dialled</option>
+<option>A typo in the host name; validate spelling</option>
+<option>An HTTPS error; switch to HTTP</option>
+<explain><p>Check-then-use with two separate lookups leaves a window. The lesson's <code>guardedLookup</code> is passed as the HTTP client's <code>lookup</code>, so there is only one lookup and it is checked.</p></explain>
+</question>
+
+<question id="ssrf-redirect" type="choice">
+<q>An allowed supplier host answers a catalogue request with a redirect to an internal address. What should the importer do?</q>
+<option>Follow it; the first host was allowed</option>
+<option correct>Not follow redirects automatically, or run every redirect target through the same URL and address checks</option>
+<option>Retry the original URL until it stops redirecting</option>
+<option>Follow it only if it uses HTTPS</option>
+<explain><p>Each hop is a new outbound request and needs the same checks. With <code>fetch</code>, pass <code>redirect: "manual"</code> or <code>"error"</code> and handle redirects yourself.</p></explain>
+</question>
+
+<question id="smug-cause" type="choice">
+<q>What makes request smuggling possible?</q>
+<option>Using HTTPS instead of HTTP</option>
+<option correct>Two HTTP parsers in a chain (for example a proxy and the app server) disagree about where an ambiguous request ends</option>
+<option>Large request bodies</option>
+<option>Missing CORS headers</option>
+<explain><p>If the front server and the back server read the framing differently, bytes the front server treated as a body can become a separate request for the back server, one that the front server never inspected.</p></explain>
+</question>
+
+<question id="smug-defence" type="choice">
+<q>What is the defence against request smuggling?</q>
+<option>Validate the request body with a schema in each route</option>
+<option correct>Every parser in the chain strictly rejects ambiguous framing (both <code>Content-Length</code> and <code>Transfer-Encoding</code>, conflicting lengths) instead of guessing</option>
+<option>Accept whichever header comes first</option>
+<option>Add a rate limit</option>
+<explain><p>Route code runs after framing has been decided, so it cannot help. If no parser guesses, no two parsers can guess differently. Node.js's parser is strict by default.</p></explain>
+</question>
+
+<question id="smug-flag" type="choice">
+<q>A pull request adds <code>insecureHTTPParser: true</code> to <code>http.createServer</code> "because an old client sends odd headers". What should a reviewer say?</q>
+<option>Fine, it only affects old clients</option>
+<option correct>No: it makes the parser lenient for every request, which reopens framing ambiguity; fix or isolate the old client instead</option>
+<option>Fine, if HTTPS is used</option>
+<option>It has no effect in Node.js 24</option>
+<explain><p>Leniency is exactly what lets two parsers disagree. It exists for legacy interoperability and should not appear in a service behind a proxy.</p></explain>
+</question>
+
+<question id="pp-how" type="choice">
+<q>Why is it dangerous to deep-merge a parsed JSON body into another object without skipping any keys?</q>
+<option><code>JSON.parse</code> runs code inside the JSON</option>
+<option correct><code>JSON.parse</code> creates an ordinary own property named <code>"__proto__"</code>, and a merge that writes <code>target["__proto__"][key]</code> writes to <code>Object.prototype</code>, which every object inherits from</option>
+<option>Merging is always slower than copying</option>
+<option>It loses the body's number types</option>
+<explain><p>Reading <code>target["__proto__"]</code> on a normal object returns <code>Object.prototype</code> itself. Anything written there appears on every object in the program.</p></explain>
+</question>
+
+<question id="pp-null-proto" type="choice">
+<q>What does creating result objects with <code>Object.create(null)</code> add to a safe merge?</q>
+<option>It makes the object immutable</option>
+<option correct>The object has no prototype, so even a key that slipped past the checks has no <code>Object.prototype</code> to reach through it</option>
+<option>It makes <code>JSON.stringify</code> skip the object</option>
+<option>It deletes <code>__proto__</code> from every object</option>
+<explain><p>Null-prototype objects (and <code>Map</code>) are the natural containers for data-controlled keys. They are a second layer behind skipping the forbidden keys.</p></explain>
+</question>
+
+<question id="redos-server" type="choice">
+<q>Why can one slow regular-expression match take down a whole Node.js server, not just one request?</q>
+<option>Regex engines use a lot of memory</option>
+<option correct>JavaScript runs on one thread; while the match runs, no other request, timer or callback can run</option>
+<option>The regex engine restarts the process</option>
+<option>It only affects that one request</option>
+<explain><p>The event loop is blocked for the whole match. That is why an exponential-time pattern on a crafted input is a denial of service.</p></explain>
+</question>
+
+<question id="redos-shape" type="choice">
+<q>Both patterns accept names made of words separated by single spaces. Which one runs in linear time on long inputs that almost match, and why?</q>
+<code file="patterns.js">
+const A = /^(\w+\s?)*$/;
+const B = /^\w+(?:\s\w+)*$/;
+</code>
+<option>A, because it is shorter</option>
+<option correct>B, because every repetition must start with a space, so there is only one way to split any text among the parts</option>
+<option>Both, because they are anchored</option>
+<option>Neither; regexes are always exponential</option>
+<explain><p>In A the space is optional, so a run of letters can be divided between repetitions in a huge number of ways, and the engine tries them all before failing. In B the repetitions cannot overlap. The lesson shows B's style on SKUs; you never need to run A to see the problem, only to count the ways it can match.</p></explain>
+</question>
+
+<question id="sqi-out-pglite" type="output">
+<q>What does this print?</q>
+<code file="pglite-params.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec("CREATE TABLE reviews (id serial PRIMARY KEY, body text NOT NULL)");
+const body = "Great rice!' ; SELECT 1; -- 5 stars, would 'order' again";
+await db.query("INSERT INTO reviews (body) VALUES ($1)", [body]);
+const { rows } = await db.query("SELECT body FROM reviews");
+console.log(rows.length, rows[0].body === body, rows[0].body.length === body.length);
+</code>
+<option correct>1 true true</option>
+<option>1 false true</option>
+<option>2 true true</option>
+<option>An error: unterminated quoted string</option>
+<explain><p>The review was sent as a parameter, so its quotes, semicolons and SQL words are just characters. Exactly one row exists and it holds the text unchanged.</p></explain>
+</question>
+
+<question id="sqi-out-any" type="output">
+<q>What does this print?</q>
+<code file="pglite-any.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec("CREATE TABLE products (sku text PRIMARY KEY)");
+for (const sku of ["RICE-5", "OIL-1", "BEANS-2"]) await db.query("INSERT INTO products VALUES ($1)", [sku]);
+
+const wanted = ["OIL-1", "RICE-5", "RICE-5', 'BEANS-2"];
+const { rows } = await db.query("SELECT sku FROM products WHERE sku = ANY($1) ORDER BY sku", [wanted]);
+console.log(rows.map((row) => row.sku));
+</code>
+<option correct>[ 'OIL-1', 'RICE-5' ]</option>
+<option>[ 'BEANS-2', 'OIL-1', 'RICE-5' ]</option>
+<option>[ 'OIL-1' ]</option>
+<option>[]</option>
+<explain><p>The whole array is one parameter, and each element is compared as a whole value. The third element is just an odd SKU that matches nothing; it cannot add <code>BEANS-2</code> to the list.</p></explain>
+</question>
+
+<question id="sqi-out-like" type="output">
+<q>What does this escaping function print?</q>
+<code file="escape-like.js">
+const escapeLike = (text) => text.replace(/[\\%_]/g, "\\$&");
+
+console.log(escapeLike("50% off"));
+console.log(escapeLike("BEANS_2"));
+console.log(escapeLike("rice"));
+</code>
+<option correct>50\% off
+BEANS\_2
+rice</option>
+<option>50% off
+BEANS_2
+rice</option>
+<option>50\\% off
+BEANS\\_2
+rice</option>
+<option>50 off
+BEANS2
+rice</option>
+<explain><p><code>$&amp;</code> in the replacement is the matched character, so each wildcard gets one backslash in front. With <code>ESCAPE '\'</code> in the query, <code>\%</code> matches a literal percent sign.</p></explain>
+</question>
+
+<question id="sqi-out-sort" type="output">
+<q>What does this allow-list print?</q>
+<code file="sort.js">
+const SORTS = { price: "price_kobo", name: "name" };
+const columnFor = (key) => (Object.hasOwn(SORTS, key) ? SORTS[key] : "sku");
+
+for (const key of ["price", "name", "created_at", "constructor", "price_kobo DESC"]) {
+  console.log(key, "->", columnFor(key));
+}
+</code>
+<option correct>price -> price_kobo
+name -> name
+created_at -> sku
+constructor -> sku
+price_kobo DESC -> sku</option>
+<option>price -> price_kobo
+name -> name
+created_at -> created_at
+constructor -> sku
+price_kobo DESC -> price_kobo DESC</option>
+<option>price -> price_kobo
+name -> name
+created_at -> sku
+constructor -> function Object() { [native code] }
+price_kobo DESC -> sku</option>
+<option>price -> price_kobo
+name -> name
+created_at -> undefined
+constructor -> undefined
+price_kobo DESC -> undefined</option>
+<explain><p>Only the two keys you listed map to column names; everything else gets the default. Without <code>Object.hasOwn</code>, <code>SORTS["constructor"]</code> would return the inherited <code>Object</code> function, and its text would end up in the SQL.</p></explain>
+</question>
+
+<question id="cmd-out-args" type="output">
+<q>What does this print?</q>
+<code file="args.js" browser="no">
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const run = promisify(execFile);
+const name = "Ada O'Neil; invoice $1042.pdf";
+const { stdout } = await run(process.execPath, ["-e", "console.log(process.argv.length - 1, JSON.stringify(process.argv[1]))", "--", name]);
+console.log(stdout.trim());
+</code>
+<option correct>1 "Ada O'Neil; invoice $1042.pdf"</option>
+<option>3 "Ada"</option>
+<option>1 "Ada O'Neil"</option>
+<option>1 "Ada O'Neil; invoice .pdf"</option>
+<explain><p>No shell was involved, so the name is one argument, with its apostrophe, semicolon and <code>$1042</code> unchanged. A shell would have split it at spaces, ended the command at <code>;</code> and expanded <code>$1</code>.</p></explain>
+</question>
+
+<question id="path-out-confine" type="output">
+<q>What does this confinement check print?</q>
+<code file="confine.js" browser="no">
+import { resolve, sep } from "node:path";
+
+const base = resolve("/srv/shop/uploads");
+const confine = (name) => {
+  const full = resolve(base, name);
+  return full.startsWith(base + sep) ? full.slice(base.length + 1) : "refused";
+};
+
+for (const name of ["logo.png", "2026/../logo.png", "../uploads-old/logo.png", "/srv/shop/uploads/logo.png", "."]) {
+  console.log(name, "->", confine(name));
+}
+</code>
+<option correct>logo.png -> logo.png
+2026/../logo.png -> logo.png
+../uploads-old/logo.png -> refused
+/srv/shop/uploads/logo.png -> logo.png
+. -> refused</option>
+<option>logo.png -> logo.png
+2026/../logo.png -> refused
+../uploads-old/logo.png -> refused
+/srv/shop/uploads/logo.png -> refused
+. -> refused</option>
+<option>logo.png -> logo.png
+2026/../logo.png -> logo.png
+../uploads-old/logo.png -> uploads-old/logo.png
+/srv/shop/uploads/logo.png -> logo.png
+. -> refused</option>
+<option>logo.png -> logo.png
+2026/../logo.png -> logo.png
+../uploads-old/logo.png -> refused
+/srv/shop/uploads/logo.png -> refused
+. -> </option>
+<explain><p>The check looks at where each path ends up. An absolute path that happens to lie inside the folder is accepted, the sibling folder is refused thanks to the separator, and <code>.</code> resolves to the folder itself, which is not a file inside it.</p></explain>
+</question>
+
+<question id="ssrf-out-url" type="output">
+<q>What does this URL check print?</q>
+<code file="url-check.js">
+const ALLOWED = new Set(["images.supplier-one.example"]);
+
+function check(text) {
+  const url = new URL(text);
+  if (url.protocol !== "https:") return "scheme";
+  if (url.username || url.password) return "credentials";
+  if (url.port !== "") return "port";
+  return ALLOWED.has(url.hostname) ? "ok" : "host";
+}
+
+for (const u of [
+  "https://images.supplier-one.example:443/a.jpg",
+  "HTTPS://Images.Supplier-One.example/a.jpg",
+  "https://images.supplier-one.example./a.jpg",
+  "https://images.supplier-one.example.cdn.test/a.jpg",
+]) {
+  console.log(check(u));
+}
+</code>
+<option correct>ok
+ok
+host
+host</option>
+<option>port
+host
+ok
+host</option>
+<option>port
+ok
+host
+ok</option>
+<option>ok
+host
+host
+host</option>
+<explain><p>The <code>URL</code> parser normalises before you check: the default port 443 becomes <code>""</code>, and the scheme and host are lower-cased. The trailing dot is kept, so the exact comparison refuses it (failing closed), and a longer host that merely starts with an allowed name is a different host.</p></explain>
+</question>
+
+<question id="ssrf-out-blocklist" type="output">
+<q>What does this address check print?</q>
+<code file="blocklist.js" browser="no">
+import { BlockList } from "node:net";
+
+const blocked = new BlockList();
+blocked.addSubnet("10.0.0.0", 8, "ipv4");
+blocked.addSubnet("127.0.0.0", 8, "ipv4");
+blocked.addSubnet("169.254.0.0", 16, "ipv4");
+
+console.log(blocked.check("10.20.30.40", "ipv4"));
+console.log(blocked.check("169.254.169.254", "ipv4"));
+console.log(blocked.check("::ffff:127.0.0.1", "ipv6"));
+console.log(blocked.check("203.0.113.9", "ipv4"));
+</code>
+<option correct>true
+true
+true
+false</option>
+<option>true
+true
+false
+false</option>
+<option>true
+false
+true
+false</option>
+<option>false
+false
+false
+true</option>
+<explain><p><code>check</code> returns <code>true</code> for blocked addresses. <code>BlockList</code> understands that <code>::ffff:127.0.0.1</code> is the IPv4 loopback address written in IPv6 form, which a hand-written string comparison would miss.</p></explain>
+</question>
+
+<question id="pp-out-json" type="output">
+<q>What does this print?</q>
+<code file="json-proto.js">
+const body = JSON.parse('{"__proto__":{"isAdmin":true},"name":"Ada"}');
+
+console.log(Object.keys(body));
+console.log(body.isAdmin, ({}).isAdmin);
+console.log(Object.getPrototypeOf(body) === Object.prototype);
+</code>
+<option correct>[ '__proto__', 'name' ]
+undefined undefined
+true</option>
+<option>[ 'name' ]
+true undefined
+false</option>
+<option>[ 'name' ]
+true true
+false</option>
+<option>[ '__proto__', 'name' ]
+true undefined
+true</option>
+<explain><p><code>JSON.parse</code> alone is safe: <code>"__proto__"</code> becomes an ordinary own property and the prototype is unchanged. The danger begins when other code copies that key into another object with <code>target[key] = …</code>, which is what a safe merge must skip.</p></explain>
+</question>
+
+<question id="pp-out-merge" type="output">
+<q>What does this safe shallow merge print?</q>
+<code file="merge.js">
+const FORBIDDEN = new Set(["__proto__", "constructor", "prototype"]);
+
+function mergeSettings(defaults, input) {
+  const out = Object.assign(Object.create(null), defaults);
+  for (const key of Object.keys(input)) {
+    if (!FORBIDDEN.has(key)) out[key] = input[key];
+  }
+  return out;
+}
+
+const input = JSON.parse('{"theme":"dark","__proto__":{"isAdmin":true},"constructor":"x"}');
+const settings = mergeSettings({ theme: "light", perPage: 20 }, input);
+console.log(JSON.stringify(settings), settings.isAdmin, ({}).isAdmin);
+</code>
+<option correct>{"theme":"dark","perPage":20} undefined undefined</option>
+<option>{"theme":"dark","perPage":20,"constructor":"x"} undefined undefined</option>
+<option>{"theme":"dark","perPage":20} true true</option>
+<option>{"theme":"light","perPage":20} undefined undefined</option>
+<explain><p>Only <code>theme</code> is copied; both forbidden keys are skipped. The result has a null prototype, and <code>Object.prototype</code> is untouched, so no object gains <code>isAdmin</code>.</p></explain>
+</question>
+
+<question id="redos-out-sku" type="output">
+<q>What does this SKU check print?</q>
+<code file="sku.js">
+const SKU = /^[A-Z]{2,10}(?:-[A-Z0-9]{1,10}){0,4}$/;
+
+function checkSku(text) {
+  if (text.length > 40) return "too long";
+  return SKU.test(text) ? "ok" : "bad";
+}
+
+console.log(["OIL-1", "OIL", "O-1", "OIL-1-2-3-4-5", "OIL-" + "9".repeat(60)].map(checkSku).join(" "));
+</code>
+<option correct>ok ok bad bad too long</option>
+<option>ok bad bad ok too long</option>
+<option>ok ok bad ok bad</option>
+<option>ok ok ok bad too long</option>
+<explain><p><code>OIL</code> has no suffix, which <code>{0,4}</code> allows. <code>O</code> is shorter than two letters. Five suffixes exceed the limit of four. The last one is refused by the length check before the regex even runs.</p></explain>
+</question>
+
+<question id="redos-out-escape" type="output">
+<q>What does this print?</q>
+<code file="escape.js">
+const term = "rice (5kg) + oil";
+const safe = new RegExp(RegExp.escape(term), "i");
+
+console.log(safe.test("Combo: Rice (5kg) + Oil, ₦6,200"));
+console.log(safe.test("Combo: Rice 5kg + Oil"));
+console.log("Combo: rice (5kg) + oil".includes(term));
+</code>
+<option correct>true
+false
+true</option>
+<option>false
+false
+true</option>
+<option>true
+true
+true</option>
+<option>An error: invalid regular expression</option>
+<explain><p><code>RegExp.escape</code> makes brackets and <code>+</code> literal, so the pattern matches only the exact text (ignoring case). For a plain substring test, <code>includes</code> needs no regex at all.</p></explain>
+</question>
+
+<question id="sqi-code-escape-like" type="code" file="like.js">
+<q><p>Write <code>likeContains(term)</code> that returns the value for <code>name ILIKE $1 ESCAPE '\'</code> meaning "contains <code>term</code> literally": escape <code>\</code>, <code>%</code> and <code>_</code> in the term with a backslash, then wrap it in <code>%</code> on both sides. Reject terms longer than 100 characters by returning <code>null</code>.</p></q>
+<starter>
+function likeContains(term) {
+  // your code here
+}
+
+console.log(likeContains("50%"));
+console.log(likeContains("BEANS_2"));
+console.log(likeContains("a\\b"));
+console.log(likeContains("x".repeat(101)));
+</starter>
+<solution>
+function likeContains(term) {
+  if (typeof term !== "string" || term.length > 100) return null;
+  return `%${term.replace(/[\\%_]/g, "\\$&")}%`;
+}
+
+console.log(likeContains("50%"));
+console.log(likeContains("BEANS_2"));
+console.log(likeContains("a\\b"));
+console.log(likeContains("x".repeat(101)));
+</solution>
+<expected>
+%50\%%
+%BEANS\_2%
+%a\\b%
+null
+</expected>
+<explain><p>The backslash must be escaped too, or a term ending in <code>\</code> would escape your closing <code>%</code>. The outer <code>%</code> signs are yours and stay wildcards. The value then goes in as a parameter, never into the SQL text.</p></explain>
+</question>
+
+<question id="sqi-code-order-by" type="code" file="order-by.js">
+<q><p>Write <code>orderBy(sort, direction)</code> that returns an <code>ORDER BY</code> clause built only from strings you wrote. Supported sort keys: <code>price</code> → <code>price_kobo</code>, <code>name</code> → <code>name</code>, <code>newest</code> → <code>created_at</code>; anything else → <code>sku</code>. Direction is <code>DESC</code> only for exactly <code>"desc"</code>, otherwise <code>ASC</code>. Always add <code>, sku</code> as a tie-breaker.</p></q>
+<starter>
+function orderBy(sort, direction) {
+  // your code here
+}
+
+console.log(orderBy("price", "desc"));
+console.log(orderBy("newest", "DESC"));
+console.log(orderBy("toString", "asc"));
+console.log(orderBy("price_kobo; anything", "sideways"));
+</starter>
+<solution>
+const SORTS = { price: "price_kobo", name: "name", newest: "created_at" };
+
+function orderBy(sort, direction) {
+  const column = typeof sort === "string" && Object.hasOwn(SORTS, sort) ? SORTS[sort] : "sku";
+  const dir = direction === "desc" ? "DESC" : "ASC";
+  return `ORDER BY ${column} ${dir}, sku`;
+}
+
+console.log(orderBy("price", "desc"));
+console.log(orderBy("newest", "DESC"));
+console.log(orderBy("toString", "asc"));
+console.log(orderBy("price_kobo; anything", "sideways"));
+</solution>
+<expected>
+ORDER BY price_kobo DESC, sku
+ORDER BY created_at ASC, sku
+ORDER BY sku ASC, sku
+ORDER BY sku ASC, sku
+</expected>
+<explain><p>The input only <em>chooses</em>; it never appears in the output. <code>Object.hasOwn</code> refuses inherited names like <code>toString</code>, and an exact comparison for the direction means unexpected spellings get the safe default.</p></explain>
+</question>
+
+<question id="path-code-normalize" type="code" file="normalize.js">
+<q><p>Without <code>node:path</code>, write <code>insideUploads(name)</code> for forward-slash paths. Refuse (<code>null</code>) names that are empty, start with <code>/</code> or contain a NUL character. Otherwise split on <code>/</code>, skip empty and <code>.</code> segments, pop a segment for <code>..</code> (refuse if there is nothing to pop), and return the remaining segments joined with <code>/</code> (refuse if nothing remains).</p></q>
+<starter>
+function insideUploads(name) {
+  // your code here
+}
+
+for (const name of ["logo.png", "2026/./09/../logo.png", "2026/../../config/app.env", "/etc/hostname", "a/..", "a\0.png"]) {
+  console.log(JSON.stringify(name), insideUploads(name));
+}
+</starter>
+<solution>
+function insideUploads(name) {
+  if (typeof name !== "string" || name === "" || name.startsWith("/") || name.includes("\0")) return null;
+  const parts = [];
+  for (const segment of name.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      if (parts.length === 0) return null;
+      parts.pop();
+    } else {
+      parts.push(segment);
+    }
+  }
+  return parts.length === 0 ? null : parts.join("/");
+}
+
+for (const name of ["logo.png", "2026/./09/../logo.png", "2026/../../config/app.env", "/etc/hostname", "a/..", "a\0.png"]) {
+  console.log(JSON.stringify(name), insideUploads(name));
+}
+</solution>
+<expected>
+"logo.png" logo.png
+"2026/./09/../logo.png" 2026/logo.png
+"2026/../../config/app.env" null
+"/etc/hostname" null
+"a/.." null
+"a\u0000.png" null
+</expected>
+<explain><p>This is what <code>path.resolve</code> plus a prefix check does: apply every segment and see whether the result is still inside. Refusing as soon as <code>..</code> would climb above the base is equivalent to the prefix check. In real code use <code>node:path</code>, which also knows Windows rules, and add <code>realpath</code> for links.</p></explain>
+</question>
+
+<question id="ssrf-code-url" type="code" file="outbound-url.js">
+<q><p>Write <code>checkOutbound(text, allowedHosts)</code> that returns <code>"ok"</code> or the first reason for refusal: <code>"invalid"</code> (not a URL), <code>"scheme"</code> (not https), <code>"credentials"</code>, <code>"port"</code> (any explicit non-default port), or <code>"host"</code> (not exactly in the set).</p></q>
+<starter>
+function checkOutbound(text, allowedHosts) {
+  // your code here
+}
+
+const hosts = new Set(["catalogue.supplier-one.example"]);
+for (const u of [
+  "https://catalogue.supplier-one.example/p.json",
+  "http://catalogue.supplier-one.example/p.json",
+  "https://ops@catalogue.supplier-one.example/p.json",
+  "https://catalogue.supplier-one.example:8080/p.json",
+  "https://evil-catalogue.supplier-one.example/p.json",
+  "not a url",
+]) {
+  console.log(checkOutbound(u, hosts));
+}
+</starter>
+<solution>
+function checkOutbound(text, allowedHosts) {
+  let url;
+  try {
+    url = new URL(text);
+  } catch {
+    return "invalid";
+  }
+  if (url.protocol !== "https:") return "scheme";
+  if (url.username !== "" || url.password !== "") return "credentials";
+  if (url.port !== "") return "port";
+  if (!allowedHosts.has(url.hostname)) return "host";
+  return "ok";
+}
+
+const hosts = new Set(["catalogue.supplier-one.example"]);
+for (const u of [
+  "https://catalogue.supplier-one.example/p.json",
+  "http://catalogue.supplier-one.example/p.json",
+  "https://ops@catalogue.supplier-one.example/p.json",
+  "https://catalogue.supplier-one.example:8080/p.json",
+  "https://evil-catalogue.supplier-one.example/p.json",
+  "not a url",
+]) {
+  console.log(checkOutbound(u, hosts));
+}
+</solution>
+<expected>
+ok
+scheme
+credentials
+port
+host
+invalid
+</expected>
+<explain><p>Parse with <code>URL</code> instead of inspecting the text, so you check exactly what the HTTP client will use. An exact set lookup refuses lookalike hosts that a suffix or substring check might accept. In production, the private-address check in the connection's lookup comes next.</p></explain>
+</question>
+
+<question id="ssrf-code-private" type="code" file="private-ipv4.js">
+<q><p>Write <code>isPrivateIPv4(text)</code>. Accept only four decimal numbers 0 to 255 separated by dots (no leading zeros except <code>0</code> itself); anything else returns <code>"invalid"</code>. Return <code>true</code> for 10.0.0.0/8, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16 and 0.0.0.0/8, otherwise <code>false</code>.</p></q>
+<starter>
+function isPrivateIPv4(text) {
+  // your code here
+}
+
+for (const ip of ["10.1.2.3", "172.31.255.1", "172.32.0.1", "169.254.169.254", "8.8.8.8", "127.1", "010.0.0.1", "256.1.1.1"]) {
+  console.log(ip, isPrivateIPv4(ip));
+}
+</starter>
+<solution>
+function isPrivateIPv4(text) {
+  const parts = text.split(".");
+  if (parts.length !== 4 || !parts.every((p) => /^(0|[1-9]\d{0,2})$/.test(p) && Number(p) <= 255)) return "invalid";
+  const [a, b] = parts.map(Number);
+  return (
+    a === 10 || a === 127 || a === 0 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  );
+}
+
+for (const ip of ["10.1.2.3", "172.31.255.1", "172.32.0.1", "169.254.169.254", "8.8.8.8", "127.1", "010.0.0.1", "256.1.1.1"]) {
+  console.log(ip, isPrivateIPv4(ip));
+}
+</solution>
+<expected>
+10.1.2.3 true
+172.31.255.1 true
+172.32.0.1 false
+169.254.169.254 true
+8.8.8.8 false
+127.1 invalid
+010.0.0.1 invalid
+256.1.1.1 invalid
+</expected>
+<explain><p>Short forms and leading zeros are refused rather than interpreted, because different libraries interpret them differently. That is the "single strict parser" idea again. In Node.js, prefer <code>net.BlockList</code>, which also handles IPv6 and IPv4-mapped addresses.</p></explain>
+</question>
+
+<question id="smug-code-framing" type="code" file="framing.js">
+<q><p>Write <code>framing(headers)</code> for a list of <code>[name, value]</code> pairs (names in any case). Return <code>"reject"</code> if both <code>content-length</code> and <code>transfer-encoding</code> appear, if <code>content-length</code> appears with different values, if a length is not all digits, or if <code>transfer-encoding</code> is anything other than exactly <code>chunked</code>. Otherwise return <code>"length N"</code>, <code>"chunked"</code> or <code>"no body"</code>.</p></q>
+<starter>
+function framing(headers) {
+  // your code here
+}
+
+console.log(framing([["Content-Length", "12"]]));
+console.log(framing([["transfer-encoding", "chunked"]]));
+console.log(framing([["Content-Length", "12"], ["Transfer-Encoding", "chunked"]]));
+console.log(framing([["content-length", "12"], ["Content-Length", "13"]]));
+console.log(framing([["content-length", "12"], ["Content-Length", "12"]]));
+console.log(framing([["Content-Length", "+12"]]));
+console.log(framing([["Host", "shop.test"]]));
+</starter>
+<solution>
+function framing(headers) {
+  const lengths = headers.filter(([name]) => name.toLowerCase() === "content-length").map(([, value]) => value);
+  const encodings = headers.filter(([name]) => name.toLowerCase() === "transfer-encoding").map(([, value]) => value);
+  if (lengths.length > 0 && encodings.length > 0) return "reject";
+  if (encodings.length > 0) return encodings.length === 1 && encodings[0] === "chunked" ? "chunked" : "reject";
+  if (lengths.length === 0) return "no body";
+  if (!lengths.every((v) => /^\d+$/.test(v)) || new Set(lengths).size !== 1) return "reject";
+  return `length ${Number(lengths[0])}`;
+}
+
+console.log(framing([["Content-Length", "12"]]));
+console.log(framing([["transfer-encoding", "chunked"]]));
+console.log(framing([["Content-Length", "12"], ["Transfer-Encoding", "chunked"]]));
+console.log(framing([["content-length", "12"], ["Content-Length", "13"]]));
+console.log(framing([["content-length", "12"], ["Content-Length", "12"]]));
+console.log(framing([["Content-Length", "+12"]]));
+console.log(framing([["Host", "shop.test"]]));
+</solution>
+<expected>
+length 12
+chunked
+reject
+reject
+length 12
+reject
+no body
+</expected>
+<explain><p>A strict parser has one answer or refuses: it never picks one header over another. Identical repeated lengths are unambiguous, so they are accepted here. Real servers use a tested parser such as Node.js's llhttp; this exercise shows the decisions it makes for you.</p></explain>
+</question>
+
+<question id="pp-code-set-path" type="code" file="set-path.js">
+<q><p>Write <code>setByPath(target, path, value)</code> for dotted paths such as <code>"display.theme"</code>. Return <code>false</code> without changing anything if any segment is empty or is <code>__proto__</code>, <code>constructor</code> or <code>prototype</code>, or if there are more than 5 segments. Create missing intermediate objects with <code>Object.create(null)</code>. Return <code>true</code> on success.</p></q>
+<starter>
+function setByPath(target, path, value) {
+  // your code here
+}
+
+const prefs = Object.create(null);
+console.log(setByPath(prefs, "display.theme", "dark"), JSON.stringify(prefs));
+console.log(setByPath(prefs, "__proto__.isAdmin", true));
+console.log(setByPath(prefs, "display.constructor.prototype.isAdmin", true));
+console.log(setByPath(prefs, "a..b", 1), setByPath(prefs, "a.b.c.d.e.f", 1));
+console.log(({}).isAdmin, JSON.stringify(prefs));
+</starter>
+<solution>
+const FORBIDDEN = new Set(["__proto__", "constructor", "prototype"]);
+
+function setByPath(target, path, value) {
+  const parts = path.split(".");
+  if (parts.length > 5 || parts.some((p) => p === "" || FORBIDDEN.has(p))) return false;
+  let node = target;
+  for (const part of parts.slice(0, -1)) {
+    if (!Object.hasOwn(node, part) || typeof node[part] !== "object" || node[part] === null) {
+      node[part] = Object.create(null);
+    }
+    node = node[part];
+  }
+  node[parts.at(-1)] = value;
+  return true;
+}
+
+const prefs = Object.create(null);
+console.log(setByPath(prefs, "display.theme", "dark"), JSON.stringify(prefs));
+console.log(setByPath(prefs, "__proto__.isAdmin", true));
+console.log(setByPath(prefs, "display.constructor.prototype.isAdmin", true));
+console.log(setByPath(prefs, "a..b", 1), setByPath(prefs, "a.b.c.d.e.f", 1));
+console.log(({}).isAdmin, JSON.stringify(prefs));
+</solution>
+<expected>
+true {"display":{"theme":"dark"}}
+false
+false
+false false
+undefined {"display":{"theme":"dark"}}
+</expected>
+<explain><p>Every segment is checked before anything is written, so a refused path changes nothing at all. Walking only own properties and creating null-prototype objects means the path can never step onto <code>Object.prototype</code>.</p></explain>
+</question>
+
+<question id="redos-code-tags" type="code" file="tags.js">
+<q><p>Product tags are lower-case words joined by single hyphens, such as <code>brown-rice</code>. Write <code>checkTag(text)</code>: return <code>"too long"</code> for more than 30 characters (checked first), <code>"ok"</code> if it matches a linear-time pattern where every repetition starts with a hyphen, otherwise <code>"bad"</code>. The last line of the test must finish quickly.</p></q>
+<starter>
+function checkTag(text) {
+  // your code here
+}
+
+for (const tag of ["rice", "brown-rice", "brown--rice", "-rice", "rice-", "Brown-Rice"]) console.log(tag, checkTag(tag));
+const start = performance.now();
+const result = checkTag("a-".repeat(50_000) + "!");
+console.log(result, performance.now() - start < 100);
+</starter>
+<solution>
+const TAG = /^[a-z]+(?:-[a-z]+)*$/;
+
+function checkTag(text) {
+  if (text.length > 30) return "too long";
+  return TAG.test(text) ? "ok" : "bad";
+}
+
+for (const tag of ["rice", "brown-rice", "brown--rice", "-rice", "rice-", "Brown-Rice"]) console.log(tag, checkTag(tag));
+const start = performance.now();
+const result = checkTag("a-".repeat(50_000) + "!");
+console.log(result, performance.now() - start < 100);
+</solution>
+<expected>
+rice ok
+brown-rice ok
+brown--rice bad
+-rice bad
+rice- bad
+Brown-Rice bad
+too long true
+</expected>
+<explain><p>Every repetition in <code>(?:-[a-z]+)*</code> must begin with <code>-</code>, which <code>[a-z]</code> cannot match, so each input can be split only one way. The length check runs first, so the 100,001-character input never reaches the regex.</p></explain>
+</question>

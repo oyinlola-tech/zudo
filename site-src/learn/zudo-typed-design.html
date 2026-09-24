@@ -1,0 +1,1105 @@
+---
+title: Type-safe application design
+description: Design a billing module for the Task API where ids, money, order states, DTOs, commands, queries, events, errors, config and DI wiring are all checked by TypeScript.
+minutes: 60
+youNeed: The whole ZudoJS application development course, and the typed events, CQRS and DI lessons of Advanced TypeScript
+youBuild: A typed billing module (users, products, orders, payments, notifications) with one contract file, typed buses over @zudojs/cqrs and @zudojs/events, a checked composition root and type tests
+keywords: type-safe application design, zudojs typescript, branded ids, kobo money type, discriminated union state, dto schema infer, typed command bus, typed query bus, typed events, createToken registerFactory, typed config, error codes satisfies, exhaustive switch never, ts-expect-error type tests, composition root
+objectives: Put every contract of a module (ids, money, DTOs, commands, queries, events, errors) in one place and derive the rest from it | Model entity states as a discriminated union so illegal transitions do not compile | Wrap @zudojs/cqrs and @zudojs/events so a request's name decides its payload and result type | Let the container, config schemas and error tables be checked by the compiler | Mark where compile-time types end and runtime checks must take over, and test both
+---
+<section>
+<h2 id="problem">A checkout that compiled and was wrong four times</h2>
+<p>The Task API is getting paid plans. Users buy <strong>products</strong> (the Pro plan, extra storage, SMS packs), which creates an <strong>order</strong>; the payment provider calls back with a <strong>payment</strong>; the user gets a <strong>notification</strong>. The first version was written quickly, with <code>string</code> ids, <code>number</code> money and <code>string</code> statuses. It compiles without a single warning. Run it:</p>
+<example file="problem.ts">
+interface Order {
+  id: string;
+  userId: string;
+  productId: string;
+  total: number;
+  status: string;
+}
+
+const prices: Record<string, number> = { "prd_pro-monthly": 5000, "prd_sms-pack": 1.1 };
+const orders: Order[] = [];
+const listeners: ((event: any) => void)[] = [];
+
+function placeOrder(productId: string, userId: string): Order {
+  const order = { id: `ord_${orders.length + 1}`, userId, productId, total: prices[productId]!, status: "pending" };
+  orders.push(order);
+  return order;
+}
+
+function recordPayment(order: Order, amount: number) {
+  if (amount === order.total) order.status = "payed";
+  for (const listener of listeners) listener({ orderId: order.id, total: order.total });
+}
+
+listeners.push((event) => console.log(`e-mail: payment of ₦${event.amount} received for ${event.orderId}`));
+
+const mine = placeOrder("u-ada", "prd_pro-monthly");
+console.log("order total:", mine.total, "for user", mine.userId);
+
+const sms = placeOrder("prd_sms-pack", "u-ada");
+sms.total = sms.total * 3;
+recordPayment(sms, 3.3);
+console.log("3 SMS packs cost", sms.total, "- the customer paid 3.3, status:", sms.status);
+
+const good = placeOrder("prd_pro-monthly", "u-ada");
+recordPayment(good, 5000);
+console.log("paid orders on the dashboard:", orders.filter((o) => o.status === "paid").length);
+</example>
+<output>
+order total: undefined for user prd_pro-monthly
+e-mail: payment of ₦undefined received for ord_2
+3 SMS packs cost 3.3000000000000003 - the customer paid 3.3, status: pending
+e-mail: payment of ₦undefined received for ord_3
+paid orders on the dashboard: 0
+</output>
+<ul>
+<li><strong>Swapped ids.</strong> The first call passed the user id as the product id. Both are <code>string</code>, so TypeScript saw nothing wrong. The order has no price and belongs to a product.</li>
+<li><strong>Float money.</strong> 3 × ₦1.10 is <code>3.3000000000000003</code> in floating point, so the customer who paid exactly ₦3.30 is refused.</li>
+<li><strong>A typo in a state.</strong> <code>"payed"</code> is a perfectly good <code>string</code>. The dashboard counts <code>"paid"</code> orders and finds none.</li>
+<li><strong>An event contract nobody checked.</strong> The publisher sends <code>total</code>, the listener reads <code>amount</code>, and customers get "payment of ₦undefined".</li>
+</ul>
+<p>Each of these is a <em>contract</em> between two pieces of code that was never written down, so the compiler could not check it. In the Advanced TypeScript course you built each tool on its own: <a href="/learn/ts-branded-types">branded types</a>, <a href="/learn/ts-domain-modeling">domain modelling</a>, <a href="/learn/ts-typed-events">typed events</a>, <a href="/learn/ts-typed-cqrs">typed CQRS</a> and <a href="/learn/ts-typed-di">typed DI</a>. This last lesson of the course puts them together in a ZudoJS application: a billing module for the Task API where every contract is written once and checked everywhere it is used, from the environment variables to the e-mail.</p>
+</section>
+
+<section>
+<h2 id="reason">Questions before any type</h2>
+<reason title="Which contracts does billing have?">
+<p>List the places where one part of billing hands data to another. For each, answer: who creates the value, who trusts it, and who checks it?</p>
+<ul>
+<li>A route receives <code>{ "productId": "prd_pro-monthly" }</code>. When does that string become a product id your code can trust?</li>
+<li>An order is pending, paid or cancelled. Which fields exist in each state? Can a paid order be paid again?</li>
+<li>The payment provider's webhook says "₦5,000 paid for order <code>ord_…</code>". What must be checked before the order is marked paid? What if the webhook arrives twice?</li>
+<li>The notification code needs to know an order was paid. Should it be called by the payment code, or listen for something?</li>
+<li>The Pro plan price comes from the environment. What type is it when it arrives, and when does it become money?</li>
+</ul>
+<answer>
+<p>A string from a request becomes a <code>ProductId</code> only after a parse function has checked it, and becomes a <em>product</em> only after the repository found it. The type <code>ProductId</code> then means "checked"; code that receives one never checks again.</p>
+<p>Each state has its own fields: only a paid order has a <code>paymentId</code> and <code>paidAt</code>, only a cancelled one a <code>reason</code>. Paying is a transition from <em>pending</em> to <em>paid</em>, so the function that pays should only accept a pending order.</p>
+<p>The webhook is outside input twice over: its signature proves who sent it (see <a href="/learn/zudo-crypto#signed">ZudoJS crypto</a>), its body must be parsed, the order must exist and be pending, and the amount must match the order total exactly. A retry of the same payment must return the same result without paying twice.</p>
+<p>Notifications should <em>listen</em> for an <code>order.paid</code> event, so payments do not depend on e-mail. The event's payload is then a contract between two modules, and needs a type as much as a function parameter does.</p>
+<p>Environment values are always strings. A config schema turns <code>"500000"</code> into a number at start-up and fails loudly if it is missing; the product catalogue turns the number into <code>Kobo</code>.</p>
+</answer>
+</reason>
+<p>Those answers give the module's contracts, and the design rule for this lesson: <strong>write each contract once, as a type, and derive everything else from it</strong>. Where the data comes from outside the program, pair the type with a runtime check that produces it:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Contract</th><th>Written once in</th><th>Checked by the compiler</th><th>Checked at runtime by</th></tr></thead>
+<tbody>
+<tr><td>Ids and money</td><td><code>values.ts</code> (brands)</td><td>no swapped ids, no naira-for-kobo</td><td>parse functions, <code>kobo()</code></td></tr>
+<tr><td>Entity states</td><td><code>model.ts</code> (unions)</td><td>only legal transitions; every state handled</td><td>(the data came through the model)</td></tr>
+<tr><td>Request and response DTOs</td><td><code>contracts.ts</code> (schemas)</td><td>handlers see the parsed type</td><td><code>@zudojs/schema</code></td></tr>
+<tr><td>Commands, queries, events</td><td><code>contracts.ts</code> (maps)</td><td>name decides payload and result</td><td>the buses (handler exists)</td></tr>
+<tr><td>Errors</td><td><code>contracts.ts</code> (codes)</td><td>every code has a status</td><td>error handler at the edge</td></tr>
+<tr><td>Config</td><td><code>app.ts</code> (schema)</td><td><code>config.pro_plan_price</code> is a number</td><td>schema at start-up</td></tr>
+<tr><td>Wiring</td><td><code>ports.ts</code> (tokens)</td><td>factories get the right services</td><td>the container (registered?)</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="values">Values: ids and money</h2>
+<p>Start with the smallest contracts. Each id gets a <strong>brand</strong> (<a href="/learn/zudo-types-constants#brands">branded ids</a>): <code>UserId</code>, <code>EmailAddress</code> and <code>Timestamp</code> come from <code>@zudojs/constants</code>, and billing adds its own with the same <code>Brand</code> type. Money is a branded whole number of <strong>kobo</strong> (₦1 = 100 kobo), so floats cannot sneak in. The only places that create these values are the functions in this file:</p>
+<file name="values.ts" project="billing">
+import type { Brand, EmailAddress, Timestamp, UserId } from "@zudojs/constants";
+import { ValidationError } from "@zudojs/errors";
+
+export type { EmailAddress, Timestamp, UserId };
+export type ProductId = Brand<string, "ProductId">;
+export type OrderId = Brand<string, "OrderId">;
+export type PaymentId = Brand<string, "PaymentId">;
+
+/** Money in kobo (₦1 = 100 kobo): a whole number, never a float. */
+export type Kobo = Brand<number, "Kobo">;
+
+export function kobo(amount: number): Kobo {
+  if (!Number.isSafeInteger(amount) || amount < 0) throw new ValidationError(`Not an amount in kobo: ${amount}`);
+  return amount as Kobo;
+}
+
+export function formatNaira(amount: Kobo): string {
+  const naira = Math.floor(amount / 100).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `₦${naira}.${String(amount % 100).padStart(2, "0")}`;
+}
+
+export function parseProductId(value: unknown): ProductId {
+  if (typeof value !== "string" || !/^prd_[a-z0-9-]{3,40}$/.test(value)) throw new ValidationError("Not a product id");
+  return value as ProductId;
+}
+
+export function parseOrderId(value: unknown): OrderId {
+  if (typeof value !== "string" || !/^ord_[0-9a-f]{12}$/.test(value)) throw new ValidationError("Not an order id");
+  return value as OrderId;
+}
+</file>
+<p>Every <code>as</code> in the module lives in this file, right after a check. Everywhere else, a <code>ProductId</code> can only come from <code>parseProductId</code> or from a stored product. The first bug from the checkout is now a compile error, and so is a float price:</p>
+<example file="swapped.ts" check="tsc-error">
+import type { Brand, UserId } from "@zudojs/constants";
+import { createUserId } from "@zudojs/constants";
+
+type ProductId = Brand<string, "ProductId">;
+type Kobo = Brand<number, "Kobo">;
+
+function placeOrder(userId: UserId, productId: ProductId): string {
+  return `${userId} ordered ${productId}`;
+}
+
+const ada = createUserId("u-ada");
+const pro = "prd_pro-monthly" as ProductId;
+placeOrder(pro, ada);
+const smsPack: Kobo = 1.1;
+</example>
+<output kind="tsc">
+swapped.ts:13:12 - error TS2345: Argument of type 'ProductId' is not assignable to parameter of type 'UserId'.
+  Type 'ProductId' is not assignable to type '{ readonly __brand: "UserId"; }'.
+    Types of property '__brand' are incompatible.
+      Type '"ProductId"' is not assignable to type '"UserId"'.
+
+13 placeOrder(pro, ada);
+              ~~~
+
+swapped.ts:14:7 - error TS2322: Type 'number' is not assignable to type 'Kobo'.
+  Type 'number' is not assignable to type '{ readonly __brand: "Kobo"; }'.
+
+14 const smsPack: Kobo = 1.1;
+         ~~~~~~~
+
+
+Found 2 errors in the same file, starting at: swapped.ts:13
+</output>
+<p>At runtime a branded value is still a plain string or number, with no cost. Checking at the boundary looks like this:</p>
+<example file="values-demo.ts" project="billing">
+import { ValidationError } from "@zudojs/errors";
+import { formatNaira, kobo, parseProductId } from "./values.js";
+
+console.log(formatNaira(kobo(500_000)), formatNaira(kobo(110 * 3)), formatNaira(kobo(1_234_567_89)));
+for (const attempt of [() => kobo(3.3), () => parseProductId("u-ada"), () => parseProductId("prd_pro-monthly")]) {
+  try {
+    console.log("ok:", attempt());
+  } catch (error) {
+    if (error instanceof ValidationError) console.log(error.statusCode, error.message);
+  }
+}
+</example>
+<output>
+₦5,000.00 ₦3.30 ₦1,234,567.89
+400 Not an amount in kobo: 3.3
+400 Not a product id
+ok: prd_pro-monthly
+</output>
+<p>Three SMS packs are 330 kobo, exactly. <code>kobo(3.3)</code> is refused with a 400-level <code>ValidationError</code>, so a float that reaches the boundary is a client error, not a silent rounding problem.</p>
+</section>
+
+<section>
+<h2 id="model">Entities: one type per state</h2>
+<p>An order is a <strong>discriminated union</strong> (<a href="/learn/ts-unions">Unions</a>): three types that share a <code>status</code> field with a different literal value each. Fields exist only in the states where they make sense, and a transition is a function from one state's type to another's:</p>
+<file name="model.ts" project="billing">
+import type { EmailAddress, Kobo, OrderId, PaymentId, ProductId, Timestamp, UserId } from "./values.js";
+
+export interface User {
+  readonly id: UserId;
+  readonly email: EmailAddress;
+  readonly name: string;
+}
+
+export interface Product {
+  readonly id: ProductId;
+  readonly name: string;
+  readonly price: Kobo;
+}
+
+interface OrderBase {
+  readonly id: OrderId;
+  readonly userId: UserId;
+  readonly productId: ProductId;
+  readonly total: Kobo;
+  readonly placedAt: Timestamp;
+}
+export interface PendingOrder extends OrderBase {
+  readonly status: "pending";
+}
+export interface PaidOrder extends OrderBase {
+  readonly status: "paid";
+  readonly paymentId: PaymentId;
+  readonly paidAt: Timestamp;
+}
+export interface CancelledOrder extends OrderBase {
+  readonly status: "cancelled";
+  readonly reason: string;
+}
+export type Order = PendingOrder | PaidOrder | CancelledOrder;
+
+export interface Payment {
+  readonly id: PaymentId;
+  readonly orderId: OrderId;
+  readonly amount: Kobo;
+  readonly providerRef: string;
+}
+
+export type Notification =
+  | { readonly channel: "email"; readonly to: EmailAddress; readonly subject: string }
+  | { readonly channel: "in-app"; readonly userId: UserId; readonly text: string };
+
+/** The only way to a PaidOrder: from a pending one, with a payment for it. */
+export function markPaid(order: PendingOrder, payment: Payment, at: Timestamp): PaidOrder {
+  return { ...order, status: "paid", paymentId: payment.id, paidAt: at };
+}
+</file>
+<p>The <code>"payed"</code> typo is now impossible: <code>status</code> can only be one of three literals. <code>markPaid</code> accepts only a <code>PendingOrder</code>, so code that holds an <code>Order</code> must check its status first, and code that forgets a state is caught when a new state is added. Here a <code>"refunded"</code> state was added to a copy of the union, and the compiler finds both places that were not updated:</p>
+<example file="refunded.ts" check="tsc-error">
+type Order =
+  | { readonly status: "pending"; readonly total: number }
+  | { readonly status: "paid"; readonly total: number; readonly paidAt: string }
+  | { readonly status: "cancelled"; readonly total: number; readonly reason: string }
+  | { readonly status: "refunded"; readonly total: number; readonly refundedAt: string };
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled value: ${JSON.stringify(value)}`);
+}
+
+function label(order: Order): string {
+  switch (order.status) {
+    case "pending": return "Waiting for payment";
+    case "paid": return `Paid on ${order.paidAt}`;
+    case "cancelled": return `Cancelled: ${order.reason}`;
+    default: return assertNever(order);
+  }
+}
+
+const badge: Record<Order["status"], string> = { pending: "grey", paid: "green", cancelled: "red" };
+</example>
+<output kind="tsc">
+refunded.ts:16:33 - error TS2345: Argument of type '{ readonly status: "refunded"; readonly total: number; readonly refundedAt: string; }' is not assignable to parameter of type 'never'.
+
+16     default: return assertNever(order);
+                                   ~~~~~
+
+refunded.ts:20:7 - error TS2741: Property 'refunded' is missing in type '{ pending: string; paid: string; cancelled: string; }' but required in type 'Record<"cancelled" | "paid" | "pending" | "refunded", string>'.
+
+20 const badge: Record<Order["status"], string> = { pending: "grey", paid: "green", cancelled: "red" };
+         ~~~~~
+
+
+Found 2 errors in the same file, starting at: refunded.ts:16
+</output>
+<p>Two techniques, two errors. The <code>switch</code> ends with <code>assertNever</code>, which only accepts <code>never</code>: once every state is handled, nothing is left. The <code>Record&lt;Order["status"], string&gt;</code> must have a key for every status. Adding a state to the union now produces a to-do list from the compiler, instead of a "pending" badge on a refunded order.</p>
+</section>
+
+<section>
+<h2 id="contracts">One contract file</h2>
+<p>Now the contracts between the module and the rest of the world. They live in one file, so a reviewer can see every promise billing makes:</p>
+<file name="contracts.ts" project="billing">
+import { BaseError, ErrorCategory } from "@zudojs/errors";
+import { schema } from "@zudojs/schema";
+import type { Infer } from "@zudojs/schema";
+import type { Order, PaidOrder, PendingOrder } from "./model.js";
+import type { Kobo, OrderId, PaymentId, ProductId, UserId } from "./values.js";
+
+/* HTTP in: what a client may send. */
+export const PlaceOrderBody = schema.object({ productId: schema.string().min(1).max(64) }).strict();
+export type PlaceOrderBody = Infer<typeof PlaceOrderBody>;
+
+export const PaymentWebhook = schema.object({
+  event: schema.enum(["charge.success"] as const),
+  data: schema.object({
+    reference: schema.string().min(1).max(100),
+    orderId: schema.string().max(64),
+    amount: schema.number().int().min(1),
+  }),
+});
+export type PaymentWebhook = Infer<typeof PaymentWebhook>;
+
+/* HTTP out: what a client may see. */
+export interface OrderResponse {
+  readonly id: string;
+  readonly status: Order["status"];
+  readonly product: string;
+  readonly total: string;
+  readonly paidAt: string | null;
+}
+
+/* Commands, queries and events: one map each, the single source of truth. */
+export type BillingCommands = {
+  PlaceOrder: { request: { userId: UserId; productId: ProductId }; result: PendingOrder };
+  RecordPayment: { request: { orderId: OrderId; amount: Kobo; providerRef: string }; result: PaidOrder };
+};
+export type BillingQueries = {
+  GetOrder: { request: { userId: UserId; orderId: OrderId }; result: OrderResponse };
+};
+export type BillingEvents = {
+  "order.placed": { orderId: OrderId; userId: UserId; total: Kobo };
+  "order.paid": { orderId: OrderId; userId: UserId; paymentId: PaymentId; total: Kobo };
+};
+
+/* Errors: every expected failure has a code, and every code a status. */
+export type BillingErrorCode = "PRODUCT_NOT_FOUND" | "ORDER_NOT_FOUND" | "ORDER_NOT_PENDING" | "AMOUNT_MISMATCH";
+
+export const BILLING_STATUS = {
+  PRODUCT_NOT_FOUND: 404,
+  ORDER_NOT_FOUND: 404,
+  ORDER_NOT_PENDING: 409,
+  AMOUNT_MISMATCH: 422,
+} as const satisfies Record<BillingErrorCode, number>;
+
+export class BillingError extends BaseError {
+  readonly reason: BillingErrorCode;
+
+  constructor(reason: BillingErrorCode, message: string) {
+    super(message, { code: `ERR_${reason}`, category: ErrorCategory.BUSINESS, statusCode: BILLING_STATUS[reason], expose: true });
+    this.reason = reason;
+  }
+}
+</file>
+<p>Four decisions to look at:</p>
+<ul>
+<li><strong>DTO types come from schemas.</strong> <code>Infer&lt;typeof PlaceOrderBody&gt;</code> is the type of whatever <code>parse</code> returns, so the schema (runtime) and the type (compile time) cannot drift apart. The name is used twice on purpose: <code>PlaceOrderBody</code> the value is the schema, <code>PlaceOrderBody</code> the type is its output.</li>
+<li><strong>The request carries branded types, the DTO carries strings.</strong> Between them sits the parse step in the route. A command handler never sees an unchecked id.</li>
+<li><strong>Maps are <code>type</code> aliases, not interfaces.</strong> <code>@zudojs/cqrs</code>'s <code>CommandOf</code> and <code>@zudojs/events</code>' <code>EventUnion</code> require <code>Record&lt;string, unknown&gt;</code>, which an interface does not satisfy (it has no index signature), as the next example shows.</li>
+<li><strong><code>as const satisfies Record&lt;BillingErrorCode, number&gt;</code></strong> checks that every code has a status (a missing one is an error) while keeping the exact literal types, so <code>BILLING_STATUS.AMOUNT_MISMATCH</code> is <code>422</code>, not just <code>number</code>.</li>
+</ul>
+<example file="interface-payload.ts" check="tsc-error">
+import type { CommandOf } from "@zudojs/cqrs";
+
+interface RefundData {
+  readonly orderId: string;
+  readonly reason: string;
+}
+
+type RefundOrder = CommandOf<"RefundOrder", RefundData>;
+type RefundOrderFixed = CommandOf<"RefundOrder", { readonly orderId: string; readonly reason: string }>;
+</example>
+<output kind="tsc">
+interface-payload.ts:8:45 - error TS2344: Type 'RefundData' does not satisfy the constraint 'Record<string, unknown>'.
+  Index signature for type 'string' is missing in type 'RefundData'.
+
+8 type RefundOrder = CommandOf<"RefundOrder", RefundData>;
+                                              ~~~~~~~~~~
+
+
+Found 1 error in interface-payload.ts:8
+</output>
+<p>An inline object type (or a <code>type</code> alias) is accepted, the interface is not. Keep payload and map types as aliases in contract files.</p>
+</section>
+
+<section>
+<h2 id="buses">Typed buses: the name decides the type</h2>
+<p><code>@zudojs/cqrs</code> and <code>@zudojs/events</code> route by runtime strings, so their own signatures cannot connect a name to a payload or a result: <code>commands.execute&lt;PlaceOrder, string&gt;(…)</code> compiles whatever the handler returns, and <code>bus.on&lt;Event&lt;X&gt;&gt;("order.paid", …)</code> believes whatever <code>X</code> you claim. <a href="/learn/ts-typed-cqrs#zudo">Type-safe CQRS</a> and <a href="/learn/ts-typed-events#zudo">a type-safe event system</a> showed both claims going wrong, and built thin layers that take a map as a type parameter. Here are compact versions for billing:</p>
+<file name="typed-buses.ts" project="billing">
+import { createCommandBus, createQueryBus } from "@zudojs/cqrs";
+import type { CommandHandlerFunction } from "@zudojs/cqrs";
+import { createEventBus } from "@zudojs/events";
+import type { Event, EventBus } from "@zudojs/events";
+
+export type Spec = Record<string, { request: object; result: unknown }>;
+export type RequestOf<S extends Spec, K extends keyof S & string> = { readonly type: K } & S[K]["request"];
+export type Handlers<S extends Spec> = {
+  [K in keyof S & string]: (request: RequestOf<S, K>) => Promise<S[K]["result"]>;
+};
+
+export interface TypedBus<S extends Spec> {
+  send<K extends keyof S & string>(type: K, request: S[K]["request"]): Promise<S[K]["result"]>;
+}
+
+type RawBus = ReturnType<typeof createCommandBus> | ReturnType<typeof createQueryBus>;
+
+function typed<S extends Spec>(raw: RawBus, handlers: Handlers<S>): TypedBus<S> {
+  for (const type of Object.keys(handlers) as (keyof S & string)[]) {
+    raw.register(type, handlers[type] as CommandHandlerFunction<{ readonly type: string }, unknown>);
+  }
+  return { send: (type, request) => raw.execute({ ...request, type }) };
+}
+
+export const typedCommands = <S extends Spec>(handlers: Handlers<S>) => typed<S>(createCommandBus(), handlers);
+export const typedQueries = <S extends Spec>(handlers: Handlers<S>) => typed<S>(createQueryBus(), handlers);
+
+export interface TypedEvents<M extends object> {
+  on<K extends keyof M & string>(type: K, handler: (event: Event<M[K]>) => void | Promise<void>): void;
+  publish<K extends keyof M & string>(type: K, payload: M[K]): Promise<void>;
+  readonly raw: EventBus;
+}
+
+export function typedEvents<M extends object>(raw: EventBus = createEventBus()): TypedEvents<M> {
+  return {
+    on(type, handler) {
+      raw.on<Event<M[typeof type]>>(type, handler);
+    },
+    async publish(type, payload) {
+      await raw.publishEvent({ type, payload });
+    },
+    raw,
+  };
+}
+</file>
+<p>What each piece buys you:</p>
+<ul>
+<li><code>Handlers&lt;S&gt;</code> is a mapped type with one required key per command. Forget a handler, misspell a name or return the wrong result, and the handler table does not compile. A missing handler, which the raw bus only reports at runtime with <code>CommandHandlerNotFoundError</code>, becomes a compile error.</li>
+<li><code>send("PlaceOrder", …)</code> takes the request type from the map and returns the map's result type. The one claim left (<code>raw.execute</code> returning that type) is made in one place, next to the code that guarantees it.</li>
+<li><code>on("order.paid", handler)</code> gives the handler <code>Event&lt;BillingEvents["order.paid"]&gt;</code>, so reading <code>event.payload.amount</code> is a compile error: that was bug four.</li>
+<li>The raw buses stay reachable (<code>raw</code>), so package middleware, wildcards and error reports still work.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="ports">Ports, tokens and handlers</h2>
+<p>The handlers depend on <strong>ports</strong>: small interfaces for what they need (a product lookup, an order store, a clock), not on concrete classes. Each port gets a token from <code>@zudojs/container</code> (<a href="/learn/zudo-container#tokens">tokens</a>), and <code>createToken&lt;T&gt;</code> carries the type, so resolving a token gives a typed service:</p>
+<file name="ports.ts" project="billing">
+import { createToken } from "@zudojs/container";
+import type { BillingCommands, BillingEvents, BillingQueries } from "./contracts.js";
+import type { Notification, Order, Payment, Product, User } from "./model.js";
+import type { TypedBus, TypedEvents } from "./typed-buses.js";
+import type { OrderId, PaymentId, ProductId, Timestamp, UserId } from "./values.js";
+
+export interface ProductRepository {
+  findById(id: ProductId): Promise<Product | null>;
+}
+export interface OrderRepository {
+  findById(id: OrderId): Promise<Order | null>;
+  save(order: Order): Promise<void>;
+}
+export interface PaymentRepository {
+  findByProviderRef(providerRef: string): Promise<Payment | null>;
+  save(payment: Payment): Promise<void>;
+}
+export interface UserDirectory {
+  findById(id: UserId): Promise<User | null>;
+}
+export interface Notifier {
+  send(notification: Notification): Promise<void>;
+}
+export interface Clock {
+  now(): Timestamp;
+}
+export interface IdSource {
+  orderId(): OrderId;
+  paymentId(): PaymentId;
+}
+
+export const TOKENS = {
+  products: createToken<ProductRepository>("ProductRepository"),
+  orders: createToken<OrderRepository>("OrderRepository"),
+  payments: createToken<PaymentRepository>("PaymentRepository"),
+  users: createToken<UserDirectory>("UserDirectory"),
+  notifier: createToken<Notifier>("Notifier"),
+  clock: createToken<Clock>("Clock"),
+  ids: createToken<IdSource>("IdSource"),
+  events: createToken<TypedEvents<BillingEvents>>("BillingEvents"),
+  commands: createToken<TypedBus<BillingCommands>>("BillingCommands"),
+  queries: createToken<TypedBus<BillingQueries>>("BillingQueries"),
+} as const;
+</file>
+<p>The handlers. Their return type is <code>Handlers&lt;BillingCommands&gt;</code>, so each method's parameter and result are checked against the map without a single annotation inside:</p>
+<file name="handlers.ts" project="billing">
+import { BillingError } from "./contracts.js";
+import type { BillingCommands, BillingEvents, BillingQueries, OrderResponse } from "./contracts.js";
+import { markPaid } from "./model.js";
+import type { Order, Product } from "./model.js";
+import type { Clock, IdSource, Notifier, OrderRepository, PaymentRepository, ProductRepository, UserDirectory } from "./ports.js";
+import type { Handlers, TypedEvents } from "./typed-buses.js";
+import { formatNaira } from "./values.js";
+
+export function toOrderResponse(order: Order, product: Product): OrderResponse {
+  return {
+    id: order.id,
+    status: order.status,
+    product: product.name,
+    total: formatNaira(order.total),
+    paidAt: order.status === "paid" ? order.paidAt : null,
+  };
+}
+
+interface CommandDeps {
+  readonly products: ProductRepository;
+  readonly orders: OrderRepository;
+  readonly payments: PaymentRepository;
+  readonly clock: Clock;
+  readonly ids: IdSource;
+  readonly events: TypedEvents<BillingEvents>;
+}
+
+export function commandHandlers(deps: CommandDeps): Handlers<BillingCommands> {
+  return {
+    async PlaceOrder({ userId, productId }) {
+      const product = await deps.products.findById(productId);
+      if (!product) throw new BillingError("PRODUCT_NOT_FOUND", `Product ${productId} not found`);
+      const order = { id: deps.ids.orderId(), userId, productId, total: product.price, placedAt: deps.clock.now(), status: "pending" } as const;
+      await deps.orders.save(order);
+      await deps.events.publish("order.placed", { orderId: order.id, userId, total: order.total });
+      return order;
+    },
+
+    async RecordPayment({ orderId, amount, providerRef }) {
+      const order = await deps.orders.findById(orderId);
+      if (!order) throw new BillingError("ORDER_NOT_FOUND", `Order ${orderId} not found`);
+      const earlier = await deps.payments.findByProviderRef(providerRef);
+      if (earlier && order.status === "paid" && order.paymentId === earlier.id) return order;
+      if (order.status !== "pending") throw new BillingError("ORDER_NOT_PENDING", `Order ${orderId} is ${order.status}`);
+      if (amount !== order.total) throw new BillingError("AMOUNT_MISMATCH", `Paid ${formatNaira(amount)}, expected ${formatNaira(order.total)}`);
+      const payment = { id: deps.ids.paymentId(), orderId, amount, providerRef };
+      await deps.payments.save(payment);
+      const paid = markPaid(order, payment, deps.clock.now());
+      await deps.orders.save(paid);
+      await deps.events.publish("order.paid", { orderId, userId: order.userId, paymentId: payment.id, total: amount });
+      return paid;
+    },
+  };
+}
+
+export function queryHandlers(deps: Pick<CommandDeps, "orders" | "products">): Handlers<BillingQueries> {
+  return {
+    async GetOrder({ userId, orderId }) {
+      const order = await deps.orders.findById(orderId);
+      if (!order || order.userId !== userId) throw new BillingError("ORDER_NOT_FOUND", `Order ${orderId} not found`);
+      const product = await deps.products.findById(order.productId);
+      if (!product) throw new Error(`Order ${orderId} points at a missing product`);
+      return toOrderResponse(order, product);
+    },
+  };
+}
+
+export function subscribeNotifications(events: TypedEvents<BillingEvents>, users: UserDirectory, notifier: Notifier): void {
+  events.on("order.paid", async (event) => {
+    const user = await users.findById(event.payload.userId);
+    if (!user) return;
+    await notifier.send({ channel: "email", to: user.email, subject: `Payment received: ${formatNaira(event.payload.total)}` });
+    await notifier.send({ channel: "in-app", userId: user.id, text: `Order ${event.payload.orderId} is paid. Thank you!` });
+  });
+}
+</file>
+<p>Read <code>RecordPayment</code> as the webhook rules from the questions, in order. A repeated webhook for the same provider reference returns the paid order again. After <code>order.status !== "pending"</code> has thrown, TypeScript has <strong>narrowed</strong> <code>order</code> to <code>PendingOrder</code>, which is why <code>markPaid(order, …)</code> compiles only there. <code>GetOrder</code> answers "not found" for another user's order, so it does not reveal that the order exists. And a product missing for an existing order is not a <code>BillingError</code> at all: it is a bug, and a plain <code>Error</code> becomes a 500.</p>
+<details class="lx-solution"><summary>Show memory.ts: in-memory implementations of the ports</summary>
+<file name="memory.ts" project="billing">
+import type { Notification, Order, Payment, Product, User } from "./model.js";
+import type { Notifier, OrderRepository, PaymentRepository, ProductRepository, UserDirectory } from "./ports.js";
+import type { OrderId, ProductId, UserId } from "./values.js";
+
+export class MemoryProducts implements ProductRepository {
+  private readonly rows: ReadonlyMap<ProductId, Product>;
+  constructor(products: readonly Product[]) {
+    this.rows = new Map(products.map((p) => [p.id, p]));
+  }
+  async findById(id: ProductId) {
+    return this.rows.get(id) ?? null;
+  }
+}
+
+export class MemoryOrders implements OrderRepository {
+  private readonly rows = new Map<OrderId, Order>();
+  async findById(id: OrderId) {
+    return this.rows.get(id) ?? null;
+  }
+  async save(order: Order) {
+    this.rows.set(order.id, order);
+  }
+}
+
+export class MemoryPayments implements PaymentRepository {
+  private readonly rows: Payment[] = [];
+  async findByProviderRef(providerRef: string) {
+    return this.rows.find((p) => p.providerRef === providerRef) ?? null;
+  }
+  async save(payment: Payment) {
+    this.rows.push(payment);
+  }
+}
+
+export class MemoryUsers implements UserDirectory {
+  constructor(private readonly users: readonly User[]) {}
+  async findById(id: UserId) {
+    return this.users.find((u) => u.id === id) ?? null;
+  }
+}
+
+export class ConsoleNotifier implements Notifier {
+  async send(notification: Notification) {
+    const to = notification.channel === "email" ? notification.to : notification.userId;
+    const text = notification.channel === "email" ? notification.subject : notification.text;
+    console.log(`  [${notification.channel} to ${to}] ${text}`);
+  }
+}
+</file>
+</details>
+<p>In the real Task API, <code>OrderRepository</code> is implemented over PostgreSQL with <a href="/learn/zudo-data-architecture#repositories">@zudojs/database</a>, whose rows the repository maps to <code>Order</code> values (checking the <code>status</code> column against the three literals as it goes). The handlers do not change.</p>
+</section>
+
+<section>
+<h2 id="composition">Config and the composition root</h2>
+<p>One function builds the module: the <strong>composition root</strong> from <a href="/learn/zudo-di-architecture#root">DI architecture</a>. Its configuration is a schema, so its type is inferred, and every <code>registerFactory</code> call types the factory's parameters from the tokens in its <code>inject</code> list:</p>
+<file name="app.ts" project="billing">
+import { createConfigManager, createEnvironmentConfigSource } from "@zudojs/config";
+import { createEmailAddress, createTimestamp, createUserId } from "@zudojs/constants";
+import { createContainer } from "@zudojs/container";
+import { schema } from "@zudojs/schema";
+import type { Infer } from "@zudojs/schema";
+import type { BillingEvents } from "./contracts.js";
+import { commandHandlers, queryHandlers, subscribeNotifications } from "./handlers.js";
+import { ConsoleNotifier, MemoryOrders, MemoryPayments, MemoryProducts, MemoryUsers } from "./memory.js";
+import { TOKENS } from "./ports.js";
+import { typedCommands, typedEvents, typedQueries } from "./typed-buses.js";
+import { kobo, parseProductId } from "./values.js";
+import type { OrderId, PaymentId } from "./values.js";
+
+export const BillingConfig = schema.object({
+  currency: schema.enum(["NGN"] as const),
+  pro_plan_price: schema.coerce.number().int().min(100),
+  storage_addon_price: schema.coerce.number().int().min(100),
+});
+export type BillingConfig = Infer<typeof BillingConfig>;
+
+export async function loadBillingConfig(env: Record<string, string>): Promise<BillingConfig> {
+  const config = createConfigManager({ sources: [createEnvironmentConfigSource({ prefix: "BILLING_", env })] });
+  await config.load();
+  return BillingConfig.parse(config.toObject());
+}
+
+export function createBillingContainer(config: BillingConfig) {
+  const container = createContainer();
+  let orderNo = 0;
+  let paymentNo = 0;
+
+  container.registerValue(TOKENS.clock, { now: () => createTimestamp("2026-09-24T09:00:00.000Z") });
+  container.registerValue(TOKENS.ids, {
+    orderId: () => `ord_${String(++orderNo).padStart(12, "0")}` as OrderId,
+    paymentId: () => `pay_${++paymentNo}` as PaymentId,
+  });
+  container.registerValue(TOKENS.products, new MemoryProducts([
+    { id: parseProductId("prd_pro-monthly"), name: "Pro plan (monthly)", price: kobo(config.pro_plan_price) },
+    { id: parseProductId("prd_storage-10gb"), name: "Extra storage 10 GB", price: kobo(config.storage_addon_price) },
+  ]));
+  container.registerValue(TOKENS.users, new MemoryUsers([
+    { id: createUserId("u-ada"), email: createEmailAddress("ada@example.com"), name: "Ada" },
+  ]));
+  container.registerValue(TOKENS.orders, new MemoryOrders());
+  container.registerValue(TOKENS.payments, new MemoryPayments());
+  container.registerValue(TOKENS.notifier, new ConsoleNotifier());
+  container.registerFactory(TOKENS.events, (users, notifier) => {
+    const events = typedEvents<BillingEvents>();
+    subscribeNotifications(events, users, notifier);
+    return events;
+  }, [TOKENS.users, TOKENS.notifier]);
+  container.registerFactory(
+    TOKENS.commands,
+    (products, orders, payments, clock, ids, events) =>
+      typedCommands(commandHandlers({ products, orders, payments, clock, ids, events })),
+    [TOKENS.products, TOKENS.orders, TOKENS.payments, TOKENS.clock, TOKENS.ids, TOKENS.events],
+  );
+  container.registerFactory(TOKENS.queries, (orders, products) => typedQueries(queryHandlers({ orders, products })), [TOKENS.orders, TOKENS.products]);
+  return container;
+}
+</file>
+<p>The fixed clock and counting ids make this lesson's output repeatable; in production the clock reads the real time and ids come from <code>generateToken</code> in <a href="/learn/zudo-crypto#random">ZudoJS crypto</a>. Only the two lines that register them change. Now a wiring mistake. In this small container the tokens in <code>inject</code> are in the wrong order:</p>
+<example file="miswired.ts" check="tsc-error">
+import { createContainer, createToken } from "@zudojs/container";
+
+interface Clock { now(): string }
+interface OrderStore { count(): number }
+class Checkout {
+  constructor(private readonly orders: OrderStore, private readonly clock: Clock) {}
+  summary() { return `${this.orders.count()} orders at ${this.clock.now()}`; }
+}
+
+const CLOCK = createToken<Clock>("Clock");
+const ORDERS = createToken<OrderStore>("OrderStore");
+const CHECKOUT = createToken<Checkout>("Checkout");
+
+const container = createContainer();
+container.registerFactory(CHECKOUT, (orders, clock) => new Checkout(orders, clock), [CLOCK, ORDERS]);
+</example>
+<output kind="tsc">
+miswired.ts:15:69 - error TS2741: Property 'count' is missing in type 'Clock' but required in type 'OrderStore'.
+
+15 container.registerFactory(CHECKOUT, (orders, clock) => new Checkout(orders, clock), [CLOCK, ORDERS]);
+                                                                       ~~~~~~
+
+  miswired.ts:4:24 - 'count' is declared here.
+    4 interface OrderStore { count(): number }
+                             ~~~~~~~~~~~~~~~
+
+
+Found 1 error in miswired.ts:15
+</output>
+<p>The factory's first parameter was typed as a <code>Clock</code> from the first token, and a clock is not an order store. With <code>registerClass</code>, the same mistake would compile and fail at runtime (<a href="/learn/ts-typed-di#zudo">typed DI</a> shows it), which is why this module only uses <code>registerFactory</code>.</p>
+<p>Config is checked at start-up, and its type flows into the code that reads it. A price of <code>"5000.50"</code> in the environment stops the app before any customer pays the wrong amount:</p>
+<example file="config-demo.ts" project="billing">
+import { isSchemaValidationError } from "@zudojs/schema";
+import { loadBillingConfig } from "./app.js";
+
+console.log(await loadBillingConfig({ BILLING_CURRENCY: "NGN", BILLING_PRO_PLAN_PRICE: "500000", BILLING_STORAGE_ADDON_PRICE: "200000" }));
+try {
+  await loadBillingConfig({ BILLING_CURRENCY: "USD", BILLING_PRO_PLAN_PRICE: "5000.50" });
+} catch (error) {
+  if (isSchemaValidationError(error)) {
+    for (const issue of error.issues) console.log(`${issue.path.join(".")}: ${issue.message}`);
+  }
+}
+</example>
+<output>
+{
+  currency: 'NGN',
+  pro_plan_price: 500000,
+  storage_addon_price: 200000
+}
+currency: Expected one of "NGN"
+pro_plan_price: Expected integer, received 5000.5
+storage_addon_price: Required field missing: storage_addon_price
+</output>
+</section>
+
+<section>
+<h2 id="run">The whole flow</h2>
+<p>Resolve the buses and run the story from the start of the lesson: Ada orders the Pro plan, the provider's webhook arrives (twice), she looks at her order, and two things go wrong on purpose:</p>
+<example file="checkout.ts" project="billing">
+import { createUserId } from "@zudojs/constants";
+import { createBillingContainer, loadBillingConfig } from "./app.js";
+import { BillingError } from "./contracts.js";
+import { TOKENS } from "./ports.js";
+import { kobo, parseProductId } from "./values.js";
+
+const config = await loadBillingConfig({ BILLING_CURRENCY: "NGN", BILLING_PRO_PLAN_PRICE: "500000", BILLING_STORAGE_ADDON_PRICE: "200000" });
+const container = createBillingContainer(config);
+const commands = container.resolve(TOKENS.commands);
+const queries = container.resolve(TOKENS.queries);
+const ada = createUserId("u-ada");
+
+const order = await commands.send("PlaceOrder", { userId: ada, productId: parseProductId("prd_pro-monthly") });
+console.log("placed", order.id, order.status, order.total);
+
+const paid = await commands.send("RecordPayment", { orderId: order.id, amount: kobo(500_000), providerRef: "PSK_1042" });
+console.log("paid", paid.status, paid.paidAt);
+const retry = await commands.send("RecordPayment", { orderId: order.id, amount: kobo(500_000), providerRef: "PSK_1042" });
+console.log("webhook retry, same payment:", retry.paymentId === paid.paymentId);
+
+console.log(await queries.send("GetOrder", { userId: ada, orderId: order.id }));
+
+const storage = await commands.send("PlaceOrder", { userId: ada, productId: parseProductId("prd_storage-10gb") });
+const attempts = [
+  () => commands.send("PlaceOrder", { userId: ada, productId: parseProductId("prd_gold-yearly") }),
+  () => commands.send("RecordPayment", { orderId: order.id, amount: kobo(500_000), providerRef: "PSK_2000" }),
+  () => commands.send("RecordPayment", { orderId: storage.id, amount: kobo(20_000), providerRef: "PSK_2001" }),
+  () => queries.send("GetOrder", { userId: createUserId("u-bola"), orderId: order.id }),
+];
+for (const attempt of attempts) {
+  try {
+    await attempt();
+  } catch (error) {
+    if (error instanceof BillingError) console.log(error.statusCode, error.reason, "-", error.message);
+  }
+}
+</example>
+<output>
+placed ord_000000000001 pending 500000
+  [email to ada@example.com] Payment received: ₦5,000.00
+  [in-app to u-ada] Order ord_000000000001 is paid. Thank you!
+paid paid 2026-09-24T09:00:00.000Z
+webhook retry, same payment: true
+{
+  id: 'ord_000000000001',
+  status: 'paid',
+  product: 'Pro plan (monthly)',
+  total: '₦5,000.00',
+  paidAt: '2026-09-24T09:00:00.000Z'
+}
+404 PRODUCT_NOT_FOUND - Product prd_gold-yearly not found
+409 ORDER_NOT_PENDING - Order ord_000000000001 is paid
+422 AMOUNT_MISMATCH - Paid ₦200.00, expected ₦2,000.00
+404 ORDER_NOT_FOUND - Order ord_000000000001 not found
+</output>
+<p>Every line is a typed value: <code>order</code> is a <code>PendingOrder</code>, <code>paid</code> a <code>PaidOrder</code> (so <code>paid.paidAt</code> exists), and the query result an <code>OrderResponse</code>. The notification arrived through the <code>order.paid</code> event, with the payload the map promised. The retry returned the same payment instead of charging twice. The failures each carry their code and status: a second, different payment for a paid order is a 409, an amount of ₦200 for a ₦2,000 order is a 422, and Bola cannot see Ada's order.</p>
+<h3>The HTTP edge</h3>
+<p>The routes are where untyped JSON meets typed code, so they do three jobs: parse the body into a DTO, turn DTO strings into branded values, and turn every outcome into a typed response. <code>ApiResult</code> is a union, so a route cannot return a success without a body or an error without a code:</p>
+<file name="routes.ts" project="billing">
+import { BaseError } from "@zudojs/errors";
+import { PaymentWebhook, PlaceOrderBody } from "./contracts.js";
+import type { BillingCommands, BillingQueries, OrderResponse } from "./contracts.js";
+import type { TypedBus } from "./typed-buses.js";
+import { kobo, parseOrderId, parseProductId } from "./values.js";
+import type { UserId } from "./values.js";
+
+export type ApiResult<T> =
+  | { readonly ok: true; readonly status: 200 | 201; readonly body: T }
+  | { readonly ok: false; readonly status: number; readonly body: { readonly error: { readonly code: string; readonly message: string } } };
+
+function failure(error: unknown): ApiResult<never> {
+  if (error instanceof BaseError && error.expose && error.statusCode < 500) {
+    return { ok: false, status: error.statusCode, body: { error: { code: error.code, message: error.message } } };
+  }
+  return { ok: false, status: 500, body: { error: { code: "ERR_INTERNAL", message: "Something went wrong" } } };
+}
+
+export function billingRoutes(commands: TypedBus<BillingCommands>, queries: TypedBus<BillingQueries>) {
+  return {
+    async placeOrder(userId: UserId, body: unknown): Promise<ApiResult<OrderResponse>> {
+      try {
+        const input = PlaceOrderBody.parse(body);
+        const order = await commands.send("PlaceOrder", { userId, productId: parseProductId(input.productId) });
+        return { ok: true, status: 201, body: await queries.send("GetOrder", { userId, orderId: order.id }) };
+      } catch (error) {
+        return failure(error);
+      }
+    },
+
+    /** Call only after the webhook's signature was verified. */
+    async paymentWebhook(body: unknown): Promise<ApiResult<{ readonly received: true }>> {
+      try {
+        const event = PaymentWebhook.parse(body);
+        await commands.send("RecordPayment", {
+          orderId: parseOrderId(event.data.orderId),
+          amount: kobo(event.data.amount),
+          providerRef: event.data.reference,
+        });
+        return { ok: true, status: 200, body: { received: true } };
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  };
+}
+</file>
+<example file="routes-demo.ts" project="billing">
+import { createUserId } from "@zudojs/constants";
+import { createBillingContainer, loadBillingConfig } from "./app.js";
+import { TOKENS } from "./ports.js";
+import { billingRoutes } from "./routes.js";
+
+const config = await loadBillingConfig({ BILLING_CURRENCY: "NGN", BILLING_PRO_PLAN_PRICE: "500000", BILLING_STORAGE_ADDON_PRICE: "200000" });
+const container = createBillingContainer(config);
+const routes = billingRoutes(container.resolve(TOKENS.commands), container.resolve(TOKENS.queries));
+const ada = createUserId("u-ada");
+
+const show = (label: string, result: { status: number; body: unknown }) => console.log(label, result.status, JSON.stringify(result.body));
+
+show("POST /orders", await routes.placeOrder(ada, { productId: "prd_storage-10gb" }));
+show("POST /orders (extra key)", await routes.placeOrder(ada, { productId: "prd_storage-10gb", total: 1 }));
+show("POST /orders (bad id)", await routes.placeOrder(ada, { productId: "../admin" }));
+show("webhook", await routes.paymentWebhook({ event: "charge.success", data: { reference: "PSK_7", orderId: "ord_000000000001", amount: 200000 } }));
+show("webhook (float)", await routes.paymentWebhook({ event: "charge.success", data: { reference: "PSK_8", orderId: "ord_000000000001", amount: 2000.5 } }));
+</example>
+<output>
+POST /orders 201 {"id":"ord_000000000001","status":"pending","product":"Extra storage 10 GB","total":"₦2,000.00","paidAt":null}
+POST /orders (extra key) 400 {"error":{"code":"ERR_SCHEMA_VALIDATION","message":"Validation failed"}}
+POST /orders (bad id) 400 {"error":{"code":"ERR_VALIDATION_FAILED","message":"Not a product id"}}
+  [email to ada@example.com] Payment received: ₦2,000.00
+  [in-app to u-ada] Order ord_000000000001 is paid. Thank you!
+webhook 200 {"received":true}
+webhook (float) 400 {"error":{"code":"ERR_SCHEMA_VALIDATION","message":"Validation failed"}}
+</output>
+<p>A client who tried to set the <code>total</code> got a 400 from the strict schema. The bad product id was refused by <code>parseProductId</code> before any command ran. The webhook with a fractional amount never reached <code>kobo()</code>: the schema's <code>int()</code> caught it. Mounting these in <code>@zudojs/http</code> is two lines per route: read the body as in <a href="/learn/zudo-http#body">Request bodies</a>, call the function, and answer with <code>createResponseContext().setStatus(result.status).json(result.body)</code>.</p>
+</section>
+
+<section>
+<h2 id="type-tests">Testing the types</h2>
+<p>The compile errors in this lesson are features, and features need tests, or a refactor can remove them silently. A <strong>type test</strong> is a line that must <em>not</em> compile, marked <code>// @ts-expect-error</code>. If the line ever starts compiling, TypeScript reports the unused directive as an error, and your build fails. Put the calls in a function you never run; they only need to be type-checked:</p>
+<example file="billing.type-test.ts" project="billing">
+import { createUserId } from "@zudojs/constants";
+import type { BillingConfig } from "./app.js";
+import type { BillingCommands, BillingEvents } from "./contracts.js";
+import { markPaid } from "./model.js";
+import type { PaidOrder, PendingOrder } from "./model.js";
+import type { TypedBus, TypedEvents } from "./typed-buses.js";
+import type { OrderId, PaymentId } from "./values.js";
+
+function typeTests(commands: TypedBus<BillingCommands>, events: TypedEvents<BillingEvents>, config: BillingConfig, paid: PaidOrder) {
+  const ada = createUserId("u-ada");
+  // @ts-expect-error a user id is not a product id
+  void commands.send("PlaceOrder", { userId: ada, productId: ada });
+  // @ts-expect-error there is no RefundOrder command yet
+  void commands.send("RefundOrder", { orderId: "ord_1" });
+  // @ts-expect-error PlaceOrder returns a PendingOrder, not a PaidOrder
+  const wrong: Promise<PaidOrder> = commands.send("PlaceOrder", { userId: ada, productId: "prd_x" as never });
+  // @ts-expect-error amounts are Kobo, not plain numbers
+  void commands.send("RecordPayment", { orderId: "ord_1" as OrderId, amount: 500_000, providerRef: "PSK_1" });
+  // @ts-expect-error the order.paid payload needs a paymentId
+  void events.publish("order.paid", { orderId: "ord_1" as OrderId, userId: ada, total: 1 as never });
+  // @ts-expect-error a paid order cannot be paid again
+  markPaid(paid, { id: "pay_1" as PaymentId, orderId: paid.id, amount: paid.total, providerRef: "x" }, paid.paidAt);
+  // @ts-expect-error a typo in a config key
+  void config.pro_plan_prise;
+  const ok: Promise<PendingOrder> = commands.send("PlaceOrder", { userId: ada, productId: "prd_x" as never });
+  return [wrong, ok];
+}
+
+console.log("type tests compiled:", typeof typeTests);
+</example>
+<output>
+type tests compiled: function
+</output>
+<p>This file is itself a test: it passed because every marked line fails to compile, for the reason in its comment. Run <code>tsc --noEmit</code> in CI and these seven guarantees can never quietly disappear. (The <code>as never</code> casts only fill in arguments the test is not about.)</p>
+<p>Runtime tests cover the other half: the rules types cannot express. For billing, that is the amount check, the retry that must not pay twice, the "not your order" rule and the event that must reach the notifier, all of which the checkout run above shows. In Vitest, build a fresh container per test with <code>createBillingContainer</code>, and replace ports with fakes by registering other values for the same tokens, as in <a href="/learn/zudo-di-architecture#testing">DI architecture</a>.</p>
+</section>
+
+<section>
+<h2 id="limits">Where the types stop</h2>
+<p>Types are erased when the program runs. Everything that crosses into your process from outside arrives untyped, whatever the TypeScript says:</p>
+<ul>
+<li><strong>Every <code>as</code> is a claim.</strong> This module has them in exactly two kinds of places: the parse functions in <code>values.ts</code> (after a check) and the typed buses (after registering the matching handler). Search for <code>as </code> in a code review; each one needs a reason next to it.</li>
+<li><strong>JSON, rows, environment and messages</strong> are <code>unknown</code> until a schema or a parse function has checked them. A repository that returns <code>row as Order</code> without checking <code>status</code> reopens the <code>"payed"</code> bug.</li>
+<li><strong>Events outlive code.</strong> Once <code>order.paid</code> is published to a queue or stored, old payloads exist. Add fields as optional, never change the meaning of one, and when you must break the shape, publish a new name (<code>order.paid.v2</code>) alongside the old for a while.</li>
+<li><strong>Types do not see time or other requests.</strong> "A payment is recorded once" needed the provider reference check; under concurrency it needs a unique index on <code>provider_ref</code>, as in <a href="/learn/zudo-data-architecture#consistency">data architecture</a>.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="production">Production concerns</h2>
+<ul>
+<li><strong>Strict compiler settings.</strong> <code>strict</code> is the minimum. <code>noUncheckedIndexedAccess</code> makes <code>prices[productId]</code> possibly <code>undefined</code>, which would have caught the first bug's missing price; <code>exactOptionalPropertyTypes</code> separates "not sent" from "sent as <code>undefined</code>". <a href="/learn/ts-tsconfig">The tsconfig lesson</a> covers them.</li>
+<li><strong>Contracts are reviewed like APIs.</strong> A change to <code>contracts.ts</code> changes what clients, other modules and stored events rely on. Many teams require a second reviewer for it.</li>
+<li><strong>Documentation from the same source.</strong> The schemas that type your DTOs can also describe your API; <a href="/learn/zudo-openapi">OpenAPI</a> generates the documentation from them, so docs cannot drift from the code either.</li>
+<li><strong>Compile time is part of the design.</strong> Deeply recursive helper types slow the editor for everyone. The maps here are flat on purpose; <a href="/learn/ts-performance">TypeScript performance</a> shows how to measure.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Cancel an order">
+<p>Add a <code>CancelOrder</code> command: it takes a <code>userId</code>, an <code>orderId</code> and a <code>reason</code>, and returns a <code>CancelledOrder</code>. Only the owner may cancel, and only a pending order. Write a <code>cancel(order: PendingOrder, reason)</code> transition, extend a copy of the command map, and implement the handler with the same errors as the other handlers.</p>
+<solution>
+<example file="cancel-order.ts" project="billing">
+import { createUserId } from "@zudojs/constants";
+import { createBillingContainer, loadBillingConfig } from "./app.js";
+import { BillingError } from "./contracts.js";
+import type { BillingCommands } from "./contracts.js";
+import type { CancelledOrder, PendingOrder } from "./model.js";
+import { TOKENS } from "./ports.js";
+import { typedCommands } from "./typed-buses.js";
+import type { OrderId, UserId } from "./values.js";
+import { parseProductId } from "./values.js";
+
+function cancel(order: PendingOrder, reason: string): CancelledOrder {
+  return { ...order, status: "cancelled", reason };
+}
+
+type MoreCommands = {
+  CancelOrder: { request: { userId: UserId; orderId: OrderId; reason: string }; result: CancelledOrder };
+};
+
+const config = await loadBillingConfig({ BILLING_CURRENCY: "NGN", BILLING_PRO_PLAN_PRICE: "500000", BILLING_STORAGE_ADDON_PRICE: "200000" });
+const container = createBillingContainer(config);
+const orders = container.resolve(TOKENS.orders);
+const billing = container.resolve(TOKENS.commands);
+
+const more = typedCommands<MoreCommands>({
+  async CancelOrder({ userId, orderId, reason }) {
+    const order = await orders.findById(orderId);
+    if (!order || order.userId !== userId) throw new BillingError("ORDER_NOT_FOUND", `Order ${orderId} not found`);
+    if (order.status !== "pending") throw new BillingError("ORDER_NOT_PENDING", `Order ${orderId} is ${order.status}`);
+    const cancelled = cancel(order, reason);
+    await orders.save(cancelled);
+    return cancelled;
+  },
+});
+
+const ada = createUserId("u-ada");
+const order: BillingCommands["PlaceOrder"]["result"] = await billing.send("PlaceOrder", { userId: ada, productId: parseProductId("prd_pro-monthly") });
+const cancelled = await more.send("CancelOrder", { userId: ada, orderId: order.id, reason: "Chose the yearly plan" });
+console.log(cancelled.status, cancelled.reason);
+try {
+  await more.send("CancelOrder", { userId: ada, orderId: order.id, reason: "again" });
+} catch (error) {
+  if (error instanceof BillingError) console.log(error.statusCode, error.message);
+}
+</example>
+<output>
+cancelled Chose the yearly plan
+409 Order ord_000000000001 is cancelled
+</output>
+<p>In the module itself you would add <code>CancelOrder</code> to <code>BillingCommands</code>; the <code>Handlers&lt;BillingCommands&gt;</code> return type of <code>commandHandlers</code> then refuses to compile until the handler exists. The narrowing after <code>order.status !== "pending"</code> is what lets <code>cancel(order, …)</code> compile.</p>
+</solution>
+</exercise>
+
+<exercise title="A query for the account page">
+<p>Add a <code>ListMyOrders</code> query that returns a user's orders as <code>OrderResponse</code>s, newest first. The in-memory store has no "find by user" method yet: add one to a port of your own (<code>OrderLister</code>), and implement it over a small array for the exercise.</p>
+<solution>
+<example file="list-orders.ts" project="billing">
+import { createTimestamp, createUserId } from "@zudojs/constants";
+import type { OrderResponse } from "./contracts.js";
+import { toOrderResponse } from "./handlers.js";
+import type { Order, Product } from "./model.js";
+import { typedQueries } from "./typed-buses.js";
+import type { OrderId, UserId } from "./values.js";
+import { kobo, parseProductId } from "./values.js";
+
+interface OrderLister {
+  listByUser(userId: UserId): Promise<readonly Order[]>;
+}
+
+type AccountQueries = {
+  ListMyOrders: { request: { userId: UserId }; result: readonly OrderResponse[] };
+};
+
+const pro: Product = { id: parseProductId("prd_pro-monthly"), name: "Pro plan (monthly)", price: kobo(500_000) };
+const ada = createUserId("u-ada");
+const rows: Order[] = [
+  { id: "ord_000000000001" as OrderId, userId: ada, productId: pro.id, total: pro.price, placedAt: createTimestamp("2026-09-01T10:00:00.000Z"), status: "cancelled", reason: "Wrong plan" },
+  { id: "ord_000000000002" as OrderId, userId: ada, productId: pro.id, total: pro.price, placedAt: createTimestamp("2026-09-02T10:00:00.000Z"), status: "pending" },
+  { id: "ord_000000000003" as OrderId, userId: createUserId("u-bola"), productId: pro.id, total: pro.price, placedAt: createTimestamp("2026-09-03T10:00:00.000Z"), status: "pending" },
+];
+const lister: OrderLister = { listByUser: async (userId) => rows.filter((o) => o.userId === userId) };
+
+const queries = typedQueries<AccountQueries>({
+  async ListMyOrders({ userId }) {
+    const mine = [...(await lister.listByUser(userId))].sort((a, b) => b.placedAt.localeCompare(a.placedAt));
+    return mine.map((order) => toOrderResponse(order, pro));
+  },
+});
+
+for (const order of await queries.send("ListMyOrders", { userId: ada })) console.log(order.id, order.status, order.total);
+</example>
+<output>
+ord_000000000002 pending ₦5,000.00
+ord_000000000001 cancelled ₦5,000.00
+</output>
+<p>The result type <code>readonly OrderResponse[]</code> comes from the map, so the page code gets DTOs, never entities with internal fields. ISO timestamps sort correctly as text, which is one reason the <code>Timestamp</code> brand stores them in that format. In the real module, <code>listByUser</code> would be a paginated query service, as in <a href="/learn/zudo-data-architecture#boundaries">data architecture</a>.</p>
+</solution>
+</exercise>
+
+<exercise title="An SMS channel">
+<p>Add an <code>"sms"</code> channel to <code>Notification</code> with a <code>phone</code> and a <code>text</code>, and write a <code>describe(notification)</code> function with an exhaustive <code>switch</code>. Show the three channels.</p>
+<solution>
+<example file="sms-channel.ts">
+type Notification =
+  | { readonly channel: "email"; readonly to: string; readonly subject: string }
+  | { readonly channel: "in-app"; readonly userId: string; readonly text: string }
+  | { readonly channel: "sms"; readonly phone: string; readonly text: string };
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled notification: ${JSON.stringify(value)}`);
+}
+
+function describe(notification: Notification): string {
+  switch (notification.channel) {
+    case "email": return `e-mail to ${notification.to}: ${notification.subject}`;
+    case "in-app": return `in-app for ${notification.userId}: ${notification.text}`;
+    case "sms": return `SMS to ${notification.phone}: ${notification.text.slice(0, 160)}`;
+    default: return assertNever(notification);
+  }
+}
+
+const all: Notification[] = [
+  { channel: "email", to: "ada@example.com", subject: "Payment received: ₦5,000.00" },
+  { channel: "in-app", userId: "u-ada", text: "Pro features are on." },
+  { channel: "sms", phone: "+2348012345678", text: "Your Task API Pro plan is active." },
+];
+for (const notification of all) console.log(describe(notification));
+</example>
+<output>
+e-mail to ada@example.com: Payment received: ₦5,000.00
+in-app for u-ada: Pro features are on.
+SMS to +2348012345678: Your Task API Pro plan is active.
+</output>
+<p>Before the <code>case "sms"</code> line existed, <code>assertNever(notification)</code> did not compile, because an SMS notification could still reach it. That error is the reminder you want every time a new variant is added: <code>ConsoleNotifier</code> and every other <code>switch</code> over channels would get the same one.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="summary">Summary</h2>
+<ul>
+<li>A module's contracts (ids, money, states, DTOs, commands, queries, events, errors, config, wiring) are written once and derived everywhere else. Put the ones other code relies on in one contract file.</li>
+<li>Brands keep ids and kobo apart at no runtime cost; parse functions are the only places that create them. Entity states are discriminated unions, transitions take the exact state they start from, and <code>never</code> or a <code>Record</code> over the status makes every state handled.</li>
+<li>DTO types come from schemas with <code>Infer</code>. Command, query and event maps are <code>type</code> aliases; thin layers over <code>@zudojs/cqrs</code> and <code>@zudojs/events</code> let the name decide the payload and result, and turn a missing handler into a compile error.</li>
+<li>Error codes map to statuses with <code>as const satisfies Record&lt;Code, number&gt;</code>. Routes return a typed <code>ApiResult</code> union and expose only errors meant for clients.</li>
+<li><code>createToken&lt;T&gt;</code> and <code>registerFactory</code> type the wiring; a config schema types the settings and checks them at start-up.</li>
+<li><code>@ts-expect-error</code> type tests keep compile-time guarantees from disappearing. Everything from outside the process is still checked at runtime; every <code>as</code> needs a reason.</li>
+</ul>
+<p>That completes <strong>ZudoJS application development</strong>: a Task API with users, roles, PostgreSQL, uploads, caching, cryptography and a typed billing module. The next course, <a href="/learn/zudo-events">ZudoJS advanced systems</a>, starts with events in depth, the mechanism billing used to send its notifications.</p>
+</section>

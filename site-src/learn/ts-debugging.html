@@ -1,0 +1,662 @@
+---
+title: Debugging TypeScript
+description: Read long type errors from the bottom up, make the compiler show you types, fix generic inference, trace module resolution and file inclusion, and tell type bugs from runtime bugs.
+minutes: 50
+youNeed: Testing TypeScript, TypeScript monorepos, Declaration files and The debugging method
+youBuild: A set of diagnosed and fixed failures from a shop codebase: a misleading array error, three inference problems, a module that cannot be found, a file nobody knew was compiled, and a type-correct program that adds ₦2.5 billion to an order
+keywords: typescript error messages, read type errors, error elaboration chain, TS2322 TS2345 TS2741 TS2820 TS2307, show inferred type, never trick, satisfies, generic inference problems, NoInfer, never array, reduce accumulator type, traceResolution, explainFiles, showConfig, cascading errors, runtime vs type bugs, escape hatches
+objectives: Read a multi-line type error from its most specific line upward, and move the error to the real mistake with annotations or satisfies | Make the compiler reveal an inferred type without an editor | Diagnose and fix common generic inference problems, including never[], wrong candidates and unwanted widening (NoInfer) | Use --traceResolution, --explainFiles and --showConfig to explain module, file and configuration problems | Decide whether a bug is a type problem or a runtime problem, and find the escape hatch that let bad data in
+---
+<section>
+<h2 id="problem">The error that blamed the wrong line</h2>
+<p>A developer builds an order for the checkout. The compiler refuses, with this:</p>
+<example file="order.ts" project="order" check="tsc-error">
+type Currency = "NGN" | "USD";
+
+interface Money {
+  kobo: number;
+  currency: Currency;
+}
+
+interface OrderLine {
+  sku: string;
+  quantity: number;
+  unitPrice: Money;
+}
+
+interface OrderInput {
+  customerId: string;
+  lines: OrderLine[];
+  delivery: { address: string; fee: Money };
+}
+
+function createOrder(input: OrderInput): string {
+  return `${input.customerId}: ${input.lines.length} lines`;
+}
+
+const lines = [
+  { sku: "RICE-5KG", quantity: 2, unitPrice: { kobo: 1_250_000, currency: "NGN" } },
+  { sku: "OIL-1L", quantity: 1, unitPrice: { kobo: 350_000, currency: "ngn" } },
+];
+
+console.log(createOrder({ customerId: "u_ada", lines, delivery: { address: "12 Allen Avenue, Ikeja", fee: { kobo: 150_000, currency: "NGN" } } }));
+</example>
+<output kind="tsc">
+order.ts:29:48 - error TS2322: Type '{ sku: string; quantity: number; unitPrice: { kobo: number; currency: string; }; }[]' is not assignable to type 'OrderLine[]'.
+  Type '{ sku: string; quantity: number; unitPrice: { kobo: number; currency: string; }; }' is not assignable to type 'OrderLine'.
+    The types of 'unitPrice.currency' are incompatible between these types.
+      Type 'string' is not assignable to type 'Currency'.
+
+29 console.log(createOrder({ customerId: "u_ada", lines, delivery: { address: "12 Allen Avenue, Ikeja", fee: { kobo: 150_000, currency: "NGN" } } }));
+                                                  ~~~~~
+
+  order.ts:16:3 - The expected type comes from property 'lines' which is declared here on type 'OrderInput'
+    16   lines: OrderLine[];
+         ~~~~~
+
+
+Found 1 error in order.ts:29
+</output>
+<p>The squiggle is under <code>lines</code> in the call, and the message says a <code>currency</code> is a <code>string</code>. The developer checks the rice line, sees <code>"NGN"</code>, which is a valid <code>Currency</code>, and is confused: the message seems to say that <code>"NGN"</code> is a plain string. They start adding <code>as Currency</code> to things.</p>
+<p>The message is accurate; it is just answering a different question from the one the developer asked. The real mistake is <code>"ngn"</code> in lower case on the oil line, and the compiler never mentions it. This lesson is about getting from "the compiler is wrong" to the actual cause quickly, for type errors, for inference that goes the wrong way, for modules that cannot be found, and for bugs that no type error will ever show. You will use the general method from <a href="/learn/debug-method">The debugging method</a> (observe, reproduce, isolate, hypothesise, test), with tools that are specific to the TypeScript compiler.</p>
+</section>
+
+<section>
+<h2 id="anatomy">Anatomy of a type error</h2>
+<p>Every <code>tsc</code> error has the same parts:</p>
+<figure class="lx-diagram">
+<pre>
+order.ts:29:48 - error TS2322: Type '{ …; currency: string; }[]' is not assignable to type 'OrderLine[]'.   ← headline
+  Type '{ …; currency: string; }' is not assignable to type 'OrderLine'.                                    ← one level deeper
+    The types of 'unitPrice.currency' are incompatible between these types.                                  ← deeper
+      Type 'string' is not assignable to type 'Currency'.                                                    ← the actual clash
+
+  order.ts:16:3 - The expected type comes from property 'lines' …                                            ← related location
+</pre>
+<figcaption>The headline compares the outermost types; each indented line zooms in; the last line is the specific clash.</figcaption>
+</figure>
+<ul>
+<li><strong>Position</strong> (<code>file:line:column</code>): where the compiler <em>noticed</em> the problem, which is where two types met. That is often not where the mistake was made.</li>
+<li><strong>Code</strong> (<code>TS2322</code>): searchable, and the same across versions and languages.</li>
+<li><strong>Elaboration chain</strong>: the indented lines. Each one descends one level into the structure. <strong>Read it from the bottom up</strong>: the deepest line is the smallest pair of types that do not fit.</li>
+<li><strong>Related information</strong>: the extra location at the end, here where the expected type was declared.</li>
+</ul>
+<p>Applied to the order: the deepest line says a <code>string</code> met <code>Currency</code> at <code>unitPrice.currency</code>. Why is it <code>string</code> and not <code>"ngn"</code>? Because <code>lines</code> was declared without a type. When TypeScript infers the type of an array of objects written in a variable, it <strong>widens</strong> string literals to <code>string</code>: nothing told it that <code>currency</code> should stay a literal. So <em>both</em> lines have <code>currency: string</code>, the mistake was lost at the declaration, and the error appears later, at the call, about the whole array.</p>
+
+<h3>Move the error to the mistake</h3>
+<p>The fix for the reading problem is to state the intended type where the value is written. Either annotate the variable, or use <code>satisfies</code>, which checks the value against the type but keeps the value's own precise type:</p>
+<example file="order.ts" project="order" check="tsc-error">
+type Currency = "NGN" | "USD";
+
+interface Money {
+  kobo: number;
+  currency: Currency;
+}
+
+interface OrderLine {
+  sku: string;
+  quantity: number;
+  unitPrice: Money;
+}
+
+const lines = [
+  { sku: "RICE-5KG", quantity: 2, unitPrice: { kobo: 1_250_000, currency: "NGN" } },
+  { sku: "OIL-1L", quantity: 1, unitPrice: { kobo: 350_000, currency: "ngn" } },
+] satisfies OrderLine[];
+</example>
+<output kind="tsc">
+order.ts:16:61 - error TS2820: Type '"ngn"' is not assignable to type 'Currency'. Did you mean '"NGN"'?
+
+16   { sku: "OIL-1L", quantity: 1, unitPrice: { kobo: 350_000, currency: "ngn" } },
+                                                               ~~~~~~~~
+
+  order.ts:5:3 - The expected type comes from property 'currency' which is declared here on type 'Money'
+    5   currency: Currency;
+        ~~~~~~~~
+
+
+Found 1 error in order.ts:16
+</output>
+<p>Now the error sits on the exact property, names the exact value, and even suggests the fix. This is the most useful habit in the whole lesson: <strong>when an error is far from its cause, add types closer to the data</strong>, and the compiler will point at the cause. Once fixed, the program runs:</p>
+<example file="order-fixed.ts" project="order-fixed">
+type Currency = "NGN" | "USD";
+
+interface Money {
+  kobo: number;
+  currency: Currency;
+}
+
+interface OrderLine {
+  sku: string;
+  quantity: number;
+  unitPrice: Money;
+}
+
+const lines: OrderLine[] = [
+  { sku: "RICE-5KG", quantity: 2, unitPrice: { kobo: 1_250_000, currency: "NGN" } },
+  { sku: "OIL-1L", quantity: 1, unitPrice: { kobo: 350_000, currency: "NGN" } },
+];
+
+const total = lines.reduce((sum, line) => sum + line.unitPrice.kobo * line.quantity, 0);
+console.log(`${lines.length} lines, ₦${(total / 100).toFixed(2)}`);
+</example>
+<output>
+2 lines, ₦28500.00
+</output>
+
+<h3>Codes you will meet most</h3>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Code</th><th>Meaning</th><th>Look first at</th></tr></thead>
+<tbody>
+<tr><td>TS2322</td><td>A value is not assignable to a declared type</td><td>The deepest line of the chain</td></tr>
+<tr><td>TS2345</td><td>An argument does not fit a parameter</td><td>The parameter's type, and how the argument's type was inferred</td></tr>
+<tr><td>TS2741 / TS2739</td><td>A required property (or several) is missing</td><td>The object literal and the "is declared here" location</td></tr>
+<tr><td>TS2339</td><td>Property does not exist on a type</td><td>Whether the value was narrowed, or the type is wider than you think</td></tr>
+<tr><td>TS2820</td><td>Like TS2322, with a "Did you mean" suggestion</td><td>The suggestion: usually a typo in a literal</td></tr>
+<tr><td>TS2769</td><td>No overload matches this call</td><td>The last overload's error (shown), then the others</td></tr>
+<tr><td>TS18046 / TS18047 / TS18048</td><td>Value is <code>unknown</code> / possibly <code>null</code> / possibly <code>undefined</code></td><td>A missing check, or a missing narrowing</td></tr>
+<tr><td>TS7006 / TS7053</td><td>Implicit <code>any</code>: a parameter, or an index</td><td>A missing annotation where inference had nothing to go on</td></tr>
+<tr><td>TS2307 / TS7016</td><td>Module not found / found but untyped</td><td><code>--traceResolution</code>, below</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="reason">Before you touch the code</h2>
+<reason title="What is this error really telling you?">
+<p>A build prints six errors in <code>packages/http/src/app.ts</code>. Before changing anything, answer:</p>
+<ol>
+<li>Is the first error the cause of the others? How would you tell?</li>
+<li>For each type in the headline: did it come from an annotation you wrote, from inference, or from a declaration file? Which of those can be wrong?</li>
+<li>Is the position the place where the mistake was made, or the place where two types met?</li>
+<li>Is this a problem with the types at all? Could the program already be misbehaving at runtime with no type error, or be fine at runtime despite the error?</li>
+</ol>
+<answer>
+<ol>
+<li>Fix and re-check the <em>first</em> error before reading the rest. If an import fails (TS2307), everything imported from it becomes an error type, and later lines report nonsense such as "<code>error</code> is of type <code>unknown</code>" after an <code>instanceof</code> check that should have narrowed it. The example below shows exactly that.</li>
+<li>Annotations say what you intended, inference says what you wrote, declaration files say what someone else claims. Any of them can be wrong: an annotation can be too strict, inference can widen, and a declaration can lie (<a href="/learn/ts-declarations#trust">Declaration files</a>).</li>
+<li>Usually where they met. Walk backwards from the position to where the value got its type, as with the <code>lines</code> array.</li>
+<li>Type errors describe the code, not the data. A clean compile says nothing about a JSON body that has a string where the type says number; and an error may be the compiler being cautious about a case your data never has. The last section of this lesson is about telling the two apart.</li>
+</ol>
+</answer>
+</reason>
+<p>Here is the cascade from point 1, on the <a href="/learn/ts-monorepos">shop monorepo</a>, when <code>http</code> is compiled on its own before its dependencies are built:</p>
+<shell>
+$ npx tsc -p packages/http
+packages/http/src/app.ts:1:30 - error TS2307: Cannot find module '@shop/auth' or its corresponding type declarations.
+…
+packages/http/src/app.ts:2:53 - error TS2307: Cannot find module '@shop/core' or its corresponding type declarations.
+…
+packages/http/src/app.ts:30:51 - error TS18046: 'error' is of type 'unknown'.
+
+30       if (error instanceof DomainError) return `${error.code === "UNAUTHENTICATED" ? 401 : 404} ${error.code}`;
+                                                     ~~~~~
+</shell>
+<p>The TS18046 is not a real problem in that line. <code>DomainError</code> could not be resolved, so <code>instanceof DomainError</code> narrows nothing. Build the dependencies (<code>tsc -b</code>) and all six errors disappear together.</p>
+</section>
+
+<section>
+<h2 id="show-types">Making the compiler show you a type</h2>
+<p>An editor shows the inferred type of anything you hover over, and that is the first tool to reach for. When you only have a terminal (in CI, over SSH, or in a code review), you can make <code>tsc</code> print a type by assigning the value to something it cannot possibly be. <code>never</code> is the usual choice, since nothing is assignable to it:</p>
+<example file="probe.ts" project="probe" check="tsc-error">
+const orders = [
+  { id: "ord_1", status: "paid", totalKobo: 250_000 },
+  { id: "ord_2", status: "pending", totalKobo: 90_000 },
+] as const;
+
+const firstPaid = orders.find((o) => o.status === "paid");
+
+const probe: never = firstPaid;
+</example>
+<output kind="tsc">
+probe.ts:8:7 - error TS2322: Type '{ readonly id: "ord_1"; readonly status: "paid"; readonly totalKobo: 250000; } | undefined' is not assignable to type 'never'.
+  Type 'undefined' is not assignable to type 'never'.
+
+8 const probe: never = firstPaid;
+        ~~~~~
+
+
+Found 1 error in probe.ts:8
+</output>
+<p>The message spells out the full type of <code>firstPaid</code>, and it holds a small surprise: not "either order", but exactly the <em>paid</em> order object, or <code>undefined</code>. Because of <code>as const</code>, each order has a literal <code>status</code>, and TypeScript worked out that the callback <code>o.status === "paid"</code> can only return <code>true</code> for the first one, so it narrowed the result of <code>find</code> (an <strong>inferred type predicate</strong>). Seeing the real type ends guesswork like this. Delete the probe when you are done. To see a <em>type</em> rather than a value's type, declare a value of it first: <code>declare const sample: SomeType; const probe: never = sample;</code>. The type tests from <a href="/learn/ts-testing#type-tests">Testing TypeScript</a> are the permanent version of a probe: once you know what a type should be, pin it with <code>expectTypeOf</code>.</p>
+<tip>Run <code>npx tsc --noEmit --pretty false</code> when you want one line per error (for <code>grep</code>, or to paste into an issue), and plain <code>npx tsc --noEmit</code> for the readable version with code excerpts. When there are many errors, the pretty output ends with an "Errors Files" table that shows which file to open first.</tip>
+</section>
+
+<section>
+<h2 id="inference">When inference goes the wrong way</h2>
+<p>Most "impossible" type errors in everyday code are inference doing exactly what it was designed to do, with less information than you assumed. Four patterns cover most of them.</p>
+<h3>1. The first candidate wins</h3>
+<p><code>firstOr</code> returns the first item of a list, or a fallback:</p>
+<example file="first-or.ts" project="infer" check="tsc-error">
+function firstOr<T>(items: readonly T[], fallback: T): T {
+  return items[0] ?? fallback;
+}
+
+const cheapest = firstOr([2500, 1200], "none");
+</example>
+<output kind="tsc">
+first-or.ts:5:40 - error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+
+5 const cheapest = firstOr([2500, 1200], "none");
+                                         ~~~~~~
+
+
+Found 1 error in first-or.ts:5
+</output>
+<p>TypeScript inferred <code>T = number</code> from the array, then checked the fallback against it. The error is on <code>"none"</code>, although the real question is a design one: should the result be <code>number | string</code>? If yes, give the fallback its own type parameter:</p>
+<example file="first-or.ts" project="infer">
+function firstOr<T, F>(items: readonly T[], fallback: F): T | F {
+  return items[0] ?? fallback;
+}
+
+const cheapest = firstOr([2500, 1200], "none");
+const nothing = firstOr([] as number[], "none");
+console.log(cheapest, nothing);
+</example>
+<output>
+2500 none
+</output>
+<h3>2. An empty array with nothing to go on</h3>
+<example file="cart.ts" project="infer" check="tsc-error">
+const cart = { id: "C-1", skus: [] };
+cart.skus.push("RICE-5KG");
+</example>
+<output kind="tsc">
+cart.ts:2:16 - error TS2345: Argument of type '"RICE-5KG"' is not assignable to parameter of type 'never'.
+
+2 cart.skus.push("RICE-5KG");
+                 ~~~~~~~~~~
+
+
+Found 1 error in cart.ts:2
+</output>
+<p>An empty array inside an object literal has no elements to infer from, so its type is <code>never[]</code>: an array that can hold nothing. The message mentions <code>never</code>, which is the clue. Annotate what the array is for: <code>const cart: { id: string; skus: string[] } = …</code>, or <code>skus: [] as string[]</code>.</p>
+<h3>3. An accumulator that starts as {}</h3>
+<example file="totals.ts" project="infer" check="tsc-error">
+const orders = [
+  { status: "paid", kobo: 250_000 },
+  { status: "pending", kobo: 90_000 },
+  { status: "paid", kobo: 40_000 },
+];
+
+const totals = orders.reduce((acc, order) => {
+  acc[order.status] = (acc[order.status] ?? 0) + order.kobo;
+  return acc;
+}, {});
+</example>
+<output kind="tsc">
+totals.ts:8:3 - error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+  No index signature with a parameter of type 'string' was found on type '{}'.
+
+8   acc[order.status] = (acc[order.status] ?? 0) + order.kobo;
+    ~~~~~~~~~~~~~~~~~
+
+totals.ts:8:24 - error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{}'.
+  No index signature with a parameter of type 'string' was found on type '{}'.
+
+8   acc[order.status] = (acc[order.status] ?? 0) + order.kobo;
+                         ~~~~~~~~~~~~~~~~~
+
+
+Found 2 errors in the same file, starting at: totals.ts:8
+</output>
+<p><code>reduce</code> infers the accumulator's type from the initial value, and <code>{}</code> is an object type with no properties, so indexing it by a string is an implicit <code>any</code> (TS7053). Tell <code>reduce</code> what you are building, with a type argument:</p>
+<example file="totals.ts" project="infer">
+const orders = [
+  { status: "paid", kobo: 250_000 },
+  { status: "pending", kobo: 90_000 },
+  { status: "paid", kobo: 40_000 },
+];
+
+const totals = orders.reduce<Record<string, number>>((acc, order) => {
+  acc[order.status] = (acc[order.status] ?? 0) + order.kobo;
+  return acc;
+}, {});
+console.log(totals);
+</example>
+<output>
+{ paid: 290000, pending: 90000 }
+</output>
+<h3>4. Inference that is too generous: NoInfer</h3>
+<p>The opposite problem is worse, because there is no error at all. A tiny state-machine helper takes the list of states and the initial state:</p>
+<example file="machine.ts" project="infer">
+function createMachine<S extends string>(states: readonly S[], initial: S) {
+  return { states, current: initial };
+}
+
+const order = createMachine(["pending", "paid", "cancelled"], "shipped");
+console.log(order.current, order.states.includes(order.current));
+</example>
+<output>
+shipped false
+</output>
+<p><code>"shipped"</code> is not one of the states, yet it compiled. TypeScript collects <em>candidates</em> for <code>S</code> from both arguments and infers the union of all four strings, so <code>"shipped"</code> fits by definition. A <code>never</code> probe on <code>order.current</code> would show <code>"pending" | "paid" | "cancelled" | "shipped"</code>. The <code>NoInfer&lt;T&gt;</code> utility type says "check against <code>T</code>, but do not use this argument to infer it":</p>
+<example file="machine.ts" project="infer" check="tsc-error">
+function createMachine<S extends string>(states: readonly S[], initial: NoInfer<S>) {
+  return { states, current: initial };
+}
+
+const order = createMachine(["pending", "paid", "cancelled"], "shipped");
+</example>
+<output kind="tsc">
+machine.ts:5:63 - error TS2345: Argument of type '"shipped"' is not assignable to parameter of type '"cancelled" | "paid" | "pending"'.
+
+5 const order = createMachine(["pending", "paid", "cancelled"], "shipped");
+                                                                ~~~~~~~~~
+
+
+Found 1 error in machine.ts:5
+</output>
+<p>When a generic function accepts something it should not, ask: which arguments are <em>sources</em> of the type, and which should only be <em>checked</em> against it? Mark the second kind with <code>NoInfer</code>. The same question debugs the first pattern: <code>firstOr</code>'s fallback was treated as a check, and the fix made it a source. You can always pass type arguments explicitly (<code>firstOr&lt;number | string&gt;(…)</code>) to see what the function does when inference is taken out of the picture.</p>
+</section>
+
+<section>
+<h2 id="resolution">"Cannot find module": tracing resolution</h2>
+<p>TS2307 means the compiler looked for a module and did not find it. <code>--traceResolution</code> prints every step of every lookup; it is long, so filter it to the module you care about. Here it is for the monorepo case above, where <code>@shop/auth</code> had not been built:</p>
+<shell>
+$ npx tsc -p packages/http --noEmit --traceResolution
+…
+======== Resolving module '@shop/auth' from '~/naija-shop/packages/http/src/app.ts'. ========
+Explicitly specified module resolution kind: 'NodeNext'.
+Resolving in ESM mode with conditions 'import', 'types', 'node'.
+…
+Loading module '@shop/auth' from 'node_modules' folder, target file types: TypeScript, JavaScript, Declaration, JSON.
+Searching all ancestor node_modules directories for preferred extensions: TypeScript, Declaration.
+Directory '~/naija-shop/packages/http/src/node_modules' does not exist, skipping all lookups in it.
+Directory '~/naija-shop/packages/http/node_modules' does not exist, skipping all lookups in it.
+Directory '~/naija-shop/packages/node_modules' does not exist, skipping all lookups in it.
+Found 'package.json' at '~/naija-shop/node_modules/@shop/auth/package.json'.
+Entering conditional exports.
+Matched 'exports' condition 'types'.
+Using 'exports' subpath '.' with target './dist/index.d.ts'.
+File '~/naija-shop/node_modules/@shop/auth/dist/index.d.ts' does not exist.
+Failed to resolve under condition 'types'.
+…
+======== Module name '@shop/auth' was not resolved. ========
+</shell>
+<p>Read a trace like a story, and stop at the first line that surprises you:</p>
+<ol>
+<li><strong>Mode and conditions</strong>: ESM mode with <code>import</code>, <code>types</code>, <code>node</code>. If you expected CommonJS, the problem is <code>"type"</code> in <code>package.json</code> or the file extension.</li>
+<li><strong>Where it searched</strong>: up through <code>node_modules</code> folders. If it never finds the <code>package.json</code>, the package is not installed where this file can see it (a phantom or missing dependency).</li>
+<li><strong>Which <code>exports</code> entry and condition matched</strong>, and which file that pointed to. Here everything was right until <code>dist/index.d.ts</code> <em>does not exist</em>: the package was never built.</li>
+</ol>
+<p>The same three questions explain most TS2307s: wrong mode, not installed, or the <code>exports</code> target is missing (not built, not published, or not listed in <code>files</code>, as in <a href="/learn/ts-publishing#problem">Publishing TypeScript packages</a>). When the trace ends in a <code>.js</code> file with no declaration beside it, you get TS7016 instead, and the fix is a declaration file.</p>
+</section>
+
+<section>
+<h2 id="files">"Why is this file even compiled?"</h2>
+<p>An orders service fails its type check in a file nobody on the team recognises:</p>
+<shell>
+$ npx tsc --noEmit
+scripts/backfill-2024.ts:4:48 - error TS2741: Property 'totalKobo' is missing in type '{ id: string; total: number; }' but required in type 'Order'.
+
+4 for (const row of rows) console.log(orderLabel(row));
+                                                 ~~~
+
+  src/orders.ts:3:3 - 'totalKobo' is declared here.
+    3   totalKobo: number;
+        ~~~~~~~~~
+
+
+Found 1 error in scripts/backfill-2024.ts:4
+</shell>
+<p>A one-off script from two years ago, written against an older <code>Order</code> type. But why is it part of the build? <code>--explainFiles</code> gives the reason for every file in the program:</p>
+<shell>
+$ npx tsc --noEmit --explainFiles
+…
+src/orders.ts
+   Imported via "../src/orders.js" from file 'scripts/backfill-2024.ts'
+   Imported via "./orders.js" from file 'src/legacy-report.ts'
+   Matched by default include pattern '**/*'
+…
+scripts/backfill-2024.ts
+   Matched by default include pattern '**/*'
+   File is ECMAScript module because 'package.json' has field "type" with value "module"
+…
+</shell>
+<p>"Matched by default include pattern <code>'**/*'</code>": the <code>tsconfig.json</code> has no <code>include</code>, so every <code>.ts</code> file under the folder is compiled, scripts and all. The fix is a decision, not a cast: delete the dead script, fix it, or give the project an explicit <code>"include": ["src", "tests"]</code>. The same command answers "why is this <code>@types</code> package loaded?" (look for <code>Entry point for implicit type library</code>) and "why does this file count as CommonJS?" (the <code>File is … module because</code> lines).</p>
+
+<h3>What configuration is actually in effect?</h3>
+<p>With <code>extends</code> chains, command-line flags and options that switch on other options, the settings you read in one file are rarely the whole story. <code>--showConfig</code> prints the final, merged configuration and the list of files, without compiling:</p>
+<shell>
+$ npx tsc --showConfig -p packages/http
+{
+    "compilerOptions": {
+        "composite": true,
+        "declaration": true,
+        "declarationMap": true,
+        "module": "nodenext",
+        "moduleResolution": "nodenext",
+        "outDir": "./dist",
+        "rootDir": "./src",
+        "skipLibCheck": true,
+        "strict": true,
+        "sourceMap": true,
+        "target": "es2024",
+        "tsBuildInfoFile": "./dist/.tsbuildinfo",
+        "types": [
+            "node"
+        ],
+        "verbatimModuleSyntax": true,
+        "moduleDetection": "force",
+        "isolatedModules": true,
+        "preserveConstEnums": true,
+        "incremental": true
+    },
+…
+    "files": [
+        "./src/app.ts",
+        "./src/index.ts",
+        "./src/main.ts"
+    ],
+…
+}
+</shell>
+<p>Everything from <code>tsconfig.base.json</code> is merged in, and the last four options were never written anywhere: they are <strong>implied</strong> by others (<code>verbatimModuleSyntax</code> implies <code>isolatedModules</code>, <code>composite</code> implies <code>incremental</code>, and <code>module: nodenext</code> sets <code>moduleDetection</code>). When a setting "does not work", check here first that it is really set.</p>
+</section>
+
+<section>
+<h2 id="build-problems">Build problems</h2>
+<p>Some failures come from what is on disk rather than what is in the code. The symptoms and their usual causes:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Symptom</th><th>Usual cause</th><th>Check with</th></tr></thead>
+<tbody>
+<tr><td>TS2307 for an internal package, only sometimes</td><td>Build order: a missing project reference, or a phantom dependency</td><td><code>tsc -b --verbose</code>, the boundary check from <a href="/learn/ts-monorepos#failures">TypeScript monorepos</a></td></tr>
+<tr><td>A change has no effect when the program runs</td><td>Running stale output: <code>dist</code> from an older build, or a stray compiled <code>.js</code> next to the source</td><td>Delete <code>dist</code> and rebuild; look at the timestamps of the files that run</td></tr>
+<tr><td>The build "succeeds" and writes nothing</td><td>A stale <code>.tsbuildinfo</code> that survived a clean</td><td>Where <code>tsBuildInfoFile</code> points (<a href="/learn/ts-performance#incremental">Compiler performance</a>)</td></tr>
+<tr><td>Errors in <code>node_modules</code> type files</td><td>Two versions of a type package, or a <code>lib</code>/<code>types</code> mismatch</td><td><code>--explainFiles</code>, <code>npm ls @types/node</code></td></tr>
+<tr><td>Works in the editor, fails in CI (or the reverse)</td><td>Different TypeScript versions, or the editor uses a different <code>tsconfig.json</code></td><td><code>npx tsc -v</code> in both places, <code>--showConfig</code></td></tr>
+</tbody>
+</table></div>
+<p>For all of them, the most reliable first step is the one CI takes: a clean checkout, a fresh install, and a full build. If the problem disappears, it lived in leftover files; if it stays, you have a reproduction.</p>
+</section>
+
+<section>
+<h2 id="runtime-vs-type">Type bug or runtime bug?</h2>
+<p>The last kind of TypeScript bug has no type error at all. An order comes back from the payments API, and the checkout adds the ₦1,500 delivery fee:</p>
+<example file="checkout.ts" project="runtime">
+interface Order {
+  id: string;
+  totalKobo: number;
+}
+
+const DELIVERY_FEE_KOBO = 150_000;
+
+function totalWithDelivery(order: Order): string {
+  return `₦${((order.totalKobo + DELIVERY_FEE_KOBO) / 100).toFixed(2)}`;
+}
+
+const body = '{"id": "ord_7", "totalKobo": "250000"}';
+const order = JSON.parse(body) as Order;
+console.log(order.id, totalWithDelivery(order));
+</example>
+<output>
+ord_7 ₦2500001500.00
+</output>
+<p>₦4,000 of goods and delivery became ₦2.5 billion. The type check is clean, the code is "correct", and it is wrong. Debugging this with the type system is hopeless, because the types are exactly what the code claims. Debug it as a runtime problem, following the value:</p>
+<ol>
+<li><strong>Observe the value, not the type.</strong> Log (or inspect in the debugger, as in <a href="/learn/debug-tools">Debugging tools</a>) <code>typeof order.totalKobo</code> at the place where it is used. It prints <code>string</code>, while the type says <code>number</code>.</li>
+<li><strong>Find where the type was claimed.</strong> The value came from outside, so somewhere a type was asserted rather than checked. Look for the <strong>escape hatches</strong>: <code>as</code>, <code>any</code>, <code>!</code>, <code>@ts-ignore</code>, <code>JSON.parse</code> and hand-written declarations. Here it is <code>JSON.parse(body) as Order</code>.</li>
+<li><strong>Replace the claim with a check.</strong> Parse the data at the boundary, and fail loudly when it is wrong.</li>
+</ol>
+<example file="checkout-fixed.ts" project="runtime">
+interface Order {
+  id: string;
+  totalKobo: number;
+}
+
+function parseOrder(json: string): Order {
+  const data: unknown = JSON.parse(json);
+  if (typeof data !== "object" || data === null) throw new TypeError("order must be an object");
+  const { id, totalKobo } = data as Record<string, unknown>;
+  if (typeof id !== "string") throw new TypeError("order.id must be a string");
+  if (typeof totalKobo !== "number" || !Number.isSafeInteger(totalKobo)) {
+    throw new TypeError(`order.totalKobo must be whole kobo, got ${JSON.stringify(totalKobo)}`);
+  }
+  return { id, totalKobo };
+}
+
+try {
+  parseOrder('{"id": "ord_7", "totalKobo": "250000"}');
+} catch (error) {
+  console.log((error as Error).message);
+}
+console.log(parseOrder('{"id": "ord_8", "totalKobo": 250000}'));
+</example>
+<output>
+order.totalKobo must be whole kobo, got "250000"
+{ id: 'ord_8', totalKobo: 250000 }
+</output>
+<p>The error now appears where the bad data enters, with the value in the message, instead of as a strange total three functions later. <a href="/learn/ts-validation">Runtime validation</a> does the same job with schemas. When you review code, you can list the escape hatches mechanically; this small scanner is enough to start a conversation:</p>
+<example file="hatches.ts" project="runtime">
+const source = `const order = JSON.parse(body) as Order;
+const fee = settings.fee!;
+// @ts-ignore legacy formatter
+const label = format(order);
+function old(x: any) { return x.total; }
+const safe = parseOrder(body);`;
+
+const patterns: [string, RegExp][] = [
+  ["as", /\bas\s+(?!const\b)[A-Z]\w*/],
+  ["non-null !", /\w!(?=[.;,)\s])/],
+  ["@ts-ignore", /@ts-ignore/],
+  ["any", /:\s*any\b/],
+];
+
+source.split("\n").forEach((line, i) => {
+  const hits = patterns.filter(([, re]) => re.test(line)).map(([name]) => name);
+  if (hits.length) console.log(`line ${i + 1}: ${hits.join(", ")}`);
+});
+</example>
+<output>
+line 1: as
+line 2: non-null !
+line 3: @ts-ignore
+line 5: any
+</output>
+<p>Each line it lists is a place where a person told the compiler "trust me". Most are fine; one of them is usually where a runtime bug that "cannot happen" came from. Some teams enforce the same with lint rules (for example banning <code>any</code> and unchecked <code>as</code> outside boundary code).</p>
+<p>The reverse case also exists: a type error for a situation that cannot happen at runtime. Resist the <code>as</code>. First try to express the reason it cannot happen in the types (a narrower parameter, a discriminated union, an assertion function that checks), because the next person to change the code will not know the reason, and the compiler will.</p>
+</section>
+
+<section>
+<h2 id="production">In production</h2>
+<ul>
+<li><strong>Annotate at boundaries</strong>: exported functions, configuration objects and data tables. Errors then appear at the mistake instead of three calls later.</li>
+<li><strong>Fix the first error first</strong>, re-run, and only then read the rest.</li>
+<li><strong>Keep the diagnostic commands in reach</strong>: <code>--traceResolution</code> for "cannot find module", <code>--explainFiles</code> for "why is this compiled", <code>--showConfig</code> for "which settings apply", <code>tsc -b --verbose</code> for "why was this rebuilt".</li>
+<li><strong>Treat escape hatches as debt</strong>: every <code>as</code>, <code>any</code>, <code>!</code> and <code>@ts-ignore</code> is a place where the compiler stopped protecting you. Keep them at boundaries, next to a runtime check.</li>
+<li><strong>Reproduce from clean</strong> before blaming TypeScript: fresh install, deleted <code>dist</code>, the same TypeScript version as CI.</li>
+<li><strong>Pin what you learn</strong>: when you debug a surprising type, add a type test for it so the surprise cannot come back.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Move the error">
+<p>This configuration produces one TS2322 on the call to <code>startServer</code>, about <code>limits</code>. Without running it, find the real mistake, then rewrite the code so that the compiler reports it on the exact line.</p>
+<pre><code>interface Limits { maxOrderKobo: number; currency: "NGN" | "USD" }
+interface ServerConfig { port: number; limits: Limits[] }
+declare function startServer(config: ServerConfig): void;
+
+const limits = [
+  { maxOrderKobo: 50_000_000, currency: "NGN" },
+  { maxOrderKobo: 1_000_00, currency: "usd" },
+];
+startServer({ port: 8080, limits });</code></pre>
+<solution>
+<example file="limits.ts" project="ex-limits" check="tsc-error">
+interface Limits {
+  maxOrderKobo: number;
+  currency: "NGN" | "USD";
+}
+
+const limits = [
+  { maxOrderKobo: 50_000_000, currency: "NGN" },
+  { maxOrderKobo: 1_000_00, currency: "usd" },
+] satisfies Limits[];
+</example>
+<output kind="tsc">
+limits.ts:8:29 - error TS2820: Type '"usd"' is not assignable to type '"NGN" | "USD"'. Did you mean '"USD"'?
+
+8   { maxOrderKobo: 1_000_00, currency: "usd" },
+                              ~~~~~~~~
+
+  limits.ts:3:3 - The expected type comes from property 'currency' which is declared here on type 'Limits'
+    3   currency: "NGN" | "USD";
+        ~~~~~~~~
+
+
+Found 1 error in limits.ts:8
+</output>
+<p>The mistake is <code>"usd"</code> in lower case. In the original, <code>limits</code> was inferred with <code>currency: string</code>, so the error could only appear at the call and only about the whole array. <code>satisfies Limits[]</code> checks each element where it is written. (<code>1_000_00</code> is legal, since numeric separators can go anywhere between digits, but it looks like a typo for <code>1_000_000</code>; a reviewer should ask.)</p>
+</solution>
+</exercise>
+<exercise title="Stop the extra state">
+<p>A helper <code>pickDefault(options, preferred)</code> returns <code>preferred</code> if it is one of the options. With the signature below, <code>pickDefault(["card", "transfer"], "cash")</code> compiles. Change the signature so that it does not, and explain what changed.</p>
+<pre><code>function pickDefault&lt;T extends string&gt;(options: readonly T[], preferred: T): T</code></pre>
+<solution>
+<example file="pick.ts" project="ex-pick" check="tsc-error">
+function pickDefault<T extends string>(options: readonly T[], preferred: NoInfer<T>): T {
+  return options.includes(preferred) ? preferred : options[0]!;
+}
+
+const method = pickDefault(["card", "transfer"], "cash");
+</example>
+<output kind="tsc">
+pick.ts:5:50 - error TS2345: Argument of type '"cash"' is not assignable to parameter of type '"card" | "transfer"'.
+
+5 const method = pickDefault(["card", "transfer"], "cash");
+                                                   ~~~~~~
+
+
+Found 1 error in pick.ts:5
+</output>
+<p>Before, both arguments were inference sources, so <code>T</code> became <code>"card" | "transfer" | "cash"</code> and <code>"cash"</code> fitted by definition. <code>NoInfer&lt;T&gt;</code> removes <code>preferred</code> from inference: <code>T</code> comes only from <code>options</code>, and <code>preferred</code> is checked against it.</p>
+</solution>
+</exercise>
+<exercise title="Read the trace">
+<p>A trace for <code>import { formatNaira } from "@naija-shop/naira"</code> ends like this. What is wrong, and what are two ways it could have happened?</p>
+<pre>Found 'package.json' at '~/shop-app/node_modules/@naija-shop/naira/package.json'.
+Entering conditional exports.
+Matched 'exports' condition 'types'.
+Using 'exports' subpath '.' with target './dist/index.d.ts'.
+File '~/shop-app/node_modules/@naija-shop/naira/dist/index.d.ts' does not exist.
+Failed to resolve under condition 'types'.</pre>
+<solution>
+<p>The package is installed and its <code>exports</code> map is read correctly, but the declaration file it promises is not in the installed package. Either it was never published (the <code>files</code> field left it out, exactly the 1.0.0 release in <a href="/learn/ts-publishing#problem">Publishing TypeScript packages</a>), or, for a workspace package, it was never built (the <code>dist</code> folder does not exist yet). <code>ls node_modules/@naija-shop/naira/dist</code> tells you which: an empty or missing folder in a workspace means "build it"; a folder with only <code>.js</code> files from the registry means "the package is broken; tell its authors, and add a local declaration meanwhile".</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>An error's position is where types met, not necessarily where the mistake is. Read the elaboration chain from the bottom up, and add annotations or <code>satisfies</code> near the data to move the error to the cause.</li>
+<li>Fix the first error first: failed imports cascade into nonsense errors further down.</li>
+<li>Make <code>tsc</code> show a type by assigning it to <code>never</code>; pin what you learn with a type test.</li>
+<li>Inference problems: the first candidate wins, empty arrays become <code>never[]</code>, <code>reduce</code> takes its type from the initial value, and generous inference accepts bad values (fix with <code>NoInfer</code>).</li>
+<li><code>--traceResolution</code> explains TS2307, <code>--explainFiles</code> explains why a file is compiled, <code>--showConfig</code> shows the settings really in effect.</li>
+<li>A runtime bug with a clean type check came in through an escape hatch. Follow the value, find the <code>as</code> or <code>any</code>, and replace the claim with a check.</li>
+</ul>
+<p>Next: <a href="/learn/ts-performance">Compiler performance</a>, where you measure what the compiler spends its time on and keep a large project fast to check.</p>
+</section>

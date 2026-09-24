@@ -1,0 +1,937 @@
+<question id="dt-no-begin" type="choice">
+<q>Why can't ShopFlow wrap "charge, reserve, book courier" in one <code>BEGIN … COMMIT</code> any more?</q>
+<option>PostgreSQL does not allow more than one statement per transaction</option>
+<option correct>Each service owns its own database, and a transaction only covers one database connection</option>
+<option>Transactions are too slow for checkout</option>
+<option>The payment provider forbids transactions</option>
+<explain><p>A transaction is a promise made by one database. With four databases (and a payment provider's HTTP API), no single system can promise all-or-nothing across them.</p></explain>
+</question>
+
+<question id="dt-2pc-vote" type="choice">
+<q>In two-phase commit, what does a participant promise when it votes "yes" in the prepare phase?</q>
+<option>That it has already committed</option>
+<option correct>That it has done and durably saved the work, keeps its locks, and will commit if told to, even after a crash</option>
+<option>That it will retry the work later</option>
+<option>That the other participants will also vote yes</option>
+<explain><p>After voting yes, the participant can no longer decide on its own. That is what makes 2PC atomic, and what makes a coordinator failure so painful.</p></explain>
+</question>
+
+<question id="dt-2pc-doubt" type="choice">
+<q>The coordinator crashes after every participant voted yes but before it sent "commit". What happens?</q>
+<option>The participants commit after a timeout</option>
+<option>The participants roll back after a timeout</option>
+<option correct>The participants stay in doubt, holding their locks, until the coordinator returns or an operator resolves the transaction</option>
+<option>The fastest participant becomes the new coordinator automatically</option>
+<explain><p>A prepared participant cannot know whether the others were told to commit or abort, so neither choice is safe. Rows stay locked and other customers wait.</p></explain>
+</question>
+
+<question id="dt-2pc-availability" type="choice">
+<q>Four services are each available 99.9% of the time. Roughly how often are all four available together, as a 2PC transaction needs?</q>
+<option>99.9%</option>
+<option correct>About 99.6%</option>
+<option>About 96%</option>
+<option>100%, because failures cancel out</option>
+<explain><p>0.999⁴ ≈ 0.996. A protocol that needs every participant at once multiplies their unavailability: about 35 hours a year instead of 9.</p></explain>
+</question>
+
+<question id="dt-2pc-provider" type="choice">
+<q>Why can't a payment provider's REST API take part in 2PC with ShopFlow's databases?</q>
+<option>REST APIs are too slow</option>
+<option correct>It offers no prepare phase: it cannot hold a charge "prepared but not committed" under ShopFlow's control</option>
+<option>2PC only works with MySQL</option>
+<option>Payment providers use a different time zone</option>
+<explain><p>A participant must implement prepare, commit and abort. HTTP APIs, message brokers and e-mail services generally do not, which is one of the main reasons sagas exist.</p></explain>
+</question>
+
+<question id="dt-saga" type="choice">
+<q>What is a saga?</q>
+<option>A long database transaction held open across services</option>
+<option correct>A sequence of local transactions, each committed on its own, with compensations that undo finished steps if a later one fails</option>
+<option>A log of every event in the system</option>
+<option>A retry policy with backoff</option>
+<explain><p>Each step commits immediately in one service's database. Consistency comes from compensations, not from rollback.</p></explain>
+</question>
+
+<question id="dt-semantic" type="choice">
+<q>The saga must undo a captured ₦25,000 payment. Which compensation is right?</q>
+<option>Delete the payment row</option>
+<option>Roll back the payments database to its state before the charge</option>
+<option correct>Refund the payment: a new, visible record in the payments ledger</option>
+<option>Nothing: money cannot be returned</option>
+<explain><p>A compensation is a new business action that semantically undoes the old one. The charge happened, the customer's bank shows it, and the refund is another fact next to it.</p></explain>
+</question>
+
+<question id="dt-reverse" type="choice">
+<q>Steps "charge", "reserve" and "book courier" succeeded; "confirm order" then fails permanently. In which order do the compensations run?</q>
+<option>Refund, release, cancel courier</option>
+<option correct>Cancel courier, release, refund</option>
+<option>All at once, in parallel</option>
+<option>Only the refund, since money matters most</option>
+<explain><p>Compensations run in reverse order, like unwinding a stack, so each one finds the world as its step left it.</p></explain>
+</question>
+
+<question id="dt-no-undo" type="choice">
+<q>A saga step sends the customer a "your order is confirmed" SMS. Later, a step fails. What is the compensation?</q>
+<option>Delete the SMS</option>
+<option correct>There is none that removes it; the best you can do is send a correction ("your order was cancelled, you have been refunded")</option>
+<option>Retry the SMS</option>
+<option>Roll back the SMS provider</option>
+<explain><p>Some steps cannot be undone. Put them last, after the steps that can fail, or accept a compensating message instead of an undo.</p></explain>
+</question>
+
+<question id="dt-pivot" type="choice">
+<q>What is the <strong>pivot</strong> of a saga?</q>
+<option>The first step</option>
+<option correct>The step after which the saga can no longer compensate, so it must go forward to completion</option>
+<option>The orchestrator process</option>
+<option>The step with the most retries</option>
+<explain><p>Before the pivot, failures compensate. After it, failures are retried until the saga completes. Irreversible steps belong at or after the pivot.</p></explain>
+</question>
+
+<question id="dt-order-steps" type="choice">
+<q>20% of orders fail because the item is out of stock. Why is "reserve, then charge" better than "charge, then reserve"?</q>
+<option>Reserving is faster than charging</option>
+<option correct>Out-of-stock orders then fail before any money moves, so they need no refund; only the rare declined card needs a cheap stock release</option>
+<option>Charging first is not allowed by payment providers</option>
+<option>It makes the saga isolated</option>
+<explain><p>Put steps that fail often and are cheap to undo first, and expensive or irreversible ones last. The practice section measured 18 refunds against 0.</p></explain>
+</question>
+
+<question id="dt-isolation" type="choice">
+<q>While a checkout saga runs, another request reads the order. What should it see, and how is that handled?</q>
+<option>Nothing: sagas are isolated like database transactions</option>
+<option correct>An intermediate state such as <code>pending</code>; the status acts as a semantic lock that tells other code the order is in progress</option>
+<option>The final state, because sagas complete instantly</option>
+<option>An error until the saga finishes</option>
+<explain><p>Sagas have no isolation: each step is committed and visible. Design for it: explicit pending states, and code that treats them as "in progress, do not touch".</p></explain>
+</question>
+
+<question id="dt-unknown" type="choice">
+<q>The charge step times out. The saga does not know whether the card was charged. What should it do?</q>
+<option>Assume it failed and compensate</option>
+<option>Assume it succeeded and continue</option>
+<option correct>Retry the charge with the same idempotency key, so payments returns the existing charge or makes it now</option>
+<option>Charge again with a new key to be sure</option>
+<explain><p>An unknown outcome is resolved by asking again safely. With the same key there is exactly one charge either way. A new key could charge twice.</p></explain>
+</question>
+
+<question id="dt-idem-steps" type="choice">
+<q>Why must every saga step and compensation be idempotent?</q>
+<option>So they can run in parallel</option>
+<option correct>A durable orchestrator can crash after a step's effect but before saving its progress, so on resume the step runs again</option>
+<option>Because PostgreSQL requires it</option>
+<option>So the saga finishes faster</option>
+<explain><p>The step's effect and the orchestrator's progress live in different databases and cannot be saved atomically. So "at least once" is the best guarantee, and idempotency turns it into "effectively once".</p></explain>
+</question>
+
+<question id="dt-comp-fail" type="choice">
+<q>A refund compensation returns 503. What should the orchestrator do?</q>
+<option>Give up and mark the saga failed</option>
+<option>Skip the refund and cancel the order</option>
+<option correct>Retry it (with backoff) until it succeeds, and alert a human if it keeps failing</option>
+<option>Charge the customer again</option>
+<explain><p>A saga that stops compensating halfway leaves the customer charged without an order. Compensations have no "give up" branch, so design them so they can always eventually succeed.</p></explain>
+</question>
+
+<question id="dt-orch" type="choice">
+<q>Which statement about orchestration and choreography is right?</q>
+<option>Choreography keeps the whole flow in one place</option>
+<option correct>Orchestration keeps the flow and its state in one component, which suits multi-step flows with compensations such as checkout</option>
+<option>Orchestration needs no idempotency</option>
+<option>Choreography cannot use events</option>
+<explain><p>An orchestrator can be read top to bottom and answers "where is order 42?" with one row. Choreography suits short reactions where services should not know about each other.</p></explain>
+</question>
+
+<question id="dt-chor-cost" type="choice">
+<q>What is a real cost of choreography?</q>
+<option>It needs a central database</option>
+<option correct>The flow is spread across services' event handlers, so changing it touches several services and debugging means following events through all of them</option>
+<option>It can only have two steps</option>
+<option>It forbids compensations</option>
+<explain><p>No service knows the whole flow. That keeps them decoupled, and also makes the flow hard to see, change and debug, and makes accidental cycles easy.</p></explain>
+</question>
+
+<question id="dt-dual-write" type="choice">
+<q>A service saves an order, then publishes <code>order.placed</code> to the broker. What can go wrong?</q>
+<option>Nothing, if both calls are awaited</option>
+<option correct>The process can crash between the two, leaving a saved order whose event is never sent</option>
+<option>The event arrives before the order is saved</option>
+<option>The broker rejects events for saved orders</option>
+<explain><p>That is a dual write: two systems, no shared transaction, a crash window in between. Reordering the calls just moves the bug (an event for an order that was never saved).</p></explain>
+</question>
+
+<question id="dt-outbox" type="choice">
+<q>What makes the transactional outbox reliable?</q>
+<option>It publishes events faster</option>
+<option correct>The event is written as a row in the same local transaction as the business change, so both are saved or neither is; a relay publishes it afterwards</option>
+<option>It uses two-phase commit with the broker</option>
+<option>It deletes events after one delivery attempt</option>
+<explain><p>"Send a message" becomes "insert a row", which the database's transaction protects. The relay retries publishing until the row is marked published.</p></explain>
+</question>
+
+<question id="dt-at-least-once" type="choice">
+<q>The relay publishes an outbox row, then crashes before marking it published. What happens next?</q>
+<option>The event is lost</option>
+<option correct>The next relay run publishes it again, so consumers may receive it twice</option>
+<option>The database rolls back the publish</option>
+<option>The broker deduplicates it automatically</option>
+<explain><p>That is why the outbox gives at-least-once delivery. Duplicates are handled on the consumer side, with an inbox or idempotent operations.</p></explain>
+</question>
+
+<question id="dt-skip-locked" type="choice">
+<q>Two relay instances claim outbox rows with <code>… FOR UPDATE SKIP LOCKED</code>. What does <code>SKIP LOCKED</code> do?</q>
+<option>It unlocks rows after reading them</option>
+<option correct>A relay skips rows that another relay has locked instead of waiting for them, so they claim different rows</option>
+<option>It skips rows that were already published</option>
+<option>It makes the query read-only</option>
+<explain><p>Without it, the second relay would wait for the first relay's lock, then publish the same rows. With it, work is shared out. (PGlite is a single connection, so the lesson could show the query but not two relays competing.)</p></explain>
+</question>
+
+<question id="dt-inbox-tx" type="choice">
+<q>Why must the inbox insert be in the same transaction as the charge it protects?</q>
+<option>To make the query faster</option>
+<option correct>If the charge fails and rolls back, the inbox row rolls back too, so a redelivery is processed properly instead of being skipped as "already done"</option>
+<option>Because PostgreSQL requires every insert to be in a transaction</option>
+<option>So the relay can read it</option>
+<explain><p>Recording "done" and doing it must be atomic. Recorded without the effect, the message is lost; the effect without the record, it is repeated.</p></explain>
+</question>
+
+<question id="dt-stable-id" type="choice">
+<q>A relay gives each send a fresh random message id. Why does that break the consumer's inbox?</q>
+<option>Random ids are too long for the table</option>
+<option correct>A redelivery of the same outbox row arrives with a different id, so the inbox cannot recognise it as a duplicate</option>
+<option>Random ids are not unique</option>
+<option>It does not break anything</option>
+<explain><p>The id must identify the message, not the delivery. Deriving it from the outbox row (or the event's own id) keeps it the same on every attempt.</p></explain>
+</question>
+
+<question id="dt-durable" type="choice">
+<q>Why does the orchestrator save the saga's step and status in the orders database after every step?</q>
+<option>For reporting only</option>
+<option correct>So a new process can resume an interrupted saga after a crash, continuing forward or compensating from where it stopped</option>
+<option>Because the steps need a transaction</option>
+<option>To make the saga isolated</option>
+<explain><p>An orchestrator that keeps progress only in memory forgets every saga in flight when it dies: money charged, no order, and nobody knows.</p></explain>
+</question>
+
+<question id="dt-after-commit" type="choice">
+<q>The orders service starts the saga in a <code>@zudojs/transactions</code> after-commit callback. If the saga throws there, what happens?</q>
+<option>The order's transaction is rolled back</option>
+<option>The error is thrown to <code>placeOrder</code>'s caller</option>
+<option correct>The data is already committed, so the manager reports the error to <code>hooks.onError</code> instead; <code>resume()</code> on startup or a timer must pick the saga up</option>
+<option>The saga is retried automatically by the manager</option>
+<explain><p>After-commit work cannot undo the commit. That is why the saga row is written in the transaction: the database, not the callback, is the source of truth.</p></explain>
+</question>
+
+<question id="dt-lease" type="choice">
+<q>The lesson's relay claims rows by setting <code>claimed_until</code> to a short time in the future. Why a lease instead of a permanent "claimed" flag?</q>
+<option>Leases use less disk space</option>
+<option correct>If the relay crashes after claiming, the lease runs out and another relay picks the rows up; a permanent flag would strand them</option>
+<option>Leases make delivery exactly once</option>
+<option>PostgreSQL cannot store booleans</option>
+<explain><p>Any claim made by a process that can die needs an expiry. The same idea protects sagas from two orchestrators working on them at once.</p></explain>
+</question>
+
+<question id="dt-out-availability" type="output">
+<q>What does this print?</q>
+<code file="availability.js">
+const each = 0.999;
+const all = each ** 4;
+console.log((all * 100).toFixed(2) + "%", Math.round((1 - all) * 365 * 24) + " hours a year");
+</code>
+<option correct>99.60% 35 hours a year</option>
+<option>99.90% 9 hours a year</option>
+<option>99.60% 9 hours a year</option>
+<option>96.00% 350 hours a year</option>
+<explain><p>Needing four systems up at once multiplies their availability: 0.999⁴ ≈ 0.996, about four times the downtime of one.</p></explain>
+</question>
+
+<question id="dt-out-saga" type="output">
+<q>What does this print?</q>
+<code file="saga.js">
+async function runSaga(steps) {
+  const done = [];
+  for (const step of steps) {
+    try {
+      await step.run();
+      done.push(step);
+    } catch {
+      for (const finished of done.reverse()) console.log("undo", finished.name);
+      return "cancelled";
+    }
+  }
+  return "confirmed";
+}
+
+const ok = (name) => ({ name, run: async () => {} });
+console.log(await runSaga([ok("order"), ok("charge"), { name: "reserve", run: async () => { throw new Error("out of stock"); } }, ok("ship")]));
+</code>
+<option correct>undo charge
+undo order
+cancelled</option>
+<option>undo order
+undo charge
+cancelled</option>
+<option>undo reserve
+undo charge
+undo order
+cancelled</option>
+<option>undo charge
+undo order
+undo ship
+cancelled</option>
+<explain><p>Only completed steps are undone, newest first. The failed step committed nothing, and "ship" never ran.</p></explain>
+</question>
+
+<question id="dt-out-inbox" type="output">
+<q>What does this print?</q>
+<code file="inbox.js">
+const inbox = new Set();
+let stock = 10;
+
+function onOrderPlaced(message) {
+  if (inbox.has(message.id)) return `${message.id}: skipped`;
+  inbox.add(message.id);
+  stock -= message.quantity;
+  return `${message.id}: stock ${stock}`;
+}
+
+const deliveries = [{ id: "m1", quantity: 2 }, { id: "m2", quantity: 1 }, { id: "m1", quantity: 2 }];
+console.log(deliveries.map(onOrderPlaced).join(" | "));
+</code>
+<option correct>m1: stock 8 | m2: stock 7 | m1: skipped</option>
+<option>m1: stock 8 | m2: stock 7 | m1: stock 5</option>
+<option>m1: stock 8 | m2: skipped | m1: skipped</option>
+<option>m1: skipped | m2: stock 9 | m1: stock 7</option>
+<explain><p>The redelivered <code>m1</code> is recognised by its id. The check and the record happen with no <code>await</code> in between, which is what makes this safe in one process; in a database, a unique key plays that role.</p></explain>
+</question>
+
+<question id="dt-out-race" type="output">
+<q>Two deliveries of the same message arrive at once. What does this print?</q>
+<code file="race.js">
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const seen = new Set();
+let charges = 0;
+
+async function consume(id) {
+  if (seen.has(id)) return;
+  await sleep(5);
+  seen.add(id);
+  charges++;
+}
+
+await Promise.all([consume("m1"), consume("m1"), consume("m2")]);
+console.log(charges, seen.size);
+</code>
+<option correct>3 2</option>
+<option>2 2</option>
+<option>3 3</option>
+<option>2 3</option>
+<explain><p>Both <code>m1</code> deliveries passed the check before either recorded it, so <code>m1</code> was charged twice. The set still has two entries, because adding the same id twice changes nothing. Check-then-act across an <code>await</code> is a race.</p></explain>
+</question>
+
+<question id="dt-out-release" type="output">
+<q>A compensation runs twice after a crash. What does this print?</q>
+<code file="release.js">
+const reservations = new Map([["ord_1:reserve", { sku: "lamp", quantity: 1, status: "reserved" }]]);
+const stock = new Map([["lamp", 4]]);
+
+function release(key) {
+  const r = reservations.get(key);
+  if (!r || r.status !== "reserved") return "nothing to do";
+  r.status = "released";
+  stock.set(r.sku, stock.get(r.sku) + r.quantity);
+  return "released";
+}
+
+console.log(release("ord_1:reserve"), release("ord_1:reserve"), stock.get("lamp"));
+</code>
+<option correct>released nothing to do 5</option>
+<option>released released 6</option>
+<option>released nothing to do 4</option>
+<option>nothing to do nothing to do 4</option>
+<explain><p>The release only acts on a reservation that is still <code>reserved</code>, so the second run is a no-op and stock goes up once. That is what "idempotent compensation" looks like in code.</p></explain>
+</question>
+
+<question id="dt-out-charge-key" type="output">
+<q>What does this print?</q>
+<code file="charge.js">
+const payments = new Map();
+let answerLost = true;
+
+function charge(key, amountKobo) {
+  if (!payments.has(key)) payments.set(key, { amountKobo, status: "captured" });
+  if (answerLost) {
+    answerLost = false;
+    throw new Error("timeout");
+  }
+  return payments.get(key);
+}
+
+for (let attempt = 1; attempt <= 3; attempt++) {
+  try {
+    console.log(`attempt ${attempt}:`, charge("ord_9:charge", 2500000).status);
+    break;
+  } catch (error) {
+    console.log(`attempt ${attempt}: ${error.message}`);
+  }
+}
+console.log("charges:", payments.size);
+</code>
+<option correct>attempt 1: timeout
+attempt 2: captured
+charges: 1</option>
+<option>attempt 1: timeout
+attempt 2: captured
+charges: 2</option>
+<option>attempt 1: captured
+charges: 1</option>
+<option>attempt 1: timeout
+attempt 2: timeout
+attempt 3: captured
+charges: 1</option>
+<explain><p>The first attempt charged the card and lost the answer. The retry used the same key, found the charge and returned it. One charge, and the saga knows it succeeded.</p></explain>
+</question>
+
+<question id="dt-out-resume" type="output">
+<q>An orchestrator saved <code>{ step: 2, status: "compensating" }</code> before crashing. What does the new one print when it resumes?</q>
+<code file="resume.js">
+const steps = ["charge", "reserve", "ship"];
+const saga = { step: 2, status: "compensating" };
+
+function resume(saga) {
+  const log = [];
+  if (saga.status === "running") {
+    for (let i = saga.step; i < steps.length; i++) log.push(`run ${steps[i]}`);
+  } else if (saga.status === "compensating") {
+    for (let i = saga.step - 1; i >= 0; i--) log.push(`undo ${steps[i]}`);
+  }
+  return log.join(", ") || "nothing to do";
+}
+
+console.log(resume(saga));
+console.log(resume({ step: 1, status: "running" }));
+console.log(resume({ step: 3, status: "completed" }));
+</code>
+<option correct>undo reserve, undo charge
+run reserve, run ship
+nothing to do</option>
+<option>undo ship, undo reserve, undo charge
+run reserve, run ship
+nothing to do</option>
+<option>undo charge, undo reserve
+run charge, run reserve, run ship
+nothing to do</option>
+<option>undo reserve, undo charge
+run reserve, run ship
+run ship</option>
+<explain><p><code>step</code> counts completed steps. Compensating from step 2 undoes steps 1 and 0 (reserve, charge); running from step 1 continues with reserve and ship. A completed saga needs nothing.</p></explain>
+</question>
+
+<question id="dt-out-relay" type="output">
+<q>An in-memory outbox and relay. What does this print?</q>
+<code file="relay.js">
+const outbox = [
+  { id: 1, type: "order.placed", published: false },
+  { id: 2, type: "order.placed", published: false },
+];
+const delivered = [];
+let crashAfter = 1;
+
+function relay() {
+  for (const row of outbox.filter((r) => !r.published)) {
+    delivered.push(row.id);
+    if (row.id === crashAfter) {
+      crashAfter = null;
+      throw new Error("crash");
+    }
+    row.published = true;
+  }
+}
+
+try { relay(); } catch {}
+relay();
+relay();
+console.log(delivered.join(","));
+</code>
+<option correct>1,1,2</option>
+<option>1,2</option>
+<option>1,2,1,2</option>
+<option>1,1,2,2</option>
+<explain><p>The relay delivered row 1 and crashed before marking it, so the next run delivered it again, then row 2. The third run found nothing. At-least-once: every row arrives, row 1 twice.</p></explain>
+</question>
+
+<question id="dt-out-chain" type="output">
+<q>A small choreography on <code>@zudojs/events</code>. What does this print?</q>
+<code file="chain.js">
+import { createEventBus } from "@zudojs/events";
+
+const bus = createEventBus();
+const trace = [];
+const emit = async (type) => {
+  trace.push(type);
+  await bus.publishEvent({ type, payload: {} });
+};
+
+bus.on("order.placed", () => emit("stock.reserved"));
+bus.on("stock.reserved", () => emit("payment.declined"));
+bus.on("payment.declined", () => emit("stock.released"));
+bus.on("stock.released", () => emit("order.cancelled"));
+
+await emit("order.placed");
+console.log(trace.join(" -> "));
+</code>
+<option correct>order.placed -> stock.reserved -> payment.declined -> stock.released -> order.cancelled</option>
+<option>order.placed -> stock.reserved -> payment.declined -> order.cancelled</option>
+<option>order.placed -> payment.declined -> stock.released -> order.cancelled</option>
+<option>order.placed</option>
+<explain><p>Each service reacts to the previous event. The compensation (releasing stock) is just another reaction, which is why the full flow is only visible by following the chain.</p></explain>
+</question>
+
+<question id="dt-out-invariant" type="output">
+<q>What does this print?</q>
+<code file="invariant.js">
+function consistent({ order, payment, shipment }) {
+  if (order === "confirmed") return payment === "captured" && shipment === "booked";
+  if (order === "cancelled") return payment !== "captured" && shipment !== "booked";
+  return false;
+}
+
+const states = [
+  { order: "confirmed", payment: "captured", shipment: "booked" },
+  { order: "cancelled", payment: "refunded", shipment: "none" },
+  { order: "cancelled", payment: "captured", shipment: "none" },
+  { order: "pending", payment: "captured", shipment: "none" },
+];
+console.log(states.map(consistent).join(" "));
+</code>
+<option correct>true true false false</option>
+<option>true true true false</option>
+<option>true false false false</option>
+<option>true true false true</option>
+<explain><p>A cancelled order with a captured payment is the ₦25,000 bug. A pending order at the end of a test means a saga was left unfinished, which the invariant must also treat as a failure.</p></explain>
+</question>
+
+<question id="dt-code-saga" type="code" file="saga.js">
+<q><p>Write <code>runSaga(steps)</code>. Each step has <code>name</code>, <code>run()</code> and <code>undo()</code>. Run the steps in order, logging <code>done NAME</code>. If one throws, log <code>failed NAME: MESSAGE</code>, run the <code>undo</code> of every completed step in reverse order logging <code>undone NAME</code>, and return <code>"cancelled"</code>. Otherwise return <code>"confirmed"</code>.</p></q>
+<starter>
+async function runSaga(steps) {
+  // your code here
+}
+
+const step = (name, fail) => ({
+  name,
+  run: async () => { if (fail) throw new Error(fail); },
+  undo: async () => {},
+});
+
+console.log(await runSaga([step("charge"), step("reserve"), step("ship", "no courier available")]));
+console.log(await runSaga([step("charge"), step("reserve")]));
+</starter>
+<solution>
+async function runSaga(steps) {
+  const done = [];
+  for (const s of steps) {
+    try {
+      await s.run();
+      console.log(`done ${s.name}`);
+      done.push(s);
+    } catch (error) {
+      console.log(`failed ${s.name}: ${error.message}`);
+      for (const finished of [...done].reverse()) {
+        await finished.undo();
+        console.log(`undone ${finished.name}`);
+      }
+      return "cancelled";
+    }
+  }
+  return "confirmed";
+}
+
+const step = (name, fail) => ({
+  name,
+  run: async () => { if (fail) throw new Error(fail); },
+  undo: async () => {},
+});
+
+console.log(await runSaga([step("charge"), step("reserve"), step("ship", "no courier available")]));
+console.log(await runSaga([step("charge"), step("reserve")]));
+</solution>
+<expected>
+done charge
+done reserve
+failed ship: no courier available
+undone reserve
+undone charge
+cancelled
+done charge
+done reserve
+confirmed
+</expected>
+<explain><p>Compensations run newest first. Copying before reversing (<code>[...done].reverse()</code>) avoids changing the list in place, a habit that matters when the list is also saved as the saga's progress.</p></explain>
+</question>
+
+<question id="dt-code-inbox" type="code" file="inbox.js">
+<q><p>Fix <code>consume</code> so that two simultaneous deliveries of the same message charge once. Claim the id before the <code>await</code>, and if the charge fails, remove the claim so a later redelivery can try again.</p></q>
+<starter>
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const seen = new Set();
+let charges = 0;
+let failNext = true;
+
+async function consume(id) {
+  if (seen.has(id)) return "skipped";
+  await sleep(5);
+  if (failNext) {
+    failNext = false;
+    throw new Error("card network down");
+  }
+  seen.add(id);
+  charges++;
+  return "charged";
+}
+
+console.log(await Promise.all([consume("m1"), consume("m1")].map((p) => p.catch((e) => e.message))));
+console.log(await Promise.all([consume("m1"), consume("m1")].map((p) => p.catch((e) => e.message))));
+console.log("charges:", charges);
+</starter>
+<solution>
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const seen = new Set();
+let charges = 0;
+let failNext = true;
+
+async function consume(id) {
+  if (seen.has(id)) return "skipped";
+  seen.add(id);
+  try {
+    await sleep(5);
+    if (failNext) {
+      failNext = false;
+      throw new Error("card network down");
+    }
+    charges++;
+    return "charged";
+  } catch (error) {
+    seen.delete(id);
+    throw error;
+  }
+}
+
+console.log(await Promise.all([consume("m1"), consume("m1")].map((p) => p.catch((e) => e.message))));
+console.log(await Promise.all([consume("m1"), consume("m1")].map((p) => p.catch((e) => e.message))));
+console.log("charges:", charges);
+</solution>
+<expected>
+[ 'card network down', 'skipped' ]
+[ 'charged', 'skipped' ]
+charges: 1
+</expected>
+<explain><p>Claiming first closes the race; releasing the claim on failure plays the role of the rollback that removes the inbox row when the charge fails. In a database both come for free from putting the inbox insert and the charge in one transaction.</p></explain>
+</question>
+
+<question id="dt-code-charge" type="code" file="charge.js">
+<q><p>Write an idempotent <code>charge(key, orderId, amountKobo)</code> for the payments service. The first call with a key stores <code>{ orderId, amountKobo, status: "captured" }</code> and returns <code>"charged"</code>; later calls with the same key return <code>"already charged"</code> without storing anything. Also write <code>refund(key)</code> that changes a captured payment to <code>"refunded"</code> and returns <code>"refunded"</code>, or <code>"nothing to refund"</code>.</p></q>
+<starter>
+const payments = new Map();
+
+function charge(key, orderId, amountKobo) {
+  // your code here
+}
+
+function refund(key) {
+  // your code here
+}
+
+console.log(charge("ord_1:charge", "ord_1", 2500000));
+console.log(charge("ord_1:charge", "ord_1", 2500000));
+console.log(refund("ord_1:charge"), refund("ord_1:charge"), refund("ord_2:charge"));
+console.log(payments.size, payments.get("ord_1:charge").status);
+</starter>
+<solution>
+const payments = new Map();
+
+function charge(key, orderId, amountKobo) {
+  if (payments.has(key)) return "already charged";
+  payments.set(key, { orderId, amountKobo, status: "captured" });
+  return "charged";
+}
+
+function refund(key) {
+  const payment = payments.get(key);
+  if (!payment || payment.status !== "captured") return "nothing to refund";
+  payment.status = "refunded";
+  return "refunded";
+}
+
+console.log(charge("ord_1:charge", "ord_1", 2500000));
+console.log(charge("ord_1:charge", "ord_1", 2500000));
+console.log(refund("ord_1:charge"), refund("ord_1:charge"), refund("ord_2:charge"));
+console.log(payments.size, payments.get("ord_1:charge").status);
+</solution>
+<expected>
+charged
+already charged
+refunded nothing to refund nothing to refund
+1 refunded
+</expected>
+<explain><p>Both operations are safe to repeat: the key stops a second charge, and the status check stops a second refund. Refunding an unknown key is also safe, which matters when a compensation runs for a step whose effect never happened.</p></explain>
+</question>
+
+<question id="dt-code-relay" type="code" file="relay.js">
+<q><p>Write <code>relay(outbox, publish)</code>: for every row with <code>published: false</code>, in <code>id</code> order, call <code>publish(row)</code> and then set <code>published = true</code>. If <code>publish</code> throws, stop and leave that row (and later ones) unpublished. Return how many rows were published.</p></q>
+<starter>
+function relay(outbox, publish) {
+  // your code here
+}
+
+const outbox = [
+  { id: 2, type: "payment.captured", published: false },
+  { id: 1, type: "order.placed", published: false },
+  { id: 3, type: "stock.reserved", published: false },
+];
+let brokerUp = false;
+const publish = (row) => {
+  if (row.id === 3 && !brokerUp) throw new Error("broker unavailable");
+  console.log("published", row.id, row.type);
+};
+
+console.log("run 1:", relay(outbox, publish));
+brokerUp = true;
+console.log("run 2:", relay(outbox, publish));
+console.log("run 3:", relay(outbox, publish));
+</starter>
+<solution>
+function relay(outbox, publish) {
+  let count = 0;
+  const pending = outbox.filter((row) => !row.published).sort((a, b) => a.id - b.id);
+  for (const row of pending) {
+    try {
+      publish(row);
+    } catch {
+      break;
+    }
+    row.published = true;
+    count++;
+  }
+  return count;
+}
+
+const outbox = [
+  { id: 2, type: "payment.captured", published: false },
+  { id: 1, type: "order.placed", published: false },
+  { id: 3, type: "stock.reserved", published: false },
+];
+let brokerUp = false;
+const publish = (row) => {
+  if (row.id === 3 && !brokerUp) throw new Error("broker unavailable");
+  console.log("published", row.id, row.type);
+};
+
+console.log("run 1:", relay(outbox, publish));
+brokerUp = true;
+console.log("run 2:", relay(outbox, publish));
+console.log("run 3:", relay(outbox, publish));
+</solution>
+<expected>
+published 1 order.placed
+published 2 payment.captured
+run 1: 2
+published 3 stock.reserved
+run 2: 1
+run 3: 0
+</expected>
+<explain><p>Publishing in id order keeps events in the order they were written, and stopping at the first failure preserves that order when the broker comes back. The row stays in the outbox until it is really out.</p></explain>
+</question>
+
+<question id="dt-code-resume" type="code" file="resume.js">
+<q><p>Write <code>resume(saga, steps)</code> for a saga stored as <code>{ step, status }</code>, where <code>step</code> is the number of completed steps. If <code>running</code>, run the remaining steps (log <code>run NAME</code>) and set status <code>completed</code>. If <code>compensating</code>, undo completed steps newest first (log <code>undo NAME</code>) and set status <code>cancelled</code>. Update <code>saga.step</code> after each step so a crash could resume again.</p></q>
+<starter>
+function resume(saga, steps) {
+  // your code here
+}
+
+const steps = ["charge", "reserve", "ship"];
+const a = { step: 1, status: "running" };
+const b = { step: 2, status: "compensating" };
+resume(a, steps);
+resume(b, steps);
+console.log(a, b);
+</starter>
+<solution>
+function resume(saga, steps) {
+  if (saga.status === "running") {
+    while (saga.step < steps.length) {
+      console.log(`run ${steps[saga.step]}`);
+      saga.step++;
+    }
+    saga.status = "completed";
+  } else if (saga.status === "compensating") {
+    while (saga.step > 0) {
+      console.log(`undo ${steps[saga.step - 1]}`);
+      saga.step--;
+    }
+    saga.status = "cancelled";
+  }
+}
+
+const steps = ["charge", "reserve", "ship"];
+const a = { step: 1, status: "running" };
+const b = { step: 2, status: "compensating" };
+resume(a, steps);
+resume(b, steps);
+console.log(a, b);
+</solution>
+<expected>
+run reserve
+run ship
+undo reserve
+undo charge
+{ step: 3, status: 'completed' } { step: 0, status: 'cancelled' }
+</expected>
+<explain><p>The same counter serves both directions: forward it counts completed steps, backward it counts steps still to undo. Saving it after every step is what makes the orchestrator restartable at any point.</p></explain>
+</question>
+
+<question id="dt-code-reserve" type="code" file="reserve.js">
+<q><p>Write an idempotent <code>reserve(key, sku, quantity)</code>: if the key was already reserved, return <code>"already reserved"</code>; if there is not enough stock, throw <code>new Error(SKU + " is out of stock")</code>; otherwise reduce stock, remember the key and return <code>"reserved, N left"</code>.</p></q>
+<starter>
+const stock = new Map([["lamp", 2]]);
+const reservations = new Map();
+
+function reserve(key, sku, quantity) {
+  // your code here
+}
+
+console.log(reserve("ord_1:reserve", "lamp", 1));
+console.log(reserve("ord_1:reserve", "lamp", 1));
+console.log(reserve("ord_2:reserve", "lamp", 1));
+try {
+  reserve("ord_3:reserve", "lamp", 1);
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+const stock = new Map([["lamp", 2]]);
+const reservations = new Map();
+
+function reserve(key, sku, quantity) {
+  if (reservations.has(key)) return "already reserved";
+  const available = stock.get(sku) ?? 0;
+  if (available < quantity) throw new Error(`${sku} is out of stock`);
+  stock.set(sku, available - quantity);
+  reservations.set(key, { sku, quantity, status: "reserved" });
+  return `reserved, ${available - quantity} left`;
+}
+
+console.log(reserve("ord_1:reserve", "lamp", 1));
+console.log(reserve("ord_1:reserve", "lamp", 1));
+console.log(reserve("ord_2:reserve", "lamp", 1));
+try {
+  reserve("ord_3:reserve", "lamp", 1);
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>
+reserved, 1 left
+already reserved
+reserved, 0 left
+lamp is out of stock
+</expected>
+<explain><p>The repeated key after a crash does not take a second lamp. In PostgreSQL the same logic is one transaction: check the reservation, <code>UPDATE … WHERE available &gt;= $2</code>, insert the reservation.</p></explain>
+</question>
+
+<question id="dt-code-choreo" type="code" file="choreo.js">
+<q><p>Build a tiny choreography with a <code>Map</code> of handlers. When <code>order.placed</code> arrives, payments emits <code>payment.captured</code>; inventory then emits <code>stock.reserved</code> if <code>stock &gt; 0</code> (and decrements it) or <code>stock.rejected</code>; on <code>stock.rejected</code>, payments emits <code>payment.refunded</code>. Print each event as it is emitted. Place two orders with 1 lamp in stock.</p></q>
+<starter>
+const handlers = new Map();
+const on = (type, handler) => handlers.set(type, [...(handlers.get(type) ?? []), handler]);
+let stock = 1;
+
+async function emit(type, orderId) {
+  console.log(`${orderId}: ${type}`);
+  for (const handler of handlers.get(type) ?? []) await handler(orderId);
+}
+
+// register the handlers here
+
+await emit("order.placed", "ord_1");
+await emit("order.placed", "ord_2");
+</starter>
+<solution>
+const handlers = new Map();
+const on = (type, handler) => handlers.set(type, [...(handlers.get(type) ?? []), handler]);
+let stock = 1;
+
+async function emit(type, orderId) {
+  console.log(`${orderId}: ${type}`);
+  for (const handler of handlers.get(type) ?? []) await handler(orderId);
+}
+
+on("order.placed", (orderId) => emit("payment.captured", orderId));
+on("payment.captured", async (orderId) => {
+  if (stock > 0) {
+    stock--;
+    await emit("stock.reserved", orderId);
+  } else {
+    await emit("stock.rejected", orderId);
+  }
+});
+on("stock.rejected", (orderId) => emit("payment.refunded", orderId));
+
+await emit("order.placed", "ord_1");
+await emit("order.placed", "ord_2");
+</solution>
+<expected>
+ord_1: order.placed
+ord_1: payment.captured
+ord_1: stock.reserved
+ord_2: order.placed
+ord_2: payment.captured
+ord_2: stock.rejected
+ord_2: payment.refunded
+</expected>
+<explain><p>The refund is a reaction to <code>stock.rejected</code>, registered by payments. Nobody holds the whole flow: to know why ord_2 was refunded you follow the chain of events, which is exactly the trade-off of choreography.</p></explain>
+</question>
+
+<question id="dt-code-check" type="code" file="check.js">
+<q><p>Write <code>check(runs)</code> for a crash test. Each run is <code>{ crashAt, order, payment, shipment, lampsBefore, lampsAfter }</code>. A run is consistent when it is confirmed (payment <code>captured</code>, shipment <code>booked</code>, one lamp fewer) or cancelled (payment not <code>captured</code>, shipment not <code>booked</code>, lamps unchanged). Print <code>INCONSISTENT crash CRASHAT</code> for each bad run, then <code>N of M consistent</code>.</p></q>
+<starter>
+function check(runs) {
+  // your code here
+}
+
+check([
+  { crashAt: "after charge", order: "confirmed", payment: "captured", shipment: "booked", lampsBefore: 5, lampsAfter: 4 },
+  { crashAt: "after reserve", order: "confirmed", payment: "captured", shipment: "booked", lampsBefore: 5, lampsAfter: 3 },
+  { crashAt: "after undo reserve", order: "cancelled", payment: "refunded", shipment: "none", lampsBefore: 5, lampsAfter: 5 },
+  { crashAt: "after undo charge", order: "cancelled", payment: "captured", shipment: "none", lampsBefore: 5, lampsAfter: 5 },
+]);
+</starter>
+<solution>
+function check(runs) {
+  let good = 0;
+  for (const run of runs) {
+    const confirmed = run.order === "confirmed" && run.payment === "captured" && run.shipment === "booked" && run.lampsAfter === run.lampsBefore - 1;
+    const cancelled = run.order === "cancelled" && run.payment !== "captured" && run.shipment !== "booked" && run.lampsAfter === run.lampsBefore;
+    if (confirmed || cancelled) good++;
+    else console.log(`INCONSISTENT crash ${run.crashAt}`);
+  }
+  console.log(`${good} of ${runs.length} consistent`);
+}
+
+check([
+  { crashAt: "after charge", order: "confirmed", payment: "captured", shipment: "booked", lampsBefore: 5, lampsAfter: 4 },
+  { crashAt: "after reserve", order: "confirmed", payment: "captured", shipment: "booked", lampsBefore: 5, lampsAfter: 3 },
+  { crashAt: "after undo reserve", order: "cancelled", payment: "refunded", shipment: "none", lampsBefore: 5, lampsAfter: 5 },
+  { crashAt: "after undo charge", order: "cancelled", payment: "captured", shipment: "none", lampsBefore: 5, lampsAfter: 5 },
+]);
+</solution>
+<expected>
+INCONSISTENT crash after reserve
+INCONSISTENT crash after undo charge
+2 of 4 consistent
+</expected>
+<explain><p>"After reserve" took two lamps: the reservation was not idempotent and ran twice on resume. "After undo charge" left a captured payment on a cancelled order: the refund was lost. Each inconsistency points straight at the step that needs fixing.</p></explain>
+</question>
