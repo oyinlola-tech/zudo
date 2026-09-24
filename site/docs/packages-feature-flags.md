@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/feature-flags — deterministic
 source: https://zudojs.oyinlola.site/docs/packages-feature-flags
 ---
 
-v1.3.0
+v1.4.0
 
 # @zudojs/feature-flags
 
@@ -25,7 +25,7 @@ pnpm add @zudojs/feature-flags
 yarn add @zudojs/feature-flags
 ```
 
-> **Peer Dependencies:** @zudojs/feature-flags depends on @zudojs/errors (v1.2.0) for its error hierarchy and @zudojs/types (v1.1.1) for its shared type guards.
+> **Peer Dependencies:** @zudojs/feature-flags depends on @zudojs/errors (v1.3.0) for its error hierarchy and @zudojs/types (v1.2.0) for its shared type guards.
 
 ## WHAT IT DOES
 
@@ -57,8 +57,8 @@ Feature flags sit between transport and application layers. HTTP handlers check 
 
 | Package | Version | Purpose |
 | --- | --- | --- |
-| @zudojs/errors | 1.2.0 | Feature flag error hierarchy (FeatureFlagError, NotFoundError, ProviderError, etc.) |
-| @zudojs/types | 1.1.1 | Shared type guards (`isPlainObject`, re-exported here and deprecated in favour of importing it from @zudojs/types) |
+| @zudojs/errors | 1.3.0 | Feature flag error hierarchy (FeatureFlagError, NotFoundError, ProviderError, etc.) |
+| @zudojs/types | 1.2.0 | Shared type guards (`isPlainObject`, re-exported here and deprecated in favour of importing it from @zudojs/types) |
 
 ## CORE TYPES
 
@@ -108,7 +108,8 @@ A complete feature flag definition.
 interface FeatureFlag {
   readonly key: string;
   readonly defaultValue: FeatureFlagValue;
-  readonly enabled: boolean;
+  readonly enabled: boolean;       // the kill switch
+  readonly offValue?: FeatureFlagValue; // served while the flag is off (new in v1.4.0)
   readonly description?: string;
   readonly state?: FeatureFlagState;
   readonly visibility?: FeatureFlagVisibility;
@@ -118,6 +119,33 @@ interface FeatureFlag {
   readonly metadata?: FeatureFlagMetadata;
 }
 ```
+
+### When a flag is off
+
+A flag is *off* when it has `enabled: false` or `state: "disabled"`, is a `"draft"`, is `"archived"` or past `metadata.expiresAt`, or is blocked by a dependency. An off flag skips its rules and serves its **off value**:
+
+- 1. `offValue`, when the flag declares one;
+- 2. otherwise `false` for a boolean flag, so the kill switch always turns a boolean feature off;
+- 3. otherwise `defaultValue` for a string, number or object flag, which has no natural "off".
+
+```ts
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([
+    { key: "new-checkout", enabled: false, defaultValue: true },
+    { key: "theme", enabled: false, defaultValue: "blue", offValue: "grey" },
+    { key: "legacy-api", enabled: false, defaultValue: false, offValue: true },
+  ]),
+});
+
+const checkout = await flags.evaluate("new-checkout");
+console.log(checkout.value, checkout.reason);         // false disabled
+console.log((await flags.evaluate("theme")).value);   // grey
+console.log(await flags.isEnabled("legacy-api"));     // true
+```
+
+> **Changed in v1.4.0 (behaviour change):** the kill switch now fails closed. Up to v1.3.x an off flag served `defaultValue`, so `{ enabled: false, defaultValue: true }` stayed **on** for everyone, and `state: "disabled"` was not honoured at all. If you relied on a killed flag serving `true`, declare `offValue: true`. `defaultValue` is still what an *on* flag serves when no rule matches.
 
 ### FeatureFlagMetadata
 
@@ -282,11 +310,11 @@ interface FeatureFlagEvaluation<TValue extends FeatureFlagValue = FeatureFlagVal
 | target_match | User or tenant rule matched |
 | percentage_rollout | Percentage rollout matched |
 | variant_assignment | Variant assigned |
-| disabled | Flag is disabled |
+| disabled | Flag is off: `enabled: false`, `state: "disabled"` or `state: "draft"`. Serves the off value. |
 | not_found | Flag does not exist |
 | error | Provider unreachable (`provider.getAll()` or `provider.get()` threw); reported to `onError`. This is how `evaluate()` reports an outage — `snapshot()` and `getAll()` reject instead. |
-| dependency_disabled | A required dependency is not on for this context (disabled, draft, archived, expired, or evaluates false) |
-| expired | Flag is `state: "archived"` or `metadata.expiresAt` is in the past (a schedule rule outside its window simply does not match) |
+| dependency_disabled | A required dependency is not on for this context (disabled, draft, archived, expired, or evaluates false). Serves the off value. |
+| expired | Flag is `state: "archived"` or `metadata.expiresAt` is in the past (a schedule rule outside its window simply does not match). Serves the off value. |
 
 ### evaluateFlag
 
@@ -505,12 +533,13 @@ provider.delete("new-ui");
 
 ### createEnvironmentProvider
 
-Reads `FEATURE_<KEY>` environment variables. Parses booleans, numbers, and strings automatically.
+Reads `FEATURE_<KEY>` environment variables. Parses booleans, numbers, and strings automatically, and sets both `defaultValue` and `enabled: true` from the variable, so `FEATURE_X=false` is how you switch it off. The key is the variable name with the prefix removed, lower-cased, and `_` turned into `-`: `FEATURE_TASK_EXPORT` becomes the flag `"task-export"`, the same key a memory or remote provider uses, so the variable overrides that flag in a composite. `get()` normalizes the key it is asked for the same way, so `"TASK_EXPORT"`, `"task_export"` and `"task-export"` all find the flag.
 
 ```ts
 interface EnvironmentProviderOptions {
   readonly prefix?: string;   // default: "FEATURE_"
   readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly keyFormat?: "kebab" | "preserve";  // default: "kebab"
 }
 
 function createEnvironmentProvider(
@@ -521,9 +550,12 @@ function createEnvironmentProvider(
 ```ts
 // FEATURE_DARK_MODE=true FEATURE_ROLLOUT_PERCENT=25
 const provider = createEnvironmentProvider();
-const flag = await provider.get("DARK_MODE");
-// flag: { key: "DARK_MODE", defaultValue: true, enabled: true } (prefix stripped, no case change)
+const flag = await provider.get("dark-mode");
+// flag: { key: "dark-mode", enabled: true, defaultValue: true }
+// get("DARK_MODE") finds the same flag; getAll() keys are "dark-mode", "rollout-percent"
 ```
+
+> **Changed in v1.4.0:** up to v1.3.x the key kept its case (`FEATURE_TASK_EXPORT` was the flag `"TASK_EXPORT"`), so an environment variable never overrode the `"task-export"` flag from another provider. Only the keys returned by `getAll()` and `snapshot()` change; lookups by the old spelling still work. Pass `keyFormat: "preserve"` to keep the old keys, which also turns off the lookup normalization.
 
 ### createCompositeProvider
 
@@ -815,7 +847,7 @@ import {
   createEnvironmentProvider,
   createCompositeProvider,
   createCachedProvider,
-  FeatureFlag,
+  type FeatureFlag,
 } from "@zudojs/feature-flags";
 
 // 1. Define flags
@@ -916,11 +948,11 @@ src/index.ts
 
 Dependencies
 
-@zudojs/errors (1.1.0)
+@zudojs/errors (1.3.0), @zudojs/types (1.2.0)
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/feature-flags` exports from its package root at v1.3.0 — **55** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/feature-flags` exports from its package root at v1.4.2 — **55** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 55 exports**
 

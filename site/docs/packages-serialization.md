@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/serialization — JSON serializ
 source: https://zudojs.oyinlola.site/docs/packages-serialization
 ---
 
-v1.1.0
+v1.2.1
 
 # @zudojs/serialization
 
@@ -44,7 +44,7 @@ Install the package. Its four Zudojs dependencies are pulled in for you.
 $ npm install @zudojs/serialization
 ```
 
-It depends on `@zudojs/constants` (tag names and limits), `@zudojs/errors` (the error classes it throws), `@zudojs/types` and `@zudojs/validation`, all at version 1.0.0.
+It depends on `@zudojs/constants` (tag names and limits), `@zudojs/errors` (the error classes it throws), `@zudojs/types` and `@zudojs/validation`.
 
 > These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest @zudojs release.
 
@@ -134,49 +134,81 @@ Six come built in, and a `JSONSerializer` created with no arguments already has 
 | BufferTransformer | "Buffer" | {"$type":"Buffer","$encoding":"base64","$value":"SGVsbG8="} |
 | ErrorTransformer | "Error" | {"$type":"Error","name":"TypeError","message":"wrong type"} |
 
-To handle a type of your own, build a `TransformerRegistry`, register what you need, and hand it to a `JSONSerializer`.
+To handle a type of your own, create a default `JSONSerializer` and call `registerTransformer` on it. The new transformer is added next to the six built-ins, so dates, maps, sets and the rest keep working.
 
 ```ts
-import {
-  JSONSerializer,
-  TransformerRegistry,
-  DateTransformer,
-} from "@zudojs/serialization";
+import { JSONSerializer, type TypeTransformer } from "@zudojs/serialization";
 
 class Money {
   constructor(public readonly cents: number) {}
 }
 
-const transformers = new TransformerRegistry();
-transformers.register(DateTransformer);
-transformers.register({
+const moneyTransformer: TypeTransformer<Money> = {
   type: "Money",
   canSerialize: (value): value is Money => value instanceof Money,
-  serialize: (value) => ({
-    $type: "Money",
-    $value: String((value as Money).cents),
-  }),
+  // Return just the value; it is wrapped as { $type: "Money", $value } for you.
+  serialize: (value) => String(value.cents),
+  // deserialize always receives the full tagged object.
   deserialize: (value) =>
     new Money(Number((value as { $value: string }).$value)),
+};
+
+const serializer = new JSONSerializer({ defaults: { preserveTypes: true } });
+serializer.registerTransformer(moneyTransformer);
+
+const json = serializer.serialize({
+  price: new Money(499),
+  placedAt: new Date("2026-01-15T10:30:00Z"),
 });
-
-const serializer = new JSONSerializer({ transformers });
-
-const json = serializer.serialize(
-  { price: new Money(499) },
-  { preserveTypes: true },
-);
 console.log(json);
-// {"price":{"$type":"Money","$value":"499"}}
+// {"price":{"$type":"Money","$value":"499"},
+//  "placedAt":{"$type":"Date","$value":"2026-01-15T10:30:00.000Z"}}
 
-const back = serializer.deserialize<{ price: Money }>(json, {
-  preserveTypes: true,
-});
-console.log(back.price instanceof Money, back.price.cents);
-// true 499
+const back = serializer.deserialize<{ price: Money; placedAt: Date }>(json);
+console.log(back.price instanceof Money, back.price.cents, back.placedAt instanceof Date);
+// true 499 true
 ```
 
-> **Watch out:** passing your own `transformers` registry *replaces* the built-in set. The example above registers `DateTransformer` deliberately; leave it out and dates in that serializer stop round-tripping. To keep the built-ins and add one more, call `serializer.registerTransformer(yourTransformer)` on a default `new JSONSerializer()` instead.
+Since v1.2.0 `serialize` may return just the value, as above, and the serializer wraps it as `{ $type, $value }`. Returning the full tagged object `{ $type: "Money", $value: … }` yourself, as the built-ins do, still works: any plain object with its own string `$type` is taken as-is. `deserialize` always receives the full tagged object, so read `$value` from it. (Before v1.2.0 a bare return was written untagged and read back as a plain string.)
+
+### Your own registry
+
+You can also pass a `TransformerRegistry` of your own, to `new JSONSerializer({ transformers })` or to `createSerializer("json", { transformers })`. Since v1.2.0 the built-in transformers stay behind it: your registry is consulted first (so it can override a built-in tag such as `"Date"`), and dates, maps, sets and the rest still work. Pass `builtins: false` to use only your registry; `createBuiltinTransformers()` returns a registry holding all six if you want to start from them.
+
+```ts
+import { createSerializer, TransformerRegistry, type TypeTransformer } from "@zudojs/serialization";
+
+class Money {
+  constructor(public readonly cents: number) {}
+}
+
+const money: TypeTransformer<Money> = {
+  type: "Money",
+  canSerialize: (value): value is Money => value instanceof Money,
+  serialize: (value) => value.cents,
+  deserialize: (value) => new Money((value as { $value: number }).$value),
+};
+
+const registry = new TransformerRegistry();
+registry.register(money);
+
+const withBuiltins = createSerializer("json", { transformers: registry, preserveTypes: true });
+console.log(withBuiltins.serialize({ price: new Money(499), tags: new Set(["sale"]) }));
+// {"price":{"$type":"Money","$value":499},"tags":{"$type":"Set","$value":["sale"]}}
+
+const onlyMine = createSerializer("json", { transformers: registry, builtins: false, preserveTypes: true });
+try {
+  onlyMine.serialize({ tags: new Set(["sale"]) });
+} catch (error) {
+  console.log((error as Error).name); // SerializeError
+  console.log((error as Error).message);
+  // Cannot serialize a Set with preserveTypes: no transformer is registered for it, and JSON
+  // would write it as {} and lose its contents. Register a transformer for Set, or keep the
+  // built-in transformers enabled (do not pass builtins: false).
+}
+```
+
+> **Nothing is silently flattened to `{}` any more:** with `preserveTypes`, a value no transformer handles that JSON would write as `{}` (a `Map`, `Set`, `WeakMap`, `WeakSet`, `WeakRef`, `Promise`, `RegExp`, `Error`, `ArrayBuffer` or `DataView`) throws `SerializeError` naming the type. With the built-ins enabled that only happens for types that have no built-in transformer, such as `RegExp`. The message names the type with the right article (“an Error”, “an ArrayBuffer”), and suggests keeping the built-ins on only when they are off and one of them would handle the type; otherwise it tells you to register a transformer (since 1.2.1; 1.2.0 said “a Error” and suggested the built-ins even when they were on). Two things are unchanged: with `builtins: false` a `Date` is still written by `JSON.stringify` as an ISO string (and reads back as a string), and the fast path without `preserveTypes` is plain `JSON.stringify`, which still writes a `Map` as `{}`.
 
 ## ENVELOPES
 
@@ -233,7 +265,7 @@ console.log(unwrapEnvelope(envelope, "json")); // {"order":123}
 console.log(contentTypeForFormat("messagepack")); // application/msgpack
 ```
 
-> **Watch out:** the envelope helpers need a serializer whose `serialize` returns a `string`, which is what `new JSONSerializer()` gives you. `createSerializer("json")` is typed more loosely (`string | Uint8Array`) and TypeScript will reject it here.
+> The envelope helpers need a serializer whose `serialize` returns a `string`. Both `new JSONSerializer()` and `createSerializer("json")` are typed that way, so either works here.
 
 ## SERIALIZER REGISTRY
 
@@ -329,7 +361,17 @@ serializer.serialize(
 );
 ```
 
-> A stack that arrives from the wire is attached to the rebuilt error as a hidden `originalStack` property rather than replacing the real `stack`, so a reconstructed error never lies about where it came from.
+On the way back in, a built-in error class is rebuilt with its own constructor: `TypeError`, `RangeError`, `SyntaxError`, `ReferenceError`, `EvalError`, `URIError` and `AggregateError`, so `instanceof` holds. Any other name, such as your own `MyError`, comes back as an `Error` with `name` set. The rebuilt error's `stack` is only its header line:
+
+```ts
+const wire = serializer.serialize({ failure: new TypeError("bad input") }, { preserveTypes: true });
+const { failure } = serializer.deserialize<{ failure: Error }>(wire, { preserveTypes: true });
+
+console.log(failure instanceof TypeError); // true
+console.log(failure.stack);                // "TypeError: bad input" — no frames
+```
+
+> A stack that arrives from the wire (sent with `includeStack: true`) is attached to the rebuilt error as a hidden `originalStack` property rather than replacing the real `stack`, so a reconstructed error never lies about where it came from. **Changed in 1.2.1:** a rebuilt error used to be a plain `Error` (so `instanceof TypeError` was `false`), and its `stack` carried the deserializer's own frames, which looked like the original stack. Now the class is right and `stack` is the header line only.
 
 > **Watch out:** the fast path (no `preserveTypes`) is plain `JSON.parse`. There, `__proto__` survives as an inert own property and still never reaches the prototype — but do not spread or deep-merge such an object into another without screening its keys.
 
@@ -409,7 +451,8 @@ Everything below is exported from `@zudojs/serialization`.
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| createSerializer(format, options?) | Creates a serializer for a format. | Only `"json"` is supported. Options: `transformers`, plus every serialize/deserialize option (`pretty`, `preserveTypes`, `maxSize`, `maxDepth`, `strict`, …) — kept as per-instance defaults. |
+| createSerializer(format, options?) | Creates a serializer for a format. | Only `"json"` is supported. Options: `transformers` (consulted before the built-ins), `builtins` (default `true`), plus every serialize/deserialize option (`pretty`, `preserveTypes`, `maxSize`, `maxDepth`, `strict`, …) — kept as per-instance defaults. |
+| createBuiltinTransformers() | Returns a new `TransformerRegistry` holding the six built-in transformers. | New in v1.2.0. A starting point for a registry you pass with `builtins: false`. |
 | createDefaultRegistry() | Returns a registry holding the built-in JSON serializer. | Size 1, name `"json"`. |
 | createEnvelope(data, format?, options?) | Wraps already-serialized data with metadata. | Format defaults to `"json"`; version, contentType and encoding are filled in for you. |
 | unwrapEnvelope(envelope, expectedFormat?) | Validates an envelope and returns its payload. | Throws on a malformed envelope, a newer schema version, or a format mismatch. |
@@ -424,7 +467,7 @@ Everything below is exported from `@zudojs/serialization`.
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| JSONSerializer | The JSON serializer. `serialize`, `deserialize`, `registerTransformer`, plus `name` and `contentType`. | Constructor takes `{ transformers?, defaults? }`. With no arguments it registers all six built-in transformers. |
+| JSONSerializer | The JSON serializer. `serialize`, `deserialize`, `registerTransformer`, plus `name` and `contentType`. | Constructor takes `JSONSerializerOptions`: `{ transformers?, builtins?, defaults? }`. Your `transformers` are consulted first and the built-ins stay behind them unless `builtins: false`. With no arguments it registers all six built-in transformers. |
 | SerializerRegistry | Name → serializer lookup. `register`, `unregister`, `get`, `has`, `names`, `clear`, `size`. | Keyed by the serializer's own `name`. `get` throws when the name is unknown. |
 | TransformerRegistry | Tag → transformer lookup. `register`, `unregister`, `get`, `findForValue`, `has`, `types`, `clear`, `size`. | Holds at most 256 transformers; `register` throws beyond that. |
 
@@ -437,14 +480,13 @@ Everything below is exported from `@zudojs/serialization`.
 | Name | What it does | Notes |
 | --- | --- | --- |
 | Serializer<TValue, TSerialized> | The contract every serializer satisfies. | `name`, `contentType`, `serialize`, `deserialize`. |
-| AsyncSerializer<TValue, TSerialized> | The same contract with promise-returning methods. | A type only — this package ships no async implementation. |
 | SerializeOptions | Options for `serialize`. | `pretty`, `preserveTypes`, `maxDepth`, `maxSize`, `indent`, `includeStack`, `allowUnsafeKeys`. |
 | DeserializeOptions | Options for `deserialize`. | `preserveTypes`, `maxDepth`, `maxSize`, `strict`, `allowUnsafeKeys`. |
-| TypeTransformer<TValue> | The contract a custom transformer implements. | `type`, `canSerialize`, `serialize(value, options?)`, `deserialize(value, options?)`. |
+| JSONSerializerOptions | Constructor options for `JSONSerializer`. | `transformers`, `builtins`, `defaults`. Exported since v1.2.0. |
+| TypeTransformer<TValue> | The contract a custom transformer implements. | `type`, `canSerialize`, `serialize(value, options?)` (return the bare value or the full tagged object), `deserialize(value, options?)` (always receives the full tagged object). |
 | SerializedEnvelope | An envelope: `{ metadata, data }`. | Paired with `SerializationMetadata` (`format`, `version`, `contentType`, `encoding`). |
 | SerializedValue | `string \| Uint8Array`. | What a serializer may produce. |
 | SerializationFormat | Format identifier. | `"json" \| "text" \| "binary" \| "messagepack" \| string`. |
-| UndefinedStrategy | `"omit" \| "null" \| "preserve"`. | A type only; the JSON serializer does not read it yet. |
 
 ### Errors
 
@@ -459,18 +501,17 @@ These are thrown by this package but **defined and exported by [@zudojs/errors](
 | SerializationDepthError | Nesting exceeds `maxDepth`. | A `SerializationError`. |
 | InvalidSerializedDataError | Input that is not valid JSON, or an unknown or malformed tag under `strict`. | A `SerializationError`. |
 | TransformerError | A transformer rejects a tag under `strict`, or a transformer claims the reserved `"Object"` tag. | A `SerializationError`. |
-| SerializeError | A value cannot be written, such as an invalid `Date` or an oversized BigInt. | A `SerializationError`. |
+| SerializeError | A value cannot be written, such as an invalid `Date`, an oversized BigInt, or (with `preserveTypes`) a `Map`, `Set`, `RegExp`, `Promise` or similar that no transformer handles and JSON would write as `{}` | A `SerializationError`. |
 
-Circular references are reported by the `@zudojs/validation` guard (`CircularReferenceError`). Envelope problems and a full transformer registry are still plain `Error`s with a descriptive message.
+Circular references are reported by the `@zudojs/validation` guard (`CircularReferenceError`). Envelope problems (a malformed envelope, a format mismatch, a newer schema version) throw `InvalidSerializedDataError`; registering a 257th transformer throws `TransformerError`.
 
 ## COMMON MISTAKES
 
 - **Serializing with `preserveTypes` but deserializing without it.** You get back the raw tagged objects — `{ $type: "Date", $value: "2026-01-15T10:30:00.000Z" }` instead of a `Date`. Fix: set the option on both calls, or set it once via `createSerializer("json", { preserveTypes: true })`.
 - **Sending a `BigInt` down the fast path.** `JSON.stringify` throws *"Do not know how to serialize a BigInt"*. Fix: turn on `preserveTypes`.
-- **Passing your own `TransformerRegistry` and losing the built-ins.** Dates silently stop round-tripping. Fix: register the built-in transformers you still need, or call `registerTransformer` on a default `new JSONSerializer()`.
+- **Passing `builtins: false` and then serializing a `Map`.** Under `preserveTypes` it throws `SerializeError`, and a `Date` quietly becomes a string. Fix: leave the built-ins on (the default) and let your registry override only the tags you need.
 - **Importing `SerializerNotFoundError` from `@zudojs/serialization`.** The import fails — the class is not re-exported here. Fix: `import { SerializerNotFoundError } from "@zudojs/errors";`
-- **Handing `createSerializer("json")` to `serializeToEnvelope`.** TypeScript rejects it, because the envelope helpers need a `serialize` that returns a `string`. Fix: use `new JSONSerializer()` and pass its options through `defaults`.
-- **Expecting a stack trace on a deserialized error.** Stacks are left out by default and a wire-supplied one lands on `originalStack`. Fix: pass `includeStack: true` when serializing, and read `originalStack` on the other side.
+- **Expecting a stack trace on a deserialized error.** Stacks are left out by default, a rebuilt error's own `stack` is only its header line, and a wire-supplied one lands on `originalStack`. Fix: pass `includeStack: true` when serializing, and read `originalStack` on the other side.
 
 ## RELATED PACKAGES
 
@@ -482,21 +523,21 @@ Circular references are reported by the `@zudojs/validation` guard (`CircularRef
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/serialization` exports from its package root at v1.1.1 — **31** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/serialization` exports from its package root at v1.2.3 — **33** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 31 exports**
+**Show all 33 exports**
 
 Classes (3)
 
 `JSONSerializer` `SerializerRegistry` `TransformerRegistry`
 
-Functions (12)
+Functions (13)
 
-`assertValidEnvelope` `contentTypeForFormat` `createDefaultRegistry` `createEnvelope` `createSerializer` `decodeUtf8` `deserializeFromEnvelope` `encodeUtf8` `fromBase64` `serializeToEnvelope` `toBase64` `unwrapEnvelope`
+`assertValidEnvelope` `contentTypeForFormat` `createBuiltinTransformers` `createDefaultRegistry` `createEnvelope` `createSerializer` `decodeUtf8` `deserializeFromEnvelope` `encodeUtf8` `fromBase64` `serializeToEnvelope` `toBase64` `unwrapEnvelope`
 
-Interfaces (7)
+Interfaces (8)
 
-`CreateSerializerOptions` `DeserializeOptions` `SerializationMetadata` `SerializedEnvelope` `SerializeOptions` `Serializer` `TypeTransformer`
+`CreateSerializerOptions` `DeserializeOptions` `JSONSerializerOptions` `SerializationMetadata` `SerializedEnvelope` `SerializeOptions` `Serializer` `TypeTransformer`
 
 Type aliases (2)
 

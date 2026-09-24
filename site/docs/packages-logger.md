@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/logger — structured logging w
 source: https://zudojs.oyinlola.site/docs/packages-logger
 ---
 
-v1.3.0
+v1.4.0
 
 # @zudojs/logger
 
@@ -61,7 +61,7 @@ LOGGER (@zudojs/logger)
 
 | Package | Version | Purpose |
 | --- | --- | --- |
-| @zudojs/errors | 1.1.0 | Error hierarchy (LoggingError, LoggerTransportError, LoggerFormatterError, etc.) |
+| @zudojs/errors | Same release (`workspace:*`) | Error hierarchy (LoggingError, LoggerTransportError, LoggerFormatterError, etc.) |
 | Dev dependencies: typescript 7.x, vitest |  |  |
 
 > **Internal dependencies:** Packages depend on each other with `workspace:*`, always — including on `main`. They are never hand-pinned to an exact version. At publish time `pnpm` rewrites each `workspace:*` to the exact version of that package in the same release, so a published tarball carries real ranges. Releases go out through `publish-all.sh`, which runs `pnpm -r publish` — it rewrites the ranges and publishes in dependency order. Plain `npm publish` does not understand the `workspace:` protocol and would ship a literal `workspace:*` to the registry.
@@ -90,17 +90,51 @@ type LoggerLevelName =
   "fatal" | "error" | "warn" | "info" | "debug" | "trace";
 ```
 
+### Type: LoggerLevelLike
+
+Wherever you configure a level (`createLogger({ level })`, `setLevel()`, `child({ level })`), you can pass the enum value or its name in any case. `"warning"` and `"information"` also work, as aliases of `"warn"` and `"info"`.
+
+```ts
+type LoggerLevelLike =
+  LoggerLevel | LoggerLevelName | Uppercase<LoggerLevelName>;
+```
+
 ### Utility Functions
 
 | Function | Signature | Returns |
 | --- | --- | --- |
 | loggerLevelToName | (level: LoggerLevel) => LoggerLevelName | Converts numeric level to canonical string name |
 | loggerLevelFromName | (name: string) => LoggerLevel | Converts string name to enum value (accepts "warning", "information") |
+| resolveLoggerLevel | (level: LoggerLevelLike) => LoggerLevel | Turns an enum value or a name in any case into the enum value; throws `InvalidLoggerLevelError` for anything else |
 | shouldLog | (threshold, messageLevel) => boolean | True if message should be emitted at the given threshold |
 | getLoggerLevels | () => readonly LoggerLevel[] | Returns all six canonical levels |
 | getLoggerLevelNames | () => readonly LoggerLevelName[] | Returns all six canonical level names |
 
 > **Threshold Behavior:** A logger set to `LoggerLevel.WARN` (2) emits FATAL (0), ERROR (1), and WARN (2). It suppresses INFO (3), DEBUG (4), and TRACE (5).
+
+### Setting a level by name
+
+Levels often come from an environment variable such as `LOG_LEVEL=debug`, so a name is accepted anywhere a level is. The logger stores the enum value, which is why `logger.level` prints a number.
+
+```ts
+import { createLogger, resolveLoggerLevel } from "@zudojs/logger";
+
+const logger = createLogger({ name: "svc", level: "error" });
+console.log(logger.level);          // 1  (LoggerLevel.ERROR)
+
+logger.setLevel("DEBUG");
+console.log(logger.level);          // 4
+
+const child = logger.child({ level: "trace" });
+console.log(child.level);           // 5
+
+console.log(resolveLoggerLevel("Warn")); // 2
+
+createLogger({ level: "verbose" });
+// throws InvalidLoggerLevelError: Invalid logger level: verbose.
+```
+
+> **Changed in 1.4.0:** names are accepted in any case, and an unknown level now throws instead of quietly switching output off. `createLogger()` and `child()` throw `InvalidLoggerLevelError`; `setLevel()` throws `LoggerConfigurationError`. A typo such as `LOG_LEVEL=verbose` now fails at startup rather than leaving you with an empty log.
 
 ## LOGGER INTERFACE
 
@@ -123,10 +157,10 @@ interface Logger {
 
   log(level: LoggerLevel, message: string, options?: LogOptions): void;
 
-  child(options?: ChildLoggerOptions): Logger;
+  child(options?: ChildLoggerOptionsInput): Logger;
   withContext(context: LoggerContext): Logger;
 
-  setLevel(level: LoggerLevel): void;
+  setLevel(level: LoggerLevelLike): void;
   enable(): void;
   disable(): void;
 
@@ -139,11 +173,11 @@ interface Logger {
 
 | Method | Description |
 | --- | --- |
-| fatal / error / warn / info / debug / trace | Log at the corresponding severity level with optional metadata |
-| log(level, message, options?) | Dynamic level logging with extended options (error, source, context) |
-| child(options?) | Creates a child logger inheriting configuration and merging metadata |
+| fatal / error / warn / info / debug / trace | Log at the corresponding severity level with optional metadata. To log a caught `Error` with its stack, see [Logging errors](#logging-errors) |
+| log(level, message, options?) | Dynamic level logging with extended options (`error`, `metadata`, `source`, `context`). The typed way to log an `Error` together with metadata |
+| child(options?) | Creates a child logger inheriting configuration and merging metadata; its `level` may also be a name |
 | withContext(context) | Returns a scoped logger that injects context into every entry |
-| setLevel(level) | Changes the log level threshold at runtime |
+| setLevel(level) | Changes the log level threshold at runtime. Takes `LoggerLevel.DEBUG` or a name such as `"debug"` / `"DEBUG"` |
 | enable() / disable() | Toggle the logger on/off without destroying it |
 | flush() | Waits for all in-flight writes (including child loggers') and flushes every transport; one failing transport does not stop the others |
 | close() | Flushes and releases all transport resources |
@@ -161,11 +195,11 @@ function createLogger(options?: LoggerOptions): Logger
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | name | string | "zudojs" | Logger identifier in log entries |
-| level | LoggerLevel | INFO (3) | Minimum severity threshold |
+| level | LoggerLevelLike | INFO (3) | Minimum severity threshold: `LoggerLevel.WARN`, or a name in any case such as `"warn"`. An unknown value throws |
 | environment | string | undefined | Environment name (development, production, etc.) |
 | metadata | LoggerContextData | {} | Default metadata merged into every entry |
 | formatter | LoggerFormatterLike | "text" | Formatter for converting entries to output |
-| transports | LoggerTransportLike[] | [] | Destinations for formatted log entries |
+| transports | LoggerTransportLike[] | [] (writes to the console) | Destinations for formatted log entries. An empty or missing list does not silence the logger: it writes through a console transport. To discard output, pass a transport that does nothing, or call `disable()` |
 | enabled | boolean | true | Whether the logger starts enabled |
 | throwTransportErrors | boolean | false | Whether to throw on transport failures; failures from asynchronous transports are rethrown by the next `flush()`/`close()` |
 | asynchronous | boolean | false | Enable async transport dispatch |
@@ -199,6 +233,72 @@ logger.debug("Config loaded", { configPath: "./config.json" });
 logger.error("Connection failed", { host: "localhost", retryCount: 3 });
 ```
 
+With no `transports` the logger writes to the console, one formatted line per call, using the default text formatter:
+
+```ts
+2026-09-23T10:15:02.114Z [INFO] [my-app] Application started port=3000
+2026-09-23T10:15:02.116Z [DEBUG] [my-app] Config loaded configPath=./config.json
+2026-09-23T10:15:02.117Z [ERROR] [my-app] Connection failed host=localhost retryCount=3
+```
+
+## LOGGING ERRORS
+
+When something throws, you usually want two things in the log: the error itself, with its *stack trace* (the list of function calls that led to it), and a few facts about what you were doing, such as an order id. The level methods take a message and a metadata object, so the typed way to send both is `logger.log(level, message, { error, metadata })`.
+
+```ts
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+
+const logger = createLogger({ name: "payments" });
+
+try {
+  throw new Error("card declined");
+} catch (err) {
+  logger.log(LoggerLevel.ERROR, "payment failed", {
+    error: err instanceof Error ? err : new Error(String(err)),
+    metadata: { orderId: "o_42" },
+  });
+}
+```
+
+What you should see: the formatted line, then the stack on the lines below it (the file's directory is shortened to `…` here; yours shows the full path).
+
+```ts
+2026-09-23T16:09:17.251Z [ERROR] [payments] payment failed orderId=o_42
+Error: card declined
+    at file:///…/pay.mjs:6:9
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at async node:internal/modules/esm/loader:643:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+```
+
+The level methods keep a single signature, `logger.error(message, metadata?)`, so every custom `Logger` implementation and every structural logger type (`{ warn(message, context?) }`) still matches. JavaScript, or loosely typed TypeScript, often passes the caught error straight in as the second argument: `logger.error("payment failed", err)`. Since 1.4.0 that call logs `err` as the entry's `error`, stack included, exactly like the `log()` call above (minus the metadata). It used to be read as metadata, and because an `Error` has no enumerable fields it vanished from the log without a trace.
+
+> **Tip:** in TypeScript, prefer `log(LoggerLevel.ERROR, ..., { error, metadata })`. It type-checks, and it keeps the error and your metadata in one entry. Putting the error inside metadata (`{ err }`) also works, but then it is serialized as a metadata field (`{ name, message, stack }`) rather than recorded as the entry's `error`.
+
+### Hiding stack traces
+
+Stack frames contain absolute file paths from the machine the code runs on, which you may not want in logs that leave the server. Build the text formatter with `includeStackTrace: false` and every error is printed as its name and message only: the entry's own error, and any `Error` you put inside metadata.
+
+```ts
+import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "payments",
+  formatter: createTextLoggerFormatter({ includeStackTrace: false }),
+});
+
+const err = new Error("card declined");
+logger.error("payment failed", err);
+logger.info("retrying", { cause: err });
+```
+
+```ts
+2026-09-23T16:08:29.975Z [ERROR] [payments] payment failed error={"name":"Error","message":"card declined"}
+2026-09-23T16:08:29.975Z [INFO] [payments] retrying cause={"name":"Error","message":"card declined"}
+```
+
+**Changed in 1.4.0:** the option used to drop only the stack printed under the line; the fallback still wrote the stack, paths included, and an `Error` in metadata always carried its `stack`. With the default (`true`) nothing changes: the stack follows the line, and a metadata error prints as `{"name":…,"message":…,"stack":…}`.
+
 ## CHILD LOGGERS
 
 Child loggers inherit parent configuration (transports, formatter, level) and merge metadata. Every entry from a child logger includes both parent and child metadata.
@@ -211,7 +311,14 @@ interface ChildLoggerOptions {
   readonly metadata?: LoggerContextData;
   readonly level?: LoggerLevel;
 }
+
+// What logger.child() accepts: the same, but level may be a name
+interface ChildLoggerOptionsInput extends Omit<ChildLoggerOptions, "level"> {
+  readonly level?: LoggerLevelLike;
+}
 ```
+
+`ChildLoggerOptions` keeps the enum, so a custom `Logger` implementation written against it still compiles. Such an implementation may now be handed a name like `"debug"`; pass `options.level` through `resolveLoggerLevel()` to convert it.
 
 ### Example: Child Loggers
 
@@ -245,7 +352,7 @@ scoped.info("Fetching user");
 
 ## LOG CONTEXT
 
-Context propagates correlation identifiers and metadata through the log pipeline. Use `AsyncLocalStorage`-compatible storage to propagate context across async boundaries.
+A *context* is a set of correlation identifiers (request id, trace id, user id…) plus metadata that you want on every entry while handling one piece of work. Build one with `createLoggerContext` and attach it with `logger.withContext(context)`, which returns a scoped logger; every entry that logger writes carries the context.
 
 ### Interface: LoggerContext
 
@@ -282,15 +389,22 @@ interface LoggerContextData {
 }
 ```
 
-### Interface: LoggerContextStorage
+### Interface: LoggerContextOptions
 
 ```ts
-interface LoggerContextStorage {
-  get(): LoggerContext | undefined;
-  set(context: LoggerContext): void;
-  run<T>(context: LoggerContext, callback: () => T): T;
-  with<T>(context: LoggerContext, callback: () => T): T;
-  clear(): void;
+interface LoggerContextOptions {
+  readonly parent?: LoggerContext;       // start from another context's identifiers and metadata
+  readonly correlationId?: string;
+  readonly requestId?: string;
+  readonly traceId?: string;
+  readonly spanId?: string;
+  readonly userId?: string;
+  readonly tenantId?: string;
+  readonly sessionId?: string;
+  readonly jobId?: string;
+  readonly moduleId?: string;
+  readonly operationId?: string;
+  readonly metadata?: LoggerContextData;
 }
 ```
 
@@ -298,12 +412,21 @@ interface LoggerContextStorage {
 
 | Function | Description |
 | --- | --- |
-| createLoggerContext(options?) | Creates a frozen LoggerContext from identifiers and metadata |
+| createLoggerContext(options?) | Creates a frozen `LoggerContext` from `LoggerContextOptions`; `parent` values are inherited and overridden |
 | mergeLoggerContexts(base, override) | Merges two contexts (override identifiers and metadata win) |
-| withLoggerContext(context, metadata) | Extends a context with additional metadata |
-| withLoggerIdentifiers(context, identifiers) | Extends a context with additional identifiers |
-| createLoggerContextStorage() | Creates a stack-based context storage for propagation |
+| withLoggerContext(logger, context, callback) | Calls `callback(scoped)` with `logger.withContext(context)` and returns its result |
 | isLoggerContext(value) | Type guard checking for identifiers and metadata properties |
+
+```ts
+import { createLogger, createLoggerContext, withLoggerContext } from "@zudojs/logger";
+
+const logger = createLogger({ name: "api" });
+const context = createLoggerContext({ requestId: "req_1", userId: "u_7" });
+
+withLoggerContext(logger, context, (scoped) => {
+  scoped.info("Fetching orders"); // carries requestId and userId
+});
+```
 
 ## LOG ENTRY
 
@@ -316,7 +439,8 @@ interface LoggerEntry {
   readonly id: string;
   readonly level: LoggerLevel;
   readonly levelName: LoggerLevelName;
-  readonly message: string;
+  readonly message: string;     // the raw message, as logged
+  readonly formatted?: string;  // the formatter's line (set on entries sent to transports)
   readonly metadata: LogMetadata;
   readonly context?: LoggerEntryContext;
   readonly source?: LoggerSource;
@@ -369,7 +493,7 @@ Metadata and context go through two passes. **Redaction** runs when the entry is
 | Set | An array of its members | redaction |
 | bigint | Its decimal string | serialization |
 | Date | An ISO-8601 string | serialization |
-| Error | { name, message, stack } | serialization |
+| Error | { name, message, stack }; without `stack` when the text formatter has `includeStackTrace: false` | serialization |
 | function | "[Function name]", or "[Function anonymous]" | serialization |
 | symbol | "Symbol(description)" | serialization |
 | A secret-named field | "[REDACTED]" (`LOGGER_REDACTION_TOKEN`) | redaction |
@@ -398,6 +522,8 @@ logger.info("Request", {
 // Before 1.3.0 both were {}.
 ```
 
+If you write your own formatter, the same serializers are exported. Both take an optional flag to leave stacks out: `serializeLoggerError(error, false)` returns `{ name, message }`, and `serializeLoggerValue(value, undefined, false)` strips the stack from every `Error` it finds inside `value`.
+
 ### Creating Entries
 
 ```ts
@@ -417,7 +543,7 @@ const entry = createLoggerEntry({
 
 ## FORMATTERS
 
-Formatters convert a `LoggerEntry` into output — either a string or a structured object. A transport always receives a `LoggerEntry`; the formatter's return value decides what is in it.
+Formatters convert a `LoggerEntry` into output — either a string or a structured object. A transport always receives a `LoggerEntry`; the formatter's result travels with it in `entry.formatted`, while `entry.message` stays the message you logged.
 
 ### Interface: LoggerFormatter
 
@@ -456,17 +582,19 @@ interface LoggerFormatterContext {
 | createCompactLoggerFormatter() | string | Minimal output: LEVEL logger: message |
 | createDevelopmentLoggerFormatter() | string | Full details: timestamp, logger, message, context, source, stack |
 | createProductionLoggerFormatter() | string | JSON output (alias for JSON formatter) |
-| createStructuredLoggerFormatter() | Record | Returns the serialized entry as an object, merged over the entry the transport receives |
+| createStructuredLoggerFormatter() | Record | Returns the serialized entry as an object, merged over the entry the transport receives; the console transport prints it as one JSON line |
 
 ### Formatter Output
 
 | The formatter returns | What the transport receives |
 | --- | --- |
-| a string | The entry with `message` replaced by the formatted string |
-| a plain object | The entry with the returned fields merged over it; same-named fields win |
+| a string | The entry, with that string in `formatted`. `message` is unchanged |
+| a plain object | The entry with the returned fields merged over it (same-named fields win), and `formatted` set to the object as one JSON line |
 | anything else (array, null, a primitive) | The entry, unchanged |
 
-> **Changed in 1.3.0:** an object return used to be computed and then discarded — the transport got the untouched entry, so `createStructuredLoggerFormatter()` and any hand-written object formatter had no visible effect at all. Object returns now reach the transport. String formatters are unchanged.
+> **Changed in 1.3.0:** an object return used to be computed and then discarded — the transport got the untouched entry, so `createStructuredLoggerFormatter()` and any hand-written object formatter had no visible effect at all. Object returns now reach the transport.
+
+> **Changed in 1.4.0:** a string formatter's output used to *replace* `entry.message`, so a transport could no longer see the message you logged. `message` is now always the raw message and the formatted line is in the new `entry.formatted`. If your custom transport printed `entry.message` to get the formatted line, print `entry.formatted ?? entry.message` instead, or call `formatTransportLine(entry)` (see [Writing a transport](#custom-transports)).
 
 ```ts
 import { createLogger, createStructuredLoggerFormatter } from "@zudojs/logger";
@@ -504,7 +632,7 @@ interface TextLoggerFormatterOptions {
   readonly includeMetadata?: boolean;
   readonly includeContext?: boolean;
   readonly includeSource?: boolean;
-  readonly includeStackTrace?: boolean;
+  readonly includeStackTrace?: boolean;   // default true; false hides every stack, metadata errors included
   readonly metadataSeparator?: string;
 }
 ```
@@ -536,10 +664,62 @@ type LoggerTransportLike = LoggerTransport | LoggerTransportFunction;
 
 | Function | Description |
 | --- | --- |
-| createConsoleLoggerTransport() | Writes to console.error / console.warn / console.info / console.debug based on level |
+| createConsoleLoggerTransport() | Writes to console.error / console.warn / console.info / console.debug based on level, one line per entry: `entry.formatted` (the text line, or the JSON line of a structured record), or the whole entry as one JSON line when there is none |
 | createConditionalLoggerTransport(transport, predicate) | Forwards entries only when the predicate returns true. Forwards `flush()`/`close()` to the wrapped transport. |
 | createMultiLoggerTransport(transports) | Fans out entries to every transport (a failing sink does not stop the others; failures are rethrown afterwards). Forwards `flush()`/`close()`. |
 | createBufferedLoggerTransport(transport, options?) | Batches entries in memory and flushes by size or interval; each entry is written independently and a timer-flush failure is rethrown by the next `flush()`/`close()` |
+
+### Console Output
+
+With the default text formatter the console transport prints one line per entry: timestamp, level, logger name, message, then the metadata as `key=value` pairs. When the entry carries an error and the formatter includes stack traces, the stack follows on the next lines, with no trailing space left on the first line.
+
+```ts
+import { createLogger, createConsoleLoggerTransport } from "@zudojs/logger";
+
+const logger = createLogger({ name: "svc", transports: [createConsoleLoggerTransport()] });
+logger.warn("careful", { userId: "u1" });
+// 2026-09-23T10:15:02.114Z [WARN] [svc] careful userId=u1
+```
+
+With `createStructuredLoggerFormatter()` each entry is one line of JSON, which is what log collectors expect. Values JSON cannot hold are made safe: a cycle becomes `"[Circular]"` and a `bigint` becomes a string.
+
+```ts
+import { createLogger, createStructuredLoggerFormatter } from "@zudojs/logger";
+
+const logger = createLogger({ name: "api", formatter: createStructuredLoggerFormatter() });
+logger.info("Request handled", { route: "/users", ms: 12 });
+```
+
+```json
+{"id":"log:23469222-ab02-4629-af8e-e4ea0243dd63","level":3,"levelName":"info","message":"Request handled","metadata":{"route":"/users","ms":12},"logger":"api","timestamp":"2026-09-23T16:08:29.973Z","timestampMs":1790179709973}
+```
+
+> **Changed in 1.4.0:** the console transport used to print a record object around the formatted text, so the timestamp and level appeared twice on every line, and a structured record was spread over several lines. It now prints the formatted line on its own, and a structured record as a single JSON line.
+
+### Writing a transport
+
+A transport can be a plain function. It receives the entry: `entry.message` is the message as you logged it, and `entry.formatted` is the line the logger's formatter produced. A transport that writes lines (a file, a socket, a stream) should print `formatTransportLine(entry)`, which returns `entry.formatted` when it is set and otherwise the entry as one JSON line.
+
+```ts
+import { createLogger, formatTransportLine } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "api",
+  transports: [
+    (entry) => {
+      console.log(entry.message);
+      console.log(formatTransportLine(entry));
+    },
+  ],
+});
+
+logger.info("Request handled", { route: "/users", ms: 12 });
+```
+
+```ts
+Request handled
+2026-09-23T16:08:29.967Z [INFO] [api] Request handled route=/users ms=12
+```
 
 ### Transport Helpers
 
@@ -548,6 +728,8 @@ type LoggerTransportLike = LoggerTransport | LoggerTransportFunction;
 | createLoggerTransport(transport, options?) | Wraps a transport or function into a RegisteredLoggerTransport |
 | enableLoggerTransport(transport) | Returns a new registered transport with enabled=true |
 | disableLoggerTransport(transport) | Returns a new registered transport with enabled=false |
+| formatTransportLine(entry) | The line a line-oriented transport should print: `entry.formatted`, or the entry as one JSON line when there is none. The console transport uses it |
+| toJsonLogLine(record) | Serializes any value to a single JSON line: cycles become `"[Circular]"`, a `bigint` a string, and U+2028/U+2029 are escaped |
 
 ### Buffered Transport Options
 
@@ -732,6 +914,7 @@ import {
   createConditionalLoggerTransport,
   createJsonLoggerFormatter,
   createDevelopmentLoggerFormatter,
+  formatTransportLine,
   LoggerLevel,
 } from "@zudojs/logger";
 
@@ -740,7 +923,7 @@ const consoleTransport = createConsoleLoggerTransport();
 
 const fileTransport = createBufferedLoggerTransport(
   async (entry) => {
-    await appendToFile("app.log", entry);
+    await appendToFile("app.log", formatTransportLine(entry) + "\n");
   },
   { name: "file", maxSize: 50, flushInterval: 5000 },
 );
@@ -806,25 +989,25 @@ process.on("SIGTERM", async () => {
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/logger` exports from its package root at v1.3.0 — **147** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/logger` exports from its package root at v1.4.3 — **153** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 147 exports**
+**Show all 153 exports**
 
 Classes (15)
 
 `ContextLogger` `InvalidLoggerEntryError` `InvalidLoggerLevelError` `LoggerConfigurationError` `LoggerDisposedError` `LoggerError` `LoggerFactory` `LoggerFormatterError` `LoggerFormatterNotFoundError` `LoggerManager` `LoggerTimeoutError` `LoggerTransportClosedError` `LoggerTransportError` `LoggerTransportNotFoundError` `ZudojsLogger`
 
-Functions (93)
+Functions (97)
 
-`assertActive` `assertMutable` `childLogger` `closeLogger` `closeLoggerTransport` `createBufferedLoggerTransport` `createChildLogger` `createChildLoggerOptions` `createCompactLoggerFormatter` `createConditionalLoggerTransport` `createConsoleLoggerTransport` `createDefaultLogger` `createDefaultSecretFieldMatcher` `createDevelopmentLoggerFormatter` `createEntry` `createErrorLoggerEntry` `createFactoryLogger` `createJsonLoggerFormatter` `createLogger` `createLoggerContext` `createLoggerEntry` `createLoggerEntryId` `createLoggerFactory` `createLoggerFormatter` `createLoggerFormatterError` `createLoggerFormatterId` `createLoggerManager` `createLoggerManagerFromLogger` `createLoggerTransport` `createLoggerTransportError` `createLoggerTransportId` `createLogMethods` `createManagedDefaultLogger` `createMultiLoggerTransport` `createProductionLoggerFormatter` `createSecretMatcher` `createStructuredLoggerFormatter` `createTextLoggerFormatter` `disableLogger` `disableLoggerTransport` `dispatchEntry` `dispatchEntrySync` `enableLogger` `enableLoggerTransport` `escapeLogText` `flushLogger` `flushLoggerTransport` `formatLoggerEntry` `getFactoryLogger` `getLoggerEnabled` `getLoggerErrorCause` `getLoggerLevel` `getLoggerLevelNames` `getLoggerLevels` `getLoggerName` `handleInfrastructureError` `hasLogControlCharacters` `initializeLoggerManager` `isLoggerContext` `isLoggerError` `isLoggerFormatter` `isLoggerFormatterFunction` `isLoggerFormatterObject` `isLoggerLevel` `isLoggerLevelName` `isLoggerTransport` `isLoggerTransportFunction` `isLoggerTransportObject` `logAtLevel` `logError` `loggerLevelFromName` `loggerLevelNameFallback` `loggerLevelToName` `mergeLoggerContexts` `mergeLoggerOptions` `normalizeConfiguration` `normalizeLogMetadata` `redactLogValue` `resolveLoggerOptions` `resolveManagedLogger` `serializeLoggerEntry` `serializeLoggerError` `serializeLoggerValue` `serializeTransportEntry` `setLoggerLevel` `settleAllOrThrow` `shouldLog` `throwCollectedFailures` `toLoggerError` `validateLoggerOptions` `withContextLogger` `withLoggerContext` `writeLoggerTransport`
+`assertActive` `assertMutable` `childLogger` `closeLogger` `closeLoggerTransport` `createBufferedLoggerTransport` `createChildLogger` `createChildLoggerOptions` `createCompactLoggerFormatter` `createConditionalLoggerTransport` `createConsoleLoggerTransport` `createDefaultLogger` `createDefaultSecretFieldMatcher` `createDevelopmentLoggerFormatter` `createEntry` `createErrorLoggerEntry` `createFactoryLogger` `createJsonLoggerFormatter` `createLogger` `createLoggerContext` `createLoggerEntry` `createLoggerEntryId` `createLoggerFactory` `createLoggerFormatter` `createLoggerFormatterError` `createLoggerFormatterId` `createLoggerManager` `createLoggerManagerFromLogger` `createLoggerTransport` `createLoggerTransportError` `createLoggerTransportId` `createLogMethods` `createManagedDefaultLogger` `createMultiLoggerTransport` `createProductionLoggerFormatter` `createSecretMatcher` `createStructuredLoggerFormatter` `createTextLoggerFormatter` `disableLogger` `disableLoggerTransport` `dispatchEntry` `dispatchEntrySync` `enableLogger` `enableLoggerTransport` `escapeLogText` `flushLogger` `flushLoggerTransport` `formatLoggerEntry` `formatTransportLine` `getFactoryLogger` `getLoggerEnabled` `getLoggerErrorCause` `getLoggerLevel` `getLoggerLevelNames` `getLoggerLevels` `getLoggerName` `handleInfrastructureError` `hasLogControlCharacters` `initializeLoggerManager` `isLoggerContext` `isLoggerError` `isLoggerFormatter` `isLoggerFormatterFunction` `isLoggerFormatterObject` `isLoggerLevel` `isLoggerLevelName` `isLoggerTransport` `isLoggerTransportFunction` `isLoggerTransportObject` `levelOptions` `logAtLevel` `logError` `loggerLevelFromName` `loggerLevelNameFallback` `loggerLevelToName` `mergeLoggerContexts` `mergeLoggerOptions` `normalizeConfiguration` `normalizeLogMetadata` `redactLogValue` `resolveLoggerLevel` `resolveLoggerOptions` `resolveManagedLogger` `serializeLoggerEntry` `serializeLoggerError` `serializeLoggerValue` `serializeTransportEntry` `setLoggerLevel` `settleAllOrThrow` `shouldLog` `throwCollectedFailures` `toJsonLogLine` `toLoggerError` `validateLoggerOptions` `withContextLogger` `withLoggerContext` `writeLoggerTransport`
 
-Interfaces (25)
+Interfaces (26)
 
-`ChildLoggerOptions` `JsonLoggerFormatterOptions` `Logger` `LoggerBufferedTransportOptions` `LoggerConfiguration` `LoggerContext` `LoggerContextData` `LoggerContextIdentifiers` `LoggerContextOptions` `LoggerEntry` `LoggerEntryContext` `LoggerEntryInput` `LoggerFormatter` `LoggerFormatterContext` `LoggerFormatterOptions` `LoggerOptions` `LoggerRedactionOptions` `LoggerSource` `LoggerTransport` `LoggerTransportContext` `LoggerTransportOptions` `LogOptions` `RegisteredLoggerTransport` `TextLoggerFormatterOptions` `ZudojsLoggerContext`
+`ChildLoggerOptions` `ChildLoggerOptionsInput` `JsonLoggerFormatterOptions` `Logger` `LoggerBufferedTransportOptions` `LoggerConfiguration` `LoggerContext` `LoggerContextData` `LoggerContextIdentifiers` `LoggerContextOptions` `LoggerEntry` `LoggerEntryContext` `LoggerEntryInput` `LoggerFormatter` `LoggerFormatterContext` `LoggerFormatterOptions` `LoggerOptions` `LoggerRedactionOptions` `LoggerSource` `LoggerTransport` `LoggerTransportContext` `LoggerTransportOptions` `LogOptions` `RegisteredLoggerTransport` `TextLoggerFormatterOptions` `ZudojsLoggerContext`
 
-Type aliases (8)
+Type aliases (9)
 
-`LoggerFormattedOutput` `LoggerFormatterFunction` `LoggerFormatterLike` `LoggerLevelName` `LoggerTransportFunction` `LoggerTransportLike` `LogMetadata` `LogValue`
+`LoggerFormattedOutput` `LoggerFormatterFunction` `LoggerFormatterLike` `LoggerLevelLike` `LoggerLevelName` `LoggerTransportFunction` `LoggerTransportLike` `LogMetadata` `LogValue`
 
 Constants (5)
 

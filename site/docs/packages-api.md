@@ -4,7 +4,7 @@ description: "@zudojs/api for ZudoJS: define an operation once and serve it over
 source: https://zudojs.oyinlola.site/docs/packages-api
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/api
 
@@ -48,7 +48,7 @@ Requires Node.js 24 or newer. The package is ESM only, so use `import`, not `req
 
 ## QUICK START
 
-This example defines one operation, registers it, and runs it. The two type arguments on `defineOperation` tell TypeScript what the input and output look like.
+This example defines one operation, registers it, and runs it. The two type arguments on `defineOperation` tell TypeScript what the input and output look like. (When the operation has an `input` schema you can leave them out; see [Letting the schema type the handler](#validation-types).)
 
 ```ts
 import {
@@ -114,7 +114,7 @@ const getUser = defineOperation<{ id: string }, User>({
   timeout: 5_000,
   metadata: { description: "Fetch one user by id", tags: ["Users"] },
   handler: async (input, context) => {
-    // context.signal fires if the caller cancels; pass it to anything that supports it.
+    // context.signal fires on timeout or cancellation; pass it to anything that supports it.
     return { id: input.id, name: "Alice" };
   },
 });
@@ -126,13 +126,49 @@ console.log(getUser.name, getUser.timeout); // "users.get" 5000
 >
 > There is no way to switch the deadline off. timeout: 0, a negative number, or NaN throws a RangeError at definition time. If you need longer than an hour, the work belongs in a queue, not an operation.
 
-The timeout stops the executor from *waiting*; it cannot stop the handler's code from running. To make long work truly cancellable, pass `context.signal` to your database client or `fetch`.
+### Stopping work when the deadline passes
+
+JavaScript cannot forcibly stop a running function. What it can do is *ask* it to stop, through an `AbortSignal`: an object that "fires" once, and that `fetch`, most database drivers and Node's timers all listen to. Every handler receives one as `context.signal`, even when the caller never supplied a signal. It fires in two cases:
+
+- The operation runs past its `timeout`. The signal's `reason` is the `APITimeoutError` (504) the call fails with.
+- The caller's own signal aborts, for example because an HTTP client disconnected. The `reason` is the `ErrorCode.OPERATION_CANCELLED` error the call fails with.
+
+It does not fire when the handler finishes normally. In this example the handler waits one second, but the operation only allows 100 ms:
+
+```ts
+import { setTimeout as sleep } from "node:timers/promises";
+import { defineOperation, APIExecutor, createAPIContext } from "@zudojs/api";
+
+const slowReport = defineOperation({
+  name: "reports.build",
+  timeout: 100,
+  handler: async (_input, context) => {
+    context.signal.addEventListener("abort", () => {
+      console.log("handler stopped:", context.signal.reason.statusCode);
+    });
+    await sleep(1_000, undefined, { signal: context.signal }); // gives up when the signal fires
+    console.log("never printed");
+    return { done: true };
+  },
+});
+
+const result = await new APIExecutor().execute(slowReport, {}, createAPIContext("req-1", {}));
+console.log(result.ok, !result.ok && result.error.statusCode);
+```
+
+```bash
+$ node report.mjs
+handler stopped: 504
+false 504
+```
+
+Before v1.2.0 the executor stopped *waiting* at the deadline but never fired the signal, so a handler kept running after the caller had been told it failed. If the caller then retried, the work (sending an email, charging a card) happened twice. A handler that ignores `context.signal` still behaves that way: its result is thrown away, but its code runs to the end. So pass the signal on to anything slow.
 
 ## VALIDATION
 
 A *schema* is an object that can check whether a value has the right shape. The executor accepts a `@zudojs/schema` schema (or any schema with a `safeParse` method), or any schema that follows the [Standard Schema](https://standardschema.dev) spec, which Zod, Valibot, and ArkType all implement. You never import a validation library from `@zudojs/api` itself.
 
-When `input` is a schema, the executor validates before calling the handler and hands the handler the schema's cleaned-up value. When `output` is a schema, the handler's return value is validated too, and the cleaned value becomes `result.data`. Any other value in those fields is rejected: `defineOperation` and `register` throw a `TypeError`, and the executor fails closed with a 500 without running the handler.
+When `input` is a schema, the executor validates immediately before calling the handler (after every [interceptor](#interceptors) has run) and hands the handler the schema's cleaned-up value. When `output` is a schema, the handler's return value is validated too, and the cleaned value becomes `result.data`. Any other value in those fields is rejected: `defineOperation` and `register` throw a `TypeError`, and the executor fails closed with a 500 without running the handler.
 
 The example below writes a tiny schema by hand so you can see the whole thing. In a real app you would pass a Zod schema in the same spot with no other changes.
 
@@ -179,9 +215,36 @@ Notice the issue says `"id: invalid"`, not `"id must be a string"`. By default t
 
 Output failures work differently. A handler returning the wrong shape is a bug on your side, not the client's, so it becomes an `APIInternalError` (status 500, `expose: false`) whose message names only the failing paths.
 
+### Letting the schema type the handler
+
+When an operation has an `input` schema, you do not need type arguments. `defineOperation` reads the handler's `input` type from the schema: the value a `@zudojs/schema` or Zod schema produces on success, or a Standard Schema's declared output type. That works even when you write the definition inline, straight inside `register()` or an operation list:
+
+```ts
+import { objectSchema, stringSchema } from "@zudojs/schema";
+import { defineOperation, APIOperationRegistry, type InferAPISchemaOutput } from "@zudojs/api";
+
+const TodoInput = objectSchema({ title: stringSchema().min(3) });
+
+const registry = new APIOperationRegistry();
+registry.register(
+  defineOperation({
+    name: "todos.create",
+    input: TodoInput,
+    // input is { title: string }, inferred from TodoInput.
+    handler: async (input) => ({ title: input.title.toUpperCase() }),
+  }),
+);
+
+type Todo = InferAPISchemaOutput<typeof TodoInput>; // { title: string }
+```
+
+Before v1.2.0 this inline form did not compile: TypeScript inferred `input` as `never`, so every property access was an error. Explicit type arguments, `defineOperation<TInput, TOutput>(…)`, still work exactly as before and win over the schema. The return type is never inferred from the schema; it is whatever the handler returns.
+
 ## EXECUTION CONTEXT
 
-The *context* is a small object that travels with one request through interceptors and into the handler. It carries a request id, optional cancellation signal, a `state` object you choose, and typed key/value slots.
+The *context* is a small object that travels with one request through interceptors and into the handler. It carries a request id, an optional cancellation signal, a `state` object you choose, and typed key/value slots.
+
+The handler gets a slightly different object from the one you pass to `execute()`: a view of it whose `signal` is always present and also fires on timeout (see [Stopping work when the deadline passes](#operations-signal)). Everything else, `requestId`, `state`, `get`/`set` and `metadata`, is the caller's context itself, so a value an interceptor sets is the value the handler reads.
 
 A *context key* is a named, typed slot. You create one with `createContextKey<T>(name)`, then `context.set(key, value)` and `context.get(key)`. Each key has its own hidden identity, so two keys with the same name never clash.
 
@@ -228,7 +291,7 @@ const context = createAPIContext(normalizeRequestId(headerValue), {});
 
 ## EXECUTOR AND RESULTS
 
-`APIExecutor.execute(operation, input, context)` runs one operation and always resolves to an `APIResult`. It validates input, runs interceptors, enforces the timeout and abort signal, runs the handler, validates output, and converts anything thrown into a failure result.
+`APIExecutor.execute(operation, input, context)` runs one operation and always resolves to an `APIResult`. In order, it runs the interceptors, validates the input they pass on, runs the handler under the timeout and abort signal, validates the output, and converts anything thrown into a failure result.
 
 A result is one of two frozen shapes. Check `result.ok` and TypeScript narrows the type for you:
 
@@ -273,7 +336,7 @@ if (result.ok) {
 }
 ```
 
-Two other failures the executor produces on its own: a handler slower than its timeout fails with `APITimeoutError` (504), and a context whose `signal` is aborted fails with code `ErrorCode.OPERATION_CANCELLED` (status 499). Branch on the code, not the status, for cancellation.
+Two other failures the executor produces on its own: a handler slower than its timeout fails with `APITimeoutError` (504), and a context whose `signal` is aborted fails with code `ErrorCode.OPERATION_CANCELLED` (status 499). In both cases the handler's `context.signal` fires too, so a handler that listens to it stops. Branch on the code, not the status, for cancellation.
 
 > **In plain words**
 >
@@ -283,7 +346,7 @@ Two other failures the executor produces on its own: a handler slower than its t
 
 An *interceptor* is code that runs around every operation: something before the handler, then `await next()`, then something after. You give the executor a list of them, and the first one in the list is the outermost. At most 32 are allowed.
 
-Each interceptor receives an `APIExecutionContext` with four fields: `operation`, `input` (writable), `context` (the request context), and `result` (set after `next()` resolves). It can replace the input, short-circuit by returning a result without calling `next()`, or observe the result afterwards.
+Each interceptor receives an `APIExecutionContext` with four fields: `operation`, `input` (writable, and not yet validated: see [below](#interceptor-order)), `context` (the request context), and `result` (set after `next()` resolves). It can replace the input, short-circuit by returning a result without calling `next()`, or observe the result afterwards.
 
 This example has a timing interceptor and an auth interceptor. The auth one returns a failure early when no user id is on the context, so the handler never runs.
 
@@ -342,6 +405,82 @@ Each run also prints a line like `users.me 1 ms false` from the timing intercept
 
 `createNoopInterceptor()` returns an interceptor that just calls `next()`. It is handy as a placeholder in tests.
 
+### Interceptors run before validation
+
+Since v1.2.0 the interceptors run first and input validation runs last, immediately before the handler. Earlier versions validated first. That order was a security problem in three ways:
+
+- **It told strangers about your schema.** An anonymous caller who sent bad input got a 422 listing which fields were wrong, instead of the 401 your authentication interceptor would have sent. Someone with no account could map out your API's inputs.
+- **Invalid calls were invisible.** Logging, metrics and rate-limit interceptors never ran for them, so a flood of malformed requests was neither logged nor limited.
+- **The schema could be skipped.** An interceptor that replaced `ctx.input` handed the handler a value no schema had checked.
+
+Now every interceptor sees every call, and whatever input the last interceptor passes on is what gets validated. This example uses a `@zudojs/schema` schema that requires a title of at least 3 characters:
+
+```ts
+import { objectSchema, stringSchema } from "@zudojs/schema";
+import {
+  defineOperation, APIExecutor, createAPIContext, apiFailure,
+  APIAuthenticationError, UserIdContextKey, type APIInterceptor,
+} from "@zudojs/api";
+
+const createTodo = defineOperation({
+  name: "todos.create",
+  input: objectSchema({ title: stringSchema().min(3) }),
+  handler: async (input) => ({ title: input.title }),
+});
+
+const logCalls: APIInterceptor = {
+  async intercept(ctx, next) {
+    const result = await next();
+    console.log("log:", ctx.operation.name, result.ok ? "ok" : result.error.statusCode);
+    return result;
+  },
+};
+
+const requireUser: APIInterceptor = {
+  async intercept(ctx, next) {
+    if (ctx.context.get(UserIdContextKey) === undefined) {
+      return apiFailure(new APIAuthenticationError("Sign in first."));
+    }
+    return next();
+  },
+};
+
+const executor = new APIExecutor({ interceptors: [logCalls, requireUser] });
+
+// 1. Anonymous and invalid: refused as anonymous, the schema is never described.
+const anonymous = await executor.execute(createTodo, { title: "" }, createAPIContext("req-1", {}));
+console.log(anonymous.ok, !anonymous.ok && anonymous.error.statusCode);
+
+// 2. Signed in and invalid: now validation answers, and the logger saw it.
+const signedIn = createAPIContext("req-2", {});
+signedIn.set(UserIdContextKey, "u_1");
+const invalid = await executor.execute(createTodo, { title: "" }, signedIn);
+console.log(invalid.ok, !invalid.ok && invalid.error.statusCode, !invalid.ok && invalid.error.issues);
+
+// 3. An interceptor that swaps in bad input cannot sneak it past the schema.
+const swapInput: APIInterceptor = {
+  async intercept(ctx, next) {
+    ctx.input = { title: "" };
+    return next();
+  },
+};
+const swapped = await new APIExecutor([swapInput]).execute(createTodo, { title: "Buy milk" }, createAPIContext("req-3", {}));
+console.log(swapped.ok, !swapped.ok && swapped.error.statusCode);
+```
+
+```bash
+$ node order.mjs
+log: todos.create 401
+false 401
+log: todos.create 422
+false 422 [ 'title: invalid' ]
+false 422
+```
+
+> **Watch out**
+>
+> If you wrote interceptors for an earlier version: ctx.input is now the input exactly as the caller sent it, not yet validated, coerced or transformed. Treat it as untrusted, and do not rely on a schema default or coercion having been applied. Anything you put back into ctx.input is validated before the handler sees it. The bindings answer exactly as before (HTTP status and APIWireError, RPC error classes, queue failures, CLI exit codes), and they still refuse __proto__ / constructor / prototype keys before any interceptor runs (see [Unsafe input](#bindings-security)).
+
 ## REGISTRY
 
 The *registry* is a map from operation name to operation. A transport uses it to turn `"users.get"` from a URL or message into the operation to run. Every error it throws is an `APIError` with a status code, so the transport can forward it without special cases.
@@ -397,7 +536,7 @@ A *binding* connects your operations to one way of calling them. The package shi
 | Queue | bindApiQueue(queue, registry, options) | Adds a job named after the operation to a [@zudojs/queue](https://zudojs.oyinlola.site/docs/packages-queue.md) queue. |
 | CLI | runApiCli(registry, argv, options) | Runs app users.create --name Ann in a terminal. |
 
-Every binding behaves the same way. It runs the call through the `APIExecutor` you pass as `executor`, so your interceptors apply on every transport. It validates input with the operation's schema. It sets `TransportContextKey` on the context to `"http"`, `"rpc"`, `"queue"` or `"cli"`, so a handler can tell where a call came from. And it hands every failure the caller was not allowed to see to `onInternalError(error, requestId)`, which is where you log it.
+Every binding behaves the same way. It runs the call through the `APIExecutor` you pass as `executor`, so your interceptors apply on every transport. It validates input with the operation's schema, after the interceptors. It sets `TransportContextKey` on the context to `"http"`, `"rpc"`, `"queue"` or `"cli"`, so a handler can tell where a call came from. And it hands every failure the caller was not allowed to see to `onInternalError(error, requestId)`, which is where you log it.
 
 The `state` option builds `context.state` from whatever the transport hands over: the `Request` for HTTP, the `RPCContext` for RPC, the `Job` for a queue, the parsed invocation for the CLI. Throw an `APIError` there, such as `APIAuthenticationError`, to refuse the call.
 
@@ -444,7 +583,7 @@ $ curl http://127.0.0.1:3000/api/users/u1
 >
 > Do not set basePath when you mount on @zudojs/http. mountFetchHandler already removes the mount path from the URL, so a basePath: "/api" as well would make the handler look for /api/api/users/u1 and answer 404. Use basePath only when the server hands the handler the full URL, as Bun.serve({ fetch: handle }) does.
 
-Where input comes from: `GET` and `DELETE` routes read the query string, so every value arrives as a string (use a coercing schema such as `coerceNumberSchema()` for numbers). `POST`, `PUT` and `PATCH` read a JSON body of at most `maxBodyBytes` (1 MiB by default). Path parameters are merged over either one and win. The request id comes from a safe `x-request-id` header and is echoed back, and the call runs under `request.signal`, so a client that disconnects cancels it.
+Where input comes from: `GET` and `DELETE` routes read the query string, so every value arrives as a string (use a coercing schema such as `coerceNumberSchema()` for numbers). `POST`, `PUT` and `PATCH` read a JSON body of at most `maxBodyBytes` (1 MiB by default), and refuse any other declared content type with 415 (see [Unsafe input](#bindings-security)). Path parameters are merged over either one and win. The request id comes from a safe `x-request-id` header and is echoed back, and the call runs under `request.signal`, so a client that disconnects cancels it.
 
 ### What a failure looks like
 
@@ -457,6 +596,8 @@ Every binding reports a failure in the same client-safe shape, `APIWireError`: `
 | The handler threw anything else | 500 | ERR_API_INTERNAL, "An internal error occurred." The real error goes to onInternalError. |
 | No operation at that method and path | 404 | ERR_API_NOT_FOUND. A known path with the wrong method gets 405 and an Allow header. |
 | The handler ran past its timeout | 504 | ERR_API_TIMEOUT, "An internal error occurred." |
+| The body or query holds a __proto__, constructor or prototype key | 400 | ERR_API_VALIDATION, e.g. 'Request body key "__proto__" is not allowed.' |
+| A body route was called with a non-JSON content type | 415 | ERR_HTTP_UNSUPPORTED_BODY_TYPE, "Request body must be application/json.", even when the body is empty. |
 
 A body that is too large, not JSON, or unreadable gets 413, 415 or 400. The same failures reach the other transports as their own kind of error: an RPC caller gets a typed RPC error, a queue job fails, and the CLI exits with a non-zero code.
 
@@ -478,7 +619,7 @@ const client = new RPCClient(createRPCMemoryTransport(server));
 console.log(await client.call("users.get", { id: "u1" })); // { id: "u1", name: "Alice" }
 ```
 
-Procedure names default to the operation name, which must then be a valid RPC name such as `"users.get"`; pass `procedureName` to map other names. API errors become their RPC equivalents (`RPC_VALIDATION_ERROR` with issues, `RPC_UNAUTHENTICATED`, `RPC_FORBIDDEN`, `RPC_TIMEOUT`, …), and a domain error keeps its own code, such as `ERR_API_CONFLICT`. To serve the same server over HTTP, mount `createRPCFetchHandler(server)` with `mountFetchHandler(router, "/rpc", …)`.
+Procedure names default to the operation name, which must then be a valid RPC name such as `"users.get"`; pass `procedureName` to map other names. API errors become their RPC equivalents (`RPC_VALIDATION_ERROR` with issues, `RPC_UNAUTHENTICATED`, `RPC_FORBIDDEN`, `RPC_TIMEOUT`, …), and a domain error keeps its own code, such as `ERR_API_CONFLICT`. The message follows the same rule as over HTTP: an error built with `expose: false` keeps its code but travels with the generic `"An internal error occurred."`, even when that code has an RPC equivalent. So `createAPIError("Stripe rejected key sk_live_…", { code: ErrorCode.API_UNAVAILABLE })` reaches an RPC caller as `RPC_UNAVAILABLE` with `"An internal error occurred."` in place of the text; before v1.2.0 that message was sent. To serve the same server over HTTP, mount `createRPCFetchHandler(server)` with `mountFetchHandler(router, "/rpc", …)`.
 
 ### Queues
 
@@ -538,6 +679,25 @@ The operation name comes first (or pass `operation` for a single-purpose program
 | 70 | INTERNAL | Internal error. |
 | 130 | CANCELLED | Cancelled through the abort signal (Ctrl+C). |
 
+### Unsafe input
+
+Two kinds of input are refused by every binding before your operation runs, so you do not have to remember to check for them.
+
+**Prototype-polluting keys.** `JSON.parse` keeps a key named `__proto__`, `constructor` or `prototype` as an ordinary property. If a handler later copies that input onto another object with `Object.assign` or a hand-written merge, the key can replace the object's prototype, and fields such as `isAdmin` appear where they were never set. So a request body, query string, queue job or CLI `--json` input that holds one of those keys at any depth is refused: 400 over HTTP, a validation error over RPC and queues (the job fails), and exit code 65 from the CLI. The check is `findUnsafeKey` from [@zudojs/security](https://zudojs.oyinlola.site/docs/packages-security.md). Over RPC the `@zudojs/rpc` server usually refuses the frame first, with `RPC_INVALID_REQUEST`.
+
+```bash
+$ curl -X POST http://127.0.0.1:3000/api/users.create \
+    -H 'content-type: application/json' \
+    -d '{"name":"Ann","__proto__":{"isAdmin":true}}'
+{"ok":false,"error":{"code":"ERR_API_VALIDATION","message":"Request body key \"__proto__\" is not allowed.","statusCode":400,"requestId":"…"}}
+```
+
+**Non-JSON bodies.** A body route (`POST`, `PUT`, `PATCH`) answers 415 when the request declares any content type other than JSON, even if the body is empty. This is a defence against *cross-site request forgery* (CSRF): a hostile web page can make a visitor's browser submit an HTML form to your API, with the visitor's cookies attached, and a form can only send `text/plain`, `multipart/form-data` or `application/x-www-form-urlencoded`. Refusing those types means a form cannot trigger even an operation that takes no input. A request with no content type and no body is still accepted, and a real client sending JSON is unaffected.
+
+> **In plain words**
+>
+> Send JSON with content-type: application/json and neither check will ever get in your way. Cookie-authenticated browser APIs should still add real CSRF protection, such as the tokens in [@zudojs/security](https://zudojs.oyinlola.site/docs/packages-security.md).
+
 ## ROUTES AND OPENAPI
 
 The HTTP binding works out a route for every operation. You can read that route table yourself, for logging, for tests, or to document the API.
@@ -575,7 +735,7 @@ Everything below is importable from `"@zudojs/api"`.
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| defineOperation(options) | Validates and freezes an operation definition. | Throws TypeError / RangeError on a bad name, handler, or timeout. |
+| defineOperation(options) | Validates and freezes an operation definition. | Throws TypeError / RangeError on a bad name, handler, or timeout. Without type arguments, the handler's input type comes from the input schema. |
 | resolveOperationTimeout(op) | Returns the effective timeout in ms. | Order: timeout, then metadata.timeout, then the default. |
 | createAPIContext(requestId, state, signal?) | Builds a frozen request context. | Throws TypeError on an invalid request id. |
 | createContextKey<T>(name) | Creates a typed context key. | Name must be a non-empty string. |
@@ -607,9 +767,10 @@ Everything below is importable from `"@zudojs/api"`.
 | --- | --- | --- |
 | APIOperation<TInput, TOutput> | The frozen object defineOperation returns. | AnyAPIOperation is what the registry accepts. |
 | DefineOperationOptions / APIOperationMetadata | Input to defineOperation and its metadata field. |  |
+| InferAPISchemaOutput<S> / APIInputSchema / DefineOperationWithSchemaOptions | The type a schema produces on success / any schema the executor accepts / the defineOperation options whose input type comes from the schema. | See [Letting the schema type the handler](#validation-types). |
 | APIHandler<TInput, TOutput> | (input, context) => Promise<TOutput> |  |
 | APIContext<TState> / APIContextKey<T> | Request context and its typed keys. | Keys carry an id: symbol; always use createContextKey. |
-| APIInterceptor / APIExecutionContext | Interceptor contract and the object it receives. | input is writable; result is set after next(). |
+| APIInterceptor / APIExecutionContext | Interceptor contract and the object it receives. | input is writable and not yet validated; result is set after next(). |
 | APIExecutorOptions | Options object for new APIExecutor(). |  |
 | APIResult<T> / APISuccess<T> / APIFailure | Result union and its two halves. |  |
 | APIWireResult<T> / APIWireError | The client-safe result every binding sends. | { code, message, statusCode, requestId, issues? }. |
@@ -659,6 +820,9 @@ All are re-exported from `@zudojs/errors` and extend `APIError`. Status codes ar
 - **Building a context key as a plain object.** `{ name: "x", type: undefined }` does not satisfy `APIContextKey`; it lacks the `id` symbol. Use `createContextKey<T>("x")`.
 - **Setting `basePath` and also mounting under a prefix.** `mountFetchHandler(router, "/api", …)` already strips `/api`, so a `basePath: "/api"` on `createApiFetchHandler` makes every route 404. Set one or the other.
 - **Enqueueing unchecked input with retries.** A job whose input fails validation is retried like any failure and can never succeed. Add it with `attempts: 1`, or validate before enqueueing.
+- **Posting a form or `text/plain` to a body route.** The HTTP binding answers 415 by design (a CSRF defence). Send the body as JSON with `content-type: application/json`.
+- **Treating `ctx.input` in an interceptor as validated.** Interceptors run before validation, so `ctx.input` is exactly what the caller sent. Check the context (who is calling), not the input; leave the input to the schema.
+- **Ignoring `context.signal` in a slow handler.** On timeout the caller gets a 504, but a handler that never looks at the signal keeps running and finishes its side effects anyway. Pass the signal to `fetch`, your database client or your loop checks.
 - **Registering the same name twice.** Usually a module imported from two paths. The registry throws `APIDuplicateOperationError`; register once at startup, then `freeze()`.
 
 ## RELATED PACKAGES
@@ -682,9 +846,9 @@ All are re-exported from `@zudojs/errors` and extend `APIError`. Status codes ar
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/api` exports from its package root at v1.1.1 — **102** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/api` exports from its package root at v1.2.3 — **106** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 102 exports**
+**Show all 106 exports**
 
 Classes (16)
 
@@ -694,13 +858,13 @@ Functions (30)
 
 `apiErrorToRPCError` `apiFailure` `apiSuccess` `apiSuccessBodySchema` `bindApiQueue` `createAPIContext` `createAPIError` `createApiFetchHandler` `createApiQueueProcessor` `createApiRpcProcedure` `createContextKey` `createNoopInterceptor` `defineOperation` `describeApiRoutes` `isAPIError` `isApiFailure` `isAPISchema` `isApiSuccess` `isValidRequestId` `normalizeAPIError` `normalizeRequestId` `parseApiCliArgs` `registerApiRpcProcedures` `resolveApiRoute` `resolveOperationTimeout` `runApiCli` `toApiWireError` `toApiWireResult` `toOpenAPIRouteDescriptor` `toOpenAPIRouteDescriptors`
 
-Interfaces (24)
+Interfaces (25)
 
-`APIBindingOptions` `APICliInvocation` `APICliIO` `APICliOptions` `APIContext` `APIContextKey` `APIErrorOptions` `APIExecutionContext` `APIExecutorOptions` `APIFailure` `APIFetchHandlerOptions` `APIInterceptor` `APIOperation` `APIOperationHttpOptions` `APIOperationMetadata` `APIOperationRoute` `APIQueueTarget` `APIRpcBindingOptions` `APIRpcProcedureTarget` `APISchemaIssue` `APISuccess` `APIWireError` `DefineOperationOptions` `DescribeApiRoutesOptions`
+`APIBindingOptions` `APICliInvocation` `APICliIO` `APICliOptions` `APIContext` `APIContextKey` `APIErrorOptions` `APIExecutionContext` `APIExecutorOptions` `APIFailure` `APIFetchHandlerOptions` `APIInterceptor` `APIOperation` `APIOperationHttpOptions` `APIOperationMetadata` `APIOperationRoute` `APIQueueTarget` `APIRpcBindingOptions` `APIRpcProcedureTarget` `APISchemaIssue` `APISuccess` `APIWireError` `DefineOperationOptions` `DefineOperationWithSchemaOptions` `DescribeApiRoutesOptions`
 
-Type aliases (13)
+Type aliases (16)
 
-`AnyAPIOperation` `APICliExitCodeValue` `APICliParseResult` `APIHandler` `APIHttpMethod` `APIOperationSource` `APIQueueBindingOptions` `APIResult` `APIRouteInputSource` `APISchemaResult` `APITransportKind` `APIWireResult` `ToOpenAPIRouteDescriptorsOptions`
+`AnyAPIOperation` `APICliExitCodeValue` `APICliParseResult` `APIHandler` `APIHandlerContext` `APIHttpMethod` `APIInputSchema` `APIOperationSource` `APIQueueBindingOptions` `APIResult` `APIRouteInputSource` `APISchemaResult` `APITransportKind` `APIWireResult` `InferAPISchemaOutput` `ToOpenAPIRouteDescriptorsOptions`
 
 Constants (19)
 

@@ -4,7 +4,7 @@ description: "@zudojs/cqrs docs: CQRS for TypeScript. Command and query buses, t
 source: https://zudojs.oyinlola.site/docs/packages-cqrs
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/cqrs
 
@@ -34,7 +34,7 @@ WHEN YOU DON'T
 
 ## INSTALLATION
 
-Install the package. It depends on `@zudojs/errors` and `@zudojs/events`, which npm installs for you. Needs Node.js 24+ and an ES module project.
+Install the package. It depends on `@zudojs/errors`, `@zudojs/events` and `@zudojs/middleware`, which npm installs for you. Needs Node.js 24+ and an ES module project.
 
 ```bash
 $ npm install @zudojs/cqrs
@@ -358,6 +358,39 @@ console.log(bus.getCommandTypes(), await bus.execute({ type: "CreateUser" }));
 
 > **Watch out:** neither the registry nor a decorator registers anything on a bus by itself. A decorated class is only a label until you call `bus.register`.
 
+## RESULT VALUES
+
+The buses return the handler's value and throw on failure. Some infrastructure (a job runner, an outbox) prefers to keep a failure as a *value* instead. `createCommandResult` and `createFailedCommandResult` wrap a value with its `status`, `commandType` and `executedAt`. `unwrapCommandResult` turns a result back into a plain value, and throws when the status is `"failure"`.
+
+```ts
+import {
+  createCommandResult,
+  createFailedCommandResult,
+  unwrapCommandResult,
+  CommandFailedError,
+} from "@zudojs/cqrs";
+
+const command = { type: "PlaceOrder" };
+
+const ok = createCommandResult({ orderId: "o-1" }, { command });
+console.log(unwrapCommandResult(ok));
+// { orderId: 'o-1' }
+
+const failed = createFailedCommandResult({ reason: "out of stock" }, { command });
+try {
+  unwrapCommandResult(failed);
+} catch (error) {
+  if (error instanceof CommandFailedError) {
+    console.log(error.code, error.commandType, error.failure);
+  }
+}
+// ERR_COMMAND_FAILED PlaceOrder { reason: 'out of stock' }
+```
+
+The failure payload is on `error.failure` and on `error.cause`. Queries work the same way: `unwrapQueryResult` throws `QueryFailedError` (code `ERR_QUERY_FAILED`, with `queryType`). Both errors are defined in [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) and re-exported here.
+
+> **Changed in 1.2.0:** before 1.2.0, `unwrapCommandResult` and `unwrapQueryResult` returned the failure payload as if it were the value. Code that checks `isFailedCommandResult` first is unaffected; code that unwrapped a failure now gets an exception.
+
 ## ERRORS
 
 Every error extends `CqrsError` (defined in @zudojs/errors and re-exported), which extends `BaseError` from [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md), so each has a `code`, `statusCode` and `metadata`. `isCqrsError(e)` checks for any of them; `toCqrsError(e)` converts an arbitrary thrown value.
@@ -371,6 +404,7 @@ Every error extends `CqrsError` (defined in @zudojs/errors and re-exported), whi
 | `DuplicateHandlerError` | `register` called twice for one type. | Status 409. Use `replace`. |
 | `InvalidHandlerTypeError`, `InvalidHandlerKindError` | Bad type string; registry kind not `"command"`/`"query"`. |  |
 | `HandlerConfigurationError` | Handler is not a function or object with `execute()`. | Also conflicting decorators. |
+| `CommandFailedError` / `QueryFailedError` | Thrown by `unwrapCommandResult` / `unwrapQueryResult` for a failed result. | Codes `ERR_COMMAND_FAILED` / `ERR_QUERY_FAILED`, status 500. Payload on `failure` and `cause`. |
 | `InvalidMiddlewareError`, `MiddlewareExecutionError` | Middleware is not a function; `next()` called twice. |  |
 | `EventHandlerExecutionError`, `EventPublishError` | Error classes for your own event code. | The buses on this page do not throw them. |
 
@@ -390,7 +424,7 @@ All from `"@zudojs/cqrs"`. Query equivalents mirror the command ones with `Query
 | `isCommandHandler`, `isCommandHandlerLike` | Class instance / anything the bus accepts. | `getCommandType(c)` and `commandType(type)` read or fix a type string. |
 | `createExecutionContext(input?)` | Frozen context with a generated `requestId`. | `correlationId` defaults to it. `createChildExecutionContext(parent, overrides?)` makes a child sharing that correlation. |
 | `withUser`, `withTenant`, `withSource`, `withContextMetadata` | Copy of a context with one field changed. | Readers: `getUserId`, `getTenantId`, `getRequestId`, `getCorrelationId`, `getCausationId`, `hasUser`, `hasTenant`, `sharesCorrelation`, `serializeExecutionContext`. |
-| `createCommandResult(value, { command })` | Wraps a value with `status`, `commandType`, `executedAt`. | Optional; buses do not produce these. Also `createFailedCommandResult`, `isSuccessfulCommandResult`, `unwrapCommandResult`, `withCommandResultMetadata`. |
+| `createCommandResult(value, { command })` | Wraps a value with `status`, `commandType`, `executedAt`. | Optional; buses do not produce these. Also `createFailedCommandResult`, `isSuccessfulCommandResult`, `isFailedCommandResult`, `unwrapCommandResult` (throws `CommandFailedError` for a failure; see [Result values](#result-values)), `withCommandResultMetadata`. |
 | `createCqrsEvent(input)` | Frozen event with aggregate fields. | With `createEventId`, `isCqrsEvent`, `isAggregateEvent`, `getEventType`, `getAggregateId`, `createCqrsEventHandler`. |
 | `createEventBus(options?)` | Re-export from `@zudojs/events`. | Also `createStartedEventBus`, `EventBus`, `EventBusState`. |
 | `createEventResult(options)` | Summary value for a publish. | `isEventPublished`, `isEventFailed`, `hasEventHandlerFailures`, `getEventErrors`. |
@@ -437,13 +471,13 @@ All from `"@zudojs/cqrs"`. Query equivalents mirror the command ones with `Query
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/cqrs` exports from its package root at v1.1.1 — **195** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/cqrs` exports from its package root at v1.2.3 — **197** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 195 exports**
+**Show all 197 exports**
 
-Classes (24)
+Classes (26)
 
-`Command` `CommandBus` `CommandHandler` `CommandHandlerContract` `CommandHandlerNotFoundError` `CqrsError` `CqrsValidationError` `DuplicateHandlerError` `EventBus` `EventHandlerExecutionError` `EventPublishError` `FunctionCommandHandler` `FunctionQueryHandler` `HandlerConfigurationError` `HandlerRegistry` `InvalidCommandError` `InvalidHandlerKindError` `InvalidHandlerTypeError` `InvalidMiddlewareError` `InvalidQueryError` `MetadataCommand` `MetadataQuery` `MiddlewareExecutionError` `QueryHandlerNotFoundError`
+`Command` `CommandBus` `CommandFailedError` `CommandHandler` `CommandHandlerContract` `CommandHandlerNotFoundError` `CqrsError` `CqrsValidationError` `DuplicateHandlerError` `EventBus` `EventHandlerExecutionError` `EventPublishError` `FunctionCommandHandler` `FunctionQueryHandler` `HandlerConfigurationError` `HandlerRegistry` `InvalidCommandError` `InvalidHandlerKindError` `InvalidHandlerTypeError` `InvalidMiddlewareError` `InvalidQueryError` `MetadataCommand` `MetadataQuery` `MiddlewareExecutionError` `QueryFailedError` `QueryHandlerNotFoundError`
 
 Functions (96)
 

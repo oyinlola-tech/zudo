@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/events — the event bus, emitt
 source: https://zudojs.oyinlola.site/docs/packages-events
 ---
 
-v1.2.0
+v1.3.0
 
 # @zudojs/events
 
@@ -34,7 +34,7 @@ WHEN YOU DON'T
 
 ## INSTALLATION
 
-Install the package. It pulls in `@zudojs/errors` and `@zudojs/constants` on its own.
+Install the package. It pulls in `@zudojs/errors`, `@zudojs/constants` and `@zudojs/middleware` on its own.
 
 ```bash
 $ npm install @zudojs/events
@@ -193,11 +193,47 @@ The type argument `Event<OrderPayload>` tells TypeScript what `event.payload` lo
 | id | Name for the handler. Must be unique on the bus; a duplicate throws DuplicateEventHandlerError. | generated |
 | priority | Higher numbers run first. Equal priorities keep registration order. | 0 |
 | once | Remove the handler before its first run, so it never runs twice. bus.once() sets this for you. | false |
-| timeoutMs | If the handler takes longer than this, its run fails with EventTimeoutError. | no timeout |
+| timeoutMs | If the handler takes longer than this, its run fails with EventTimeoutError and the context.signal that handler received is aborted, with the EventTimeoutError as its reason. Other handlers and the dispatch are not aborted. | no timeout |
 | enabled | A disabled handler stays registered but is skipped. | true |
 | description | Free text, useful when listing handlers. | none |
 
 `bus.onAny(handler)` is shorthand for `bus.on("*", handler)`. `bus.off(subscription)` is the same as `subscription.unsubscribe()` and returns `true` if the subscription was still active. To detach several handlers together, put their subscriptions in a `createEventSubscriptionGroup()` and call `unsubscribe()` on the group.
+
+### Stopping work at the deadline
+
+`context.signal` is aborted in two cases: the `signal` you passed to the publish call is aborted, or this handler's `timeoutMs` runs out. Hand the signal to the slow work the handler starts (`fetch`, a timer, a database driver) and that work stops at the deadline.
+
+```ts
+import { setTimeout as sleep } from "node:timers/promises";
+import { createEventBus, EventTimeoutError } from "@zudojs/events";
+
+const bus = createEventBus();
+
+bus.on("report.build", async (_event, context) => {
+  try {
+    // Stands in for slow work that accepts a signal, such as fetch().
+    await sleep(5_000, undefined, { signal: context.signal });
+  } catch {
+    console.log("gave up:", context.signal.reason instanceof EventTimeoutError);
+  }
+}, { timeoutMs: 100 });
+
+const result = await bus.publishEvent({ type: "report.build", payload: null });
+console.log("failed:", result.failed);
+console.log("cause:", result.errors[0]?.cause instanceof EventTimeoutError);
+```
+
+What you should see, after about 100 ms instead of 5 seconds:
+
+```ts
+gave up: true
+failed: 1
+cause: true
+```
+
+> **Changed in 1.3.0**
+>
+> Before 1.3.0 a timeout only stopped the bus from waiting: `context.signal` was never aborted, so the handler's work carried on in the background. A handler that ignores the signal still does that today, because JavaScript cannot stop a function from outside.
 
 > **Common mistake**
 >
@@ -218,7 +254,7 @@ The **event bus** (`EventBus`) is the object your application talks to. It holds
 By default the bus keeps going when a handler throws, and reports the failure in the result instead. This example has one good handler and one that fails.
 
 ```ts
-import { createEventBus, EventHandlerError } from "@zudojs/events";
+import { createEventBus } from "@zudojs/events";
 
 const bus = createEventBus();
 
@@ -231,8 +267,8 @@ const result = await bus.publishEvent({ type: "job.done", payload: null });
 
 console.log(result.handled, result.succeeded, result.failed); // true 1 1
 
-const failure = result.errors[0];
-if (failure instanceof EventHandlerError) {
+// result.errors is typed readonly EventHandlerError[]
+for (const failure of result.errors) {
   console.log(failure.handlerId, "->", (failure.cause as Error).message);
   // bad -> disk full
 }
@@ -244,7 +280,7 @@ if (failure instanceof EventHandlerError) {
 | handled | true when at least one handler finished without throwing. |
 | handlerCount · succeeded · failed | How many handlers ran, and how they ended. |
 | results | Return values of the handlers, in run order. |
-| errors | One EventHandlerError per failed handler. handlerId says which; cause is what it threw. |
+| errors | One EventHandlerError per failed handler, typed readonly EventHandlerError[] (it was unknown[] before 1.3.0). handlerId says which; cause is what it threw. |
 | shortCircuited | true when a middleware stopped the event before any handler ran. |
 
 ### Error mode and error hook
@@ -420,7 +456,7 @@ took about 30x ms
 
 **Middleware** is a function that wraps the dispatch of every published event. It receives a `context` (holding the event) and a `next` function. Whatever it does before calling `next()` happens before the handlers; whatever it does after happens after them. It is the place for logging, timing, validation, and anything else that should apply to all events without repeating it in each handler.
 
-Middleware only exists on the bus, not on a bare emitter. You can add it in three places: bus options, `bus.use()`, or the options of one publish call.
+Middleware only exists on the bus, not on a bare emitter. You can add it in three places: bus options, `bus.use()`, or the options of one publish call. `bus.use()` accepts everything the `middleware` option does: a plain function, a `{ handle }` object, or a built-in helper's result.
 
 ```ts
 import { createEventBus, timingEventMiddleware, validateEventMiddleware } from "@zudojs/events";
@@ -474,6 +510,30 @@ Middleware runs in descending `priority` order, so the validator (100) wraps eve
 | stateEventMiddleware(key, factory) | Store factory(context) in context.state, a Map shared by the whole pipeline. |
 | createEventMiddleware(fn, options) | Wrap any middleware with an id, priority and enabled flag. |
 
+Every helper returns a registered middleware record (`RegisteredEventMiddleware`) with its `id`, `priority` and `enabled` flag. Pass it to `bus.use()` to add it after the bus exists:
+
+```ts
+import { createEventBus, validateEventMiddleware } from "@zudojs/events";
+
+const bus = createEventBus();
+bus.on("file.saved", () => console.log("handler ran"));
+
+const remove = bus.use(validateEventMiddleware((event) => event.payload !== null, { priority: 100 }));
+
+try {
+  await bus.publishEvent({ type: "file.saved", payload: null });
+} catch (error) {
+  console.log("refused:", (error as Error).name);  // refused: EventMiddlewareError
+}
+
+remove();
+await bus.publishEvent({ type: "file.saved", payload: null });  // handler ran
+```
+
+> **Changed in 1.3.0**
+>
+> Before 1.3.0 `bus.use(validateEventMiddleware(check))` threw `TypeError: Invalid event middleware.`; only the `middleware` options accepted helper records. Both now accept the same things.
+
 > **In plain words**
 >
 > If a middleware returns without calling `next()`, nothing further runs and the publish result has `shortCircuited: true` and `handled: false`. If a middleware throws, the publish rejects with `EventMiddlewareError`. Handler failures are never relabelled as middleware errors.
@@ -500,7 +560,7 @@ Everything below is importable from `"@zudojs/events"`. Only the exports you cal
 | normalizeEventType(type) | Trims, lower-cases and validates a type name. | tryNormalizeEventType returns undefined instead of throwing. |
 | matchesEventType(type, pattern) | Tests a type against an exact name, ns.* or *. | Expects normalized input. |
 | createEventSubscriptionGroup() | Collects subscriptions to cancel together. | group.add(sub), group.unsubscribe(). |
-| beforeEvent · afterEvent · aroundEvent · validateEventMiddleware · timingEventMiddleware · stateEventMiddleware · createEventMiddleware | Middleware builders. | See [Middleware](#middleware). |
+| beforeEvent · afterEvent · aroundEvent · validateEventMiddleware · timingEventMiddleware · stateEventMiddleware · createEventMiddleware | Middleware builders. | Return a RegisteredEventMiddleware. Accepted by bus.use() and by the middleware option of the bus and of a publish call. See [Middleware](#middleware). |
 
 ### Classes
 
@@ -542,13 +602,13 @@ All extend `EventError` from `@zudojs/errors` and carry `eventType` and `eventId
 | --- | --- | --- |
 | InvalidEventError | Bad type name, id or timestamp; or a non-event passed to publish(). |  |
 | EventHandlerError | A handler threw. | handlerId, cause. |
-| EventTimeoutError | A handler exceeded its timeoutMs. | Arrives wrapped in an EventHandlerError. |
+| EventTimeoutError | A handler exceeded its timeoutMs. | Arrives wrapped in an EventHandlerError. Also the reason of the aborted context.signal that handler received. |
 | EventMiddlewareError | A middleware threw, or validation failed. | middlewareId. |
-| EventDispatchAbortedError | The signal you passed was aborted. | results and errors gathered so far. |
+| EventDispatchAbortedError | The signal you passed was aborted. | results and errors gathered so far. Sequential mode: raised when the signal is aborted before a handler starts or while any handler runs, including the last or only one (since 1.3.0; it used to resolve normally). Parallel mode: raised only when the signal was aborted before dispatch began. |
 | EventTypeNotFoundError | Publishing an unregistered type with requireRegistration: true. |  |
 | DuplicateEventHandlerError · DuplicateEventDefinitionError | Reusing a handler id or registering a type twice. |  |
 | EventListenerLimitExceededError | Registering past maxHandlersPerPattern / maxListeners with enforceHandlerLimit: true. | pattern, count, limit. Never raised under the default warn-only behaviour. |
-| EventBusStoppedError · EventBusDisposedError · EventEmitterDisposedError | Using a bus or emitter after stop() / dispose(). |  |
+| EventBusStoppedError · EventBusDisposedError · EventEmitterDisposedError | Using a bus or emitter after stop() / dispose(). | Since 1.3.0 the two bus errors are defined in @zudojs/errors and re-exported, so instanceof works whichever package you import them from. EventBusDisposedError's code is ERR_EVENT_BUS_DISPOSED (was ERR_LIFECYCLE_DISPOSED). |
 
 ## COMMON MISTAKES
 
@@ -577,7 +637,7 @@ All extend `EventError` from `@zudojs/errors` and carry `eventType` and `eventId
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/events` exports from its package root at v1.2.0 — **207** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/events` exports from its package root at v1.3.3 — **207** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 207 exports**
 

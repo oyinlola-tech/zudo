@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/validation — schema validatio
 source: https://zudojs.oyinlola.site/docs/packages-validation
 ---
 
-v1.0.3
+v1.1.0
 
 # @zudojs/validation
 
@@ -44,7 +44,7 @@ Zudo has two packages that check data, and they do not share schemas. Pick one p
 
 ## INSTALLATION
 
-Install the package. It pulls in `zod` (v4) and `@zudojs/errors` as regular dependencies, so you do not install those separately.
+Install the package. It pulls in `zod` (v4), `@zudojs/errors`, `@zudojs/constants` and `@zudojs/types` as regular dependencies, so you do not install those separately.
 
 ```bash
 $ npm install @zudojs/validation
@@ -201,6 +201,8 @@ Built-in constraints. Those written as `name(arg)` are functions you call; the r
 | Arrays | `minItems(n)`, `maxItems(n)`, `exactItems(n)`, `everyItem(constraint)`, `someItem(constraint)` |
 | Membership | `oneOf([...values])`, `noneOf([...values])` |
 | Combining | `combineConstraints(a, b)` (all must pass, one issue), `not(constraint)` (fails closed: wrong-typed input or a throwing inner constraint fails) |
+
+Length and count messages use the singular for one: `minLength(1)` reports "Value must contain at least 1 character." and `minItems(1)` or `exactItems(1)` say "1 item", where they used to say "1 characters" and "1 items". Larger counts keep the plural. The wording comes from `formatCount` in [@zudojs/types](https://zudojs.oyinlola.site/docs/packages-types.md). Messages from a `z` schema (such as the `too_small` issue in the quick start) are Zod's own text and are passed through unchanged.
 
 > **Common mistake:** a constraint issue has an empty `path` because a constraint only sees one value. When you check a field of an object, pass the path yourself: `checkConstraints([email], input.email, ["email"])`. Otherwise `toFieldErrors` has nothing to group by.
 
@@ -361,10 +363,58 @@ console.log(getSerializationDepth({ a: { b: [1] } })); // 3
 | --- | --- | --- |
 | `assertDepthWithinLimit(value, maxDepth)` | Rejects nesting deeper than `maxDepth` | `SerializationDepthError` (400) |
 | `assertSizeWithinLimit(value, maxBytes)` | Rejects an estimated JSON size above `maxBytes` | `SerializationPayloadTooLargeError` (413) |
-| `assertNoCircularReference(value, path?, maxDepth?)` | Rejects a value that contains itself | `CircularReferenceError` (500) |
+| `assertNoCircularReference(value, path?, maxDepth?)` | Rejects a value that contains itself, or that nests deeper than `maxDepth` | `CircularReferenceError` (500) for a cycle; `SerializationDepthError` (400) past `maxDepth` |
 | `hasCircularReference(value)` | Same check, returns `boolean` | never |
 | `getSerializationDepth(value, limit?)` | Measures nesting depth (0 for a primitive), capped at `limit` | never |
 | `estimateSerializedSize(value, maxBytes?)` | Estimates JSON byte size without building the string, stopping at `maxBytes`. Defaults to `SerializationLimits.MAX_SIZE` (10,485,760 bytes / 10 MB) | never |
+
+### Too-deep input is a 400
+
+These guards exist to check input from outside your program, so a payload that nests too deep is the *client's* mistake, not a crash in your server. `assertDepthWithinLimit` and `assertNoCircularReference` therefore throw `SerializationDepthError` with `statusCode: 400` and `expose: true`. *Exposed* means the message is safe to send back to the caller; it contains only the depth that was found and the limit, never any of the payload.
+
+An HTTP layer that honours an error's status turns it into a `400 Bad Request` with no extra code. Here is a [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md) handler that guards its body before using it:
+
+```ts
+import { createNodeHttpAdapter, createResponseContext } from "@zudojs/http";
+import { assertDepthWithinLimit } from "@zudojs/validation";
+
+const adapter = createNodeHttpAdapter({
+  port: 3000,
+  handler: (request) => {
+    const body = JSON.parse(new TextDecoder().decode(request.body as Uint8Array));
+    assertDepthWithinLimit(body, 32); // throws a 400 for hostile nesting
+    return createResponseContext().json({ ok: true });
+  },
+});
+
+await adapter.start();
+```
+
+```bash
+$ curl -i -X POST http://127.0.0.1:3000/import -d "$(printf '[%.0s' {1..100}; printf ']%.0s' {1..100})"
+HTTP/1.1 400 Bad Request
+{"error":"Maximum serialization depth exceeded: 33 > 32","code":"ERR_MAX_DEPTH_EXCEEDED"}
+
+$ curl -X POST http://127.0.0.1:3000/import -d '{"a":[1,2]}'
+{"ok":true}
+```
+
+Before v1.1.0 the same request was answered `500 Internal Server Error`: the error was an unexposed server error, so a client that sent bad input saw what looked like your bug. The error class did not change, so `instanceof SerializationDepthError` checks still match. [@zudojs/serialization](https://zudojs.oyinlola.site/docs/packages-serialization.md) calls these guards, so a depth failure from `JSONSerializer` (serialize or deserialize) is now a 400 as well.
+
+The options the guards pass are exported as `UNTRUSTED_DEPTH_ERROR` (`{ statusCode: 400, expose: true }`). `SerializationDepthError` from [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) takes them as an optional third argument; constructed without it, the error is still an unexposed `500`, which is right when your own code, not a client, built the too-deep value:
+
+```ts
+import { SerializationDepthError } from "@zudojs/errors";
+import { UNTRUSTED_DEPTH_ERROR } from "@zudojs/validation";
+
+const internal = new SerializationDepthError(33, 32);
+const fromClient = new SerializationDepthError(33, 32, UNTRUSTED_DEPTH_ERROR);
+
+console.log(internal.statusCode, internal.expose);     // 500 false
+console.log(fromClient.statusCode, fromClient.expose); // 400 true
+```
+
+The size and cycle guards are unchanged: `assertSizeWithinLimit` still throws `SerializationPayloadTooLargeError` (413) and a cycle is still `CircularReferenceError` (500). Neither is exposed.
 
 ### The size budget
 
@@ -443,6 +493,7 @@ Everything below is exported from `@zudojs/validation`. Constraints, normalizers
 | `ValidationErrorCode` | Enum of `validationCode` values | `INVALID_INPUT`, `REQUIRED`, `INVALID_TYPE`, `INVALID_FORMAT`, `INVALID_VALUE`, `CONSTRAINT_FAILED`, `SCHEMA_FAILED`, `UNKNOWN` |
 | `isValidationError(e)`, `hasValidationErrorCode(e, code)`, `toValidationError(e)`, `createValidationError(issues)` | Inspect or build validation errors | `toValidationError` wraps any thrown value |
 | `ValidationResult`, `ValidationSuccess`, `ValidationFailure`, `ValidationIssue` | Result types |  |
+| `UNTRUSTED_DEPTH_ERROR` | `{ statusCode: 400, expose: true }` | The options the depth guards give `SerializationDepthError`. See [Too-deep input is a 400](#too-deep-is-a-400) |
 | `ValidationSchema<T>`, `ParseOptions` | Alias for `ZodType<T>`; options for `validate`/`parse` |  |
 | `ValidationConstraint`, `ConstraintOptions`, `ValidationStep`, `ValidationComposer`, `ValidationParser`, `ValidationNormalizer`, `ValidationTransformer`, `ValidationRule` | Types of the objects each factory returns |  |
 
@@ -465,9 +516,9 @@ Everything below is exported from `@zudojs/validation`. Constraints, normalizers
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/validation` exports from its package root at v1.0.3 — **178** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/validation` exports from its package root at v1.1.2 — **179** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 178 exports**
+**Show all 179 exports**
 
 Classes (12)
 
@@ -485,9 +536,9 @@ Type aliases (8)
 
 `AsyncNormalizer` `AsyncValidationTransform` `Normalizer` `TraversalHalt` `ValidationResult` `ValidationSchema` `ValidationStep` `ValidationTransform`
 
-Constants (19)
+Constants (20)
 
-`ascii` `digits` `email` `even` `finiteNumber` `futureDate` `httpUrl` `integer` `isoDate` `letters` `MAX_MEASURABLE_DEPTH` `nonEmptyString` `nonNegative` `odd` `pastDate` `positive` `required` `slug` `uuid`
+`ascii` `digits` `email` `even` `finiteNumber` `futureDate` `httpUrl` `integer` `isoDate` `letters` `MAX_MEASURABLE_DEPTH` `nonEmptyString` `nonNegative` `odd` `pastDate` `positive` `required` `slug` `UNTRUSTED_DEPTH_ERROR` `uuid`
 
 Enums (1)
 

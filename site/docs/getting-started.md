@@ -1,6 +1,6 @@
 ---
 title: "Getting Started"
-description: "Everything you need to install, configure, and launch your first Zudo application. Prerequisites, installation, and a quick-start guide."
+description: "Install ZudoJS on Node.js 24, run a first module by hand, then scaffold a working API with the zudo CLI. Prerequisites, quick start and troubleshooting."
 source: https://zudojs.oyinlola.site/docs/getting-started
 ---
 
@@ -55,12 +55,12 @@ $ npm install @zudojs/config      # layered configuration
 $ npm install @zudojs/container   # standalone dependency container
 ```
 
-There is also a command-line tool that scaffolds whole projects. It is published as `zudojs-cli` and its binary is called `zudojs`:
+There is also a command-line tool, the **CLI**, that writes whole projects for you. Install it under either name, `zudojs` or `zudojs-cli`; both give you the command `zudojs` and its short alias `zudo`:
 
 ```bash
-$ npm install -g zudojs-cli
-$ zudojs --version
-1.1.0
+$ npm install -g zudojs
+$ zudo --version
+2.1.0
 ```
 
 > These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest @zudojs release.
@@ -69,7 +69,7 @@ $ zudojs --version
 >
 >
 >
-> There is no package called `zudo` on npm. Every framework package is scoped as `@zudojs/<name>`; the CLI is the one exception, published as `zudojs-cli`.
+> There is no package called `zudo` on npm; `zudo` is only a command name the CLI installs. Every framework package is scoped as `@zudojs/<name>`; the CLI is the one exception, published unscoped as `zudojs` and `zudojs-cli`.
 
 ## QUICK START
 
@@ -180,24 +180,26 @@ Stop the server with `await adapter.stop()`, or press `Ctrl+C`. Passing `port: 0
 
 ## SCAFFOLD WITH THE CLI
 
-Writing the files by hand is the best way to see what Zudo does. Once you know, the CLI writes a whole project for you.
+Writing the files by hand is the best way to see what Zudo does. Once you know, the CLI writes a whole project for you: an HTTP server that is already wired up, an example endpoint, configuration, security defaults and a passing test.
 
 ```bash
-$ npx zudojs-cli create my-app
+$ npx zudojs create my-api
 ```
 
-In a terminal, `create` asks a short series of questions: project name, project type (backend, frontend or fullstack), backend architecture (monolith, modular-monolith or microservice), database, API style, package manager, and which optional capabilities to switch on. Every answer also has a flag, so you can skip the questions entirely:
+`npx` downloads the CLI and runs it once; with the CLI installed globally, `zudo create my-api` (or `zudo new my-api`) does the same. In a terminal, `create` asks a short series of questions: project type (backend, frontend or fullstack), backend architecture (monolith, modular-monolith or microservice), database, API style, package manager, and which optional capabilities to switch on. Every answer also has a flag, so you can skip the questions entirely:
 
 ```bash
-$ npx zudojs-cli create my-app --type backend --architecture monolith --package-manager npm
+$ npx zudojs create my-api --type backend --architecture monolith --package-manager npm
 ```
 
-Then start it. A scaffolded monolith gets a `dev` script that runs `tsx watch src/server.ts`, so:
+Then start it. The project’s `dev` script runs `tsx watch src/server.ts`, which restarts the server whenever you save a file:
 
 ```bash
-$ cd my-app
+$ cd my-api
 $ npm run dev
 ```
+
+The server listens on `http://localhost:3000` and already answers `/health`, an example resource at `/api/v1/examples`, its OpenAPI document at `/openapi.json` and a docs page at `/docs`. [Your First App](https://zudojs.oyinlola.site/docs/getting-started-first-app.md) takes it from there, one command at a time.
 
 The most useful `create` flags:
 
@@ -206,30 +208,31 @@ The most useful `create` flags:
 | `--type`, `-t` | backend, frontend or fullstack | `backend` |
 | `--architecture`, `-a` | monolith, modular-monolith or microservice | `monolith` |
 | `--package-manager`, `-p` | npm, pnpm, yarn or bun | `pnpm` |
-| `--database`, `-d` | postgresql, mysql, sqlite or mongodb | `postgresql` |
+| `--database`, `-d` | postgresql, mysql or sqlite | `postgresql` |
 | `--api` | rest, graphql or rpc | `rest` |
 | `--frontend`, `-f` | react, next, vue, nuxt, angular, svelte, sveltekit, astro, vanilla, flutter, react-native | `none` |
-| `--services` | comma-separated service names (microservice only) | `gateway,api` |
+| `--services` | comma-separated service names (microservice only) | none: just the gateway |
+| `--capabilities` | comma-separated: cqrs, events, messaging, queue, observability, openapi, database, security | `cqrs,messaging,observability,openapi,database` when run without prompts |
 | `--no-install` | skip installing dependencies | off |
 | `--no-git` | skip `git init` | off |
 
-The other commands the `zudojs` binary provides:
+The other commands the CLI provides. Run `zudo` on its own in a terminal to pick one from a numbered menu instead:
 
 | Command | What it does | Notes |
 | --- | --- | --- |
-| `zudojs create [name]` | Scaffolds a new project | Asks questions in a terminal; flags skip them |
-| `zudojs dev` (`d`) | Starts the dev servers for the current project by running each app’s `dev` script through the package manager | `--frontend-only`, `--backend-only`, `--port <n>` |
-| `zudojs generate <kind> <name>` (`g`) | Writes new files from a template, into `src/` or `apps/api/src/` in a fullstack workspace | `--dry-run` shows the files without writing them |
-| `zudojs add <feature>` | Adds a feature package to the backend app(s) and records it | database, queue, messaging, openapi, observability, security, cache, storage, scheduler, docs |
-| `zudojs doctor` | Checks Node version, the project manifest, package manager, installed dependencies, tsconfig in every app, and declared features | Exits non-zero when an error-level check fails |
-| `zudojs build` (`b`) | Runs the project's own build script | Detects the package manager from the lock file |
-| `zudojs info` | Prints the CLI version, the project’s type, architecture and package manager, and its `@zudojs/*` dependencies | Works outside a project too; mentions a newer CLI release when one exists |
+| `zudo create [name]` (`new`) | Scaffolds a new project | Asks questions in a terminal; flags skip them |
+| `zudo dev` (`d`) | Starts the dev servers for the current project by running each app’s `dev` script through the package manager | `--frontend-only`, `--backend-only`, `--port <n>` |
+| `zudo generate <kind> <name>` (`g`) | Writes new files and registers them. `generate resource users` writes a whole `/api/v1/users` endpoint | `--dry-run` shows the files without writing them |
+| `zudo add <feature>` | Adds working code for a feature, with its config and environment variables | database, redis, websockets, email, docker, queue, messaging, openapi, observability, cache, storage, scheduler |
+| `zudo doctor` | Checks Node version, the project manifest, package manager, installed dependencies, tsconfig in every app, and declared features | Exits non-zero when an error-level check fails |
+| `zudo build` (`b`) | Runs the project's own build script | Detects the package manager from the lock file |
+| `zudo info` | Prints the CLI version, the project’s type, architecture and package manager, and its `@zudojs/*` dependencies | Works outside a project too; mentions a newer CLI release when one exists |
 
 > IN PLAIN WORDS
 >
 >
 >
-> `zudojs create` writes a hidden `.zudojs/manifest.json`. That file is how `dev`, `generate` and `add` know which architecture your project uses. Do not delete it.
+> `zudo create` records what kind of project it made in two places: the `zudojs` block of `package.json` and a hidden `.zudojs/manifest.json`. That is how `dev`, `generate` and `add` know which architecture your project uses. There is no `zudojs.config.ts`. Do not delete the manifest.
 
 ## TROUBLESHOOTING
 
@@ -241,8 +244,9 @@ The other commands the `zudojs` binary provides:
 
 ## NEXT STEPS
 
-- [Your First App](https://zudojs.oyinlola.site/docs/getting-started-first-app.md) — grow the quick start into a two-module application with a dependency and an HTTP endpoint.
-- [Project Structure](https://zudojs.oyinlola.site/docs/getting-started-project-structure.md) — what `zudojs create` actually writes to disk, folder by folder.
+- [Your First App](https://zudojs.oyinlola.site/docs/getting-started-first-app.md) — create a project with the CLI, call its API, generate a resource and run its tests.
+- [Project Structure](https://zudojs.oyinlola.site/docs/getting-started-project-structure.md) — what `zudo create` writes to disk, and how a request travels through it.
 - [@zudojs/core](https://zudojs.oyinlola.site/docs/packages-core.md) — the full reference for modules, the application and the runtime.
+- [zudojs-cli](https://zudojs.oyinlola.site/docs/packages-cli.md) — every command, flag, schematic and feature.
 - [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md) — routing, middleware, cookies and the other adapters.
 - [All 39 packages](https://zudojs.oyinlola.site/docs/packages.md) — the rest of the ecosystem.

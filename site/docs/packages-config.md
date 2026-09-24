@@ -4,7 +4,7 @@ description: "@zudojs/config reference: layered configuration with sources, stor
 source: https://zudojs.oyinlola.site/docs/packages-config
 ---
 
-v1.2.0
+v1.3.1
 
 # @zudojs/config
 
@@ -55,7 +55,7 @@ pnpm add @zudojs/config
 yarn add @zudojs/config
 ```
 
-> **Dependency:** @zudojs/config depends on @zudojs/errors (workspace:*). It uses ConfigurationError and related error factories from that package.
+> **Dependency:** @zudojs/config 1.3.1 depends on @zudojs/errors 1.3.0 and @zudojs/constants 1.1.2 (exact versions, installed for you). It uses ConfigurationError and related error factories from @zudojs/errors.
 
 ## ARCHITECTURE
 
@@ -117,12 +117,17 @@ const manager = await configFactory.initialize({
 
 // Or create a validated configuration. `validated` takes the object
 // schema itself — its `properties` map — not a wrapper with a `schema` key.
-const { manager: validatedManager, config } = await configFactory.validated({
-  properties: {
-    'app.name': { type: ConfigValueType.STRING, required: true },
-    'app.port': { type: ConfigValueType.NUMBER, min: 1, max: 65535 },
+// Options go in the second argument; without values, the required
+// 'app.name' is missing and validated() throws ConfigManagerValidationError.
+const { manager: validatedManager, config } = await configFactory.validated(
+  {
+    properties: {
+      'app.name': { type: ConfigValueType.STRING, required: true },
+      'app.port': { type: ConfigValueType.NUMBER, min: 1, max: 65535 },
+    },
   },
-});
+  { initialValues: { 'app.name': 'My App', 'app.port': 3000 } },
+);
 ```
 
 **Use the `ConfigValueType` enum for `type`.** A bare string literal such as `type: 'string'` widens to `string` in a plain object and will not satisfy `ConfigSchema`. `ConfigValueType.STRING` is the value `"string"`, so the runtime shape is identical — it just keeps the literal type intact.
@@ -136,6 +141,9 @@ const db = manager.scoped('db');
 const host = db.string('host');     // reads 'db.host'
 const port = db.number('port');     // reads 'db.port'
 const name = db.string('name');     // reads 'db.name'
+
+// Typed required accessors parse, check and throw (on scoped resolvers since v1.3.0)
+const dbPort = db.requiredNumber('port');  // DB__PORT=5432 gives 5432 (a number)
 ```
 
 ## CONFIG VALUE
@@ -219,7 +227,7 @@ Keys and values are screened (`isSensitiveConfigEntry`): password/secret/token/a
 ### Interface
 
 ```ts
-interface ConfigEntry<T> {
+interface ConfigEntry<T extends ConfigValue = ConfigValue> {
   readonly key: string;
   readonly value: T;
   readonly source: string;
@@ -227,7 +235,7 @@ interface ConfigEntry<T> {
   readonly priority: number;
   readonly sensitive: boolean;
   readonly resolved: boolean;
-  readonly createdAt: Date;
+  readonly createdAt: number;  // epoch milliseconds, not a Date
 }
 ```
 
@@ -237,7 +245,7 @@ interface ConfigEntry<T> {
 import {
   createConfigEntry, isConfigEntry,
   toSafeConfigEntry, serializeConfigEntry,
-  sortConfigEntries
+  sortConfigEntries, ConfigSourceType
 } from '@zudojs/config';
 
 const entry = createConfigEntry({
@@ -298,10 +306,11 @@ import {
 } from '@zudojs/config';
 
 // In-memory source — declares no priority, so it lands at -1
+// The second argument is required and must carry a name.
 const memSource = createMemoryConfigSource({
   'app.name': 'My App',
   'app.port': 3000,
-});
+}, { name: 'memory' });
 
 // Defaults source (lowest priority)
 const defaults = createDefaultsConfigSource({
@@ -312,7 +321,7 @@ const defaults = createDefaultsConfigSource({
 // Custom async source
 const remote = createCustomConfigSource('remote', async (ctx) => {
   const res = await fetch('https://api.example.com/config');
-  const data = await res.json();
+  const data = (await res.json()) as Record<string, string>; // json() is typed unknown
   return { values: data, source: 'remote', type: ConfigSourceType.CUSTOM };
 });
 
@@ -400,10 +409,12 @@ store.set('api_key_name', 'billing', { sensitive: false });
 
 ```ts
 // Get all entries with a given prefix
-const dbEntries = store.getByPrefix('db.');
+// 'db' and 'db.' select the same entries (a trailing dot is ignored since v1.3.0;
+// before, 'db.' matched nothing and returned [] and {}).
+const dbEntries = store.getByPrefix('db');
 
 // Get values as an object with prefix stripped
-const dbConfig = store.getObjectByPrefix('db.');
+const dbConfig = store.getObjectByPrefix('db');
 // { host: 'localhost', port: 5432 }  (not 'db.host', 'db.port')
 ```
 
@@ -412,8 +423,9 @@ const dbConfig = store.getObjectByPrefix('db.');
 ```ts
 const unsubscribe = store.subscribe((event) => {
   console.log(`Changed: ${event.key}`);
-  console.log(`Previous: ${event.previous}`);
-  console.log(`Current: ${event.current}`);
+  // previous and current are whole ConfigEntry objects (or undefined), not values.
+  console.log(`Previous: ${String(event.previous?.value)}`);
+  console.log(`Current: ${String(event.current?.value)}`);
 });
 
 store.set('app.port', 4000);  // Fires listener
@@ -459,7 +471,7 @@ resolver.requiredString('app.name');    // throws if missing
 
 // Number (auto-parses from string)
 resolver.number('app.port');             // 3000
-resolver.number('env.port', 8080);       // 8080 if missing
+resolver.number('env.port', 8080);       // 8080 if missing; typed number
 
 // Boolean (parses "true"/"1"/"yes"/"y"/"on")
 resolver.boolean('app.debug');           // true
@@ -470,22 +482,33 @@ resolver.date('app.created');            // Date object
 // Object and Array
 resolver.object<DbConfig>('db');       // typed object
 resolver.array<string>('app.tags');    // typed array
+
+// Raw value with a fallback: the literal is widened, so this is a string
+const mode: string = resolver.get('app.mode', 'dev');
 ```
+
+> **Changed in v1.3.0 — a fallback narrows the return type.** Called with a fallback, every typed accessor — `string`, `number`, `boolean`, `bigint`, `date`, `object`, `array`, on the resolver, the manager and a scoped resolver — returns `T` instead of `T | undefined`, so `const port: number = resolver.number('env.port', 8080)` compiles under strict `tsc`. Calls without a fallback keep `T | undefined`. The new `get(key, fallback)` overload returns the stored value, or the fallback when the key is missing; its literal fallback is widened through `ConfigWiden<T>`, so `get('mode', 'dev')` is typed `string`, not `'dev'`. Note that `get()` does no parsing: it returns whatever is stored, so an environment value is still a string there.
 
 ### Schema Validation
 
 ```ts
-import { createConfigResolver } from '@zudojs/config';
+import { ConfigValueType } from '@zudojs/config';
+import type { ConfigNumberSchema } from '@zudojs/config';
 
-const port = resolver.resolve('app.port', {
-  type: 'number',
+// resolve() takes a TypedConfigSchema, keyed on `type`: a NUMBER schema accepts
+// min/max/integer/positive, and { type: NUMBER, minLength: 1 } is a compile error.
+const port = resolver.resolve('app.port', { type: ConfigValueType.NUMBER, min: 1, max: 65535 });
+
+// A named schema still works, typed with the matching interface.
+const portSchema: ConfigNumberSchema = {
+  type: ConfigValueType.NUMBER,
   min: 1,
   max: 65535,
   integer: true,
-});
+};
 
 // Full diagnostic result
-const result = resolver.resolveResult('app.port', schema);
+const result = resolver.resolveResult('app.port', portSchema);
 // { key: 'app.port', value: 3000, found: true, valid: true, issues: [] }
 ```
 
@@ -531,15 +554,15 @@ Schema validation for configuration values with type checking, constraints, defa
 
 ```ts
 enum ConfigValueType {
-  STRING  = 'STRING',
-  NUMBER  = 'NUMBER',
-  BOOLEAN = 'BOOLEAN',
-  BIGINT  = 'BIGINT',
-  DATE    = 'DATE',
-  OBJECT  = 'OBJECT',
-  ARRAY   = 'ARRAY',
-  NULL    = 'NULL',
-  ANY     = 'ANY',
+  STRING  = 'string',
+  NUMBER  = 'number',
+  BOOLEAN = 'boolean',
+  BIGINT  = 'bigint',
+  DATE    = 'date',
+  OBJECT  = 'object',
+  ARRAY   = 'array',
+  NULL    = 'null',
+  ANY     = 'any',
 }
 ```
 
@@ -547,34 +570,64 @@ enum ConfigValueType {
 
 ```ts
 // Base schema
-interface ConfigSchema<T> {
-  type: ConfigValueType;
+interface ConfigSchema<T extends ConfigValue = ConfigValue> {
+  type: ConfigValueType | readonly ConfigValueType[];  // every field is readonly
   required?: boolean;
   nullable?: boolean;
   default?: T | (() => T);
   description?: string;
   secret?: boolean;  // honoured at any depth; the store entry holding it is redacted whole
+  coerce?: boolean;  // default true: parse a string for NUMBER/BOOLEAN before the type check
   validate?: (value: T, context: ConfigValidationContext) => boolean | string | ConfigValidationIssue | readonly ConfigValidationIssue[];
   transform?: (value: ConfigValue, context: ConfigValidationContext) => T;
 }
 
 // String schema
 interface ConfigStringSchema extends ConfigSchema<string> {
-  type: 'STRING';
+  type: ConfigValueType.STRING;
   minLength?: number;
   maxLength?: number;
   pattern?: string | RegExp;
-  enum?: string[];
+  enum?: readonly string[];
 }
 
 // Number schema
 interface ConfigNumberSchema extends ConfigSchema<number> {
-  type: 'NUMBER';
+  type: ConfigValueType.NUMBER;
   min?: number;
   max?: number;
   integer?: boolean;
   positive?: boolean;
 }
+```
+
+Since v1.3.0 the constraint groups are exported on their own as `ConfigStringConstraints`, `ConfigNumberConstraints`, `ConfigArrayConstraints` and `ConfigObjectConstraints`, and `ConfigStringSchema` / `ConfigNumberSchema` are built from them with the same fields as before. `TypedConfigSchema<T>` is the union keyed on `type` that `resolve()` and `resolveResult()` accept, so each value type takes exactly the constraints the validator enforces.
+
+### Order of Checks
+
+A value goes through five steps, in this order: **coerce → type check → constraints → `transform` → `validate`**. `validate` therefore sees the final value, matching its `(value: T)` signature. Before v1.3.0 `validate` ran before `transform` and saw the raw input.
+
+- **Coerce.** A string is parsed first when the schema's type includes `NUMBER` or `BOOLEAN` and does not also accept `STRING` or `ANY`. Numbers are parsed strictly in decimal (`"8080"` passes; `"80a"`, `"0x1F90"` and `""` stay `TYPE_MISMATCH`). Booleans use `true/false`, `1/0`, `yes/no`, `y/n`, `on/off`, case-insensitively. Set `coerce: false` on the schema to require a real number or boolean.
+- **Transform as a parser.** A string that does not have the schema's type is handed to `transform`, and the output must then have the type and pass the constraints. A non-string of the wrong type is rejected without calling `transform`.
+
+```ts
+import { validateConfigValue, ConfigValueType } from '@zudojs/config';
+
+validateConfigValue('8080', { type: ConfigValueType.NUMBER }).value;   // 8080
+validateConfigValue('yes', { type: ConfigValueType.BOOLEAN }).value;   // true
+validateConfigValue('80a', { type: ConfigValueType.NUMBER }).valid;    // false (TYPE_MISMATCH)
+validateConfigValue('8080', { type: ConfigValueType.NUMBER, coerce: false }).valid; // false
+
+// transform parses a string that does not have the type; validate sees the result
+validateConfigValue('a,b', {
+  type: ConfigValueType.ARRAY,
+  transform: (s) => String(s).split(','),
+}).value;                                                              // ['a', 'b']
+validateConfigValue('1F90', {
+  type: ConfigValueType.NUMBER,
+  transform: (s) => parseInt(String(s), 16),
+  validate: (port) => port > 1024,
+}).value;                                                              // 8080
 ```
 
 ### Validation
@@ -603,16 +656,41 @@ assertValidConfig(configValues, schema);
 ### Validation Error
 
 ```ts
-import { ConfigSchemaValidationError } from '@zudojs/config';
+import { assertValidConfig, ConfigSchemaValidationError } from '@zudojs/config';
 
 try {
   assertValidConfig(values, schema);
 } catch (error) {
   if (error instanceof ConfigSchemaValidationError) {
     console.log(error.issues);
-    // [{ path: 'app.port', message: 'must be >= 1', code: 'MIN', ... }]
+    // [{ path: '$.app.port', message: 'Value must be greater than or equal to 1.',
+    //    code: 'MIN', severity: 'error' }]
   }
 }
+```
+
+The manager's own error carries the same issue objects. Since v1.3.1 `ConfigManagerValidationError.issues` is typed `readonly ConfigValidationIssue[]`, so you read `path`, `code` and `message` without a cast (it was `readonly unknown[]` before):
+
+```ts
+import { configFactory, ConfigManagerValidationError, ConfigValueType } from '@zudojs/config';
+
+try {
+  await configFactory.validated(
+    {
+      properties: {
+        'app.name': { type: ConfigValueType.STRING, required: true },
+        'app.port': { type: ConfigValueType.NUMBER, min: 1, max: 65535 },
+      },
+    },
+    { initialValues: { 'app.port': 0 } },
+  );
+} catch (error) {
+  if (error instanceof ConfigManagerValidationError) {
+    for (const issue of error.issues) console.log(issue.path, issue.code, issue.message);
+  }
+}
+// $.app.name REQUIRED Configuration value at "$.app.name" is required.
+// $.app.port MIN Value must be greater than or equal to 1.
 ```
 
 ## CONFIG LOADER
@@ -632,7 +710,9 @@ const loader = createConfigLoader({
     console.log(`Loaded ${Object.keys(result.values).length} values from ${source.name}`);
   },
   onSourceError: (source, error) => {
-    console.error(`Failed to load ${source.name}: ${error.message}`);
+    // error is typed unknown
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Failed to load ${source.name}: ${message}`);
   },
 });
 ```
@@ -682,12 +762,12 @@ The central orchestration class that coordinates the loader, store, and resolver
 
 ```ts
 enum ConfigManagerState {
-  CREATED    = 'CREATED',     // Initial state
-  LOADING    = 'LOADING',     // Loading from sources
-  READY      = 'READY',       // Configuration available
-  RELOADING  = 'RELOADING',   // Reloading from sources
-  FAILED     = 'FAILED',      // Load failed
-  DISPOSED   = 'DISPOSED',    // Manager disposed
+  CREATED    = 'created',     // Initial state
+  LOADING    = 'loading',     // Loading from sources
+  READY      = 'ready',       // Configuration available
+  RELOADING  = 'reloading',   // Reloading from sources
+  FAILED     = 'failed',      // Load failed
+  DISPOSED   = 'disposed',    // Manager disposed
 }
 ```
 
@@ -705,7 +785,7 @@ const manager = createConfigManager({
 });
 
 // Create and load in one step
-const manager = await initializeConfigManager({
+const loadedManager = await initializeConfigManager({
   sources: [envSource],
   initialValues: { 'app.port': 3000 },
 });
@@ -716,7 +796,7 @@ const manager = await initializeConfigManager({
 ```ts
 await manager.load();      // CREATED → LOADING → READY
 await manager.reload();    // READY → RELOADING → READY
-manager.getState();        // 'READY'
+manager.getState();        // 'ready' (ConfigManagerState.READY)
 manager.isReady;           // true
 manager.isLoading;         // false
 ```
@@ -731,7 +811,15 @@ manager.required<string>('app.name');
 manager.object<DbConfig>('db');
 manager.array<string>('app.tags');
 manager.scoped('db');
+
+// Typed required accessors (on the manager since v1.3.0): parse, check, throw.
+manager.requiredNumber('app.port');
+manager.requiredString('app.name');
+manager.requiredBoolean('app.debug');
+manager.requiredDate('app.created');
 ```
+
+**`required<T>()` is a cast, not a parse.** It returns the stored value unchanged and only tells the compiler it is a `T`, because `T` is erased at run time and cannot be checked. With `DB__PORT=5432` from the environment, `manager.required<number>('db.port')` returns the *string* `"5432"` typed as `number`. Use `requiredNumber()` / `requiredBoolean()` / `requiredString()` / `requiredDate()` instead — on the manager, the resolver or a scoped resolver — which parse the value and throw `ConfigResolutionError` when it is missing or does not parse.
 
 ### Runtime Updates
 
@@ -752,7 +840,11 @@ Log `toSafeObject()`, never `toObject()`. Values seeded through `initialValues` 
 
 ```ts
 manager.addSource(newSource);
-manager.addSourceLoader('custom', async (ctx) => ({ ... }));
+manager.addSourceLoader('flags', async () => ({
+  values: { 'feature.beta': true },
+  source: 'flags',
+  type: ConfigSourceType.CUSTOM,
+}));
 manager.removeSource('old-source');
 ```
 
@@ -764,13 +856,44 @@ const config = manager.validate<AppConfig>(appSchema);
 
 // Get status snapshot
 const status = manager.getStatus();
-// { state: 'READY', loaded: true, loading: false, size: 42, lastLoadedAt: Date }
+// { name: 'config', state: 'ready', loaded: true, loading: false, size: 42,
+//   lastLoadedAt: 1790176359562 }  — epoch milliseconds, not a Date
 
-// Subscribe to state changes
+// Subscribe to lifecycle STATE changes (load, reload, failure, dispose).
+// It does not fire on set()/delete(); use manager.getStore().subscribe() for values.
 const unsub = manager.subscribe((status) => {
   console.log(`State: ${status.state}`);
 });
 ```
+
+### Validating Environment Values
+
+`createEnvironmentConfigSource()` stores every variable as the raw string it read: `APP__PORT=8080` becomes `'app.port': '8080'` (`__` maps to `.`, and names are lower-cased). Since v1.3.0 a `NUMBER` or `BOOLEAN` schema coerces such strings before the type check (see [Order of Checks](#config-schema)), so `validate()`, `configFactory.validated()`, `resolve()` and `validateConfigObject()` accept them and return the parsed values. The store itself keeps the strings; read through `number()` / `boolean()` or the value `validate()` returns. (In v1.2.0 these schemas always failed on environment values with `TYPE_MISMATCH`.)
+
+```ts
+import {
+  createConfigManager, createEnvironmentConfigSource, ConfigValueType,
+} from '@zudojs/config';
+
+// APP__PORT=8080 APP__DEBUG=yes
+const manager = createConfigManager({
+  sources: [createEnvironmentConfigSource({ prefix: 'APP__' })],
+});
+await manager.load();
+
+const config = manager.validate<{ port: number; debug: boolean }>({
+  properties: {
+    port: { type: ConfigValueType.NUMBER, required: true, integer: true, min: 1, max: 65535 },
+    debug: { type: ConfigValueType.BOOLEAN, default: false },
+  },
+});
+console.log(config.port, config.debug); // 8080 true (a number and a boolean)
+
+// Or read one value with a parsing accessor
+const port = manager.requiredNumber('port'); // 8080
+```
+
+A value that does not parse (`APP__PORT=80a`) still fails with `TYPE_MISMATCH` and `validate()` throws `ConfigManagerValidationError`. For richer parsing across the whole object you can still coerce with [@zudojs/schema](https://zudojs.oyinlola.site/docs/packages-schema.md).
 
 ### Cleanup
 
@@ -787,19 +910,19 @@ High-level convenience functions for common configuration patterns.
 import { configFactory } from '@zudojs/config';
 
 // Create without loading
-const manager = configFactory.create({ initialValues });
+const created = configFactory.create({ initialValues });
 
 // Create and load
-const manager = await configFactory.initialize({ sources });
+const loaded = await configFactory.initialize({ sources });
 
 // Create from key-value map
-const manager = configFactory.fromValues({ 'key': 'value' });
+const fromValues = configFactory.fromValues({ 'key': 'value' });
 
 // Create from sources
-const manager = configFactory.fromSources([source1, source2]);
+const fromSources = configFactory.fromSources([source1, source2]);
 
 // Create from existing store
-const manager = configFactory.fromStore(existingStore);
+const fromStore = configFactory.fromStore(existingStore);
 
 // Create, load, and validate
 // validated(schema, options) — the schema is the first argument.
@@ -830,6 +953,9 @@ All exported types, interfaces, and type aliases.
 | ConfigArraySchema<T> | configSchema | Array schema |
 | ConfigStringSchema | configSchema | String schema with constraints |
 | ConfigNumberSchema | configSchema | Number schema with constraints |
+| TypedConfigSchema<T> | configSchema | Union keyed on `type` accepted by `resolve()` / `resolveResult()` (v1.3.0) |
+| ConfigStringConstraints, ConfigNumberConstraints, ConfigArrayConstraints, ConfigObjectConstraints | configSchema | The constraint fields each value type accepts (v1.3.0) |
+| ConfigWiden<T> | configResolver | Widens a literal fallback to its primitive type in `get(key, fallback)` (v1.3.0) |
 | ConfigValidationIssue | configSchema | Validation issue |
 | ConfigValidationResult | configSchema | Validation result |
 | ConfigManagerOptions | configManager | Manager options |
@@ -864,27 +990,27 @@ CUSTOM      = 'custom'        // createCustomConfigSource
 ### ConfigValueType
 
 ```ts
-STRING = 'STRING'  |  NUMBER = 'NUMBER'  |  BOOLEAN = 'BOOLEAN'
-BIGINT = 'BIGINT'  |  DATE = 'DATE'      |  OBJECT = 'OBJECT'
-ARRAY = 'ARRAY'   |  NULL = 'NULL'      |  ANY = 'ANY'
+STRING = 'string'  |  NUMBER = 'number'  |  BOOLEAN = 'boolean'
+BIGINT = 'bigint'  |  DATE = 'date'      |  OBJECT = 'object'
+ARRAY = 'array'   |  NULL = 'null'      |  ANY = 'any'
 ```
 
 ### ConfigValidationSeverity
 
 ```ts
-ERROR   = 'ERROR'
-WARNING = 'WARNING'
+ERROR   = 'error'
+WARNING = 'warning'
 ```
 
 ### ConfigManagerState
 
 ```ts
-CREATED   = 'CREATED'    // Initial state
-LOADING   = 'LOADING'    // Loading from sources
-READY     = 'READY'      // Configuration available
-RELOADING = 'RELOADING'  // Reloading from sources
-FAILED    = 'FAILED'     // Load failed
-DISPOSED  = 'DISPOSED'   // Manager disposed
+CREATED   = 'created'    // Initial state
+LOADING   = 'loading'    // Loading from sources
+READY     = 'ready'      // Configuration available
+RELOADING = 'reloading'  // Reloading from sources
+FAILED    = 'failed'     // Load failed
+DISPOSED  = 'disposed'   // Manager disposed
 ```
 
 ## ERRORS
@@ -893,7 +1019,7 @@ All error classes, their fields, and when they are thrown.
 
 | Class | Extends | Fields | Thrown When |
 | --- | --- | --- | --- |
-| ConfigManagerValidationError | ConfigurationError | issues: readonly unknown[] | manager.validate() fails against object schema |
+| ConfigManagerValidationError | ConfigurationError | issues: readonly ConfigValidationIssue[] (typed since v1.3.1; was readonly unknown[]) | manager.validate() or configFactory.validated() fails against the schema |
 | ConfigSchemaValidationError | ConfigurationError | issues: ConfigValidationIssue[] | assertValidConfig() fails |
 | ConfigResolutionError | ConfigurationError | key: string, issues: unknown[] | Type mismatch in strict mode, missing required value |
 
@@ -916,11 +1042,12 @@ import {
 ```ts
 const manager = await initializeConfigManager({
   sources: [
-    createDefaultsConfigSource({ 'app.port': 3000 }),
-    createMemoryConfigSource(process.env, { name: 'env' }),
+    createDefaultsConfigSource({ 'app.port': 3000 }),   // priority -1000
+    createEnvironmentConfigSource(),                     // priority 100
   ],
 });
-// Environment variables override defaults
+// APP__PORT=8080 is read as 'app.port': '8080' (a string) and overrides the default.
+const port = manager.number('app.port') ?? 3000; // 8080 — number() parses the string
 ```
 
 ### 2. Multi-Source Configuration with Priority
@@ -939,31 +1066,29 @@ const manager = await initializeConfigManager({
 ### 3. Type-Safe Configuration Access
 
 ```ts
-interface AppConfig {
-  'app.name': string;
-  'app.port': number;
-  'db.host': string;
-  'db.port': number;
-}
-
+// The required* helpers are on the manager, the resolver and scoped resolvers.
 const db = manager.scoped('db');
-const host = db.requiredString('host');  // type-safe
-const port = db.requiredNumber('port');  // auto-parsed
+const host = db.requiredString('host');  // string; throws if missing
+const port = db.requiredNumber('port');  // number; parses "5432", throws if it cannot
+
+// A fallback makes the result non-optional.
+const poolSize: number = db.number('poolSize', 10);
 ```
 
 ### 4. Configuration Validation with Schemas
 
 ```ts
-const { manager, config } = await configFactory.validated({
-  schema: {
-    type: 'object',
+const { manager, config } = await configFactory.validated(
+  {
     properties: {
-      'app.port': { type: 'number', min: 1, max: 65535 },
-      'app.name': { type: 'string', required: true },
-    }
-  }
-});
-// Throws ConfigSchemaValidationError if validation fails
+      'app.port': { type: ConfigValueType.NUMBER, min: 1, max: 65535 },
+      'app.name': { type: ConfigValueType.STRING, required: true },
+    },
+  },
+  { initialValues: { 'app.name': 'My App', 'app.port': 3000 } },
+);
+// Throws ConfigManagerValidationError if validation fails.
+// NUMBER/BOOLEAN also accept environment strings such as "8080" (coerced).
 ```
 
 ### 5. Runtime Configuration Updates
@@ -972,9 +1097,10 @@ const { manager, config } = await configFactory.validated({
 // Update a value at runtime
 manager.set('app.debug', true);
 
-// Listen for changes
-manager.subscribe((status) => {
-  console.log(`Config updated: ${status.size} entries`);
+// Listen for value changes on the store (manager.subscribe() only
+// reports lifecycle state changes, not set() or delete()).
+manager.getStore().subscribe((event) => {
+  console.log(`Config updated: ${event.key}`);
 });
 
 // Reload from sources
@@ -990,9 +1116,10 @@ const dbConfig = manager.scoped('db');
 const cacheConfig = manager.scoped('cache');
 
 // Modules access only their own config
-const secret = authConfig.requiredString('jwtSecret');
-const host = dbConfig.requiredString('host');
-const ttl = cacheConfig.number('ttl', 3600);
+const secret = authConfig.string('jwtSecret');
+if (secret === undefined) throw missingConfigurationError('auth.jwtSecret');
+const host = dbConfig.string('host') ?? 'localhost';
+const ttl = cacheConfig.number('ttl') ?? 3600;
 ```
 
 ## CONNECTIONS
@@ -1048,11 +1175,11 @@ ConfigStore, ConfigChangeEvent, ConfigChangeListener, ConfigStoreOptions, create
 
 configResolver
 
-ConfigResolver, ScopedConfigResolver, ConfigResolverOptions, ConfigResolutionResult, ConfigResolutionError, createConfigResolver
+ConfigResolver, ScopedConfigResolver, ConfigResolverOptions, ConfigResolutionResult, ConfigResolutionError, ConfigWiden, createConfigResolver
 
 configSchema
 
-ConfigValueType, ConfigValidationSeverity, ConfigValidationIssue, ConfigValidationResult, ConfigValidationContext, ConfigSchema, ConfigObjectSchema, ConfigArraySchema, ConfigStringSchema, ConfigNumberSchema, ConfigBooleanSchema, ConfigSchemaDefinition, ConfigSchemaBuilder, getConfigValueType, matchesConfigType, createConfigValidationIssue, validateConfigValue, validateConfigObject, assertValidConfig, ConfigSchemaValidationError
+ConfigValueType, ConfigValidationSeverity, ConfigValidationIssue, ConfigValidationResult, ConfigValidationContext, ConfigSchema, ConfigObjectSchema, ConfigArraySchema, ConfigStringSchema, ConfigNumberSchema, ConfigBooleanSchema, TypedConfigSchema, ConfigStringConstraints, ConfigNumberConstraints, ConfigArrayConstraints, ConfigObjectConstraints, ConfigSchemaDefinition, ConfigSchemaBuilder, getConfigValueType, matchesConfigType, createConfigValidationIssue, validateConfigValue, validateConfigObject, assertValidConfig, ConfigSchemaValidationError
 
 configLoader
 
@@ -1074,9 +1201,9 @@ ConfigurationError, createConfigurationError, isConfigurationError, missingConfi
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/config` exports from its package root at v1.2.0 — **114** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/config` exports from its package root at v1.3.3 — **120** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 114 exports**
+**Show all 120 exports**
 
 Classes (9)
 
@@ -1086,13 +1213,13 @@ Functions (65)
 
 `assertValidConfig` `cloneConfigValue` `configEntriesEqual` `configValuesEqual` `configValueToString` `createConfigEntry` `createConfigLoader` `createConfigManager` `createConfigResolver` `createConfigSource` `createConfigStore` `createConfiguration` `createConfigurationError` `createConfigurationFromSources` `createConfigurationFromStore` `createConfigurationFromValues` `createConfigValidationIssue` `createCustomConfigSource` `createDefaultsConfigSource` `createEnvironmentConfigSource` `createInitializedConfiguration` `createMemoryConfigSource` `createValidatedConfiguration` `deduplicateConfigSources` `defineConfigProperty` `findConfigSource` `freezeConfigValue` `getConfigValueType` `initializeConfigManager` `invalidConfigurationError` `isConfigEntry` `isConfigObject` `isConfigPrimitive` `isConfigSource` `isConfigurationError` `isConfigValue` `isSensitiveConfigEntry` `isSensitiveConfigKey` `isSensitiveConfigValue` `isUnsafeConfigKey` `loadConfigSource` `loadConfigSources` `loadConfigSourceStrict` `loadConfiguration` `matchesConfigType` `missingConfigurationError` `normalizeConfigSourceResult` `normalizeKey` `parseConfigBigInt` `parseConfigBoolean` `parseConfigDate` `parseConfigNumber` `parseConfigString` `readOwnConfigProperty` `redactConfigValue` `serializeConfigEntry` `sortConfigEntries` `sortConfigSources` `sourceResultsToEntries` `toConfigJsonValue` `toSafeConfigEntry` `updateConfigEntry` `validateConfigObject` `validateConfigValue` `withConfigEntrySource`
 
-Interfaces (25)
+Interfaces (29)
 
-`ConfigArraySchema` `ConfigBooleanSchema` `ConfigChangeEvent` `ConfigEntry` `ConfigEntryOptions` `ConfigLoaderOptions` `ConfigLoadResult` `ConfigManagerOptions` `ConfigManagerStatus` `ConfigNumberSchema` `ConfigObjectSchema` `ConfigResolutionResult` `ConfigResolverOptions` `ConfigSchema` `ConfigSource` `ConfigSourceContext` `ConfigSourceOptions` `ConfigSourceResult` `ConfigStoreOptions` `ConfigStringSchema` `ConfigValidationContext` `ConfigValidationIssue` `ConfigValidationResult` `EnvironmentConfigSourceOptions` `FunctionConfigSource`
+`ConfigArrayConstraints` `ConfigArraySchema` `ConfigBooleanSchema` `ConfigChangeEvent` `ConfigEntry` `ConfigEntryOptions` `ConfigLoaderOptions` `ConfigLoadResult` `ConfigManagerOptions` `ConfigManagerStatus` `ConfigNumberConstraints` `ConfigNumberSchema` `ConfigObjectConstraints` `ConfigObjectSchema` `ConfigResolutionResult` `ConfigResolverOptions` `ConfigSchema` `ConfigSource` `ConfigSourceContext` `ConfigSourceOptions` `ConfigSourceResult` `ConfigStoreOptions` `ConfigStringConstraints` `ConfigStringSchema` `ConfigValidationContext` `ConfigValidationIssue` `ConfigValidationResult` `EnvironmentConfigSourceOptions` `FunctionConfigSource`
 
-Type aliases (9)
+Type aliases (11)
 
-`AnyConfigSchema` `ConfigChangeListener` `ConfigFactoryOptions` `ConfigJsonValue` `ConfigManagerListener` `ConfigPrimitive` `ConfigSourceLoader` `ConfigValue` `ResolvedConfigValue`
+`AnyConfigSchema` `ConfigChangeListener` `ConfigFactoryOptions` `ConfigJsonValue` `ConfigManagerListener` `ConfigPrimitive` `ConfigSourceLoader` `ConfigValue` `ConfigWiden` `ResolvedConfigValue` `TypedConfigSchema`
 
 Constants (2)
 

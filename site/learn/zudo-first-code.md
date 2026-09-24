@@ -4,26 +4,28 @@ description: "Install your first ZudoJS packages, check untrusted data at runtim
 source: https://zudojs.oyinlola.site/learn/zudo-first-code
 ---
 
-LESSON 9 OF 10
+LESSON 47 OF 84
 
-Meet ZudoJS
+Meet ZudoJS Core
 
 # Your first Zudo code
 
 Install your first ZudoJS packages, check untrusted data at runtime with @zudojs/schema, and report failures with the ready-made errors in @zudojs/errors.
 
 - **35 min** to read and try
-- **You need:** The ts-tasks project from lessons 6 to 8
+- **You need:** The ts-tasks project from "Why TypeScript exists", and "Welcome to ZudoJS"
 - **You build:** A task service that validates input and reports errors like an API
+
+  [Test yourself](#test)
 
 ## Install two packages
 
-Lesson 8 ended with a problem: types cannot check data that arrives while the program runs. ZudoJS is a set of small packages, and two of them solve exactly that:
+[TypeScript and JavaScript together](https://zudojs.oyinlola.site/learn/ts-runtime) ended with a problem: types cannot check data that arrives while the program runs. ZudoJS is a set of small packages, and two of them solve exactly that:
 
 - `@zudojs/schema` describes what valid data looks like and checks real values against it, at runtime.
-- `@zudojs/errors` has ready-made error classes, like the `NotFoundError` you wrote in lesson 5, with the right HTTP status codes built in.
+- `@zudojs/errors` has ready-made error classes, like the `NotFoundError` you wrote in [Handling errors](https://zudojs.oyinlola.site/learn/js-errors), with the right HTTP status codes built in.
 
-In the `ts-tasks` folder from lesson 6:
+In the `ts-tasks` folder from [Why TypeScript exists](https://zudojs.oyinlola.site/learn/ts-setup):
 
 Terminal on your computer
 
@@ -68,7 +70,7 @@ Read it line by line:
 
 ## Check real data
 
-`parse` checks a value and gives you back a clean copy that is guaranteed to match. Use it on the same bad request body from lesson 8, and on a good one:
+`parse` checks a value and gives you back a clean copy that is guaranteed to match. Use it on the same kind of bad request body as in [TypeScript and JavaScript together](https://zudojs.oyinlola.site/learn/ts-runtime), and on a good one:
 
 parse.ts
 
@@ -103,11 +105,11 @@ There are two ways to check:
 | `safeParse(value)` | Returns `{ success: false, issues }`. Never throws. | You want to look at the problems yourself. |
 | `parse(value)` | Throws a `SchemaError`. | Bad data means "stop here". This is the usual choice inside an API. |
 
-`safeParse` returns a discriminated union, just like the `Result` type you wrote in lesson 8: after `if (!result.success)`, TypeScript knows `result.issues` exists, and after `if (result.success)` it knows `result.data` is a `NewTask`.
+`safeParse` returns a discriminated union, just like the `Result` type you wrote in [Generics](https://zudojs.oyinlola.site/learn/ts-generics): after `if (!result.success)`, TypeScript knows `result.issues` exists, and after `if (result.success)` it knows `result.data` is a `NewTask`.
 
 ## Errors that already know their status code
 
-`@zudojs/errors` replaces the error classes you wrote in lesson 5. Each one carries an HTTP `statusCode` and a stable `code` string that clients can check:
+`@zudojs/errors` replaces the error classes you wrote in [Handling errors](https://zudojs.oyinlola.site/learn/js-errors). Each one carries an HTTP `statusCode` and a stable `code` string that clients can check:
 
 errors.ts
 
@@ -188,8 +190,8 @@ An API answers every request with a **status code** and a JSON **body**, even wh
 main.ts
 
 ```ts
-import { BaseError, SchemaError } from "@zudojs/errors";
-import type { SchemaIssue } from "@zudojs/schema";
+import { BaseError } from "@zudojs/errors";
+import { isSchemaValidationError } from "@zudojs/schema";
 import { TaskService } from "./task.service.js";
 
 const service = new TaskService();
@@ -198,9 +200,8 @@ function respond(action: () => unknown): { status: number; body: unknown } {
   try {
     return { status: 200, body: action() };
   } catch (error) {
-    if (error instanceof SchemaError) {
-      const found = error.issues as readonly SchemaIssue[];
-      const issues = found.map((i) => `${i.path.join(".")}: ${i.message}`);
+    if (isSchemaValidationError(error)) {
+      const issues = error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
       return { status: 400, body: { error: error.code, issues } };
     }
     if (error instanceof BaseError && error.expose) {
@@ -258,7 +259,7 @@ Every outcome became a status and a body:
 - **400 Bad Request**: a title that is too short and a priority that is not allowed, both reported at once.
 - **404 Not Found**: a task that does not exist.
 
-One line needs explaining: `error.issues as readonly SchemaIssue[]`. `SchemaError` lives in `@zudojs/errors`, a basic package that every other ZudoJS package builds on, so it cannot know the shape of `@zudojs/schema`'s issues and types them as `unknown`. The word `as` is a **type assertion**: you tell TypeScript "trust me, these are schema issues". It checks nothing at runtime, so only use it when, as here, you know where the value came from.
+One line needs explaining: `isSchemaValidationError(error)`. A `catch` block receives `unknown`, and `error instanceof SchemaError` alone is not enough here: `SchemaError` lives in `@zudojs/errors`, a basic package that every other ZudoJS package builds on, so it cannot know the shape of `@zudojs/schema`'s issues and types them as `unknown`. `isSchemaValidationError`, from `@zudojs/schema`, is a **type guard**, like the ones you wrote in [TypeScript and JavaScript together](https://zudojs.oyinlola.site/learn/ts-runtime): it checks at runtime that the error is a `SchemaError` and that every issue has the right shape, and then TypeScript knows `error.issues` is a list of schema issues with a `path` and a `message`. You need no `as` cast.
 
 `error.expose` is `true` for errors whose message is safe to show a client. Anything unexpected becomes a plain 500 with a generic message. You never send internal details, such as a stack trace, to the outside world.
 
@@ -346,3 +347,7 @@ The schema lives next to the code that uses it here to keep the example short. I
 - A service takes `unknown` input, validates it, and throws the right error. Something at the edge turns errors into status codes and bodies.
 
 You have now written the core of an API. What is missing is the part that listens on the network. For that you need a real ZudoJS project, which the CLI creates in the next lesson.
+
+## Test yourself
+
+Five questions, picked at random from this lesson's question bank. Some ask you to choose an answer, some to predict what code prints, and some to write code and run it in the terminal. Get 4 of 5 right to pass. If you don't, read the explanations and try again: you get 5 different questions.

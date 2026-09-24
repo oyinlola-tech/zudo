@@ -4,7 +4,7 @@ description: "@zudojs/cache reference: CacheService, memory adapter, tag-based i
 source: https://zudojs.oyinlola.site/docs/packages-cache
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/cache
 
@@ -78,7 +78,7 @@ A read that finds the entry is a *hit*; one that does not is a *miss*. `get` nev
 
 A *key* is the name you store a value under. Before the key reaches the adapter, a *key builder* turns it into a full key of the form `prefix:namespace:key`. The default prefix is `zudojs` and the default separator is `:`, so `set("user.123", ...)` is stored as `zudojs:user.123`.
 
-Every part is checked. A part may only contain letters, digits, `.`, `_` and `-`, and it must not contain the separator. The full key may be at most 256 characters. A bad key throws a `CacheError` right away.
+Every part is checked. A part may only contain letters, digits, `.`, `_` and `-`, and it must not contain the separator. The full key may be at most 256 characters. A bad key throws a `CacheError` right away, with code `ERR_INVALID_INPUT` and `statusCode` 400. Since v1.2.0 that rejection is also counted in `getStats().errors` and emitted as a `cache.error` event, like an invalid TTL.
 
 The separator is the only thing that marks where the namespace ends and your key begins. If your key could contain it, `set("admin:x")` would land inside the `admin` namespace. Rejecting the separator in each part closes that hole.
 
@@ -95,14 +95,14 @@ console.log(keys.build("user.1", { namespace: "auth" }));
 // "myapp:auth:user.1"
 
 keys.build("user:1");
-// throws CacheError: Invalid cache key part "user:1"
+// throws CacheError (code ERR_INVALID_INPUT): Invalid cache key part "user:1"
 ```
 
 ### Namespaces and tenant isolation
 
 A *namespace* is a label that groups a set of keys. Two entries with the same key but different namespaces are different entries. A *tenant* is one customer or organisation in an app that serves many; giving each tenant its own namespace keeps their cached data apart.
 
-You can set the namespace once for a whole service with `config.namespace`, or per call with `{ namespace }`. Reads, writes, `clear`, tag invalidation and locks all stay inside the namespace they were given. An empty-string namespace is rejected with `CACHE_INVALID_KEY` in the config and per call, so a tenant id that resolved to `""` never falls into the global keyspace.
+You can set the namespace once for a whole service with `config.namespace`, or per call with `{ namespace }`. Reads, writes, `clear`, tag invalidation and locks all stay inside the namespace they were given. An empty-string namespace is rejected in the config and per call, so a tenant id that resolved to `""` never falls into the global keyspace. The error is a `CacheError` with code `ERR_INVALID_INPUT` and `statusCode` 400, the same one an invalid key throws.
 
 This stores the same key under two tenants and then clears only one of them.
 
@@ -165,7 +165,7 @@ const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
 await cache.set("timed",   "v", { ttl: 10_000 });
 await cache.set("forever", "v", { ttl: null });
 
-console.log(await cache.ttl("timed"));   // 9999 (milliseconds left; yours will differ)
+console.log(await cache.ttl("timed"));   // 9998 (whole milliseconds left, rounded down; yours may differ slightly)
 console.log(await cache.ttl("forever")); // null  (never expires)
 console.log(await cache.ttl("missing")); // undefined (no such key)
 
@@ -267,7 +267,7 @@ console.log(await cache.has("user.1"));                // false
 console.log(await cache.has("post.1"));                // true
 ```
 
-Tags live inside a namespace. A tag added under `tenant-a` is only visible to `invalidateByTag(tags, { namespace: "tenant-a" })` or to a service configured with that namespace. A tag must be a non-empty string of at most 128 characters.
+Tags live inside a namespace. A tag added under `tenant-a` is only visible to `invalidateByTag(tags, { namespace: "tenant-a" })` or to a service configured with that namespace. A tag must be a non-empty string of at most 128 characters with no NUL character. Since v1.2.0 an invalid tag, including `tags: [""]`, throws `ERR_INVALID_INPUT` (status 400), the same code as an invalid key; it used to surface as `CACHE_OPERATION_FAILED`, which reads like an adapter fault.
 
 > WATCH OUT
 >
@@ -352,7 +352,7 @@ Lock names go through the key builder, so they are validated like keys and scope
 
 ## SEEING WHAT THE CACHE DOES
 
-The service counts hits, misses, sets, deletes and errors, and it emits an *event* (a small message you can listen for) on every operation. Stats are on by default; turn them off with `config.collectStats: false`, after which `getStats()` returns `null`.
+The service counts hits, misses, sets, deletes and errors (including rejected input: an invalid key, namespace, pattern, tag or TTL), and it emits an *event* (a small message you can listen for) on every operation. Stats are on by default; turn them off with `config.collectStats: false`, after which `getStats()` returns `null`.
 
 This listens for misses, does a few reads, and prints the counters.
 
@@ -412,7 +412,7 @@ Everything below is exported from `@zudojs/cache`. Most apps only need the first
 | `set(key, value, { ttl?, tags?, namespace?, overwrite?, metadata? })` | Writes one entry. | Returns `{ success, key, expiresAt, skipped? }`. `overwrite: false` skips existing keys. |
 | `has(key, opts?)` / `delete(key, opts?)` | Existence check / removal. | `delete` returns `{ deleted, key }`. |
 | `getOrSet<T>(key, fn, opts?)` | Read, or compute and store. | Returns `{ value, cached }`. Options add `forceRefresh`. |
-| `ttl(key, opts?)` / `expire(key, ttl, opts?)` | Remaining lifetime / set a new lifetime. | `ttl` returns ms, `null` (never) or `undefined` (missing). |
+| `ttl(key, opts?)` / `expire(key, ttl, opts?)` | Remaining lifetime / set a new lifetime. | `ttl` returns whole ms (rounded down, since v1.2.0), `null` (never) or `undefined` (missing). |
 | `clear({ namespace?, pattern? })` | Removes everything, or only matching entries. | Returns `{ cleared }`. |
 | `invalidateByTag(tags, { namespace? })` | Removes entries carrying any of the tags. | Scoped to the namespace. |
 | `invalidateByPattern(pattern, { namespace? })` | Removes entries matching a glob. | `*` stops at `:`; `**` spans. |
@@ -472,7 +472,7 @@ Every error thrown by this package is a `CacheError` from `@zudojs/errors`, re-e
 | Name | What it does | Notes |
 | --- | --- | --- |
 | `CacheError`, `isCacheError` | Error class and type guard. | Has `message`, `code`, `statusCode`, `operation`, `key`. |
-| `CacheErrorCode` | Codes this package sets: `CACHE_DISABLED`, `CACHE_OPERATION_FAILED`, `CACHE_INVALID_TTL`, `CACHE_MIDDLEWARE_RESULT_MISSING`, `CACHE_LOCK_UNAVAILABLE`, `CACHE_LOCK_ACQUIRE_FAILED`, `CACHE_LOCK_LOST`. | Type only. |
+| `CacheErrorCode` | Codes this package sets: `CACHE_DISABLED`, `CACHE_OPERATION_FAILED`, `CACHE_INVALID_TTL`, `CACHE_MIDDLEWARE_RESULT_MISSING`, `CACHE_LOCK_UNAVAILABLE`, `CACHE_LOCK_ACQUIRE_FAILED`, `CACHE_LOCK_LOST`. | Type only. An invalid key, namespace, pattern, tag or lock name throws with the shared code `ERR_INVALID_INPUT` (`ErrorCode.INVALID_INPUT`, status 400), which is not in this union. There is no `CACHE_INVALID_KEY` code. Before v1.2.0 an invalid tag surfaced as `CACHE_OPERATION_FAILED`. |
 | `CacheOperation` | Enum of operation names (`GET`, `SET`, `DELETE`, `LOCK_ACQUIRE`, ...). | Pass to `getLatencyStats`. |
 | `cacheInvalidKeyError`, `cacheSerializationError`, `cacheDeserializationError`, `cacheConnectionError`, `cacheTimeoutError`, `cacheAdapterNotConfiguredError` | Factories for building a `CacheError` of each kind. | Useful inside a custom adapter. |
 
@@ -505,7 +505,7 @@ Every error thrown by this package is a `CacheError` from `@zudojs/errors`, re-e
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/cache` exports from its package root at v1.1.1 — **104** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/cache` exports from its package root at v1.2.3 — **104** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 104 exports**
 

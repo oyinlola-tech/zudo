@@ -4,7 +4,7 @@ description: "@zudojs/runtime docs: application lifecycle orchestration, depende
 source: https://zudojs.oyinlola.site/docs/packages-runtime
 ---
 
-v1.2.0
+v1.3.1
 
 # @zudojs/runtime
 
@@ -111,9 +111,9 @@ A **lifecycle state** is one word describing where the runtime is right now: not
 ```ts
 type RuntimeState =
   | "created"       // built, nothing has run yet
-  | "initializing"  // running module hooks to bring modules up
-  | "initialized"   // every module initialized
-  | "starting"      // modules are being started
+  | "initializing"  // onInitialize hooks are running
+  | "initialized"   // every module has initialized
+  | "starting"      // onReady hooks are running
   | "running"       // everything is up
   | "stopping"      // modules are being torn down
   | "stopped"       // everything is down
@@ -125,15 +125,17 @@ The runtime only moves between states along fixed paths. Ask for an illegal move
 | From | Can move to |
 | --- | --- |
 | created | initializing, stopped, failed |
-| initializing | initialized, running, failed |
-| initialized | starting, running, failed |
+| initializing | initialized, failed |
+| initialized | starting, failed |
 | starting | running, failed |
 | running | stopping, failed |
 | stopping | stopped, failed |
 | stopped | *nothing — this is the end* |
 | failed | stopping, stopped |
 
-> **In plain words:** `failed` is not the end. A failed start only rolls back the modules that actually started, so you can still call `stop()` to release everything else.
+> **Changed in v1.3.0:** `start()` passes through every state in order: `created → initializing → initialized → starting → running`. `onInitialize` hooks see `initializing` and `onReady` hooks see `starting`, and the runtime publishes `runtime.initialized` and `runtime.starting` between the two phases. `RUNTIME_STATE_TRANSITIONS` no longer allows `initializing → running` or `initialized → running`. In 1.2.1 the two middle states were declared but never entered, and `onReady` ran while the state still read `initializing`.
+
+> **In plain words:** `failed` is not the end. A failed start only rolls back the modules that actually started, so you can still call `stop()` to release everything else. Since v1.3.0 the state helpers agree: `TERMINAL_STATES` is `["stopped"]` and `isTerminalState("failed")` is `false`.
 
 The same rules are available as functions, if you want to check a state without touching a runtime.
 
@@ -148,6 +150,7 @@ import {
 console.log(canTransition("created", "initializing")); // true
 console.log(canTransition("stopped", "running"));   // false
 console.log(isTerminalState("stopped"));               // true
+console.log(isTerminalState("failed"));                // false — stop() still works from "failed"
 console.log(isRunning("running"));                     // true
 console.log(hasFailed("failed"));                      // true
 ```
@@ -179,7 +182,7 @@ Each module can implement any of four hooks. The runtime calls them with a `Modu
 | Hook | When it runs | Order |
 | --- | --- | --- |
 | onInitialize | Bringing the module up: open connections, read config. | Dependencies first |
-| onReady | After every module has initialized: start accepting work. | Dependencies first |
+| onReady | After every module has initialized: start accepting work. `runtime.state` is `starting` here (it was still `initializing` before v1.3.0). | Dependencies first |
 | onShutdown | Shutting down: stop accepting work, drain. | Reverse |
 | onDestroy | Last call: release everything the module still holds. | Reverse |
 
@@ -261,19 +264,32 @@ console.log(resolveDependencies(graph).parallelGroups);
 
 ## STARTUP AND SHUTDOWN
 
-`start()` initializes every module in order, then readies them. If any module throws, the runtime rolls back: modules that already started are stopped and destroyed in reverse, the state becomes `failed`, and the original error is re-thrown to you. A configuration manager that fails to load fails startup with `RuntimeStartError` (`phase: "initialize"`).
+`start()` initializes every module in order, then readies them. If any module throws, the runtime rolls back: modules that already started are stopped and destroyed in reverse, and the state becomes `failed`.
+
+`start()` does **not** re-throw the error your module threw. It rejects with a `RuntimeStartError` whose `cause` is your original error, whose `phase` is `"initialize"` (an `onInitialize` threw) or `"start"` (an `onReady` threw), and whose `failedModuleId` names the module. So `error instanceof MyDbError` is always false in the catch block; test `error.cause` instead. Since v1.3.0 two subclasses narrow it down, and `instanceof RuntimeStartError` still matches both:
+
+- `RuntimeInitializationError` (`phase: "initialize"`) when an `onInitialize` hook fails, or when the configuration manager fails to load (then with no `failedModuleId`).
+- `RuntimeRollbackError` when startup fails *and* the rollback that follows also fails. `phase`, `failedModuleId` and `cause` describe the startup failure, `originalError` holds the error `start()` would otherwise have thrown, `rollbackError` what failed during rollback (an `AggregateError` when several modules failed), and the message names both, for example `Module "api" failed during initialization. Rollback also failed: close failed`. Before v1.3.0 a rollback failure was only logged.
+
+A startup that outlives `startupTimeout` rejects with `RuntimeTimeoutError` instead, which has no cause.
 
 `stop()` goes the other way, and is safe to call more than once — stopping an already-stopped runtime does nothing.
 
-Handling a failed start:
+Handling a failed start, and getting at the original error:
 
 ```ts
-import { RuntimeTimeoutError } from "@zudojs/runtime";
+import { RuntimeStartError, RuntimeTimeoutError } from "@zudojs/runtime";
 
 try {
   await runtime.start();
 } catch (error) {
-  if (error instanceof RuntimeTimeoutError) {
+  if (error instanceof RuntimeStartError) {
+    // error.cause is the error your module threw.
+    console.error(
+      `module ${error.failedModuleId} failed in ${error.phase}:`,
+      error.cause,
+    );
+  } else if (error instanceof RuntimeTimeoutError) {
     console.error(`${error.operation} timed out after ${error.timeoutMs}ms`);
   } else {
     console.error("startup failed:", error);
@@ -281,9 +297,31 @@ try {
 
   // Release whatever startup did not roll back, then exit non-zero.
   await runtime.stop();
+  await container.dispose(); // unless you passed disposeContainerOnStop: true
   process.exit(1);
 }
 ```
+
+With a module whose `onInitialize` throws `new Error("connect ECONNREFUSED")`, this prints `module database failed in initialize: Error: connect ECONNREFUSED`.
+
+### Who disposes the container
+
+The container is passed in, so by default the caller owns it: `stop()` calls every module's `onShutdown` and `onDestroy` but leaves the container alone, and any `SINGLETON` it created (a pool, a file handle, a client with open sockets) is still open after `runtime.stop()` resolves. Since v1.3.0 you can hand ownership to the runtime with `disposeContainerOnStop: true`: `stop()` then disposes the container after every module has shut down and been destroyed, including a signal-driven stop and `stop()` on a runtime that never started. A disposal failure is recorded in `status.shutdownFailures` under the id `"(container)"` (exported as `CONTAINER_SHUTDOWN_ID`) and does not fail the stop.
+
+```ts
+const runtime = createRuntime(
+  { modules, logger, container, eventBus },
+  { environment: "production", applicationName: "my-api", disposeContainerOnStop: true },
+);
+
+await runtime.start();
+await runtime.stop();      // modules shut down, then each singleton's dispose() runs
+console.log(container.isDisposed()); // true
+```
+
+Without the option, dispose the container yourself *after* the runtime has stopped (modules may still resolve services while they shut down, and a disposed container throws on every use): `await runtime.stop(); await container.dispose();`.
+
+The fatal-error path (`uncaughtException`, `unhandledRejection`) calls `process.exit(1)` as soon as the stop settles, so an asynchronous `dispose()` you start yourself from a `runtime.stopped` handler may not finish there. `disposeContainerOnStop: true` avoids that, because the disposal is part of `stop()` itself.
 
 Two options bound how long either direction may take. A module whose hook never settles no longer hangs the process forever.
 
@@ -352,7 +390,7 @@ When your platform wants your process gone, it sends a *signal* — a small mess
 
 | Signal or event | What the runtime does |
 | --- | --- |
-| SIGTERM | Graceful shutdown. A signal during startup waits for startup to settle, then stops. A second SIGTERM during shutdown exits immediately. |
+| SIGTERM | Graceful shutdown. The process stays alive until every `onShutdown` has finished, then exits on its own: code 0 when the shutdown succeeded, code 1 when it failed. A signal during startup waits for startup to settle, then stops. A second SIGTERM during shutdown exits immediately. |
 | SIGINT | Same as SIGTERM. This is Ctrl-C. |
 | uncaughtException | Logs the error, shuts down, then exits with code 1. |
 | unhandledRejection | Same as an uncaught exception. |
@@ -369,6 +407,28 @@ const runtime = createRuntime(dependencies, {
 ```
 
 > **Watch out:** do not add your own `process.on("SIGTERM", ...)` that also calls `stop()` while `handleSignals` is on. You get two shutdowns racing; the second signal is then read as "exit now".
+
+### How a signal-driven shutdown ends
+
+With `handleSignals` on, the signal handler holds the event loop open for the whole graceful shutdown, so `onShutdown` runs to the end even under plain `node`, after your server has closed and nothing else keeps the process alive. The runtime never calls `process.exit()` here. It sets `process.exitCode` and lets the process exit on its own:
+
+| What happened during shutdown | Final state | Exit code | Events and log |
+| --- | --- | --- | --- |
+| Every hook finished | `stopped` | 0 (left alone) | `runtime.stopped` |
+| An `onShutdown` threw | `stopped` | 1 | `runtime.module.failed`, then `runtime.stopped`; logs `Shutdown handler failed.` with a `RuntimeSignalError` |
+| The shutdown outlived `shutdownTimeout` | `failed` | 1 | `runtime.failed` (`phase: "stop"`) once; logs `Shutdown handler failed.` with a `RuntimeSignalError` |
+
+Tested under plain `node` with a module whose `onShutdown` clears the last interval and then waits on an unref'd 300 ms timer, and `shutdownTimeout: 500`:
+
+```ts
+clean shutdown        → database closed, runtime.stopped, exit code 0, state "stopped"
+onShutdown throws     → exit code 1, state "stopped", runtime.failed not published
+onShutdown never ends → runtime.failed stop (once), exit code 1, state "failed"
+```
+
+An orchestrator such as Kubernetes or systemd sees the non-zero exit without any code of yours. You no longer need to set `process.exitCode` from a `runtime.failed` handler; subscribe to `runtime.failed` and `runtime.module.failed` only to report the failure.
+
+> **Changed in v1.3.1:** in v1.3.0 a `SIGTERM`/`SIGINT` under plain `node` could end the process at once with code 0, with the runtime still `running` or `stopping` and `onShutdown` unfinished, whenever nothing else kept the event loop alive (`tsx` hid this by keeping the loop alive). A failed signal-driven shutdown was only logged, as `Shutdown failed.`, and the exit code stayed 0, so this page advised setting `process.exitCode = 1` in a `runtime.failed` handler; that workaround can go. A failed stop also published `runtime.failed` twice, and a module failure during startup did too; each now publishes it once.
 
 ## EVENTS
 
@@ -391,9 +451,9 @@ eventBus.on("runtime.health.changed", (event) => {
 // A clean boot prints: health: unknown -> starting, then starting -> healthy
 ```
 
-Nineteen event types are emitted, in four families:
+Eighteen event types are emitted, in four families:
 
-- **Runtime** — `runtime.created`, `.initializing`, `.initialized`, `.starting`, `.running`, `.stopping`, `.stopped`, `.failed`
+- **Runtime** — `runtime.initializing`, `.initialized`, `.starting`, `.running`, `.stopping`, `.stopped`, `.failed`. `.initialized` and `.starting` are published since v1.3.0, and since v1.3.1 the `RuntimeEventType` union includes them too. There is no `runtime.created` event.
 - **Module** — `runtime.module.initializing`, `.initialized`, `.starting`, `.started`, `.stopping`, `.stopped`, `.failed`
 - **Shutdown** — `runtime.shutdown.drain`, `runtime.shutdown.complete`
 - **Derived state** — `runtime.health.changed`, `runtime.readiness.changed`
@@ -514,7 +574,7 @@ describe("my app", () => {
 });
 ```
 
-When you need the runtime object itself, build one with `createTestRuntime` and drive it by hand.
+When you need the runtime object itself, build one with `createTestRuntime` and drive it by hand. It creates its own container and, since v1.3.0, disposes it on `stop()` (`disposeContainerOnStop: true`); pass `disposeContainerOnStop: false` to keep it.
 
 ```ts
 import { createTestRuntime, createMockModule } from "@zudojs/runtime/testing";
@@ -535,8 +595,8 @@ await runtime.stop();
 
 | Member | What it does | Notes |
 | --- | --- | --- |
-| start() | Brings every module up in dependency order. | Rolls back and throws on failure. Calling it twice is a no-op. |
-| stop() | Tears every module down in reverse order. | Works from `failed`; safe to call repeatedly. |
+| start() | Brings every module up in dependency order. | Rolls back and throws `RuntimeStartError` (original on `cause`; `RuntimeInitializationError` or `RuntimeRollbackError` where they apply) on failure. Calling it twice is a no-op. |
+| stop() | Tears every module down in reverse order. | Works from `failed`; safe to call repeatedly. Disposes the container only with `disposeContainerOnStop: true`. |
 | state | The current lifecycle state. | One `RuntimeState` string. |
 | status | State plus timestamps, error and shutdown failures. | Recomputed on every read. |
 | context | Identity, services and live state in one object. | Recomputed on every read. |
@@ -553,7 +613,7 @@ await runtime.stop();
 | --- | --- | --- |
 | environment | *required* | "development" \| "test" \| "staging" \| "production". |
 | applicationName | *required* | Name used in logs and events. |
-| applicationVersion | "1.0.0" | Version reported on the context. |
+| applicationVersion | "0.1.0" | Version reported on the context. |
 | runtimeId | generated | Identifier for this runtime instance. |
 | handleSignals | true | Shut down on SIGTERM and SIGINT. |
 | handleFatalErrors | true | Shut down and exit 1 on an uncaught error. |
@@ -565,6 +625,9 @@ await runtime.stop();
 | emitEvents | true | Publish lifecycle events on the bus. |
 | trackReadiness | true | Mark ready automatically once all checks pass. |
 | trackHealth | true | Derive health and emit health events. |
+| readinessCheckTimeout | 5000 | Milliseconds one readiness check may take before it counts as failed. |
+| parallelInitialization | false | Initialize modules at the same dependency depth together instead of one by one. |
+| disposeContainerOnStop | false | Dispose the container after every module has shut down. New in v1.3.0; `createTestRuntime` sets it to `true`. |
 | metadata | {} | Free-form values surfaced on the context. |
 
 ### Functions
@@ -575,7 +638,6 @@ await runtime.stop();
 | resolveDependencies(map) | Returns order and parallelGroups. | Throws on a missing dependency or a cycle. |
 | buildDependencyGraph(map) | Returns nodes, order and any cycles. | Does not throw on a cycle; it reports one. |
 | validateDependencies(map) | Throws if a module names a dependency that is not in the map. | Returns nothing; resolveDependencies calls it for you. |
-| validateDependencies(map) | Throws if a dependency is not registered. | Returns nothing. |
 | computeRuntimeHealth(state, readiness) | Derives health from a state and check results. | What `runtime.health` uses. |
 | createRuntimeOptions(options) | Applies defaults, then validates. | `resolveRuntimeOptions` and `validateRuntimeOptions` do each half. |
 | createRuntimeContext(deps) | Builds a context object. | The runtime does this for you. |
@@ -603,14 +665,14 @@ await runtime.stop();
 | Name | Thrown when | Notes |
 | --- | --- | --- |
 | RuntimeStateError | An illegal state move is attempted. | E.g. starting a stopped runtime. |
-| RuntimeStartError | Startup fails. | Carries `phase` and `failedModuleId`. |
+| RuntimeStartError | A module hook, or the configuration manager, fails during startup. | Carries `phase` (`"initialize"` or `"start"`) and `failedModuleId`; the error your module threw is on `cause`. |
 | RuntimeStopError | Shutdown fails. | Carries `phase`. |
-| RuntimeInitializationError | A module fails to initialize. | — |
+| RuntimeInitializationError | An `onInitialize` hook, or the configuration manager, fails during startup. | Extends `RuntimeStartError` with `phase: "initialize"`; accepts a `failedModuleId`. Thrown since v1.3.0. |
 | RuntimeTimeoutError | Startup, shutdown or a check runs too long. | Carries `operation` and `timeoutMs`. |
-| RuntimeRollbackError | The rollback after a failure also fails. | Carries both errors. |
+| RuntimeRollbackError | Startup fails and the rollback that follows also fails. | Extends `RuntimeStartError`. `originalError` is the startup error, `rollbackError` what failed during rollback (an `AggregateError` for several). Thrown since v1.3.0. |
 | RuntimeCircularDependencyError | Modules depend on each other in a loop. | Carries the `cycle`. |
 | RuntimeDependencyError | A module depends on an unregistered id. | Carries `moduleId` and `dependencyId`. |
-| RuntimeSignalError | An unexpected signal is received. | Carries `signal`. |
+| RuntimeSignalError | Logged by `SignalHandler` when the shutdown it triggered rejects; never thrown, since a signal handler has no caller. | Carries `signal` and, since v1.3.0, an optional `cause`. See the note under Signals: a runtime from `createRuntime` catches its own stop failure first and logs `Shutdown failed.` instead. |
 | toRuntimeError(error, phase) | Wraps anything thrown into a `RuntimeError`. | Passes an existing one through unchanged. |
 
 ### Constants and types
@@ -619,13 +681,14 @@ await runtime.stop();
 | --- | --- | --- |
 | DEFAULT_RUNTIME_OPTIONS | The default option values. | Frozen object. |
 | RUNTIME_STATE_TRANSITIONS | The legal moves per state. | Backs `canTransition`. |
-| TERMINAL_STATES / STARTABLE_STATES / STOPPABLE_STATES | State groupings. | Frozen arrays. |
+| TERMINAL_STATES / STARTABLE_STATES / STOPPABLE_STATES | State groupings. | Frozen arrays. `TERMINAL_STATES` is `["stopped"]` since v1.3.0. |
+| CONTAINER_SHUTDOWN_ID | `"(container)"` | The `shutdownFailures` id under which a failed container disposal is recorded. |
 | Runtime, RuntimeDependencies | The runtime interface and its inputs. | Type-only exports. |
 | RuntimeOptions, ResolvedRuntimeOptions | Options before and after defaults. | Type-only. |
 | RuntimeState, RuntimeStatus, RuntimeHealth, RuntimeHealthState | State and health shapes. | Type-only. |
 | ReadinessCheckFn, ReadinessCheck, ReadinessTrackerState | Readiness shapes. | Type-only. |
 | LifecyclePhase, LifecycleResult, LifecycleFailure | Per-phase results from the lifecycle manager. | Type-only. |
-| RuntimeEventType, RuntimeEventMap and payload types | Event names and payload shapes. | Type-only. |
+| RuntimeEventType, RuntimeModuleEventType, RuntimeEventMap and payload types | Event names and payload shapes. | Type-only. Since v1.3.1 `RuntimeEventType` is `keyof RuntimeEventMap` (all 18 names, including `runtime.initialized` and `runtime.starting`), and `RuntimeModuleEventType` is its `runtime.module.*` subset. |
 
 ## COMMON MISTAKES
 
@@ -635,6 +698,9 @@ await runtime.stop();
 - **Treating `failed` as the end.** Startup rollback shuts down started modules and destroys every module whose `onInitialize` ran (including one that threw); a module that finishes after a startup timeout is torn down when it settles, and `stop()` waits for that. Call `stop()` on a failed runtime to release it fully.
 - **Caching `runtime.status` in a variable and reading it later.** Each read builds a fresh snapshot; the one you held onto is frozen in the past. Read `runtime.status` at the moment you need it.
 - **Ignoring `status.shutdownFailures`.** The state reaches `stopped` either way. Only that list tells you a module failed to release its resources.
+- **Checking the startup error's type directly.** `start()` wraps a module's failure in `RuntimeStartError`, so `error instanceof YourError` is false. Look at `error.cause`.
+- **Assuming `stop()` closes container services.** By default it does not call `container.dispose()`. Pass `disposeContainerOnStop: true`, or call it yourself after the runtime has stopped.
+- **Checking `state === "initializing"` inside `onReady`.** Since v1.3.0 `onReady` runs in `starting`. Test for the state you actually mean, or subscribe to `runtime.starting` / `runtime.running`.
 
 ## RELATED PACKAGES
 
@@ -646,9 +712,9 @@ await runtime.stop();
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/runtime` exports from its package root at v1.2.1 — **90** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/runtime` exports from its package root at v1.3.3 — **91** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 90 exports**
+**Show all 91 exports**
 
 Classes (14)
 
@@ -666,6 +732,6 @@ Type aliases (10)
 
 `LifecyclePhase` `ModuleEventListener` `ReadinessCheckFn` `ReadinessState` `RuntimeEventType` `RuntimeFailureState` `RuntimeHealthState` `RuntimeId` `RuntimeModuleEventType` `RuntimeState`
 
-Constants (5)
+Constants (6)
 
-`DEFAULT_RUNTIME_OPTIONS` `RUNTIME_STATE_TRANSITIONS` `STARTABLE_STATES` `STOPPABLE_STATES` `TERMINAL_STATES`
+`CONTAINER_SHUTDOWN_ID` `DEFAULT_RUNTIME_OPTIONS` `RUNTIME_STATE_TRANSITIONS` `STARTABLE_STATES` `STOPPABLE_STATES` `TERMINAL_STATES`

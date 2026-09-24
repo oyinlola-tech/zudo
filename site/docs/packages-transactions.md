@@ -4,7 +4,7 @@ description: "@zudojs/transactions docs: transaction lifecycle, async context pr
 source: https://zudojs.oyinlola.site/docs/packages-transactions
 ---
 
-v1.1.1
+v1.2.0
 
 # @zudojs/transactions
 
@@ -140,11 +140,40 @@ console.log(transaction.state); // "committed"
 
 > **Watch out:** committing a transaction that was already rolled back throws `TransactionStateError`. Only a second commit of an already-committed transaction is a harmless no-op.
 
+> **The other way round throws too (since v1.2.0):** `manager.rollback(transaction, reason)` on a transaction that is already `committed` throws `TransactionStateError`, matching `Transaction.rollback()`. Before v1.2.0 it silently did nothing, so a `catch` block that rolled back after a late failure looked as if it had undone the work. Rolling back an already rolled-back or failed transaction is still a harmless no-op, and `run()` no longer tries to roll back when an error (for example from an `afterCommit` hook) arrives after a successful commit.
+
 ## ADAPTERS
 
 An *adapter* is the object that turns "begin a transaction" into something your database understands. The manager never touches a driver; it calls `adapter.begin()`, `adapter.commit(handle)` and `adapter.rollback(handle)`.
 
 A *handle* is whatever your `begin()` returns — a client, a connection, an id. The manager stores it and hands it straight back to you on commit and rollback, without looking inside.
+
+Application code can reach the handle too, so a repository can run its queries on "the connection of the current transaction". Since v1.2.0 `getTransactionHandle<T>(transaction)` returns the handle of a transaction you hold, and `currentTransactionHandle<T>()` or `manager.getCurrentHandle<T>()` the handle of whatever transaction is in scope. A participant resolves to the handle of the transaction it joined, a savepoint to its connection's handle, and a non-transactional scope (or no transaction at all) to `undefined`. Use the handle for work inside the transaction; commit and roll back through the manager, or you bypass its state machine, hooks and events.
+
+```ts
+import {
+  createTransactionManager,
+  createInMemoryAdapter,
+  currentTransactionHandle,
+  getTransactionHandle,
+} from "@zudojs/transactions";
+
+const manager = createTransactionManager({ adapter: createInMemoryAdapter() });
+
+// A repository deep in the call stack finds the transaction's connection itself.
+function connectionForQuery(): unknown {
+  return currentTransactionHandle() ?? "the pool";
+}
+
+await manager.run(async (transaction) => {
+  console.log(connectionForQuery() === getTransactionHandle(transaction)); // true
+  console.log(manager.getCurrentHandle() === getTransactionHandle(transaction)); // true
+});
+
+console.log(connectionForQuery()); // "the pool"
+```
+
+`currentTransactionHandle()` reads the shared default context. If you gave the manager its own `context`, pass that context, or call `manager.getCurrentHandle()`. `getTransactionHandle` throws `TypeError` for an object this package did not create.
 
 An adapter also declares its `capabilities`: whether it can do savepoints, nested transactions, read-only transactions, timeouts, and which isolation levels it accepts. Asking for something the adapter did not declare throws `TransactionIsolationError` (unsupported isolation level) or `TransactionCapabilityError` (any other capability) before any work starts.
 
@@ -194,7 +223,7 @@ You ask for one per transaction with `isolation`. The adapter above accepts two 
 
 ```ts
 await manager.begin({ isolation: "repeatable_read" });
-// TransactionAdapterError: Adapter does not support isolation level "repeatable_read"
+// TransactionIsolationError: Isolation level "repeatable_read" is not supported by the adapter
 ```
 
 ## NESTING AND PROPAGATION
@@ -287,13 +316,13 @@ Nested transactions need an adapter that declares `savepoints: true` and impleme
 
 Sometimes you know a transaction must not be kept, but you are not the code that will finish it — you are three functions deep. Mark it *rollback-only* and carry on; whoever tries to commit it gets a rollback instead.
 
-The flag is checked before the adapter is asked to commit, so a rollback can never be reported to you as a commit.
+The flag is checked before the adapter is asked to commit, so a rollback can never be reported to you as a commit. The commit rejects with `TransactionRollbackOnlyError` (new in v1.2.0), a `TransactionRollbackError` subclass whose message reads `Transaction "txn_…" commit refused: transaction marked rollback-only`. The reason you gave is in `error.metadata.originalError`. Before v1.2.0 this was a plain `TransactionRollbackError` with the misleading message "rollback failed"; `instanceof TransactionRollbackError` and the error code still match.
 
 ```ts
 import {
   createTransactionManager,
   createInMemoryAdapter,
-  TransactionRollbackError,
+  TransactionRollbackOnlyError,
 } from "@zudojs/transactions";
 
 const manager = createTransactionManager({
@@ -306,7 +335,9 @@ transaction.markRollbackOnly("stock check failed");
 try {
   await manager.commit(transaction);
 } catch (error) {
-  console.log(error instanceof TransactionRollbackError); // true
+  console.log(error instanceof TransactionRollbackOnlyError); // true
+  console.log((error as Error).message);
+  // Transaction "txn_…" commit refused: transaction marked rollback-only
 }
 
 console.log(transaction.state); // "rolled_back"
@@ -314,18 +345,39 @@ console.log(transaction.state); // "rolled_back"
 
 ### Timeouts
 
-`timeout` is a number of milliseconds. When it passes, the transaction is marked rollback-only and `timedOut` becomes `true`, so the commit at the end of `run()` turns into a rollback.
+`timeout` is a number of milliseconds. When it passes, the transaction is marked rollback-only, `timedOut` becomes `true`, and `transaction.signal` (an `AbortSignal`, new in v1.2.0) aborts with a `TransactionTimeoutError` as its reason. `run()` stops waiting for the callback at that moment: it rolls back and rejects with the `TransactionTimeoutError` straight away.
 
 ```ts
-await manager.run(async () => {
-  await new Promise((resolve) => setTimeout(resolve, 40));
-}, { timeout: 10 });
-// rejects with TransactionRollbackError; the adapter saw BEGIN then ROLLBACK
+import {
+  createTransactionManager,
+  createInMemoryAdapter,
+  TransactionTimeoutError,
+} from "@zudojs/transactions";
+
+const manager = createTransactionManager({ adapter: createInMemoryAdapter() });
+
+const started = Date.now();
+try {
+  await manager.run(async (transaction) => {
+    // Hand the signal to cancellable work so it stops too.
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(resolve, 300);
+      transaction.signal.addEventListener("abort", () => {
+        clearTimeout(timer);
+        reject(transaction.signal.reason);
+      });
+    });
+  }, { timeout: 20 });
+} catch (error) {
+  console.log(error instanceof TransactionTimeoutError, Date.now() - started < 100); // true true
+}
 ```
 
-A timeout does not interrupt your callback — it cannot, since the work is already in flight. It guarantees the result is thrown away, not that the work stops early. The timer is cleared as soon as the transaction ends.
+JavaScript cannot cancel a promise, so a callback that ignores the signal keeps running in the background after `run()` has rejected; its eventual result or error is discarded. Any side effect it has outside the transaction (an HTTP call, a queue message, a file) still happens. Pass `transaction.signal` to `fetch`, your driver, or anything else that accepts one, or use the database's own statement timeout. A participant exposes the signal of the transaction it joined, and a savepoint's signal also aborts with its parent's. `raceSignal(work, signal)` is the helper `run()` uses: it settles with `work`, or rejects with `signal.reason` as soon as the signal aborts.
 
-> **Watch out:** a timed-out transaction is rolled back and `commit()`/`run()` throw `TransactionTimeoutError` (`transaction.timedOut` is also true). Transactions opened with `begin()` time out too. The adapter must declare `timeouts: true` or the `timeout` option is rejected up front.
+> **Watch out:** a timed-out transaction is rolled back and `commit()`/`run()` throw `TransactionTimeoutError` (`transaction.timedOut` is also true). Transactions opened with `begin()` time out too: their signal aborts and the later `commit()` rejects. The adapter must declare `timeouts: true` or the `timeout` option is rejected up front.
+
+> **Changed in v1.2.0:** `transaction.timed_out` is emitted once per timeout, from the timer. It used to be emitted a second time when the commit of a timed-out transaction was refused. Before v1.2.0 there was also no signal, and `run()` waited for the callback to finish before rolling back.
 
 ## RETRIES
 
@@ -435,7 +487,7 @@ Everything below is exported from `@zudojs/transactions`. Most apps only need `c
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| `createTransactionManager({ adapter, context?, hooks?, registry? })` | Builds the manager you call from app code. | `adapter` is required; the context defaults to a shared `AsyncLocalStorage` one. |
+| `createTransactionManager({ adapter, context?, hooks?, registry?, onEvent? })` | Builds the manager you call from app code. | `adapter` is required; the context defaults to a shared `AsyncLocalStorage` one. `onEvent` receives a `TransactionEvent` for each lifecycle step. |
 | `createInMemoryAdapter()` | Adapter that keeps handles in memory and emulates savepoints. | For tests and examples. Declares every capability. |
 | `createAdapter(implementation, capabilities)` | Copies an adapter with a frozen capability list. | Handy when one driver is used at two capability levels. |
 | `createTransactionContext()` | A fresh `AsyncLocalStorage`-backed context. | Pass as `context` to isolate a manager, as the tests do. |
@@ -448,6 +500,8 @@ Everything below is exported from `@zudojs/transactions`. Most apps only need `c
 | `isModifiable(transaction)` | `true` while the state is `active` or `pending`. | Takes a transaction, not a state. |
 | `summarizeTransaction(transaction)` | One-line summary for logs. | e.g. `"Transaction txn_ab12, state=active, duration=42ms"`. |
 | `canTransition(from, to)` / `isTerminal(state)` / `createTransitionFunction(get, set)` | The state machine rules, on their own. | For custom `Transaction` implementations. |
+| `getTransactionHandle<T>(transaction)` / `currentTransactionHandle<T>(context?)` | The adapter handle behind a transaction, or behind the one in scope. | New in v1.2.0. `undefined` outside a transaction or in a non-transactional scope. |
+| `raceSignal(work, signal)` | Settles with `work`, or rejects with `signal.reason` once `signal` aborts. | New in v1.2.0. The abandoned promise keeps running; its rejection is observed. |
 | `asSavepointHandle(handle)` | Narrows a handle to `{ parent, savepoint }`, or `undefined`. | For adapters that inspect nested handles. |
 
 ### Manager methods
@@ -457,8 +511,9 @@ Everything below is exported from `@zudojs/transactions`. Most apps only need `c
 | `run<T>(callback, options?)` | Opens a transaction, runs the callback, commits or rolls back. | Returns whatever the callback returns. Honours `retry`. |
 | `begin(options?)` | Opens a transaction and returns it. | You must commit or roll it back yourself. |
 | `commit(transaction)` | Commits it, or rolls back if it is rollback-only. | No-op for participants and already-committed transactions; throws otherwise when not `active`. |
-| `rollback(transaction, reason?)` | Rolls back, or marks the joined transaction rollback-only. | Already-finished transactions are a no-op. |
+| `rollback(transaction, reason?)` | Rolls back, or marks the joined transaction rollback-only. | Throws `TransactionStateError` on a committed transaction (since v1.2.0); already rolled-back or failed ones are a no-op. |
 | `getCurrent()` | The transaction in scope right now, or `undefined`. | Reads the async context. |
+| `getCurrentHandle<T>()` | The adapter handle of the transaction in scope, or `undefined`. | New in v1.2.0. Uses this manager's context. |
 
 ### Transaction members
 
@@ -467,6 +522,7 @@ Everything below is exported from `@zudojs/transactions`. Most apps only need `c
 | `id`, `parentId`, `startedAt` | Identity and start time. | `id` looks like `txn_ab12…`; a participant shares the id it joined. |
 | `kind` | `"root"`, `"participant"`, `"savepoint"` or `"none"`. | How the manager routes commit and rollback. |
 | `state`, `timedOut` | Lifecycle state and whether the timeout fired. | See the state table above. |
+| `signal` | An `AbortSignal` that aborts with a `TransactionTimeoutError` when the transaction times out. | New in v1.2.0. Never aborts without a `timeout`. Participants share the joined transaction's signal. |
 | `options`, `metadata` | The options it was opened with; metadata as a map. | `metadata` hands back a copy, so writing to it changes nothing. |
 | `markRollbackOnly(reason?)` / `isRollbackOnly()` | Forbid the commit / ask whether it was forbidden. | On a participant, both apply to the joined transaction. |
 | `afterCommit(cb)` / `afterRollback(cb)` | Run a callback once this transaction ends that way. | The other list is discarded, so exactly one set runs. |
@@ -487,13 +543,15 @@ Everything below is exported from `@zudojs/transactions`. Most apps only need `c
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| `TransactionError` | Base class for every error here. | Owned by [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) and re-exported here (all 12 classes), so `instanceof` matches either import. |
+| `TransactionError` | Base class for every error here. | Owned by [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) and re-exported here (all 13 classes), so `instanceof` matches either import. |
 | `TransactionStateError` | The transaction is in the wrong state for what you asked. | Thrown by commit, rollback and illegal transitions. |
-| `TransactionRollbackError` | The commit turned into a rollback, or the rollback itself failed. | This is what a rollback-only or timed-out commit rejects with. |
+| `TransactionRollbackError` | The commit turned into a rollback, or the rollback itself failed. | A driver failure during rollback is in `cause`. Accepts an optional `message` option. |
+| `TransactionRollbackOnlyError` | A commit was refused because the transaction was marked rollback-only (by `markRollbackOnly` or a failing participant). | New in v1.2.0; extends `TransactionRollbackError`. Message: `commit refused: transaction marked rollback-only`. The reason is in `error.metadata.originalError`. |
 | `TransactionCommitError` | The adapter refused the commit. | The driver error is in `cause`. |
-| `TransactionAdapterError` | A requested capability is missing, or the adapter misbehaved. | Thrown before any work starts. |
+| `TransactionAdapterError` | The adapter misbehaved. | The in-memory adapter throws it for a foreign handle or an unknown savepoint. A missing capability is `TransactionIsolationError` / `TransactionCapabilityError`. |
 | `TransactionPropagationError` | A propagation rule was broken. | `mandatory` with nothing open, `never` with something open, an unknown mode. |
-| `TransactionTimeoutError`, `TransactionIsolationError`, `SavepointError`, `TransactionRequiredError`, `TransactionUnexpectedError`, `TransactionCapabilityError` | Extra error classes you can throw from your own adapters and services. | The package itself never throws these. |
+| `TransactionTimeoutError`, `TransactionIsolationError`, `TransactionCapabilityError`, `SavepointError` | A timed-out transaction (also `transaction.signal.reason`); an isolation level or other capability the adapter did not declare; a savepoint that could not be released or rolled back to. | Thrown by the manager. |
+| `TransactionRequiredError`, `TransactionUnexpectedError` | Extra error classes you can throw from your own adapters and services. | The package itself never throws these. |
 
 ### Types and constants
 
@@ -506,7 +564,7 @@ Everything below is exported from `@zudojs/transactions`. Most apps only need `c
 | `TransactionHooks`, `TransactionHookContext`, `TransactionErrorContext` | Hook shapes. | Hooks receive `{ transaction }`, `onError` also `{ error }`. |
 | `TransactionRegistry` | Contract for a registry. | Implement it to publish open transactions elsewhere. |
 | `Savepoint`, `TransactionResult` | Shapes for savepoint objects and run results. | Declarations only — nothing in the package returns one. |
-| `TRANSACTION_EVENTS`, `TransactionEvent`, `TransactionEventHandler` | Names and shapes for transaction lifecycle events. | Constants and types only; the package emits nothing. Publish them from hooks yourself. |
+| `TRANSACTION_EVENTS`, `TransactionEvent`, `TransactionEventHandler` | Names and shapes for transaction lifecycle events. | Pass `onEvent` to `createTransactionManager` to receive them. A throwing handler is ignored. A timeout is reported once (see Timeouts). |
 
 > Transaction internals (`_setHandle`, `_transition`, `_markTimedOut`) live behind a private symbol and are not reachable from the package's exports. Drive the state machine through the manager.
 
@@ -516,7 +574,7 @@ Everything below is exported from `@zudojs/transactions`. Most apps only need `c
 - **Swallowing an inner failure and committing anyway.** A failing participant marks the enclosing transaction rollback-only, so the outer `commit()` rejects with `TransactionRollbackError` even though you caught the error. If a step is genuinely optional, run it with `propagation: "nested"` so only its savepoint is undone.
 - **Sending the email inside the callback.** If the commit later fails, the mail is already gone. Register it with `transaction.afterCommit()` so it only runs once the data is really saved.
 - **Retrying everything.** Without `shouldRetry`, a constraint violation is replayed until the attempts run out — slower, and the error is the same each time. Return `true` only for deadlocks and serialization failures.
-- **Expecting `timeout` to cancel the work.** It marks the transaction rollback-only, so the result is thrown away, but your callback keeps running to the end. Add your own cancellation if the work itself must stop.
+- **Ignoring `transaction.signal`.** On a timeout `run()` rolls back and rejects at once, but a callback that does not watch the signal keeps running in the background and its side effects still happen. Pass `transaction.signal` to cancellable work.
 - **Declaring capabilities the adapter does not have.** Claiming `savepoints: true` without implementing `createSavepoint` makes `propagation: "nested"` throw; claiming isolation levels the driver ignores means a `serializable` unit of work silently runs at the default. Declare only what you implement.
 - **Reaching for `requires_new` to "just commit this bit".** It opens a second transaction on top of the first. On a single-connection driver the two can deadlock, and its writes survive the outer rollback. Use `nested` unless you truly want independent work.
 
@@ -530,17 +588,17 @@ Everything below is exported from `@zudojs/transactions`. Most apps only need `c
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/transactions` exports from its package root at v1.1.2 — **54** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/transactions` exports from its package root at v1.2.2 — **58** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 54 exports**
+**Show all 58 exports**
 
-Classes (12)
+Classes (13)
 
-`SavepointError` `TransactionAdapterError` `TransactionCapabilityError` `TransactionCommitError` `TransactionError` `TransactionIsolationError` `TransactionPropagationError` `TransactionRequiredError` `TransactionRollbackError` `TransactionStateError` `TransactionTimeoutError` `TransactionUnexpectedError`
+`SavepointError` `TransactionAdapterError` `TransactionCapabilityError` `TransactionCommitError` `TransactionError` `TransactionIsolationError` `TransactionPropagationError` `TransactionRequiredError` `TransactionRollbackError` `TransactionRollbackOnlyError` `TransactionStateError` `TransactionTimeoutError` `TransactionUnexpectedError`
 
-Functions (19)
+Functions (22)
 
-`asSavepointHandle` `canTransition` `createAdapter` `createEmitter` `createInMemoryAdapter` `createNonTransactional` `createParticipant` `createTransaction` `createTransactionContext` `createTransactionManager` `createTransactionRegistry` `createTransitionFunction` `getDefaultContext` `isModifiable` `isTerminal` `isTerminalState` `mergeHooks` `resetDefaultContext` `summarizeTransaction`
+`asSavepointHandle` `canTransition` `createAdapter` `createEmitter` `createInMemoryAdapter` `createNonTransactional` `createParticipant` `createTransaction` `createTransactionContext` `createTransactionManager` `createTransactionRegistry` `createTransitionFunction` `currentTransactionHandle` `getDefaultContext` `getTransactionHandle` `isModifiable` `isTerminal` `isTerminalState` `mergeHooks` `raceSignal` `resetDefaultContext` `summarizeTransaction`
 
 Interfaces (14)
 

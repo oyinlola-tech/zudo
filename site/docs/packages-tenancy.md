@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/tenancy — multi-tenant contex
 source: https://zudojs.oyinlola.site/docs/packages-tenancy
 ---
 
-v1.2.0
+v1.3.1
 
 # @zudojs/tenancy
 
@@ -37,13 +37,13 @@ When you don't
 
 ## INSTALLATION
 
-Install the package. It pulls in `@zudojs/errors` and `@zudojs/constants` on its own. It needs Node 24 or newer.
+Install the package. It pulls in `@zudojs/errors`, `@zudojs/constants` and `@zudojs/middleware` on its own. It needs Node 24 or newer.
 
 ```bash
 $ npm install @zudojs/tenancy
 ```
 
-The HTTP middleware plugs into the `@zudojs/http` pipeline without depending on it: it reads headers through `request.getHeader()`, or from a plain object or `Map`. Install `@zudojs/http` if you want its server.
+The HTTP middleware plugs into the `@zudojs/http` pipeline without depending on it: it reads headers through `request.getHeader()`, or from a plain object or `Map`. Install `@zudojs/http` if you want its server; the middleware goes straight into a route's `middleware` list, as shown in [HTTP middleware](#http-middleware).
 
 ```bash
 $ npm install @zudojs/http
@@ -74,13 +74,14 @@ repository.add({
 });
 
 // A resolver reads the tenant id off whatever the request gives it.
-const resolver = createHeaderResolver({ trust: "verified" });
+// A header is written by the client, so it is "untrusted" (see Trust levels).
+const resolver = createHeaderResolver();
 const resolution = await resolver.resolve({
   getHeader: (name) => (name === "x-tenant-id" ? "Acme" : undefined),
 });
 if (!resolution) throw new Error("no tenant on this request");
 console.log(resolution);
-// { tenantId: "acme", source: "header", trust: "verified" }
+// { tenantId: "acme", source: "header", trust: "untrusted" }
 
 const tenant = await repository.findById(resolution.tenantId);
 if (!tenant) throw new Error("unknown tenant");
@@ -96,6 +97,8 @@ tenants.run(tenant, () => {
 ```
 
 Two things to notice. The header said `"Acme"` but the resolved ID is `"acme"` — IDs are normalized. And nothing was passed into the callback: `requireCurrentTenant()` found the tenant on its own.
+
+The header keeps the example short, but note the `trust: "untrusted"` in the result. Anyone can send `x-tenant-id: acme`, so on its own it proves nothing about which tenant the caller belongs to. In a real app, take the tenant from a verified token or from the host name (see [Trust levels](#trust-levels)); the HTTP middleware refuses a header-only tenant by default.
 
 ## TENANTS AND TENANT IDS
 
@@ -186,7 +189,7 @@ The JWT resolver does **not** verify the token. It reads claims that something u
 
 Most apps accept more than one way of naming a tenant. A *chain* holds several resolvers, sorts them by priority (highest first) and asks each in turn.
 
-`chain.resolve(context)` returns a `TenantResolutionResult`: the winning `resolution`, every `candidate` collected, and a `conflict` flag. `chain.asResolver()` hands you the chain packaged as a single resolver, which is what the HTTP middleware wants.
+The chain's context type is inferred from its resolvers: it is the intersection of what they read, so a chain of a JWT and a header resolver needs both `getClaims` and `getHeader`, and TypeScript says so if you leave one out. `chain.resolve(context)` returns a `TenantResolutionResult`: the winning `resolution`, every `candidate` collected, and a `conflict` flag. `chain.asResolver()` hands you the chain packaged as a single resolver. Since 1.3.1 the HTTP middleware accepts the chain itself and does that for you.
 
 ```ts
 import {
@@ -194,19 +197,9 @@ import {
   createJwtResolver,
   createResolverChain,
 } from "@zudojs/tenancy";
-import type {
-  HeaderContext,
-  JwtContext,
-  TenantResolver,
-} from "@zudojs/tenancy";
 
-// One context type covering everything the chain's resolvers read.
-type RequestFacts = JwtContext & HeaderContext;
-
-const resolvers: readonly TenantResolver<RequestFacts>[] = [
-  createJwtResolver(),
-  createHeaderResolver(),
-];
+// The chain's context is inferred: it needs getClaims (JWT) and getHeader.
+const resolvers = [createJwtResolver(), createHeaderResolver()];
 
 const chain = createResolverChain(resolvers, { detectConflicts: true });
 
@@ -305,6 +298,8 @@ try {
 ```
 
 **Common mistake:** raising the header resolver to `verified` because a route stopped working. If a client can still send that header directly, you have just handed it the ability to choose its tenant.
+
+> **A tenant id the client sent is a claim, not a fact.** `x-tenant-id`, a `/t/:tenant` path segment, a query parameter or a body field are all chosen by whoever sends the request, so a logged-in user of tenant A can put tenant B there. Trust is about *where the id came from*, not whether it looks valid or exists in your repository. Keep such sources `untrusted` and let `minimumTrust` (default `"verified"`) refuse them. If you do accept one, for example on an admin route, also check that the authenticated user is a member of that tenant before serving anything.
 
 ## TENANT CONTEXT
 
@@ -443,6 +438,7 @@ On every request it does five things in order, and stops at the first that fails
 - 5. Puts the tenant in request state and runs the rest of the request inside the tenant context.
 
 ```ts
+import { createHttpServer, createNodeHttpAdapter, createRouter } from "@zudojs/http";
 import {
   createJwtResolver,
   createMemoryTenantRepository,
@@ -452,8 +448,9 @@ import {
   createSubdomainResolver,
   createTenantContextStorage,
   createTenantId,
+  TENANT_STATE_KEY,
 } from "@zudojs/tenancy";
-import type { HttpResolverContext, TenantResolver } from "@zudojs/tenancy";
+import type { Tenant } from "@zudojs/tenancy";
 
 export const storage = createTenantContextStorage();
 
@@ -466,15 +463,14 @@ repository.add({
   metadata: {},
 });
 
-const resolvers: readonly TenantResolver<HttpResolverContext>[] = [
+// The chain's context is inferred from its resolvers: JWT claims and the host.
+const chain = createResolverChain([
   createJwtResolver(),
   createSubdomainResolver({ baseDomain: "example.com" }),
-];
-
-const chain = createResolverChain(resolvers);
+]);
 
 export const resolveTenant = createResolveTenantMiddleware({
-  resolver: chain.asResolver(),
+  resolver: chain, // a chain is accepted as it is (since 1.3.1)
   repository,
   storage,
   minimumTrust: "verified",
@@ -482,26 +478,52 @@ export const resolveTenant = createResolveTenantMiddleware({
 
 // Run after resolveTenant. Answers 401 when no tenant was established.
 export const requireTenant = createRequireTenantMiddleware();
+
+const router = createRouter();
+router.get("/orders", (ctx) => {
+  const tenant = ctx.state.get(TENANT_STATE_KEY) as Tenant;
+  return { tenant: tenant.name };
+}, { middleware: [resolveTenant, requireTenant] });
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 3000 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+
+// GET /orders, Host: acme.example.com   → 200 {"tenant":"Acme Corp"}
+// GET /orders, Host: nobody.example.com → 404 {"error":"Tenant not found"}
+// GET /orders, Host: localhost          → 404 {"error":"Tenant not found"}
 ```
 
-Register `resolveTenant` before `requireTenant`, and both before your routes. By default (`minimumTrust: "verified"`) a tenant named only by an untrusted header or a URL path is refused; pass `minimumTrust: "untrusted"` to opt down.
+Register `resolveTenant` before `requireTenant`, and both before your routes. By default (`minimumTrust: "verified"`) a tenant named only by an untrusted header or a URL path is refused with `403`; pass `minimumTrust: "untrusted"` to opt down.
+
+The refusals are real HTTP responses. Every tenancy middleware answers with a *guard response* built by `createGuardResponse` from [@zudojs/middleware](https://zudojs.oyinlola.site/docs/packages-middleware.md), which `@zudojs/http` sends with its status, headers and JSON body. Tested against a real server: an unknown host answered `404`, a header-only tenant (with a header resolver in the chain) `403`, and `requireTenant` with no tenant `401`, each as `application/json`.
+
+> **Changed in 1.3.0:** two workarounds are no longer needed. Up to 1.2.x the refusals were plain `{ status, body, headers }` objects that `@zudojs/http` ignored, so a refused request came back as `200` with an empty body, and the fix was a wrapper that turned the object into a response. The middleware also needed `as never` to fit a route's `middleware` list, and `createResolverChain([createJwtResolver(), createSubdomainResolver(…)])` failed with `TS2322` unless you wrote `<HttpResolverContext>`. Remove the wrapper, the casts and the type argument when you upgrade; an explicit type argument still compiles.
+
+> **Changed in 1.3.1:** `resolver` accepts a chain from `createResolverChain` as it is. Up to 1.3.0 you had to pass `chain.asResolver()`: the chain itself was a type error, and if cast through, every request was refused, because a chain's `resolve` returns `{ resolution, candidates, conflict }`, which carries no `trust`. A chain is now recognised by its `asResolver` method and adapted; `.asResolver()` still works. The accepted union is exported as `TenantResolverSource`. `getClaims` (here and on `createHttpResolverContext`) is now generic over the middleware context it reads, so a helper typed with `@zudojs/http`'s `HttpMiddlewareContext` no longer needs a cast; its type is exported as `TenantClaimsReader`. A reader for something that is not a middleware context is still a type error. Tested against a real server: `Host: acme.example.com` answered `200 {"tenant":"Acme Corp"}` with `resolver: chain`, and claims read by a typed `readClaims` helper resolved the same tenant.
 
 ### Where JWT claims come from
 
 The middleware does not verify tokens. It reads already-verified claims from request state under the key `TENANT_CLAIMS_STATE_KEY` (`"tenancy:claims"`). Your authentication middleware publishes them there, or you supply a `getClaims` function.
 
 ```ts
-import { TENANT_CLAIMS_STATE_KEY } from "@zudojs/tenancy";
+import type { HttpMiddlewareContext } from "@zudojs/http";
+import { TENANT_CLAIMS_STATE_KEY, type TenantClaims } from "@zudojs/tenancy";
 
 // In your auth middleware, after the signature has been verified:
 context.state.set(TENANT_CLAIMS_STATE_KEY, { tenant_id: "acme" });
 
-// Or tell the tenancy middleware where to look instead:
+// Or tell the tenancy middleware where to look instead. A helper typed with
+// @zudojs/http's own context is accepted without a cast (since 1.3.1).
+const readClaims = (ctx: HttpMiddlewareContext) => ctx.state.get<TenantClaims>("auth:claims");
+
 createResolveTenantMiddleware({
-  resolver: chain.asResolver(),
+  resolver: chain,
   repository,
   storage,
-  getClaims: (ctx) => ctx.state.get("auth:claims"),
+  getClaims: readClaims,
 });
 ```
 
@@ -567,7 +589,7 @@ assertTenantOwnership(order, createTenantId("acme"));
 | `createHeaderResolver({ headerName?, trust?, priority? })` | Reads the tenant from a header. | `x-tenant-id`, priority 80, trust `untrusted`. |
 | `createPathResolver({ prefix?, priority? })` | Reads the tenant from the first path segment after `prefix`; paths outside the prefix resolve to nothing. | Priority 60, trust `untrusted`. |
 | `createDomainResolver({ registry?, repository?, priority? })` | Maps the host to a tenant through a registered custom domain. | Priority 75, trust `verified`. |
-| `createResolverChain(resolvers, options?)` | Runs resolvers in priority order. | Returns `resolve`, `resolveTenant`, `asResolver`. |
+| `createResolverChain(resolvers, options?)` | Runs resolvers in priority order. | Returns `resolve`, `resolveTenant`, `asResolver`. The context is inferred as the intersection of what the resolvers read (`ResolverChainContext`); an explicit type argument also works. |
 
 ### Context
 
@@ -603,13 +625,14 @@ assertTenantOwnership(order, createTenantId("acme"));
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| `createResolveTenantMiddleware(options)` | Resolves, checks and enters the tenant context. | Options: `resolver`, `repository`, `storage`, `minimumTrust` (default `"verified"`), `slugLookup` (default `true`), `allowInactive`, `getClaims`, `notFoundResponse`, `optional` (lets a request that resolves to no tenant continue without one; default `false` → 404). |
+| `createResolveTenantMiddleware(options)` | Resolves, checks and enters the tenant context. | Options: `resolver` (a resolver or, since 1.3.1, a chain: `TenantResolverSource`), `repository`, `storage`, `minimumTrust` (default `"verified"`), `slugLookup` (default `true`), `allowInactive`, `getClaims` (a `TenantClaimsReader`, generic over the middleware context), `notFoundResponse`, `optional` (lets a request that resolves to no tenant continue without one; default `false` → 404). |
 | `createRequireTenantMiddleware({ requirement?, deniedResponse? })` | Enforces tenant presence. | `"required"` (default), `"optional"`, `"forbidden"`. |
 | `createTenantGuardMiddleware({ repository? })` | Re-checks that the tenant in state is active. | Runs after resolve. |
 | `createTenantPropagationMiddleware(storage)` | Re-enters the context from request state. | For later pipeline stages. |
 | `createHttpResolverContext(context, getClaims?)` | Adapts an HTTP context to the resolver accessor. | The resolve middleware calls it for you. |
 | `TENANT_STATE_KEY`, `TENANT_CONTEXT_STATE_KEY`, `TENANT_CLAIMS_STATE_KEY` | State keys for tenant, context and claims. | `"tenancy:tenant"`, `"tenancy:context"`, `"tenancy:claims"`. |
-| `createJsonErrorResponse`, `createBadRequest`, `createUnauthorized`, `createForbidden`, `createNotFound` | Frozen JSON error responses. | Body is `{ error: message }`. |
+| `createJsonErrorResponse`, `createBadRequest`, `createUnauthorized`, `createForbidden`, `createNotFound` | Frozen JSON error responses. | Guard responses (`isGuardResponse` is `true`), so `@zudojs/http` sends their status. Body is `{ error: message }`. |
+| `createJsonResponse(status, body)` | A guard response with any status and JSON body. | For a custom refusal in your own middleware. Added in 1.3.0. |
 
 ### Utilities
 
@@ -659,25 +682,25 @@ All extend `TenantError`, which extends `AuthorizationError` from [@zudojs/error
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/tenancy` exports from its package root at v1.2.1 — **95** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/tenancy` exports from its package root at v1.3.3 — **99** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 95 exports**
+**Show all 99 exports**
 
 Classes (11)
 
 `InvalidTenantIdError` `TenantAccessDeniedError` `TenantAlreadyExistsError` `TenantContextMissingError` `TenantError` `TenantIsolationError` `TenantNotFoundError` `TenantResolutionConflictError` `TenantResolutionError` `TenantTrustLevelError` `TenantUnavailableError`
 
-Functions (39)
+Functions (40)
 
-`assertSameTenant` `assertTenantOwnership` `assertTenantUsable` `assertTrustLevel` `createBadRequest` `createContextManager` `createDomainRegistry` `createDomainResolver` `createForbidden` `createHeaderResolver` `createHttpResolverContext` `createJsonErrorResponse` `createJwtResolver` `createMemoryTenantRepository` `createNotFound` `createPathResolver` `createRequireTenantMiddleware` `createResolverChain` `createResolveTenantMiddleware` `createSubdomainResolver` `createTenantCacheKey` `createTenantContextStorage` `createTenantGuardMiddleware` `createTenantId` `createTenantManager` `createTenantPropagationMiddleware` `createUnauthorized` `getDefaultStorage` `getDefaultTrust` `isTenantActive` `isValidTenantId` `meetsTrustLevel` `readRequestHeader` `resetDefaultStorage` `sameTenant` `summarizeContext` `summarizeTenant` `tenantKey` `tryCreateTenantId`
+`assertSameTenant` `assertTenantOwnership` `assertTenantUsable` `assertTrustLevel` `createBadRequest` `createContextManager` `createDomainRegistry` `createDomainResolver` `createForbidden` `createHeaderResolver` `createHttpResolverContext` `createJsonErrorResponse` `createJsonResponse` `createJwtResolver` `createMemoryTenantRepository` `createNotFound` `createPathResolver` `createRequireTenantMiddleware` `createResolverChain` `createResolveTenantMiddleware` `createSubdomainResolver` `createTenantCacheKey` `createTenantContextStorage` `createTenantGuardMiddleware` `createTenantId` `createTenantManager` `createTenantPropagationMiddleware` `createUnauthorized` `getDefaultStorage` `getDefaultTrust` `isTenantActive` `isValidTenantId` `meetsTrustLevel` `readRequestHeader` `resetDefaultStorage` `sameTenant` `summarizeContext` `summarizeTenant` `tenantKey` `tryCreateTenantId`
 
 Interfaces (33)
 
 `ContextManagerOptions` `DomainContext` `DomainResolverOptions` `HeaderContext` `HeaderResolverOptions` `HttpResolverContext` `JwtContext` `JwtResolverOptions` `MemoryTenantRepository` `PathContext` `PathResolverOptions` `RequireTenantMiddlewareOptions` `ResolverChainOptions` `ResolveTenantMiddlewareOptions` `SubdomainContext` `SubdomainResolverOptions` `SystemContext` `Tenant` `TenantCache` `TenantClaims` `TenantContext` `TenantContextStorage` `TenantDomain` `TenantExecutionContext` `TenantGuardMiddlewareOptions` `TenantManagerOptions` `TenantRepository` `TenantResolution` `TenantResolutionResult` `TenantResolver` `TenantResolverChain` `TenantResource` `TenantWithDomains`
 
-Type aliases (6)
+Type aliases (9)
 
-`ExecutionTenantContext` `TenantId` `TenantRequirement` `TenantResolutionSource` `TenantStatus` `TenantTrustLevel`
+`ExecutionTenantContext` `ResolverChainContext` `TenantClaimsReader` `TenantId` `TenantRequirement` `TenantResolutionSource` `TenantResolverSource` `TenantStatus` `TenantTrustLevel`
 
 Constants (6)
 

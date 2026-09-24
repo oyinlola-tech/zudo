@@ -4,11 +4,11 @@ description: "@zudojs/middleware docs: composable middleware pipelines with comp
 source: https://zudojs.oyinlola.site/docs/packages-middleware
 ---
 
-v1.0.2
+v1.1.0
 
 # @zudojs/middleware
 
-Composable middleware pipeline for the Zudojs framework. Provides middleware composition, chaining, priority ordering, execution tracking with timing, error handling, context propagation, and built-in middleware for logging, errors, timeouts, and rate limiting.
+Composable middleware pipeline for the Zudojs framework. Provides middleware composition, chaining, priority ordering, execution tracking with timing, error handling, context propagation, built-in middleware for logging, errors, timeouts, and rate limiting, and the guard-response contract that lets a middleware refuse a request with a real status code.
 
 MIDDLEWARE PIPELINE COMPOSITION TIMING
 
@@ -25,7 +25,7 @@ pnpm add @zudojs/middleware
 yarn add @zudojs/middleware
 ```
 
-> **Peer Dependencies:** @zudojs/middleware depends on @zudojs/errors (at 1.1.0). Uses the `BaseError` class for structured error handling in pipeline execution.
+> **Peer Dependencies:** @zudojs/middleware depends on @zudojs/errors (at 1.3.0). Uses the `BaseError` class for structured error handling in pipeline execution.
 
 ## WHAT IT DOES
 
@@ -40,6 +40,7 @@ yarn add @zudojs/middleware
 - **Context propagation** — context object flows through every middleware in the chain
 - **Built-in middleware** for logging, error handling, timeout enforcement, and rate limiting
 - **Pipeline options** — configurable max middleware count and stop-on-error behavior
+- **Guard responses** — `createGuardResponse()` lets a middleware refuse a request with a real `401`/`403` that an HTTP adapter sends as-is
 
 > **Core Principle:** Middleware wraps the request/response cycle with cross-cutting concerns. Each middleware calls `next()` to delegate to the next middleware or the final handler. This pattern is used by @zudojs/messaging, @zudojs/events, @zudojs/http, and other packages.
 
@@ -59,7 +60,7 @@ MESSAGING LAYER (@zudojs/messaging, @zudojs/events)
 
 | Package | Version | Purpose |
 | --- | --- | --- |
-| @zudojs/errors | 1.1.0 | All middleware error classes (MiddlewareError, MiddlewareTimeoutError, MiddlewareNextCalledMultipleTimesError, MiddlewareLimitExceededError, MiddlewareDepthExceededError, MiddlewareRateLimitError, MiddlewareAbortedError) are the @zudojs/errors classes, re-exported |
+| @zudojs/errors | 1.3.0 | All middleware error classes (MiddlewareError, MiddlewareTimeoutError, MiddlewareNextCalledMultipleTimesError, MiddlewareLimitExceededError, MiddlewareDepthExceededError, MiddlewareRateLimitError, MiddlewareAbortedError) are the @zudojs/errors classes, re-exported |
 
 > **Internal dependencies:** Packages depend on each other with `workspace:*`, always — including on `main`. They are never hand-pinned to an exact version. At publish time `pnpm` rewrites each `workspace:*` to the exact version of that package in the same release, so a published tarball carries real ranges. Releases go out through `publish-all.sh`, which runs `pnpm -r publish` — it rewrites the ranges and publishes in dependency order. Plain `npm publish` does not understand the `workspace:` protocol and would ship a literal `workspace:*` to the registry.
 
@@ -293,7 +294,7 @@ import { timeoutMiddleware } from "@zudojs/middleware";
 
 const mw = timeoutMiddleware(5000); // 5 second timeout
 
-// Throws: "Middleware timeout after 5000ms"
+// Rejects with MiddlewareTimeoutError: 'Middleware "timeout" timed out after 5000ms.'
 ```
 
 ### rateLimitMiddleware
@@ -308,6 +309,102 @@ const mw = rateLimitMiddleware(100, 60_000); // 100 requests per minute
 // Context needs a key property
 type Ctx = { readonly key?: string; /* ... */ };
 ```
+
+## GUARD RESPONSES
+
+A *guard* is a middleware that decides whether a request may continue: is the caller logged in, allowed to do this, asking for the right tenant? When the answer is no, the guard stops the chain by answering the request itself, usually with `401 Unauthorized` or `403 Forbidden`. To do that it has to say *which* status, headers and body to send, and that is what a guard response is.
+
+### Why it exists
+
+Many guards live in packages that sit below `@zudojs/http`: `@zudojs/permissions`' `authorize()` and `@zudojs/tenancy`'s middleware, for example. They are not allowed to depend on the HTTP package, so they cannot build an `HttpResponseContext`. Before v1.1.0 they returned a plain `{ status, body, headers }` object instead, and `@zudojs/http` ignored it: the handler never ran, but the client, caches and monitoring all saw `200 OK`. A refusal that looks like a success is a security and debugging problem.
+
+The fix is a small contract that both sides share. `@zudojs/middleware` sits below everyone, so a guard in any package can create a guard response here, and `@zudojs/http` (its router, `HttpMiddlewarePipeline` and `RouteDispatcher`) turns it into a real response with that status, those headers and that body.
+
+### Function: createGuardResponse
+
+```ts
+function createGuardResponse(init: {
+  readonly status: number;                               // integer 100-599
+  readonly body?: unknown;                               // omit for an empty body
+  readonly headers?: Readonly<Record<string, string>>;
+}): GuardResponse
+
+interface GuardResponse {
+  readonly [GUARD_RESPONSE]: true;
+  readonly status: number;
+  readonly body: unknown;
+  readonly headers: Readonly<Record<string, string>>; // lower-case names
+}
+```
+
+- A structured body (an object or array) gets `content-type: application/json; charset=utf-8` unless you set one. A string or `Uint8Array` body is sent as it is.
+- Header names are lower-cased, and every value must be a string (`TypeError` otherwise).
+- A status that is not an integer from 100 to 599 throws `RangeError`.
+- The result is frozen, so nothing downstream can change it.
+
+### Function: isGuardResponse and the GUARD_RESPONSE brand
+
+Every guard response carries a *brand*: the property `GUARD_RESPONSE`, which is the registered symbol `Symbol.for("zudojs.middleware.guardResponse")`. `isGuardResponse(value)` checks for it, and only the brand counts. JSON cannot carry a symbol, so a request body or a handler's data that happens to have a `status` key can never be mistaken for a response. Because the symbol is registered, two copies of this package in one app still agree on it.
+
+```ts
+import { createGuardResponse, isGuardResponse } from "@zudojs/middleware";
+
+const refusal = createGuardResponse({ status: 403, body: { error: "Forbidden" } });
+
+console.log(refusal.status, refusal.body, refusal.headers);
+// 403 { error: 'Forbidden' } { 'content-type': 'application/json; charset=utf-8' }
+
+console.log(isGuardResponse(refusal));                                // true
+console.log(isGuardResponse({ status: 403, body: {}, headers: {} }));  // false: no brand
+console.log(isGuardResponse(JSON.parse(JSON.stringify(refusal)))); // false: JSON drops the symbol
+
+try {
+  createGuardResponse({ status: 700 });
+} catch (error) {
+  console.log(String(error));
+  // RangeError: Guard response status must be an integer in 100-599, got 700.
+}
+```
+
+### Using it with @zudojs/http
+
+This guard refuses requests that have no API key. It returns the guard response *instead of* calling `next()`, so the handler never runs. With `@zudojs/http` installed too, you can run it as it is:
+
+```ts
+import { createGuardResponse } from "@zudojs/middleware";
+import { createRouter, createRequestContext } from "@zudojs/http";
+import type { HttpMiddleware } from "@zudojs/http";
+
+const requireApiKey: HttpMiddleware = async (ctx, next) => {
+  if (!ctx.request.getHeader("x-api-key")) {
+    return createGuardResponse({
+      status: 401,
+      body: { error: "Unauthorized" },
+      headers: { "WWW-Authenticate": "ApiKey" },
+    });
+  }
+  return next();
+};
+
+const router = createRouter();
+router.get("/reports", () => ({ reports: 3 }), { middleware: [requireApiKey] });
+
+const attempts: Record<string, string>[] = [{}, { "x-api-key": "k-123" }];
+
+for (const headers of attempts) {
+  const { response } = await router.dispatch(
+    createRequestContext({ method: "GET", url: "/reports", headers }),
+  );
+  console.log(response.status, response.headers, response.body);
+}
+// 401 {
+//   'content-type': 'application/json; charset=utf-8',
+//   'www-authenticate': 'ApiKey'
+// } {"error":"Unauthorized"}
+// 200 { 'content-type': 'application/json' } {"reports":3}
+```
+
+> **Common mistake:** returning a plain object such as `{ status: 401, body: { error: "Unauthorized" } }` from a guard. It has no brand, so it is treated as ordinary data and is not sent as a `401`. Always build refusals with `createGuardResponse()`. The ready-made guards in `@zudojs/permissions` and `@zudojs/tenancy` already do.
 
 ## ERROR HIERARCHY
 
@@ -448,26 +545,26 @@ if (result.success) {
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/middleware` exports from its package root at v1.0.3 — **35** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/middleware` exports from its package root at v1.1.2 — **40** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 35 exports**
+**Show all 40 exports**
 
 Classes (7)
 
 `MiddlewareAbortedError` `MiddlewareDepthExceededError` `MiddlewareError` `MiddlewareLimitExceededError` `MiddlewareNextCalledMultipleTimesError` `MiddlewareRateLimitError` `MiddlewareTimeoutError`
 
-Functions (10)
+Functions (12)
 
-`compose` `createPipeline` `errorMiddleware` `loggingMiddleware` `rateLimitMiddleware` `resolveMiddleware` `resolveNamedMiddleware` `sanitizeLogValue` `timeoutMiddleware` `withTiming`
+`compose` `createGuardResponse` `createPipeline` `errorMiddleware` `isGuardResponse` `loggingMiddleware` `rateLimitMiddleware` `resolveMiddleware` `resolveNamedMiddleware` `sanitizeLogValue` `timeoutMiddleware` `withTiming`
 
-Interfaces (13)
+Interfaces (15)
 
-`ComposeOptions` `LoggingContext` `LoggingOptions` `NamedMiddleware` `PipelineFailure` `PipelineMiddlewareFailure` `PipelineOptions` `PipelineSuccess` `RateLimitMiddleware` `RateLimitOptions` `RateLimitState` `TimeoutOptions` `TimingOptions`
+`ComposeOptions` `GuardResponse` `GuardResponseInit` `LoggingContext` `LoggingOptions` `NamedMiddleware` `PipelineFailure` `PipelineMiddlewareFailure` `PipelineOptions` `PipelineSuccess` `RateLimitMiddleware` `RateLimitOptions` `RateLimitState` `TimeoutOptions` `TimingOptions`
 
 Type aliases (4)
 
 `Middleware` `MiddlewareFactory` `PipelineErrorMode` `PipelineResult`
 
-Constants (1)
+Constants (2)
 
-`MAX_DEPTH`
+`GUARD_RESPONSE` `MAX_DEPTH`

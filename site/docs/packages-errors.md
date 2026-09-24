@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/errors — shared error base cl
 source: https://zudojs.oyinlola.site/docs/packages-errors
 ---
 
-v1.2.0
+v1.3.0
 
 # @zudojs/errors
 
@@ -222,9 +222,15 @@ Every family below is exported from the package root. The status and exposure li
 | `ConfigurationError` | 500 | no | `missingConfigurationError`, `invalidConfigurationError` |
 | `HttpError` | you pass it | 4xx yes, 5xx no | `createHttpError(message, statusCode)`, plus one class per status (`BadRequestError`, `UnauthorizedError`, `PayloadTooLargeError`, …) |
 | `DatabaseError` | 500 | no | `databaseConnectionError`, `databaseQueryError`, `databaseTransactionError` |
-| `TimeoutError` | varies | request timeouts only | `requestTimeoutError`, `databaseTimeoutError`, `serviceTimeoutError`, `lockTimeoutError` |
+| `TimeoutError` | varies | request timeouts only | `requestTimeoutError` (504), `databaseTimeoutError` (504), `serviceTimeoutError` (504), `lockTimeoutError` (409: waiting on a lock is contention, not a gateway timeout) |
 | `ExternalServiceError` | 502 (429 passes through) | no | `service`, `responseStatus` options |
-| Subsystem families | mostly 500/503 | no | `CacheError`, `StorageError`, `NetworkError`, `ContainerError`, `AdapterError`, `MiddlewareError`, `EventError`, `MessageError`, `QueueError`, `SchedulerError`, `PluginError`, `RPCError`, `APIError`, `SchemaError`, `SerializationError`, `LifecycleError`, `ModuleError`, `RuntimeError`, `SystemError`, `CryptoError`, `LoggingError` |
+| Subsystem families | mostly 500/503 | no | `CacheError`, `StorageError`, `NetworkError`, `ContainerError`, `AdapterError`, `MiddlewareError`, `EventError`, `MessageError`, `QueueError`, `SchedulerError`, `PluginError`, `RPCError`, `APIError`, `SerializationError`, `LifecycleError`, `ModuleError`, `RuntimeError`, `SystemError`, `CryptoError`, `LoggingError`, `TransactionError`, `CqrsError`, `DocumentationError`, `OpenAPIError`, `ObservabilityError`, `ServiceError`, `HttpClientError` |
+| `CommandFailedError` / `QueryFailedError` `ERR_COMMAND_FAILED` / `ERR_QUERY_FAILED` | 500 | no | New in 1.3.0. `commandType` / `queryType` and `failure` fields. See [below](#new-in-1-3). |
+| `EventBusStoppedError` `ERR_LIFECYCLE_STATE` | 500 | no | New in 1.3.0. `operation` field (`"publish"`, `"subscribe"`, …). |
+| `EventBusDisposedError` `ERR_EVENT_BUS_DISPOSED` | 500 | no | Code was `ERR_LIFECYCLE_DISPOSED` before 1.3.0. |
+| `TransactionRollbackOnlyError` `ERR_DATABASE_TRANSACTION` | 500 | no | New in 1.3.0. A subclass of `TransactionRollbackError`. |
+| `SerializationDepthError` `ERR_MAX_DEPTH_EXCEEDED` | 500, or what you pass | no, or what you pass | `new SerializationDepthError(depth, maxDepth, { statusCode?, expose? })`. The validation guards pass 400 and `expose: true`. |
+| `SchemaError<TIssue>` | 400 | yes | `createSchemaError(message, { issues })`, `isSchemaError`. See [below](#schema-and-rpc-errors). |
 | `EventListenerLimitExceededError` `ERR_EVENT_LISTENER_LIMIT_EXCEEDED` | 500 | no — never | `pattern`, `count`, `limit` fields, also copied into `metadata` |
 
 The subsystem families are thrown by the matching Zudo package (`@zudojs/cache` throws `CacheError`, and so on). You catch them; you rarely construct them yourself.
@@ -232,6 +238,79 @@ The subsystem families are thrown by the matching Zudo package (`@zudojs/cache` 
 `EventListenerLimitExceededError` (new in 1.2.0) is the one member of the `EventError` family worth catching by name. It is raised when a single event pattern passes its configured handler limit — the signature of a subscribe-without-unsubscribe leak — and carries the `pattern`, the handler `count` and the `limit`, both as own readonly fields and inside `metadata`. Registering past a handler limit is a programming fault rather than bad input, so the class fixes its classification as internal: `statusCode` 500, `expose` `false`, `isOperational` `false`. It is never exposed to a caller — `serializePublicError` replaces its message with `"An unexpected error occurred."` and drops its metadata.
 
 Before 1.2.0 the class did not exist here and nothing in the framework ever threw it, so a `catch` branch testing for it was unreachable. `@zudojs/events` now raises it, but only when a registry, emitter or bus is configured to enforce its handler limit; the default is still a one-shot warning that lets the registration through. The class is owned by `@zudojs/errors` and re-exported from `@zudojs/events`, so an import from either package resolves to the same constructor and `instanceof` matches across both.
+
+### SchemaError and RPCError: typed extras
+
+Two families carry structured data beyond the message. `SchemaError` holds the list of validation `issues`. It is *generic*: `SchemaError<TIssue = unknown>` takes the shape of one issue as a type parameter. This package sits below `@zudojs/schema` and cannot know that shape, so the default is `unknown`; `@zudojs/schema` throws `SchemaError<SchemaIssue>`. `SchemaErrorOptions<TIssue>` and `createSchemaError<TIssue>` take the same parameter, and code that never names it keeps working unchanged.
+
+```ts
+import { createSchemaError, RPCError } from "@zudojs/errors";
+
+interface FieldIssue { readonly field: string; readonly message: string }
+
+const invalid = createSchemaError<FieldIssue>("Validation failed", {
+  issues: [{ field: "email", message: "Invalid email format" }],
+});
+console.log(invalid.issues[0].field, invalid.statusCode); // "email" 400
+
+// RPCError declares a readonly `details`, set through the option of the same name.
+const limited = new RPCError("Too many calls.", { details: { retryAfter: 30 } });
+console.log(limited.details); // { retryAfter: 30 }
+```
+
+`RPCError` now declares a readonly `details` and accepts it as an option. `details` is the structured, caller-safe part of an RPC error's wire payload: validation issues, `{ retryAfter }` for a rate limit, or whatever a custom error sent. An `@zudojs/rpc` client sets it on the errors it rebuilds from a response, so you read `error.details` without a cast. `toJSON()` includes it when present.
+
+> **Tip:** when you catch an error from `schema.parse()`, narrow it with `isSchemaValidationError` from `@zudojs/schema` rather than `instanceof SchemaError`: the guard types `error.issues` as `readonly SchemaIssue[]`, where `instanceof` leaves them `unknown`.
+
+### New in 1.3.0: failed results, stopped buses, refused commits
+
+Version 1.3.0 adds a handful of classes that other Zudo packages now throw. Before, those packages either returned a failure as if it were a normal value, or threw an error whose message described the wrong problem. Because the classes live here, `instanceof` works the same whether you import them from `@zudojs/errors` or from the package that throws them.
+
+- **`CommandFailedError` and `QueryFailedError`** are thrown by `unwrapCommandResult()` and `unwrapQueryResult()` in [@zudojs/cqrs](https://zudojs.oyinlola.site/docs/packages-cqrs.md) when the result's status is `"failure"`. The failure payload is on `error.failure` and also on `error.cause`. They are 500s and are not exposed, because the payload is an internal value. New codes: `ErrorCode.COMMAND_FAILED` and `ErrorCode.QUERY_FAILED`.
+- **`EventBusStoppedError`** is thrown when you publish or subscribe on an [@zudojs/events](https://zudojs.oyinlola.site/docs/packages-events.md) bus after `stop()`. Call `start()` to resume. `EventBusDisposedError` also moved here, and its code is now `ERR_EVENT_BUS_DISPOSED` (it was `ERR_LIFECYCLE_DISPOSED`).
+- **`TransactionRollbackOnlyError`** is thrown by [@zudojs/transactions](https://zudojs.oyinlola.site/docs/packages-transactions.md) when you commit a transaction that was marked rollback-only. It used to be a `TransactionRollbackError` saying "rollback failed", which sent people looking for the wrong bug. It extends `TransactionRollbackError`, so existing `instanceof` checks and the error code still match. `TransactionRollbackError` itself now accepts an optional `message` option.
+- **`SerializationDepthError`** takes an optional third argument, `{ statusCode?, expose? }`. Without it the error is still a hidden 500. The depth guards in [@zudojs/validation](https://zudojs.oyinlola.site/docs/packages-validation.md) (`assertDepthWithinLimit`, `assertNoCircularReference`) pass `{ statusCode: 400, expose: true }`, so a request body nested too deep is now a 400 the client can see instead of a hidden server error. The message holds only the two numbers, so it is safe to expose.
+- **New auth codes** `ErrorCode.TOKEN_REVOKED`, `ErrorCode.ACCOUNT_LOCKED` and `ErrorCode.ACCOUNT_DEACTIVATED`. [@zudojs/auth](https://zudojs.oyinlola.site/docs/packages-auth.md) uses them for `TokenRevokedError`, `AccountLockedError` and `AccountDeactivatedError`, which all used to share `ERR_FORBIDDEN`.
+
+This example builds each new error by hand so you can see what it carries. In an app you would normally catch them rather than construct them.
+
+```ts
+import {
+  CommandFailedError,
+  EventBusStoppedError,
+  TransactionRollbackError,
+  TransactionRollbackOnlyError,
+  SerializationDepthError,
+  ErrorCode,
+} from "@zudojs/errors";
+
+const failed = new CommandFailedError("CreateOrder", { reason: "out of stock" });
+console.log(failed.message);                  // Command "CreateOrder" failed.
+console.log(failed.code, failed.statusCode);  // ERR_COMMAND_FAILED 500
+console.log(failed.failure);                  // { reason: 'out of stock' }
+console.log(failed.cause === failed.failure); // true
+
+const stopped = new EventBusStoppedError("publish");
+console.log(stopped.message);
+// Cannot publish on a stopped event bus. Call start() first.
+
+const refused = new TransactionRollbackOnlyError("tx_1");
+console.log(refused.message);
+// Transaction "tx_1" commit refused: transaction marked rollback-only
+console.log(refused instanceof TransactionRollbackError); // true
+
+const internal = new SerializationDepthError(40, 32);
+const fromClient = new SerializationDepthError(40, 32, { statusCode: 400, expose: true });
+console.log(internal.statusCode, internal.expose);     // 500 false
+console.log(fromClient.statusCode, fromClient.expose); // 400 true
+console.log(fromClient.message);
+// Maximum serialization depth exceeded: 40 > 32
+
+console.log(ErrorCode.TOKEN_REVOKED, ErrorCode.ACCOUNT_LOCKED, ErrorCode.ACCOUNT_DEACTIVATED);
+// ERR_TOKEN_REVOKED ERR_ACCOUNT_LOCKED ERR_ACCOUNT_DEACTIVATED
+```
+
+> **Behaviour change:** if a client or test matched `ERR_FORBIDDEN` to detect a revoked token, a locked account or a deactivated account, it must now match the new codes. `TokenRevokedError` is also a 401 now (log in again), not a 403. Code that checked `ERR_LIFECYCLE_DISPOSED` for a disposed event bus must check `ERR_EVENT_BUS_DISPOSED`.
 
 ## WRITING YOUR OWN ERROR
 
@@ -458,6 +537,8 @@ Everything below is exported from `@zudojs/errors`. The error classes themselves
 | `PublicErrorResponse` | Return type of `serializePublicError`. | `code`, `message`, `category`, `statusCode`, `metadata?`. |
 | `PublicErrorHandlerResult` | Return type of `handlePublic` / `toPublicResult`. | `code`, `message`, `statusCode`, `requestId?`, `correlationId?`, `details?`. |
 | `ErrorMetadata`, `ErrorMetadataValue` | Shape of the metadata bag. | JSON-safe values only. |
+| `SchemaErrorOptions<TIssue = unknown>` | Options for `SchemaError` / `createSchemaError`. | Base options plus `issues?: readonly TIssue[]`. |
+| `RPCErrorOptions` | Options for `RPCError`. | Base options plus `procedureName?` and `details?: unknown`. |
 | `ValidationIssue` | One entry in `ValidationError.issues`. | `message` plus optional `field`, `path`, `code`, `value`. |
 | `SENSITIVE_METADATA_KEY_PATTERN` | Default regex for secret-looking keys. | Override per call with `sensitiveKeyPattern`. |
 | `REDACTED_METADATA_VALUE` | The string `"[REDACTED]"`. |  |
@@ -483,13 +564,13 @@ Everything below is exported from `@zudojs/errors`. The error classes themselves
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/errors` exports from its package root at v1.2.0 — **625** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/errors` exports from its package root at v1.3.2 — **629** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 625 exports**
+**Show all 629 exports**
 
-Classes (301)
+Classes (305)
 
-`AdapterAlreadyRegisteredError` `AdapterCapabilityMissingError` `AdapterConfigurationError` `AdapterConnectionError` `AdapterDisposeError` `AdapterError` `AdapterInitializationError` `AdapterNotFoundError` `AdapterNotSupportedError` `AdapterOperationError` `AdapterTimeoutError` `APIAuthenticationError` `APIAuthorizationError` `APIConflictError` `APIDuplicateOperationError` `APIError` `APIIdempotencyError` `APIInternalError` `APINotFoundError` `APIOperationNotFoundError` `APIRateLimitError` `APITimeoutError` `APIUnavailableError` `APIValidationError` `APIVersionError` `ApplicationError` `AuthenticationError` `AuthError` `AuthorizationError` `BadGatewayError` `BadRequestError` `BaseError` `BodyParserError` `BrokenDocumentationLinkError` `CacheError` `CircularDependencyError` `CircularReferenceError` `CLIGenerationError` `CLINotInProjectError` `CLITemplateError` `CLIValidationError` `ConfigurationError` `ConflictError` `ConstantContextError` `ContainerError` `ContainerLifecycleError` `CqrsError` `CronParseError` `CryptoError` `DatabaseError` `DeserializeError` `DocumentationError` `DocumentationVersionError` `DocumentNotFoundError` `DocumentParseError` `DocumentValidationError` `DomainError` `DuplicateDocumentError` `DuplicateEventDefinitionError` `DuplicateEventHandlerError` `DuplicateMessageHandlerError` `DuplicateRegistrationError` `DuplicateRouteParameterError` `ErrorHandler` `ErrorMapperRegistry` `ErrorSerializer` `EventBusDisposedError` `EventDefinitionNotFoundError` `EventDeserializationError` `EventDispatchAbortedError` `EventEmitterDisposedError` `EventError` `EventHandlerError` `EventHandlerNotFoundError` `EventListenerLimitExceededError` `EventMiddlewareError` `EventPublishError` `EventRegistryDisposedError` `EventSerializationError` `EventSubscriptionClosedError` `EventTimeoutError` `EventTypeNotFoundError` `ExampleValidationError` `ExpectationFailedError` `ExternalServiceError` `FailedDependencyError` `ForbiddenError` `GatewayTimeoutError` `GenerationError` `GoneError` `HttpAdapterError` `HttpBodyAbortedError` `HttpBodyError` `HttpBodyLimitError` `HttpBodyParseError` `HttpClientAbortError` `HttpClientError` `HttpClientNetworkError` `HttpClientTimeoutError` `HttpConflictError` `HttpError` `HttpFormDataError` `HttpFormDataLimitError` `HttpFormDataParseError` `HttpMiddlewareError` `HttpMiddlewarePipelineError` `HttpNotFoundError` `HttpRequestGuardError` `HttpResponseWriterError` `HttpRouterError` `HttpServerLifecycleError` `HttpServerStartError` `HttpServerStopError` `HttpStreamError` `InternalServerError` `InvalidConstantError` `InvalidContentLengthError` `InvalidContentTypeError` `InvalidDurationError` `InvalidEventError` `InvalidFrontmatterError` `InvalidHeaderError` `InvalidHttpServerStateError` `InvalidJobError` `InvalidMessageError` `InvalidNavigationError` `InvalidRoutePatternError` `InvalidScheduleError` `InvalidSerializedDataError` `JobCancelledError` `JobDeserializationError` `JobDuplicateError` `JobError` `JobMaxAttemptsError` `JobNotFoundError` `JobProcessingError` `JobSerializationError` `JobStalledError` `JobTimeoutError` `LengthRequiredError` `LifecycleComponentError` `LifecycleDependencyError` `LifecycleDisposedError` `LifecycleError` `LifecycleRollbackError` `LifecycleStartError` `LifecycleStateError` `LifecycleStopError` `LifecycleTimeoutError` `LockedError` `LoggingError` `MessageBusDisposedError` `MessageDeserializationError` `MessageDispatchAbortedError` `MessageDispatchError` `MessageError` `MessageHandlerError` `MessageHandlerNotFoundError` `MessageMiddlewareError` `MessageSerializationError` `MessageTimeoutError` `MessageTypeNotFoundError` `MessageValidationError` `MethodNotAllowedError` `MiddlewareAbortedError` `MiddlewareDepthExceededError` `MiddlewareError` `MiddlewareLimitExceededError` `MiddlewareNextCalledMultipleTimesError` `MiddlewareRateLimitError` `MiddlewareTimeoutError` `ModuleDependencyError` `ModuleError` `ModuleLifecycleError` `ModuleLoadError` `ModuleNotFoundError` `MultipartError` `MultipartLimitError` `MultipartParseError` `NetworkError` `NotAcceptableError` `NotFoundError` `NotImplementedError` `OAuthError` `ObservabilityError` `OpenAPIError` `PayloadTooLargeError` `PluginAlreadyRegisteredError` `PluginDependencyCycleError` `PluginDependencyError` `PluginDisposeError` `PluginError` `PluginInitializationError` `PluginNotFoundError` `PluginRegistrationError` `PluginStartError` `PluginStateError` `PluginStopError` `PluginTimeoutError` `PreconditionRequiredError` `ProviderResolutionError` `QueueClosedError` `QueueConnectionError` `QueueDisposedError` `QueueError` `QueueNotFoundError` `RangeNotSatisfiableError` `RateLimitError` `RegistrationNotFoundError` `RequestAbortedError` `RequestBodyTimeoutError` `RequestBodyTooLargeError` `RequestHeaderFieldsTooLargeError` `RequestTimeoutError` `ResponseAlreadySentError` `RouteConflictError` `RoutePatternError` `RPCAuthenticationError` `RPCCancelledError` `RPCDeadlineExceededError` `RPCDeserializationError` `RPCDuplicateProcedureError` `RPCError` `RPCForbiddenError` `RPCInternalError` `RPCInvalidRequestError` `RPCProcedureNotFoundError` `RPCRateLimitedError` `RPCSerializationError` `RPCTimeoutError` `RPCTransportError` `RPCUnavailableError` `RPCValidationError` `RuntimeBootstrapError` `RuntimeEnvironmentError` `RuntimeError` `RuntimeManagerError` `RuntimeShutdownError` `RuntimeStateError` `SavepointError` `ScheduleAlreadyExistsError` `ScheduleNotFoundError` `SchedulerAlreadyStartedError` `SchedulerError` `SchedulerJobAlreadyExistsError` `SchedulerJobCancelledError` `SchedulerJobExecutionError` `SchedulerJobNotFoundError` `SchedulerJobTimeoutError` `SchedulerLockError` `SchedulerNotStartedError` `SchedulerStoppedError` `SchedulerStoreError` `SchemaEnumError` `SchemaError` `SchemaLiteralError` `SchemaNumberError` `SchemaRequiredError` `SchemaStringError` `SchemaTypeError` `SchemaUnionError` `SchemaUnknownKeyError` `SerializationDepthError` `SerializationError` `SerializationPayloadTooLargeError` `SerializeError` `SerializerNotFoundError` `ServiceError` `ServiceUnavailableError` `StorageError` `SystemError` `TimeoutError` `TooEarlyError` `TooManyRequestsError` `TransactionAdapterError` `TransactionCapabilityError` `TransactionCommitError` `TransactionError` `TransactionIsolationError` `TransactionPropagationError` `TransactionRequiredError` `TransactionRollbackError` `TransactionStateError` `TransactionTimeoutError` `TransactionUnexpectedError` `TransformerError` `TransformerNotFoundError` `TraversalLimitError` `UnauthorizedError` `UnprocessableEntityError` `UnsupportedBodyTypeError` `UnsupportedMediaTypeError` `UnsupportedProtocolError` `UnsupportedResponseBodyError` `UnsupportedSerializationFormatError` `UpgradeRequiredError` `URITooLongError` `ValidationError` `WorkerError` `WorkerLifecycleError` `WorkerNotFoundError`
+`AdapterAlreadyRegisteredError` `AdapterCapabilityMissingError` `AdapterConfigurationError` `AdapterConnectionError` `AdapterDisposeError` `AdapterError` `AdapterInitializationError` `AdapterNotFoundError` `AdapterNotSupportedError` `AdapterOperationError` `AdapterTimeoutError` `APIAuthenticationError` `APIAuthorizationError` `APIConflictError` `APIDuplicateOperationError` `APIError` `APIIdempotencyError` `APIInternalError` `APINotFoundError` `APIOperationNotFoundError` `APIRateLimitError` `APITimeoutError` `APIUnavailableError` `APIValidationError` `APIVersionError` `ApplicationError` `AuthenticationError` `AuthError` `AuthorizationError` `BadGatewayError` `BadRequestError` `BaseError` `BodyParserError` `BrokenDocumentationLinkError` `CacheError` `CircularDependencyError` `CircularReferenceError` `CLIGenerationError` `CLINotInProjectError` `CLITemplateError` `CLIValidationError` `CommandFailedError` `ConfigurationError` `ConflictError` `ConstantContextError` `ContainerError` `ContainerLifecycleError` `CqrsError` `CronParseError` `CryptoError` `DatabaseError` `DeserializeError` `DocumentationError` `DocumentationVersionError` `DocumentNotFoundError` `DocumentParseError` `DocumentValidationError` `DomainError` `DuplicateDocumentError` `DuplicateEventDefinitionError` `DuplicateEventHandlerError` `DuplicateMessageHandlerError` `DuplicateRegistrationError` `DuplicateRouteParameterError` `ErrorHandler` `ErrorMapperRegistry` `ErrorSerializer` `EventBusDisposedError` `EventBusStoppedError` `EventDefinitionNotFoundError` `EventDeserializationError` `EventDispatchAbortedError` `EventEmitterDisposedError` `EventError` `EventHandlerError` `EventHandlerNotFoundError` `EventListenerLimitExceededError` `EventMiddlewareError` `EventPublishError` `EventRegistryDisposedError` `EventSerializationError` `EventSubscriptionClosedError` `EventTimeoutError` `EventTypeNotFoundError` `ExampleValidationError` `ExpectationFailedError` `ExternalServiceError` `FailedDependencyError` `ForbiddenError` `GatewayTimeoutError` `GenerationError` `GoneError` `HttpAdapterError` `HttpBodyAbortedError` `HttpBodyError` `HttpBodyLimitError` `HttpBodyParseError` `HttpClientAbortError` `HttpClientError` `HttpClientNetworkError` `HttpClientTimeoutError` `HttpConflictError` `HttpError` `HttpFormDataError` `HttpFormDataLimitError` `HttpFormDataParseError` `HttpMiddlewareError` `HttpMiddlewarePipelineError` `HttpNotFoundError` `HttpRequestGuardError` `HttpResponseWriterError` `HttpRouterError` `HttpServerLifecycleError` `HttpServerStartError` `HttpServerStopError` `HttpStreamError` `InternalServerError` `InvalidConstantError` `InvalidContentLengthError` `InvalidContentTypeError` `InvalidDurationError` `InvalidEventError` `InvalidFrontmatterError` `InvalidHeaderError` `InvalidHttpServerStateError` `InvalidJobError` `InvalidMessageError` `InvalidNavigationError` `InvalidRoutePatternError` `InvalidScheduleError` `InvalidSerializedDataError` `JobCancelledError` `JobDeserializationError` `JobDuplicateError` `JobError` `JobMaxAttemptsError` `JobNotFoundError` `JobProcessingError` `JobSerializationError` `JobStalledError` `JobTimeoutError` `LengthRequiredError` `LifecycleComponentError` `LifecycleDependencyError` `LifecycleDisposedError` `LifecycleError` `LifecycleRollbackError` `LifecycleStartError` `LifecycleStateError` `LifecycleStopError` `LifecycleTimeoutError` `LockedError` `LoggingError` `MessageBusDisposedError` `MessageDeserializationError` `MessageDispatchAbortedError` `MessageDispatchError` `MessageError` `MessageHandlerError` `MessageHandlerNotFoundError` `MessageMiddlewareError` `MessageSerializationError` `MessageTimeoutError` `MessageTypeNotFoundError` `MessageValidationError` `MethodNotAllowedError` `MiddlewareAbortedError` `MiddlewareDepthExceededError` `MiddlewareError` `MiddlewareLimitExceededError` `MiddlewareNextCalledMultipleTimesError` `MiddlewareRateLimitError` `MiddlewareTimeoutError` `ModuleDependencyError` `ModuleError` `ModuleLifecycleError` `ModuleLoadError` `ModuleNotFoundError` `MultipartError` `MultipartLimitError` `MultipartParseError` `NetworkError` `NotAcceptableError` `NotFoundError` `NotImplementedError` `OAuthError` `ObservabilityError` `OpenAPIError` `PayloadTooLargeError` `PluginAlreadyRegisteredError` `PluginDependencyCycleError` `PluginDependencyError` `PluginDisposeError` `PluginError` `PluginInitializationError` `PluginNotFoundError` `PluginRegistrationError` `PluginStartError` `PluginStateError` `PluginStopError` `PluginTimeoutError` `PreconditionRequiredError` `ProviderResolutionError` `QueryFailedError` `QueueClosedError` `QueueConnectionError` `QueueDisposedError` `QueueError` `QueueNotFoundError` `RangeNotSatisfiableError` `RateLimitError` `RegistrationNotFoundError` `RequestAbortedError` `RequestBodyTimeoutError` `RequestBodyTooLargeError` `RequestHeaderFieldsTooLargeError` `RequestTimeoutError` `ResponseAlreadySentError` `RouteConflictError` `RoutePatternError` `RPCAuthenticationError` `RPCCancelledError` `RPCDeadlineExceededError` `RPCDeserializationError` `RPCDuplicateProcedureError` `RPCError` `RPCForbiddenError` `RPCInternalError` `RPCInvalidRequestError` `RPCProcedureNotFoundError` `RPCRateLimitedError` `RPCSerializationError` `RPCTimeoutError` `RPCTransportError` `RPCUnavailableError` `RPCValidationError` `RuntimeBootstrapError` `RuntimeEnvironmentError` `RuntimeError` `RuntimeManagerError` `RuntimeShutdownError` `RuntimeStateError` `SavepointError` `ScheduleAlreadyExistsError` `ScheduleNotFoundError` `SchedulerAlreadyStartedError` `SchedulerError` `SchedulerJobAlreadyExistsError` `SchedulerJobCancelledError` `SchedulerJobExecutionError` `SchedulerJobNotFoundError` `SchedulerJobTimeoutError` `SchedulerLockError` `SchedulerNotStartedError` `SchedulerStoppedError` `SchedulerStoreError` `SchemaEnumError` `SchemaError` `SchemaLiteralError` `SchemaNumberError` `SchemaRequiredError` `SchemaStringError` `SchemaTypeError` `SchemaUnionError` `SchemaUnknownKeyError` `SerializationDepthError` `SerializationError` `SerializationPayloadTooLargeError` `SerializeError` `SerializerNotFoundError` `ServiceError` `ServiceUnavailableError` `StorageError` `SystemError` `TimeoutError` `TooEarlyError` `TooManyRequestsError` `TransactionAdapterError` `TransactionCapabilityError` `TransactionCommitError` `TransactionError` `TransactionIsolationError` `TransactionPropagationError` `TransactionRequiredError` `TransactionRollbackError` `TransactionRollbackOnlyError` `TransactionStateError` `TransactionTimeoutError` `TransactionUnexpectedError` `TransformerError` `TransformerNotFoundError` `TraversalLimitError` `UnauthorizedError` `UnprocessableEntityError` `UnsupportedBodyTypeError` `UnsupportedMediaTypeError` `UnsupportedProtocolError` `UnsupportedResponseBodyError` `UnsupportedSerializationFormatError` `UpgradeRequiredError` `URITooLongError` `ValidationError` `WorkerError` `WorkerLifecycleError` `WorkerNotFoundError`
 
 Functions (228)
 

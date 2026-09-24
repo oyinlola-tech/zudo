@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/security — input validation, 
 source: https://zudojs.oyinlola.site/docs/packages-security
 ---
 
-v1.2.0
+v1.3.1
 
 # @zudojs/security
 
@@ -238,7 +238,10 @@ Issuing a token when a page is rendered:
 ```ts
 import { generateCsrfToken, generateCsrfCookie } from "@zudojs/security";
 
-const secret = process.env.CSRF_SECRET ?? "a-long-random-string";
+// At least 32 characters, e.g. randomBytes(32).toString("hex"). No fallback:
+// a missing secret must stop the app, not quietly use a known string.
+const secret = process.env.CSRF_SECRET;
+if (!secret) throw new Error("CSRF_SECRET is not set");
 
 // sessionId binds the token to one logged-in user.
 const token = generateCsrfToken(secret, { sessionId: "user-42", expiration: 3600 });
@@ -259,44 +262,80 @@ import {
   verifyDoubleSubmit,
 } from "@zudojs/security";
 
-function checkCsrf(method, headers, sessionId, secret) {
+type Headers = Record<string, string | string[] | undefined>;
+
+function checkCsrf(method: string, headers: Headers, sessionId: string, secret: string): boolean {
   // GET, HEAD, OPTIONS and TRACE do not change state, so they are skipped.
   if (!requiresCsrfProtection(method)) return true;
 
-  const fromCookie = extractCsrfTokenFromCookies(headers.cookie ?? "");
+  const cookie = typeof headers.cookie === "string" ? headers.cookie : "";
+  const fromCookie = extractCsrfTokenFromCookies(cookie);
   const fromRequest = extractCsrfTokenFromHeaders(headers);
 
   return verifyDoubleSubmit(fromCookie, fromRequest, secret, { sessionId });
 }
 
-console.log(checkCsrf("GET", {}, "user-42", "s3cret"));  // true — nothing to check
-console.log(checkCsrf("POST", {}, "user-42", "s3cret")); // false — no token present
+const secret = process.env.CSRF_SECRET;
+if (!secret) throw new Error("CSRF_SECRET is not set");
+
+console.log(checkCsrf("GET", {}, "user-42", secret));  // true — nothing to check
+console.log(checkCsrf("POST", {}, "user-42", secret)); // false — no token present
+console.log(checkCsrf("POST", { cookie: "_csrf=abc", "x-csrf-token": "abc" }, "user-42", secret)); // false — forged token
+
+try {
+  checkCsrf("POST", {}, "user-42", "s3cret");
+} catch (error) {
+  console.log((error as Error).name); // ConfigurationError — secret under 32 characters
+}
 ```
 
+> **Two different failures:** a missing, forged, expired or wrong-session token makes `verifyDoubleSubmit`, `validateCsrfToken` and `csrf.verify` return `false` — answer that with a 403. So does a token that is not a string at all, a request with no `method`, and a malformed `headers` or cookie bag. A bad *secret* (missing, empty, or under 32 characters) is a configuration error: every call throws `ConfigurationError` (`ERR_CONFIGURATION_INVALID`), even on a request that carries no token at all, and `generateCsrfToken` throws too. Validate the secret once at startup so this surfaces at boot and not as a 500 on the first POST.
+
 `verifyDoubleSubmit` passes only when both tokens are present, byte-for-byte equal (compared in constant time), correctly signed, unexpired, and bound to the session id you pass. Comparing the two alone would not be enough. `validateCsrfToken` and `verifyDoubleSubmit` throw on a secret shorter than 32 characters (`MIN_CSRF_SECRET_LENGTH`), and the protected `methods` list is matched case-insensitively.
+
+> **Changed in 1.3.0:** the checks throw only for misconfiguration. Up to 1.2.x a non-string token, a request with no method, or a malformed header or cookie bag made them throw a `TypeError`, which a server turned into a 500 rather than a 403. They now return `false`. A secret under 32 characters and a bad `methods` list still throw `ConfigurationError`.
 
 `createCsrfProtection` binds all of that to one configuration, so the cookie name, header name, lifetime and secret are read from the same place at every call site:
 
 ```ts
-import { createCsrfProtection } from "@zudojs/security";
+import type { IncomingHttpHeaders } from "node:http";
+import { createCsrfProtection, MIN_CSRF_SECRET_LENGTH } from "@zudojs/security";
+
+const secret = process.env.CSRF_SECRET;
+if (!secret || secret.length < MIN_CSRF_SECRET_LENGTH) {
+  throw new Error(`CSRF_SECRET must be set to at least ${MIN_CSRF_SECRET_LENGTH} characters`);
+}
 
 const csrf = createCsrfProtection({
-  secret: process.env.CSRF_SECRET, // at least 32 characters
-  cookieName: "app_csrf",            // default "_csrf"
-  headerName: "x-app-csrf",          // default "x-csrf-token"
-  expiration: 3600,                // seconds
+  secret,
+  cookieName: "app_csrf",   // default "_csrf"
+  headerName: "x-app-csrf", // default "x-csrf-token"
+  expiration: 3600,         // seconds
   // methods: omit for the defaults — POST, PUT, PATCH, DELETE.
 });
 
-const { token, setCookie } = csrf.issue({ sessionId });
-setHeader("Set-Cookie", setCookie);
+const sessionId = "user-42"; // the logged-in user's session id
 
-// Safe to call on every request: safe methods return true.
-const ok = csrf.verify(
-  { method: request.method, headers: request.headers, cookieHeader: request.headers.cookie },
-  { sessionId },
-);
+// Issue: render `token` into the page and send `setCookie` as Set-Cookie.
+const { token, setCookie } = csrf.issue({ sessionId });
+console.log(setCookie.startsWith("app_csrf=")); // true
+
+// Verify: safe to call on every request. Safe methods return true; a missing,
+// forged or malformed token returns false and never throws.
+function verify(method: string, headers: IncomingHttpHeaders): boolean {
+  return csrf.verify({ method, headers, cookieHeader: headers.cookie }, { sessionId });
+}
+
+console.log(verify("POST", { cookie: `app_csrf=${token}`, "x-app-csrf": token })); // true
+console.log(verify("POST", { cookie: `app_csrf=${token}` }));                      // false — no header
+console.log(verify("POST", { cookie: "app_csrf=junk", "x-app-csrf": "junk" }));   // false — malformed
+console.log(verify("GET", {}));                                                    // true — safe method
+console.log(verify("", {}));                                                       // false — an empty method is verified, not skipped
 ```
+
+`verify` and `requiresCsrfProtection` fail closed. Only `GET`, `HEAD`, `OPTIONS` and `TRACE` skip the check, matched exactly after upper-casing and without trimming, so `"get"` is skipped but `" GET"` is not. Every other value is verified: an empty or blank method, `"POST "`, `"CONNECT"` and an unknown method such as `"FOO"` all need a valid token. When you configure `methods`, a standard HTTP method the list leaves out is also exempt: with `methods: ["DELETE"]`, `POST` and `PUT` skip the check, while `""` and `"FOO"` are still verified.
+
+> **Changed in 1.3.1 (security):** up to 1.3.0 any method outside the protected list skipped the check, so `""`, `" "`, `"POST "`, `"FOO"` and `"CONNECT"` returned `true` with no token. They now return `false` without a valid token. If a client of yours sends a non-standard method to a CSRF-protected route, it now needs a token.
 
 > **Changed in 1.2.0:** `createCsrfProtection` and `requiresCsrfProtection` now throw a `ConfigurationError` when `methods` is present but empty, is not an array, or contains a blank entry. Until 1.1.0, `methods: []` turned CSRF off for every request in silence — and that is exactly what `process.env.CSRF_METHODS?.split(",").filter(Boolean) ?? []` produces when the variable is unset. Omit `methods` to get the defaults; pass a list only when you mean to change them.
 
@@ -406,6 +445,30 @@ console.log(clean.tags);          // [ "x", "y" ] — still an array
 `sanitizeObject` drops keys named `__proto__`, `constructor` and `prototype`, which are the keys used to poison JavaScript's prototype chain. Arrays stay arrays, a `Date` or class instance is passed through untouched, a value that refers back to itself becomes `undefined` instead of crashing, and recursion stops at `maxDepth` (32 by default).
 
 > **Changed in 1.2.0:** `sanitizeObject` throws a `ConfigurationError` when `maxDepth` is present but is not an integer of 1 or more. The guard runs before the object is entered, so `maxDepth: 0` used to discard the argument itself and return `undefined` under a non-optional `T` — every field read off the result then threw at a call site TypeScript had called safe. `Number(process.env.MAX_DEPTH)` with the variable unset is the same shape of mistake as a `NaN` body limit.
+
+### Refusing prototype-polluting data
+
+Every JavaScript object has a hidden link to a shared *prototype* that supplies its inherited properties. `JSON.parse` keeps a key named `__proto__`, `constructor` or `prototype` as an ordinary property, so it reaches your handler intact. The moment your code copies that object with `Object.assign`, a `for…in` merge or a bracket assignment, the key can rewrite the prototype instead, and a field like `isAdmin` suddenly appears on objects that never had it. That attack is called *prototype pollution*.
+
+`findUnsafeKey(value)` looks through decoded, untrusted data and returns the first of those three keys it finds, at any depth, or `undefined` when there is none. It walks plain objects and arrays only, iteratively (so a deeply nested payload cannot overflow the stack) and cycle-safe (an object that refers to itself is visited once).
+
+```ts
+import { findUnsafeKey } from "@zudojs/security";
+
+const body = JSON.parse('{"user":{"name":"Ada","settings":{"__proto__":{"isAdmin":true}}}}');
+
+const unsafe = findUnsafeKey(body);
+if (unsafe !== undefined) {
+  // Refuse the request (400) rather than trying to repair it.
+  console.log(`Refused: body contains "${unsafe}"`); // Refused: body contains "__proto__"
+}
+
+console.log(findUnsafeKey({ items: [{ id: 1 }, { id: 2 }] })); // undefined
+```
+
+Which one to use: `findUnsafeKey` checks a whole *value*, such as a request body, a queue job or an RPC payload, and is the one to call on anything you decoded. `containsPrototypePollution(input)` checks a single *string*, such as a key name or a path segment you are about to use as a property name. `sanitizeObject` silently drops the keys and hands back a cleaned copy; `findUnsafeKey` lets you refuse the input instead, which is usually the better answer, because a client that sends `__proto__` is not sending you anything you want to process.
+
+> **Already done for you:** `@zudojs/rpc` refuses an RPC frame whose payload or metadata carries one of these keys (`RPC_INVALID_REQUEST`), and every `@zudojs/api` binding refuses them in its input (400 over HTTP, a validation error over RPC, queues and the CLI). Both use this function.
 
 ### Escaping for HTML
 
@@ -543,18 +606,36 @@ console.log(parsed.cookies); // [ { name: "sid", value: "abc123" }, { name: "the
 console.log(parsed.errors); // []
 ```
 
-`serializeCookie` takes the same attributes as one object instead of separate arguments, and both functions **throw** rather than write something dangerous.
+`serializeCookie` takes the same attributes as one object instead of separate arguments, and both functions **throw** a `ValidationError` rather than write something dangerous. `Domain` must be a hostname: labels of letters, digits and hyphens separated by dots, with an optional leading dot, at most 253 characters. `Path` must be printable ASCII (0x20–0x7E) with no `;` or `,`: percent-encode anything else, so write `/caf%C3%A9`, not `/café`. A space is allowed, as RFC 6265 allows it. `generateCsrfCookie` and `createCsrfProtection` apply the same `Path` check and throw `ValidationError` too.
 
 ```ts
-import { serializeCookie } from "@zudojs/security";
+import { serializeCookie, createSecureCookie } from "@zudojs/security";
+import { ValidationError } from "@zudojs/errors";
 
-// A newline in an attribute would let the caller add headers of their own.
+// Domain must be a hostname. This one has literal backslashes, a space and a colon.
 try {
   serializeCookie({ name: "sid", value: "v", domain: "a\\r\\nX-Evil: 1" });
 } catch (error) {
-  console.log(error.message); // 'Cookie Domain contains invalid characters (injection risk): …'
+  console.log(error instanceof ValidationError); // true
+  console.log((error as Error).message);
+  // 'Cookie Domain contains invalid characters (injection risk): it must be a hostname …'
+}
+
+console.log(createSecureCookie("sid", "v", { domain: ".example.com", path: "/app" }));
+// "sid=v; Path=/app; Domain=.example.com; Secure; HttpOnly; SameSite=Lax"
+
+// A ";" in Path would start a new attribute.
+try {
+  createSecureCookie("sid", "v", { path: "/app;Domain=evil.example" });
+} catch (error) {
+  console.log((error as Error).message);
+  // 'Cookie Path contains invalid characters (injection risk): only printable ASCII is allowed (percent-encode anything else), and ";" and "," are not, …'
 }
 ```
+
+> **Changed in 1.3.0 (behaviour change):** up to 1.2.x only a real CR, LF, NUL, `;` or `,` was refused, so a `Domain` of `a\r\nX-Evil: 1` written with literal backslashes, or one with spaces or a colon, went into the header unchanged. If you pass a `Domain` with a port or anything other than a hostname, it now throws.
+
+> **Changed in 1.3.1 (behaviour change):** a cookie `Path` with non-ASCII characters, such as `"/ä"`, used to be written as it was. It now throws `ValidationError`; percent-encode it. `generateCsrfCookie` and `createCsrfProtection` used to write their `path` into `Set-Cookie` unchecked and now run the same check.
 
 > **Watch out:** `parseCookieHeader` splits and trims; it does *not* percent-decode. If you wrote a value with `createSecureCookie` and it contained anything outside the plain cookie character set, call `decodeURIComponent` on the value yourself after parsing.
 
@@ -666,11 +747,11 @@ Everything below is exported from the package root, `@zudojs/security`.
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| `generateCsrfToken(secret, options?)` | Mints a signed token. | `options` is `{ expiration?, sessionId? }` or a plain number of seconds. Empty secret throws. |
-| `validateCsrfToken(token, secret, options?)` | Checks signature, expiry and session binding. | Returns `boolean`. `expiration` is the maximum lifetime you accept. |
-| `verifyDoubleSubmit(cookieToken, requestToken, secret, options?)` | Checks that both copies match and are valid. | Constant-time comparison. The usual entry point. |
-| `createCsrfProtection(config)` | Binds a secret, lifetime, cookie/header names and methods to the primitives. | Returns `{ issue, verify, requiresProtection }`. Throws `ConfigurationError` on a short secret or an unusable `methods` list. |
-| `requiresCsrfProtection(method, config?)` | Does this method change state? | `false` for GET, HEAD, OPTIONS, TRACE. Throws `ConfigurationError` when `config.methods` is present but empty, not an array, or holds a blank entry. |
+| `generateCsrfToken(secret, options?)` | Mints a signed token. | `options` is `{ expiration?, sessionId? }` or a plain number of seconds. Throws `ConfigurationError` on an empty secret or one under 32 characters. |
+| `validateCsrfToken(token, secret, options?)` | Checks signature, expiry and session binding. | Returns `boolean` (`false` for a malformed or forged token). `expiration` is the maximum lifetime you accept. Throws on a short secret. |
+| `verifyDoubleSubmit(cookieToken, requestToken, secret, options?)` | Checks that both copies match and are valid. | Constant-time comparison. The usual entry point. `false` for a missing or non-string token; throws only on a short secret. |
+| `createCsrfProtection(config)` | Binds a secret, lifetime, cookie/header names and methods to the primitives. | Returns `{ issue, verify, requiresProtection }`. Throws `ConfigurationError` on a short secret or an unusable `methods` list. `verify` returns `false`, never throws, for a bad token or a malformed request. |
+| `requiresCsrfProtection(method, config?)` | Does this method change state? | `false` for GET, HEAD, OPTIONS, TRACE (and, with `config.methods`, a standard method the list leaves out); `true` for anything else, including an empty or unknown method. Throws `ConfigurationError` when `config.methods` is present but empty, not an array, or holds a blank entry. |
 | `extractCsrfTokenFromHeaders(headers, headerName?)` | Reads the token from headers. | Default `x-csrf-token`; lookup is case-insensitive. |
 | `extractCsrfTokenFromCookies(cookieHeader, cookieName?)` | Reads the token from a raw Cookie header. | Default cookie name `_csrf`. |
 | `generateCsrfCookie(token, config?)` | Builds the `Set-Cookie` value. | `HttpOnly`, `Secure`, `SameSite=Strict` by default. |
@@ -698,7 +779,8 @@ Everything below is exported from the package root, `@zudojs/security`.
 | `detectThreats(input)` | Labels what it recognised. | Any of `"SQL_INJECTION"`, `"XSS"`, `"NULL_BYTE"`, `"CONTROL_CHARACTERS"`. Heuristic. |
 | `containsSqlInjection(input)` | Regex guess at SQL injection. | High false-positive rate. Never a substitute for parameterised queries. |
 | `containsXss(input)` | Regex guess at XSS. | Misses real attacks. Encode on output instead. |
-| `containsPrototypePollution(input)` | Is this string one of the three dangerous keys? | Exact match only. |
+| `containsPrototypePollution(input)` | Is this string one of the three dangerous keys? | Exact match on one string. For a whole decoded value use `findUnsafeKey`. |
+| `findUnsafeKey(value)` | First `__proto__`, `constructor` or `prototype` key anywhere in decoded data, or `undefined`. | Plain objects and arrays only; iterative and cycle-safe. See [Refusing prototype-polluting data](#unsafe-keys). |
 | `withoutStickyFlags(pattern)` | Copies a regex without `g` and `y`. | Use before repeated `.test()` calls. |
 | `PROTOTYPE_POLLUTION_KEYS`, `SQL_INJECTION_PATTERNS`, `XSS_PATTERNS` | The lists behind those checks. | None carries the `g` flag, by design. |
 
@@ -719,7 +801,7 @@ Everything below is exported from the package root, `@zudojs/security`.
 | Name | What it does | Notes |
 | --- | --- | --- |
 | `createSecureCookie(name, value, options?, config?)` | Builds a `Set-Cookie` value. | Secure, HttpOnly, SameSite=Lax by default. Throws on unsafe input. |
-| `serializeCookie(cookie, config?)` | Same, taking a `ParsedCookie`. | Percent-encodes the value; validates every attribute. |
+| `serializeCookie(cookie, config?)` | Same, taking a `ParsedCookie`. | Percent-encodes the value; validates every attribute. `Domain` must be a hostname; `Path` must be printable ASCII with no `;` or `,`. |
 | `parseCookieHeader(header, config?)` | Splits a Cookie header. | Returns `{ cookies, errors }`. Does not percent-decode. |
 | `validateCookieName(name)` / `validateCookieValue(value)` | Check one part. | Error message, or `undefined` when fine. |
 | `stripSensitiveCookies(header, names?)` | Removes session-like cookies. | Defaults to `DEFAULT_SENSITIVE_COOKIE_NAMES`, matched as whole words anywhere in the name (`isSensitiveCookieName`). |
@@ -764,13 +846,13 @@ These are TypeScript types only; they disappear at runtime. Each is the config o
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/security` exports from its package root at v1.2.0 — **102** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/security` exports from its package root at v1.3.3 — **103** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 102 exports**
+**Show all 103 exports**
 
-Functions (65)
+Functions (66)
 
-`containsPrototypePollution` `containsSqlInjection` `containsTraversal` `containsXss` `createBodySizeChecker` `createCsrfProtection` `createIpKeyGenerator` `createRateLimiter` `createSecureCookie` `defaultHandler` `defaultKeyGenerator` `detectThreats` `embeddedIpv4` `escapeHtml` `expandIpv6` `extractClientIp` `extractCsrfTokenFromCookies` `extractCsrfTokenFromHeaders` `fullyDecodeUri` `generateCspNonce` `generateCsrfCookie` `generateCsrfToken` `generatePreflightHeaders` `generateSecurityHeaders` `generateSimpleHeaders` `getBodyLimitForContentType` `getDisallowedHeaders` `getMissingSecurityHeaders` `ipRateLimitKey` `isHopByHopHeader` `isMethodAllowed` `isNonPublicIpv6Range` `isOriginAllowed` `isPrivateHostname` `isSafeString` `isSafeUrl` `isSensitiveCookieName` `normalizePath` `parseClientIp` `parseCookieHeader` `parseMediaType` `requiresCsrfProtection` `resolveBodyLimit` `retryAfterSeconds` `sanitizeHeaderValue` `sanitizeObject` `sanitizeString` `serializeCookie` `stripHtml` `stripSensitiveCookies` `validateBodyFraming` `validateBodyLimitConfig` `validateBodySize` `validateContentLength` `validateCookieName` `validateCookieValue` `validateCspDirective` `validateCsrfToken` `validateHeaderName` `validateHeaders` `validateHeaderValue` `validateRequestTarget` `validateUrl` `verifyDoubleSubmit` `withoutStickyFlags`
+`containsPrototypePollution` `containsSqlInjection` `containsTraversal` `containsXss` `createBodySizeChecker` `createCsrfProtection` `createIpKeyGenerator` `createRateLimiter` `createSecureCookie` `defaultHandler` `defaultKeyGenerator` `detectThreats` `embeddedIpv4` `escapeHtml` `expandIpv6` `extractClientIp` `extractCsrfTokenFromCookies` `extractCsrfTokenFromHeaders` `findUnsafeKey` `fullyDecodeUri` `generateCspNonce` `generateCsrfCookie` `generateCsrfToken` `generatePreflightHeaders` `generateSecurityHeaders` `generateSimpleHeaders` `getBodyLimitForContentType` `getDisallowedHeaders` `getMissingSecurityHeaders` `ipRateLimitKey` `isHopByHopHeader` `isMethodAllowed` `isNonPublicIpv6Range` `isOriginAllowed` `isPrivateHostname` `isSafeString` `isSafeUrl` `isSensitiveCookieName` `normalizePath` `parseClientIp` `parseCookieHeader` `parseMediaType` `requiresCsrfProtection` `resolveBodyLimit` `retryAfterSeconds` `sanitizeHeaderValue` `sanitizeObject` `sanitizeString` `serializeCookie` `stripHtml` `stripSensitiveCookies` `validateBodyFraming` `validateBodyLimitConfig` `validateBodySize` `validateContentLength` `validateCookieName` `validateCookieValue` `validateCspDirective` `validateCsrfToken` `validateHeaderName` `validateHeaders` `validateHeaderValue` `validateRequestTarget` `validateUrl` `verifyDoubleSubmit` `withoutStickyFlags`
 
 Interfaces (26)
 

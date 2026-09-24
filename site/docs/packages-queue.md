@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/queue — background job proces
 source: https://zudojs.oyinlola.site/docs/packages-queue
 ---
 
-v1.3.0
+v1.4.1
 
 # @zudojs/queue
 
@@ -82,7 +82,9 @@ console.log(finished?.state); // "completed"
 await queue.close();
 ```
 
-What you should see: the "Sending ..." line, then `waiting`, then `completed`. The queue starts polling for work the moment you call `process()`, so you never have to start it by hand.
+What you should see: `waiting`, then the "Sending ..." line, then `completed`. The queue starts polling for work the moment you call `process()`, so you never have to start it by hand.
+
+> **Process lifetime:** since v1.4.0, pending work keeps Node running. While the queue has waiting, delayed, retrying or running jobs that one of its processors can run, its poll timer is referenced, so a script that only calls `process()` and `add()` runs the job before it exits. An idle queue, a paused one, jobs no processor handles and a closed queue never hold the process open. Pass `keepAlive: false` in `QueueOptions` to get the old unreferenced timer back. (Before v1.4.0 such a script exited with code 0 before the job ran.)
 
 > **Watch out:** the first argument to `createInMemoryQueue` is a `QueueName`, not a plain string. Wrap the name in `createQueueName()` or TypeScript will reject it.
 
@@ -90,7 +92,27 @@ What you should see: the "Sending ..." line, then `waiting`, then `completed`. T
 
 A **job** is one unit of work. It has a `name` (which processor should run it), `data` (the input), and a `state` that the queue moves through as work happens. You never build a job by hand; `queue.add()` builds it and returns it.
 
-A **processor** is an `async` function registered with `queue.process(name, fn)`. The queue calls it with two arguments: the job, and a `JobContext`. The context carries an `AbortSignal` that fires if the job times out or the queue shuts down, plus an `updateProgress()` method.
+A **processor** is an `async` function registered with `queue.process(name, fn)`. The queue calls it with two arguments: the job, and a `JobContext`. The context carries an `AbortSignal` that fires if the job times out or the queue shuts down, the 1-based `attemptNumber`, and an `updateProgress()` method.
+
+Inside a processor, `job.attempt` counts the attempts that have *already failed*, so it starts at **0**: a job with `attempts: 3` runs with `job.attempt` equal to 0, then 1, then 2. For a human-readable count use the context's `attemptNumber` (new in v1.4.0), which is 1-based and always `job.attempt + 1`, the same convention as `ctx.attempt` in [@zudojs/scheduler](https://zudojs.oyinlola.site/docs/packages-scheduler.md). `job.maxAttempts` holds the total.
+
+```ts
+import { createInMemoryQueue, createQueueName, createFixedBackoff } from "@zudojs/queue";
+
+const queue = createInMemoryQueue(createQueueName("flaky"));
+
+queue.process("sync", async (job, ctx) => {
+  console.log(`job.attempt=${job.attempt} attempt ${ctx.attemptNumber} of ${job.maxAttempts}`);
+  if (ctx.attemptNumber < 3) throw new Error("not yet");
+});
+
+await queue.add("sync", {}, { attempts: 3, backoff: createFixedBackoff(10) });
+await new Promise((resolve) => setTimeout(resolve, 300));
+// job.attempt=0 attempt 1 of 3
+// job.attempt=1 attempt 2 of 3
+// job.attempt=2 attempt 3 of 3
+await queue.close();
+```
 
 ### Job states
 
@@ -152,12 +174,39 @@ The third argument to `queue.add()` is a `JobOptions` object. Every field is opt
 | `backoff` | How long to wait between attempts (see Retries) | exponential, 1s to 30s |
 | `delay` | Milliseconds to wait before the job may run | `0` |
 | `scheduledAt` | A `Date` before which the job may not run | now |
-| `priority` | Higher numbers run first; ties run oldest-first | `50` |
+| `priority` | Higher numbers run first; within a priority, jobs run in the order they became runnable (when added, or when a delayed job came due). A retried job keeps its place | `50` |
 | `timeout` | Milliseconds before a running job is aborted and failed. A timeout aborts `context.signal`; the job's slot and its retry wait up to `timeoutGraceMs` (default 5000) for the processor to stop, so honour the signal. | `30000` |
 | `deduplicationKey` | Reject a second job with the same key while the first exists | none |
 | `metadata` | Any extra data you want stored on the job. The key `zudo:context` is reserved by the queue and stripped from whatever you pass (see below) | none |
 
 > **Reserved key:** `metadata["zudo:context"]` (exported as `CONTEXT_METADATA_KEY`) belongs to the queue's context carriers. Since v1.3.0 the queue drops whatever the caller put there before storing the job, whether or not a carrier captured anything. Before v1.3.0, an `add()` made with no ambient context kept the caller's record verbatim and the queue replayed it around the middleware and the processor — so an enqueuer could choose the tenant, correlation id or trace the job ran under. Context that a carrier genuinely captured is unaffected; put your own data under any other key.
+
+### Dates and other non-JSON values in `data`
+
+`add()` copies the payload through the queue's serializer. Since v1.4.0 the default `JsonSerializer` preserves types, so a `Date` in `data` reaches the processor as a `Date`, matching what `Queue<{ dueAt: Date }>` promises. `BigInt`, `Map`, `Set`, `Uint8Array` and `Error` round-trip too. Output for plain JSON data is unchanged. No options are needed:
+
+```ts
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+interface Reminder { userId: string; dueAt: Date; tags: Set<string>; }
+
+const queue = createInMemoryQueue<Reminder>(createQueueName("reminders"));
+
+queue.process("remind", async (job) => {
+  console.log(job.data.dueAt instanceof Date, job.data.dueAt.toISOString(), job.data.tags.has("vip"));
+});
+
+await queue.add("remind", {
+  userId: "u1",
+  dueAt: new Date("2026-10-01T09:00:00Z"),
+  tags: new Set(["vip"]),
+});
+await new Promise((resolve) => setTimeout(resolve, 200));
+// true 2026-10-01T09:00:00.000Z true
+await queue.close();
+```
+
+The default uses the tagged format of [@zudojs/serialization](https://zudojs.oyinlola.site/docs/packages-serialization.md). `createJsonSerializer()` also defaults to `preserveTypes: true`; pass `serializer: createJsonSerializer({ preserveTypes: false })` for plain JSON, where a `Date` becomes its ISO string (type such fields as `string`). Class instances still lose their prototype through JSON; to keep them, pass `serializer: PassthroughSerializer` (or `serializePayloads: false`) and the in-memory queue stores the payload by reference. Before v1.4.0 the default was plain JSON: a `Date` arrived as a string, a `BigInt` made `add()` throw, and a `Map` or `Set` arrived as `{}`.
 
 This example uses priority, delay and deduplication together. `JobPriorityLevels` is a set of named numbers you can use instead of guessing.
 
@@ -297,6 +346,8 @@ const queue = createInMemoryQueue(createQueueName("broken"), {
 await queue.close(); // `store` is yours: close() leaves it alone
 ```
 
+> **Changed in v1.4.1:** `QueueOptions.deadLetterStore` is now typed `DeadLetterStore<unknown>`. In v1.4.0 it was `DeadLetterStore<never>`, so both `createInMemoryDeadLetterStore()` and `createInMemoryDeadLetterStore<Email>()` for a `Queue<Email>` were rejected with TS2322, and the workaround was the type argument `<never>`. Either store is now accepted with no annotation. A store still annotated `<never>` compiles, so you can drop it at your own pace.
+
 > **Who clears it:** `close()` clears the dead-letter store the queue created for itself, so a closed queue holds onto nothing. A store you passed in as `deadLetterStore` is left alone, as before — you own its contents and its lifetime.
 
 > **Watch out:** `getStats().failed` counts jobs currently in `failed` *or* `dead_letter` state. A job that will be retried shows up there for a moment too. Use `deadLettered` for the lifetime total.
@@ -340,7 +391,8 @@ await queue.close();
 | Option | What it does | Default |
 | --- | --- | --- |
 | `concurrency` | How many jobs this worker runs at the same time | `1` |
-| `pollInterval` | Milliseconds to wait before asking again when the queue is empty | `100` |
+| `pollInterval` | Milliseconds between re-checks while idle. The in-memory queue wakes a started worker as soon as a job becomes runnable (`Queue.onJobReady`), so this only bounds how often an idle worker looks again | `100` |
+| `keepAlive` | Whether a started worker holds the Node.js process open until `stop()` or `forceStop()`. `false` leaves its timers unreferenced | `true` |
 | `timeoutMs` | Timeout for jobs that carry none of their own | queue default (30 s) |
 | `middleware` | Extra middleware run after the queue's own | none |
 | `drainTimeout` | How long `stop()` waits for running jobs before forcing | `30000` |
@@ -386,7 +438,7 @@ What you should see: "Job processing started" with the job details, then "send-e
 
 ## EVENTS
 
-The queue can tell you when things happen: a job was created, started, completed, failed, cancelled, or will retry, and a worker started, stopped or hit an error. By default it tells nobody. To listen, create an **event emitter** (an object you can subscribe to) and hand it to the queue as `QueueOptions.eventEmitter`.
+The queue can tell you when things happen: a job was created, started, completed, failed, cancelled, or will retry, and a worker started, stopped or hit an error. Since v1.4.0 every queue has an **event emitter** (an object you can subscribe to) out of the box: a queue created without one gets an in-memory emitter, reachable as `queue.events`. Before v1.4.0 the default was a silent no-op. To share one emitter between queues, or to plug in your own, create it and hand it to the queue as `QueueOptions.eventEmitter`.
 
 Subscribe with `on(event, handler)`. It returns a function that unsubscribes.
 
@@ -468,7 +520,20 @@ await worker.stop();  // worker-1 is down
 await queue.close();
 ```
 
-`Queue.events` is optional on the `Queue` interface, so reach it with `queue.events?.`. The in-memory queue always has one: a queue created without an `eventEmitter` exposes the no-op emitter, so a worker can report itself unconditionally.
+`Queue.events` is optional on the `Queue` interface, so reach it with `queue.events?.`. The in-memory queue always has one: a queue created without an `eventEmitter` exposes its own in-memory emitter, so you can subscribe with no set-up at all:
+
+```ts
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+
+const queue = createInMemoryQueue(createQueueName("emails"));
+queue.events?.on("job:completed", ({ job }) => console.log("completed", job.name));
+
+queue.process("send-email", async () => {});
+await queue.add("send-email", {});
+await new Promise((resolve) => setTimeout(resolve, 100));
+// completed send-email
+await queue.close();
+```
 
 > **Tip:** a handler that throws does not break the job. The remaining handlers still run and processing continues. Since v1.3.0 the failure goes to `logger.error` when a logger is configured — either `createInMemoryQueueEventEmitter({ logger })` or `QueueOptions.logger`, which the queue hands to the emitter it was given — and to `process.emitWarning` otherwise. It is never written to `console`. Pass `onHandlerError` to take it over entirely.
 
@@ -520,7 +585,7 @@ Everything below is exported from `@zudojs/queue` unless a note says otherwise.
 | `calculateRetryDelay(attempt, backoff?)` | Milliseconds to wait before the given attempt | Returns 0 without a backoff |
 | `shouldRetry(attempt, maxAttempts)` | `attempt < maxAttempts` |  |
 | `createInMemoryQueueEventEmitter(options?)` | Emitter you can subscribe to with `on()` | `options.onHandlerError`, `options.logger` (a throwing listener's error, default `process.emitWarning`); class `InMemoryQueueEventEmitter` also exported, with `setLogger()` and `removeAllListeners()` |
-| `createNoopQueueEventEmitter()` | Emitter that drops every event | The queue's default |
+| `createNoopQueueEventEmitter()` | Emitter that drops every event | Pass as `eventEmitter` to silence a queue; the default was this before v1.4.0 |
 | `createLoggingMiddleware(logger?)` | Logs start, completion and failure of each job | `logger.info(message, data)` |
 | `createTimeoutMiddleware(ms, onTimeout?)` | Fails a job that runs longer than `ms` | The queue already applies one per job |
 | `createMiddlewareChain(middleware[])` | Combines several middleware into one |  |
@@ -529,13 +594,13 @@ Everything below is exported from `@zudojs/queue` unless a note says otherwise.
 | `createJobProgress(percent, options?)` | Builds a `JobProgress` for `ctx.updateProgress()` | Clamps to 0..100 |
 | `createJobResult(data, durationMs)` | Builds a successful `JobResult` | Also `createJobErrorResult(error, durationMs)` |
 | `createProcessorRegistry()` | Standalone name-to-processor map | Not used by `Queue`; the queue keeps its own |
-| `createJsonSerializer(options?)` | JSON serializer with `space` / `preserveTypes` | Constants `JsonSerializer` (default) and `PassthroughSerializer` |
+| `createJsonSerializer(options?)` | JSON serializer with `space` / `preserveTypes` (default `true`) | Constants `JsonSerializer` (default, type-preserving) and `PassthroughSerializer` (stores payloads by reference) |
 
 ### Queue methods
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| `add(name, data, options?)` | Stores a job and returns it | Throws when paused (by default), closed, duplicate, or payload not JSON-serializable |
+| `add(name, data, options?)` | Stores a job and returns it, and wakes the poller and any idle worker at once | Throws when paused (by default), closed, duplicate, or the payload cannot be serialized (a cyclic object, for example) |
 | `process(name, processor)` | Registers the processor for a job name and starts polling | One processor per name; a later call replaces it |
 | `getJob(id)` | Current copy of a job, or `null` | Jobs are immutable; re-fetch to see new state |
 | `getNextJob()` | Peeks at the next runnable job | Does not claim it |
@@ -544,20 +609,22 @@ Everything below is exported from `@zudojs/queue` unless a note says otherwise.
 | `getDeadLetterJobs()` | All `DeadLetterJob` entries |  |
 | `pause()` / `resume()` / `isPaused()` | Stop and restart processing |  |
 | `close()` / `isDisposed()` | Drain and shut down | Idempotent; clears a dead-letter store the queue created itself, not one you supplied |
-| `events` | The emitter this queue publishes on | Optional on the interface; a worker uses it to emit `worker:started` / `worker:stopped` / `worker:error` |
+| `events` | The emitter this queue publishes on | Optional on the interface; in-memory by default. A worker uses it to emit `worker:started` / `worker:stopped` / `worker:error` |
+| `onJobReady(listener)` | Calls `listener` whenever a job may have become runnable; returns an unsubscribe function | Optional on the interface; the in-memory queue implements it. A `Worker` subscribes on `start()` and unsubscribes on `stop()` |
 
 ### Queue options
 
 | Name | What it does | Default |
 | --- | --- | --- |
 | `concurrency` | Jobs the queue's own loop runs at once | `1` |
-| `pollInterval` | Milliseconds between checks for work | `50` |
+| `pollInterval` | Milliseconds between polls of the queue's own loop. When set, every poll uses it. Either way, `add()`, a delayed job coming due, an elapsed retry backoff, `resume()` and a finished job wake the loop at once | unset: 50 ms, backing off to 2000 ms while idle |
+| `keepAlive` | Whether pending work (waiting, delayed, retrying or running jobs a processor can run) holds the Node.js process open. `false` leaves every timer unreferenced | `true` |
 | `defaultJobOptions` | `JobOptions` applied to every `add()` | none |
 | `middleware` | Middleware run around every processor | `[]` |
-| `eventEmitter` | Where lifecycle events go | no-op |
+| `eventEmitter` | Where lifecycle events go | an in-memory emitter, exposed as `queue.events` |
 | `deadLetterStore` | Where exhausted jobs go | in-memory, last `1000` |
 | `logger` | Destination for errors with no caller to receive them; also handed to an `InMemoryQueueEventEmitter` so a throwing listener reaches `logger.error` | none (`process.emitWarning`) |
-| `serializer` / `serializePayloads` | Payloads are copied through JSON on `add()`; set `false` to store by reference | `JsonSerializer` / `true` |
+| `serializer` / `serializePayloads` | Payloads are copied through the serializer on `add()` (the default keeps `Date`, `BigInt`, `Map`, `Set`, `Uint8Array` and `Error`); set `serializePayloads: false` or use `PassthroughSerializer` to store by reference | `JsonSerializer` / `true` |
 | `pauseRejectsAdd` | Whether `add()` throws while paused | `true` |
 | `retainSettledJobs` | Finished jobs kept before the oldest are dropped | `1000` |
 | `closeTimeout` | How long `close()` waits for running jobs | `30000` |
@@ -565,6 +632,8 @@ Everything below is exported from `@zudojs/queue` unless a note says otherwise.
 | `autoProcess` | Whether the queue's own loop claims and runs jobs; creating a `Worker` turns it off | `true` |
 | `timeoutGraceMs` | After a timeout, how long the slot and the retry wait for the processor to settle | `5000` |
 | `contextCarriers` | Context (tenant, correlation id, trace ids) carried from `add()` into the processor; see `captureContext` / `runWithContext` and the README section "Carrying context across the queue" | none |
+
+> **Pickup latency:** since v1.4.0, work does not wait for the next poll. `add()` and every other event that makes a job runnable wake the queue's loop (and any started `Worker`) immediately, so a job added after an idle spell starts within milliseconds instead of after up to 2 seconds, and 40 instant jobs at concurrency 1 finish in tens of milliseconds. Before v1.4.0 `pollInterval` applied only to the first poll.
 
 ### Types and constants
 
@@ -577,7 +646,7 @@ Everything below is exported from `@zudojs/queue` unless a note says otherwise.
 | `QueueMiddleware`, `QueueMiddlewareContext` | Middleware function and its `ctx` |  |
 | `QueueEventEmitter`, `QueueEventMap` | Emitter interface and the event-name-to-payload map |  |
 | `DeadLetterJob`, `DeadLetterStore` | Dead-letter entry and store interface |  |
-| `Serializer` | `serialize(data): string` / `deserialize(string)` |  |
+| `Serializer` | `serialize(data): string` / `deserialize(string)` | Optional `passthrough: true` tells the in-memory queue to store payloads by reference |
 | `JobState`, `WorkerState`, `BackoffType` | Enums of lowercase string values | `BackoffType.FIXED`, `BackoffType.EXPONENTIAL` |
 | `JobPriorityLevels` | `LOW 10`, `NORMAL 50`, `HIGH 100`, `CRITICAL 200` | Frozen object |
 | `DEFAULT_JOB_OPTIONS` | `{ attempts: 1, timeout: 30000 }` | Also `mergeJobOptions(options?)` |
@@ -594,7 +663,7 @@ These are thrown by the queue but live in `@zudojs/errors`. Import them from the
 | `QueueError` | Base class; also `add()` on a paused queue | All others extend it |
 | `QueueDisposedError` | `add()`, `process()` or `resume()` after `close()` |  |
 | `JobDuplicateError` | `deduplicationKey` already in use |  |
-| `JobSerializationError` | Payload cannot be JSON-serialized | Cyclic objects, for example |
+| `JobSerializationError` | Payload cannot be serialized | Cyclic objects, for example |
 | `JobTimeoutError` | A job ran past its timeout | Counts as a failed attempt |
 | `JobMaxAttemptsError` | Recorded on the job when it is dead-lettered | Appears as `DeadLetterJob.error` |
 | `JobStalledError` | A job was reclaimed after `stalledAfter` | Needs `stalledAfter > 0` |
@@ -606,7 +675,8 @@ These are thrown by the queue but live in `@zudojs/errors`. Import them from the
 - **Importing errors from `@zudojs/queue`.** The import is `undefined` at runtime and `instanceof` checks silently fail. Import `JobTimeoutError` and friends from `@zudojs/errors`.
 - **Reading `job.state` from the object `add()` returned.** Jobs are immutable snapshots, so it stays `"waiting"` forever. Call `queue.getJob(job.id)` to see the current state.
 - **Expecting `attempts: 3` to retry instantly.** Without a `backoff` the default is exponential starting at 1 second, so a test that waits 200 ms sees only one attempt. Pass `createFixedBackoff(10)` in tests.
-- **Adding a payload that is not plain JSON.** Class instances lose their methods and cyclic objects throw `JobSerializationError`. Put IDs and plain data in the job, and load the rest inside the processor.
+- **Adding class instances or cyclic objects.** The default serializer keeps `Date`, `BigInt`, `Map`, `Set`, `Uint8Array` and `Error`, but class instances lose their methods and cyclic objects throw `JobSerializationError`. Put IDs and plain data in the job, or pass `serializer: PassthroughSerializer` to store payloads by reference.
+- **Treating `job.attempt` as 1-based.** It is 0 on the first run. Use the processor context's `ctx.attemptNumber` (1-based, equal to `job.attempt + 1`) for a human-readable count.
 - **Forgetting `close()`.** Jobs you never awaited are abandoned and pending retries are lost when the process exits. Close every queue (or `manager.closeAll()`) during shutdown.
 
 ## RELATED PACKAGES
@@ -619,7 +689,7 @@ These are thrown by the queue but live in `@zudojs/errors`. Import them from the
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/queue` exports from its package root at v1.3.0 — **87** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/queue` exports from its package root at v1.5.1 — **87** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 87 exports**
 

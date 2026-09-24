@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/openapi — the OpenAPI specifi
 source: https://zudojs.oyinlola.site/docs/packages-openapi
 ---
 
-v1.4.0
+v1.5.0
 
 # @zudojs/openapi
 
@@ -41,7 +41,7 @@ SKIP IT WHEN
 $ npm install @zudojs/openapi
 ```
 
-The runtime dependencies are `@zudojs/errors` (v1.2.0) and `@zudojs/constants` (v1.1.1), which supplies the schema ceilings the converter emits. Install `@zudojs/schema` too if you want to register schemas rather than hand-written OpenAPI objects:
+The runtime dependencies are `@zudojs/errors` (v1.3.0) and `@zudojs/constants` (v1.1.2), which supplies the schema ceilings the converter emits. Install `@zudojs/schema` too if you want to register schemas rather than hand-written OpenAPI objects:
 
 ```bash
 $ npm install @zudojs/schema
@@ -111,7 +111,7 @@ Every field is optional. The main ones:
 | `params` / `query` / `headers` / `cookies` | Shorthand: one object schema each, and every property becomes a parameter. |
 | `requestBody` | The body the endpoint accepts, keyed by media type. |
 | `body` | Shorthand: a schema sent as `application/json`, or `{ schema, contentType?, required? }`. |
-| `responses` | Keyed by status code, a `4XX`-style range, or `default`. Each is a Response Object with a `description`, or the shorthand `{ schema }`, whose description defaults to the reason phrase. |
+| `responses` | Keyed by status code, a `4XX`-style range, or `default`. Each is a Response Object with a `description`, or the shorthand `{ schema }`, whose description defaults to the reason phrase. Leave it out and the operation gets `default: "Undocumented response"` plus a warning (see [below](#undocumented-responses)). |
 | `security` / `servers` / `externalDocs` | Per-operation overrides of the document-level values. `security: []` marks the operation public. |
 | `deprecated` | Marks the endpoint as going away. |
 | `hidden` | Leaves the route out of the generated document entirely. |
@@ -154,6 +154,43 @@ Since v1.4.0 “the same route” means the same method and the same *OpenAPI pa
 
 > **Watch out:** OpenAPI has no optional or wildcard path segments. `/files/*` and `/users/:id?` both throw an `OpenAPIRouteError` instead of quietly producing a path template no tool understands. Generating from an `@zudojs/http` router avoids this: the router resolves those patterns first (an optional segment becomes two paths, a wildcard a `{rest}` slot).
 
+### Routes with no documented responses
+
+OpenAPI requires every operation to list at least one response. If a route declares none (no `responses` field, or `responses: {}`), the generator does not make one up. It emits a `default` response described as `"Undocumented response"`, which keeps the document valid while saying honestly that nothing is known, and it reports a warning so you can fix the route:
+
+```ts
+import { createOpenAPIDocumentFromRoutes } from "@zudojs/openapi";
+
+const options = {
+  info: { title: "Users API", version: "1.0.0" },
+  onRouteWarning: (message) => console.warn("warning:", message),
+};
+
+// No responses declared.
+const before = createOpenAPIDocumentFromRoutes([{ method: "DELETE", path: "/users/:id" }], options);
+console.log(before.paths["/users/{id}"].delete.responses);
+
+// The response the endpoint really sends.
+const after = createOpenAPIDocumentFromRoutes(
+  [{ method: "DELETE", path: "/users/:id", responses: { "204": { description: "User deleted" } } }],
+  options,
+);
+console.log(after.paths["/users/{id}"].delete.responses);
+```
+
+```bash
+$ node responses.mjs
+warning: DELETE /users/:id: no responses are documented; emitted "default: Undocumented response".
+{ default: { description: 'Undocumented response' } }
+{ '204': { description: 'User deleted' } }
+```
+
+Before v1.5.0 such a route got an invented `"200": { description: "OK" }`. That was a guess, and often a wrong one: a `DELETE` that answers `204 No Content` was published as returning `200`, so a client generated from the document expected a body that never came. The guess also hid the problem, because the validator's “every operation declares a response” check could never fire.
+
+The warning reaches three places: the `onRouteWarning(message)` option (accepted by `new OpenAPIManager`, `createOpenAPIDocumentFromRoutes` and `createOpenAPIManagerFromRoutes`), `onSchemaWarning` under the name `"routes"`, and `manager.routeWarnings()`. `@zudojs/http`'s `generateOpenAPIDocument` passes its own `onRouteWarning` through, so these arrive next to its duplicate-route warnings.
+
+> **Watch out:** regenerate any checked-in spec after upgrading to v1.5.0. Every operation that relied on the invented `200` now shows `default` instead, and each one logs a warning. The fix is to declare the responses the endpoint really returns; the warning then goes away.
+
 ## GENERATING FROM A ROUTE TABLE
 
 Most of the time you do not want to call `addRoute` once per endpoint. Your routes already exist somewhere — in a router, or in a list of operations — and the document should come from that list, so it can never describe an endpoint that is not there.
@@ -182,7 +219,12 @@ const document = createOpenAPIDocumentFromRoutes(
       body: objectSchema({ name: stringSchema() }),
       responses: { "201": { schema: user } },
     },
-    { method: "GET", path: "/health", security: [] }, // public
+    {
+      method: "GET",
+      path: "/health",
+      security: [], // public
+      responses: { "200": { description: "The service is up" } },
+    },
   ],
   {
     info: { title: "Users API", version: "1.0.0" },
@@ -217,7 +259,7 @@ An `OpenAPIRouteDescriptor` is `RouteOpenAPIMetadata` plus `method` and `path`. 
 | `inferredParameters` | Parameters the source worked out itself, such as a regex constraint. Lowest precedence. |
 | `hidden` | `true` leaves the operation out. |
 
-Every path template slot is documented as a required string parameter even when nothing declares it. A declared path parameter the template does not contain is dropped with a warning, rather than producing an invalid document. Warnings reach `onSchemaWarning` under the name `"routes"` and `manager.routeWarnings()`.
+Every path template slot is documented as a required string parameter even when nothing declares it. A declared path parameter the template does not contain is dropped with a warning, rather than producing an invalid document. Warnings reach `onRouteWarning`, `onSchemaWarning` under the name `"routes"`, and `manager.routeWarnings()`. A route with no responses warns too (see [Routes with no documented responses](#undocumented-responses)).
 
 ### Where descriptors come from
 
@@ -370,22 +412,25 @@ const manager = new OpenAPIManager({
 manager.addRoute({
   method: "get",
   path: "/orders/:id",
-  metadata: {
-    openapi: { responses: { "200": { description: "OK" } } },
-  },
+  metadata: { openapi: { operationId: "orders.get", responses: { "200": { description: "The order" } } } },
+});
+manager.addRoute({
+  method: "get",
+  path: "/orders",
+  metadata: { openapi: { operationId: "orders.get", responses: { "200": { description: "All orders" } } } }, // copy-paste slip
 });
 
 const result = manager.validate();
 console.log(result.valid);              // false
-console.log(result.errors[0].message); // mentions the missing "id" parameter
+console.log(result.errors[0].message); // 'Duplicate operationId "orders.get" (also used by GET /orders/{id}).'
 ```
 
-The path says `{id}` but no parameter declares it, so the document claims a slot nothing fills. Add `parameters: [{ name: "id", in: "path" }]` and it passes.
+Two operations share the `operationId` `"orders.get"`, so a code generator would produce two methods with the same name. Rename the second one (say, `"orders.list"`) and it passes.
 
 ### What it checks
 
 - Required document fields are present and `openapi` names a supported version.
-- Every operation declares at least one response, keyed by a status code, a `4XX`-style range or `default`, each with a description.
+- Every operation declares at least one response, keyed by a status code, a `4XX`-style range or `default`, each with a description. Generated documents always pass this one (an undocumented route gets `default` and a [warning](#undocumented-responses)), so it matters most for documents built by hand.
 - Path templates and `in: "path"` parameters agree in both directions, path parameters are required, no parameter is declared twice in one list (an operation-level parameter may override a path-level one), and no two paths are identical apart from their template parameter names.
 - `operationId` values are unique and within `MAX_OPERATION_ID_LENGTH`.
 - Every `security` requirement names a scheme declared in `components.securitySchemes`, and every declared scheme is used somewhere.
@@ -643,7 +688,7 @@ Serialize any document with `toOpenAPIJSON` or `toOpenAPIYAML`. The YAML is real
 | `setRoute(route)` | Registers a route, replacing any existing one. | — |
 | `removeRoute(method, path)` | Removes a route. | Returns whether one was removed. |
 | `setRoutes(routes)` | Replaces the whole route set. | Rejects duplicates before anything changes. Chainable. |
-| `routeWarnings()` | Warnings from the last route conversion. | For example a declared path parameter the path lacks. |
+| `routeWarnings()` | Warnings from the last route conversion. | For example a declared path parameter the path lacks, or a route with no documented responses. |
 | `addSchema(name, schema)` | Converts a `@zudojs/schema` schema and registers it. | Conversion warnings land in `schemaWarnings()`. |
 | `addRawSchema(name, schema)` | Registers an already-converted OpenAPI schema. | No conversion. |
 | `setInfo`, `addServer`, `addTag` | Set document metadata. | Chainable. |
@@ -678,7 +723,7 @@ Serialize any document with `toOpenAPIJSON` or `toOpenAPIYAML`. The YAML is real
 | `toOpenAPIPath(path)` | `/users/:id` → `/users/{id}`. | Throws on wildcard or optional segments. |
 | `extractPathParameters(path)` | Parameter names in a path template. | — |
 | `convertRouteToOpenAPI(method, path, metadata?)` | Turns one route into an operation. | — |
-| `buildResponses(metadata?)` | The `responses` object for an operation. | Synthesizes a `200` only when none are declared. |
+| `buildResponses(metadata?)` | The `responses` object for an operation. | When none are declared, returns `{ default: { description: "Undocumented response" } }`; it never invents a `200`. |
 | `isOpenAPIMethod(method)` | Whether a string is an OpenAPI method. | Type guard. |
 | `toOpenAPIJSON(document)` / `toOpenAPIYAML(document)` | Serialize a document. | YAML quotes ambiguous strings. |
 | `createOpenAPIError` / `isOpenAPIError` / `formatIssuePath` | Error helpers. | `formatIssuePath` renders an issue path as `paths./orders.get`. |
@@ -687,7 +732,7 @@ Serialize any document with `toOpenAPIJSON` or `toOpenAPIYAML`. The YAML is real
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| `OpenAPIManagerOptions` | Constructor options. | `version`, `info`, `servers`, `tags`, `security`, `cacheTtlMs`, `onSchemaWarning`, `branding`, `now`. |
+| `OpenAPIManagerOptions` | Constructor options. | `version`, `info`, `servers`, `tags`, `security`, `cacheTtlMs`, `onSchemaWarning`, `onRouteWarning`, `branding`, `now`. |
 | `OpenAPIUIOptions` | Options for the documentation page. | See the table in [Serving](#serving). |
 | `OpenAPIUIRenderer` | `"swagger" \| "redoc"`. | — |
 | `OpenAPIUIResponse` | `{ status, headers, body }` for the page. | Returned by `toUIResponse`. |
@@ -721,6 +766,7 @@ All extend `OpenAPIError`, the [@zudojs/errors](https://zudojs.oyinlola.site/doc
 | `MAX_OPERATION_ID_LENGTH` | `128` | Longer ids fail validation. |
 | `COMPONENT_REF_PREFIX` | `"#/components"` | Prefix of every local `$ref`. |
 | `DEFAULT_MEDIA_TYPE` | `"application/json"` | Content type of `toResponse()`. |
+| `UNDOCUMENTED_RESPONSE_DESCRIPTION` | `"Undocumented response"` | Description of the `default` response a route with none gets. |
 | `DEFAULT_SERVER_URL` | `"http://localhost"` | Fallback server URL. |
 | `DOCUMENT_CACHE_TTL_MS` | `300000` | Five minutes. Override with `cacheTtlMs`. |
 | `STATUS_CODE_CATEGORIES` | `1XX`…`5XX` | The range keys OpenAPI allows. |
@@ -730,8 +776,8 @@ All extend `OpenAPIError`, the [@zudojs/errors](https://zudojs.oyinlola.site/doc
 
 ## COMMON MISTAKES
 
-- **Leaving a path parameter out of `parameters`.**
-   The path says `{id}` but nothing declares it, so validation fails and generated clients have no way to pass the value. Add `{ name: "id", in: "path" }`; you do not need to set `required`, it is forced to `true`.
+- **Leaving out the responses.**
+   A route with no `responses` is published with a `default` “Undocumented response”, and every generated client has to guess what comes back. Declare the real ones, such as `"204"` for a delete, and listen to `onRouteWarning` so a new undocumented route shows up in your logs.
 - **Serving the spec but not a page, or a page but not the spec.**
    A `toUIResponse` page fetches `specUrl` at load time and shows an error if nothing answers. Register both handlers, and make `specUrl` match the route the spec is actually on.
 - **Assuming a 3.1 document still means the same thing as 3.0.**
@@ -753,9 +799,9 @@ All extend `OpenAPIError`, the [@zudojs/errors](https://zudojs.oyinlola.site/doc
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/openapi` exports from its package root at v1.4.0 — **137** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/openapi` exports from its package root at v1.5.2 — **138** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 137 exports**
+**Show all 138 exports**
 
 Classes (17)
 
@@ -773,6 +819,6 @@ Type aliases (9)
 
 `ComponentSection` `OpenAPIHttpMethod` `OpenAPIParameterLocation` `OpenAPIPaths` `OpenAPIResponses` `OpenAPISchemaInput` `OpenAPIUIRenderer` `OpenAPIVersion` `RouteConversionOptions`
 
-Constants (24)
+Constants (25)
 
-`COMPONENT_REF_PREFIX` `DEFAULT_MEDIA_TYPE` `DEFAULT_OPENAPI_VERSION` `DEFAULT_SERVER_URL` `DOCUMENT_CACHE_TTL_MS` `MAX_OPERATION_ID_LENGTH` `PATH_TEMPLATE_PARAMETER` `REDOC_VERSION` `RESPONSE_KEY_PATTERN` `STATUS_CODE_CATEGORIES` `SUPPORTED_OPENAPI_VERSIONS` `SWAGGER_UI_VERSION` `ZUDO_FAVICON_DATA_URI` `ZUDO_FAVICON_SVG` `ZUDO_MARK_DARK_DATA_URI` `ZUDO_MARK_DARK_SVG` `ZUDO_MARK_DATA_URI` `ZUDO_MARK_SVG` `ZUDO_SITE_URL` `ZUDO_WORDMARK_DARK_DATA_URI` `ZUDO_WORDMARK_DARK_SVG` `ZUDO_WORDMARK_DATA_URI` `ZUDO_WORDMARK_SVG` `ZUDOLIB_TO_OPENAPI_METHODS`
+`COMPONENT_REF_PREFIX` `DEFAULT_MEDIA_TYPE` `DEFAULT_OPENAPI_VERSION` `DEFAULT_SERVER_URL` `DOCUMENT_CACHE_TTL_MS` `MAX_OPERATION_ID_LENGTH` `PATH_TEMPLATE_PARAMETER` `REDOC_VERSION` `RESPONSE_KEY_PATTERN` `STATUS_CODE_CATEGORIES` `SUPPORTED_OPENAPI_VERSIONS` `SWAGGER_UI_VERSION` `UNDOCUMENTED_RESPONSE_DESCRIPTION` `ZUDO_FAVICON_DATA_URI` `ZUDO_FAVICON_SVG` `ZUDO_MARK_DARK_DATA_URI` `ZUDO_MARK_DARK_SVG` `ZUDO_MARK_DATA_URI` `ZUDO_MARK_SVG` `ZUDO_SITE_URL` `ZUDO_WORDMARK_DARK_DATA_URI` `ZUDO_WORDMARK_DARK_SVG` `ZUDO_WORDMARK_DATA_URI` `ZUDO_WORDMARK_SVG` `ZUDOLIB_TO_OPENAPI_METHODS`

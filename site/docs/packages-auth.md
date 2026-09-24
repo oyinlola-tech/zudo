@@ -4,7 +4,7 @@ description: "@zudojs/auth reference: JWT access and refresh tokens, scrypt pass
 source: https://zudojs.oyinlola.site/docs/packages-auth
 ---
 
-v1.2.0
+v1.3.0
 
 # @zudojs/auth
 
@@ -39,14 +39,14 @@ Look elsewhere when
 
 ## INSTALLATION
 
-Install the package and the three sibling packages it depends on.
+Install the package. Its dependencies, @zudojs/constants, @zudojs/crypto, @zudojs/errors, @zudojs/permissions and @zudojs/types, are installed with it.
 
 ```bash
 # npm
-$ npm install @zudojs/auth @zudojs/errors @zudojs/constants @zudojs/permissions
+$ npm install @zudojs/auth
 
 # pnpm
-$ pnpm add @zudojs/auth @zudojs/errors @zudojs/constants @zudojs/permissions
+$ pnpm add @zudojs/auth
 ```
 
 Node.js 24 or newer is required, because the package uses the modern node:crypto scrypt API.
@@ -105,6 +105,13 @@ import {
   type AuthUser,
 } from "@zudojs/auth";
 
+// Secrets come from the environment; a missing one stops the app at startup.
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is not set`);
+  return value;
+}
+
 // 1. A user record. In a real app this row comes from your database.
 const passwordHash = await hashPassword("correct horse battery staple");
 
@@ -119,8 +126,8 @@ const alice: AuthUser = {
 // 2. Wire the service. Every function below is one you supply.
 const auth = createAuthService({
   token: {
-    accessSecret: "access-secret-at-least-32-bytes-long!!",
-    refreshSecret: "refresh-secret-at-least-32-bytes-long!!",
+    accessSecret: requireEnv("JWT_ACCESS_SECRET"),
+    refreshSecret: requireEnv("JWT_REFRESH_SECRET"),
   },
   sessionStore: createMemorySessionStore(),
   sessionTtlSeconds: 3600,
@@ -148,11 +155,23 @@ await auth.logout(sessionId, tokens.refreshToken);
 await auth.verifyToken(tokens.accessToken); // throws SessionExpiredError
 ```
 
-What you should see: the three console.log lines above, then an uncaught SessionExpiredError from the last line — which is the point of the example.
+What you should see: the two console.log lines above, then an uncaught SessionExpiredError from the last line — which is the point of the example.
+
+> **login() normalises the identifier**
+>
+> Before findUser sees it, the identifier is NFKC-folded and trimmed, and lower-cased when it is an email address; a username keeps its case. So logging in with " Alice@Example.COM " finds the user above. Store identifiers through the same exported normalizeLoginIdentifier() at registration so both sides agree. Pass normalizeIdentifier: false to receive the raw string, or your own function. *Changed in 1.3.0:* earlier versions passed the raw string, so a case or whitespace variant missed the lookup.
+
+```ts
+import { normalizeLoginIdentifier } from "@zudojs/auth";
+
+// At registration, store the identifier the way login() will look it up.
+console.log(normalizeLoginIdentifier("  Alice@Example.COM ")); // "alice@example.com"
+console.log(normalizeLoginIdentifier(" BobTheBuilder "));      // "BobTheBuilder" — usernames keep their case
+```
 
 > **Never hard-code secrets**
 >
-> The literal secrets above keep the example self-contained. In real code read them from the environment. Each must be at least 32 bytes, and the two must differ — otherwise AuthConfigurationError is thrown on the first token operation.
+> The example reads both signing secrets from the environment and has no fallback, so set them before running it, e.g. export JWT_ACCESS_SECRET=$(openssl rand -hex 32) and the same for JWT_REFRESH_SECRET. Each must be at least 32 bytes, and the two must differ. createAuthService() checks them when it is *constructed*, not on first use: a missing, short or shared secret throws AuthConfigurationError (ERR_CONFIGURATION_INVALID) at startup. Never write ?? "some-default" after process.env: a secret that is in your source code is not a secret.
 
 ## PASSWORDS
 
@@ -178,7 +197,7 @@ console.log(needsRehash(stored));                              // false
 
 Hashing the same password twice gives two different strings, because each hash gets a fresh random *salt* mixed in. That is expected — verifyPassword() reads the salt back out of the stored string.
 
-hashPassword returns a [@zudojs/crypto](https://zudojs.oyinlola.site/docs/packages-crypto.md) hash, v1$scrypt$16384$8$5$<salt>.<hash>. Earlier scrypt$… hashes (all parameter sets and the param-less format) still verify, and needsRehash() returns true for every hash that is not a current-parameter crypto scrypt hash. Call it right after a successful login, while you still hold the plain password, and re-store a fresh hash if it says so. hashPassword("") throws AuthError (INVALID_INPUT).
+hashPassword returns a [@zudojs/crypto](https://zudojs.oyinlola.site/docs/packages-crypto.md) hash, v1$scrypt$16384$8$5$<salt>.<hash>. Earlier scrypt$… hashes (all parameter sets and the param-less format) still verify, and needsRehash() returns true for every hash that is not a current-parameter crypto scrypt hash. A hash made by @zudojs/crypto's own hashPassword() with its defaults (same N, r and p; 16-byte salt, 32-byte key) counts as current and returns false; before 1.3.0 it was flagged on every login. Call it right after a successful login, while you still hold the plain password, and re-store a fresh hash if it says so. hashPassword("") throws AuthError (INVALID_INPUT).
 
 > **verifyPassword never throws**
 >
@@ -204,9 +223,16 @@ import {
   type TokenConfig,
 } from "@zudojs/auth";
 
+// Secrets come from the environment; a missing one stops the app at startup.
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is not set`);
+  return value;
+}
+
 const config: TokenConfig = {
-  accessSecret: "access-secret-at-least-32-bytes-long!!",
-  refreshSecret: "refresh-secret-at-least-32-bytes-long!!",
+  accessSecret: requireEnv("JWT_ACCESS_SECRET"),
+  refreshSecret: requireEnv("JWT_REFRESH_SECRET"),
   accessTtl: 900,
   refreshTtl: 604800,
   issuer: "my-api",
@@ -226,7 +252,7 @@ if (result.valid && result.payload) {
 }
 ```
 
-A bad *token* is never an exception — it comes back as { valid: false, error }. A bad *config* is: missing, short, or identical secrets throw AuthConfigurationError.
+A bad *token* is never an exception — it comes back as { valid: false, error }. A bad *config* is: missing, short, or identical secrets throw AuthConfigurationError from createTokenPair and verifyAccessToken on every call, and from createAuthService() as soon as it is constructed.
 
 The token payload carries sub (user id), iat and exp (issued-at and expiry, in Unix seconds), typ ("access" or "refresh"), jti (a random id used for revocation), optional roles, and optional sid (the session it belongs to).
 
@@ -321,6 +347,8 @@ createAuthService(config) is the entry point you should use. It is the only path
 | loginThrottle | No | Failed-attempt lockout and login rate limiting. |
 | allowInsecureFallbackGuard | No | Opt in to the built-in guard when no engine is configured. Read the warning below first. |
 | fallbackAdminRole | No | Role the fallback guard treats as superuser (default "admin"). |
+| normalizeIdentifier | No | How login() normalises the identifier before findUser. Default normalizeLoginIdentifier; false passes the raw string; or your own function. |
+| externalSessionMethods | No | Methods createSessionForUser() may start a session for, e.g. ["oauth"]. Default none, so it throws. |
 
 > **findUserById is required — and it is not findUser**
 >
@@ -339,6 +367,7 @@ createAuthService(config) is the entry point you should use. It is the only path
 | refresh(refreshToken) | Returns a new TokenPair, re-loading the user first. |
 | logout(sessionId, refreshToken?) | Destroys the session; also revokes the refresh token when both it and a revocation store are supplied. |
 | logoutAll(userId) | Destroys every session for the user — sign out everywhere. |
+| createSessionForUser(userId, { method, userAgent?, ip?, metadata? }) | Issues a session and tokens, like login(), for a user your code already authenticated another way (OAuth, passkey, magic link). No password check. See below. |
 | checkAccess(context) | Authorization check. See RBAC below. |
 | hashPassword(password) | Convenience wrapper over the standalone hashPassword(). |
 | verifyPasswordHash(password, hash) | Convenience wrapper over the standalone verifyPassword(). |
@@ -359,6 +388,13 @@ import {
   type AuthUser,
 } from "@zudojs/auth";
 
+// Secrets come from the environment; a missing one stops the app at startup.
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is not set`);
+  return value;
+}
+
 const alice: AuthUser = {
   id: toUserId("user-123"),
   email: "alice@example.com",
@@ -369,8 +405,8 @@ const alice: AuthUser = {
 
 const auth = createAuthService({
   token: {
-    accessSecret: "access-secret-at-least-32-bytes-long!!",
-    refreshSecret: "refresh-secret-at-least-32-bytes-long!!",
+    accessSecret: requireEnv("JWT_ACCESS_SECRET"),
+    refreshSecret: requireEnv("JWT_REFRESH_SECRET"),
   },
   sessionStore: createMemorySessionStore(),
   revocationStore: createMemoryTokenRevocationStore(),
@@ -403,19 +439,109 @@ verifyPassword: async () => true keeps the example short. Never write that in a 
 Add loginThrottle and repeated failures start costing the attacker. After maxFailedAttempts (default 5) the identifier is locked for lockoutSeconds (default 900) and login() throws AccountLockedError. Beyond maxAttemptsPerWindow (default 20) it throws AuthRateLimitError instead. A failure is reserved before the password is checked, so even a parallel burst gets only maxFailedAttempts guesses. Both budgets are per identifier: put a per-IP limiter (createRateLimiter from @zudojs/security) in front of login(). The in-memory store forgets an unlocked failure streak after failureTtlSeconds (default 900) and caps tracked identifiers at maxEntries (default 100 000).
 
 ```ts
-import { createMemoryLoginAttemptStore } from "@zudojs/auth";
+import {
+  AccountLockedError,
+  createAuthService,
+  createMemoryLoginAttemptStore,
+  createMemorySessionStore,
+} from "@zudojs/auth";
 
-// Pass this as the `loginThrottle` option of createAuthService().
-const loginThrottle = {
-  store: createMemoryLoginAttemptStore({ windowSeconds: 60 }),
-  maxFailedAttempts: 5,      // -> AccountLockedError (HTTP 423)
-  lockoutSeconds: 900,
-  maxAttemptsPerWindow: 20,  // -> AuthRateLimitError (HTTP 429)
-  windowSeconds: 60,
-};
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is not set`);
+  return value;
+}
+
+const auth = createAuthService({
+  token: {
+    accessSecret: requireEnv("JWT_ACCESS_SECRET"),
+    refreshSecret: requireEnv("JWT_REFRESH_SECRET"),
+  },
+  sessionStore: createMemorySessionStore(),
+  sessionTtlSeconds: 3600,
+  findUser: async () => null, // every login fails in this example
+  findUserById: async () => null,
+  verifyPassword: async () => false,
+  loginThrottle: {
+    store: createMemoryLoginAttemptStore({ windowSeconds: 60 }),
+    maxFailedAttempts: 5,      // -> AccountLockedError (HTTP 423)
+    lockoutSeconds: 900,
+    maxAttemptsPerWindow: 20,  // -> AuthRateLimitError (HTTP 429)
+    windowSeconds: 60,
+  },
+});
+
+for (let attempt = 1; attempt <= 6; attempt++) {
+  try {
+    await auth.login({ identifier: "mallory@example.com", password: "guess" });
+  } catch (error) {
+    if (error instanceof AccountLockedError) {
+      console.log(attempt, error.statusCode, error.code, error.retryAfterSeconds, error.headers);
+      // 6 423 ERR_ACCOUNT_LOCKED 900 { 'retry-after': '900' }
+    }
+  }
+}
 ```
 
+AccountLockedError and AuthRateLimitError carry retryAfterSeconds (for the lockout, the time left on the lock) and a matching Retry-After header in error.headers. Thrown from a [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md) handler, the error answers 423 with that header copied onto the response.
+
 Counters are keyed by the submitted identifier — trimmed, NFKC-normalised and lower-cased, so case or whitespace variants share one budget — not by a resolved user, so unknown and real accounts are throttled identically. Both memory stores are per-process; back them with Redis if you run more than one instance.
+
+## SESSIONS FOR OAUTH AND OTHER SIGN-INS
+
+A user authenticated some other way — the callback of [@zudojs/auth-oauth](https://zudojs.oyinlola.site/docs/packages-auth-oauth.md), a passkey, a magic link — still needs a session and tokens. createSessionForUser() issues them exactly as login() would, without a password check.
+
+```ts
+import { createAuthService, createMemorySessionStore, toUserId, type AuthUser } from "@zudojs/auth";
+
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is not set`);
+  return value;
+}
+
+const alice: AuthUser = {
+  id: toUserId("user-123"),
+  email: "alice@example.com",
+  roles: ["editor"],
+  active: true,
+  createdAt: new Date(),
+};
+
+const auth = createAuthService({
+  token: {
+    accessSecret: requireEnv("JWT_ACCESS_SECRET"),
+    refreshSecret: requireEnv("JWT_REFRESH_SECRET"),
+  },
+  sessionStore: createMemorySessionStore(),
+  sessionTtlSeconds: 3600,
+  findUser: async () => null,          // no password logins in this example
+  findUserById: async (id) => (id === alice.id ? alice : null),
+  verifyPassword: async () => false,
+  externalSessionMethods: ["oauth"],   // off by default
+});
+
+// In the OAuth callback, after state and PKCE were verified and the provider
+// identity was mapped to one of YOUR users. Never use a user id from the request.
+const { user, tokens, sessionId } = await auth.createSessionForUser(alice.id, {
+  method: "oauth",
+  metadata: { provider: "github" }, // stored on the session with authMethod: "oauth"
+});
+console.log(user.email, (await auth.verifyToken(tokens.accessToken)).sub);
+// alice@example.com user-123
+
+try {
+  await auth.createSessionForUser(alice.id, { method: "magic-link" });
+} catch (error) {
+  console.log((error as Error).name); // AuthConfigurationError — not in externalSessionMethods
+}
+
+await auth.logout(sessionId); // ends it like any other session
+```
+
+> **It checks no credential**
+>
+> Your code is asserting that the user is authenticated, so the method is off unless you list it in externalSessionMethods; any other method throws AuthConfigurationError. It still loads the user with findUserById() and refuses an unknown user (InvalidCredentialsError) or a deactivated one (AccountDeactivatedError). **Never pass it a user id taken from the request**: a route that forwards a client-supplied id hands out sessions for any account. The session records metadata.authMethod, and logout() / logoutAll() end it like any other. Added in 1.3.0.
 
 ## RBAC & PERMISSIONS
 
@@ -432,6 +558,13 @@ import {
 } from "@zudojs/auth";
 import { createPermissionEngine } from "@zudojs/permissions";
 
+// Secrets come from the environment; a missing one stops the app at startup.
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is not set`);
+  return value;
+}
+
 const alice: AuthUser = {
   id: toUserId("user-123"),
   email: "alice@example.com",
@@ -442,8 +575,8 @@ const alice: AuthUser = {
 
 const auth = createAuthService({
   token: {
-    accessSecret: "access-secret-at-least-32-bytes-long!!",
-    refreshSecret: "refresh-secret-at-least-32-bytes-long!!",
+    accessSecret: requireEnv("JWT_ACCESS_SECRET"),
+    refreshSecret: requireEnv("JWT_REFRESH_SECRET"),
   },
   sessionStore: createMemorySessionStore(),
   sessionTtlSeconds: 3600,
@@ -534,7 +667,8 @@ async function currentUserId(authorization: unknown): Promise<string | null> {
 | createAuthService(config) | Builds the full auth service. | The entry point for real applications. |
 | hashPassword(password, saltLength?) | Hashes a password with scrypt (N=16384, r=8, p=5) via @zudojs/crypto. | Async. Salt length 16–64 bytes, default 32. |
 | verifyPassword(password, hash) | Checks a password against a stored hash. | Async. Returns false instead of throwing. |
-| needsRehash(hash) | Says whether a stored hash uses outdated settings. | Call after a successful login. |
+| needsRehash(hash) | Says whether a stored hash uses outdated settings. | Call after a successful login. false for current hashes, including @zudojs/crypto's defaults. |
+| normalizeLoginIdentifier(identifier) | NFKC, trim, and lower-case for an email address. | What login() applies by default. Use it at registration too. |
 | generateRandomToken(length?) | Random hex string for reset links and similar. | Length in bytes, 16–1024, default 32. |
 | createTokenPair(userId, config, options?) | Mints an access + refresh pair. | Synchronous. No session binding unless you pass sessionId; createAuthService() rejects such unbound tokens unless allowSessionlessTokens is true. |
 | verifyAccessToken(token, config) | Verifies an access token. | Returns a result object; only bad config throws. |
@@ -577,26 +711,29 @@ async function currentUserId(authorization: unknown): Promise<string | null> {
 | Permission / Role | Re-exports from @zudojs/permissions. | Prefer importing them from that package in new code. |
 | GuardContext / GuardResult | Input and output of checkAccess(). |  |
 | PasswordCredentials / ApiKeyCredentials | Credential shapes. | API-key verification is not implemented here. |
+| ExternalSessionOptions / ExternalSessionResult | Input and output of createSessionForUser(). | { method, userAgent?, ip?, metadata? }; the result has the login() shape. |
 
 ### Errors
 
 Every error extends AuthError, re-exported from [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) (a BaseError). Each carries an HTTP status code and a message that is safe to show a client — the messages never reveal whether an account exists.
 
-| Name | Thrown when | Status |
+| Name | Thrown when | Status / code |
 | --- | --- | --- |
-| AuthError | Base class for everything below. | 401 |
-| AuthConfigurationError | Bad secrets, or checkAccess() with no engine. | 500 |
-| InvalidCredentialsError | Unknown user or wrong password. | 401 |
-| TokenExpiredError | The token's exp has passed. | 401 |
-| TokenInvalidError | Malformed, mis-signed, or wrong-type token. | 401 |
-| TokenRevokedError | A used refresh token was replayed. | 403 |
-| AccountLockedError | Too many failed logins. | 423 |
-| AccountDeactivatedError | The account is not active. | 403 |
-| AccessDeniedError | Insufficient permissions. | 403 |
-| SessionExpiredError | The token's session is gone or expired. | 401 |
-| AuthRateLimitError | Too many login attempts in the window. | 429 |
+| AuthError | Base class for everything below. | 401 ERR_AUTHENTICATION |
+| AuthConfigurationError | Bad secrets, checkAccess() with no engine, or createSessionForUser() with an unlisted method. | 500 ERR_CONFIGURATION_INVALID |
+| InvalidCredentialsError | Unknown user or wrong password. | 401 ERR_INVALID_CREDENTIALS |
+| TokenExpiredError | The token's exp has passed. | 401 ERR_TOKEN_EXPIRED |
+| TokenInvalidError | Malformed, mis-signed, or wrong-type token. | 401 ERR_TOKEN_INVALID |
+| TokenRevokedError | A used refresh token was replayed. | 401 ERR_TOKEN_REVOKED |
+| AccountLockedError | Too many failed logins. | 423 ERR_ACCOUNT_LOCKED |
+| AccountDeactivatedError | The account is not active. | 403 ERR_ACCOUNT_DEACTIVATED |
+| AccessDeniedError | Insufficient permissions. | 403 ERR_ACCESS_DENIED |
+| SessionExpiredError | The token's session is gone or expired. | 401 ERR_SESSION_EXPIRED |
+| AuthRateLimitError | Too many login attempts in the window. | 429 ERR_RATE_LIMITED |
 
-AuthErrorOptions is exported too, for constructing these yourself. AccountLockedError and AuthRateLimitError put a retryAfterSeconds value in their metadata, ready for a Retry-After header.
+*Changed in 1.3.0:* AccountLockedError, AccountDeactivatedError and TokenRevokedError used to share the code ERR_FORBIDDEN, and TokenRevokedError was a 403. Each now has its own code, and a revoked token is a 401 (category authentication), because the client has to sign in again. A client that matched ERR_FORBIDDEN for these, or treated a revoked refresh token as a 403, must be updated.
+
+AuthErrorOptions is exported too, for constructing these yourself. AccountLockedError and AuthRateLimitError carry retryAfterSeconds (also in their metadata) and a Retry-After header in headers, which @zudojs/http copies onto the response.
 
 ### Constants
 
@@ -609,11 +746,12 @@ AuthErrorOptions is exported too, for constructing these yourself. AccountLocked
 ## COMMON MISTAKES
 
 - **Passing your email-keyed findUser as findUserById.** Every refresh looks up a user id in an email-keyed table, gets nothing, and throws AccountDeactivatedError. Users drop out roughly 15 minutes after logging in. *Fix:* give findUserById a real id-keyed lookup.
-- **Using the same string for accessSecret and refreshSecret.** The first token operation throws AuthConfigurationError, because one secret would let a refresh token be presented as an access token. *Fix:* two different secrets, each at least 32 bytes.
+- **Using the same string for accessSecret and refreshSecret.** createAuthService() throws AuthConfigurationError at construction, because one secret would let a refresh token be presented as an access token. *Fix:* two different secrets, each at least 32 bytes.
 - **Calling the standalone refreshAccessToken() on a public route.** It does not rotate, revoke, re-load the user, or check the session, so a stolen refresh token works for a week. *Fix:* use createAuthService().refresh() with a revocationStore.
 - **Trusting extractUserId() to identify the caller.** It reads an unverified payload, so anyone can forge a user id. *Fix:* call verifyToken() and use payload.sub.
 - **Shipping the in-memory stores.** Sessions, revocations and attempt counters vanish on restart and are not shared between instances, so logouts and lockouts do not hold. *Fix:* implement SessionStore, TokenRevocationStore and LoginAttemptStore against Redis or your database.
 - **Setting allowInsecureFallbackGuard: true to make checkAccess() stop throwing.** The fallback ignores the permission string and grants owners and admins everything. *Fix:* configure a permissions engine.
+- **Passing a request value to createSessionForUser().** It checks no password, so a route that forwards a client-supplied user id signs anyone in as anyone. *Fix:* call it only after your own verification (OAuth state and PKCE, a passkey assertion) mapped the identity to a user, and list only the methods you use in externalSessionMethods.
 - **Forgetting absoluteSessionTtlSeconds.** An idle timeout alone lets an active session live forever, so a stolen session id never dies. *Fix:* set a hard ceiling, for example seven days.
 
 ## RELATED PACKAGES
@@ -637,25 +775,25 @@ AuthErrorOptions is exported too, for constructing these yourself. AccountLocked
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/auth` exports from its package root at v1.2.1 — **65** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/auth` exports from its package root at v1.3.3 — **69** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 65 exports**
+**Show all 69 exports**
 
 Classes (11)
 
 `AccessDeniedError` `AccountDeactivatedError` `AccountLockedError` `AuthConfigurationError` `AuthError` `AuthRateLimitError` `InvalidCredentialsError` `SessionExpiredError` `TokenExpiredError` `TokenInvalidError` `TokenRevokedError`
 
-Functions (19)
+Functions (20)
 
-`createAuthService` `createMemoryLoginAttemptStore` `createMemorySessionStore` `createMemoryTokenRevocationStore` `createTokenPair` `extractUserId` `generateCsrfToken` `generateRandomToken` `hashPassword` `isTokenExpired` `needsRehash` `parseBearerToken` `parseCookies` `refreshAccessToken` `toSessionId` `toUserId` `verifyAccessToken` `verifyPassword` `verifyRefreshToken`
+`createAuthService` `createMemoryLoginAttemptStore` `createMemorySessionStore` `createMemoryTokenRevocationStore` `createTokenPair` `extractUserId` `generateCsrfToken` `generateRandomToken` `hashPassword` `isTokenExpired` `needsRehash` `normalizeLoginIdentifier` `parseBearerToken` `parseCookies` `refreshAccessToken` `toSessionId` `toUserId` `verifyAccessToken` `verifyPassword` `verifyRefreshToken`
 
-Interfaces (22)
+Interfaces (24)
 
-`ApiKeyCredentials` `AuthErrorOptions` `AuthService` `AuthServiceConfig` `AuthSession` `AuthUser` `CreateSessionOptions` `GuardContext` `GuardResult` `LoginAttemptRecord` `LoginAttemptStore` `LoginResult` `LoginThrottleConfig` `PasswordCredentials` `SessionStore` `TokenConfig` `TokenPair` `TokenPayload` `TokenRevocationStore` `TokenVerificationResult` `UserCredentials` `UserRegistration`
+`ApiKeyCredentials` `AuthErrorOptions` `AuthService` `AuthServiceConfig` `AuthSession` `AuthUser` `CreateSessionOptions` `ExternalSessionOptions` `ExternalSessionResult` `GuardContext` `GuardResult` `LoginAttemptRecord` `LoginAttemptStore` `LoginResult` `LoginThrottleConfig` `PasswordCredentials` `SessionStore` `TokenConfig` `TokenPair` `TokenPayload` `TokenRevocationStore` `TokenVerificationResult` `UserCredentials` `UserRegistration`
 
-Type aliases (9)
+Type aliases (10)
 
-`JwtToken` `PasswordVerifier` `Permission` `Role` `SessionId` `TokenId` `UserByIdLookup` `UserId` `UserLookup`
+`JwtToken` `PasswordVerifier` `Permission` `Role` `SessionId` `ThrottleErrorOptions` `TokenId` `UserByIdLookup` `UserId` `UserLookup`
 
 Constants (4)
 

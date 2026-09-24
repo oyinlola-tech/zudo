@@ -4,7 +4,7 @@ description: "@zudojs/auth-oauth: OAuth 2.0 sign-in with PKCE, timing-safe state
 source: https://zudojs.oyinlola.site/docs/packages-auth-oauth
 ---
 
-v1.2.0
+v1.2.2
 
 # @zudojs/auth-oauth
 
@@ -29,7 +29,7 @@ When you need it
 When you don't
 
 - You only need email-and-password login — that is `@zudojs/auth`.
-- You want this package to create the user row or the session. It does not; it returns a profile and stops.
+- You want this package to create the user row or the session. It does not; it returns a profile and stops. `@zudojs/auth`'s `createSessionForUser()` issues the session once you have mapped the profile to a user.
 - You need the signature on an OIDC `id_token` verified. The token is returned to you unparsed and unchecked.
 - You are writing a browser-only app. The client secret must stay on a server.
 
@@ -68,18 +68,25 @@ Three words appear over and over. Here is what each one means:
 
 ## QUICK START
 
-This is step 1 of the flow: build the URL you send the user to. It makes no network request, so you can run it right now.
+This is step 1 of the flow: build the URL you send the user to. It makes no network request, but it does need your OAuth client's credentials in the environment: `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`. Every function validates the config first, and an empty `clientId` or `clientSecret` throws `OAuthConfigurationError`, so the example stops with `GOOGLE_CLIENT_ID is not set` if you have not exported them. To try it before you have registered an app, any non-empty values will do for this step: `GOOGLE_CLIENT_ID=your-client-id GOOGLE_CLIENT_SECRET=placeholder npx tsx quick-start.ts`.
 
 ```ts
 import { createAuthorizationUrl, generateState } from "@zudojs/auth-oauth";
 import type { OAuthConfig } from "@zudojs/auth-oauth";
 
+// No fallbacks: a missing variable stops the app instead of sending "" to the provider.
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is not set`);
+  return value;
+}
+
 const callback = "https://app.example.com/auth/callback";
 
 const config: OAuthConfig = {
   provider: "google",
-  clientId: process.env.GOOGLE_CLIENT_ID ?? "",
-  clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+  clientId: requireEnv("GOOGLE_CLIENT_ID"),
+  clientSecret: requireEnv("GOOGLE_CLIENT_SECRET"),
   allowedRedirectUris: [callback],
 };
 
@@ -152,12 +159,19 @@ This asks GitHub for a narrower scope than the preset's default and adds a provi
 import { createAuthorizationUrl, generateState } from "@zudojs/auth-oauth";
 import type { OAuthConfig } from "@zudojs/auth-oauth";
 
+// No fallbacks: a missing variable stops the app instead of sending "" to the provider.
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is not set`);
+  return value;
+}
+
 const callback = "https://app.example.com/auth/github/callback";
 
 const config: OAuthConfig = {
   provider: "github",
-  clientId: process.env.GITHUB_CLIENT_ID ?? "",
-  clientSecret: process.env.GITHUB_CLIENT_SECRET ?? "",
+  clientId: requireEnv("GITHUB_CLIENT_ID"),
+  clientSecret: requireEnv("GITHUB_CLIENT_SECRET"),
   allowedRedirectUris: [callback],
   scopes: ["read:user"],
 };
@@ -200,12 +214,19 @@ import {
 } from "@zudojs/auth-oauth";
 import type { OAuthConfig, OAuthUserInfo } from "@zudojs/auth-oauth";
 
+// No fallbacks: a missing variable stops the app instead of sending "" to the provider.
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is not set`);
+  return value;
+}
+
 const callback = "https://app.example.com/auth/callback";
 
 const config: OAuthConfig = {
   provider: "google",
-  clientId: process.env.GOOGLE_CLIENT_ID ?? "",
-  clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+  clientId: requireEnv("GOOGLE_CLIENT_ID"),
+  clientSecret: requireEnv("GOOGLE_CLIENT_SECRET"),
   allowedRedirectUris: [callback],
 };
 
@@ -234,11 +255,24 @@ What you get back: an `OAuthUserInfo` such as `{ providerId: "1078…", email: "
 
 The `redirectUri` you pass here must be the same one used to build the authorization URL, and it must be in the allowlist. Both calls check it independently.
 
+**Signing the user in.** This package stops at the profile. Map `providerId` plus the provider name to one of your own users (create the row on first sign-in), then start a session with [@zudojs/auth](https://zudojs.oyinlola.site/docs/packages-auth.md#external-sessions) 1.3.0 or later: `auth.createSessionForUser(user.id, { method: "oauth", metadata: { provider: "google" } })` returns the same `{ user, tokens, sessionId }` as a password login. The service must list `"oauth"` in `externalSessionMethods`, and the user id must come from your own lookup, never from the request.
+
 > TIP
 >
 >
 >
 > A `code` is single-use. If the user reloads your callback page, the second exchange fails with an `OAuthProviderError`. Redirect away from the callback URL as soon as the exchange succeeds.
+
+Apple posts the callback from its own site, so a `SameSite=Lax` state cookie never arrives.
+
+The `apple` preset sends `response_mode=form_post` (Apple requires it when you ask for `name` or `email`). The browser then comes back as a `POST` from `appleid.apple.com` to your redirect URI, with `code` and `state` in the form body instead of the query string. That is a cross-site POST, and browsers do not attach `SameSite=Lax` or `Strict` cookies to it. If your `state` and `codeVerifier` live in such a cookie (or in a session whose cookie is Lax), the callback sees no session, `verifyState` returns `false`, and every Apple sign-in fails.
+
+Do one of these for the Apple flow only:
+
+- Keep the pending `state` and `codeVerifier` in a short-lived, dedicated cookie set with `SameSite=None; Secure; HttpOnly` and a few minutes' `Max-Age`, and delete it in the callback. Leave your main session cookie as it is.
+- Or store them server-side, keyed by the `state` value itself (a cache or table entry with a short TTL). In the callback, look the entry up by the posted `state`, delete it so it cannot be used twice, and only then exchange the code. No cookie is needed.
+
+Also accept `POST` on the Apple callback route and read `code`/`state` from the `application/x-www-form-urlencoded` body. Do not exempt that route from state checking to make it work.
 
 ## USER PROFILES
 
@@ -278,14 +312,21 @@ An access token expires — Google's last about an hour. A *refresh token* is a 
 import { refreshAccessToken } from "@zudojs/auth-oauth";
 import type { OAuthConfig } from "@zudojs/auth-oauth";
 
+// No fallbacks: a missing variable stops the app instead of sending "" to the provider.
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is not set`);
+  return value;
+}
+
 const config: OAuthConfig = {
   provider: "google",
-  clientId: process.env.GOOGLE_CLIENT_ID ?? "",
-  clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+  clientId: requireEnv("GOOGLE_CLIENT_ID"),
+  clientSecret: requireEnv("GOOGLE_CLIENT_SECRET"),
   allowedRedirectUris: ["https://app.example.com/auth/callback"],
 };
 
-const stored = process.env.GOOGLE_REFRESH_TOKEN ?? "";
+const stored = requireEnv("GOOGLE_REFRESH_TOKEN");
 const tokens = await refreshAccessToken(config, stored);
 
 console.log(tokens.accessToken.length > 0, tokens.expiresIn);
@@ -402,14 +443,14 @@ Every error extends `OAuthError`, which extends the shared `OAuthError` from `@z
 
 ## RELATED PACKAGES
 
-- [@zudojs/auth](https://zudojs.oyinlola.site/docs/packages-auth.md) — what happens after this package hands you a profile: your own sessions, JWTs and password login. This package deliberately stops before that.
+- [@zudojs/auth](https://zudojs.oyinlola.site/docs/packages-auth.md) — what happens after this package hands you a profile: your own sessions, JWTs and password login. This package deliberately stops before that; `createSessionForUser()` there is the hand-off point.
 - [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md) — serves the two routes this flow needs: the one that redirects to the provider and the callback that receives `code` and `state`.
 - [@zudojs/permissions](https://zudojs.oyinlola.site/docs/packages-permissions.md) — deciding what a user may do once you know who they are. OAuth scopes are the provider's permissions, not yours.
 - [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) — the framework-wide error hierarchy. This package's `OAuthError` extends its shared `OAuthError`.
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/auth-oauth` exports from its package root at v1.2.1 — **50** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/auth-oauth` exports from its package root at v1.2.5 — **50** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 50 exports**
 

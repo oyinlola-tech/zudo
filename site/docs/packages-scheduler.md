@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/scheduler — the time and recu
 source: https://zudojs.oyinlola.site/docs/packages-scheduler
 ---
 
-v1.1.1
+v1.2.0
 
 # @zudojs/scheduler
 
@@ -88,6 +88,12 @@ beat 1
 stopped
 ```
 
+> A STARTED SCHEDULER KEEPS YOUR PROCESS ALIVE
+>
+>
+>
+> Since v1.2.0 a started scheduler holds the Node.js process open until you call `stop()`, so a script whose only work is a scheduler runs its jobs. The flip side: a script that never calls `stop()` never exits, even after its last one-shot has run. Pass `new Scheduler({ keepAlive: false })` for a scheduler that should never hold the process open by itself (the behaviour before v1.2.0, when a scheduler-only script exited at once with code 0 and ran nothing).
+
 > IN PLAIN WORDS
 >
 >
@@ -98,7 +104,7 @@ stopped
 
 `define()` registers a job. It takes an `id` (a non-empty string, unique), a `name` for humans, a `handler` function, and optional `options`. Defining the same id twice throws `SchedulerJobAlreadyExistsError`.
 
-Your handler receives one argument, the **job context**. It carries the ids, the time the run was scheduled for, the time it actually started, the attempt number, any `data` you attached to the schedule, and an `AbortSignal`.
+Your handler receives one argument, the **job context**. It carries the ids, the time the run was scheduled for, the time it actually started, the 1-based attempt number (`attempt`, also available as `attemptNumber`), any `data` you attached to the schedule, and an `AbortSignal`.
 
 The **signal** is how the scheduler asks a running job to stop — on timeout, on cancel, or on shutdown. Pass it to anything that accepts one, such as `fetch`, and long jobs stop promptly instead of hanging around.
 
@@ -188,11 +194,17 @@ scheduler.at(new Date(Date.now() - 60_000), "report", { misfire: "skip" });
 // throws InvalidScheduleError
 ```
 
-> NOT IMPLEMENTED YET
+The third misfire value, `"catch-up"`, matters for *recurring* schedules. If the process is blocked past several fire times of an `every()` or `cron()` schedule, the default `"run-once"` runs once and then resumes from the current time, so the missed occurrences are dropped. `"catch-up"` computes each next time from the fire time that just ran instead of from now, so every missed occurrence is replayed, one per tick, until the schedule is current again. For a one-shot, `"catch-up"` behaves like `"run-once"`.
+
+```ts
+scheduler.every("1h", "hourly-rollup", { misfire: "catch-up" });
+```
+
+> MORE MISFIRE RULES
 >
 >
 >
-> The third misfire value, `"catch-up"`, replays each missed occurrence, rescheduling from the last fire time. `priority` breaks ties between schedules due at the same instant (higher first). A one-shot resumed after its fire time follows its misfire policy: `run-once`/`catch-up` fire it immediately, `skip` retires it. Misfire policies apply to one-shots (`at`, `after`). A schedule added after `start()` fires on time; the timer is re-armed on every add.
+> A one-shot resumed after its fire time follows its misfire policy: `run-once`/`catch-up` fire it immediately, `skip` retires it. A paused recurring schedule always resumes from now, whatever its policy. `priority` breaks ties between schedules due at the same instant (higher first); it never lets a schedule jump ahead of one due earlier. A schedule added after `start()` fires on time, because the timer is re-armed on every add.
 
 ## CRON EXPRESSIONS
 
@@ -258,7 +270,7 @@ Five shorthand macros are also accepted anywhere an expression is:
 >
 > When day-of-month and day-of-week are *both* restricted, cron fires if **either** matches, not both. `0 0 1 * mon` means “the 1st of the month, *and* every Monday”. This is odd but it is what every cron does, so expressions copied from elsewhere behave the same here.
 
-A bad expression throws `CronParseError` the moment you write it, not silently at 2 a.m. Wrong field count, a value out of range (`99 0 * * *`), a zero step (`*/0 * * * *`) and an inverted range (`5-1 * * * *`) are all rejected. An expression that can never happen, such as 30 February (`0 0 30 2 *`), parses, but `scheduler.cron()` rejects it with `InvalidScheduleError` because it has no next fire time within the five-year search (`nextCronDate` returns `null`).
+A bad expression throws `CronParseError` the moment you write it, not silently at 2 a.m. Wrong field count, a value out of range (`99 0 * * *`), a zero step (`*/0 * * * *`) and an inverted range (`5-1 * * * *`) are all rejected. The message names the expression first and the reason second, for example `Invalid cron expression "99 0 * * *": Cron field "minute" value 99 is outside 0-59.`, and the same two strings are on `error.metadata.expression` and `error.metadata.reason` (before v1.2.0 they were swapped, which garbled the message). An expression that can never happen, such as 30 February (`0 0 30 2 *`), parses, but `scheduler.cron()` rejects it with `InvalidScheduleError` because it has no next fire time within the five-year search (`nextCronDate` returns `null`).
 
 ## TIME ZONES
 
@@ -289,12 +301,13 @@ Any other zone name is **rejected** rather than quietly ignored, so a schedule n
 
 You schedule a job every ten seconds. One day it takes twenty-five seconds. The next fire time arrives while the previous run is still going. That is an **overlap**, and you have to decide what should happen.
 
-The `overlap` option on the schedule decides. Set it per schedule, since two schedules of the same job can want different answers.
+The `overlap` option on the schedule decides. Set it per schedule, since two schedules of the same job can want different answers, or set a default for every schedule of a job with `options.overlap` in `define()`. The schedule's own value wins.
 
 | Value | What happens | Use when |
 | --- | --- | --- |
 | `"allow"` (default) | The new run starts alongside the old one. Two copies run at once. | Runs are independent and safe to double up. |
 | `"skip"` | The new run is dropped. The old one continues undisturbed. | A slow run has already covered the work. |
+| `"queue"` | The new run is held and starts when the old one finishes. At most one run at a time; held runs execute one after another. | Every fire time must run, but never two at once. |
 | `"replace"` | The old run is aborted through its `ctx.signal`, then the new one starts. | Only the freshest result matters. |
 
 This job takes 120 ms but is scheduled every 10 ms. With `"skip"`, exactly one copy runs at a time.
@@ -325,18 +338,25 @@ setTimeout(async () => {
 
 Without `overlap: "skip"` that same program prints `runs started: 8` or so.
 
-> NOT IMPLEMENTED YET
+> WATCH OUT: A QUEUE THAT NEVER CATCHES UP
 >
 >
 >
-> The `OverlapPolicy` type also lists `"queue"`, but nothing implements it: it currently behaves like `"allow"`. Use `"skip"` or `"replace"`.
+> With `"queue"`, a job that is always slower than its interval builds a backlog: in the program above it would still be working through held runs long after the schedule fired. The backlog is capped at 1,024 held runs per schedule; fire times beyond that are dropped. `stop()` without `drain` and `cancel()` discard held runs.
 
 ### The separate global ceiling
 
-`overlap` is per schedule. `maxConcurrency` on the scheduler caps how many job runs may be in flight *in total*, across every schedule. It defaults to 10. Anything over the ceiling stays on the queue and is picked up on a later tick, not dropped.
+`overlap` is per schedule. `maxConcurrency` on the scheduler caps how many job runs may be in flight *in total*, across every schedule. It defaults to 10. Anything over the ceiling stays on the queue and is picked up on a later tick, not dropped. Between the two sits `options.concurrency` on a job: the most runs of that one job in flight at once, across every schedule that fires it. A fire time at that ceiling is held and started when a run finishes.
 
 ```ts
 const scheduler = new Scheduler({ maxConcurrency: 2 });
+
+scheduler.define({
+  id: "reindex",
+  name: "Reindex a tenant",
+  options: { concurrency: 1 },
+  handler: reindex,
+});
 ```
 
 ## FAILURES AND RETRIES
@@ -345,7 +365,7 @@ A job handler that throws does not crash the scheduler, and it does not disappea
 
 A **retry policy** says how many attempts to make and how long to wait between them. `strategy` picks the shape of that wait: `"fixed"` always waits `delay`; `"linear"` waits `delay × attempt`; `"exponential"` doubles each time. `maxDelay` caps it, and `jitter: true` randomises it so many failing jobs do not all retry in the same instant.
 
-This job fails twice and succeeds on the third attempt, then fails permanently the next time round.
+This job fails twice and succeeds on the third attempt. `attempts` is the total number of tries, including the first, and `ctx.attempt` counts from 1.
 
 ```ts
 import { Scheduler } from "@zudojs/scheduler";
@@ -380,9 +400,15 @@ scheduler.define({
 
 scheduler.after("1s", "flaky");
 scheduler.start();
+
+// Let the retries play out, then stop so the process can exit.
+setTimeout(async () => {
+  console.log(scheduler.getExecutions("flaky").map((e) => [e.status, e.attempt]));
+  await scheduler.stop();
+}, 5_000);
 ```
 
-You should see `attempt 1`, then `attempt 2` about a second later, then `attempt 3`, and no error line — the third attempt succeeded. Had all three failed, `onError` would have printed once.
+You should see `attempt 1`, then `attempt 2` up to a second later (`jitter` picks a random wait below the computed delay), then `attempt 3`, and no error line — the third attempt succeeded. Had all three failed, `onError` would have printed once. The execution history then prints `[ [ 'completed', 3 ] ]`: since v1.2.0 `getExecutions()` records the attempt that finished the run (it always said `1` before), and while a run is in flight the record shows the attempt in progress. `ctx.attemptNumber` is an alias of `ctx.attempt`, named as in [@zudojs/queue](https://zudojs.oyinlola.site/docs/packages-queue.md), whose processor context carries the same 1-based number.
 
 The error you receive tells you *how* it failed:
 
@@ -402,7 +428,13 @@ The error you receive tells you *how* it failed:
 
 `start()` begins watching the clock. Nothing fires before it. Calling it twice throws `SchedulerAlreadyStartedError`. You can define jobs and create schedules before or after starting.
 
-`stop()` is `async` — always `await` it. By default it aborts every run in flight and waits for them to settle. Pass `{ drain: true }` to let them finish instead, and `timeoutMs` to bound the wait either way. Calling it when already stopped rejects with `SchedulerStoppedError`.
+`stop()` is `async` — always `await` it. By default it aborts every run in flight and waits for them to settle. Pass `{ drain: true }` to let them finish instead, and `timeoutMs` to bound the wait either way.
+
+> `stop()` IS SAFE TO CALL TWICE
+>
+>
+>
+> Since v1.2.0 `stop()` is idempotent. On a scheduler that never started, or one already stopped, it resolves (after waiting for any execution still settling) instead of rejecting with `SchedulerStoppedError`. Shutdown code that runs twice (SIGINT then SIGTERM, or a signal handler plus a lifecycle hook), or after a boot that failed before `start()`, needs no guard.
 
 ```ts
 // Let running jobs finish, but wait no longer than 30 seconds.
@@ -413,7 +445,7 @@ process.on("SIGTERM", async () => {
 });
 ```
 
-Two read-only properties let you inspect the scheduler, and two methods let you inspect its schedules.
+Two read-only properties let you inspect the scheduler, two methods let you inspect its schedules, and `getExecutions()` returns the last 100 runs.
 
 ```ts
 console.log(scheduler.isRunning);      // true
@@ -421,6 +453,8 @@ console.log(scheduler.scheduleCount);  // 3
 console.log(scheduler.listSchedules().map((s) => s.jobId));
 // [ 'cleanup', 'report', 'heartbeat' ]
 console.log(scheduler.getSchedule(handle.id)?.nextRunAt);
+console.log(scheduler.getExecutions("cleanup").map((e) => e.status));
+// [ 'completed', 'failed', 'running' ]
 ```
 
 ## SCHEDULER VS. QUEUE
@@ -445,7 +479,7 @@ They combine well. Let the scheduler fire on time and have its handler push the 
 >
 >
 >
-> Deploy three copies of a service that schedules a nightly billing job and the billing runs three times. This package has no cross-process lock. `SchedulerStoreError` and `SchedulerLockError` exist in the error list for future persistence work; no store or lock is implemented today.
+> Deploy three copies of a service that schedules a nightly billing job and the billing runs three times. This package has no cross-process lock. `SchedulerStoreError` and `SchedulerLockError` exist in `@zudojs/errors` for future persistence work; this package does not re-export them, and no store or lock is implemented today.
 
 ## API REFERENCE
 
@@ -455,16 +489,17 @@ Everything below is exported from `@zudojs/scheduler`. Most applications only ne
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| `new Scheduler(options?)` | Creates a scheduler. | Options: `jobs`, `executor`, `queue`, `clock`, `maxConcurrency`, `onError`. All optional. |
+| `new Scheduler(options?)` | Creates a scheduler. | Options: `jobs`, `executor`, `queue`, `clock`, `maxConcurrency`, `onError`, `keepAlive` (default `true`: a started scheduler holds the process open until `stop()`). All optional. |
 | `define(job)` | Registers a `JobDefinition`. | Throws `InvalidJobError` on a blank id, a missing handler or a non-positive timeout. |
 | `after(duration, jobId, options?)` | Runs once after a delay. | Returns a `ScheduleHandle`. |
 | `at(date, jobId, options?)` | Runs once at a `Date`. | A past date follows the misfire policy. |
 | `every(duration, jobId, options?)` | Runs repeatedly on an interval. | First run is one interval away. |
 | `cron(expression, jobId, options?)` | Runs repeatedly on a cron schedule. | Options also accept `timezone`. |
 | `start()` | Starts the timer loop. | Throws `SchedulerAlreadyStartedError` if already running. |
-| `stop(options?)` | Stops and waits for in-flight runs. | `async`. Options: `drain`, `timeoutMs`. |
+| `stop(options?)` | Stops and waits for in-flight runs. | `async`. Options: `drain`, `timeoutMs`. Idempotent: resolves on a scheduler that never started or already stopped. |
 | `getSchedule(scheduleId)` | Snapshot of one schedule, or `undefined`. | Read-only copy. |
 | `listSchedules()` | Snapshots of every live schedule. | Completed and cancelled ones are gone. |
+| `getExecutions(jobId?)` | Recorded runs, oldest first, as `JobExecution` records. | At most 100 (`MAX_EXECUTION_HISTORY`). Pass a job id to filter. |
 | `isRunning` / `scheduleCount` | Getters for state and live schedule count. | Read-only. |
 
 ### Functions
@@ -488,9 +523,9 @@ Everything below is exported from `@zudojs/scheduler`. Most applications only ne
 | --- | --- | --- |
 | `Scheduler` | The one class most apps use. | See the table above. |
 | `JobRegistry` | Holds job definitions: `register`, `get`, `getOrThrow`, `has`, `list`, `unregister`, `clear`. | The scheduler builds one unless you pass your own. |
-| `JobExecutor` | Runs one job under a timeout, an abort signal and the retry policy. | `new JobExecutor(clock)`; `execute(job, executionId, scheduledAt, attempt, signal, data?)`. |
+| `JobExecutor` | Runs one job under a timeout, an abort signal and the retry policy. | `new JobExecutor(clock)`; `execute(job, executionId, scheduledAt, attempt, signal, data?, hooks?)`. `hooks.onAttempt(n)` reports each 1-based attempt as it starts. |
 | `PriorityQueue` | Min-heap of schedules ordered by `nextRunAt`. | `enqueue` throws `RangeError` on an invalid date. |
-| `SystemClock` | Real time: `now()` and `nowMs()`. | Pass any object with those two methods as `clock` to fake time in tests. |
+| `SystemClock` | Real time: `now()` and `nowMs()`. | Pass any `Clock` (an object with those two methods) as `clock` to fake time in tests. Since v1.2.0 the interface is exported: `import type { Clock } from "@zudojs/scheduler"`. |
 | `DelayTrigger`, `DateTrigger`, `IntervalTrigger`, `CronTrigger` | Compute the next fire time. Each has `next(after)`. | The scheduler picks one for you; use them directly to preview times. |
 | `ScheduleHandleImpl` | The concrete `ScheduleHandle`. | You get an instance back from `after`/`at`/`every`/`cron`; rarely constructed by hand. |
 
@@ -500,10 +535,10 @@ Everything below is exported from `@zudojs/scheduler`. Most applications only ne
 | --- | --- | --- |
 | `JobDefinition` | `{ id, name, handler, options? }`. | What `define()` takes. |
 | `JobHandler<T>` | `(context: JobContext<T>) => Promise<void> \| void`. | The return value is ignored. |
-| `JobContext<T>` | `jobId`, `executionId`, `scheduledAt`, `startedAt`, `attempt`, `data`, `signal`. | The single argument your handler gets. |
-| `JobOptions` | `timeout`, `retry`, `concurrency`, `overlap`. | `concurrency` is accepted but not applied; use the scheduler's `maxConcurrency`. |
+| `JobContext<T>` | `jobId`, `executionId`, `scheduledAt`, `startedAt`, `attempt`, `attemptNumber`, `data`, `signal`. | The single argument your handler gets. `attempt` and `attemptNumber` are the same 1-based number. |
+| `JobOptions` | `timeout`, `retry`, `concurrency`, `overlap`. | `concurrency` caps this job's runs in flight; `overlap` is the default for its schedules. |
 | `RetryPolicy` | `attempts`, `strategy`, `delay`, `maxDelay?`, `jitter?`. | `strategy` is `RetryStrategy`: fixed, linear or exponential. |
-| `ScheduleOptions` | `timezone`, `misfire`, `priority`. | The scheduler methods additionally accept `overlap` and `data` inline; this exported type does not list them. |
+| `ScheduleOptions` | `timezone`, `misfire`, `overlap`, `priority`, `data`. | `data` reaches the handler as `ctx.data`. |
 | `Schedule` | `id`, `jobId`, `type`, `expression?`, `nextRunAt`, `lastRunAt?`, `state`, `options?`. | What `getSchedule()` returns. |
 | `ScheduleHandle` | `id`, `state`, `pause`, `resume`, `cancel`, `nextRun`. | Returned by every scheduling method. |
 | `Trigger` | `{ next(after: Date): Date \| null }`. | Implement it for a custom timing rule. |
@@ -511,7 +546,7 @@ Everything below is exported from `@zudojs/scheduler`. Most applications only ne
 | `SchedulerOptions`, `SchedulerErrorEvent` | Constructor options, and the `{ scheduleId, jobId, executionId, error }` given to `onError`. |  |
 | `ScheduleType`, `ScheduleState`, `JobState`, `OverlapPolicy`, `MisfirePolicy` | String unions used above. | Executions are recorded with a `status` and returned by `getExecutions()` (last 100). |
 | `SchedulerJobId`, `ScheduleId`, `ExecutionId` | Aliases for `string`. | Documentation only. |
-| `JobExecution`, `JobExecutionResult` | Shapes for an execution record and its result. | `JobExecutionResult` is what `JobExecutor.execute` resolves to. Nothing produces `JobExecution`: there is no execution history. |
+| `JobExecution`, `JobExecutionResult` | Shapes for an execution record and its result. | `JobExecutionResult` is what `JobExecutor.execute` resolves to on success (it rejects on failure). `getExecutions()` returns `JobExecution` records. |
 | `ScheduleHandleBinding`, `SchedulerErrorOptions` | The wiring a handle needs; the options bag for scheduler errors. | Only needed if you build a handle yourself. |
 
 ### Errors
@@ -523,10 +558,10 @@ Everything below is exported from `@zudojs/scheduler`. Most applications only ne
 | `InvalidScheduleError` | A bad trigger, an unsupported time zone, or `misfire: "skip"` on a past time. | Also for a non-positive or absurd interval. |
 | `CronParseError` | The cron expression is malformed. | Thrown at `cron()`, not at fire time. |
 | `InvalidDurationError` | The duration string is malformed or out of range. | From `parseDuration`, `after` and `every`. |
-| `SchedulerAlreadyStartedError` / `SchedulerStoppedError` | `start()` while running; `stop()` while stopped. | `stop()` rejects rather than throwing synchronously. |
+| `SchedulerAlreadyStartedError` / `SchedulerStoppedError` | `start()` while running. `SchedulerStoppedError` is still exported, but since v1.2.0 `stop()` no longer rejects with it. | `start()` throws synchronously. |
 | `SchedulerJobAlreadyExistsError` / `SchedulerJobNotFoundError` | Duplicate `define()`; `JobRegistry.getOrThrow` on an unknown id. |  |
 | `SchedulerJobExecutionError` / `SchedulerJobTimeoutError` / `SchedulerJobCancelledError` | A run threw, ran too long, or was aborted. | These reach you through `onError`. |
-| `SchedulerNotStartedError`, `ScheduleNotFoundError`, `ScheduleAlreadyExistsError`, `SchedulerStoreError`, `SchedulerLockError` | Declared for completeness. | Exported, but nothing in this package throws them yet. |
+| `SchedulerNotStartedError`, `ScheduleNotFoundError`, `ScheduleAlreadyExistsError`, `SchedulerStoreError`, `SchedulerLockError` | Never thrown by this package. | Not exported from `@zudojs/scheduler`; import them from `@zudojs/errors` if you build a durable scheduler on top. |
 
 ### Constants
 
@@ -540,13 +575,14 @@ Everything below is exported from `@zudojs/scheduler`. Most applications only ne
 | `DEFAULT_OVERLAP_POLICY` | `"allow"` | Applied when `overlap` is omitted. |
 | `MAX_TIMER_DELAY` | 2,147,483,647 | Longest single `setTimeout` the loop will arm. |
 | `MAX_JOBS` / `MAX_SCHEDULES` | 4,096 each | Hard caps; exceeding either throws. |
-| `MAX_EXECUTION_HISTORY`, `SCHEDULER_TICK_INTERVAL` | 100, 1,000 | Exported but unused — the loop sleeps until the next fire time rather than ticking on a fixed interval. |
+| `MAX_EXECUTION_HISTORY` | 100 | How many runs `getExecutions()` keeps. There is no fixed tick interval: the loop sleeps until the next fire time. |
 
 ## COMMON MISTAKES
 
 - **Scheduling before defining.** → `InvalidJobError: Job "x" is not registered.` → Call `define()` first; the scheduler checks the registry at scheduling time.
+- **Never calling `stop()` in a script.** → The jobs run, but the process never exits, because a started scheduler keeps Node alive. → `await scheduler.stop()` when the script is done, or pass `keepAlive: false` if something else owns the process lifetime.
 - **Forgetting `start()`.** → Schedules exist, `nextRun()` returns a date, nothing ever runs. → Call `scheduler.start()` once at boot.
-- **Not awaiting `stop()`.** → The process exits mid-job, or an unhandled rejection appears on shutdown. → `await scheduler.stop({ drain: true, timeoutMs: 30_000 })`.
+- **Not awaiting `stop()`.** → The process exits mid-job, or an unhandled rejection appears on shutdown. → `await scheduler.stop({ drain: true, timeoutMs: 30_000 })`. A second call is harmless.
 - **Leaving out `onError`.** → A job that throws every run fails in total silence. → Pass `onError` to the constructor and log the event.
 - **Passing a number where a duration string goes.** → `every(5000, "job")` is a type error, and `every("5", "job")` throws `InvalidDurationError`. → Write the unit: `"5s"`.
 - **Ignoring `ctx.signal` in a long handler.** → A timeout or `stop()` reports the job as cancelled while the work keeps running. → Pass the signal to `fetch`, database drivers and anything else that accepts one.
@@ -562,9 +598,9 @@ Everything below is exported from `@zudojs/scheduler`. Most applications only ne
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/scheduler` exports from its package root at v1.1.2 — **67** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/scheduler` exports from its package root at v1.2.2 — **68** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 67 exports**
+**Show all 68 exports**
 
 Classes (22)
 
@@ -574,9 +610,9 @@ Functions (10)
 
 `createJobContext` `createJobDefinition` `createSchedule` `createSchedulerError` `createSystemClock` `isSchedulerError` `nextCronDate` `parseCron` `parseDuration` `retryDelay`
 
-Interfaces (15)
+Interfaces (16)
 
-`JobContext` `JobDefinition` `JobExecution` `JobExecutionResult` `JobOptions` `ParsedCron` `RetryPolicy` `Schedule` `ScheduleHandle` `ScheduleHandleBinding` `ScheduleOptions` `SchedulerErrorEvent` `SchedulerErrorOptions` `SchedulerOptions` `Trigger`
+`Clock` `JobContext` `JobDefinition` `JobExecution` `JobExecutionResult` `JobOptions` `ParsedCron` `RetryPolicy` `Schedule` `ScheduleHandle` `ScheduleHandleBinding` `ScheduleOptions` `SchedulerErrorEvent` `SchedulerErrorOptions` `SchedulerOptions` `Trigger`
 
 Type aliases (10)
 

@@ -498,7 +498,7 @@ Everything below is exported from `@zudojs/crypto`. All functions that touch `no
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/crypto` exports from its package root at v1.3.0 — **257** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/crypto` exports from its package root at v1.3.3 — **257** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 257 exports**
 

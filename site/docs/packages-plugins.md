@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/plugins — the controlled exte
 source: https://zudojs.oyinlola.site/docs/packages-plugins
 ---
 
-v1.2.0
+v1.3.1
 
 # @zudojs/plugins
 
@@ -35,7 +35,7 @@ Skip it when
 
 ## INSTALLATION
 
-Install the package. Its three helper packages (`@zudojs/errors`, `@zudojs/constants`, `@zudojs/types`) are pulled in automatically.
+Install the package. Its one dependency, `@zudojs/errors`, is pulled in automatically. `@zudojs/events` is optional: install it only if you want to pass an `EventBus` as the `events` option.
 
 ```bash
 $ npm install @zudojs/plugins
@@ -142,7 +142,7 @@ interface PluginContext {
   readonly container?: PluginContainer; // { register(token, provider) }
   readonly config?: PluginConfig;       // { get(key) }
   readonly logger?: PluginLogger;       // { info, warn, error }
-  readonly events?: PluginEvents;       // { on, off, emit }
+  readonly events?: PluginEvents;       // { on, off, emit }; a bus is adapted to this
   readonly signal: AbortSignal;         // aborted on shutdown
 
   onDispose(handler: () => void | Promise<void>): void;
@@ -221,7 +221,27 @@ Three rules apply, all checked when you call `start()`:
 - Two plugins that need each other (a *cycle*) throw `PluginDependencyCycleError`. The manager cannot pick which to start first.
 - A `version` on a dependency is a range in npm style: `^2.0.0`, `~1.2.0`, `>=1.0.0`, exact `1.2.3`, or `*`. If the registered plugin's `metadata.version` does not satisfy it (or is missing), startup throws `PluginDependencyError`.
 
-`optionalDependencies` work the same way for ordering, but a missing one is silently ignored. Use them when your plugin can integrate with another *if it happens to be present*.
+`optionalDependencies` work the same way for ordering, but a missing one is silently ignored. Use them when your plugin can integrate with another *if it happens to be present*. Since 1.3.1 you can say the same thing inside `dependencies` with `optional: true`; the two forms are equivalent. An optional dependency is skipped when it is missing and, when it is present, started before the dependent and version-checked:
+
+```ts
+manager.register({
+  metadata: { name: "reports", version: "1.0.0" },
+  dependencies: [
+    { name: "database" },
+    { name: "metrics", version: "^1.0.0", optional: true }, // used if present
+  ],
+  // Same as: optionalDependencies: [{ name: "metrics", version: "^1.0.0" }]
+  start() { console.log("reports up"); },
+});
+```
+
+```ts
+no "metrics" registered   → database up, reports up
+"metrics" 1.4.0 registered → database up, metrics up, reports up
+"metrics" 2.0.0 registered → start() throws PluginDependencyVersionError (a PluginDependencyError)
+```
+
+> **Changed in 1.3.1:** up to 1.3.0 only `optionalDependencies` was honoured, so `dependencies: [{ name: "metrics", optional: true }]` made `start()` throw `PluginDependencyError` when "metrics" was not registered.
 
 > **Tip:** the manager uses `DependencyResolver` internally. You can call `new DependencyResolver().resolve(map)` yourself to inspect `ordered`, `missingDetails` and `cycles` without starting anything.
 
@@ -288,7 +308,7 @@ try {
 | onError(error, pluginName) | Called for each failure during `stop()`. Shutdown continues past the failing plugin. | logs through the `logger` option (or the context logger); otherwise a `ZudoPluginWarning` process warning |
 | logger | Logger for teardown failures when `onError` is omitted. | context logger |
 | checkVersions | Enforce `version` ranges on dependencies at `start()`. | `true` |
-| events | Event sink (`on`/`off`/`emit`) for `plugin:registered`. Registration happens before any plugin context exists, so lifecycle events sent through `context.events` cannot cover it. | unset (no registration event) |
+| events | Event sink (`on`/`off`/`emit`) or an `@zudojs/events` `EventBus`, for `plugin:registered`. Registration happens before any plugin context exists, so lifecycle events sent through `context.events` cannot cover it. A failed emit here is reported through `onError`. | unset (no registration event) |
 | allowedCapabilities | List of strings a plugin's `metadata.capabilities` may contain. Anything else is rejected at `register()`. | unset (allow all) |
 
 This manager gives every hook two seconds and collects shutdown errors instead of printing them.
@@ -329,7 +349,7 @@ console.log(report.total, report.healthy, report.degraded, report.unhealthy, rep
 console.log(report.plugins[0]?.state, report.plugins[0]?.health.status); // started healthy
 ```
 
-If your context has an `events` object, the manager emits an event at every state change. Subscribe *before* calling `start()`. Node's built-in `EventEmitter` has the right shape.
+If your context has an `events` object, the manager emits an event at every state change. Subscribe *before* calling `start()`. Node's built-in `EventEmitter` has the right shape, and so does an `@zudojs/events` bus (see below).
 
 ```ts
 import { EventEmitter } from "node:events";
@@ -350,7 +370,72 @@ await manager.start(createPluginContext({ name: "my-app" }, { events }));
 
 Event names live on `PLUGIN_EVENTS`: `INSTALLING`, `INSTALLED`, `INITIALIZING`, `INITIALIZED`, `STARTING`, `STARTED`, `STOPPING`, `STOPPED`, `DISPOSING`, `DISPOSED` and `FAILED`. Each event payload is a `PluginLifecycleEvent` with `plugin`, `state`, `previousState`, `timestamp` and, on failure, `error`.
 
-> **Note:** `register()` emits `PLUGIN_EVENTS.REGISTERED` only through the manager's `events` option, because no plugin context exists yet; events sent through `context.events` start with `INSTALLING`. A listener that throws is logged and does not interrupt the lifecycle.
+> **Note:** `register()` emits `PLUGIN_EVENTS.REGISTERED` only through the manager's `events` option, because no plugin context exists yet; events sent through `context.events` start with `INSTALLING`.
+
+### A failing listener never stops the lifecycle
+
+An `emit` may throw, or it may be `async` and return a promise that rejects. Either way the manager catches the failure, reports it, and carries on. A failure from the manager's own `events` option goes to `onError`. A failure from `context.events` goes to the context's `logger.error`, or, with no logger, to a `ZudoPluginWarning` process warning.
+
+```ts
+import { PluginManager, createPluginContext } from "@zudojs/plugins";
+import type { PluginEvents } from "@zudojs/plugins";
+
+const events: PluginEvents = {
+  on() {},
+  off() {},
+  async emit(name) {
+    throw new Error(`could not deliver ${name}`);
+  },
+};
+
+const logger = { info: console.log, warn: console.warn, error: console.error };
+const manager = new PluginManager();
+manager.register({ metadata: { name: "greeter" } });
+
+await manager.start(createPluginContext({ name: "my-app" }, { events, logger }));
+console.log("start() resolved and the process keeps running");
+// logger.error prints one line per event, such as:
+// Listener for "plugin:started" threw. { plugin: 'greeter', event: 'plugin:started', error: 'could not deliver plugin:started' }
+```
+
+> **Changed in 1.3.0:** before 1.3.0 only a synchronous throw was caught. A rejected promise from an `async emit` escaped as an unhandled rejection after `start()` had resolved, and Node stopped the process with exit code 1. `PluginEvents.emit` is now typed `void | PromiseLike<unknown>`.
+
+### Using an @zudojs/events bus
+
+Both the manager's `events` option and `createPluginContext(meta, { events })` accept an [@zudojs/events](https://zudojs.oyinlola.site/docs/packages-events.md) `EventBus` as it is. The manager wraps it with `toPluginEvents()`, so inside a hook `context.events` is still a `PluginEvents`:
+
+- `emit(name, payload)` publishes `{ type: name, payload }` and returns the publish promise. The bus normalizes names, so `plugin:started` arrives as the type `plugin.started`, and `"plugin.*"` matches every lifecycle event.
+- `on(name, handler)` subscribes on the bus and hands the handler the event's `payload`; `off(name, handler)` cancels that subscription.
+
+```ts
+import { createEventBus } from "@zudojs/events";
+import { PluginManager, createPluginContext, PLUGIN_EVENTS } from "@zudojs/plugins";
+import type { PluginLifecycleEvent } from "@zudojs/plugins";
+
+const bus = createEventBus();
+bus.on(PLUGIN_EVENTS.STARTED, (event) => {
+  const { plugin } = event.payload as PluginLifecycleEvent;
+  console.log(`${plugin.name} started`);
+});
+bus.on("report.ready", (event) => console.log("report ready:", event.payload));
+
+const manager = new PluginManager({ events: bus });
+manager.register({
+  metadata: { name: "reports" },
+  async start(context) {
+    // context.events is a PluginEvents view of the bus.
+    await context.events?.emit("report.ready", { rows: 3 });
+  },
+});
+
+await manager.start(createPluginContext({ name: "my-app" }, { events: bus }));
+// prints: report ready: { rows: 3 }
+//         reports started
+```
+
+`toPluginEvents(source)` is exported if you want the same view yourself; it returns a `PluginEvents` sink unchanged. `isPluginEventBus(source)` tells the two apart: a bus is recognised by its `publishEvent` method.
+
+> **Changed in 1.3.0:** earlier versions had no adapter. A bus passed with a cast crashed with `InvalidEventError`, because its `emit` expects an event object rather than a name, so you had to write the adapter by hand. Remove that adapter when you upgrade.
 
 ## API REFERENCE
 
@@ -369,7 +454,9 @@ Everything below is exported from `@zudojs/plugins`.
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| createPluginContext(metadata, options?) | Builds the template context you pass to `start()` and `stop()`. | Options: `container`, `config`, `logger`, `events`, `disposables`, `abortController`. |
+| createPluginContext(metadata, options?) | Builds the template context you pass to `start()` and `stop()`. | Options: `container`, `config`, `logger`, `events` (a `PluginEvents` sink or an `EventBus`), `disposables`, `abortController`. |
+| toPluginEvents(source) | Adapts an event bus to `PluginEvents`; returns a sink unchanged. | The manager and `createPluginContext` call it for you. Added in 1.3.0. |
+| isPluginEventBus(source) | `true` for a bus (it has `publishEvent`), `false` for a `PluginEvents` sink. | Added in 1.3.0. |
 | createOwnedPluginContext(metadata, options?) | Same, but also returns the `disposables` array and an `abort()` function. | For tests and custom managers that need to trigger teardown themselves. |
 | assertResolutionValid(resolution) | Throws `PluginDependencyError` or `PluginDependencyCycleError` if a resolution has problems. | Pairs with `DependencyResolver.resolve()`. |
 | satisfiesVersion(version, range) | Returns `true`, `false`, or `undefined` if the range is not understood. | Supports `^`, `~`, `>=`, `>`, `<=`, `<`, exact and `*`. |
@@ -394,9 +481,10 @@ Everything below is exported from `@zudojs/plugins`.
 | --- | --- | --- |
 | Plugin<TOptions> | The plugin object shape. | See [Writing a plugin](#writing-a-plugin). |
 | PluginMetadata | `name` (required), `version`, `description`, `author`, `homepage`, `keywords`, `capabilities`. | All strings or string arrays. |
-| PluginDependency | `{ name, version?, optional? }`. | Put optional ones in `optionalDependencies`. |
+| PluginDependency | `{ name, version?, optional? }`. | Mark an optional one with `optional: true` inside `dependencies` (since 1.3.1), or list it in `optionalDependencies`. |
 | PluginContext | What hooks receive. | See [The plugin context](#plugin-context). |
-| PluginContainer, PluginConfig, PluginLogger, PluginEvents, PluginDisposable | The small service interfaces a context can carry. | Structural: any object with the methods qualifies. |
+| PluginContainer, PluginConfig, PluginLogger, PluginEvents, PluginDisposable | The small service interfaces a context can carry. | Structural: any object with the methods qualifies. `PluginEvents.emit` may return a promise. |
+| PluginEventBus, PluginEventSource | The part of an event bus the manager uses (`publishEvent`, `on`), and `PluginEvents \| PluginEventBus`. | `PluginEventSource` is what the `events` options accept. |
 | PluginManagerOptions | Constructor options for `PluginManager`. | See [Manager options](#manager-options). |
 | PluginState | The twelve state names. | Includes `"failed"`. |
 | PluginDiagnosticReport, PluginDiagnostic, PluginHealth, PluginHealthStatus | Shape of `diagnostics()` output. | `PluginHealthStatus` is `"healthy" \| "degraded" \| "unhealthy"`. |
@@ -435,25 +523,25 @@ All error classes come from `@zudojs/errors` and are re-exported here. Every one
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/plugins` exports from its package root at v1.2.1 — **60** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/plugins` exports from its package root at v1.3.3 — **64** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 60 exports**
+**Show all 64 exports**
 
 Classes (17)
 
 `DependencyResolver` `LifecycleController` `PluginAlreadyRegisteredError` `PluginDependencyCycleError` `PluginDependencyError` `PluginDependencyVersionError` `PluginDisposeError` `PluginError` `PluginInitializationError` `PluginManager` `PluginNotFoundError` `PluginRegistrationError` `PluginRegistryImpl` `PluginStartError` `PluginStateError` `PluginStopError` `PluginTimeoutError`
 
-Functions (15)
+Functions (17)
 
-`assertDependencyVersions` `assertResolutionValid` `buildDiagnosticReport` `compareVersions` `createDegradedHealth` `createHealthyHealth` `createOwnedPluginContext` `createPluginContext` `createPluginError` `createPluginLifecycleEvent` `createUnhealthyHealth` `isPluginError` `isValidTransition` `parseVersion` `satisfiesVersion`
+`assertDependencyVersions` `assertResolutionValid` `buildDiagnosticReport` `compareVersions` `createDegradedHealth` `createHealthyHealth` `createOwnedPluginContext` `createPluginContext` `createPluginError` `createPluginLifecycleEvent` `createUnhealthyHealth` `isPluginError` `isPluginEventBus` `isValidTransition` `parseVersion` `satisfiesVersion` `toPluginEvents`
 
-Interfaces (24)
+Interfaces (25)
 
-`CreatePluginContextOptions` `DependencyResolution` `LifecycleControllerOptions` `MissingDependency` `OwnedPluginContext` `Plugin` `PluginConfig` `PluginContainer` `PluginContext` `PluginDependency` `PluginDiagnostic` `PluginDiagnosticReport` `PluginDisposable` `PluginErrorOptions` `PluginEvents` `PluginHealth` `PluginLifecycleEvent` `PluginLogger` `PluginManagerOptions` `PluginMetadata` `PluginRegistry` `RegisteredPlugin` `ResolvablePlugin` `SemVer`
+`CreatePluginContextOptions` `DependencyResolution` `LifecycleControllerOptions` `MissingDependency` `OwnedPluginContext` `Plugin` `PluginConfig` `PluginContainer` `PluginContext` `PluginDependency` `PluginDiagnostic` `PluginDiagnosticReport` `PluginDisposable` `PluginErrorOptions` `PluginEventBus` `PluginEvents` `PluginHealth` `PluginLifecycleEvent` `PluginLogger` `PluginManagerOptions` `PluginMetadata` `PluginRegistry` `RegisteredPlugin` `ResolvablePlugin` `SemVer`
 
-Type aliases (2)
+Type aliases (3)
 
-`PluginHealthStatus` `PluginState`
+`PluginEventSource` `PluginHealthStatus` `PluginState`
 
 Constants (2)
 

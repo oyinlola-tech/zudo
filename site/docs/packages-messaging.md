@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/messaging — the in-process me
 source: https://zudojs.oyinlola.site/docs/packages-messaging
 ---
 
-v1.1.0
+v1.2.1
 
 # @zudojs/messaging
 
@@ -235,6 +235,18 @@ Pass `{ timeout: 5000 }` to one dispatch, or `defaultTimeout` to `createMessageB
 
 > **Watch out:** A handler that is already running is not interrupted. Long handlers should check `context.signal.aborted` between steps and stop themselves. A timed-out dispatch comes back with `result.error instanceof MessageTimeoutError`.
 
+> **Changed in v1.2.0:** an abort always fails the dispatch. If your own `signal` aborts while the *last* (or only) handler is running, the dispatch now settles promptly with `success: false` and a `MessageDispatchAbortedError` in `result.error`, even if that handler ignores the signal and later returns normally. As with a timeout, the dispatch does not wait for such a handler, and `result.handlerResults` lists only the handlers that finished. This applies to the bus and to a dispatcher used directly. Before v1.2.0 that case came back as `success: true`. Handlers should still honour the signal (for example `context.signal.throwIfAborted()` after each `await`) so the work itself stops:
+
+```ts
+bus.on("report.build", async (message, context) => {
+  const rows = await loadRows(context.signal);
+  context.signal.throwIfAborted();
+  return render(rows);
+}, { id: "build-report" });
+```
+
+> **Changed in v1.2.1:** aborting a dispatch no longer needs Node's `setImmediate`. In a browser bundle, v1.2.0 threw `ReferenceError: setImmediate is not defined` the moment a dispatch was aborted. The abort rejection is now scheduled with `setTimeout(…, 0)`, which keeps the same ordering: a handler that aborts the signal and then returns still has its result recorded first. Tested with `setImmediate` deleted from the global scope: a handler that called `controller.abort()` and returned gave `success: false`, `MessageDispatchAbortedError`, and one successful entry in `handlerResults`. Nothing changes in Node.
+
 > **Changed in v1.1.0:** `result.handlerResults` is a snapshot taken when the dispatch settles, so it stops changing once you have awaited the dispatch. Previously it was the live array the dispatcher was still writing into: a handler that kept running past a timeout could push a `success: true` record into the result of a dispatch that had already failed with `MessageTimeoutError`. Audit records and metrics derived from `handlerResults` are now stable.
 
 ## MIDDLEWARE
@@ -281,7 +293,7 @@ A *correlation id* is a label shared by every message that belongs to one bigger
 `createDerivedMessage` builds a follow-up message that inherits the parent's correlation id and records the parent as its cause.
 
 ```ts
-import { createMessage, createDerivedMessage, toCorrelationId } from "@zudojs/messaging";
+import { createMessage, createDerivedMessage, toCorrelationId, toCausationId } from "@zudojs/messaging";
 
 const placed = createMessage({
   type: "order.placed",
@@ -295,7 +307,7 @@ const paid = createDerivedMessage(placed, {
 });
 
 console.log(paid.correlationId);              // "req-abc" — inherited
-console.log(paid.causationId === placed.id);  // true — placed caused paid
+console.log(paid.causationId === toCausationId(placed.id));  // true — placed caused paid
 ```
 
 Inside a handler, read the ids from the context. This handler dispatches a follow-up on the same bus, keeping the chain intact.
@@ -320,6 +332,26 @@ await bus.send({ type: "order.placed", payload: { orderId: "ord-001" } });
 ```
 
 > **In plain words:** Handlers receive the same context as middleware: `DispatchOptions.context` headers, state and id overrides, plus anything middleware put into `context.state`.
+
+> **Changed in v1.2.0:** `bus.send(input, { context: { correlationId, causationId } })` now writes those identifiers onto the message it builds, unless the input carries its own. `message.correlationId` in the handler is therefore the request id, and `createDerivedMessage(message, …)` continues the chain instead of starting a new one. Before v1.2.0 the context ids applied to that one dispatch only and never reached the message.
+
+```ts
+import { createMessageBus, createDerivedMessage, toCorrelationId } from "@zudojs/messaging";
+
+const bus = createMessageBus();
+
+bus.on("order.placed", async (message) => {
+  const paid = createDerivedMessage(message, { type: "order.paid", payload: null });
+  console.log(message.correlationId, paid.correlationId);
+}, { id: "take-payment" });
+
+await bus.send(
+  { type: "order.placed", payload: null },
+  { context: { correlationId: toCorrelationId("req-abc") } },
+);
+// req-abc req-abc
+bus.dispose();
+```
 
 ## MESSAGING VS EVENTS
 
@@ -434,22 +466,23 @@ Everything below is exported from `@zudojs/messaging`.
 
 ### Errors
 
-All error classes live in `@zudojs/errors` and are re-exported here. Only the first four are raised by this package; the rest are exported so your own code and other packages can share one hierarchy.
+All error classes live in `@zudojs/errors` and are re-exported here. Only the first five in the table are raised by this package, plus the base `MessageError` when a bus created with `allowMultipleHandlers: false` refuses a second handler. The rest are exported so your own code and other packages can share one hierarchy.
 
 | Name | What it does | Notes |
 | --- | --- | --- |
 | `MessageHandlerError` | A handler threw. | Appears in `result.error`; has `handlerId`, `cause`. |
 | `DuplicateMessageHandlerError` | Handler id already registered. | Thrown by `on()` / `addHandler()`. |
 | `MessageBusDisposedError` | Bus used after `dispose()`. | Rejects the dispatch promise. |
-| `MessageDispatchAbortedError` | Signal aborted before or between handlers. | Rejects if aborted up front; otherwise returned as `result.error`. |
-| `MessageError`, `MessageDispatchError`, `InvalidMessageError`, `MessageTypeNotFoundError`, `MessageHandlerNotFoundError`, `MessageTimeoutError`, `MessageMiddlewareError`, `MessageValidationError` | Shared hierarchy for messaging errors. | Not thrown by this package itself. |
+| `MessageDispatchAbortedError` | Signal aborted before or between handlers. | Rejects if aborted up front; otherwise returned as `result.error`, including an abort while the last handler runs (since v1.2.0). |
+| `MessageTimeoutError` | A dispatch ran past its `timeout` or `defaultTimeout`. | Returned as `result.error`, even when the last handler finishes later. |
+| `MessageError`, `MessageDispatchError`, `InvalidMessageError`, `MessageTypeNotFoundError`, `MessageHandlerNotFoundError`, `MessageMiddlewareError`, `MessageValidationError` | Shared hierarchy for messaging errors. | Not thrown by this package itself, apart from `MessageError` as described above. |
 
 ## COMMON MISTAKES
 
 - **Registering handlers without an `id` and then trying to remove them** → generated ids come from a per-bus counter (`handler:<type>:<n>`), so they never collide, but they depend on registration order and are not something you can hard-code. → Pass an `id` in the options of `on()` for any handler you intend to `off()`.
 - **Checking for a thrown error instead of `result.success`** → a failing handler never throws from `send()`, so your `catch` block stays silent and the failure is missed. → Read `result.success` and `result.error` after every dispatch.
 - **Passing a plain string as `correlationId`** → TypeScript rejects it because the type is branded. → Wrap it: `toCorrelationId("req-abc")`.
-- **Expecting a timeout to stop a running handler** → the timer only aborts a signal; the handler keeps going; the dispatch result carries a `MessageTimeoutError`. → Check `context.signal.aborted` inside long handlers.
+- **Expecting a timeout to stop a running handler** → the timer only aborts a signal; the handler keeps going; the dispatch result carries a `MessageTimeoutError`. → Check `context.signal.aborted` inside long handlers, or call `context.signal.throwIfAborted()` after each `await`.
 - **Expecting `result.value` to always be a single value** → with two or more handlers it is an array in priority order, and with none it is `[]`. → Check `result.handlerResults.length` when the handler count can vary.
 - **Using a bus after `dispose()`** → every `send`/`dispatch` rejects with `MessageBusDisposedError` and all handlers are gone. → Dispose once, at shutdown, and check `bus.disposed` if unsure.
 
@@ -463,7 +496,7 @@ All error classes live in `@zudojs/errors` and are re-exported here. Only the fi
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/messaging` exports from its package root at v1.1.0 — **69** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/messaging` exports from its package root at v1.2.3 — **69** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 69 exports**
 

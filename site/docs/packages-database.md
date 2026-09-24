@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/database — database clients, 
 source: https://zudojs.oyinlola.site/docs/packages-database
 ---
 
-v1.2.0
+v1.4.0
 
 # @zudojs/database
 
@@ -18,7 +18,7 @@ Most applications need to store data in a database and read it back. Prisma alre
 
 `@zudojs/database` adds that layer on top of Prisma 7 for PostgreSQL. It wraps your Prisma client in a *DatabaseClient* that manages the connection, gives you a *BaseRepository* class you extend once per table, and ships helpers for transactions, query building, pagination, migrations, seeds, locks, caching and health checks.
 
-Prisma stays visible. Repositories wrap a Prisma model (for example `prisma.user`), and transaction callbacks receive Prisma's own transaction client. The package normalises lifecycle, errors and pagination; it does not hide Prisma from you.
+Prisma stays visible. Repositories wrap a Prisma model (for example `prisma.user`), and transaction callbacks receive Prisma's own transaction client, typed from your generated client. The package normalises lifecycle, errors and pagination; it does not hide Prisma from you.
 
 When you need it
 
@@ -29,6 +29,7 @@ When you need it
 
 When you don't
 
+- You do not use Prisma. There is no driver of its own: the client, repositories and transactions all call a Prisma client (or a Prisma driver adapter), so Drizzle, Kysely, TypeORM or a raw `pg` pool cannot be plugged in.
 - You use MySQL, SQLite or MongoDB. The client works with any Prisma client, but the migration, seed and lock helpers emit PostgreSQL SQL only.
 - You are happy calling `prisma.user.findMany()` directly and have one or two tables.
 - You need nested transactions or savepoints. Prisma interactive transactions are used as-is.
@@ -38,13 +39,27 @@ When you don't
 Install the package together with Prisma and the PostgreSQL driver adapter. Prisma 7 talks to the database through an *adapter*, a small package that owns the connection string, pool size and SSL settings.
 
 ```bash
-$ npm install @zudojs/database @prisma/client @prisma/adapter-pg
+$ npm install @zudojs/database @prisma/client@7 @prisma/adapter-pg@7
+$ npm install -D prisma@7
 $ npx prisma generate
+```
+
+Prisma 7's `prisma-client` generator writes a TypeScript client into your own source tree, so you import `PrismaClient` from that folder rather than from `@prisma/client`. The examples on this page use this generator block in `prisma/schema.prisma`, which puts the client at `src/generated/prisma`; if your `output` differs, change the import path to match.
+
+```ts
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
 ```
 
 > These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest @zudojs release.
 
-> **Peer dependency.** `@prisma/client` `>=7.0.0 <8` is a peer dependency, so you install it yourself. `@zudojs/errors` is a regular dependency and comes along automatically.
+> **Peer dependency.** `@prisma/client` `>=7.0.0 <8` is a peer dependency, so you install it yourself. Pin the `@7` major as above: the `prisma` CLI's `latest` tag on npm can point at a newer major that is outside this range. `@zudojs/errors` is a regular dependency and comes along automatically.
+
+> **Strict type-checking works.** Since v1.4.0 the published type declarations never import `@prisma/client`; every Prisma type the package needs is structural and owned by it. A project that type-checks with `skipLibCheck: false` compiles against it whether the generated client lives in your source tree (`prisma-client`) or in `node_modules/.prisma/client` (the legacy `prisma-client-js`).
 
 > **PostgreSQL only.** `MigrationRunner`, `SeedRunner` and `DatabaseLockManager` emit PostgreSQL SQL. Passing `dialect: "mysql"` or `"sqlite"` throws `UnsupportedDialectError`; those dialects are typed but not implemented.
 
@@ -62,9 +77,9 @@ Everything is exported from the package root. Three smaller entry points exist i
 This example assumes your Prisma schema has a `User` model with `id`, `email`, `name` and a nullable `deletedAt` column. It builds the Prisma client, wraps it, defines one repository and creates a row.
 
 ```ts
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "./generated/prisma/client.js";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { BaseRepository, createDatabaseClient } from "@zudojs/database";
+import { BaseRepository, createDatabaseClient, type RepositoryDelegate } from "@zudojs/database";
 
 interface User {
   id: string;
@@ -75,7 +90,7 @@ interface User {
 
 // One repository per model. The delegate is the Prisma model (prisma.user).
 class UserRepository extends BaseRepository<User> {
-  constructor(delegate: ConstructorParameters<typeof BaseRepository<User>>[0]) {
+  constructor(delegate: RepositoryDelegate<User>) {
     super(delegate, { modelName: "User", softDelete: true });
   }
 }
@@ -86,7 +101,7 @@ const prisma = new PrismaClient({
 const client = createDatabaseClient({ prisma });
 await client.connect();
 
-const users = new UserRepository(prisma.user);
+const users = new UserRepository(prisma.user); // no cast since v1.3.1
 const alice = await users.create({ email: "alice@example.com", name: "Alice" });
 console.log(alice.name, await users.count());
 // Alice 1
@@ -96,13 +111,26 @@ await client.disconnect();
 
 Run it with `DATABASE_URL` set. The console prints `Alice 1`: the created row's name and the number of live rows in the table. The client also logs `Database connected.` and `Database disconnected.` through its default logger, a `@zudojs/logger` console logger named `@zudojs/database`.
 
-> **Tip:** the long `ConstructorParameters<...>[0]` type just means "whatever the base class accepts as its first argument". It keeps your repository independent from Prisma's generated types.
+> **Tip:** `RepositoryDelegate<User>` is the structural shape `BaseRepository` needs from a model (`findUnique`, `findFirst`, `findMany`, `create`, `update`, `delete`, `count`). It accepts any argument list and checks only the return types, so a generated Prisma 7 delegate such as `prisma.user` is passed as it is, while a delegate whose rows do not match `User` (say `prisma.order`) is still a type error. Typing the constructor with it keeps your repository independent from Prisma's generated types.
+
+> **Changed in v1.3.1:** in v1.3.0, `new UserRepository(prisma.user)` with a generated Prisma 7 client failed strict type-checking with TS2345, because Prisma's generic `findFirst<T extends UserFindFirstArgs>(...)` could not be assigned to a hand-written argument shape, and these examples used `prisma.user as unknown as RepositoryDelegate<User>`. `RepositoryDelegate` now accepts any argument list, so the cast can go; it still compiles if you keep it. Inside a subclass, `this.delegate` is typed by the new `RepositoryDelegateOperations`, the arguments the repository passes, so `this.delegate.findMany({ where })` compiles as before. Checked with Prisma 7.10.0 and `prisma generate`.
 
 ## DATABASE CLIENT
 
 A *DatabaseClient* is a thin wrapper around a Prisma client. It tracks whether you are connected, de-duplicates concurrent `connect()` calls, adds timeouts and cancellation to raw queries, and converts every failure into a `DatabaseError`.
 
 You create it with `createDatabaseClient` and either a pre-built `prisma` instance or an `adapter`. With only an adapter the client constructs the `PrismaClient` for you. Passing neither throws immediately.
+
+The `prisma` option is typed `PrismaClientLike`, a structural type describing the methods the wrapper calls. A client generated by Prisma 7 satisfies it as-is, so you pass it straight in:
+
+```ts
+const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+const client = createDatabaseClient({ prisma: new PrismaClient({ adapter }) });
+```
+
+> **No cast needed.** Earlier releases declared a single generic `$transaction` signature that a generated client's overloaded `$transaction` could not match, so this call needed `prisma as unknown as PrismaClientLike`. `PrismaClientLike` now accepts the generated client; delete the cast if you have one.
+
+`createDatabaseClient` is generic in the client you pass. `createDatabaseClient({ prisma })` returns `DatabaseClient<TransactionClientOf<typeof prisma>>`, and for a generated client that transaction type is Prisma's own `Prisma.TransactionClient`, so `tx` in every transaction callback has your model delegates. See [Typed transaction clients](#typed-transactions).
 
 | Option | What it does | Default |
 | --- | --- | --- |
@@ -115,7 +143,7 @@ You create it with `createDatabaseClient` and either a pre-built `prisma` instan
 This example connects, runs a raw parameterised query with a 2-second deadline, and prints a health check.
 
 ```ts
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "./generated/prisma/client.js";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { createDatabaseClient } from "@zudojs/database";
 
@@ -139,7 +167,17 @@ console.log(await client.healthCheck());
 await client.disconnect();
 ```
 
-Every raw method accepts the same options object: `signal` (an `AbortSignal` that rejects with `DatabaseAbortError`), `timeoutMs` and `metadata` (merged into any error raised). `queryRawUnsafe` / `executeRawUnsafe` take a SQL string plus a values array; `queryRaw` / `executeRaw` take a `Prisma.sql` tagged template.
+Every raw method accepts the same options object: `signal` (an `AbortSignal` that rejects with `DatabaseAbortError`), `timeoutMs` and `metadata` (merged into any error raised). `queryRawUnsafe` / `executeRawUnsafe` take a SQL string plus a values array; `queryRaw` / `executeRaw` take a `Prisma.sql` tagged template. Their parameter is typed `PrismaSqlLike`, a structural `{ strings, values, sql }` shape that any `Prisma.sql` value satisfies, so you import `Prisma` from your generated client as usual:
+
+```ts
+import { PrismaClient, Prisma } from "./generated/prisma/client.js";
+
+const rows = await client.queryRaw<{ count: bigint }[]>(
+  Prisma.sql`SELECT COUNT(*) AS "count" FROM "User" WHERE "email" LIKE ${"%@example.com"}`,
+);
+console.log(rows[0]?.count);
+// 1n
+```
 
 > **Watch out:** `timeoutMs` is client-side. The client stops waiting, but PostgreSQL keeps running the statement. Set `statement_timeout` on the database for real cancellation.
 
@@ -164,14 +202,14 @@ The constructor takes a *delegate* (a Prisma model such as `prisma.user`, or any
 This example continues from the Quick Start and shows the soft-delete cycle.
 
 ```ts
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "./generated/prisma/client.js";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { BaseRepository, createDatabaseClient } from "@zudojs/database";
+import { BaseRepository, createDatabaseClient, type RepositoryDelegate } from "@zudojs/database";
 
 interface User { id: string; email: string; name: string; deletedAt: Date | null }
 
 class UserRepository extends BaseRepository<User> {
-  constructor(delegate: ConstructorParameters<typeof BaseRepository<User>>[0]) {
+  constructor(delegate: RepositoryDelegate<User>) {
     super(delegate, { modelName: "User", softDelete: true });
   }
 
@@ -186,7 +224,7 @@ const prisma = new PrismaClient({
 const client = createDatabaseClient({ prisma });
 await client.connect();
 
-const users = new UserRepository(prisma.user);
+const users = new UserRepository(prisma.user); // no cast since v1.3.1
 const alice = await users.create({ email: "alice@example.com", name: "Alice" });
 
 await users.softDelete(alice.id);
@@ -228,14 +266,14 @@ A *transaction* groups several writes so they either all succeed or all roll bac
 `withTransaction(client, callback)` opens a Prisma interactive transaction and passes you `tx`, a transaction-bound Prisma client. Repositories created from the root `prisma` object do *not* know about `tx`. Call `repo.withTransaction(tx)` to get a copy that does.
 
 ```ts
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "./generated/prisma/client.js";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { BaseRepository, createDatabaseClient, withTransaction } from "@zudojs/database";
+import { BaseRepository, createDatabaseClient, withTransaction, type RepositoryDelegate } from "@zudojs/database";
 
 interface User { id: string; email: string; name: string; deletedAt: Date | null }
 
 class UserRepository extends BaseRepository<User> {
-  constructor(delegate: ConstructorParameters<typeof BaseRepository<User>>[0]) {
+  constructor(delegate: RepositoryDelegate<User>) {
     super(delegate, { modelName: "User", softDelete: true });
   }
 }
@@ -246,7 +284,7 @@ const prisma = new PrismaClient({
 const client = createDatabaseClient({ prisma });
 await client.connect();
 
-const users = new UserRepository(prisma.user);
+const users = new UserRepository(prisma.user); // no cast since v1.3.1
 const alice = await users.create({ email: "alice@example.com", name: "Alice" });
 
 const renamed = await withTransaction(client, async (tx, context) => {
@@ -261,7 +299,66 @@ console.log(renamed);
 await client.disconnect();
 ```
 
-If the callback throws, Prisma rolls the transaction back and `withTransaction` rethrows a `DatabaseError` that carries `transactionId` and `transactionStatus: "failed"`. `getTransactionContextFromError(error)` recovers that context.
+### Typed transaction clients
+
+You do not need a repository to write inside a transaction. `tx` is typed from the client you passed to `createDatabaseClient`, so you can call its model delegates directly and TypeScript checks them against your schema, the same as `prisma.user`:
+
+```ts
+const bob = await client.transaction(async (tx) => {
+  const created = await tx.user.create({ data: { email: "bob@example.com", name: "Bob" } });
+  return tx.user.update({ where: { id: created.id }, data: { name: "Bob Smith" } });
+});
+console.log(bob.name, bob.createdAt instanceof Date);
+// Bob Smith true
+```
+
+No cast is involved: `bob` is the generated `User` row type, and a misspelled field in `data` is a compile error. `withTransaction`, `withTransactionRetry`, `TransactionManager`, `createUnitOfWork`, `createDatabase`, `createLockManager`, `createMigrationRunner` and `createSeedRunner` take the transaction type from the client they wrap, so their callbacks get the same `tx`. How the type is found depends on how the client was built:
+
+| You write | `tx` is |
+| --- | --- |
+| `createDatabaseClient({ prisma })`, `createDatabase({ prisma })` | Your client's transaction client (`Prisma.TransactionClient`), model delegates included. |
+| `createDatabaseClient<PrismaClient>({ adapter })` | The same, from the type argument. |
+| `createDatabaseClient({ adapter })`, `new DatabaseClient(options)`, `getDatabase()` / `connectDatabase(options)` | `DatabaseTransactionContext`: the four raw methods (`$queryRaw`, `$executeRaw`, `$queryRawUnsafe`, `$executeRawUnsafe`) and no model delegates. |
+
+With only an adapter there is no client value to read the type from, so `tx.user` is a compile error until you pass the client type:
+
+```ts
+import { PrismaClient } from "./generated/prisma/client.js";   // or "@prisma/client" with prisma-client-js
+
+const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+
+const untyped = createDatabaseClient({ adapter });
+await untyped.transaction(async (tx) => tx.user.count());
+// error TS2339: Property 'user' does not exist on type 'DatabaseTransactionContext'.
+
+const typed = createDatabaseClient<PrismaClient>({ adapter });
+await typed.transaction(async (tx) => tx.user.count());   // OK
+```
+
+`TransactionClientOf<TClient>` is the type-level helper behind this. It reads the interactive `$transaction` callback parameter of a client type and falls back to `DatabaseTransactionContext` when there is none, for example for a hand-written stub. Use it to annotate a function that takes `tx`: `async function archive(tx: TransactionClientOf<PrismaClient>, id: string)`.
+
+> **Changed in v1.4.0:** `DatabaseTransactionContext` used to be `Prisma.TransactionClient` imported from `@prisma/client`. With Prisma 7's `prisma-client` generator that import has nothing behind it, so under `skipLibCheck: false` the package's own declarations failed with TS2307 (`Cannot find module '.prisma/client/default'`) and TS2305 (`Module '"@prisma/client"' has no exported member 'Prisma'`), and under `skipLibCheck: true` every `tx` was silently `any`. `DatabaseTransactionContext` is now the structural raw-query type above and stays the default type argument everywhere, so code that annotates `tx` with it still compiles. One case needs a change: with the legacy `prisma-client-js` generator, a client built from only an adapter (or `new DatabaseClient(...)`, or `getDatabase()`) used to give `tx.user` the generated types; it now needs `createDatabaseClient<PrismaClient>({ adapter })`, or pass `prisma`.
+
+> **Writing your own transaction client:** since v1.4.0, an object you *return* as a `DatabaseTransactionContext` (for example from a hand-written adapter's `$transaction`) must implement `$queryRaw`, `$executeRaw`, `$queryRawUnsafe` and `$executeRawUnsafe`; otherwise TypeScript reports TS2739. Code that only *receives* a `tx` is unaffected. The [Learn database lesson](https://zudojs.oyinlola.site/learn/zudo-database) shows a full adapter over PGlite.
+
+If the callback throws, the transaction is rolled back and the error comes out in one of two ways. Since v1.3.0 a `@zudojs/errors` `BaseError` that is *not* a `DatabaseError` (a `NotFoundError`, `ValidationError`, `DomainError`, ...) is rethrown as the **same instance**, so its status code and message reach your HTTP layer unchanged; it is logged at debug level only. Anything else (a driver or database failure, a plain `Error`, any other thrown value) is normalised into a `DatabaseError` that carries `transactionId` and `transactionStatus: "failed"`, and `getTransactionContextFromError(error)` recovers that context. The same rule applies to `withTransactionRetry`, `client.transaction()`, `TransactionManager.run()` / `execute()` and a unit of work. `isNonDatabaseBaseError(error)` is the guard the package uses to tell the two apart.
+
+```ts
+import { NotFoundError } from "@zudojs/errors";
+
+try {
+  await withTransaction(client, async (tx) => {
+    const user = await users.withTransaction(tx).findById("missing-id");
+    if (!user) throw new NotFoundError("User not found");
+    // ...more writes, all rolled back by the throw
+  });
+} catch (error) {
+  console.log(error instanceof NotFoundError, (error as NotFoundError).statusCode);
+  // true 404
+}
+```
+
+> **Changed in v1.3.0:** before this release every error from the callback, your own included, was wrapped in a 500 `DatabaseError` (`code: "ERR_DATABASE"`, `expose: false`) with the original in `.cause`, so a `NotFoundError` thrown in a transaction surfaced as an internal server error. If you added an unwrap step for that, it is now dead code and can go.
 
 | Option | What it does |
 | --- | --- |
@@ -351,6 +448,17 @@ console.log(first.data.length, first.meta.hasNextPage, second.data.length);
 
 Page and limit are normalised for you: `NaN`, negative or missing values fall back to page 1 and limit 20, and the limit is capped at 100 (`MAX_LIMIT`). The repository always adds the id column as a tiebreaker to cursor sorts so the order is stable.
 
+Cursor pagination goes both ways. Since v1.3.0 any non-empty page requested *with* a cursor sets `meta.previousCursor`; pass it back as `cursor` to fetch the page before. Rows still come back in the requested sort order. Backward cursors carry a reserved `$before: true` marker (`KEYSET_BACKWARD_KEY`). The first page has no `previousCursor`, and a page reached by going back reports `hasPreviousPage: false` when it is the first one.
+
+```ts
+// ...continuing from above: step back from the second page
+const back = await users.paginateCursor(undefined, { cursor: second.meta.previousCursor, limit: 25, sort });
+console.log(back.data[0]?.id === first.data[0]?.id, back.meta.hasPreviousPage);
+// true false
+```
+
+A bad cursor is a client error. A missing, forged, tampered or malformed cursor makes `paginateCursor` (and `decodeCursor`, `validateCursorPayload`, `decodeKeysetCursor`) throw a `ValidationError` from `@zudojs/errors`: status 400, `expose: true`, with one issue on `cursor` whose `code` is `cursor_required`, `cursor_signature`, `cursor_malformed`, `cursor_payload` or `cursor_field`. Your HTTP layer can pass it straight through; no wrapping is needed. Messages never quote the offending field name. An invalid `cursorSecret` or sort definition is a programming error and still throws `TypeError`. (Before v1.3.0 a bad cursor was a plain `TypeError` that surfaced as a 500, and `previousCursor` was never set.)
+
 > **Watch out:** a cursor is a base64 string the browser sends back. Without a `cursorSecret` on the repository anyone can forge one. Set the secret on any repository whose cursors leave your server; they are then HMAC-signed and rejected if edited.
 
 ## MIGRATIONS AND SEEDS
@@ -360,7 +468,7 @@ A *migration* is a numbered script that changes the database structure, such as 
 Both runners take a PostgreSQL *advisory lock* (a database-wide named lock) before working, so two app instances booting at the same time never run the same script twice. Each script runs in its own transaction by default.
 
 ```ts
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "./generated/prisma/client.js";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { createDatabaseClient, createMigrationRunner, createSeedRunner } from "@zudojs/database";
 
@@ -419,7 +527,7 @@ Run the script a second time and both print `0` applied: the runners see the rec
 A *health check* is a quick "is the database reachable?" probe, usually exposed on a `/health` route so a load balancer can stop sending traffic to a broken instance. It runs `SELECT 1` with a timeout (default 5 s) and reports `degraded` when latency is above 75% of that timeout.
 
 ```ts
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "./generated/prisma/client.js";
 import { PrismaPg } from "@prisma/adapter-pg";
 import {
   assertDatabaseHealth,
@@ -449,7 +557,7 @@ await locks.withAdvisoryLock("reports:nightly", async (tx) => {
 await client.disconnect();
 ```
 
-Other health helpers: `isDatabaseHealthy(client)` returns a boolean and `checkDatabaseReadiness(client)` returns `{ ready, latencyMs, checkedAt }` for a readiness route. For scheduled checks with automatic reconnect, wrap the client in `createConnectionManager({ client, healthCheckIntervalMs: 15_000 })` and call `manager.connect()`; it emits `error` and `reconnecting` events through `manager.on(listener)`.
+Other health helpers: `isDatabaseHealthy(client)` returns a boolean and `checkDatabaseReadiness(client)` returns `{ ready, latencyMs, checkedAt }` for a readiness route. For scheduled checks with automatic reconnect, wrap the client in `createConnectionManager({ client, healthCheckIntervalMs: 15_000 })` and call `manager.connect()`; it emits `error` and `reconnecting` events through `manager.on(listener)`. The reconnect policy (`reconnect: { failureThreshold, maxAttempts, baseDelayMs, maxDelayMs }`, defaults 1, 5, 500 ms, 30 s; `false` turns it off) backs off between attempts. Since v1.3.0 that back-off wait is not `unref`'d, so a script whose only pending work is a reconnect stays alive until it finishes, and `disconnect()` / `destroy()` cancel a reconnect in progress, wait included. The scheduled health-check timer itself is still unreferenced.
 
 A *lock* stops two processes from doing the same work at once. `withAdvisoryLock(key, callback)` holds a named PostgreSQL lock for the length of a transaction. `withRowLock(table, id, callback)` locks one row with `SELECT ... FOR UPDATE` instead. `timeoutMs` becomes `SET LOCAL lock_timeout` and must be at least 1 ms — PostgreSQL treats `lock_timeout = 0` as *disabled*, so `0` throws a `TypeError`; use `noWait` to fail immediately. `skipLocked` / `noWait` control what happens when someone else holds the lock.
 
@@ -494,7 +602,7 @@ Everything below is exported from `@zudojs/database`. Internal helpers (cursor e
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| `createDatabaseClient(options)` | Builds a `DatabaseClient`. | Needs `prisma` or `adapter`. |
+| `createDatabaseClient(options)` | Builds a `DatabaseClient`. | Needs `prisma` or `adapter`. The transaction type is inferred from `prisma`; with only `adapter`, pass `<PrismaClient>` to keep model delegates on `tx`. |
 | `createDatabase`, `getDatabase`, `connectDatabase`, `disconnectDatabase`, `resetDatabase` | Manage one shared `Database` facade. | `getDatabase` throws if given options after creation. |
 | `createConnectionManager(options)` | Scheduled health checks and reconnect around a client. | Pass `client` to wrap an existing one. |
 | `withTransaction(client, cb, options?)` | Runs `cb(tx, context)` in one transaction. |  |
@@ -505,14 +613,14 @@ Everything below is exported from `@zudojs/database`. Internal helpers (cursor e
 | `toPrismaWhere(filter)`, `toPrismaArgs(state)`, `toPrismaOrderBy`, `toPrismaSelect`, `toPrismaSkipTake` | Translate filters and builder state into Prisma arguments. |  |
 | Filter helpers (`equals`, `and`, `or`, ...) | Build `QueryFilter` values. | Full list in Query Builder. |
 | `normalizePagination`, `createPaginationMeta`, `createPaginatedResult`, `paginateCollection` | Offset pagination helpers for data you already have in memory. |  |
-| `encodeCursor`, `decodeCursor`, `createKeysetPage`, `buildKeysetWhere` | Cursor pagination building blocks used by `paginateCursor`. | Pass `allowedFields` to `decodeCursor` for untrusted input. |
+| `encodeCursor`, `decodeCursor`, `createKeysetPage`, `buildKeysetWhere`, `getKeysetDirection`, `keysetFetchSort`, `reverseKeysetSort`, `createInvalidCursorError` | Cursor pagination building blocks used by `paginateCursor`. | Pass `allowedFields` to `decodeCursor` for untrusted input. `createKeysetCursor` takes an optional `direction` and `createKeysetPage` a `direction` option; `buildKeysetWhere` honours backward cursors. `createInvalidCursorError` builds the 400 `ValidationError`. |
 | `createMigrationRunner(client, migrations, options?)` | Builds a `MigrationRunner`. | PostgreSQL only. |
 | `createSeedRunner(client, seeds, options?)` | Builds a `SeedRunner`. | PostgreSQL only. |
 | `createLockManager(client)`, `acquireAdvisoryLock(tx, key)`, `lockRow(tx, table, id)` | Advisory and row locks. | PostgreSQL only. |
 | `checkDatabaseHealth`, `checkDatabaseReadiness`, `assertDatabaseHealth`, `isDatabaseHealthy` | Health probes with a timeout. | Default 5000 ms. |
 | `createDatabaseCache(options?)`, `createCacheKey(ns, ...parts)`, `getOrSet(cache, key, loader)`, `invalidateByPrefix(cache, prefix)` | Process-local LRU cache with TTL. | Not transaction-aware. |
 | `oneToOne`, `oneToMany`, `manyToOne`, `manyToMany`, `createRelationRegistry`, `includeRelation`, `toPrismaInclude` | Describe relations and validate `include` trees. | Depth-limited (default 5). |
-| `isConflictError`, `isNotFoundError`, `isRetryableTransactionError`, `getDatabaseErrorKind`, `getDatabaseErrorCode`, `toDatabaseErrorInfo`, `normalizeDatabaseError` | Inspect and convert errors. |  |
+| `isConflictError`, `isNotFoundError`, `isRetryableTransactionError`, `isNonDatabaseBaseError`, `getDatabaseErrorKind`, `getDatabaseErrorCode`, `toDatabaseErrorInfo`, `normalizeDatabaseError` | Inspect and convert errors. |  |
 
 ### Classes
 
@@ -546,13 +654,17 @@ Everything below is exported from `@zudojs/database`. Internal helpers (cursor e
 | `PaginatedResult`, `PaginationMeta`, `CursorPaginatedResult`, `CursorPaginationMeta`, `SortInput`, `QueryOptions` | Pagination shapes. |
 | `Migration`, `MigrationRecord`, `MigrationStatus`, `Seed`, `SeedRecord` | Runner inputs and outputs. |
 | `DatabaseEntity`, `SoftDeletableEntity`, `AuditableEntity` | Optional base shapes for your entity interfaces. |
-| `PrismaClientLike`, `RepositoryDelegate`, `DatabaseTransactionContext` | Structural types; a stub object satisfying them works in tests. |
+| `PrismaClientLike`, `RepositoryDelegate`, `RepositoryDelegateOperations` | Structural types; a stub object satisfying them works in tests. A Prisma 7 client generated with the `prisma-client` generator satisfies `PrismaClientLike`, and its model delegates satisfy `RepositoryDelegate`, without a cast. `RepositoryDelegateOperations` types `this.delegate` inside a repository subclass. |
+| `DatabaseTransactionContext` | The structural transaction client: `$queryRaw`, `$executeRaw`, `$queryRawUnsafe`, `$executeRawUnsafe`. The default transaction type everywhere, and what migration, seed and lock callbacks need. A hand-written transaction client must provide all four methods. |
+| `TransactionClientOf<TClient>` | The interactive transaction client of a Prisma client type (`Prisma.TransactionClient` for a generated client), or `DatabaseTransactionContext` when it cannot be read. What `createDatabaseClient({ prisma })` types `tx` with. |
+| `PrismaSqlLike` | `{ strings, values, sql }`, the parameter of `queryRaw` / `executeRaw`. Any `Prisma.sql` value satisfies it. |
 | `DatabaseLogger`, `noopDatabaseLogger` | Logger interface and a silent implementation. |
 | `DEFAULT_PAGE` (1), `DEFAULT_LIMIT` (20), `MAX_LIMIT` (100), `DEFAULT_HEALTH_TIMEOUT_MS` (5000), `DEFAULT_MIGRATION_TABLE`, `DEFAULT_SEED_TABLE`, `SUPPORTED_ISOLATION_LEVELS` | Constants. |
 
 ## COMMON MISTAKES
 
 - **Creating a client with no `prisma` and no `adapter`.** `createDatabaseClient({})` throws `DatabaseError: DatabaseClient requires either a pre-built prisma client or a Prisma driver adapter`. Pass one of them.
+- **Calling `tx.user` on a client built from only an adapter.** `createDatabaseClient({ adapter })` has no client value to read the transaction type from, so `tx` is `DatabaseTransactionContext` and TypeScript reports `Property 'user' does not exist on type 'DatabaseTransactionContext'`. Pass the client type, `createDatabaseClient<PrismaClient>({ adapter })`, or pass `prisma`.
 - **Using the root repository inside a transaction.** `users.update(...)` inside `withTransaction` runs on the normal connection and is not rolled back with the rest. Call `users.withTransaction(tx)` and use that copy.
 - **Wrong `modelName` for the Prisma model.** `withTransaction(tx)` looks up `tx.user` from `modelName: "User"`. If your model is `UserAccount`, set `modelName: "UserAccount"` or pass `delegateKey: "userAccount"`, otherwise it throws `Transaction client has no "user" delegate`.
 - **Passing `getDatabase(options)` twice.** The second call throws a `TypeError` because the shared instance already exists. Configure it once at startup with `connectDatabase(options)`; everywhere else call `getDatabase()` with no arguments.
@@ -569,26 +681,26 @@ Everything below is exported from `@zudojs/database`. Internal helpers (cursor e
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/database` exports from its package root at v1.2.1 — **275** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/database` exports from its package root at v1.4.0 — **286** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 275 exports**
+**Show all 286 exports**
 
 Classes (15)
 
 `BaseRepository` `Database` `DatabaseAbortError` `DatabaseClient` `DatabaseConnectionManager` `DatabaseLockManager` `DatabaseUnhealthyError` `DatabaseUnitOfWork` `MemoryDatabaseCache` `MigrationRunner` `QueryBuilder` `RelationRegistry` `SeedRunner` `TransactionManager` `UnsupportedDialectError`
 
-Functions (147)
+Functions (152)
 
-`acquireAdvisoryLock` `allOf` `and` `anyOf` `assertDatabaseHealth` `between` `buildKeysetWhere` `buildLockClause` `buildPrismaTransactionOptions` `calculateOffset` `calculateTotalPages` `checkDatabaseHealth` `checkDatabaseReadiness` `cloneFilter` `condition` `connectDatabase` `contains` `createAbortError` `createCacheKey` `createConnectionManager` `createCursorPaginatedResult` `createCursorPaginationMeta` `createDatabase` `createDatabaseCache` `createDatabaseClient` `createKeysetCursor` `createKeysetPage` `createLockManager` `createMigrationRunner` `createPaginatedResult` `createPaginationMeta` `createQueryBuilder` `createRelationRegistry` `createSeedRunner` `createTransactionContext` `createTransactionId` `createTransactionManager` `createUnitOfWork` `dateOnly` `dateRange` `decodeCursor` `decodeKeysetCursor` `disconnectDatabase` `encodeCursor` `endsWith` `equals` `escapeCachePart` `executeUnitOfWork` `flattenAnd` `fnv1a64` `fromObject` `getCurrentVersion` `getDatabase` `getDatabaseErrorCode` `getDatabaseErrorKind` `getHealthCheckCause` `getItemRange` `getLatestVersion` `getNextPage` `getOrSet` `getPreviousPage` `getSqlDialect` `getTransactionContextFromError` `greaterThan` `greaterThanOrEqual` `hasConditions` `hashLockKey` `includeRelation` `includeRelations` `inList` `invalidateByPrefix` `isAfter` `isBefore` `isBetween` `isCollectionRelation` `isConflictError` `isDatabaseErrorLike` `isDatabaseHealthy` `isEmpty` `isNotEmpty` `isNotFoundError` `isNotNull` `isNull` `isPrismaError` `isPrismaErrorLike` `isRelationType` `isRetryableTransactionError` `isSingleRelation` `isSqlDialectName` `isTransactionActive` `isTransactionCommitted` `isTransactionFailed` `isValidPage` `lessThan` `lessThanOrEqual` `lockRow` `manyToMany` `manyToOne` `mapRepositoryError` `matchesPattern` `noneOf` `normalizeAdvisoryKey` `normalizeAdvisoryKeyPair` `normalizeCursorPagination` `normalizeDatabaseError` `normalizeLimit` `normalizeMigrations` `normalizePage` `normalizePagination` `normalizeSeeds` `not` `notCondition` `notEquals` `notInList` `oneOf` `oneToMany` `oneToOne` `optionalContains` `optionalEquals` `or` `paginateCollection` `quoteIdentifier` `raceAbort` `relational` `resetDatabase` `resolveLockTransactionOptions` `serializeCachePart` `startsWith` `throwIfAborted` `toDatabaseErrorInfo` `toDatabaseOperation` `toPrismaArgs` `toPrismaInclude` `toPrismaOrderBy` `toPrismaSelect` `toPrismaSkipTake` `toPrismaWhere` `validateCursorPayload` `validateIdentifier` `validateInclude` `validateLockKey` `validateMigration` `validateRelation` `validateSeed` `withDatabaseErrorMetadata` `withTransaction` `withTransactionRetry`
+`acquireAdvisoryLock` `allOf` `and` `anyOf` `assertDatabaseHealth` `between` `buildKeysetWhere` `buildLockClause` `buildPrismaTransactionOptions` `calculateOffset` `calculateTotalPages` `checkDatabaseHealth` `checkDatabaseReadiness` `cloneFilter` `condition` `connectDatabase` `contains` `createAbortError` `createCacheKey` `createConnectionManager` `createCursorPaginatedResult` `createCursorPaginationMeta` `createDatabase` `createDatabaseCache` `createDatabaseClient` `createInvalidCursorError` `createKeysetCursor` `createKeysetPage` `createLockManager` `createMigrationRunner` `createPaginatedResult` `createPaginationMeta` `createQueryBuilder` `createRelationRegistry` `createSeedRunner` `createTransactionContext` `createTransactionId` `createTransactionManager` `createUnitOfWork` `dateOnly` `dateRange` `decodeCursor` `decodeKeysetCursor` `disconnectDatabase` `encodeCursor` `endsWith` `equals` `escapeCachePart` `executeUnitOfWork` `flattenAnd` `fnv1a64` `fromObject` `getCurrentVersion` `getDatabase` `getDatabaseErrorCode` `getDatabaseErrorKind` `getHealthCheckCause` `getItemRange` `getKeysetDirection` `getLatestVersion` `getNextPage` `getOrSet` `getPreviousPage` `getSqlDialect` `getTransactionContextFromError` `greaterThan` `greaterThanOrEqual` `hasConditions` `hashLockKey` `includeRelation` `includeRelations` `inList` `invalidateByPrefix` `isAfter` `isBefore` `isBetween` `isCollectionRelation` `isConflictError` `isDatabaseErrorLike` `isDatabaseHealthy` `isEmpty` `isNonDatabaseBaseError` `isNotEmpty` `isNotFoundError` `isNotNull` `isNull` `isPrismaError` `isPrismaErrorLike` `isRelationType` `isRetryableTransactionError` `isSingleRelation` `isSqlDialectName` `isTransactionActive` `isTransactionCommitted` `isTransactionFailed` `isValidPage` `keysetFetchSort` `lessThan` `lessThanOrEqual` `lockRow` `manyToMany` `manyToOne` `mapRepositoryError` `matchesPattern` `noneOf` `normalizeAdvisoryKey` `normalizeAdvisoryKeyPair` `normalizeCursorPagination` `normalizeDatabaseError` `normalizeLimit` `normalizeMigrations` `normalizePage` `normalizePagination` `normalizeSeeds` `not` `notCondition` `notEquals` `notInList` `oneOf` `oneToMany` `oneToOne` `optionalContains` `optionalEquals` `or` `paginateCollection` `quoteIdentifier` `raceAbort` `relational` `resetDatabase` `resolveLockTransactionOptions` `reverseKeysetSort` `serializeCachePart` `startsWith` `throwIfAborted` `toDatabaseErrorInfo` `toDatabaseOperation` `toPrismaArgs` `toPrismaInclude` `toPrismaOrderBy` `toPrismaSelect` `toPrismaSkipTake` `toPrismaWhere` `validateCursorPayload` `validateIdentifier` `validateInclude` `validateLockKey` `validateMigration` `validateRelation` `validateSeed` `withDatabaseErrorMetadata` `withTransaction` `withTransactionRetry`
 
-Interfaces (73)
+Interfaces (75)
 
-`AuditableEntity` `BaseRepositoryOptions` `CacheEntry` `CacheOptions` `CacheStats` `CursorPaginatedResult` `CursorPaginationInput` `CursorPaginationMeta` `CursorQueryOptions` `DatabaseCache` `DatabaseClientHealth` `DatabaseClientOptions` `DatabaseConnectionEventDetails` `DatabaseConnectionManagerOptions` `DatabaseConnectionOptions` `DatabaseEntity` `DatabaseErrorInfo` `DatabaseHealthOptions` `DatabaseLockOptions` `DatabaseLockResult` `DatabaseLogger` `DatabaseOperationOptions` `DatabaseReadiness` `DatabaseReconnectOptions` `DecodeCursorOptions` `EncodeCursorOptions` `KeysetPageOptions` `ManagedTransactionOptions` `MemoryCacheOptions` `Migration` `MigrationRecord` `MigrationResult` `MigrationRunnerOptions` `MigrationStatus` `NormalizeDatabaseErrorOptions` `NormalizedPagination` `PaginatedResult` `PaginationInput` `PaginationMeta` `PrismaClientLike` `PrismaDriverAdapterLike` `PrismaErrorLike` `PrismaQueryArgs` `PrismaQueryEvent` `PrismaTransactionOptions` `QueryBuilderState` `QueryCondition` `QueryFilter` `QueryOptions` `RelationDefinition` `RelationInclude` `RelationLoadOptions` `Repository` `RepositoryDelegate` `RepositoryErrorContext` `Seed` `SeedRecord` `SeedResult` `SeedRunnerOptions` `SeedStatus` `SoftDeletableEntity` `SoftDeletableRepository` `SoftDeleteOptions` `SortInput` `SqlDialect` `ToPrismaArgsOptions` `ToPrismaIncludeOptions` `TransactionContext` `TransactionOptions` `TransactionOutcome` `TransactionRetryOptions` `UnitOfWork` `UnitOfWorkOptions`
+`AuditableEntity` `BaseRepositoryOptions` `CacheEntry` `CacheOptions` `CacheStats` `CursorPaginatedResult` `CursorPaginationInput` `CursorPaginationMeta` `CursorQueryOptions` `DatabaseCache` `DatabaseClientHealth` `DatabaseClientOptions` `DatabaseConnectionEventDetails` `DatabaseConnectionManagerOptions` `DatabaseConnectionOptions` `DatabaseEntity` `DatabaseErrorInfo` `DatabaseHealthOptions` `DatabaseLockOptions` `DatabaseLockResult` `DatabaseLogger` `DatabaseOperationOptions` `DatabaseReadiness` `DatabaseReconnectOptions` `DecodeCursorOptions` `EncodeCursorOptions` `KeysetPageOptions` `ManagedTransactionOptions` `MemoryCacheOptions` `Migration` `MigrationRecord` `MigrationResult` `MigrationRunnerOptions` `MigrationStatus` `NormalizeDatabaseErrorOptions` `NormalizedPagination` `PaginatedResult` `PaginationInput` `PaginationMeta` `PrismaClientLike` `PrismaDriverAdapterLike` `PrismaErrorLike` `PrismaQueryArgs` `PrismaQueryEvent` `PrismaSqlLike` `PrismaTransactionOptions` `QueryBuilderState` `QueryCondition` `QueryFilter` `QueryOptions` `RelationDefinition` `RelationInclude` `RelationLoadOptions` `Repository` `RepositoryDelegate` `RepositoryDelegateOperations` `RepositoryErrorContext` `Seed` `SeedRecord` `SeedResult` `SeedRunnerOptions` `SeedStatus` `SoftDeletableEntity` `SoftDeletableRepository` `SoftDeleteOptions` `SortInput` `SqlDialect` `ToPrismaArgsOptions` `ToPrismaIncludeOptions` `TransactionContext` `TransactionOptions` `TransactionOutcome` `TransactionRetryOptions` `UnitOfWork` `UnitOfWorkOptions`
 
-Type aliases (25)
+Type aliases (28)
 
-`CursorPayload` `DatabaseConnectionEvent` `DatabaseConnectionListener` `DatabaseErrorKind` `DatabaseHealth` `DatabaseHealthInfo` `DatabaseHealthStatus` `DatabaseLockMode` `DatabaseOperation` `DatabaseStatus` `DatabaseTransactionContext` `KeysetWhere` `PrismaWhere` `QueryOperator` `RawQueryOptions` `RelationOperator` `RelationType` `RepositoryOperation` `RunnerTransactionOptions` `SortDirection` `SqlDialectName` `TransactionCallback` `TransactionClientLike` `TransactionIsolationLevel` `TransactionStatus`
+`CursorPayload` `DatabaseConnectionEvent` `DatabaseConnectionListener` `DatabaseErrorKind` `DatabaseHealth` `DatabaseHealthInfo` `DatabaseHealthStatus` `DatabaseLockMode` `DatabaseOperation` `DatabaseStatus` `DatabaseTransactionContext` `InvalidCursorReason` `KeysetDirection` `KeysetWhere` `PrismaWhere` `QueryOperator` `RawQueryOptions` `RelationOperator` `RelationType` `RepositoryOperation` `RunnerTransactionOptions` `SortDirection` `SqlDialectName` `TransactionCallback` `TransactionClientLike` `TransactionClientOf` `TransactionIsolationLevel` `TransactionStatus`
 
-Constants (15)
+Constants (16)
 
-`CACHE_KEY_SEPARATOR` `DEFAULT_HEALTH_TIMEOUT_MS` `DEFAULT_INCLUDE_DEPTH` `DEFAULT_LIMIT` `DEFAULT_MIGRATION_LOCK` `DEFAULT_MIGRATION_TABLE` `DEFAULT_PAGE` `DEFAULT_SEED_LOCK` `DEFAULT_SEED_TABLE` `DEFAULT_SQL_DIALECT` `MAX_LIMIT` `noopDatabaseLogger` `RETRYABLE_DATABASE_CODES` `SQL_IDENTIFIER_PATTERN` `SUPPORTED_ISOLATION_LEVELS`
+`CACHE_KEY_SEPARATOR` `DEFAULT_HEALTH_TIMEOUT_MS` `DEFAULT_INCLUDE_DEPTH` `DEFAULT_LIMIT` `DEFAULT_MIGRATION_LOCK` `DEFAULT_MIGRATION_TABLE` `DEFAULT_PAGE` `DEFAULT_SEED_LOCK` `DEFAULT_SEED_TABLE` `DEFAULT_SQL_DIALECT` `KEYSET_BACKWARD_KEY` `MAX_LIMIT` `noopDatabaseLogger` `RETRYABLE_DATABASE_CODES` `SQL_IDENTIFIER_PATTERN` `SUPPORTED_ISOLATION_LEVELS`

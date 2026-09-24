@@ -1,32 +1,30 @@
 ---
 title: "Set up your computer"
-description: "Install Node.js, run your first JavaScript file, and learn the two places you will run code in this course."
+description: "Install Node.js, try JavaScript in the Node.js REPL, write and run your first program, and turn its folder into a project."
 source: https://zudojs.oyinlola.site/learn/setup
 ---
 
-LESSON 1 OF 10
+LESSON 5 OF 84
 
-JavaScript for the backend
+Start here Foundation
 
 # Set up your computer
 
-Install Node.js, run your first JavaScript file, and learn the two places you will run code in this course.
+Install Node.js, try JavaScript in the Node.js REPL, write and run your first program, and turn its folder into a project.
 
-- **15 min** to read and try
-- **You need:** A computer where you can install programs
-- **You build:** A hello-zudo folder with your first program
+- **30 min** to read and try
+- **You need:** Lessons 1 to 4, and a computer where you can install programs
+- **You build:** A hello-zudo project folder with your first program
 
-## What a backend is
+  [Test yourself](#test)
 
-When you open an app on your phone and see your tasks, the tasks are not stored on the phone. The app asks another computer for them, and that computer answers. The program on that other computer is the **backend**.
+## What is JavaScript?
 
-A backend receives requests, checks them, reads and writes data, and sends answers back. In this course you will write one in JavaScript, then TypeScript, using ZudoJS.
+**JavaScript** is a programming language. It was made in 1995 to make web pages react to clicks, and today it runs almost everywhere: in every browser, on servers, in phone apps and in tools you use every day.
 
-JavaScript started inside web browsers. **Node.js** is a program that runs JavaScript outside the browser, on a server or on your own computer. ZudoJS needs Node.js 24 or newer.
+In [How programs run](https://zudojs.oyinlola.site/learn/how-programs-run) you saw that a language needs an engine and a runtime around it. In the browser, the browser is the runtime. On your computer and on servers, the runtime is **Node.js**. Node.js is what turns JavaScript into a language for backends, and ZudoJS needs Node.js 24 or newer.
 
-## Two places to run code
-
-Every example in this course has a **Run in browser** button. Press it on the example below. A terminal opens at the bottom of the page, runs the code, and prints the result.
+You can already run JavaScript on these pages. Press **Run in browser**:
 
 hello.js
 
@@ -40,32 +38,18 @@ Output of `node hello.js` and of the browser terminal
 Hello from Node.js!
 ```
 
-`console.log` prints whatever you give it. It is the first tool every JavaScript developer reaches for when they want to see what their code is doing.
-
-The browser terminal is for trying things quickly. The real backend will run on your computer, so the rest of this lesson installs Node.js there.
-
-> NOTE
->
-> In the browser terminal you can change the code and press **Run** again, or press Ctrl + Enter. Try changing the message.
-
-## Open a terminal
-
-A terminal is a window where you type commands instead of clicking. Backend developers use it all day.
-
-- **Windows:** press the Start button, type `PowerShell`, and open **Windows PowerShell**.
-- **macOS:** press Cmd + Space, type `Terminal`, and press Enter.
-- **Linux:** press Ctrl + Alt + T on most desktops.
-
-In this course, a line that starts with `$` is a command for you to type. Type everything after the `$`, then press Enter. The lines under it are what the computer prints back.
+`console.log` prints whatever you give it. It is the first tool every JavaScript developer reaches for when they want to see what their code is doing. The browser terminal is for trying things quickly. The real backend will run on your computer, so the rest of this lesson installs Node.js there.
 
 ## Install Node.js
+
+Open a terminal first. If you are not sure how, [Your developer environment](https://zudojs.oyinlola.site/learn/dev-environment#terminal) shows you on Windows, macOS and Linux.
 
 1. Go to [nodejs.org/en/download](https://nodejs.org/en/download).
 2. Download the **LTS** version for your system. LTS means long-term support: the stable version most companies run. It must be version 24 or newer.
 3. Run the installer and accept the defaults.
 4. Close your terminal and open a new one, so it finds the new program.
 
-Now check that it worked:
+Now check that it worked. `--version` asks a program which version it is:
 
 Terminal on your computer
 
@@ -76,15 +60,49 @@ $ npm --version
 11.19.0
 ```
 
-Your numbers can be higher. What matters is that `node --version` starts with `v24` or more. `npm` comes with Node.js. It installs packages, which are pieces of code other people published, such as ZudoJS.
+Your numbers can be higher. What matters is that `node --version` starts with `v24` or more. `npm` comes with Node.js. It installs **packages**, which are pieces of code other people published, such as ZudoJS.
 
 > WATCH OUT
 >
-> If your terminal says `command not found` or `is not recognized`, close every terminal window and open a new one. If it still fails, restart your computer: the installer adds Node.js to your system's search path, and some systems only pick that up after a restart.
+> If your terminal says `command not found` or `is not recognized`, close every terminal window and open a new one. If it still fails, restart your computer: the installer adds Node.js to your system's PATH, the list of folders where the shell looks for programs, and some systems only pick that up after a restart.
+
+## Try JavaScript in the REPL
+
+Type `node` on its own and press Enter. Node.js starts the **REPL**: Read, Evaluate, Print, Loop. It reads one line of JavaScript, runs it, prints the result, and waits for the next. The prompt changes to `>`. Here is a real session:
+
+Terminal on your computer
+
+```bash
+$ node
+Welcome to Node.js v24.19.0.
+Type ".help" for more information.
+> 1 + 2
+3
+> 10 * 3 - 4
+26
+> "Buy " + "milk"
+'Buy milk'
+> const tasks = ["Buy milk", "Write report"]
+undefined
+> tasks.length
+2
+> console.log("Hello from the REPL")
+Hello from the REPL
+undefined
+> .exit
+```
+
+- Each line after `>` is what was typed. The line under it is the result.
+- `'Buy milk'` is text, so the REPL shows it in quotes.
+- `const tasks = …` stores a list under the name `tasks`. Storing a value produces no result, so the REPL prints `undefined`, which means "no value". The next line uses the stored list: it has 2 items.
+- `console.log` printed its text, then the REPL printed `undefined` because `console.log` itself gives back no value.
+- `.exit` leaves the REPL. Pressing Ctrl + C twice, or Ctrl + D, does the same.
+
+The REPL is great for a quick question, like "what does this give?". Everything you type is lost when you leave it. For real programs, you write files.
 
 ## Run your first program on your computer
 
-Make a folder for the course and go into it. `mkdir` makes a folder and `cd` moves into it:
+Make a folder for the course and go into it:
 
 Terminal on your computer
 
@@ -93,7 +111,7 @@ $ mkdir hello-zudo
 $ cd hello-zudo
 ```
 
-Open the folder in your editor. In VS Code you can type `code .` in the terminal. Create a file called `hello.js` with the same line as before:
+Open the folder in your editor with `code .`, or with **File → Open Folder**. Create a file called `hello.js` with the same line as before:
 
 hello.jsNode.js only
 
@@ -101,7 +119,7 @@ hello.jsNode.js only
 console.log("Hello from Node.js!");
 ```
 
-Save it, then run it with Node.js:
+Save it, then give the file to Node.js:
 
 Terminal on your computer
 
@@ -109,6 +127,8 @@ Terminal on your computer
 $ node hello.js
 Hello from Node.js!
 ```
+
+`node hello.js` means "run the file `hello.js` in the current folder". If the file is in another folder, give its path, such as `node src/app.js`. When you change the file, save it and run the same command again. Press Up to get the command back.
 
 You just ran JavaScript outside a browser. That is all a backend is at the start: a JavaScript file that Node.js runs.
 
@@ -120,7 +140,7 @@ Terminal on your computer
 
 ```bash
 $ npm init -y
-Wrote to /home/you/hello-zudo/package.json:
+Wrote to ~/hello-zudo/package.json:
 
 {
   "name": "hello-zudo",
@@ -137,7 +157,7 @@ Wrote to /home/you/hello-zudo/package.json:
 }
 ```
 
-Look at the last line: `"type": "commonjs"`. JavaScript has two ways of splitting code into files. **CommonJS** is the old one. **ES modules** are the modern one, and every ZudoJS package uses them. Switch the project over now:
+On your computer the first line shows the full path of your folder. Look at the last line of the file: `"type": "commonjs"`. JavaScript has two ways of splitting code into files. **CommonJS** is the old one. **ES modules** are the modern one, and every ZudoJS package uses them. Switch the project over now:
 
 Terminal on your computer
 
@@ -145,7 +165,123 @@ Terminal on your computer
 $ npm pkg set type=module
 ```
 
-That command prints nothing when it works. Open `package.json` and the last line now says `"type": "module"`. You will learn what modules are in lesson 5.
+That command prints nothing when it works. Open `package.json` and the last line now says `"type": "module"`. You will learn what modules are in the [lesson on modules](https://zudojs.oyinlola.site/learn/js-modules). Every project in this course starts with these two commands.
+
+## Statements and comments
+
+A program is a list of **statements**, instructions that run one after another from top to bottom. Each statement usually sits on its own line and ends with a semicolon (`;`).
+
+A **comment** is a note for people. Node.js skips it completely. `//` starts a comment that runs to the end of the line. `/*` and `*/` wrap a comment over several lines. Create `tasks.js`:
+
+tasks.js
+
+```ts
+// This program prints a short task list.
+// Node.js skips every line that starts with two slashes.
+
+console.log("My tasks for today:");
+console.log("- Buy milk"); // a comment can also end a line
+console.log("- Write report");
+
+/*
+  A comment can span several lines.
+  It is a good place to explain why the code is written this way.
+*/
+console.log("Tasks:", 2, "Done:", 0);
+```
+
+Output of `node tasks.js` and of the browser terminal
+
+```ts
+My tasks for today:
+- Buy milk
+- Write report
+Tasks: 2 Done: 0
+```
+
+Four `console.log` statements ran, so four lines were printed. None of the comments appear in the output. The last line shows that `console.log` can take several values separated by commas: it prints them on one line with a space between them. Text goes in quotes; numbers do not.
+
+Run it on your computer with `node tasks.js` and you see the same four lines.
+
+> TIP
+>
+> Write comments that explain *why*, not *what*. `// print the tasks` above `console.log(tasks)` tells the reader nothing new.
+
+## Your first errors
+
+Everybody types mistakes. The trick is to read what Node.js tells you. Here are the two you will meet first.
+
+### A missing quote
+
+This `typo.js` forgets the closing `"`:
+
+typo.js
+
+```ts
+console.log("Hello from Node.js!);
+```
+
+Terminal on your computer
+
+```bash
+$ node typo.js
+file://~/hello-zudo/typo.js:1
+console.log("Hello from Node.js!);
+            ^^^^^^^^^^^^^^^^^^^^^^
+
+SyntaxError: Invalid or unexpected token
+    at compileSourceTextModule (node:internal/modules/esm/utils:318:16)
+…
+
+Node.js v24.19.0
+```
+
+This is a **syntax error**, as you saw in [How programs run](https://zudojs.oyinlola.site/learn/how-programs-run#errors): the file breaks JavaScript's grammar, so nothing in it runs. The first line points at the file and the line number (`typo.js:1`). The `^^^` marks start at the unclosed text. "Unexpected token" means "I found something here that does not belong". On your computer the first line shows the full path.
+
+### A capital letter
+
+JavaScript is **case-sensitive**: `console` and `Console` are different names. This one is not a grammar mistake, so the file starts, and then fails at that line:
+
+capital.js
+
+```ts
+Console.log("Hello from Node.js!");
+```
+
+Terminal on your computer
+
+```bash
+$ node capital.js
+file://~/hello-zudo/capital.js:1
+Console.log("Hello from Node.js!");
+^
+
+ReferenceError: Console is not defined
+    at file://~/hello-zudo/capital.js:1:1
+…
+
+Node.js v24.19.0
+```
+
+`ReferenceError` means "you used a name that does not exist". The fix is a small `c`. You can see the error's name and message without the crash by catching it:
+
+catch-typo.js
+
+```ts
+try {
+  Console.log("Hello from Node.js!");
+} catch (error) {
+  console.log(error.name + ":", error.message);
+}
+```
+
+Output of `node catch-typo.js` and of the browser terminal
+
+```ts
+ReferenceError: Console is not defined
+```
+
+When you get an error, read three things: the **file and line** at the top, the **error name** (`SyntaxError`, `ReferenceError`, `TypeError`), and the **message** after it. Skip the `at node:internal…` lines: they are inside Node.js, not your code.
 
 ## Practice
 
@@ -153,7 +289,7 @@ TRY IT YOURSELF
 
 ### Print three lines
 
-Change `hello.js` so it prints your name, what you want to build, and the number of lessons in this course (10). Run it in the browser, then on your computer.
+Change `hello.js` so it prints your name, what you want to build, and the number of lessons in this course (84). Run it in the browser, then on your computer.
 
 **Show a solution**
 
@@ -162,7 +298,7 @@ about-me.js
 ```ts
 console.log("My name is Ada");
 console.log("I want to build a task API");
-console.log("Lessons in this course:", 10);
+console.log("Lessons in this course:", 84);
 ```
 
 Output of `node about-me.js` and of the browser terminal
@@ -170,15 +306,77 @@ Output of `node about-me.js` and of the browser terminal
 ```ts
 My name is Ada
 I want to build a task API
-Lessons in this course: 10
+Lessons in this course: 84
 ```
 
 `console.log` can take several values separated by commas. It prints them on one line with a space between them.
 
+TRY IT YOURSELF
+
+### Use the REPL as a calculator
+
+Start `node` and work out how many minutes there are in a week (7 days of 24 hours of 60 minutes). Then leave the REPL. Do the same in a file, with `console.log`.
+
+**Show a solution**
+
+In the REPL, type `7 * 24 * 60` and press Enter, then `.exit`. In a file:
+
+week.js
+
+```ts
+console.log("Minutes in a week:", 7 * 24 * 60);
+```
+
+Output of `node week.js` and of the browser terminal
+
+```ts
+Minutes in a week: 10080
+```
+
+TRY IT YOURSELF
+
+### Fix three mistakes
+
+This program has three mistakes. Run it, read each error, fix it, and run it again until it prints both lines.
+
+broken-list.js
+
+```ts
+console.log("Shopping list:);
+Console.log("- Bread");
+console.log("- Milk"
+```
+
+**Show a solution**
+
+fixed-list.js
+
+```ts
+console.log("Shopping list:");
+console.log("- Bread");
+console.log("- Milk");
+```
+
+Output of `node fixed-list.js` and of the browser terminal
+
+```ts
+Shopping list:
+- Bread
+- Milk
+```
+
+Line 1 was missing a `"`. Line 3 was missing a `)`, and the `;` is good style. Both are syntax errors, so Node.js reports one of them first and runs nothing. Line 2 used `Console` with a capital C, a `ReferenceError` you only see once the syntax errors are fixed.
+
 ## Recap
 
-- A backend is a program on another computer that answers requests. Node.js runs JavaScript there.
-- The browser terminal on these pages runs examples instantly. Your computer is where the real project lives.
-- `node file.js` runs a file. `npm init -y` creates `package.json`, and `npm pkg set type=module` switches it to ES modules.
+- JavaScript is the language; Node.js is the runtime that runs it on your computer and on servers. You need Node.js 24 or newer: check with `node --version`.
+- `node` alone opens the REPL for quick experiments. `node file.js` runs a file.
+- `npm init -y` creates `package.json`, and `npm pkg set type=module` switches it to ES modules.
+- A program is statements run top to bottom. Comments (`//` and `/* */`) are notes for people.
+- Read errors in three parts: file and line, error name, message.
 
-Next you will learn the building blocks of every program: values, variables and functions.
+Next you will learn the building blocks of every program: values and variables.
+
+## Test yourself
+
+Five questions, picked at random from this lesson's question bank. Some ask you to choose an answer, some to predict what code prints, and some to write code and run it in the terminal. Get 4 of 5 right to pass. If you don't, read the explanations and try again: you get 5 different questions.

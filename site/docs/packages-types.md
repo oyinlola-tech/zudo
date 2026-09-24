@@ -4,7 +4,7 @@ description: "@zudojs/types docs: type guards (isPlainObject, isDate, isEmail), 
 source: https://zudojs.oyinlola.site/docs/packages-types
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/types
 
@@ -293,6 +293,30 @@ null
 
 > **Watch out:** the object `mapToObject` returns has a *null prototype* — that is the `null` on the second line above. Your keys are all there, but inherited methods are not, so `asObject.hasOwnProperty(k)` throws. Use `Object.hasOwn(asObject, k)` instead. The reason is that a `__proto__` key coming from request data must not be able to replace the result's prototype.
 
+### Counting words
+
+`formatCount(count, singular, plural?)` (new in 1.2.0) puts a number in front of the right form of a word: the singular for exactly 1 (or -1), the plural for everything else, including 0. It exists so messages never say "1 characters". When you leave out `plural`, it adds an `s`; pass it for irregular words.
+
+```ts
+import { formatCount } from "@zudojs/types";
+
+console.log(formatCount(1, "file"));
+console.log(formatCount(3, "file"));
+console.log(formatCount(0, "item"));
+console.log(formatCount(2, "entry", "entries"));
+```
+
+What you should see:
+
+```ts
+1 file
+3 files
+0 items
+2 entries
+```
+
+The `@zudojs/schema` and `@zudojs/validation` length and count messages are built with it ("at least 1 character", "at least 1 item").
+
 ## CASE CONVERSION
 
 Databases usually name columns `created_at`, JavaScript names properties `createdAt`, and CSS names classes `primary-button`. These four functions translate between those conventions.
@@ -473,6 +497,7 @@ Everything below is exported from `@zudojs/types`.
 | `toArray(value)` | Wraps a non-array in an array | An existing array is returned unchanged |
 | `mapToObject(map)` | Turns a `Map` into a plain object | Result has a null prototype; use `Object.hasOwn` |
 | `objectToMap(obj)` | Turns an object into a `Map` | Own enumerable keys only |
+| `formatCount(count, singular, plural?)` | Formats a count with the matching word form, e.g. `"1 file"`, `"3 files"` | Singular only for 1 and -1. `plural` defaults to `singular + "s"`. See [Counting words](#counting-words) |
 | `snakeToCamel(str)` | `user_name` → `userName` |  |
 | `camelToSnake(str)` | `createdAt` → `created_at` | Handles leading capitals and acronyms; Unicode-aware, keeps punctuation |
 | `kebabToCamel(str)` | `get-user-data` → `getUserData` |  |
@@ -539,17 +564,17 @@ Everything below is exported from `@zudojs/types`.
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/types` exports from its package root at v1.1.1 — **61** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/types` exports from its package root at v1.2.0 — **62** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 61 exports**
+**Show all 62 exports**
 
 Classes (2)
 
 `FixedClock` `SeededRandom`
 
-Functions (30)
+Functions (31)
 
-`camelToKebab` `camelToSnake` `defineSecureRandom` `isArrayOfType` `isDate` `isDefined` `isEmail` `isFiniteNumber` `isFunction` `isInteger` `isIsoDateString` `isIsoDateTimeString` `isNonEmptyString` `isNonNullObject` `isPlainObject` `isPositiveNumber` `isPromise` `isThenable` `isUrl` `isUuid` `isUuidV4` `kebabToCamel` `mapToObject` `objectToMap` `safeJsonParse` `snakeToCamel` `toArray` `toBoolean` `toNumber` `toString`
+`camelToKebab` `camelToSnake` `defineSecureRandom` `formatCount` `isArrayOfType` `isDate` `isDefined` `isEmail` `isFiniteNumber` `isFunction` `isInteger` `isIsoDateString` `isIsoDateTimeString` `isNonEmptyString` `isNonNullObject` `isPlainObject` `isPositiveNumber` `isPromise` `isThenable` `isUrl` `isUuid` `isUuidV4` `kebabToCamel` `mapToObject` `objectToMap` `safeJsonParse` `snakeToCamel` `toArray` `toBoolean` `toNumber` `toString`
 
 Interfaces (4)
 

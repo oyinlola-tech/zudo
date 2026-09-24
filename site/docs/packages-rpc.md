@@ -4,7 +4,7 @@ description: "@zudojs/rpc docs for ZudoJS: typed procedures, middleware, retries
 source: https://zudojs.oyinlola.site/docs/packages-rpc
 ---
 
-v1.3.0
+v1.4.0
 
 # @zudojs/rpc
 
@@ -158,6 +158,7 @@ const user = await client.call("users.getUser", { id: "123" });
 
 - `auth` — the identity the server sees as `context.auth`: a fixed value, or a function of the request. In memory, your own code is the one vouching for it.
 - `serializer` — how frames are copied. Pass another serializer to match a remote transport, or `false` to hand frames over by reference.
+- When the caller aborts (its signal fires, or the call times out), the transport passes that signal to the server, so the handler's `context.signal` aborts and the server stops the work too.
 - After `client.close()` every send fails with `RPCUnavailableError`.
 
 ### Writing your own
@@ -230,6 +231,8 @@ console.log(total);
 - It accepts only `POST` with a JSON content type, and reads at most `maxBodyBytes` (default `DEFAULT_RPC_HTTP_MAX_BODY_BYTES`, 1 MiB plus 64 KiB for the envelope) without buffering more.
 - Every reply is an RPC frame, even for a bad HTTP request (wrong method, wrong content type, oversized or invalid body). A caller never gets an HTML error page.
 - An `auth` hook that throws `RPCAuthenticationError` refuses the call. Anything else it throws is answered as an internal error.
+- The call runs under the request's signal. If the client disconnects, the procedure is cancelled (`context.signal` aborts and the dispatch ends with `RPC_CANCELLED`) instead of running on to its timeout for nobody.
+- A frame whose payload or metadata holds a `__proto__`, `constructor` or `prototype` key is refused with `RPC_INVALID_REQUEST`. See [Refusing unsafe keys](#unsafe-keys).
 - The HTTP status follows the wire code, as below. The status is advisory, for proxies and dashboards; `error.code` in the body is what counts.
 
 | Wire code | HTTP status |
@@ -238,7 +241,8 @@ console.log(total);
 | RPC_INVALID_REQUEST, RPC_DESERIALIZATION_ERROR | 400 |
 | RPC_UNAUTHENTICATED | 401 |
 | RPC_FORBIDDEN | 403 |
-| RPC_PROCEDURE_NOT_FOUND | 404 |
+| RPC_PROCEDURE_NOT_FOUND, RPC_NOT_FOUND | 404 |
+| RPC_CONFLICT | 409 |
 | RPC_VALIDATION_ERROR | 422 |
 | RPC_RATE_LIMITED | 429 |
 | RPC_CANCELLED | 499 |
@@ -248,7 +252,7 @@ console.log(total);
 
 ### What the client transport does for you
 
-It aborts the underlying `fetch` when the call's signal or deadline fires, so a timed-out call frees its connection. Its failures are typed: a network failure, or a reply that is not an RPC frame for this request (a proxy's HTML page, a truncated or oversized body), is an `RPCTransportError`; an expired deadline is an `RPCTimeoutError`; a caller abort is an `RPCCancelledError`. Other options: `fetch` (your own fetch function), `serializer` and `maxResponseBytes`.
+It aborts the underlying `fetch` when the call's signal or deadline fires, so a timed-out call frees its connection. Its failures are typed: a network failure, or a reply that is not an RPC frame for this request (a proxy's HTML page, a truncated or oversized body), is an `RPCTransportError`; an expired deadline is an `RPCTimeoutError`; a caller abort is an `RPCCancelledError`. The deadline is clamped to the range Node's timers accept (`MAX_TIMER_DELAY`, about 24.8 days): a larger timeout, or `Infinity`, used to overflow and fail every call at once, and now simply means "wait a very long time". Other options: `fetch` (your own fetch function), `serializer` and `maxResponseBytes`.
 
 > **Watch out:** use the same serializer on both ends. The default is plain JSON. `createRPCJsonSerializer({ preserveTypes: true })` also carries `Date`, `BigInt`, `Map` and `Set`, but only if the server and the client both use it.
 
@@ -258,7 +262,7 @@ Every handler gets two arguments: the parsed input, and a **context**. The conte
 
 The store is how middleware talks to a handler: middleware writes with `context.set()`, the handler reads with `context.get()`.
 
-The signal is how a call is cancelled. Nothing forces a handler to stop, so check the signal wherever giving up makes sense.
+The signal is how a call is cancelled. It aborts when the procedure's timeout or the caller's deadline passes, and also when the caller goes away: the second argument of `server.handle(request, { auth, signal })` is an `RPCContextOptions`, and its `signal` is the caller's. The built-in HTTP handler and memory transport pass it for you; a custom transport should pass the signal of its connection. Nothing forces a handler to stop, so check the signal wherever giving up makes sense.
 
 ```ts
 import { createRPCProcedure, throwIfCancelled } from "@zudojs/rpc";
@@ -386,11 +390,32 @@ const server = new RPCServer(undefined, undefined, {
 
 Set either limit to `0` to skip that check when the transport already enforces a frame limit.
 
+### Refusing unsafe keys
+
+`JSON.parse` keeps a key named `__proto__`, `constructor` or `prototype` as an ordinary property. A handler that later merges its input into another object (`{ ...defaults, ...input }` is safe, `Object.assign` into a shared object or a hand-written deep merge often is not) can have that object's prototype replaced: an attack called *prototype pollution*. So the server refuses a frame whose `payload` or `metadata` holds one of those keys at any depth, before any middleware or handler runs.
+
+```ts
+const response = await server.handle(
+  createRPCRequest({
+    id: "req-2",
+    procedure: "users.getUser",
+    payload: JSON.parse('{"id":"1","__proto__":{"isAdmin":true}}'),
+  }),
+);
+
+console.log(response.error?.code, "|", response.error?.message);
+// RPC_INVALID_REQUEST | Request contains the forbidden key "__proto__".
+```
+
+If a procedure genuinely receives such keys (a JSON document store, say) and never merges them, turn the check off with `new RPCServer(undefined, undefined, { limits: { allowUnsafeKeys: true } })`. The check is `findUnsafeKey(value)` from [@zudojs/security](https://zudojs.oyinlola.site/docs/packages-security.md); call it yourself on anything else you decode.
+
 ## ERRORS ACROSS THE BOUNDARY
 
 A thrown error cannot travel over a network. Only data can. So the boundary works in three steps: your handler throws a typed error; the server turns it into a small JSON payload with a `code`, a `message` and sometimes `details`; the client reads the code and throws a matching error on your side.
 
 The code is the contract. It is why a caller can tell a rejected session from a timeout without matching on message text.
+
+You do not have to throw RPC classes. Domain code usually throws the ready-made errors from [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md), and those that are built with `expose: true` (the 4xx ones are, by default) reach the caller with their own message under the code that matches their status. A `ValidationError` sends its issues as `details` (without the values the caller sent), and a `RateLimitError` built with `retryAfterSeconds` sends `{ retryAfter }`. Before v1.4.0 they all arrived as `RPC_INTERNAL_ERROR`, and `RPC_NOT_FOUND` (404) and `RPC_CONFLICT` (409) did not exist.
 
 | Thrown on the server | Wire code |
 | --- | --- |
@@ -406,11 +431,18 @@ The code is the contract. It is why a caller can tell a rejected session from a 
 | RPCUnavailableError | RPC_UNAVAILABLE |
 | RPCSerializationError | RPC_SERIALIZATION_ERROR |
 | RPCDeserializationError | RPC_DESERIALIZATION_ERROR |
-| anything else | RPC_INTERNAL_ERROR |
+| NotFoundError (404) | RPC_NOT_FOUND |
+| ConflictError (409) | RPC_CONFLICT |
+| ValidationError (400/422) | RPC_VALIDATION_ERROR |
+| AuthenticationError (401) | RPC_UNAUTHENTICATED |
+| AuthorizationError (403) | RPC_FORBIDDEN |
+| RateLimitError (429) | RPC_RATE_LIMITED |
+| any other `@zudojs/errors` error with `expose: true` | by status (408/504 → `RPC_TIMEOUT`, 503 → `RPC_UNAVAILABLE`), otherwise its own `code` |
+| anything else, and any error with `expose: false` | RPC_INTERNAL_ERROR |
 
-> **Danger:** an unrecognised error never sends its own message. Exception text can name hosts, paths, credentials or queries, and the caller is a stranger. They get one fixed sentence plus the request id. The same applies to any `RPCError` thrown with `expose: false` — `RPCInternalError`, `RPCSerializationError`, or a plain `new RPCError(...)` — its `code` is sent but its message is replaced. Pass the server's `onInternalError` hook if you want the real error — that hook is the only place it is recorded.
+> **Danger:** an unrecognised or non-exposed error never sends its own message. Exception text can name hosts, paths, credentials or queries, and the caller is a stranger. They get one fixed sentence plus the request id. The same applies to any `RPCError` thrown with `expose: false` — `RPCInternalError`, `RPCSerializationError`, or a plain `new RPCError(...)` — its `code` is sent but its message is replaced. A `@zudojs/errors` error with `expose: false` (a `DatabaseError`, for example) goes out as `RPC_INTERNAL_ERROR` with the fixed message. Pass the server's `onInternalError` hook if you want the real error — that hook is the only place it is recorded.
 
-On the caller's side, `RPCClient` rebuilds a typed error from the wire code (the same mapping is exported as `rpcErrorFromWire`), so you can branch with `instanceof` instead of comparing strings. The codes above come back as `RPCProcedureNotFoundError`, `RPCValidationError` (with its `issues`), `RPCInvalidRequestError`, `RPCAuthenticationError`, `RPCForbiddenError`, `RPCRateLimitedError`, `RPCTimeoutError`, `RPCCancelledError` or `RPCUnavailableError`. Any other code becomes a plain `RPCError`. Either way, the server's wire `code` and `details` are kept on the error.
+On the caller's side, `RPCClient` rebuilds a typed error from the wire code (the same mapping is exported as `rpcErrorFromWire`), so you can branch with `instanceof` instead of comparing strings. The codes above come back as `RPCProcedureNotFoundError`, `RPCValidationError` (with its `issues`), `RPCInvalidRequestError`, `RPCAuthenticationError`, `RPCForbiddenError`, `RPCRateLimitedError`, `RPCTimeoutError`, `RPCCancelledError` or `RPCUnavailableError`. Any other code, including `RPC_NOT_FOUND` and `RPC_CONFLICT`, becomes a plain `RPCError`. Either way, `error.code` is the wire code and `error.details` holds the server's details, so `error.code === "RPC_TIMEOUT"` and `error instanceof RPCTimeoutError` both work. That includes errors the client raises itself (its own deadline, a cancelled signal, a closed client), and `"RPC_TRANSPORT_ERROR"` for a network failure. The class codes such as `"ERR_RPC_TIMEOUT"` are never what a client error carries; before v1.4.0 timeouts, cancellations and unavailability came back with them, so code comparing `error.code` with `"RPC_TIMEOUT"` silently never matched.
 
 ```ts
 import {
@@ -445,6 +477,39 @@ try {
 ```
 
 **What you should see:** `RPC_FORBIDDEN | Admins only.` The error object itself did not cross the boundary — only its code and message did — but the client rebuilt an `RPCForbiddenError` from that code, so the `instanceof` check passes. The same works over HTTP.
+
+This one throws plain `@zudojs/errors` errors from the handler and branches on the code on the caller's side:
+
+```ts
+import { RPCServer, RPCClient, createRPCProcedure, createRPCMemoryTransport, RPCError } from "@zudojs/rpc";
+import { NotFoundError, databaseQueryError } from "@zudojs/errors";
+
+const server = new RPCServer();
+server.register(
+  createRPCProcedure("users.get", async (input: { id: string }) => {
+    throw new NotFoundError(`User ${input.id} was not found.`);
+  }),
+);
+server.register(
+  createRPCProcedure("reports.run", async () => {
+    throw databaseQueryError('relation "users" does not exist');
+  }),
+);
+
+const client = new RPCClient(createRPCMemoryTransport(server));
+
+for (const [name, input] of [["users.get", { id: "42" }], ["reports.run", {}]] as const) {
+  try {
+    await client.call(name, input);
+  } catch (error) {
+    if (error instanceof RPCError) console.log(error.code, "|", error.message);
+  }
+}
+// RPC_NOT_FOUND | User 42 was not found.
+// RPC_INTERNAL_ERROR | The server encountered an internal error while handling this request.
+```
+
+The `NotFoundError` is exposed, so its message travels. The `DatabaseError` is not, so the caller sees only the fixed sentence, and the SQL detail stays on the server, where `onInternalError` can log it.
 
 ## TIMEOUTS, RETRIES & CANCELLATION
 
@@ -486,7 +551,31 @@ console.log(value, tries);
 
 **What you should see:** two `retry` lines with randomised waits, then `ready 3`.
 
-To cancel a call yourself, pass a signal in `RPCCallOptions.signal`. An `AbortSignal` alone cannot be aborted — only its controller can — so `createCancellableSignal()` hands you both as `{ signal, cancel }`. Whatever reason the abort carries, the client always throws an `RPCCancelledError`, keeping the original as `cause`.
+To cancel a call yourself, pass a signal in `RPCCallOptions.signal`. An `AbortSignal` alone cannot be aborted — only its controller can — so `createCancellableSignal()` hands you both as `{ signal, cancel }`. Whatever reason the abort carries, the client always throws an `RPCCancelledError`, keeping the original as `cause`. The cancel reaches the server as well: the handler's `context.signal` aborts, so a cancelled or timed-out call stops the work on both sides.
+
+The client's deadline timer and the `retry()` backoff timer keep the Node process alive while they wait, and are cleared the moment the call settles. So a plain script that awaits a call really does wait for its timeout. Before v1.4.0 those timers did not hold the process open, and a script whose only pending work was an unanswered call exited early with code 13 ("unsettled top-level await") instead of reporting `RPC_TIMEOUT`.
+
+```ts
+// hang.mjs
+import { RPCClient, RPCTimeoutError } from "@zudojs/rpc";
+
+// A transport that never answers, standing in for a server that hangs.
+const client = new RPCClient({ send: () => new Promise(() => {}) }, { timeout: 200 });
+
+try {
+  await client.call("users.get", {});
+} catch (error) {
+  console.log(error instanceof RPCTimeoutError, error.code, "|", error.message);
+}
+```
+
+```bash
+$ node hang.mjs; echo "exit code $?"
+true RPC_TIMEOUT | RPC operation timed out after 200ms.
+exit code 0
+```
+
+The client raised this timeout itself, and its `code` is still the wire code `RPC_TIMEOUT`, the same one a server-side timeout arrives with.
 
 > **Watch out:** a client allows 1024 calls in flight at once (`maxPending`). Past that, `call()` fails immediately with `RPCUnavailableError` rather than queueing without bound. `client.pendingCount` and `client.inspectPending()` show what is running.
 
@@ -546,9 +635,10 @@ They stack rather than compete. A typical service mounts `createRPCFetchHandler(
 | RPCProcedure RPCHandler RPCProcedureOptions | A procedure and its handler. | Generic over input and output. |
 | RPCRequest RPCResponse RPCErrorPayload RPCMetadata | The messages on the wire. | Check `success` before reading `result`. Each has an Options variant for its factory. |
 | RPCContext | Per-call request, metadata, signal and state. | Second argument to every handler and middleware. |
+| RPCContextOptions | Second argument of `server.handle(request, options)`. | `auth` (verified identity) and `signal` (the caller's; aborting it cancels the call with `RPC_CANCELLED`). |
 | RPCTransport RPCMiddleware RPCInterceptor | The pieces you plug in. | Middleware is a function; a transport and an interceptor are objects. Use a built-in transport or implement `RPCTransport` yourself. |
 | RPCMemoryTransportOptions RPCHttpTransportOptions RPCFetchHandlerOptions RPCFrameSerializer | Options for the built-in transports. | Memory: `auth`, `serializer` (`false` = by reference). HTTP client: `url`, `headers`, `fetch`, `serializer`, `maxResponseBytes`. Fetch handler: `auth`, `serializer`, `maxBodyBytes`, `onInternalError`. |
-| RPCServerOptions RPCDispatcherOptions RPCClientOptions RPCCallOptions RPCRequestLimits | Everything you can configure. | Server: `limits`, `dispatch`, `onInternalError`. Limits: `maxPayloadBytes` (1 MB), `maxRequestIdLength` (128), `enforceProcedureNamePattern` (true). Dispatch: `defaultTimeout`, `honourDeadline`, `interceptors`. Client and call: `timeout`, `maxPending`, `signal`, `metadata`. |
+| RPCServerOptions RPCDispatcherOptions RPCClientOptions RPCCallOptions RPCRequestLimits | Everything you can configure. | Server: `limits`, `dispatch`, `onInternalError`. Limits: `maxPayloadBytes` (1 MB), `maxRequestIdLength` (128), `enforceProcedureNamePattern` (true), `allowUnsafeKeys` (false). Dispatch: `defaultTimeout`, `honourDeadline`, `interceptors`. Client and call: `timeout`, `maxPending`, `signal`, `metadata`. |
 | RPCSchema RPCRetryOptions RPCBackoff RPCJitter CancellableSignal | Validation and reliability settings. | `RPCSchema` needs only `safeParse`. Backoff: fixed, linear, exponential. Jitter: none, full, equal. |
 
 ### Constants
@@ -565,13 +655,15 @@ They stack rather than compete. A typical service mounts `createRPCFetchHandler(
 | DEFAULT_RPC_HTTP_MAX_BODY_BYTES | 1114112 | Largest body `createRPCFetchHandler` reads: `MAX_RPC_PAYLOAD_SIZE` plus 64 KiB for the envelope. |
 | MAX_RPC_FRAME_DEPTH | 128 | Nesting depth the default serializer decodes. |
 | RPC_HTTP_STATUS | Code → status map | The table in [Over HTTP](#http-transport). Unlisted codes are sent as 500. |
-| MAX_TIMER_DELAY | 2147483647 | Retry delays clamp to it, so a big backoff cannot overflow into an instant retry. |
+| MAX_TIMER_DELAY | 2147483647 | Retry delays, the client deadline and the HTTP transport's request timeout clamp to it, so a huge value cannot overflow into an instant retry or an instant timeout. |
 | PROCEDURE_NAME_PATTERN | /^[a-z][a-zA-Z0-9]*(\.[a-z][a-zA-Z0-9]*)+$/ | At least two dot-separated segments. |
 | INTERNAL_ERROR_MESSAGE | Fixed sentence | What a caller sees instead of an unexpected exception. |
 
 ### Errors
 
 Sixteen classes are defined in [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) and re-exported here, so either import works: RPCError, RPCProcedureNotFoundError, RPCInvalidRequestError, RPCValidationError, RPCAuthenticationError, RPCForbiddenError, RPCTimeoutError, RPCCancelledError, RPCInternalError, RPCTransportError, RPCSerializationError, RPCDeserializationError, RPCUnavailableError, RPCRateLimitedError, RPCDeadlineExceededError and RPCDuplicateProcedureError. The type `RPCErrorOptions` comes with them.
+
+Every `RPCError` has a readonly `details`, which you can also pass as an option: `new RPCError(message, { code, details })`. On the client it holds what the server sent. The server only ever sends two kinds of details: validation issues (`RPC_VALIDATION_ERROR`) and `{ retryAfter }` (`RPC_RATE_LIMITED`). Details you attach to your own `RPCError` on the server stay there, so they can never leak internal data to a caller.
 
 > **Not implemented yet:** streaming. `RPCStreamingHandler`, `RPCStreamingProcedure` and `createRPCStreamingProcedure` exist, but a registry accepts only `RPCProcedure` and `RPCTransport.send` resolves a single response. A streaming procedure cannot be registered or called today.
 
@@ -582,6 +674,7 @@ Sixteen classes are defined in [@zudojs/errors](https://zudojs.oyinlola.site/doc
 - **Reading `response.result` without checking `response.success`.** On a failure it is absent, so you get `undefined` instead of an error. Branch on `success`, or use `RPCClient`, which throws for you.
 - **Running a server with no `onInternalError`.** Unexpected failures answer with a fixed sentence and are recorded nowhere else, so the bug is invisible. Pass the hook and log the error with its request id.
 - **Retrying everything.** Replaying a forbidden or invalid call burns attempts and can duplicate side effects. Use `retryIf`, and check `idempotent` from `registry.describe()`.
+- **Comparing `error.code` with `ErrorCode.RPC_TIMEOUT`.** That is the class code, `"ERR_RPC_TIMEOUT"`. A client error carries the wire code, so compare with `"RPC_TIMEOUT"`, or use `instanceof RPCTimeoutError`.
 - **Ignoring `options.signal` in a custom transport.** The client still rejects on time, but the socket stays open. Pass the signal to `fetch` or your socket library. The built-in transports already do this.
 - **Using different serializers on the two ends.** A server built with `createRPCJsonSerializer({ preserveTypes: true })` sends tagged values a plain-JSON client does not decode, so a `Date` arrives as something else. Pass the same serializer to `createRPCFetchHandler` and `createRPCHttpTransport`.
 
@@ -595,7 +688,7 @@ Sixteen classes are defined in [@zudojs/errors](https://zudojs.oyinlola.site/doc
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/rpc` exports from its package root at v1.3.0 — **114** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/rpc` exports from its package root at v1.4.3 — **114** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 114 exports**
 

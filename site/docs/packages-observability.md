@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/observability — structured lo
 source: https://zudojs.oyinlola.site/docs/packages-observability
 ---
 
-v1.1.0
+v1.2.1
 
 # @zudojs/observability
 
@@ -41,7 +41,7 @@ SKIP IT WHEN
 $ npm install @zudojs/observability
 ```
 
-The only runtime dependency is `@zudojs/errors` at `1.1.0`, which npm installs for you. Node 24 or newer is required — context propagation uses Node's built-in `AsyncLocalStorage`, so this package does not run in a browser.
+The runtime dependencies are `@zudojs/errors` and `@zudojs/logger` (whose secret-field rules the redactor reuses), which npm installs for you. Node 24 or newer is required — context propagation uses Node's built-in `AsyncLocalStorage`, so this package does not run in a browser.
 
 > These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest `@zudojs` release.
 
@@ -57,6 +57,7 @@ import { createObservability, LogLevel } from "@zudojs/observability";
 const obs = createObservability({
   serviceName: "orders-api",
   logLevel: LogLevel.INFO,
+  // Redaction is on by default; see Redaction.
 });
 
 obs.logger.info("server started", { port: 3000 });
@@ -88,6 +89,12 @@ await obs.shutdown();
 >
 >
 > Printing to the console is the default, not a choice you made. `useConsoleExporters` defaults to `true`, so a deployed service will spray JSON at stdout until you pass real exporters or set it to `false`.
+
+> CHANGED IN 1.2.0
+>
+>
+>
+> `shutdown()` exports the final metric snapshot once. Up to 1.1.x it exported it twice, with the same value and timestamp, so a backend that adds up counter exports counted the last interval double. If you added deduplication in your exporter for that, you can remove it. `flush()` is unchanged.
 
 > TIP
 >
@@ -370,22 +377,22 @@ Use `runSync` for synchronous work, and `derive()` to make a child context that 
 
 *Redaction* means replacing a sensitive value with a placeholder before it leaves the process. Telemetry is the classic accidental leak: a request body lands in a log context, the log ships to a vendor, and a password is now in someone else's database.
 
-> DANGER — REDACTION IS OFF BY DEFAULT
->
->
->
-> If you do not set `redaction` in your config, **nothing is redacted**. There is no implicit protection. Setting `redaction: {}` is enough to switch on the built-in field list.
+Redaction is **on by default**, as it is in [@zudojs/logger](https://zudojs.oyinlola.site/docs/packages-logger.md). With no `redaction` option, every field name the logger redacts by default (`password`, `passphrase`, `token`, `jwt`, `bearer`, `authorization`, `cookie`, `sid`, `pwd`, API keys, card numbers and more) is redacted, along with this package's own `DEFAULT_SENSITIVE_FIELDS`. It is applied inside the logger and inside the span, so every processor and exporter downstream sees the already-redacted value.
 
-Once you opt in, redaction is applied inside the logger and inside the span, so every processor and exporter downstream sees the already-redacted value.
+> CHANGED IN 1.2.0
+>
+>
+>
+> Up to 1.1.x redaction was off unless you passed `redaction`, so `obs.logger.info("login", { password })` exported the password in clear text. You no longer need `redaction: {}`; it still works and means the same as leaving the option out. To turn redaction off, pass `redaction: false`.
 
-This turns redaction on and shows what it catches in both a log and a span.
+This uses the defaults and shows what they catch in both a log and a span.
 
 ```ts
 import { createObservability } from "@zudojs/observability";
 
 const obs = createObservability({
   serviceName: "orders-api",
-  redaction: {}, // opt in; {} means "use the defaults"
+  // No redaction option: the default rules apply. redaction: false turns them off.
 });
 
 obs.logger.info("login attempt", {
@@ -408,9 +415,9 @@ await obs.shutdown();
 
 | Data | Redacted? | Notes |
 | --- | --- | --- |
-| Log context fields | **Yes**, once you opt in | Nested objects, arrays and instances of your own classes are walked too; built-ins such as `Error`, `Date`, `Map` and `Set` are left intact. |
-| Span attributes | **Yes**, once you opt in | Applied on `setAttribute`, before any processor sees it. |
-| Span event attributes | **Yes**, once you opt in | Covers `addEvent`. |
+| Log context fields | **Yes**, by default | Nested objects, arrays and instances of your own classes are walked too; built-ins such as `Error`, `Date`, `Map` and `Set` are left intact. |
+| Span attributes | **Yes**, by default | Applied on `setAttribute`, before any processor sees it. |
+| Span event attributes | **Yes**, by default | Covers `addEvent`. |
 | The log message string | **No** | Only named fields are examined. Never interpolate a secret into the message. |
 | The error you pass to a log method | **No** | Its name, message and stack reach the exporter as written. |
 | Error message and stack on a span | **No** | `recordError` stores them as strings under non-sensitive keys, so the field rules never fire. Set `captureStackTraces: false` to drop the stack. |
@@ -421,16 +428,14 @@ await obs.shutdown();
 
 Matching is case-insensitive and, by default, word-aware. `userPassword`, `x-api-key` and `accessToken` all match; `shippingAddress` and `authorId` do not, even though they contain the letters `pin` and `auth`. Pass `matchMode: "exact"` to match whole names only.
 
-This adds a field, a pattern and a custom rule on top of the defaults.
+This adds a field, a pattern and a custom rule on top of the defaults. `fields`, `patterns` and `customRedactor` all add to the default rules, so they can only redact more.
 
 ```ts
-import {
-  redactObject,
-  DEFAULT_SENSITIVE_FIELDS,
-} from "@zudojs/observability";
+import { redactObject, type RedactionConfig } from "@zudojs/observability";
 
-const config = {
-  fields: [...DEFAULT_SENSITIVE_FIELDS, "nationalId"],
+const config: RedactionConfig = {
+  // fields and patterns both add to the defaults
+  fields: ["nationalId"],
   patterns: [/^x-.*-token$/i],
   replacement: "***",
   customRedactor: (key, value) =>
@@ -443,19 +448,33 @@ console.log(redactObject({
   email: "ada@example.com",
   nationalId: "A123",
   "x-refresh-token": "rt_1",
+  jwt: "eyJhbGciOi",
   orderId: "o_9",
 }, config));
 // { email: "***@example.com", nationalId: "***",
-//   "x-refresh-token": "***", orderId: "o_9" }
+//   "x-refresh-token": "***", jwt: "***", orderId: "o_9" }
 ```
 
 Traversal stops at depth 8 by default (raise it with `maxDepth`) and is cycle-aware. Anything cut off is replaced with `MAX_DEPTH_MARKER` or `CIRCULAR_MARKER`, both exported so you can recognise them.
 
-> WATCH OUT
+`DEFAULT_SENSITIVE_FIELDS` is the whole default list: `@zudojs/logger`'s `DEFAULT_LOGGER_SECRET_FIELDS` plus this package's extra spellings, frozen. You do not need to spread it into `fields`; `fields: ["nationalId"]` already redacts `nationalId` and every default name. To use your list *alone*, pass `replaceDefaults: true`:
+
+```ts
+import { redactObject } from "@zudojs/observability";
+
+const input = { ssn: "078-05-1120", password: "hunter2", jwt: "eyJhbGciOi" };
+
+console.log(redactObject(input, { fields: ["ssn"] }));
+// { ssn: "[REDACTED]", password: "[REDACTED]", jwt: "[REDACTED]" }
+console.log(redactObject(input, { fields: ["ssn"], replaceDefaults: true }));
+// { ssn: "[REDACTED]", password: "hunter2", jwt: "eyJhbGciOi" }
+```
+
+> CHANGED IN 1.2.1 (BEHAVIOUR CHANGE, SECURITY)
 >
 >
 >
-> Supplying `fields` *replaces* the built-in list rather than adding to it. Spread `DEFAULT_SENSITIVE_FIELDS` in, as above, unless you really mean to start from scratch.
+> Up to 1.2.0, `fields` *replaced* the default rules, and `DEFAULT_SENSITIVE_FIELDS` lacked `jwt`, `sid`, `pwd`, `passphrase` and `bearer`, so the old advice to write `fields: [...DEFAULT_SENSITIVE_FIELDS, "nationalId"]` left `jwt` in clear text. `fields` now extends the defaults, and that spread (or spreading `DEFAULT_LOGGER_SECRET_FIELDS` too) is harmless but no longer needed. If you relied on `fields` to redact *less* than the default, add `replaceDefaults: true`, and only for data you are sure is safe to export.
 
 ## EXPORTERS & PROCESSORS
 
@@ -527,7 +546,7 @@ Every field of `ObservabilityConfig`. Only `serviceName` is required.
 | `useConsoleExporters` | Fall back to console exporters when none is supplied. | `true` |
 | `sampler` | Which traces to record. | `AlwaysOnSampler` |
 | `processors` | Your own span processors. Supplying them disables the built-in batch processor. | one `BatchSpanProcessor` |
-| `redaction` | Turns redaction on for log contexts and span attributes. | off |
+| `redaction` | Redaction rules for log contexts and span attributes (`RedactionConfig`), or `false` to turn redaction off. | on, with the default rules |
 | `metrics` | `MetricsRegistryOptions`: `maxSeries`, `histogramBoundaries`, `onCardinalityLimit`. | cap 10,000 |
 | `spanLimits` | Per-span caps on attributes, events and string length. | 128 / 128 / 128 / 4096 |
 | `resource` | Extra attributes stamped on every span. | `{}` |
@@ -566,7 +585,7 @@ Everything below is exported from `@zudojs/observability`. Most applications onl
 | `getCurrentContext()`, `requireCurrentContext()` | Read the active context. | The first may return `undefined`; the second invents a new trace. |
 | `createConsoleLogExporter`, `createConsoleSpanExporter`, `createConsoleMetricExporter` | Print telemetry as JSON. | Take `ConsoleExporterOptions` (`pretty`, `console`). |
 | `createBatchSpanProcessor`, `createSimpleSpanProcessor`, `createBatchLogProcessor` | Buffer or forward telemetry to an exporter. | Batch options: `batchSize`, `flushIntervalMs`, `maxQueueSize`, `onError`, `onDrop`. |
-| `createRedactor(config?)`, `createStructureRedactor(config?)` | Redact one field, or walk a whole structure. | Used internally when `redaction` is set. |
+| `createRedactor(config?)`, `createStructureRedactor(config?)` | Redact one field, or walk a whole structure. | Used internally unless `redaction` is `false`. |
 | `redactObject(object, config?)`, `redactValue(value, config?)`, `isSensitiveField(key, config?)` | One-shot redaction helpers. | Handy in tests and in your own sinks. |
 | `generateTraceId()`, `generateSpanId()`, `isValidTraceId`, `isValidSpanId` | W3C-shaped IDs: 32 and 16 hex characters. | Applied by every context factory: an invalid inbound ID starts a fresh trace. Use `parseTraceparent` / `formatTraceparent` for W3C headers. |
 | `logLevelToName`, `logLevelFromName`, `parseLogLevel`, `shouldLog`, `getLogLevelNames` | Convert between levels and names. | `parseLogLevel` returns `undefined` on junk — good for env vars. |
@@ -621,7 +640,7 @@ Everything below is exported from `@zudojs/observability`. Most applications onl
 
 | Name | What it is | Notes |
 | --- | --- | --- |
-| `DEFAULT_SENSITIVE_FIELDS` | The built-in redaction field list. | Spread it when adding your own. |
+| `DEFAULT_SENSITIVE_FIELDS` | The effective default redaction field list. | The logger's `DEFAULT_LOGGER_SECRET_FIELDS` plus this package's extra spellings; frozen. `fields` adds to it unless `replaceDefaults: true`. |
 | `DEFAULT_BUCKET_BOUNDARIES` | Default histogram buckets, 1 to 10,000. | Tuned for millisecond latencies. |
 | `CIRCULAR_MARKER`, `MAX_DEPTH_MARKER` | Placeholders left by the redactor. | `"[CIRCULAR]"` and `"[MAX_DEPTH]"`. |
 | `INVALID_PROPAGATION_CONTEXT` | All-zero context used by the noop manager. | Frozen. |
@@ -631,11 +650,11 @@ Everything below is exported from `@zudojs/observability`. Most applications onl
 ## COMMON MISTAKES
 
 - **Exiting without `await obs.shutdown()`.** Buffered logs, spans and the final metric snapshot are dropped, and the process may hang on the metric timer. Await `shutdown()` in your termination handler.
-- **Assuming secrets are stripped.** With no `redaction` key, passwords and tokens are printed verbatim. Set `redaction: {}` at minimum, and keep secrets out of log messages, error messages and metric labels — none of those are covered.
+- **Assuming every secret is stripped.** Redaction covers named fields in log contexts and span attributes. Log messages, error messages and stacks, and metric labels are not covered, so keep secrets out of them. And never ship `redaction: false` outside a local debugging session.
 - **Putting an ID in a metric label.** `{ path: "/orders/9182" }` creates one series per order. You hit the 10,000-series cap, new series are refused, and your graphs go flat. Use the route template.
 - **Deploying with the console exporters.** `useConsoleExporters` defaults to `true`, so production writes JSON to stdout. Pass real exporters or set it to `false`.
 - **Forgetting `span.end()` on the error path.** The span is never exported and never released. End it in a `finally`.
-- **Replacing `fields` instead of extending it.** `redaction: { fields: ["myToken"] }` discards the built-in list, so `password` stops being redacted. Spread `DEFAULT_SENSITIVE_FIELDS` first.
+- **Reaching for `replaceDefaults: true` to add a name.** Since 1.2.1, `redaction: { fields: ["myToken"] }` adds `myToken` to the defaults. `replaceDefaults: true` throws the defaults away, so `password` stops being redacted. Leave it off unless you mean to redact less.
 - **Leaving `onError` unset.** Dropped batches, failing exporters and cardinality warnings all go nowhere. Wire it to your own logger.
 
 ## RELATED PACKAGES
@@ -647,7 +666,7 @@ Everything below is exported from `@zudojs/observability`. Most applications onl
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/observability` exports from its package root at v1.1.1 — **142** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/observability` exports from its package root at v1.2.3 — **142** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 142 exports**
 

@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/schema — type-safe schema def
 source: https://zudojs.oyinlola.site/docs/packages-schema
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/schema
 
@@ -59,7 +59,7 @@ const UserSchema = schema.object({
 // A good value: parse() returns a typed copy.
 const user = UserSchema.parse({ name: "Ada", email: "ada@example.com" });
 console.log(user);
-// { name: "Ada", email: "ada@example.com", age: undefined }
+// { name: "Ada", email: "ada@example.com" }   (age was left out, so it stays out)
 
 // A bad value: safeParse() reports issues instead of throwing.
 const result = UserSchema.safeParse({ name: "A", email: "nope" });
@@ -83,11 +83,10 @@ Every schema has two methods that do this. They run the same checks; they differ
 - `parse(input)` returns the parsed value, or **throws** a `SchemaError`. Use it when a bad value means "stop here".
 - `safeParse(input)` never throws. It returns `{ success: true, data }` or `{ success: false, issues }`. Use it when you want to show the errors to someone.
 
-Both accept `unknown`, so you can pass the raw result of `JSON.parse` straight in. This catches the thrown error from `parse()`.
+Both accept `unknown`, so you can pass the raw result of `JSON.parse` straight in. This catches the thrown error from `parse()` and reads its issues.
 
 ```ts
-import { schema } from "@zudojs/schema";
-import { SchemaError } from "@zudojs/errors";
+import { schema, isSchemaValidationError } from "@zudojs/schema";
 
 const AgeSchema = schema.number().int().min(0);
 const fromTheWire: unknown = JSON.parse('"forty"');
@@ -95,14 +94,21 @@ const fromTheWire: unknown = JSON.parse('"forty"');
 try {
   AgeSchema.parse(fromTheWire);
 } catch (error) {
-  if (error instanceof SchemaError) {
-    console.log(error.message, error.issues.length);
-    // Validation failed 1
+  if (isSchemaValidationError(error)) {
+    // error.issues is readonly SchemaIssue[] here: no cast needed.
+    for (const issue of error.issues) {
+      console.log(issue.code, issue.message);
+    }
+    // invalid_type Expected number, received string
+  } else {
+    throw error; // not a validation failure: a real bug
   }
 }
 ```
 
-> **Tip:** `SchemaError` lives in `@zudojs/errors`, not in this package. Import it from there.
+`parse()` throws a `SchemaError<SchemaIssue>`. `isSchemaValidationError(error)` is a *type guard*: a function whose `true` answer tells TypeScript what the value is. After it, `error.issues` is typed `readonly SchemaIssue[]`, and the guard has also checked at runtime that every issue has a `code`, `path` and `message`. Anything else, such as a `TypeError` from your own code, fails the guard, so you can rethrow it.
+
+> **Tip:** `SchemaError` itself lives in `@zudojs/errors`, which cannot know this package's issue type, so `error instanceof SchemaError` alone leaves `error.issues` as `unknown[]`. Use the guard instead of writing `error.issues as SchemaIssue[]`.
 
 ## READING A VALIDATION ISSUE
 
@@ -137,6 +143,8 @@ if (!result.success) console.log(result.issues[0]);
 
 > **In plain words:** read `path` to find the field, `code` to decide how to handle it in code, and `message` to tell a person.
 
+Messages are written to be shown to people, so counts read naturally: `schema.string().min(1)` reports "String must be at least 1 character" and `schema.array(item).min(1)` reports "Array must have at least 1 item", while larger counts use the plural ("at least 2 characters"). Match on `code`, never on the message text.
+
 ## BUILDING BLOCKS
 
 Everything starts from the `schema` object. Each function on it builds a schema for one kind of value, and most return an object with extra methods that tighten the rule. Calling one of those methods returns a *new* schema; the original is never changed.
@@ -158,7 +166,7 @@ console.log(Role.parse("admin"));         // "admin"
 
 | Schema | Accepts | Rule methods |
 | --- | --- | --- |
-| `schema.string()` | Strings. Max 255 characters unless you set `.max()`. | `min`, `max`, `length`, `regex`, `email`, `url`, `uuid`, `uuidv4`, `datetime`, `date`, `time`, `ipv4`, `ipv6`, `phone`, `hexColor`, `trim`, `toLowerCase`, `toUpperCase` |
+| `schema.string()` | Strings. Max 255 characters unless you set `.max()`. | `min`, `max`, `length`, `regex`, `email`, `url(options?)`, `uuid`, `uuidv4`, `datetime`, `date`, `time`, `ipv4`, `ipv6`, `phone`, `hexColor`, `trim`, `toLowerCase`, `toUpperCase` |
 | `schema.number()` | Numbers. `NaN` is rejected. | `min`, `max`, `gt`, `lt`, `int`, `positive`, `negative`, `finite`, `safe`, `multipleOf` |
 | `schema.boolean()` | `true` or `false`. | `coerce()` also accepts `"true"`, `"false"`, `1`, `0` |
 | `schema.literal(v)` | Exactly the value `v` (string, number, boolean or null). | none |
@@ -168,7 +176,45 @@ console.log(Role.parse("admin"));         // "admin"
 | `schema.any()`, `schema.unknown()` | Anything at all (typed `any` / `unknown`). | none |
 | `schema.never()` | Nothing; every value fails. | none |
 
+Every schema in this table also has the chainable `.optional()`, `.nullable()`, `.default()`, `.refine()` and `.transform()` methods, so `schema.boolean().optional()` works just like `schema.string().optional()`. Before 1.2.0 only `string()`, `number()` and the coerce schemas had them.
+
 > **Watch out:** `schema.string().trim()` changes the output, not the check. `min(3)` is measured after trimming, so `"  ab  "` fails.
+
+### URLs and dates
+
+`.url()` accepts only absolute `http:` and `https:` URLs by default. That is deliberate: a link a user submits should never be a `javascript:` or `data:` URL. For other kinds of URL, such as a database connection string in `DATABASE_URL`, list the schemes (protocols) you allow, or pass `"any"` to accept any scheme the standard `URL` parser understands.
+
+```ts
+import { schema } from "@zudojs/schema";
+
+const Website = schema.string().url();
+console.log(Website.safeParse("https://example.com").success);  // true
+console.log(Website.safeParse("javascript:alert(1)").success); // false
+
+const DatabaseUrl = schema.string().url({ protocols: ["postgres", "postgresql"] });
+console.log(DatabaseUrl.parse("postgres://app:secret@db:5432/app"));
+// postgres://app:secret@db:5432/app
+console.log(DatabaseUrl.safeParse("https://example.com").success); // false: not in the list
+
+const AnyUrl = schema.string().url({ protocols: "any" });
+console.log(AnyUrl.safeParse("redis://cache:6379").success); // true
+console.log(AnyUrl.safeParse("not a url").success);          // false
+```
+
+`.date()` (`YYYY-MM-DD`), `.datetime()` (`YYYY-MM-DDTHH:mm:ss` with optional fractions and a `Z` or `±hh:mm` offset) and `.time()` (`HH:mm:ss`) check that the value is a real one, not just that it has the right shape: the month is 01-12, the day exists in that month (29 February only in leap years), hours are 00-23, minutes and seconds 00-59, and an offset is at most 23:59.
+
+```ts
+const Day = schema.string().date();
+console.log(Day.safeParse("2026-02-28").success); // true
+console.log(Day.safeParse("2026-02-30").success); // false: February has no 30th
+console.log(Day.safeParse("2028-02-29").success); // true: 2028 is a leap year
+
+const At = schema.string().datetime();
+console.log(At.safeParse("2026-09-23T10:15:00+01:00").success); // true
+console.log(At.safeParse("2026-02-30T25:61:00Z").success);      // false
+```
+
+> **Changed in 1.2.0:** values such as `"2026-02-30"`, `"2026-13-45"` and `"2026-02-30T25:61:00Z"` used to pass because only the digit pattern was checked; they now fail with `invalid_format`. `.url()` used to refuse every non-web URL with no way out, so a `postgres://` `DATABASE_URL` could not be validated; the `protocols` option is new, and the http/https default is unchanged.
 
 ## OBJECTS AND ARRAYS
 
@@ -210,7 +256,7 @@ console.log(Strict.safeParse({
 | Method | What it does |
 | --- | --- |
 | `.pick(keys)` / `.omit(keys)` | New object schema with only / without those keys. |
-| `.partial()` / `.required()` | Make every key optional / make every key required again. |
+| `.partial()` / `.required()` | Make every key optional / make every key required again. `.partial()` does not fill in defaults for keys that are left out (see below). |
 | `.extend(other)` / `.merge(other)` | Add another object schema's keys (same thing; later keys win). |
 | `.strip()` / `.strict()` / `.passthrough()` | Drop / reject / keep unknown keys. |
 | `.shape` | The shape you passed in, for reading. |
@@ -222,28 +268,58 @@ console.log(Strict.safeParse({
 
 > **Tip:** Keys named `__proto__`, `constructor` and `prototype` are always rejected in input. This blocks prototype-pollution attacks without any work on your side.
 
+### Update schemas with `partial()`
+
+A common pattern is one schema for creating a record and `.partial()` of it for updating one, where the caller sends only the fields that change. `.partial()` keeps checking the fields that are present but leaves the missing ones missing, even when they have a `.default()`. Otherwise every update would quietly reset those fields to their defaults.
+
+```ts
+import { schema } from "@zudojs/schema";
+
+const ProfileSchema = schema.object({
+  name: schema.string().min(1),
+  theme: schema.string().default("light"),
+  newsletter: schema.boolean().default(false),
+});
+
+console.log(ProfileSchema.parse({ name: "Ada" }));
+// { name: "Ada", theme: "light", newsletter: false }   (create: defaults filled in)
+
+const ProfileUpdate = ProfileSchema.partial();
+console.log(ProfileUpdate.parse({ theme: "dark" }));
+// { theme: "dark" }   (update: only what was sent)
+console.log(ProfileUpdate.safeParse({ name: "" }).success);
+// false: a present value is still checked
+```
+
+> **Changed in 1.2.0:** `.partial()` used to apply defaults, so `{ theme: "dark" }` came back as `{ theme: "dark", newsletter: false }` and saving it overwrote the stored `newsletter` value.
+
 ## OPTIONAL, NULLABLE, DEFAULT
 
 Three wrappers change what a schema accepts when the value is absent. *Optional* also accepts `undefined`. *Nullable* also accepts `null`. *Default* replaces `undefined` with a value you choose, then checks that value.
 
-There are two ways to apply them. `string()`, `number()` and the `coerce` schemas have `.optional()`, `.nullable()` and `.default()` methods. Every other schema (objects, arrays, enums, literals, unions) does not, so you wrap it with `schema.optional(x)`, `schema.nullable(x)` or `schema.default(x, value)`.
+There are two ways to apply them. Every primitive schema (`string()`, `number()`, `boolean()`, `bigint()`, `symbol()`, `literal()`, `enum()`, `null()`, `undefined()`, `any()`, `unknown()`, `never()`) and every `coerce` schema has `.optional()`, `.nullable()` and `.default()` methods. Structures (objects, arrays, tuples, records, maps, sets) and combinations (unions, intersections, lazy schemas) do not, so you wrap them with `schema.optional(x)`, `schema.nullable(x)` or `schema.default(x, value)`.
 
-Both forms are shown here. Missing keys get their default; an absent optional key is allowed.
+Both forms are shown here. Missing keys get their default. An optional key that is missing from the input is also missing from the result: it is not added with the value `undefined`.
 
 ```ts
 import { schema } from "@zudojs/schema";
 
 const SettingsSchema = schema.object({
-  theme: schema.string().default("light"),                     // method form
-  role: schema.default(schema.enum(["admin", "user"]), "user"), // wrapper form
+  theme: schema.string().default("light"),                    // method form
+  role: schema.enum(["admin", "user"]).default("user"),        // method form
   nickname: schema.string().optional(),
-  avatar: schema.nullable(schema.string().url()),
-  tags: schema.default(schema.array(schema.string()), []),
+  avatar: schema.string().url().nullable(),
+  tags: schema.default(schema.array(schema.string()), []), // wrapper form (arrays have no .default())
 });
 
 console.log(SettingsSchema.parse({ avatar: null }));
+// { theme: "light", role: "user", avatar: null, tags: [] }
+
+console.log(SettingsSchema.parse({ avatar: null, nickname: undefined }));
 // { theme: "light", role: "user", nickname: undefined, avatar: null, tags: [] }
 ```
+
+The second call sends `nickname` explicitly as `undefined`, so the key is kept. This matters when you save the result: a key that is not there leaves the stored column alone, while a key set to `undefined` may be written as `NULL`. Before 1.2.0 every missing optional key came back as `undefined`.
 
 > **Watch out:** a default runs only for `undefined`. Passing `null` to a defaulted string schema is still an error; add `nullable` if you want both.
 
@@ -253,7 +329,7 @@ Built-in rules cover types and sizes. For anything else, *refine* adds your own 
 
 *Transform* changes the output. Its function receives the valid value and returns something new, possibly of a different type. The schema's output type follows whatever you return.
 
-Like the wrappers above, `.refine()` and `.transform()` are methods on `string()` and `number()`; for everything else use `schema.refine(x, check, message)` and `schema.transform(x, fn)`.
+Like the wrappers above, `.refine()` and `.transform()` are methods on every primitive and coerce schema (`schema.boolean().transform(...)` works too); for objects, arrays and other structures use `schema.refine(x, check, message)` and `schema.transform(x, fn)`.
 
 ```ts
 import { schema } from "@zudojs/schema";
@@ -336,10 +412,10 @@ console.log(QuerySchema.parse({ page: "3", active: "no" }));
 
 | Schema | Converts | Extra methods |
 | --- | --- | --- |
-| `schema.coerce.number()` | Numeric strings like `"42"`, `"3.14"`, `"-1e3"`. Rejects `""`, hex, and anything non-finite. | `int`, `min`, `max`, `positive`, `pipe(numberSchema)`, `optional`, `nullable`, `default`, `refine` |
-| `schema.coerce.boolean()` | `"true"/"1"/"yes"/"on"` and `1` to true; `"false"/"0"/"no"/"off"/""` and `0` to false. Case and spaces ignored. | `optional`, `nullable`, `default` |
-| `schema.coerce.string()` | Numbers, booleans, bigints and valid `Date`s (as ISO). Rejects objects and symbols. | `min`, `max`, `regex`, `pipe(stringSchema)`, `optional`, `nullable`, `default` |
-| `schema.coerce.bigint()` | Safe integers and digit-only strings (at most 4096 digits, `SerializationLimits.MAX_BIGINT_DIGITS`). | `optional`, `nullable` |
+| `schema.coerce.number()` | Numeric strings like `"42"`, `"3.14"`, `"-1e3"`. Rejects `""`, hex, and anything non-finite. | `int`, `min`, `max`, `positive`, `pipe(numberSchema)`, `optional`, `nullable`, `default`, `refine`, `transform` |
+| `schema.coerce.boolean()` | `"true"/"1"/"yes"/"on"` and `1` to true; `"false"/"0"/"no"/"off"/""` and `0` to false. Case and spaces ignored. | `optional`, `nullable`, `default`, `refine`, `transform` |
+| `schema.coerce.string()` | Numbers, booleans, bigints and valid `Date`s (as ISO). Rejects objects and symbols. | `min`, `max`, `regex`, `pipe(stringSchema)`, `optional`, `nullable`, `default`, `refine`, `transform` |
+| `schema.coerce.bigint()` | Safe integers and digit-only strings (at most 4096 digits, `SerializationLimits.MAX_BIGINT_DIGITS`). | `optional`, `nullable`, `default`, `refine`, `transform` |
 
 ## TYPE INFERENCE
 
@@ -357,7 +433,7 @@ const UserSchema = schema.object({
 });
 
 type User = Infer<typeof UserSchema>;
-// { name: string; role: "admin" | "user"; age: number | undefined }
+// { name: string; role: "admin" | "user"; age?: number | undefined }
 
 function greet(user: User): string {
   return `Hi ${user.name} (${user.role})`;
@@ -368,7 +444,26 @@ console.log(greet(UserSchema.parse({ name: "Ada", role: "admin" })));
 
 > **Watch out:** without `as const` on an enum's list, TypeScript widens the values to `string` and the inferred type loses the union. Runtime checking is unaffected either way.
 
+An optional field becomes an optional property (`age?:`), because a parsed object leaves out an optional key that the input left out. That also makes the inferred type correct under TypeScript's `exactOptionalPropertyTypes` setting. The type that does this is exported as `ObjectShapeOutput<Shape>`.
+
 Two related helpers exist. `SchemaOutput<T>` is the same as `Infer<T>`. `SchemaInput<T>` gives the type *before* a transform runs, which is only different for transform schemas.
+
+```ts
+import { schema, type Infer, type SchemaInput, type Schema } from "@zudojs/schema";
+
+const Price = schema.string().transform((v) => Number(v));
+
+type PriceIn  = SchemaInput<typeof Price>; // string (what you pass to parse)
+type PriceOut = Infer<typeof Price>;       // number (what parse returns)
+
+const Order = schema.object({ price: Price });
+type OrderOut = Infer<typeof Order>;       // { price: number }
+
+// Annotating a transform: give both types, output first
+const Annotated: Schema<number, string> = Price;
+```
+
+> **Changed in 1.2.0:** `SchemaInput` of a transform used to give the output type. A transform schema is now a `Schema<TOut, TIn>`, so if you annotated one as `Schema<number>`, TypeScript now reports an error; write `Schema<number, string>` (or `Schema<number, unknown>`). Objects, tuples and unions read only the output type of their members, so `Infer` of a transformed field is unchanged. Also new: an optional key is now `age?: number | undefined` rather than `age: number | undefined`.
 
 ## PARSE OPTIONS
 
@@ -421,7 +516,8 @@ Everything below is importable from `@zudojs/schema`. Each `schema.x()` also has
 | Name | What it does | Notes |
 | --- | --- | --- |
 | `isSchemaSuccess(r)`, `isSchemaFailure(r)` | Type guards for a `SchemaResult`. | Same as checking `r.success`. |
-| `unwrapSchemaResult(r)` | Returns `r.data` or throws a plain `Error` listing the messages. | Not a `SchemaError`. |
+| `unwrapSchemaResult(r)` | Returns `r.data` or throws a `SchemaError<SchemaIssue>` carrying the issues. | Its message lists the issue messages; read `error.issues` for the details. |
+| `isSchemaValidationError(error)` | Type guard for a caught value: `true` when it is a `SchemaError` whose issues all have the `SchemaIssue` shape. | Narrows `error.issues` to `readonly SchemaIssue[]` without a cast. Works for errors from `parse()` and `unwrapSchemaResult()`. |
 | `schemaSuccess(data)`, `schemaFailure(issues)` | Build a result by hand. | Useful in tests. |
 
 ### Types
@@ -429,7 +525,9 @@ Everything below is importable from `@zudojs/schema`. Each `schema.x()` also has
 | Name | What it does | Notes |
 | --- | --- | --- |
 | `Infer<S>`, `SchemaOutput<S>` | Output type of a schema. | Identical. |
-| `SchemaInput<S>` | Input type (before transform). |  |
+| `SchemaInput<S>` | Input type (before transform). | For `string().transform(fn)` this is `string`. |
+| `ObjectShapeOutput<Shape>` | Parsed type of an object shape. | Keys that can be `undefined` become optional properties. |
+| `StringUrlOptions` | Argument of `string().url(options)`. | `protocols`: a list of schemes, or `"any"`. Default: http and https. See [URLs and dates](#urls-and-dates). |
 | `SchemaIssue` | One problem: `code`, `path`, `message`, optional `expected`, `received`, `input`, `details`. |  |
 | `SchemaResult<T>`, `SchemaSuccess<T>`, `SchemaFailure` | What `safeParse` returns. |  |
 | `SchemaParseOptions` | Second argument of `parse`/`safeParse`. | See [Parse options](#parse-options). |
@@ -439,18 +537,20 @@ Everything below is importable from `@zudojs/schema`. Each `schema.x()` also has
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| `SchemaError` | Thrown by `parse()`; has `.issues` and `.hasIssues()`. | Import from `@zudojs/errors`. Status code 400. |
+| `SchemaError` | Thrown by `parse()` and `unwrapSchemaResult()` as `SchemaError<SchemaIssue>`; has `.issues` and `.hasIssues()`. | Import from `@zudojs/errors`. Status code 400. Narrow a caught value with `isSchemaValidationError`. |
 | `SchemaIssueCode` | Object of every issue code string. | Import from `@zudojs/constants`. |
 
-The package also exports the low-level pieces used to write a custom `Schema` subclass: `createParseContext`, `childContext`, `addIssue`, `failValidation`, `rethrowUnexpected`, `enterComposite`, `leaveComposite`, `isMaxDepthExceeded`, `shouldAbortEarly`, `countIssues`, `SchemaValidationSignal` (an internal control-flow signal; intentionally not a `@zudojs/errors` class) and the individual schema classes. You will not need them for everyday use.
+The package also exports the low-level pieces used to write a custom `Schema` subclass: `createParseContext`, `childContext`, `addIssue`, `failValidation`, `rethrowUnexpected`, `enterComposite`, `leaveComposite`, `isMaxDepthExceeded`, `shouldAbortEarly`, `countIssues`, `SchemaValidationSignal` (an internal control-flow signal; intentionally not a `@zudojs/errors` class), `ModifiableSchema` (the base class that gives a schema `.optional()`, `.nullable()`, `.default()`, `.refine()` and `.transform()`) and the individual schema classes. You will not need them for everyday use.
 
 ## COMMON MISTAKES
 
-- **Calling `.optional()` on an object, array or enum schema.** TypeScript reports that the method does not exist. Wrap it instead: `schema.optional(schema.array(schema.string()))`.
+- **Calling `.optional()` on an object, array or union schema.** TypeScript reports that the method does not exist. Wrap it instead: `schema.optional(schema.array(schema.string()))`. (Primitives, including `boolean()`, `enum()` and `literal()`, do have the method.)
 - **Chaining `.transform()` after `.refine()`.** `.refine()` returns a base `Schema` with no chain methods. Use `schema.transform(refined, fn)`.
 - **Using `schema.number()` for query-string values.** `"3"` is a string, so it fails with `invalid_type`. Use `schema.coerce.number()`.
 - **Expecting extra keys to survive.** Objects strip unknown keys by default, so `parse()` returns a smaller object than you passed in. Call `.passthrough()` to keep them or `.strict()` to reject them.
 - **Importing `SchemaError` from `@zudojs/schema`.** It is not exported there; import it from `@zudojs/errors`.
+- **Casting `error.issues as SchemaIssue[]`.** A cast checks nothing and hides the case where the caught value is some other error. Use `if (isSchemaValidationError(error))`, which narrows the type and checks the issues at runtime.
+- **Using `.partial()` to build a create schema.** `.partial()` does not fill in defaults, so a record created from it lacks every defaulted field the caller left out. Use the full schema for creating and `.partial()` for updating.
 - **Forgetting the type annotation on a lazy schema.** TypeScript errors with "implicitly has type any". Declare it as `const Tree: Schema<TreeNode> = schema.lazy(...)`.
 
 ## RELATED PACKAGES
@@ -463,25 +563,25 @@ The package also exports the low-level pieces used to write a custom `Schema` su
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/schema` exports from its package root at v1.1.1 — **94** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/schema` exports from its package root at v1.2.3 — **98** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 94 exports**
+**Show all 98 exports**
 
-Classes (35)
+Classes (36)
 
-`AnySchema` `ArraySchema` `BigIntSchema` `BooleanSchema` `CoerceBigIntSchema` `CoerceBooleanSchema` `CoerceNumberSchema` `CoerceStringSchema` `DefaultSchema` `DiscriminatedUnionSchema` `EnumSchema` `IntersectionSchema` `LazySchema` `LiteralSchema` `MapSchema` `NeverSchema` `NullableModifierSchema` `NullSchema` `NumberSchema` `ObjectSchema` `OptionalModifierSchema` `OptionalSchema` `RecordSchema` `RefineSchema` `Schema` `SchemaValidationSignal` `SetSchema` `StringSchema` `SymbolSchema` `TransformModifierSchema` `TransformSchema` `TupleSchema` `UndefinedSchema` `UnionSchema` `UnknownSchema`
+`AnySchema` `ArraySchema` `BigIntSchema` `BooleanSchema` `CoerceBigIntSchema` `CoerceBooleanSchema` `CoerceNumberSchema` `CoerceStringSchema` `DefaultSchema` `DiscriminatedUnionSchema` `EnumSchema` `IntersectionSchema` `LazySchema` `LiteralSchema` `MapSchema` `ModifiableSchema` `NeverSchema` `NullableModifierSchema` `NullSchema` `NumberSchema` `ObjectSchema` `OptionalModifierSchema` `OptionalSchema` `RecordSchema` `RefineSchema` `Schema` `SchemaValidationSignal` `SetSchema` `StringSchema` `SymbolSchema` `TransformModifierSchema` `TransformSchema` `TupleSchema` `UndefinedSchema` `UnionSchema` `UnknownSchema`
 
-Functions (46)
+Functions (47)
 
-`addIssue` `anySchema` `arraySchema` `bigintSchema` `booleanSchema` `childContext` `coerceBigIntSchema` `coerceBooleanSchema` `coerceNumberSchema` `coerceStringSchema` `countIssues` `createParseContext` `defaultSchema` `discriminatedUnionSchema` `enterComposite` `enumSchema` `failValidation` `intersectionSchema` `isMaxDepthExceeded` `isSchemaFailure` `isSchemaSuccess` `lazySchema` `leaveComposite` `literalSchema` `mapSchema` `neverSchema` `nullableSchema` `nullSchema` `numberSchema` `objectSchema` `optionalSchema` `recordSchema` `refineSchema` `rethrowUnexpected` `schemaFailure` `schemaSuccess` `setSchema` `shouldAbortEarly` `stringSchema` `symbolSchema` `transformSchema` `tupleSchema` `undefinedSchema` `unionSchema` `unknownSchema` `unwrapSchemaResult`
+`addIssue` `anySchema` `arraySchema` `bigintSchema` `booleanSchema` `childContext` `coerceBigIntSchema` `coerceBooleanSchema` `coerceNumberSchema` `coerceStringSchema` `countIssues` `createParseContext` `defaultSchema` `discriminatedUnionSchema` `enterComposite` `enumSchema` `failValidation` `intersectionSchema` `isMaxDepthExceeded` `isSchemaFailure` `isSchemaSuccess` `isSchemaValidationError` `lazySchema` `leaveComposite` `literalSchema` `mapSchema` `neverSchema` `nullableSchema` `nullSchema` `numberSchema` `objectSchema` `optionalSchema` `recordSchema` `refineSchema` `rethrowUnexpected` `schemaFailure` `schemaSuccess` `setSchema` `shouldAbortEarly` `stringSchema` `symbolSchema` `transformSchema` `tupleSchema` `undefinedSchema` `unionSchema` `unknownSchema` `unwrapSchemaResult`
 
-Interfaces (6)
+Interfaces (7)
 
-`SchemaFailure` `SchemaIssue` `SchemaMetadata` `SchemaParseContext` `SchemaParseOptions` `SchemaSuccess`
+`SchemaFailure` `SchemaIssue` `SchemaMetadata` `SchemaParseContext` `SchemaParseOptions` `SchemaSuccess` `StringUrlOptions`
 
-Type aliases (6)
+Type aliases (7)
 
-`Infer` `SchemaInput` `SchemaOutput` `SchemaPathSegment` `SchemaResult` `SchemaShape`
+`Infer` `ObjectShapeOutput` `SchemaInput` `SchemaOutput` `SchemaPathSegment` `SchemaResult` `SchemaShape`
 
 Constants (1)
 

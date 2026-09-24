@@ -4,7 +4,7 @@ description: "@zudojs/testing docs for ZudoJS: mocks, spies, fixtures, assertion
 source: https://zudojs.oyinlola.site/docs/packages-testing
 ---
 
-v1.1.2
+v1.2.0
 
 # @zudojs/testing
 
@@ -423,7 +423,7 @@ it("returns one user", async () => {
 | `.query({ … })` | Adds query parameters. | — |
 | `.send(body)` | Sets the body. | Objects as JSON, strings as text, bytes as octet-stream, `URLSearchParams` as a form. |
 | `.auth(token)` or `.auth(user, password)` | Bearer or Basic authorization. | — |
-| `.timeout(ms)` | Per-request time limit. | Default 5 s, or `{ timeout }` on the client. Rejects with a `TimeoutError`. |
+| `.timeout(ms)` | Per-request time limit. | Default 5 s, or `{ timeout }` on the client. Rejects with a `TimeoutError`. Values beyond Node's timer limit (about 24.8 days) are clamped to it, so a huge timeout means "wait a very long time"; it used to overflow and fire after 1 ms. |
 | `.expect(status)` | Checks the status code. | — |
 | `.expect(header, "value" \| /re/)` | Checks a header. | — |
 | `.expect((response) => …)` | Runs your own check. | — |
@@ -449,6 +449,8 @@ await client.get("/me").expect(200);
 ```
 
 An explicit `Cookie` header replaces the jar for that one request, and `createHttpTestClient(target, { cookies: false })` turns the jar off. The jar also has `set`, `delete`, `clear` and `toJSON`.
+
+Cookie paths are matched against the path the *server* saw, including any path in the base URL. With a client made for `http://127.0.0.1:3000/api`, `client.get("/me")` requests `/api/me`, so a cookie the server set with `Path=/api` is sent back, exactly as a browser would. Before 1.2.0 the jar compared `Path=/api` with `/me` and never returned the cookie.
 
 ### Closing
 
@@ -579,11 +581,11 @@ The remaining factories wrap real Zudojs services in a recording shell. You get 
 | --- | --- | --- |
 | `createSpyLogger(name?, level?)` | A full logger that writes nowhere and remembers everything. | `logger.calls` |
 | `createTestContainer({ overrides })` | A started DI container with your fakes registered. | — (use `resolve` / `has`) |
-| `createTestEventBus(options?)` | A started `EventBus` plus a `publish` that records. | `bus.published` |
-| `createTestMessageBus(options?)` | A `MessageBus` plus a `send` that records. | `bus.dispatched` |
-| `createTestQueue(name, options?)` | An in-memory queue plus an `add` that records. | `queue.jobs` |
+| `createTestEventBus(options?)` | A started `EventBus` that records every `publish`, `publishEvent` and `emit`. It *is* the bus: `testBus.bus === testBus`. | `testBus.published`, `findByType(type)` |
+| `createTestMessageBus(options?)` | A `MessageBus` that records every `send` and `dispatch`, on the double or on `.bus`. | `testBus.dispatched`, `findByType(type)` |
+| `createTestQueue(name, options?)` | A `Queue` (in memory) that records every `add`, on the double or on the underlying `.queue`. | `testQueue.jobs`, `findByName(name)` |
 | `createTestConfigManager(values?)` | A `ConfigManager` pre-loaded with values, auto-loading off. | — (use `get` / `set`) |
-| `createTestApplication(options?)` | A container, logger, clock and cleanup manager wired together. | — |
+| `createTestApplication(options?)` | A container, logger, clock and cleanup manager wired together. Silent, with a fixed clock, by default. | `app.logger.calls` |
 | `new InMemoryTestStorage()` | A key-value store with optional TTL. A TTL of `0` expires immediately; only an omitted TTL never expires. | — (use `keys()` / `size`) |
 
 ### Example: spy logger and in-memory storage
@@ -615,7 +617,7 @@ it("logs and stores the new user", () => {
 
 ### Expiry in `InMemoryTestStorage`
 
-`set(key, value, ttlMs)` takes an optional time-to-live in milliseconds. The entry carries a deadline of `Date.now() + ttlMs`, and the next `get`, `has`, `keys()` or `size` drops it once that deadline has passed. Only an omitted (or `undefined`) TTL means "never expires".
+`set(key, value, ttlMs)` takes an optional time-to-live in milliseconds. The entry carries a deadline of `Date.now() + ttlMs`, and the next `get`, `has`, `keys()` or `size` drops it once that deadline has passed. Only an omitted (or `undefined`) TTL means "never expires". A `NaN` TTL throws a `RangeError` (`TTL for "k" is NaN; pass a number of milliseconds or omit it.`); before 1.2.0 it was stored and silently never expired. `delete()` returns `false` for a key that has already expired, as if it were not there.
 
 ```ts
 const store = new InMemoryTestStorage();
@@ -658,6 +660,67 @@ it("publishes user.created and nothing else", async () => {
 
 **What you should see:** a pass. `testBus.published` hands back a copy, so holding on to it will not show later publications. `createTestMessageBus` works the same way with `send()` and `dispatched`, and `createTestQueue` with `add()` and `jobs`.
 
+### Every path is recorded
+
+In a real test you rarely call `publish` yourself. You hand the bus to the code under test and it publishes however it likes. Since 1.2.0 the doubles record every way in: the test event bus *is* an `EventBus` (so you can pass it wherever one is expected), and it records `publish`, `publishEvent` and `emit`. `testBus.bus` is the same object, kept so older tests still compile.
+
+```ts
+import { it, expect } from "vitest";
+import { createTestEventBus } from "@zudojs/testing";
+import type { EventBus } from "@zudojs/events";
+
+// The code under test only knows it gets an EventBus.
+async function registerUser(events: EventBus, name: string): Promise<void> {
+  await events.publishEvent({ type: "user.created", payload: { name } });
+}
+
+it("records a publish made by code that was handed the bus", async () => {
+  const events = createTestEventBus();
+
+  await registerUser(events, "ann");     // the double itself is an EventBus
+  await registerUser(events.bus, "bob"); // .bus is the same object
+
+  expect(events.bus).toBe(events);
+  expect(events.findByType("user.created")).toHaveLength(2);
+  console.log(events.published.map((entry) => entry.event.payload));
+  // [ { name: 'ann' }, { name: 'bob' } ]
+
+  events.dispose();
+});
+```
+
+**What you should see:** a pass, and the two payloads printed. `publish` now accepts a full `Event`, as `EventBus.publish` does, as well as the short `{ type, payload }` input it always took. The same goes for the other doubles: `createTestMessageBus()` is a `MessageBus` that records both `send` and `dispatch`, and `createTestQueue()` is a `Queue` that records `add` whether you call it on the double or on `testQueue.queue`. Destructured methods (`const { publish } = createTestEventBus()`) keep working.
+
+The test queue also passes `onJobReady` through to the real queue, so a `Worker` from [@zudojs/queue](https://zudojs.oyinlola.site/docs/packages-queue.md) running on a test queue wakes up as soon as a job is added instead of waiting for its next poll.
+
+> **Changed in v1.2.0:** before this release only the double's own wrapper method recorded. `createTestEventBus().bus.publishEvent(...)`, `createTestMessageBus().bus.send(...)` and `createTestQueue().queue.add(...)` ran but recorded nothing, so a test asserting on `published`, `dispatched` or `jobs` could pass while checking an empty list. If one of your assertions such as `toHaveLength(0)` now fails, it was hiding a real publication.
+
+### A test application: quiet and fixed in time
+
+`createTestApplication()` gives you a container, a logger, a clock and a cleanup manager in one object. By default it prints nothing and always starts at the same moment. The logger is a `createSpyLogger(name)` that records every line in `app.logger.calls`, and the clock is a test clock pinned at `DEFAULT_TEST_APPLICATION_TIME` (2026-01-01T00:00:00.000Z).
+
+```ts
+import { it, expect } from "vitest";
+import { createTestApplication, DEFAULT_TEST_APPLICATION_TIME } from "@zudojs/testing";
+
+it("logs quietly and reads a fixed time", async () => {
+  const app = createTestApplication({ name: "billing" });
+
+  app.logger.info("invoice created", { invoiceId: "inv_1" }); // prints nothing
+
+  expect(app.logger.calls).toHaveLength(1);
+  expect(app.logger.findByMessage("invoice")).toHaveLength(1);
+  console.log(app.clock.now.toISOString()); // 2026-01-01T00:00:00.000Z
+  expect(app.clock.timestamp).toBe(DEFAULT_TEST_APPLICATION_TIME);
+
+  await app.dispose(); // closes the container, then the logger
+});
+```
+
+**What you should see:** a pass, the date `2026-01-01T00:00:00.000Z` printed, and no log line in the output. To opt back in to the old behaviour, pass `logger: createLogger({ name })` from [@zudojs/logger](https://zudojs.oyinlola.site/docs/packages-logger.md) to print, `clock` for a clock of your own, or `startTime` to move the default clock (`startTime: Date.now()` for the wall-clock time). `app.logger` is typed as the logger you passed, or as a `SpyLogger` when you passed none.
+
+> **Changed in v1.2.0:** the application used to get a real logger that printed to the console and a clock that started at the current time. A test that read `app.clock.now` and expected "today" now gets 2026-01-01; pass `startTime: Date.now()` if it really needs the current time.
+
 ## API REFERENCE
 
 Everything below is exported from the package root: `import { … } from "@zudojs/testing"`.
@@ -676,16 +739,16 @@ Everything below is exported from the package root: `import { … } from "@zudoj
 | `createTestContext(options?)` | Clock + cleanup + log/event/message recorders. | Options: `clock`, `cleanup`. |
 | `createLogRecorder()` `createEventRecorder()` `createMessageRecorder()` | The individual recorders, if you want them on their own. | Used internally by `createTestContext`. |
 | `createTestContainer(options?)` | Started DI container with `overrides` registered. | Exposes `resolve`, `has`, `dispose`. |
-| `createTestApplication(options?)` | Container, logger, clock and cleanup in one object. | `dispose()` closes the container, then the logger. |
+| `createTestApplication(options?)` | Container, logger, clock and cleanup in one object. | Options: `name`, `container`, `logger` (default: silent `createSpyLogger(name)`), `clock`, `startTime` (default: `DEFAULT_TEST_APPLICATION_TIME`), `cleanup`. `dispose()` closes the container, then the logger. See [A test application](#test-application). |
 | `createSpyLogger(name?, level?)` | Recording logger; children share the recording. | Defaults: name `"test"`, level `LEVELS.trace`. |
 | `createTestConfigManager(values?, options?)` | Config manager pre-loaded with values. | `autoLoad` is off by default. |
-| `createTestEventBus(options?)` | Started event bus that records publications. | Call `dispose()`. |
-| `createTestMessageBus(options?)` | Message bus that records dispatches. | Call `dispose()`. |
-| `createTestQueue(name, options?)` | In-memory queue that records added jobs. | Call `close()`. |
+| `createTestEventBus(options?)` | Started `EventBus` that records `publish`, `publishEvent` and `emit`. | `.bus` is the same instance. `published`, `findByType`, `clear`. Call `dispose()`. |
+| `createTestMessageBus(options?)` | `MessageBus` that records `send` and `dispatch`. | `dispatched`, `findByType`, `clear`. Call `dispose()`. |
+| `createTestQueue(name, options?)` | In-memory `Queue` that records `add`, on the double and on `.queue`. | `jobs`, `findByName`, `clear`; forwards `onJobReady`. Call `close()`. |
 | `createHttpTestClient(target, options?)` | Sends real HTTP requests to your app, supertest style. | Options: `cleanup`, `timeout`, `headers`, `cookies`, `kind`, `origin`, `adapter`. See [Testing an HTTP app](#http-test-client). |
 | `createHttpTestCookieJar()` | A standalone cookie jar, the one the client uses. | `get`, `set`, `delete`, `clear`, `toJSON`, `size`. |
 | `createTestHTTPRequest()` | Fluent request builder. | Finish with `build()`. |
-| `createHTTPRequest(method, path, options?)` | Request in one call. | Options: `headers`, `query`, `body`, `params`. |
+| `createHTTPRequest(method, path, options?)` | Request in one call. | Options: `headers`, `query`, `body`, `params`. `query` and `params` are copied, so changing your object afterwards does not change the request. |
 | `createTestHTTPResponse()` | Fluent response builder. | `json` / `text` / `html` set the content type. |
 | `createHTTPResponse(status, body?, headers?)` | Response in one call. | Always marked `sent`. |
 | `jsonResponse` `createdResponse` `noContentResponse` `badRequestResponse` `notFoundResponse` `serverErrorResponse` | Ready-made 200 / 201 / 204 / 400 / 404 / 500 responses. | The 4xx and 5xx ones use a `{ error }` body. |
@@ -711,13 +774,14 @@ Everything below is exported from the package root: `import { … } from "@zudoj
 | `assertErrorType(error, Class)` | Requires `instanceof Class`. | Narrows the type for TypeScript. |
 | `assertErrorCode(error, code)` | Checks a Zudojs error's `code`. | — |
 | `assertErrorMetadata(error, key, value)` | Checks one metadata entry. | Compared structurally. |
-| `assertSerializesCorrectly` `assertSerializesTo` `assertDeserializesTo` `assertTypePreservesRoundTrip` | Serialization round-trip checks. | These four still compare with `JSON.stringify` — see the warning above. |
+| `assertSerializesCorrectly` `assertSerializesTo` `assertDeserializesTo` `assertTypePreservesRoundTrip` | Serialization round-trip checks. | `assertSerializesCorrectly` and `assertDeserializesTo` compare structurally; `assertSerializesTo` compares the JSON string. See the note above. |
 
 ### Classes, constants and helpers
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| `InMemoryTestStorage` | Key-value store: `get`, `set`, `delete`, `has`, `clear`, `keys()`, `size`. | `set(key, value, ttlMs)` expires entries at `now + ttlMs`; `ttlMs: 0` is already expired and only an omitted TTL never expires (changed in v1.1.2). `has` tells a stored `null` from a miss. |
+| `InMemoryTestStorage` | Key-value store: `get`, `set`, `delete`, `has`, `clear`, `keys()`, `size`. | `set(key, value, ttlMs)` expires entries at `now + ttlMs`; `ttlMs: 0` is already expired and only an omitted TTL never expires (changed in v1.1.2). A `NaN` TTL throws a `RangeError`, and `delete` returns `false` for an expired key (both since v1.2.0). `has` tells a stored `null` from a miss. |
+| `DEFAULT_TEST_APPLICATION_TIME` | Where `createTestApplication`'s default clock starts. | `Date.UTC(2026, 0, 1)`, i.e. 2026-01-01T00:00:00.000Z. |
 | `LEVELS` | Numeric log levels: fatal 0 → trace 5. | Use with `createSpyLogger`'s second argument. |
 | `createRecordingLogger`, `deepMatches`, `mergeContext`, `mergeLoggerContext` | Internals the spy logger is built from. | Exported, but rarely needed directly. |
 
@@ -734,7 +798,8 @@ All of these are exported as types only. Mocking: `MockFn`, `SpyFn`, `SpyMethod`
 - **Reusing a cleanup manager after disposing it.** `register()` throws "Cannot register cleanup after manager has been disposed." *Fix:* build a fresh manager (or a fresh test context) per test.
 - **Expecting `clock.reset()` to return to the time you started with.** It jumps to the real current time, so later expiry checks silently pass. *Fix:* call `clock.set(startTime)` with your fixed time instead.
 - **Passing the bus itself to an event assertion.** `assertEventPublished(bus, "user.created")` is a type error, and at runtime nothing matches. *Fix:* pass the recorded array — `assertEventPublished(bus.published, "user.created")`.
-- **Trusting `assertSerializesCorrectly` with a `Map` or `Set`.** It compares JSON strings, and those types stringify to `{}`, so the assertion cannot fail. *Fix:* use `assertTypePreservesRoundTrip` with your own checker, or compare with `deepEqual`.
+- **Checking a `Map` or `Set` with `assertSerializesTo`.** It compares JSON strings, and those types stringify to `{}`, so `assertSerializesTo(new Map([["a", 1]]), "{}")` passes while the contents are lost. *Fix:* use `assertSerializesCorrectly`, which compares the round-tripped value structurally, or `assertTypePreservesRoundTrip` with your own checker.
+- **Expecting `createTestApplication()` to print its logs or use today's date.** Since v1.2.0 its logger is silent and its clock starts at 2026-01-01. *Fix:* read `app.logger.calls`, or pass `logger` / `startTime: Date.now()`.
 - **Not awaiting an HTTP test request.** `client.get("/users/7").expect(200)` on its own sends nothing and checks nothing, so the test passes whatever the app does. *Fix:* `await` every chain.
 - **Forgetting `spy.restore()` after `createSpyMethod`.** The object keeps the wrapper for the rest of the file, and later tests count calls they did not make. *Fix:* restore in `afterEach`, or register it with the cleanup manager.
 
@@ -749,9 +814,9 @@ All of these are exported as types only. Mocking: `MockFn`, `SpyFn`, `SpyMethod`
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/testing` exports from its package root at v1.1.2 — **124** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/testing` exports from its package root at v1.2.4 — **125** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 124 exports**
+**Show all 125 exports**
 
 Classes (1)
 
@@ -769,6 +834,6 @@ Type aliases (9)
 
 `FetchHandler` `HttpTestAdapterOptions` `HttpTestBody` `HttpTestExpectation` `HttpTestQuery` `HttpTestQueryValue` `HttpTestTarget` `HttpTestTargetKind` `NodeRequestListener`
 
-Constants (1)
+Constants (2)
 
-`LEVELS`
+`DEFAULT_TEST_APPLICATION_TIME` `LEVELS`

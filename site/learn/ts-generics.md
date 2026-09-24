@@ -1,76 +1,282 @@
 ---
-title: "Unions, narrowing and generics"
-description: "Handle values that can be one of several types, write functions that work for any type with generics, and discover the one thing types cannot do for a backend."
+title: "Generics"
+description: "Write one function, interface or class that works for many types without losing type safety, set rules with constraints and keyof, give type parameters defaults, and build a Result type and a generic repository."
 source: https://zudojs.oyinlola.site/learn/ts-generics
 ---
 
-LESSON 8 OF 10
+LESSON 36 OF 84
 
-From JavaScript to TypeScript
+TypeScript Foundation
 
-# Unions, narrowing and generics
+# Generics
 
-Handle values that can be one of several types, write functions that work for any type with generics, and discover the one thing types cannot do for a backend.
+Write one function, interface or class that works for many types without losing type safety, set rules with constraints and keyof, give type parameters defaults, and build a Result type and a generic repository.
 
-- **30 min** to read and try
-- **You need:** Lessons 6 and 7
-- **You build:** A typed Result helper and a generic repository
+- **35 min** to read and try
+- **You need:** Interfaces, unions and literal types
+- **You build:** A typed Result helper and a generic in-memory repository for tasks and users
 
-## Narrowing a union
+  [Test yourself](#test)
 
-A value with a union type, such as `string | number`, could be either. Before you use it, you check which one it is. TypeScript follows your checks and **narrows** the type inside each branch:
+## Why generics
 
-narrow.ts
+Here is a small helper that returns the first task in a list, and the same helper for users:
+
+why.ts
 
 ```ts
-function parseId(raw: string | number): number {
-  if (typeof raw === "number") {
-    return raw;
-  }
-  return Number.parseInt(raw, 10);
+interface Task { id: number; title: string }
+interface User { id: number; name: string }
+
+function firstTask(items: Task[]): Task | undefined {
+  return items[0];
 }
 
-console.log(parseId(7));
-console.log(parseId("42"));
-console.log(parseId("abc"));
+function firstUser(items: User[]): User | undefined {
+  return items[0];
+}
+
+console.log(firstTask([{ id: 1, title: "Buy milk" }])?.title);
+console.log(firstUser([{ id: 7, name: "Ada" }])?.name);
 ```
 
-Output of `npx tsx narrow.ts` and of the browser terminal
+Output of `npx tsx why.ts` and of the browser terminal
 
 ```ts
-7
-42
-NaN
+Buy milk
+Ada
 ```
 
-Inside the `if`, `raw` is a `number`. After it, TypeScript knows it can only be a `string`. The last line shows why a backend cannot stop there: `"abc"` is a string, so the types are happy, and yet the result is `NaN`, "not a number". You will fix that properly in lesson 9.
+The two bodies are identical. Only the types differ. You could write one version with `any`, but you learned in [Basic types](https://zudojs.oyinlola.site/learn/ts-types#any-unknown) what that costs:
 
-## Results instead of surprises
+any-first.ts
 
-Many ZudoJS functions do not throw when something goes wrong. They return an object that says whether it worked. The trick is a property, here `ok`, whose literal value tells the two shapes apart. That is a **discriminated union**:
+```ts
+function firstAny(items: any[]): any {
+  return items[0];
+}
+
+const title = firstAny(["Buy milk", "Call Ada"]);
+try {
+  console.log(title.toFixed(2));
+} catch (error) {
+  console.log(String(error));
+}
+```
+
+Output of `npx tsx any-first.ts` and of the browser terminal
+
+```ts
+TypeError: title.toFixed is not a function
+```
+
+It compiles, and crashes. The compiler forgot that the list held strings. A **generic** is the fix: a function (or interface, or class) with a **type parameter**, a placeholder for a type that the caller fills in.
+
+## Generic functions
+
+A type parameter goes in angle brackets before the parameter list. By convention a single one is called `T` (for "type"):
+
+first.ts
+
+```ts
+function first<T>(items: readonly T[]): T | undefined {
+  return items[0];
+}
+
+const title = first(["Buy milk", "Call Ada"]);
+const count = first([3, 1, 2]);
+const nothing = first<string>([]);
+
+console.log(title?.toUpperCase(), (count ?? 0) + 1, nothing);
+```
+
+Output of `npx tsx first.ts` and of the browser terminal
+
+```ts
+BUY MILK 4 undefined
+```
+
+When you call `first(["Buy milk", "Call Ada"])`, TypeScript sees an array of strings, so `T` becomes `string` and `title` is `string | undefined`. For `[3, 1, 2]`, `T` is `number`. This is **inference** again. With an empty array there is nothing to infer from, so you pass the type yourself: `first<string>([])`.
+
+A function can have several type parameters. This one turns a list into a `Map`, looked up by a key that a callback picks:
+
+index-by.ts
+
+```ts
+function indexBy<T, K>(items: readonly T[], keyOf: (item: T) => K): Map<K, T> {
+  const map = new Map<K, T>();
+  for (const item of items) map.set(keyOf(item), item);
+  return map;
+}
+
+const users = [
+  { id: 1, email: "ada@example.com", name: "Ada" },
+  { id: 2, email: "grace@example.com", name: "Grace" },
+];
+
+const byEmail = indexBy(users, (user) => user.email);
+const byId = indexBy(users, (user) => user.id);
+
+console.log(byEmail.get("grace@example.com")?.name);
+console.log(byId.get(1)?.name, byId.size);
+```
+
+Output of `npx tsx index-by.ts` and of the browser terminal
+
+```ts
+Grace
+Ada 2
+```
+
+`T` is inferred from the list and `K` from what the callback returns: `string` for `byEmail`, `number` for `byId`. So `byId.get("1")` would be a type error, which is right, because the map's keys are numbers.
+
+You have used generic types since the first lessons without the name: `Array<string>`, `Promise<Task>` and `Map<K, T>` are all generic types from JavaScript's standard library.
+
+## Generic interfaces and types
+
+Interfaces and type aliases can take type parameters too. An API that returns long lists sends them one page at a time. The page shape is the same for tasks and users; only the items differ:
+
+page.ts
+
+```ts
+interface Page<T> {
+  readonly items: readonly T[];
+  readonly page: number;
+  readonly totalPages: number;
+}
+
+function paginate<T>(all: readonly T[], page: number, size: number): Page<T> {
+  const start = (page - 1) * size;
+  return { items: all.slice(start, start + size), page, totalPages: Math.ceil(all.length / size) };
+}
+
+const titles = ["Buy milk", "Call Ada", "File taxes", "Fix bug", "Water plants"];
+const second: Page<string> = paginate(titles, 2, 2);
+console.log(second);
+```
+
+Output of `npx tsx page.ts` and of the browser terminal
+
+```json
+{ items: [ 'File taxes', 'Fix bug' ], page: 2, totalPages: 3 }
+```
+
+A generic type is like a function for types: `Page<string>` "calls" `Page` with `T = string`, and gives an object whose `items` are strings.
+
+## Constraints: extends and keyof
+
+Inside a generic function, `T` could be anything, so TypeScript lets you do almost nothing with it. Try to read an `id`:
+
+find.ts
+
+```ts
+function findById<T>(items: readonly T[], id: number): T | undefined {
+  return items.find((item) => item.id === id);
+}
+```
+
+What `npx tsc --noEmit` prints
+
+```ts
+find.ts:2:36 - error TS2339: Property 'id' does not exist on type 'T'.
+
+2   return items.find((item) => item.id === id);
+                                     ~~
+
+
+Found 1 error in find.ts:2
+```
+
+That is correct: someone could call `findById([1, 2, 3], 1)`, and numbers have no `id`. A **constraint**, written `T extends …`, sets a rule for `T`: "any type, as long as it has at least this shape".
+
+find.ts
+
+```ts
+function findById<T extends { id: number }>(items: readonly T[], id: number): T | undefined {
+  return items.find((item) => item.id === id);
+}
+
+function pluck<T, K extends keyof T>(items: readonly T[], key: K): T[K][] {
+  return items.map((item) => item[key]);
+}
+
+const tasks = [
+  { id: 1, title: "Buy milk", done: false },
+  { id: 2, title: "Call Ada", done: true },
+];
+
+console.log(findById(tasks, 2)?.title);
+console.log(pluck(tasks, "title"));
+console.log(pluck(tasks, "done"));
+```
+
+Output of `npx tsx find.ts` and of the browser terminal
+
+```ts
+Call Ada
+[ 'Buy milk', 'Call Ada' ]
+[ false, true ]
+```
+
+- `T extends { id: number }`: `T` can be a task, a user, anything with a numeric `id`. And the result is still the full `T`: `findById(tasks, 2)?.title` works.
+- `keyof T` is the union of `T`'s property names, here `"id" | "title" | "done"`. `K extends keyof T` means "one of those names", and `T[K]` is the type of that property. So `pluck(tasks, "title")` is a `string[]` and `pluck(tasks, "done")` a `boolean[]`.
+
+A name that is not a property is refused:
+
+pluck-typo.ts
+
+```ts
+function pluck<T, K extends keyof T>(items: readonly T[], key: K): T[K][] {
+  return items.map((item) => item[key]);
+}
+
+pluck([{ id: 1, title: "Buy milk" }], "titel");
+```
+
+What `npx tsc --noEmit` prints
+
+```ts
+pluck-typo.ts:5:39 - error TS2345: Argument of type '"titel"' is not assignable to parameter of type '"id" | "title"'.
+
+5 pluck([{ id: 1, title: "Buy milk" }], "titel");
+                                        ~~~~~~~
+
+
+Found 1 error in pluck-typo.ts:5
+```
+
+`keyof` and `T[K]` get a full section of their own in [Advanced and utility types](https://zudojs.oyinlola.site/learn/ts-advanced).
+
+## A Result type, with defaults
+
+Many functions can fail in expected ways: a port number out of range, a missing record. Instead of throwing, they can return an object that says whether it worked. You know the tool for that from [Interfaces, unions and literal types](https://zudojs.oyinlola.site/learn/ts-objects#discriminated): a discriminated union. Made generic, it works for any value and any error:
 
 result.ts
 
 ```ts
-type Result =
-  | { ok: true; value: number }
-  | { ok: false; error: string };
+export type Result<T, E = string> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly error: E };
 
-function parsePort(raw: string): Result {
+export function ok<T>(value: T): Result<T, never> {
+  return { ok: true, value };
+}
+
+export function err<E>(error: E): Result<never, E> {
+  return { ok: false, error };
+}
+
+function parsePort(raw: string): Result<number> {
   const port = Number(raw);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    return { ok: false, error: `"${raw}" is not a valid port` };
+    return err(`"${raw}" is not a valid port`);
   }
-  return { ok: true, value: port };
+  return ok(port);
 }
 
 for (const input of ["3000", "99999", "http"]) {
   const result = parsePort(input);
-  if (result.ok) {
-    console.log("port", result.value);
-  } else {
-    console.log("error:", result.error);
-  }
+  console.log(result.ok ? `port ${result.value}` : `error: ${result.error}`);
 }
 ```
 
@@ -82,52 +288,15 @@ error: "99999" is not a valid port
 error: "http" is not a valid port
 ```
 
-After `if (result.ok)`, TypeScript knows `result` has a `value`. In the `else` branch it knows it has an `error`. Try to read `result.value` in the `else` branch and `tsc` refuses. You cannot forget the failure case.
+- `E = string` is a **default type parameter**. `Result<number>` means `Result<number, string>`. Pass a second type when you need a different error: `Result<User, "not-found" | "suspended">`.
+- `ok` returns `Result<T, never>`: a success can never hold an error, so it fits any `Result<T, E>`. The same goes for `err`.
+- After `result.ok`, TypeScript knows which member you have. You cannot read `result.value` without checking first, so you cannot forget the failure case.
 
-## Generics: one function, any type
+Some ZudoJS packages use this idea: `@zudojs/schema`'s `safeParse` returns a result object with a `success` flag instead of throwing.
 
-That `Result` only works for numbers. You want the same shape for tasks, users, anything. A **generic** type takes a type as a parameter, written in angle brackets:
+## Generic classes: a repository
 
-generic.ts
-
-```ts
-type Result<T> =
-  | { ok: true; value: T }
-  | { ok: false; error: string };
-
-function first<T>(items: T[]): Result<T> {
-  if (items.length === 0) {
-    return { ok: false, error: "the list is empty" };
-  }
-  return { ok: true, value: items[0]! };
-}
-
-const title = first(["Buy milk", "Call Ada"]);
-const count = first([3, 1, 2]);
-const none = first<string>([]);
-
-if (title.ok) console.log(title.value.toUpperCase());
-if (count.ok) console.log(count.value + 1);
-if (!none.ok) console.log(none.error);
-```
-
-Output of `npx tsx generic.ts` and of the browser terminal
-
-```ts
-BUY MILK
-4
-the list is empty
-```
-
-`T` is a placeholder. When you call `first(["Buy milk", ...])`, TypeScript sees an array of strings, so `T` becomes `string` and `title.value` is a string. For `[3, 1, 2]`, `T` is `number`. With an empty array there is nothing to infer from, so you pass the type yourself: `first<string>([])`.
-
-The `!` in `items[0]!` tells TypeScript "I checked, this is not undefined". Use it only right after a check like the `length` test above.
-
-You have already used generic types without noticing: `Task[]` is short for `Array<Task>`, and an `async` function that returns a task returns a `Promise<Task>`.
-
-## A generic repository
-
-Here is a pattern ZudoJS uses everywhere: a **repository**, the one place that stores and finds one kind of record. Written once with a generic, it works for tasks, users or anything with an `id`:
+Classes can be generic too. Here is a pattern ZudoJS uses everywhere: a **repository**, the one place that stores and finds one kind of record. Written once, it works for tasks, users or anything with an `id`:
 
 repository.ts
 
@@ -148,96 +317,37 @@ class MemoryRepository<T extends Entity> {
     return this.items.get(id);
   }
 
-  async findAll(): Promise<T[]> {
-    return [...this.items.values()];
+  async findWhere(match: (item: T) => boolean): Promise<T[]> {
+    return [...this.items.values()].filter(match);
   }
 }
 
-interface Task extends Entity {
-  title: string;
-  done: boolean;
-}
+interface Task extends Entity { title: string; done: boolean }
+interface User extends Entity { email: string }
 
 const tasks = new MemoryRepository<Task>();
 await tasks.save({ id: 1, title: "Buy milk", done: false });
 await tasks.save({ id: 2, title: "Call Ada", done: true });
 
+const users = new MemoryRepository<User>();
+await users.save({ id: 1, email: "ada@example.com" });
+
 console.log(await tasks.findById(2));
-console.log((await tasks.findAll()).length);
+console.log((await tasks.findWhere((task) => !task.done)).map((task) => task.title));
+console.log((await users.findById(1))?.email);
 ```
 
 Output of `npx tsx repository.ts` and of the browser terminal
 
 ```json
 { id: 2, title: 'Call Ada', done: true }
-2
+[ 'Buy milk' ]
+ada@example.com
 ```
 
-- `T extends Entity` means "any type, as long as it has an `id`". Without that rule, `item.id` would be an error.
-- `private readonly items` can only be used inside the class, and never replaced. A `Map` is a built-in key-to-value store.
-- The methods are `async` even though a `Map` answers instantly, because a real database will not. Swapping this class for a database later will not change any code that uses it.
-
-## unknown, any, and the gap types cannot close
-
-TypeScript has two "I don't know" types:
-
-- `any` switches type checking off. Anything goes, nothing is checked. Avoid it.
-- `unknown` means "could be anything, so prove what it is before you use it". The compiler refuses to let you use it until you narrow it.
-
-unknown.tsNode.js only
-
-```ts
-const body: unknown = JSON.parse('{"title":"Buy milk"}');
-
-console.log(body.title);
-```
-
-What `npx tsc --noEmit` prints
-
-```ts
-unknown.ts:3:13 - error TS18046: 'body' is of type 'unknown'.
-
-3 console.log(body.title);
-              ~~~~
-
-
-Found 1 error in unknown.ts:3
-```
-
-To use it, you would have to check first: `typeof body === "object"`, then that it has a `title`, then that the title is a string. That is tedious to write by hand for every request, which is exactly the problem the next section shows.
-
-Now the problem that matters most for a backend. `JSON.parse` is declared to return `any`, so you can put its result straight into a typed variable, and the compiler believes you:
-
-gap.ts
-
-```ts
-interface Task {
-  title: string;
-  done: boolean;
-}
-
-const requestBody = '{"title": 42, "done": "sometimes"}';
-const task: Task = JSON.parse(requestBody);
-
-console.log(typeof task.title, typeof task.done);
-
-try {
-  console.log(task.title.toUpperCase());
-} catch (error) {
-  console.log(String(error));
-}
-```
-
-Output of `npx tsx gap.ts` and of the browser terminal
-
-```ts
-number string
-TypeError: task.title.toUpperCase is not a function
-```
-
-This file passes `tsc` with no errors, then fails when it runs. Without the `try`, the program would crash. The types said `title` was a string. The data said otherwise, and the data won, because types are removed before the code runs (lesson 6).
-
-Every request that reaches your API is text like `requestBody`, sent by someone else. TypeScript cannot check it. Something has to check it **while the program runs**, and turn it into a value that really matches the type. That is the first job ZudoJS will do for you, in the next lesson.
+- `new MemoryRepository<Task>()` fixes `T` for that object. `tasks.save` now only accepts tasks, and `findById` returns a `Task`. Try `tasks.save({ id: 3, email: "x" })`: it is a type error.
+- `private readonly items` can only be used inside the class and never replaced. [Classes in TypeScript](https://zudojs.oyinlola.site/learn/ts-classes) covers these words.
+- The methods are `async` even though a `Map` answers instantly, because a real database will not. Swapping this class for a database version later will not change any code that uses it.
 
 ## Practice
 
@@ -245,16 +355,16 @@ TRY IT YOURSELF
 
 ### A generic findOrFail
 
-Write a generic function `findOrFail<T extends { id: number }>(items: T[], id: number): Result<T>` that returns the item, or an error `"Item 7 not found"`. Try it with tasks.
+Using the `Result` type from this lesson, write `findOrFail<T extends { id: number }>(items: readonly T[], id: number): Result<T>` that returns the item, or the error `"Item 7 not found"`.
 
 **Show a solution**
 
 find-or-fail.ts
 
 ```ts
-type Result<T> = { ok: true; value: T } | { ok: false; error: string };
+type Result<T, E = string> = { ok: true; value: T } | { ok: false; error: E };
 
-function findOrFail<T extends { id: number }>(items: T[], id: number): Result<T> {
+function findOrFail<T extends { id: number }>(items: readonly T[], id: number): Result<T> {
   const item = items.find((i) => i.id === id);
   return item ? { ok: true, value: item } : { ok: false, error: `Item ${id} not found` };
 }
@@ -266,8 +376,8 @@ const tasks = [
 
 const found = findOrFail(tasks, 2);
 const missing = findOrFail(tasks, 7);
-console.log(found.ok && found.value.title);
-console.log(!missing.ok && missing.error);
+if (found.ok) console.log(found.value.title);
+if (!missing.ok) console.log(missing.error);
 ```
 
 Output of `npx tsx find-or-fail.ts` and of the browser terminal
@@ -277,11 +387,94 @@ Call Ada
 Item 7 not found
 ```
 
+TRY IT YOURSELF
+
+### Group by a key
+
+Write `groupBy<T, K>(items: readonly T[], keyOf: (item: T) => K): Map<K, T[]>`. Group tasks by their `status` and print how many are in each group.
+
+**Show a solution**
+
+group-by.ts
+
+```ts
+function groupBy<T, K>(items: readonly T[], keyOf: (item: T) => K): Map<K, T[]> {
+  const groups = new Map<K, T[]>();
+  for (const item of items) {
+    const key = keyOf(item);
+    const group = groups.get(key) ?? [];
+    group.push(item);
+    groups.set(key, group);
+  }
+  return groups;
+}
+
+type Status = "todo" | "doing" | "done";
+const tasks: { title: string; status: Status }[] = [
+  { title: "Buy milk", status: "done" },
+  { title: "Fix bug", status: "doing" },
+  { title: "Call Ada", status: "done" },
+];
+
+for (const [status, group] of groupBy(tasks, (task) => task.status)) {
+  console.log(status, group.length);
+}
+```
+
+Output of `npx tsx group-by.ts` and of the browser terminal
+
+```ts
+done 2
+doing 1
+```
+
+TRY IT YOURSELF
+
+### A typed stack
+
+Write a class `Stack<T>` with `push(item: T): void`, `pop(): T | undefined` and a `size` getter. Use it for an "undo" list of task titles.
+
+**Show a solution**
+
+stack.ts
+
+```ts
+class Stack<T> {
+  private readonly items: T[] = [];
+
+  push(item: T): void {
+    this.items.push(item);
+  }
+
+  pop(): T | undefined {
+    return this.items.pop();
+  }
+
+  get size(): number {
+    return this.items.length;
+  }
+}
+
+const undo = new Stack<string>();
+undo.push("rename: Buy milk");
+undo.push("delete: Call Ada");
+console.log(undo.pop(), undo.size);
+```
+
+Output of `npx tsx stack.ts` and of the browser terminal
+
+```ts
+delete: Call Ada 1
+```
+
 ## Recap
 
-- Check a union's type with `typeof` or a shared literal property, and TypeScript narrows it for you.
-- A discriminated union like `{ ok: true; value } | { ok: false; error }` makes failure impossible to ignore.
-- Generics (`<T>`) let one function or class work for many types. `T extends Entity` sets rules for `T`.
-- Prefer `unknown` to `any`. And remember: data from outside your program is never checked by types. You need a runtime check.
+- A generic has type parameters (`<T>`) that the caller fills in, usually by inference. It keeps full type safety where `any` would lose it.
+- Functions, interfaces, type aliases and classes can all be generic.
+- `T extends Shape` sets a rule for `T`. `K extends keyof T` means "one of `T`'s property names", and `T[K]` is that property's type.
+- `E = string` gives a type parameter a default.
+- `Result<T, E>` makes failure part of the return type; a generic repository stores any kind of record.
 
-You now know enough TypeScript to read and write ZudoJS code. Time to install it.
+## Test yourself
+
+Five questions, picked at random from this lesson's question bank. Some ask you to choose an answer, some to predict what code prints, and some to write code and run it in the terminal. Get 4 of 5 right to pass. If you don't, read the explanations and try again: you get 5 different questions.

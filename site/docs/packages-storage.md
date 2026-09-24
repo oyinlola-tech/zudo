@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/storage — database, object st
 source: https://zudojs.oyinlola.site/docs/packages-storage
 ---
 
-v1.1.1
+v1.2.0
 
 # @zudojs/storage
 
@@ -247,6 +247,51 @@ await users.findAll({ orderBy: "1; DROP TABLE users --" });
 
 Passing `columns` is the stronger guard: a name that passes the character check but is not on your list is refused with `STORAGE_IDENTIFIER_NOT_ALLOWED`. Without it, a body carrying `is_admin` would be written happily. The same guards are exported for your own SQL: `assertIdentifier`, `assertIdentifiers`, `assertRowBound`, `assertSortDirection`.
 
+### Separate lists for writes, filters and sorting
+
+`columns` is the default allow-list for everything. Since v1.2.0 three optional lists narrow it per use: `writableColumns` governs the keys of `create()` and `update()`, `filterableColumns` the keys of a `count(where)` filter, and `sortableColumns` `findAll({ orderBy })`. Each one defaults to `columns`, so existing configs behave the same. This lets you sort by `created_at` and filter by `is_admin` without letting a request body write either. This fragment reuses the stub `database` from above.
+
+```ts
+interface Account extends Record<string, unknown> {
+  id: string;
+  email: string;
+  name: string | null;
+  is_admin: boolean;
+  created_at: Date;
+}
+
+const accounts = new BaseRepository<Account, string>(database, {
+  tableName: "users",
+  primaryKey: "id",
+  columns: ["id", "email", "name", "is_admin", "created_at"],
+  writableColumns: ["email", "name"],
+  filterableColumns: ["email", "is_admin"],
+  sortableColumns: ["email", "created_at"],
+});
+
+await accounts.findAll({ orderBy: "created_at" }); // allowed
+await accounts.count({ is_admin: true });         // allowed
+await accounts.update("u_1", { is_admin: true });
+// throws StorageError (STORAGE_IDENTIFIER_NOT_ALLOWED, 400): not writable
+```
+
+Still pick the writable fields yourself where you can, for example by parsing the body with a schema that only has those fields; `writableColumns` is the backstop.
+
+### `undefined` means “not provided”, `null` clears
+
+Since v1.2.0 `create()` and `update()` treat a property whose value is `undefined` as not provided and leave it out of the SQL, even when it is an own key. A partial DTO, such as the output of `@zudojs/schema`'s `.partial()` for a PATCH that only sent an email, therefore changes only the email. An explicit `null` still writes `NULL`. An `update` whose properties are all `undefined` writes nothing and returns the current row. The comments below show the SQL the driver receives; they assume a driver that returns the row (the stub above returns none, so there each `update` ends in `STORAGE_ENTITY_NOT_FOUND`). (Before v1.2.0 an `undefined` key was written as `NULL`, so such a PATCH wiped the other columns.)
+
+```ts
+await accounts.update("u_1", { email: "new@example.com", name: undefined });
+// UPDATE users SET email = $1 WHERE id = $2 RETURNING *  [ 'new@example.com', 'u_1' ]
+
+await accounts.update("u_1", { name: null });
+// UPDATE users SET name = $1 WHERE id = $2 RETURNING *  [ null, 'u_1' ]
+
+await accounts.update("u_1", { name: undefined });
+// nothing to write, so it reads the row: SELECT * FROM users WHERE id = $1  [ 'u_1' ]
+```
+
 > **Column names outside that character set are refused**
 >
 > A column called `"first name"` or `"user-id"` will not pass. That is deliberate. If your schema uses such names, write those statements yourself with your engine's quoting rather than routing them through `BaseRepository`.
@@ -396,6 +441,7 @@ console.log(manager.getPhase()); // shutdown
 - Phases run `uninitialized → initializing → ready → draining → drained → shutdown`. `start()` outside `ready` throws `STORAGE_LIFECYCLE_INVALID_PHASE`.
 - If a component's `initialize()` throws, the manager returns to `uninitialized` and rethrows.
 - `drain()` and `shutdown()` visit every component even when one fails, then throw one `StorageError` whose `cause` is an `AggregateError`.
+- **Teardown runs in reverse, one at a time.** `initialize()` goes in registration order; since v1.2.0 `drain()` and `shutdown()` visit components one after another in *reverse* registration order. Register dependencies first (a database, then a cache that writes to it) and the cache is drained and shut down before the database. Before v1.2.0 all components were drained at once, in registration order.
 - An empty manager or checker reports `healthy: false`. It has nothing to attest to, and green would mislead.
 
 ## SERIALIZATION
@@ -472,7 +518,7 @@ Errors are thrown as `StorageError` and `NotFoundError` from `@zudojs/errors`; t
 | Code | Status | Thrown when |
 | --- | --- | --- |
 | STORAGE_INVALID_IDENTIFIER | 400 | A table, key or column name is not a plain identifier. |
-| STORAGE_IDENTIFIER_NOT_ALLOWED | 400 | A valid name is not in the configured columns list. |
+| STORAGE_IDENTIFIER_NOT_ALLOWED | 400 | A valid name is not in the configured columns list, or in the writableColumns / filterableColumns / sortableColumns list that governs that use. |
 | STORAGE_INVALID_ROW_BOUND | 400 | limit or offset is not a non-negative safe integer. |
 | STORAGE_INVALID_SORT_DIRECTION | 400 | order is neither ASC nor DESC. |
 | STORAGE_ENTITY_NOT_FOUND | 404 | update() with empty changes on a missing row. A NotFoundError. |
@@ -482,8 +528,9 @@ Errors are thrown as `StorageError` and `NotFoundError` from `@zudojs/errors`; t
 | STORAGE_OBJECT_TOO_LARGE | 413 | A payload exceeds maxObjectBytes. |
 | STORAGE_CONNECTION_POOL_CLOSED | 503 | acquire() after drain(). |
 | STORAGE_CONNECTION_POOL_DRAINING | 503 | A queued acquirer is rejected because draining started. |
-| STORAGE_CONNECTION_ACQUIRE_TIMEOUT | 504 | No connection freed within acquireTimeout. |
-| STORAGE_LOCK_ACQUIRE_TIMEOUT | 504 | A lock did not free within timeout. |
+| STORAGE_CONNECTION_ACQUIRE_TIMEOUT | 503 | No connection freed within acquireTimeout. Retryable (was 504 before v1.2.0). |
+| STORAGE_CONNECTION_TIMEOUT | 503 | The factory did not open a connection within connectionTimeout. Retryable. |
+| STORAGE_LOCK_ACQUIRE_TIMEOUT | 409 | A lock did not free within timeout. Contention, like @zudojs/cache's lock errors (was 504 before v1.2.0). |
 | STORAGE_LOCK_LOST | 409 | extend() on a lock this handle no longer holds. |
 | STORAGE_LIFECYCLE_INVALID_PHASE | 500 | start() called outside the ready phase. |
 | STORAGE_LIFECYCLE_OPERATION_FAILED | 500 | Components failed to drain or shut down. |
@@ -507,7 +554,7 @@ try {
 ## COMMON MISTAKES
 
 - **Calling `repo.create(req.body)` with no `columns` allowlist.**
-  A request carrying `is_admin: true` writes that column, because the name passes the character check. Fix: pass `columns` to the constructor.
+  A request carrying `is_admin: true` writes that column, because the name passes the character check. Fix: pass `columns` to the constructor, and `writableColumns` when some columns may be read, filtered or sorted but never written.
 - **Expecting a signed URL or an S3 bucket.**
   Your editor reports no such method, because none exists. Fix: implement `ObjectStorage` over your provider's SDK, or serve files through your own authenticated route.
 - **Registering a `ConnectionPool` with the lifecycle manager or health checker.**
@@ -529,7 +576,7 @@ try {
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/storage` exports from its package root at v1.1.2 — **51** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/storage` exports from its package root at v1.2.3 — **51** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 51 exports**
 

@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/permissions — RBAC, ABAC, res
 source: https://zudojs.oyinlola.site/docs/packages-permissions
 ---
 
-v1.3.0
+v1.4.1
 
 # @zudojs/permissions
 
@@ -25,7 +25,7 @@ pnpm add @zudojs/permissions
 yarn add @zudojs/permissions
 ```
 
-> **Dependencies:** @zudojs/permissions depends on @zudojs/errors only. Its HTTP middleware composes with the @zudojs/http pipeline structurally — the types are mirrored locally — so no dependency or peer on @zudojs/http is declared.
+> **Dependencies:** @zudojs/permissions depends on @zudojs/errors and @zudojs/middleware (for `createGuardResponse`). Its HTTP middleware composes with the @zudojs/http pipeline structurally — the types are mirrored locally and are assignable to @zudojs/http's own — so no dependency or peer on @zudojs/http is declared.
 
 ## WHAT IT DOES
 
@@ -35,7 +35,7 @@ yarn add @zudojs/permissions
 - **Permission parsing and matching** with resource:action format and wildcard support
 - **Role hierarchy** with inheritance chains and circular detection
 - **Rule engine** with exact, wildcard, and conditional (ABAC) matching — deny-overrides by default, priority-based on request
-- **Policy evaluation** with wildcard matching, timeouts, priority ordering, and fail-closed error handling
+- **Policy evaluation** with wildcard matching, timeouts, priority ordering, and fail-closed error handling — a policy narrows access by default and grants only with `effect: "grant"`
 - **Ability context** for pre-resolved actors with can/cannot/check/explain
 - **Decision caching** keyed by actor, permission and resource, with configurable TTL, size cap and actor-level invalidation — opt-in only for resolver-backed engines, via `resolverCacheKey`
 - **HTTP middleware** integration with actor extraction and permission guards
@@ -75,7 +75,8 @@ The permissions engine sits between the application layer and the authorization 
 
 | Package | Version | Purpose |
 | --- | --- | --- |
-| @zudojs/errors | 1.1.0 | Base error classes (AuthorizationError, ErrorCode) |
+| @zudojs/errors | 1.3.0 | Base error classes (AuthorizationError, ErrorCode) |
+| @zudojs/middleware | 1.1.0 | `createGuardResponse`: the 401/403 refusals the HTTP guards return |
 | @zudojs/http | — | Not a dependency; the middleware plugs into its pipeline structurally |
 
 > **Internal dependencies:** Packages depend on each other with `workspace:*`, always — including on `main`. They are never hand-pinned to an exact version. At publish time `pnpm` rewrites each `workspace:*` to the exact version of that package in the same release, so a published tarball carries real ranges. Releases go out through `publish-all.sh`, which runs `pnpm -r publish` — it rewrites the ranges and publishes in dependency order. Plain `npm publish` does not understand the `workspace:` protocol and would ship a literal `workspace:*` to the registry.
@@ -334,16 +335,18 @@ ruleMatches(rule, { resource: "post", action: "write" }); // false
 
 ### evaluateRules
 
+`evaluateRules` is **async**, because a rule's conditions may be. It returns a `Promise`, so `await` it: without `await`, `result.allowed` is `undefined`, and `if (result)` is always true. For rules with no conditions, `evaluateRulesSync(rules, target)` returns the same result synchronously; it skips a conditional allow and applies a conditional deny.
+
 ```ts
-import { evaluateRules } from "@zudojs/permissions";
+import { evaluateRules, type PermissionRule } from "@zudojs/permissions";
 
 const rules: PermissionRule[] = [
   { effect: "allow", action: "read", resource: "post", priority: 10 },
   { effect: "deny", action: "read", resource: "post", priority: 20 },
 ];
 
-const result = evaluateRules(rules, { resource: "post", action: "read" });
-// { allowed: false, matchedRule: { effect: "deny", priority: 20 } }
+const result = await evaluateRules(rules, { resource: "post", action: "read" });
+// { allowed: false, matchedRule: { effect: "deny", …, priority: 20 }, applicable: [ …both rules ] }
 ```
 
 ### compileRules & findMatchingRules
@@ -425,8 +428,25 @@ const tenantCheck = tenantIsolation("tenantId", "tenantId");
 | not(fn) | Negate a condition |
 | always() | Unconditional pass |
 | never() | Unconditional fail |
-| isOwner(field?) | Actor owns the resource (checks resource[field] === actor.id) |
-| tenantIsolation(aField?, rField?) | Actor and resource share the same tenant |
+| isOwner(field?) | Actor owns the resource: `resource[field]` equals `actor.id`. A string and a number are compared as strings, so a numeric `ownerId: 42` from a database row matches `actor.id: "42"` from a token. No other conversion happens: `" 42"`, a `bigint` or an ObjectId-like object does not match, and a missing resource or a `null`/`undefined` id on either side is always `false`. Default field `"ownerId"`. |
+| tenantIsolation(aField?, rField?) | The tenant in the check's `metadata` (field `aField`, default `"tenantId"`) equals `resource[rField]`. False when either is missing. The actor's tenant is read from `metadata`, not from the actor, so fill it from a verified token claim or the tenant `@zudojs/tenancy` resolved, never from a request header. |
+
+Enforce tenant isolation with a deny rule, not an allow rule.
+
+Grants add up. If a role already grants `invoice:read`, an allow rule with `condition: tenantIsolation()` changes nothing: the role alone lets a member of tenant A read tenant B's invoice. A deny rule wins over every grant:
+
+```ts
+rules: [{
+  name: "cross-tenant",
+  effect: "deny",
+  resource: "invoice",
+  action: "read",
+  condition: not(tenantIsolation()),
+}]
+// role grants invoice:read → tenant A reading B's invoice: false, B reading B's: true
+```
+
+Use the allow-rule form only when no role grants the permission on its own. The deny rule also holds against policies: a policy with `effect: "grant"` cannot override it (tested in v1.4.0: tenant A reading B's invoice through a granting policy is still `false`).
 
 ## POLICIES
 
@@ -435,6 +455,7 @@ const tenantCheck = tenantIsolation("tenantId", "tenantId");
 ```ts
 interface PermissionPolicyDefinition {
   readonly name: string;
+  readonly effect?: PolicyEffect;  // "constrain" (default) | "grant"
   readonly permissions: readonly string[];
   readonly cacheable?: boolean;
   readonly priority?: number;
@@ -442,6 +463,76 @@ interface PermissionPolicyDefinition {
     PermissionDecision | Promise<PermissionDecision>;
 }
 ```
+
+### What a policy's answer means
+
+A policy runs alongside the rules for every permission it lists. Policies run highest priority first and stop at the first denial, and a denial always wins. What a policy's answer means depends on its `effect`:
+
+- `"constrain"` (the default): “no objection”. The policy is an extra condition on top of RBAC/ABAC, so the actor's roles, direct permissions or rules must still grant the permission. An allow means “no objection”; `allowed: false`, a throw or a `policyTimeout` denies. It can take access away, never hand it out.
+- `"grant"`: an independent grant. The allow grants the permission even when no role or rule does, with reason `policy_allow`. `allowed: false`, a throw or a timeout **abstains**: the policy adds nothing, and the decision falls to the roles, permissions and rules. It can add access, never take it away. Use it only for a policy that establishes the right on its own, such as an ownership check. Only the exact string `"grant"` grants; a typo constrains.
+
+```ts
+import { createPermissionEngine } from "@zudojs/permissions";
+
+let maintenance = false;
+
+const engine = createPermissionEngine({
+  roles: [{ name: "staff", permissions: ["task:*"] }],
+  policies: [
+    {
+      name: "maintenance-window",
+      permissions: ["task:*"], // wildcards work here too
+      cacheable: false,        // reads state outside the actor and resource
+      evaluate: () =>
+        maintenance ? { allowed: false, reason: "maintenance" } : { allowed: true },
+    },
+  ],
+});
+
+const staff = { id: "u1", roles: ["staff"] };
+const guest = { id: "u2" };
+
+console.log(await engine.can(staff, "task:delete")); // true  — the role grants; the policy has no objection
+console.log(await engine.can(guest, "task:delete")); // false — no role grants it; an allow is not a grant
+maintenance = true;
+console.log(await engine.can(staff, "task:delete")); // false — the policy denies
+```
+
+### Policies that grant
+
+A policy that establishes the right on its own says so with `effect: "grant"`. The rule is one-sided: when it allows, it grants; when it returns `false`, throws or times out, it abstains. An ownership policy therefore only has to answer “is this the author?” — an editor whose role grants the permission still gets in when the policy says `false`, and an actor with neither is still refused. A throw or timeout is still reported through `onError`.
+
+```ts
+import { createPermissionEngine } from "@zudojs/permissions";
+
+const posts = createPermissionEngine({
+  roles: [{ name: "editor", permissions: ["post:update"] }],
+  policies: [
+    {
+      name: "author-can-edit",
+      permissions: ["post:update"],
+      effect: "grant", // an allow grants, even with no role; a false abstains
+      evaluate: ({ actor, resource }) => ({
+        allowed: (resource as { authorId?: string } | undefined)?.authorId === actor.id,
+      }),
+    },
+  ],
+});
+
+const post = { id: "p1", authorId: "ada" };
+
+console.log(await posts.check({ id: "ada" }, "post:update", post));
+// { allowed: true, reason: "policy_allow", policy: "author-can-edit" }
+console.log(await posts.can({ id: "bob" }, "post:update", post));                    // false — not the author, no role
+console.log(await posts.check({ id: "eve", roles: ["editor"] }, "post:update", post));
+// { allowed: true, reason: "role_permission", matchedPermission: "post:update" } — the policy abstained
+```
+
+A granting policy never overrides a denial from another policy, `deniedPermissions`, or a deny rule that applied. `createPermissionEngine({ defaultPolicyEffect: "grant" })` keeps the pre-1.4 semantics for policies that set no `effect`: there, an allow grants and a `false` still denies. `policyGrants(policy, defaultEffect?)` tells you whether a policy would grant, and `DEFAULT_POLICY_EFFECT` is `"constrain"`. Internally, an allow from constraining policies alone is recorded as `policy_pass`; the decision you get back then carries the grant's reason (such as `role_permission`) with `policy` naming the policies that ran.
+
+> **Changed in 1.4.0 (behaviour change, security):** up to 1.3.x an allowing policy granted the permission on its own, so a policy meant as a restriction, such as business hours, let an actor with no roles through, and the old advice was to check the role inside every policy. That check is no longer needed. **If you relied on a policy to grant access, those checks now deny** until you add `effect: "grant"` to that policy. `createPermissionEngine({ defaultPolicyEffect: "grant" })` restores the old behaviour for every policy that sets no `effect`; prefer marking the individual policies.
+
+> **Changed in 1.4.1:** in 1.4.0 a policy with `effect: "grant"` that returned `false` denied, so an ownership policy locked out editors whose role grants the permission, and the workaround was `|| actorHasRole(actor, "editor")` inside the policy. A granting policy now abstains when it returns `false`, throws or times out, so that workaround can go. It is harmless if you keep it.
 
 ### createPolicyRegistry
 
@@ -454,16 +545,18 @@ policies.define({
   name: "business-hours",
   permissions: ["post:publish"],
   priority: 10,
-  evaluate(ctx) {
+  cacheable: false, // depends on the clock
+  evaluate() {
     const hour = new Date().getHours();
-    if (hour < 9 || hour > 17) {
+    if (hour < 9 || hour >= 17) {
       return { allowed: false, reason: "Outside business hours" };
     }
-    return { allowed: true, reason: "Within business hours" };
+    // "No objection": the actor's roles still have to grant post:publish.
+    return { allowed: true };
   },
 });
 
-policies.forPermission("post:publish"); // [business-hours policy]
+console.log(policies.forPermission("post:publish").map((policy) => policy.name)); // [ 'business-hours' ]
 ```
 
 ### Policy Errors
@@ -482,6 +575,7 @@ interface EvaluatorOptions {
   readonly getRole?: (name: string) => RoleDefinition | undefined;
   readonly policies?: readonly PermissionPolicyDefinition[];
   readonly policyTimeout?: number;
+  readonly defaultPolicyEffect?: PolicyEffect;  // default "constrain"
 }
 ```
 
@@ -513,7 +607,8 @@ const result = await evaluateWithExplain(
 // { allowed: true, steps: [
 //   { type: "role", detail: "Role: editor", matched: true },
 //   { type: "permission", detail: "Permission: post:update", matched: true },
-//   { type: "permission", detail: "Rule matched", matched: true }
+//   { type: "rule", detail: "Rule allow: post:update", matched: true },
+//   { type: "permission", detail: "Decision: allow (role_permission)", matched: true }
 // ]}
 ```
 
@@ -556,6 +651,8 @@ const engine = createPermissionEngine({
   ],
   policies: [businessHoursPolicy],
   policyTimeout: 5000,
+  // defaultPolicyEffect: "grant" would restore the pre-1.4 behaviour for
+  // policies without an effect; prefer effect: "grant" on single policies.
 });
 
 // Simple boolean check
@@ -673,7 +770,7 @@ A resolver that fails is reported through `onError` and the check continues fail
 Hand the cache to the engine and it manages the keys itself. A key carries the actor id, a digest of everything else the actor holds (`roles`, `permissions`, `type`, any other field a condition may read), the permission, the resource id and the engine's configuration generation. The same user id with different roles — an admin token in one tenant and a viewer token in another, or a demoted token — therefore never shares a decision. Role and policy registry changes, and `invalidateRoles()`, clear the decision cache.
 
 ```ts
-import { createMemoryPermissionCache } from "@zudojs/permissions";
+import { createMemoryPermissionCache, createPermissionEngine } from "@zudojs/permissions";
 
 const engine = createPermissionEngine({
   roles,
@@ -748,13 +845,68 @@ await cache.invalidateActor("user-1"); // drops every entry for that actor
 
 Middleware factories that integrate the authorization engine with `@zudojs/http`'s middleware pipeline.
 
+A refusal is a real HTTP response. `authorize()`, `createRequirePermissionMiddleware()`, `createRequirePermissionsMiddleware()` and `createActorMiddleware({ requireActor: true })` return a guard response (`createGuardResponse` from [@zudojs/middleware](https://zudojs.oyinlola.site/docs/packages-middleware.md)): `403` when the engine denies, `401` with `WWW-Authenticate: Bearer` when there is no actor. `@zudojs/http` sends it with that status and a JSON body, and the guards go straight into a route's `middleware` list with no cast.
+
+```ts
+import { createHttpServer, createNodeHttpAdapter, createRouter } from "@zudojs/http";
+import {
+  authorize,
+  createActorMiddleware,
+  createPermissionEngine,
+  ACTOR_STATE_KEY,
+  type PermissionActor,
+} from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [
+    { name: "editor", permissions: ["post:update"] },
+    { name: "viewer", permissions: ["post:read"] },
+  ],
+});
+
+// Stand-in for your verified session lookup. Never trust a client-chosen role.
+const sessions = new Map<string, PermissionActor>([
+  ["s-editor", { id: "u1", roles: ["editor"] }],
+  ["s-viewer", { id: "u2", roles: ["viewer"] }],
+]);
+
+const router = createRouter();
+router.put("/posts/:id", () => ({ updated: true }), {
+  middleware: [
+    createActorMiddleware({
+      extractActor: (ctx) => sessions.get(ctx.request.getHeader?.("x-session") ?? ""),
+    }),
+    authorize(engine, "post:update", {
+      extractActor: (ctx) => ctx.state.get(ACTOR_STATE_KEY) as PermissionActor | undefined,
+    }),
+  ],
+});
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 3000 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+
+// PUT /posts/1, x-session: s-editor → 200 {"updated":true}
+// PUT /posts/1, x-session: s-viewer → 403 {"error":"Forbidden","message":"Access denied"}
+// PUT /posts/1, no session          → 401 {"error":"Unauthorized","message":"Authentication required"}
+```
+
+> **Changed in 1.4.0:** up to 1.3.x these guards returned a plain `{ status, body, headers }` object, which `@zudojs/http` treated as data: a refused request reached the client as `200` (the handler did not run), and the guards needed `as never` to fit a route's `middleware` list. If you replaced them with a guard that throws `ForbiddenError` / `UnauthorizedError`, that still works; you can now go back to the factories. A hand-written middleware typed with this package's `HttpMiddleware` can no longer return a plain object; return `createGuardResponse(...)` instead.
+
 ### Types
 
 ```ts
-type HttpMiddleware = (
+// Generic over what next() resolves to, so it is assignable to @zudojs/http's own type.
+type HttpMiddlewareOutcome<Downstream> = void | Response | GuardResponse | Downstream;
+
+type HttpMiddleware = <Downstream extends HttpResponseContext>(
   context: HttpMiddlewareContext,
-  next: () => Promise<HttpResponseContext>,
-) => void | Response | HttpResponseContext | Promise<void | Response | HttpResponseContext>;
+  next: () => Promise<Downstream>,
+) => HttpMiddlewareOutcome<Downstream> | Promise<HttpMiddlewareOutcome<Downstream>>;
+
+// PermissionHttpResponse is an alias of GuardResponse from @zudojs/middleware.
 
 const ACTOR_STATE_KEY = "permissions:actor";
 const DECISION_STATE_KEY = "permissions:decision";
@@ -770,6 +922,7 @@ import {
   createRequirePermissionsMiddleware,
   createForbiddenResponse,
   createJsonResponse,
+  ACTOR_STATE_KEY,
 } from "@zudojs/permissions";
 
 // Extract actor from request
@@ -806,20 +959,92 @@ const multiMw = createRequirePermissionsMiddleware(
 ### HTTP Options
 
 ```ts
-interface AuthorizeMiddlewareOptions {
-  extractActor(context: HttpMiddlewareContext):
+interface AuthorizeMiddlewareOptions extends DeniedResponseOptions {
+  readonly extractActor?: (context: HttpMiddlewareContext) =>
     PermissionActor | Promise<PermissionActor> | undefined;
   readonly authorization?: AuthorizationOptions;
-  readonly deniedResponse?: (decision: PermissionDecision) => unknown;
+  readonly forwardSignal?: boolean;
+  readonly extractMetadata?: (context: HttpMiddlewareContext) => Record<string, unknown> | undefined;
+  readonly onError?: (error: unknown, source: string) => void;
 }
 
-interface RequirePermissionMiddlewareOptions extends AuthorizeMiddlewareOptions {
+interface DeniedResponseOptions {
+  readonly deniedResponse?: (decision: PermissionDecision) => unknown;
+  readonly unauthenticatedResponse?: () => unknown;
+  readonly authenticateChallenge?: string;
+}
+
+interface RequirePermissionMiddlewareOptions
+  extends AuthorizeMiddlewareOptions, MissingResourceOptions {
   readonly permission: string;
   readonly extractResource?: (context: HttpMiddlewareContext) => unknown | Promise<unknown>;
 }
+
+// Added in 1.4.1. Also accepted by createRequirePermissionsMiddleware.
+type MissingResourceMode = "check" | "forbid" | "notFound";
+
+interface MissingResourceOptions extends NotFoundResponseOptions {
+  readonly onMissingResource?: MissingResourceMode; // default "check"
+}
+
+interface NotFoundResponseOptions {
+  readonly notFoundResponse?: () => unknown; // builds the 404 body
+}
 ```
 
-`extractResource` may be async and is awaited; a loader that throws or rejects answers 403. An empty list passed to `createRequirePermissionsMiddleware` denies.
+`extractResource` may be async and is awaited; a loader that throws or rejects answers 403. An empty list passed to `createRequirePermissionsMiddleware` denies. `createForbiddenResponse`, `createUnauthorizedResponse`, `createNotFoundResponse` (since 1.4.1) and `createJsonResponse(status, body)` build the same guard responses for your own middleware; `createJsonResponse` throws `RangeError` for a status outside 100–599.
+
+### A resource that does not exist: onMissingResource
+
+Since 1.4.1, `authorize()`, `createRequirePermissionMiddleware` and `createRequirePermissionsMiddleware` take `onMissingResource`, which decides what the guard does when `extractResource` returns `undefined` or `null`:
+
+- `"check"` (the default): evaluate the permission with no resource, as the guards always have. A role grant alone lets the request through, so the handler still has to answer 404 itself.
+- `"notFound"`: answer **404** without evaluating. `notFoundResponse` shapes the body; the default is `{"error":"Not Found","message":"Resource not found"}`.
+- `"forbid"`: answer **403** without evaluating.
+
+A request with no actor still gets 401 first. The option does nothing on a guard without `extractResource`. A refusal records `RESOURCE_NOT_FOUND_DECISION` (`reason: "resource_not_found"`) under `permissions:decision`.
+
+```ts
+import { createHttpServer, createNodeHttpAdapter, createRouter } from "@zudojs/http";
+import { authorize, createPermissionEngine, type PermissionActor } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{ name: "editor", permissions: ["post:update"] }],
+});
+
+// Stand-ins for your verified session lookup and your data store.
+const sessions = new Map<string, PermissionActor>([
+  ["s-editor", { id: "u1", roles: ["editor"] }],
+  ["s-guest", { id: "u2" }],
+]);
+const posts = new Map([["1", { id: "1", authorId: "u1" }]]);
+
+const router = createRouter();
+router.put("/posts/:id", () => ({ updated: true }), {
+  middleware: [
+    authorize(engine, "post:update", {
+      extractActor: (ctx) => sessions.get(ctx.request.getHeader?.("x-session") ?? ""),
+      extractResource: (ctx) => posts.get(ctx.request.getParam?.("id") ?? ""),
+      onMissingResource: "notFound", // 404 before the permission is evaluated
+      notFoundResponse: () => ({ error: "Not Found", message: "No such post" }),
+    }),
+  ],
+});
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 3000 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+
+// PUT /posts/1,   x-session: s-editor → 200 {"updated":true}
+// PUT /posts/404, x-session: s-editor → 404 {"error":"Not Found","message":"No such post"}
+// PUT /posts/1,   x-session: s-guest  → 403 {"error":"Forbidden","message":"Access denied"}
+// PUT /posts/404, x-session: s-guest  → 404 {"error":"Not Found","message":"No such post"}
+// PUT /posts/404, no session          → 401 {"error":"Unauthorized","message":"Authentication required"}
+```
+
+> **A 404 is not concealment on its own.** Look at the guest rows above: an existing post answers 403 and a missing one 404, so the pair of statuses tells a caller which ids exist. `"notFound"` hides existence only if every route over the resource answers the same way and a denial on an existing resource is also answered 404, which these guards do not do for you. Use it to take the not-found check out of the handler, not to hide ids.
 
 ## OBSERVABILITY
 
@@ -956,7 +1181,11 @@ const ability = engine.createAbility(editor);
 if (await ability.can("post:update")) {
   // Update the post
 }
-await ability.authorize("post:delete");
+try {
+  await ability.authorize("post:delete"); // editors cannot delete
+} catch (error) {
+  // PermissionDeniedError (403, reason "no_matching_rule")
+}
 
 // 6. HTTP middleware
 const authMiddleware = authorize(engine, "post:update", {
@@ -974,32 +1203,33 @@ console.log(explanation.steps);
 // [
 //   { type: "role", detail: "Role: editor", matched: true },
 //   { type: "permission", detail: "Permission: post:update", matched: true },
-//   { type: "permission", detail: "Rule matched", matched: true }
+//   { type: "rule", detail: "Rule allow: post:update", matched: true },
+//   { type: "permission", detail: "Decision: allow (role_permission)", matched: true }
 // ]
 ```
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/permissions` exports from its package root at v1.3.0 — **139** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/permissions` exports from its package root at v1.4.3 — **150** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 139 exports**
+**Show all 150 exports**
 
 Classes (14)
 
 `AuthorizationAbortedError` `CircularRoleInheritanceError` `DuplicatePermissionError` `DuplicatePolicyError` `DuplicateRoleError` `InvalidPermissionError` `InvalidRoleError` `PermissionDeniedError` `PermissionError` `PermissionNotFoundError` `PermissionResolverError` `PolicyError` `PolicyTimeoutError` `RoleNotFoundError`
 
-Functions (65)
+Functions (68)
 
-`actorCacheDigest` `actorHasPermission` `actorHasRole` `allOf` `always` `anyOf` `assertNotAborted` `authorize` `buildPermission` `compileRules` `createAbility` `createActor` `createActorMiddleware` `createCacheKey` `createForbiddenResponse` `createJsonResponse` `createMemoryPermissionCache` `createMemoryPermissionResolver` `createMemoryRoleResolver` `createPermissionActor` `createPermissionEngine` `createPermissionEventEmitter` `createPermissionRegistry` `createPolicyRegistry` `createRequirePermissionMiddleware` `createRequirePermissionsMiddleware` `createRoleRegistry` `createStaticPermissionResolver` `createStaticRoleResolver` `createUnauthorizedResponse` `evaluate` `evaluatePolicies` `evaluateRules` `evaluateRulesSync` `evaluateWithExplain` `evaluateWithTrace` `extractAction` `extractResource` `findMatchingRules` `formatPermission` `isOwner` `isSystemActor` `isValidPermission` `loadResource` `matches` `matchesPermission` `memoizeRoleLookup` `metadataEquals` `never` `not` `parsePermission` `parsePermissionSafe` `patternStrMatches` `permissionCacheKey` `permissionsOverlap` `resolveActorGrants` `resolveActorPermissions` `resolveRolePermissions` `resourceEquals` `ruleMatches` `selectPolicies` `tenantIsolation` `toMetadataMap` `withObservability` `withTimeout`
+`actorCacheDigest` `actorHasPermission` `actorHasRole` `allOf` `always` `anyOf` `assertNotAborted` `authorize` `buildPermission` `compileRules` `createAbility` `createActor` `createActorMiddleware` `createCacheKey` `createForbiddenResponse` `createJsonResponse` `createMemoryPermissionCache` `createMemoryPermissionResolver` `createMemoryRoleResolver` `createNotFoundResponse` `createPermissionActor` `createPermissionEngine` `createPermissionEventEmitter` `createPermissionRegistry` `createPolicyRegistry` `createRequirePermissionMiddleware` `createRequirePermissionsMiddleware` `createRoleRegistry` `createStaticPermissionResolver` `createStaticRoleResolver` `createUnauthorizedResponse` `evaluate` `evaluatePolicies` `evaluateRules` `evaluateRulesSync` `evaluateWithExplain` `evaluateWithTrace` `extractAction` `extractResource` `findMatchingRules` `formatPermission` `isOwner` `isSystemActor` `isValidPermission` `loadResource` `matches` `matchesPermission` `memoizeRoleLookup` `metadataEquals` `never` `not` `parsePermission` `parsePermissionSafe` `patternStrMatches` `permissionCacheKey` `permissionsOverlap` `policyGrants` `refuseMissingResource` `resolveActorGrants` `resolveActorPermissions` `resolveRolePermissions` `resourceEquals` `ruleMatches` `selectPolicies` `tenantIsolation` `toMetadataMap` `withObservability` `withTimeout`
 
-Interfaces (46)
+Interfaces (48)
 
-`Ability` `ActorMiddlewareOptions` `AuthorizationOptions` `AuthorizeMiddlewareOptions` `DeniedResponseOptions` `EvaluatorOptions` `ExplainResult` `ExplainStep` `HttpMiddlewareContext` `HttpMiddlewareState` `HttpRequestContext` `HttpResponseContext` `MemoryPermissionCacheOptions` `Permission` `PermissionActor` `PermissionCache` `PermissionCheckEvent` `PermissionContext` `PermissionDecision` `PermissionEngine` `PermissionEngineOptions` `PermissionEventEmitter` `PermissionEventEmitterOptions` `PermissionHttpResponse` `PermissionPolicyDefinition` `PermissionRegistry` `PermissionRegistryOptions` `PermissionResolver` `PermissionRule` `PolicyOutcome` `PolicyRegistry` `PolicyRegistryOptions` `PolicySource` `RegisteredPermission` `RequirePermissionMiddlewareOptions` `RequirePermissionsMiddlewareOptions` `ResolvedGrants` `RoleDefinition` `RoleRegistry` `RoleRegistryOptions` `RoleResolution` `RoleResolutionOptions` `RoleResolver` `RoleSource` `RuleEvaluation` `RuleIndex`
+`Ability` `ActorMiddlewareOptions` `AuthorizationOptions` `AuthorizeMiddlewareOptions` `DeniedResponseOptions` `EvaluatorOptions` `ExplainResult` `ExplainStep` `HttpMiddlewareContext` `HttpMiddlewareState` `HttpRequestContext` `HttpResponseContext` `MemoryPermissionCacheOptions` `MissingResourceOptions` `MissingResourceRefusal` `NotFoundResponseOptions` `Permission` `PermissionActor` `PermissionCache` `PermissionCheckEvent` `PermissionContext` `PermissionDecision` `PermissionEngine` `PermissionEngineOptions` `PermissionEventEmitter` `PermissionEventEmitterOptions` `PermissionPolicyDefinition` `PermissionRegistry` `PermissionRegistryOptions` `PermissionResolver` `PermissionRule` `PolicyOutcome` `PolicyRegistry` `PolicyRegistryOptions` `PolicySource` `RegisteredPermission` `RequirePermissionMiddlewareOptions` `RequirePermissionsMiddlewareOptions` `ResolvedGrants` `RoleDefinition` `RoleRegistry` `RoleRegistryOptions` `RoleResolution` `RoleResolutionOptions` `RoleResolver` `RoleSource` `RuleEvaluation` `RuleIndex`
 
-Type aliases (9)
+Type aliases (13)
 
-`HttpMiddleware` `HttpRequestBag` `PermissionConditionFn` `PermissionEventHandler` `PermissionString` `ResourceExtractor` `ResourceOutcome` `RuleCombiningAlgorithm` `RuleEffect`
+`HttpMiddleware` `HttpMiddlewareOutcome` `HttpRequestBag` `MissingResourceMode` `PermissionConditionFn` `PermissionEventHandler` `PermissionHttpResponse` `PermissionString` `PolicyEffect` `ResourceExtractor` `ResourceOutcome` `RuleCombiningAlgorithm` `RuleEffect`
 
-Constants (5)
+Constants (7)
 
-`ACTOR_STATE_KEY` `DECISION_STATE_KEY` `DECISIONS_STATE_KEY` `MAX_ACTOR_DIGEST_LENGTH` `RESOURCE_ERROR_DECISION`
+`ACTOR_STATE_KEY` `DECISION_STATE_KEY` `DECISIONS_STATE_KEY` `DEFAULT_POLICY_EFFECT` `MAX_ACTOR_DIGEST_LENGTH` `RESOURCE_ERROR_DECISION` `RESOURCE_NOT_FOUND_DECISION`
