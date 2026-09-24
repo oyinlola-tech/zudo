@@ -1,0 +1,613 @@
+---
+title: Type aliases and interfaces
+description: Name the types of a banking domain once and reuse them, extend them safely, understand declaration merging and recursive types, and learn the real differences between type and interface.
+minutes: 45
+youNeed: Union types in depth
+youBuild: A shared banking-domain types module with money, accounts, a recursive chart of accounts and a plugin that extends a type from another file
+keywords: typescript type alias, typescript interface, interface vs type, extends, intersection vs extends, declaration merging, module augmentation, recursive types, tree types, index signature, domain types, reusable types
+objectives: Give recurring shapes one name, and explain why aliases do not create new types | Extend interfaces and aliases, and predict how each reports a conflict | Explain declaration merging, avoid it by accident and use it for module augmentation | Write recursive types for trees and walk them with recursive functions | List the real differences between type and interface and choose between them
+---
+<section>
+<h2 id="problem">The same shape in five places</h2>
+<p>A payments module started with amounts in naira only. Each function wrote the shape it needed inline, right in its signature:</p>
+<example file="payments.ts" project="problem">
+function format(money: { amount: number }): string {
+  return `₦${money.amount.toLocaleString("en-NG")}`;
+}
+
+function total(items: { amount: number }[]): { amount: number } {
+  return { amount: items.reduce((sum, m) => sum + m.amount, 0) };
+}
+
+const basket = [
+  { amount: 25000, currency: "NGN" },
+  { amount: 40, currency: "USD" },
+];
+
+console.log(format(total(basket)));
+</example>
+<output>
+</output>
+<p>Later, the app started accepting dollars, and someone added <code>currency</code> to the objects. Everything still compiles, and the result is wrong: ₦25,000 plus $40 is not ₦25,040. The functions never heard about currencies, because each one had its own private idea of what money looks like. Nothing connected them.</p>
+<p>Now give the shape one name, and use that name everywhere:</p>
+<example file="money.ts" project="named" check="tsc-error">
+interface Money {
+  amount: number;
+  currency: "NGN" | "USD";
+}
+
+function format(money: Money): string {
+  return `${money.currency} ${money.amount.toLocaleString("en-NG")}`;
+}
+
+function total(items: Money[]): Money {
+  return { amount: items.reduce((sum, m) => sum + m.amount, 0) };
+}
+</example>
+<output kind="tsc">
+</output>
+<p>The moment <code>currency</code> joined <code>Money</code>, the compiler found the one function that was building money without it, and forced someone to decide what the total of mixed currencies means. A named type is a single place where a concept is defined, so a change to the concept reaches every function that uses it. This lesson is about the two ways to create those names, <code>type</code> and <code>interface</code>, which you first met in <a href="/learn/ts-objects#interface-vs-type">Interfaces, unions and literal types</a>, and about what really separates them.</p>
+</section>
+
+<section>
+<h2 id="aliases">Type aliases: names, not new types</h2>
+<p>A <strong>type alias</strong> gives a name to any type: an object shape, a union, a tuple, a function type, even a primitive.</p>
+<example file="aliases.ts" project="aliases">
+type Currency = "NGN" | "USD" | "GBP";
+type AccountId = string;
+type Money = { amount: number; currency: Currency };
+type FxRate = [from: Currency, to: Currency, rate: number];
+type Converter = (money: Money, to: Currency) => Money;
+
+const rates: FxRate[] = [["USD", "NGN", 1550], ["GBP", "NGN", 2050]];
+
+const convert: Converter = (money, to) => {
+  if (money.currency === to) return money;
+  const rate = rates.find(([from, target]) => from === money.currency && target === to);
+  if (rate === undefined) throw new Error(`No rate from ${money.currency} to ${to}`);
+  return { amount: Math.round(money.amount * rate[2]), currency: to };
+};
+
+const owner: AccountId = "ACC-1001";
+console.log(owner, convert({ amount: 40, currency: "USD" }, "NGN"));
+</example>
+<output>
+</output>
+<p>An alias is only a <em>name</em>. It does not create a new, separate type: everywhere you write <code>AccountId</code>, the compiler sees <code>string</code>. That matters when two aliases share the same underlying type:</p>
+<example file="units.ts" project="aliases">
+type Naira = number;
+type Kobo = number;
+
+function chargeFee(balance: Naira, fee: Naira): Naira {
+  return balance - fee;
+}
+
+const feeInKobo: Kobo = 5000;
+console.log(chargeFee(20000, feeInKobo));
+</example>
+<output>
+</output>
+<p>The fee was ₦50, stored in kobo as 5000. It was charged as ₦5,000, and the compiler did not blink, because <code>Naira</code> and <code>Kobo</code> are both just <code>number</code>. Aliases document intent; they do not enforce it. Making types like these truly distinct is possible with <strong>branded types</strong>, covered in <a href="/learn/ts-branded-types">Branded and nominal types</a>. Until then, the reliable fix is one unit everywhere (kobo, as whole numbers), and names that say it: <code>feeKobo</code>.</p>
+</section>
+
+<section>
+<h2 id="interfaces">Interfaces and extension</h2>
+<p>An <strong>interface</strong> names an object type (including objects that can be called, and classes' public shapes). Interfaces are built for extension. <code>extends</code> can take several parents, and the parents can be interfaces or object type aliases:</p>
+<example file="accounts.ts" project="extend">
+type Currency = "NGN" | "USD";
+
+interface Timestamps {
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+interface Account extends Timestamps {
+  readonly id: string;
+  readonly owner: string;
+  readonly currency: Currency;
+  balance: number;
+}
+
+type InterestTerms = { readonly ratePercent: number; readonly paidMonthly: boolean };
+
+interface SavingsAccount extends Account, InterestTerms {
+  readonly withdrawalsThisMonth: number;
+}
+
+function monthlyInterest(account: SavingsAccount): number {
+  return account.paidMonthly ? Math.round((account.balance * account.ratePercent) / 100 / 12) : 0;
+}
+
+const savings: SavingsAccount = {
+  id: "SAV-7",
+  owner: "Ada",
+  currency: "NGN",
+  balance: 1200000,
+  ratePercent: 8,
+  paidMonthly: true,
+  withdrawalsThisMonth: 1,
+  createdAt: "2026-01-10",
+  updatedAt: "2026-09-01",
+};
+
+console.log(monthlyInterest(savings));
+</example>
+<output>
+</output>
+<h3>extends is checked; &amp; is not</h3>
+<p>You can build the same shapes with intersections (<code>Account &amp; InterestTerms</code>), which is how type aliases combine. The two behave differently when the parts disagree. Say a new developer wants a "legacy" account whose id is a number:</p>
+<example file="conflict.ts" project="extend" check="tsc-error">
+interface Account {
+  id: string;
+  balance: number;
+}
+
+interface LegacyAccount extends Account {
+  id: number;
+}
+
+type LegacyAccount2 = Account & { id: number };
+
+const legacy: LegacyAccount2 = { id: 42, balance: 0 };
+</example>
+<output kind="tsc">
+</output>
+<p>With <code>extends</code>, the error appears on the declaration: <code>LegacyAccount</code> "incorrectly extends" <code>Account</code>, and the message explains why. With <code>&amp;</code>, the declaration is accepted, <code>id</code> quietly becomes <code>string &amp; number</code>, which is <code>never</code> (as you saw in <a href="/learn/ts-unions#intersections">Union types in depth</a>), and the error only appears later, far away, when someone tries to create a value. To change a property's type on purpose, remove it first: <code>interface LegacyAccount extends Omit&lt;Account, "id"&gt; { id: number }</code> (<code>Omit</code> is explained in <a href="/learn/ts-advanced#utility-types">Advanced and utility types</a>).</p>
+</section>
+
+<section>
+<h2 id="merging">Declaration merging</h2>
+<p>Interfaces have one ability no alias has: two interface declarations with the same name, in the same scope, <strong>merge</strong> into one interface with the members of both. This is called <strong>declaration merging</strong>. A duplicate type alias is simply an error:</p>
+<example file="merge.ts" project="merge" check="tsc-error">
+interface Transfer {
+  from: string;
+  to: string;
+}
+
+type Fee = { amount: number };
+
+interface Transfer {
+  reference: string;
+}
+
+type Fee = { currency: string };
+
+const t: Transfer = { from: "Ada", to: "Bola" };
+</example>
+<output kind="tsc">
+</output>
+<p>The duplicate <code>Fee</code> is reported where it is written. The second <code>Transfer</code> is accepted silently, and the error surfaces somewhere else: a transfer "is missing" a <code>reference</code> that nobody remembers adding. In a long file, that second declaration may be hundreds of lines away. That is the danger of merging: it is invisible at the place where it happens.</p>
+<h3>Where merging is the point: extending another module's types</h3>
+<p>Merging exists for one very good reason: adding fields to a type <em>you do not own</em>. Libraries with plugin systems rely on it. A core module defines a type; a plugin, in another file, adds its own fields to it. This is called <strong>module augmentation</strong>. Here is a transfer module, and a fraud-scoring plugin that adds a risk score to every transfer event:</p>
+<example file="events.ts" project="augment">
+export interface TransferEvent {
+  id: string;
+  amount: number;
+}
+
+export function describeEvent(event: TransferEvent): string {
+  return `${event.id}: ₦${event.amount}`;
+}
+</example>
+<example file="fraud.ts" project="augment">
+import type { TransferEvent } from "./events.js";
+
+declare module "./events.js" {
+  interface TransferEvent {
+    riskScore?: number;
+  }
+}
+
+export function scoreTransfer(event: TransferEvent): TransferEvent {
+  const riskScore = event.amount > 500000 ? 0.9 : 0.1;
+  return { ...event, riskScore };
+}
+</example>
+<example file="main.ts" project="augment">
+import { describeEvent, type TransferEvent } from "./events.js";
+import { scoreTransfer } from "./fraud.js";
+
+const events: TransferEvent[] = [
+  { id: "TRF-1", amount: 25000 },
+  { id: "TRF-2", amount: 750000 },
+];
+
+for (const event of events.map(scoreTransfer)) {
+  const flag = (event.riskScore ?? 0) > 0.5 ? "REVIEW" : "ok";
+  console.log(describeEvent(event), flag);
+}
+</example>
+<output>
+</output>
+<p><code>declare module "./events.js" { … }</code> reopens the other module's scope, and the <code>interface TransferEvent</code> inside it merges with the original. <code>main.ts</code> reads <code>event.riskScore</code>, a property that <code>events.ts</code> never declared, and it type-checks. Two rules make this safe:</p>
+<ul>
+<li><strong>Add optional fields</strong> (<code>riskScore?</code>). A required field would suddenly be required in every <code>TransferEvent</code> anywhere in the program, including code that has never heard of the plugin.</li>
+<li><strong>The augmentation must be in a file that is part of the compilation</strong>, usually because it is imported. Here <code>main.ts</code> imports <code>fraud.ts</code>.</li>
+</ul>
+<p>The same mechanism lets you describe globals, for example extra properties on <code>window</code> in a browser app (<code>declare global { interface Window { … } }</code>). Use it for extending code you do not own. For your own types, write the fields in the original declaration.</p>
+<warn title="MODULES PROTECT YOU">Merging only happens within one scope. Every file with an <code>import</code> or <code>export</code> is a module with its own scope, so two modules can each have an <code>interface Account</code> without merging. Old-style script files (no imports or exports) share one global scope, where same-named interfaces from different files merge silently. Keep every file a module; the course's <code>tsconfig.json</code> (with <code>module: "NodeNext"</code> and <code>"type": "module"</code>) treats every file as one.</warn>
+</section>
+
+<section>
+<h2 id="recursive">Recursive types</h2>
+<p>Some data contains smaller copies of itself: comment threads, folder trees, organisation charts. A bank's <strong>chart of accounts</strong> is one: "Assets" contains "Cash" and "Loans", "Cash" contains "Vault" and "ATMs", and so on. A type for it must refer to itself. Both interfaces and aliases can:</p>
+<example file="ledger.ts" project="recursive">
+interface LedgerAccount {
+  readonly code: string;
+  readonly name: string;
+  readonly balance: number;
+  readonly children: readonly LedgerAccount[];
+}
+
+function totalBalance(account: LedgerAccount): number {
+  return account.children.reduce((sum, child) => sum + totalBalance(child), account.balance);
+}
+
+function print(account: LedgerAccount, depth = 0): void {
+  console.log(`${"  ".repeat(depth)}${account.code} ${account.name}: ₦${totalBalance(account)}`);
+  for (const child of account.children) print(child, depth + 1);
+}
+
+const assets: LedgerAccount = {
+  code: "1000",
+  name: "Assets",
+  balance: 0,
+  children: [
+    {
+      code: "1100",
+      name: "Cash",
+      balance: 0,
+      children: [
+        { code: "1110", name: "Vault", balance: 4000000, children: [] },
+        { code: "1120", name: "ATMs", balance: 2500000, children: [] },
+      ],
+    },
+    { code: "1200", name: "Loans to customers", balance: 18000000, children: [] },
+  ],
+};
+
+print(assets);
+</example>
+<output>
+</output>
+<p>The type and the function have the same structure: <code>children</code> refers back to <code>LedgerAccount</code>, and <code>totalBalance</code> calls itself on each child. The base case, which you met in <a href="/learn/js-functions#recursion">Functions</a>, is an account with no children: <code>reduce</code> over an empty array just returns the starting value, the account's own balance.</p>
+<h3>A recursive union: any JSON value</h3>
+<p>A type alias can be recursive through a union too. This is the type of every value <code>JSON.parse</code> can produce:</p>
+<example file="json.ts" project="recursive">
+type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+
+function countLeaves(value: Json): number {
+  if (Array.isArray(value)) return value.reduce((sum: number, item) => sum + countLeaves(item), 0);
+  if (value !== null && typeof value === "object") {
+    return Object.values(value).reduce((sum: number, item) => sum + countLeaves(item), 0);
+  }
+  return 1;
+}
+
+const statement: Json = {
+  account: "ACC-1001",
+  entries: [
+    { date: "2026-09-01", amount: -2500, memo: "Airtime" },
+    { date: "2026-09-03", amount: 150000, memo: null },
+  ],
+  closed: false,
+};
+
+console.log(countLeaves(statement));
+</example>
+<output>
+</output>
+<p><code>{ [key: string]: Json }</code> is an <strong>index signature</strong>: an object whose keys can be any string, each holding a <code>Json</code> value. The self-reference is allowed because it sits inside an array or an object type; a type that referred to itself directly, like <code>type Loop = Loop | string</code>, would be an error, since the compiler could never finish expanding it. <code>Json</code> is also a much more honest type than <code>any</code> for parsed data: it says exactly what JSON can contain, and still makes you check before use.</p>
+</section>
+
+<section>
+<h2 id="differences">The real differences</h2>
+<p>For a plain object shape, <code>type X = { … }</code> and <code>interface X { … }</code> are almost interchangeable, and structural typing means values move freely between them. The differences that matter in practice are these:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th></th><th><code>interface</code></th><th><code>type</code></th></tr></thead>
+<tbody>
+<tr><td>Can name</td><td>Object types only (including callable objects and class shapes)</td><td>Any type: unions, tuples, primitives, functions, mapped and conditional types</td></tr>
+<tr><td>Combining</td><td><code>extends</code>, checked at the declaration</td><td><code>&amp;</code>; conflicts silently become <code>never</code></td></tr>
+<tr><td>Same name twice</td><td>Merges (on purpose or by accident)</td><td>Error TS2300</td></tr>
+<tr><td>Assignable to an index signature such as <code>Record&lt;string, string&gt;</code></td><td>No (it could be merged with more fields later)</td><td>Yes, when every property fits</td></tr>
+<tr><td>Module augmentation</td><td>Yes</td><td>No</td></tr>
+</tbody>
+</table></div>
+<p>The index-signature row surprises people. A logging function that accepts <code>Record&lt;string, string&gt;</code> takes an object typed with an alias, but refuses the same shape typed with an interface:</p>
+<example file="fields.ts" project="diff" check="tsc-error">
+interface CustomerI {
+  name: string;
+  phone: string;
+}
+
+type CustomerT = {
+  name: string;
+  phone: string;
+};
+
+function logFields(fields: Record<string, string>): void {
+  console.log(Object.keys(fields).join(","));
+}
+
+const a: CustomerI = { name: "Ada", phone: "0803 000 1111" };
+const b: CustomerT = { name: "Ada", phone: "0803 000 1111" };
+logFields(b);
+logFields(a);
+</example>
+<output kind="tsc">
+</output>
+<p>Because an interface can be merged with more members later (maybe a number), TypeScript will not promise that <em>every</em> property of <code>CustomerI</code> is a string. An alias is closed, so it can check. If you need to pass an interface to such a function, spread it (<code>logFields({ ...a })</code>) or widen the parameter to <code>Record&lt;string, unknown&gt;</code>... which an interface does not fit either. The honest fix is usually a parameter type that says what the function really needs: <code>{ name: string }</code>, or a generic (<a href="/learn/ts-generics">Generics</a>).</p>
+</section>
+
+<section>
+<h2 id="choosing">Choosing between them</h2>
+<reason title="Which concepts deserve a name?">
+<p>You are writing the shared types module for the bank. Before writing any code, think about these:</p>
+<ol>
+<li>Customers and staff both have a name, a phone number and an email. Should they share a type? Should a staff member <em>be</em> a customer?</li>
+<li>An amount appears in transfers, fees, balances and limits. One type or several?</li>
+<li>A transaction is a deposit, a withdrawal or a transfer, each with different fields. <code>interface</code> or <code>type</code>?</li>
+<li>Which of these types might a plugin, or another team, need to add fields to?</li>
+</ol>
+<answer>
+<ol>
+<li>Share the <em>contact details</em>, not the identity: an interface <code>ContactDetails</code> that both <code>Customer</code> and <code>StaffMember</code> extend. A staff member is not a customer (they have different permissions and lifecycles), even if a person can be both; a function that emails someone should only ask for <code>ContactDetails</code>.</li>
+<li>One <code>Money</code> type, with the amount in kobo as a whole number and a currency, used everywhere. The opening example showed what happens with several private ideas of money.</li>
+<li>A <code>type</code>: it is a union of three shapes, which only an alias can name. Each member can itself be an interface.</li>
+<li>Events and request contexts, which plugins decorate. Those should be interfaces, so they can be augmented. Closed data such as <code>Money</code> can be either; nobody should be adding fields to money.</li>
+</ol>
+</answer>
+</reason>
+<p>A rule that works, and the one ZudoJS itself follows (its <code>AGENTS.md</code> asks for interface-first design, <code>readonly</code> properties and no <code>I</code> prefix on names):</p>
+<ul>
+<li><strong><code>interface</code> for object shapes</strong>, especially ones others build on or extend: entities, service contracts, events, options objects.</li>
+<li><strong><code>type</code> for everything else</strong>: unions, discriminated unions, tuples, function types, and types computed from other types.</li>
+<li><strong>Name the concept, not the use.</strong> <code>Money</code>, not <code>TransferAmountObject</code>. Reusable names come from the domain.</li>
+<li><strong>Ask for the smallest type a function needs.</strong> <code>notify(contact: ContactDetails)</code> can be called with a customer or a staff member; <code>notify(customer: Customer)</code> cannot.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="build">Build: a shared domain types module</h2>
+<p>Here are the bank's domain types, all in one file that other modules import with <code>import type</code>:</p>
+<example file="domain.ts" project="domain">
+export type Currency = "NGN" | "USD";
+
+export interface Money {
+  readonly kobo: number;
+  readonly currency: Currency;
+}
+
+export interface ContactDetails {
+  readonly name: string;
+  readonly phone: string;
+  readonly email: string;
+}
+
+export interface Customer extends ContactDetails {
+  readonly customerId: string;
+  readonly kycLevel: 1 | 2 | 3;
+}
+
+export interface StaffMember extends ContactDetails {
+  readonly staffId: string;
+  readonly branch: string;
+}
+
+interface TransactionBase {
+  readonly id: string;
+  readonly money: Money;
+  readonly at: string;
+}
+
+export interface Deposit extends TransactionBase {
+  readonly kind: "deposit";
+  readonly channel: "branch" | "transfer-in";
+}
+
+export interface Withdrawal extends TransactionBase {
+  readonly kind: "withdrawal";
+  readonly atmId: string | null;
+}
+
+export interface Transfer extends TransactionBase {
+  readonly kind: "transfer";
+  readonly toAccount: string;
+}
+
+export type Transaction = Deposit | Withdrawal | Transfer;
+</example>
+<p>Interfaces for the entities and their shared parts, a <code>type</code> for the union. Now two modules that use it without knowing about each other:</p>
+<example file="notify.ts" project="domain">
+import type { ContactDetails } from "./domain.js";
+
+export function smsLine(contact: ContactDetails, text: string): string {
+  return `to ${contact.phone} (${contact.name}): ${text}`;
+}
+</example>
+<example file="statement.ts" project="domain">
+import type { Money, Transaction } from "./domain.js";
+
+export function formatMoney(money: Money): string {
+  const major = (money.kobo / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 });
+  return `${money.currency === "NGN" ? "₦" : "$"}${major}`;
+}
+
+export function line(tx: Transaction): string {
+  switch (tx.kind) {
+    case "deposit":
+      return `${tx.at} +${formatMoney(tx.money)} (${tx.channel})`;
+    case "withdrawal":
+      return `${tx.at} -${formatMoney(tx.money)} ${tx.atmId === null ? "at branch" : `ATM ${tx.atmId}`}`;
+    case "transfer":
+      return `${tx.at} -${formatMoney(tx.money)} to ${tx.toAccount}`;
+  }
+}
+</example>
+<example file="main.ts" project="domain">
+import type { Customer, StaffMember, Transaction } from "./domain.js";
+import { smsLine } from "./notify.js";
+import { line } from "./statement.js";
+
+const ada: Customer = { customerId: "C-1", kycLevel: 2, name: "Ada", phone: "0803 000 1111", email: "ada@example.com" };
+const tunde: StaffMember = { staffId: "S-9", branch: "Yaba", name: "Tunde", phone: "0805 222 3333", email: "tunde@bank.example" };
+
+const history: Transaction[] = [
+  { kind: "deposit", id: "T1", at: "09-01", money: { kobo: 15000000, currency: "NGN" }, channel: "transfer-in" },
+  { kind: "withdrawal", id: "T2", at: "09-02", money: { kobo: 2000000, currency: "NGN" }, atmId: "ATM-12" },
+  { kind: "transfer", id: "T3", at: "09-03", money: { kobo: 4550, currency: "USD" }, toAccount: "ACC-2001" },
+];
+
+for (const tx of history) console.log(line(tx));
+console.log(smsLine(ada, "Your statement is ready"));
+console.log(smsLine(tunde, "3 statements sent"));
+</example>
+<output>
+</output>
+<p><code>smsLine</code> asks only for <code>ContactDetails</code>, so it serves customers and staff alike. <code>formatMoney</code> is the one place that knows how to show money, and every amount is in kobo, so the naira/kobo mix-up from earlier cannot happen by accident.</p>
+</section>
+
+<section>
+<h2 id="testing">Testing shared types</h2>
+<p>A shared types module is a contract many files depend on, so it deserves tests of its own: values that must compile, and values that must not. Keep them in a type-test file that <code>npm run check</code> covers:</p>
+<example file="domain.types-test.ts" project="domain">
+import type { Customer, Money, Transaction } from "./domain.js";
+
+const ok: Transaction = { kind: "transfer", id: "T9", at: "09-04", money: { kobo: 100, currency: "NGN" }, toAccount: "ACC-1" };
+
+// @ts-expect-error: a withdrawal needs atmId (null for the branch)
+const noAtm: Transaction = { kind: "withdrawal", id: "T10", at: "09-04", money: { kobo: 100, currency: "NGN" } };
+
+// @ts-expect-error: money is always in kobo, never "amount"
+const wrongUnit: Money = { amount: 100, currency: "NGN" };
+
+// @ts-expect-error: KYC levels are 1, 2 or 3
+const badKyc: Customer = { customerId: "C-2", kycLevel: 4, name: "Bola", phone: "0", email: "b@example.com" };
+
+console.log(ok.kind, noAtm.kind, wrongUnit.currency, badKyc.kycLevel);
+</example>
+<output>
+</output>
+<p>Each <code>@ts-expect-error</code> line documents a rule of the domain, and fails the check if the rule is ever loosened, for example if someone makes <code>atmId</code> optional. (The file also runs: TypeScript's checks are erased, so the "invalid" values exist at runtime. That is fine for a type test, and a reminder that only runtime validation can reject bad data.)</p>
+</section>
+
+<section>
+<h2 id="production">In production</h2>
+<ul>
+<li><strong>One home per concept.</strong> Put shared domain types in one module (or one package, in a monorepo) and import them with <code>import type</code>. ZudoJS does this at scale: types such as <code>Logger</code> or <code>EventBus</code> are owned by one package and imported by the others, never redefined.</li>
+<li><strong>Keep files as modules</strong> so that interfaces cannot merge across files by accident.</li>
+<li><strong>Augment only what you do not own</strong>, only with optional fields, and keep the augmentation next to the code that sets those fields.</li>
+<li><strong>Prefer <code>extends</code> over <code>&amp;</code> for object hierarchies.</strong> Conflicts are reported at the declaration, and the checker caches interface relationships, which helps in very large projects.</li>
+<li><strong>Aliases are not units.</strong> <code>type Kobo = number</code> documents, but does not protect. Store money as whole kobo, and move to branded types when mix-ups become a real risk.</li>
+<li><strong>Types describe, they do not check.</strong> A <code>Customer</code> from a database row or a request body must be validated at runtime before you trust its <code>kycLevel</code>.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Find the merge">
+<p>This file fails to compile with "Property 'branch' is missing". Nobody on the team remembers requiring a branch. Explain what happened, and fix it without deleting any information the second declaration was trying to add.</p>
+<example file="teller.ts" project="ex-merge" check="tsc-error">
+interface Teller {
+  id: string;
+  name: string;
+}
+
+function greet(teller: Teller): string {
+  return `Hello, ${teller.name}`;
+}
+
+// … two hundred lines later …
+
+interface Teller {
+  branch: string;
+}
+
+console.log(greet({ id: "S-1", name: "Tunde" }));
+</example>
+<output kind="tsc">
+</output>
+<solution>
+<p>The two <code>interface Teller</code> declarations are in the same module, so they merged: every <code>Teller</code> now needs a <code>branch</code>. The second declaration was probably meant for a teller <em>assigned to</em> a branch. Give that its own name:</p>
+<example file="teller.ts" project="ex-merge">
+interface Teller {
+  id: string;
+  name: string;
+}
+
+interface BranchTeller extends Teller {
+  branch: string;
+}
+
+function greet(teller: Teller): string {
+  return `Hello, ${teller.name}`;
+}
+
+const tunde: BranchTeller = { id: "S-1", name: "Tunde", branch: "Yaba" };
+console.log(greet({ id: "S-2", name: "Kemi" }), "|", greet(tunde), "at", tunde.branch);
+</example>
+<output>
+</output>
+</solution>
+</exercise>
+<exercise title="Walk a comment thread">
+<p>Customer support notes can have replies, which can have replies. Write a recursive <code>Note</code> type (author, text, replies) and a function <code>countNotes(note)</code> that counts a note and all replies at every depth. Then write <code>authors(note)</code> that returns every distinct author.</p>
+<solution>
+<example file="notes.ts" project="ex-notes">
+interface Note {
+  readonly author: string;
+  readonly text: string;
+  readonly replies: readonly Note[];
+}
+
+function countNotes(note: Note): number {
+  return 1 + note.replies.reduce((sum, reply) => sum + countNotes(reply), 0);
+}
+
+function authors(note: Note): string[] {
+  const all = [note.author, ...note.replies.flatMap(authors)];
+  return [...new Set(all)];
+}
+
+const thread: Note = {
+  author: "Ada",
+  text: "Card blocked after 3 wrong PINs",
+  replies: [
+    { author: "Tunde", text: "Unblocked, new PIN sent", replies: [{ author: "Ada", text: "Thanks!", replies: [] }] },
+    { author: "Kemi", text: "Added fraud flag for review", replies: [] },
+  ],
+};
+
+console.log(countNotes(thread), authors(thread));
+</example>
+<output>
+</output>
+<p><code>flatMap(authors)</code> calls <code>authors</code> on every reply and flattens the resulting arrays into one; a <code>Set</code> removes the repeated "Ada".</p>
+</solution>
+</exercise>
+<exercise title="interface or type?">
+<p>For each of these, choose <code>interface</code> or <code>type</code>, and say why: (a) a card's state, one of <code>active</code>, <code>blocked</code> or <code>expired</code>; (b) the options object for a <code>createTransferService</code> function; (c) a pair of latitude and longitude; (d) the shape of a request context that plugins add fields to; (e) a function that validates an amount.</p>
+<solution>
+<ul>
+<li>(a) <code>type CardState = "active" | "blocked" | "expired"</code>: a union, which only an alias can name.</li>
+<li>(b) <code>interface TransferServiceOptions</code>: an object shape that may grow and that other options may extend.</li>
+<li>(c) <code>type LatLng = [lat: number, lng: number]</code>: a tuple. (An interface <code>{ lat; lng }</code> would also be a fine design; the choice of tuple is what forces <code>type</code>.)</li>
+<li>(d) <code>interface RequestContext</code>: plugins must be able to augment it, and only interfaces merge.</li>
+<li>(e) <code>type AmountValidator = (kobo: number) =&gt; string | null</code>: a function type reads most clearly as an alias.</li>
+</ul>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Name each recurring concept once. A change to a named type reaches every function that uses it; inline shapes drift apart silently.</li>
+<li>A type alias names any type, but creates nothing new: <code>Naira</code> and <code>Kobo</code> aliases of <code>number</code> are interchangeable.</li>
+<li>Interfaces extend one or more parents, and <code>extends</code> reports conflicts at the declaration; <code>&amp;</code> turns them into <code>never</code> silently.</li>
+<li>Same-named interfaces in one scope merge. That is a trap inside your own files, and the tool for module augmentation when extending code you do not own.</li>
+<li>Recursive types describe trees and nested data; recursive functions walk them, with an empty child list as the base case.</li>
+<li>Interfaces are not assignable to index signatures; aliases can be. Use <code>interface</code> for object shapes and <code>type</code> for unions, tuples, functions and computed types.</li>
+</ul>
+<p>Next: <a href="/learn/ts-special-types">Special types</a>: <code>any</code>, <code>unknown</code>, <code>never</code>, <code>void</code>, <code>object</code>, <code>{}</code> and <code>Object</code>.</p>
+</section>
